@@ -40,97 +40,97 @@ const (
 
 type metadataProcessingProfile struct {
 	Type                           string         `json:"type"`
-	Fingerprint                    string         `json:"profile_fingerprint"`
-	CanonicalProfile               jsontext.Value `json:"canonical_profile"`
-	RenditionRequestFingerprint    string         `json:"rendition_request_fingerprint"`
-	EvidenceLexicalFingerprint     string         `json:"evidence_lexical_fingerprint"`
-	RetentionDisclosureFingerprint string         `json:"retention_disclosure_fingerprint"`
-	AttachmentPolicyFingerprint    string         `json:"attachment_policy_fingerprint"`
-	ConsentFingerprint             string         `json:"consent_fingerprint"`
-	RenditionDisclosureFingerprint string         `json:"rendition_disclosure_fingerprint"`
-	TrustBoundary                  string         `json:"trust_boundary"`
+	Fingerprint                    string         `json:"profile_fingerprint" db:"profile_fingerprint"`
+	CanonicalProfile               jsontext.Value `json:"canonical_profile" db:"canonical_profile,json"`
+	RenditionRequestFingerprint    string         `json:"rendition_request_fingerprint" db:"rendition_request_fingerprint"`
+	EvidenceLexicalFingerprint     string         `json:"evidence_lexical_fingerprint" db:"evidence_lexical_fingerprint"`
+	RetentionDisclosureFingerprint string         `json:"retention_disclosure_fingerprint" db:"retention_disclosure_fingerprint"`
+	AttachmentPolicyFingerprint    string         `json:"attachment_policy_fingerprint" db:"attachment_policy_fingerprint"`
+	ConsentFingerprint             string         `json:"consent_fingerprint" db:"consent_fingerprint"`
+	RenditionDisclosureFingerprint string         `json:"rendition_disclosure_fingerprint" db:"rendition_disclosure_fingerprint"`
+	TrustBoundary                  string         `json:"trust_boundary" db:"trust_boundary"`
 }
 
 type metadataRenditionBuild struct {
 	Type                              string                        `json:"type"`
-	ID                                string                        `json:"build_id"`
-	VaultID                           string                        `json:"vault_id"`
-	SourceSHA256                      string                        `json:"source_sha256"`
-	RenditionRequestFingerprint       string                        `json:"rendition_request_fingerprint"`
-	EvidenceLexicalFingerprint        string                        `json:"evidence_lexical_fingerprint"`
-	CapturedArtifactPolicyFingerprint string                        `json:"captured_artifact_policy_fingerprint"`
-	CapturedArtifactPolicy            jsontext.Value                `json:"captured_artifact_policy"`
-	AuthorizationChecksum             string                        `json:"authorization_checksum"`
-	ProviderOperationID               string                        `json:"provider_operation_id"`
-	ProviderReceipt                   jsontext.Value                `json:"provider_receipt"`
-	EvidenceChecksum                  string                        `json:"evidence_checksum"`
-	RenditionChecksum                 string                        `json:"rendition_checksum"`
-	MarkdownChecksum                  string                        `json:"markdown_checksum"`
-	Completeness                      document.EvidenceCompleteness `json:"completeness"`
-	PartialSuccess                    bool                          `json:"partial_success"`
-	Truncated                         bool                          `json:"truncated"`
-	Warnings                          []string                      `json:"warnings"`
-	CompletedAt                       string                        `json:"completed_at"`
-	DeclaredArtifactCount             int                           `json:"declared_artifact_count"`
-	UnitCount                         int                           `json:"unit_count"`
-	LexicalSegmentCount               int                           `json:"lexical_segment_count"`
+	ID                                string                        `json:"build_id" db:"build_id"`
+	VaultID                           string                        `json:"vault_id" db:"vault_uid"`
+	SourceSHA256                      string                        `json:"source_sha256" db:"source_sha256"`
+	RenditionRequestFingerprint       string                        `json:"rendition_request_fingerprint" db:"rendition_request_fingerprint"`
+	EvidenceLexicalFingerprint        string                        `json:"evidence_lexical_fingerprint" db:"evidence_lexical_fingerprint"`
+	CapturedArtifactPolicyFingerprint string                        `json:"captured_artifact_policy_fingerprint" db:"captured_artifact_policy_fingerprint"`
+	CapturedArtifactPolicy            jsontext.Value                `json:"captured_artifact_policy" db:"captured_artifact_policy_json,json"`
+	AuthorizationChecksum             string                        `json:"authorization_checksum" db:"authorization_checksum"`
+	ProviderOperationID               string                        `json:"provider_operation_id" db:"provider_operation_id"`
+	ProviderReceipt                   jsontext.Value                `json:"provider_receipt" db:"provider_receipt_json,json"`
+	EvidenceChecksum                  string                        `json:"evidence_checksum" db:"evidence_checksum"`
+	RenditionChecksum                 string                        `json:"rendition_checksum" db:"rendition_checksum"`
+	MarkdownChecksum                  string                        `json:"markdown_checksum" db:"markdown_checksum"`
+	Completeness                      document.EvidenceCompleteness `json:"completeness" db:"completeness"`
+	PartialSuccess                    bool                          `json:"partial_success" db:"partial_success"`
+	Truncated                         bool                          `json:"truncated" db:"truncated"`
+	Warnings                          []string                      `json:"warnings" db:"warnings_json,json"`
+	CompletedAt                       string                        `json:"completed_at" db:"completed_at"`
+	DeclaredArtifactCount             int                           `json:"declared_artifact_count" db:"declared_artifact_count"`
+	UnitCount                         int                           `json:"unit_count" db:"unit_count"`
+	LexicalSegmentCount               int                           `json:"lexical_segment_count" db:"lexical_segment_count"`
 }
 
 type metadataRenditionArtifact struct {
 	Type       string                 `json:"type"`
-	BuildID    string                 `json:"build_id"`
-	ArtifactID string                 `json:"artifact_id"`
-	Role       string                 `json:"role"`
-	BlobHash   string                 `json:"blob_hash"`
-	Size       int64                  `json:"size"`
-	Checksum   string                 `json:"checksum"`
+	BuildID    string                 `json:"build_id" db:"build_id"`
+	ArtifactID string                 `json:"artifact_id" db:"artifact_id"`
+	Role       string                 `json:"role" db:"role"`
+	BlobHash   string                 `json:"blob_hash" db:"blob_hash"`
+	Size       int64                  `json:"size" db:"size"`
+	Checksum   string                 `json:"checksum" db:"checksum"`
 	State      RenditionArtifactState `json:"state"`
 }
 
 type metadataRenditionUnit struct {
 	Type           string                     `json:"type"`
-	BuildID        string                     `json:"build_id"`
-	UnitID         string                     `json:"unit_id"`
-	EvidenceUnitID string                     `json:"evidence_unit_id"`
-	Order          int                        `json:"order"`
-	Checksum       string                     `json:"checksum"`
-	HeadingPath    []string                   `json:"heading_path"`
-	Locator        document.EvidenceLocatorV1 `json:"locator"`
+	BuildID        string                     `json:"build_id" db:"build_id"`
+	UnitID         string                     `json:"unit_id" db:"unit_id"`
+	EvidenceUnitID string                     `json:"evidence_unit_id" db:"evidence_unit_id"`
+	Order          int                        `json:"order" db:"unit_order"`
+	Checksum       string                     `json:"checksum" db:"checksum"`
+	HeadingPath    []string                   `json:"heading_path" db:"heading_path_json,json"`
+	Locator        document.EvidenceLocatorV1 `json:"locator" db:"locator_json,json"`
 }
 
 type metadataRenditionSegment struct {
 	Type      string `json:"type"`
-	BuildID   string `json:"build_id"`
-	SegmentID string `json:"segment_id"`
-	UnitID    string `json:"unit_id"`
-	Order     int    `json:"order"`
-	CharStart int    `json:"char_start"`
-	CharEnd   int    `json:"char_end"`
-	Checksum  string `json:"checksum"`
-	Text      string `json:"text"`
+	BuildID   string `json:"build_id" db:"build_id"`
+	SegmentID string `json:"segment_id" db:"segment_id"`
+	UnitID    string `json:"unit_id" db:"unit_id"`
+	Order     int    `json:"order" db:"segment_order"`
+	CharStart int    `json:"char_start" db:"char_start"`
+	CharEnd   int    `json:"char_end" db:"char_end"`
+	Checksum  string `json:"checksum" db:"checksum"`
+	Text      string `json:"text" db:"text"`
 }
 
 type metadataRenditionAttachment struct {
 	Type                           string `json:"type"`
-	AttachmentID                   string `json:"attachment_id"`
-	VaultID                        string `json:"vault_id"`
-	ContentVersionID               string `json:"content_version_id"`
-	BuildID                        string `json:"build_id"`
-	ProcessingProfileFingerprint   string `json:"processing_profile_fingerprint"`
-	RetentionDisclosureFingerprint string `json:"retention_disclosure_fingerprint"`
-	AttachmentPolicyFingerprint    string `json:"attachment_policy_fingerprint"`
-	ConsentFingerprint             string `json:"consent_fingerprint"`
-	RenditionDisclosureFingerprint string `json:"rendition_disclosure_fingerprint"`
-	TrustBoundary                  string `json:"trust_boundary"`
-	AttachedAt                     string `json:"attached_at"`
+	AttachmentID                   string `json:"attachment_id" db:"attachment_id"`
+	VaultID                        string `json:"vault_id" db:"vault_uid"`
+	ContentVersionID               string `json:"content_version_id" db:"content_version_id"`
+	BuildID                        string `json:"build_id" db:"build_id"`
+	ProcessingProfileFingerprint   string `json:"processing_profile_fingerprint" db:"profile_fingerprint"`
+	RetentionDisclosureFingerprint string `json:"retention_disclosure_fingerprint" db:"retention_disclosure_fingerprint"`
+	AttachmentPolicyFingerprint    string `json:"attachment_policy_fingerprint" db:"attachment_policy_fingerprint"`
+	ConsentFingerprint             string `json:"consent_fingerprint" db:"consent_fingerprint"`
+	RenditionDisclosureFingerprint string `json:"rendition_disclosure_fingerprint" db:"rendition_disclosure_fingerprint"`
+	TrustBoundary                  string `json:"trust_boundary" db:"trust_boundary"`
+	AttachedAt                     string `json:"attached_at" db:"attached_at"`
 }
 
 type metadataRenditionHead struct {
 	Type                         string `json:"type"`
-	ContentVersionID             string `json:"content_version_id"`
-	ProcessingProfileFingerprint string `json:"processing_profile_fingerprint"`
-	AttachmentID                 string `json:"attachment_id"`
-	PublishedAt                  string `json:"published_at"`
+	ContentVersionID             string `json:"content_version_id" db:"content_version_id"`
+	ProcessingProfileFingerprint string `json:"processing_profile_fingerprint" db:"profile_fingerprint"`
+	AttachmentID                 string `json:"attachment_id" db:"attachment_id"`
+	PublishedAt                  string `json:"published_at" db:"published_at"`
 }
 
 type metadataLexicalGeneration struct {
@@ -146,59 +146,59 @@ type metadataLexicalGeneration struct {
 
 type metadataCurrentRenditionRoot struct {
 	Type         string                     `json:"type"`
-	ID           string                     `json:"root_id"`
-	Kind         CurrentRenditionRootKind   `json:"root_kind"`
-	TargetKind   CurrentRenditionTargetKind `json:"target_kind"`
-	TargetID     string                     `json:"target_id"`
-	FencingToken int64                      `json:"fencing_token"`
-	RecordedAt   string                     `json:"recorded_at"`
-	Active       bool                       `json:"active"`
-	ReleasedAt   *string                    `json:"released_at"`
+	ID           string                     `json:"root_id" db:"root_id"`
+	Kind         CurrentRenditionRootKind   `json:"root_kind" db:"root_kind"`
+	TargetKind   CurrentRenditionTargetKind `json:"target_kind" db:"target_kind"`
+	TargetID     string                     `json:"target_id" db:"target_id"`
+	FencingToken int64                      `json:"fencing_token" db:"fencing_token"`
+	RecordedAt   string                     `json:"recorded_at" db:"recorded_at"`
+	Active       bool                       `json:"active" db:"active"`
+	ReleasedAt   *string                    `json:"released_at" db:"released_at"`
 }
 
 type metadataDerivativePurgeSuppression struct {
 	Type               string  `json:"type"`
-	SourceSHA256       string  `json:"source_sha256"`
-	ProfileFingerprint string  `json:"profile_fingerprint"`
-	BuildID            string  `json:"build_id"`
-	PurgedAt           string  `json:"purged_at"`
-	Active             bool    `json:"active"`
-	SupersededAt       *string `json:"superseded_at"`
-	SupersedingBuildID *string `json:"superseding_build_id"`
+	SourceSHA256       string  `json:"source_sha256" db:"source_sha256"`
+	ProfileFingerprint string  `json:"profile_fingerprint" db:"profile_fingerprint"`
+	BuildID            string  `json:"build_id" db:"build_id"`
+	PurgedAt           string  `json:"purged_at" db:"purged_at"`
+	Active             bool    `json:"active" db:"active"`
+	SupersededAt       *string `json:"superseded_at" db:"superseded_at"`
+	SupersedingBuildID *string `json:"superseding_build_id" db:"superseding_build_id"`
 }
 
 type metadataProcessingIncarnation struct {
 	Type      string `json:"type"`
-	ID        string `json:"incarnation_id"`
-	CreatedAt string `json:"created_at"`
+	ID        string `json:"incarnation_id" db:"incarnation_id"`
+	CreatedAt string `json:"created_at" db:"created_at"`
 }
 
 type metadataProcessingConsentGrant struct {
 	Type                    string   `json:"type"`
-	ID                      string   `json:"grant_id"`
-	ConsentSetID            string   `json:"consent_set_id"`
-	VaultID                 string   `json:"vault_id"`
-	ProcessingIncarnationID string   `json:"incarnation_id"`
-	Principal               string   `json:"principal"`
-	Scope                   string   `json:"scope"`
-	ProfileFingerprint      string   `json:"profile_fingerprint"`
-	DisclosureFingerprint   string   `json:"disclosure_fingerprint"`
-	InputClasses            []string `json:"input_classes"`
-	RetainedArtifactClasses []string `json:"retained_artifact_classes"`
-	RevocationFence         int64    `json:"revocation_fence"`
-	IssuedAt                string   `json:"issued_at"`
-	ExpiresAt               *string  `json:"expires_at"`
+	ID                      string   `json:"grant_id" db:"grant_id"`
+	ConsentSetID            string   `json:"consent_set_id" db:"consent_set_id"`
+	VaultID                 string   `json:"vault_id" db:"vault_uid"`
+	ProcessingIncarnationID string   `json:"incarnation_id" db:"incarnation_id"`
+	Principal               string   `json:"principal" db:"principal"`
+	Scope                   string   `json:"scope" db:"scope"`
+	ProfileFingerprint      string   `json:"profile_fingerprint" db:"profile_fingerprint"`
+	DisclosureFingerprint   string   `json:"disclosure_fingerprint" db:"disclosure_fingerprint"`
+	InputClasses            []string `json:"input_classes" db:"input_classes_json,json"`
+	RetainedArtifactClasses []string `json:"retained_artifact_classes" db:"retained_classes_json,json"`
+	RevocationFence         int64    `json:"revocation_fence" db:"revocation_fence"`
+	IssuedAt                string   `json:"issued_at" db:"issued_at"`
+	ExpiresAt               *string  `json:"expires_at" db:"expires_at"`
 }
 
 type metadataProcessingConsentRevocation struct {
 	Type                    string `json:"type"`
-	ID                      string `json:"revocation_id"`
-	VaultID                 string `json:"vault_id"`
-	ProcessingIncarnationID string `json:"incarnation_id"`
-	Principal               string `json:"principal"`
-	Scope                   string `json:"scope"`
-	Fence                   int64  `json:"fence"`
-	RevokedAt               string `json:"revoked_at"`
+	ID                      string `json:"revocation_id" db:"revocation_id"`
+	VaultID                 string `json:"vault_id" db:"vault_uid"`
+	ProcessingIncarnationID string `json:"incarnation_id" db:"incarnation_id"`
+	Principal               string `json:"principal" db:"principal"`
+	Scope                   string `json:"scope" db:"scope"`
+	Fence                   int64  `json:"fence" db:"fence"`
+	RevokedAt               string `json:"revoked_at" db:"revoked_at"`
 }
 
 type metadataRenditionJob struct {
@@ -234,143 +234,106 @@ type metadataRenditionJob struct {
 
 type metadataRenditionJobWaiter struct {
 	Type                         string                `json:"type"`
-	ID                           string                `json:"waiter_id"`
-	JobID                        string                `json:"job_id"`
-	ContentVersionID             string                `json:"content_version_id"`
-	ProfileFingerprint           string                `json:"profile_fingerprint"`
-	Principal                    string                `json:"principal"`
-	Scope                        string                `json:"scope"`
-	DisclosureFingerprint        string                `json:"disclosure_fingerprint"`
-	InputClasses                 []string              `json:"input_classes"`
-	RetainedClasses              []string              `json:"retained_classes"`
-	AuthorizationGrantID         string                `json:"authorization_grant_id"`
-	AuthorizationIncarnationID   string                `json:"authorization_incarnation_id"`
-	AuthorizationRevocationFence int64                 `json:"authorization_revocation_fence"`
-	State                        string                `json:"state"`
-	FailureCode                  *RenditionFailureCode `json:"failure_code,omitempty"`
-	AttachmentID                 string                `json:"attachment_id"`
-	CreatedAt                    string                `json:"created_at"`
-	UpdatedAt                    string                `json:"updated_at"`
+	ID                           string                `json:"waiter_id" db:"waiter_id"`
+	JobID                        string                `json:"job_id" db:"job_id"`
+	ContentVersionID             string                `json:"content_version_id" db:"content_version_id"`
+	ProfileFingerprint           string                `json:"profile_fingerprint" db:"profile_fingerprint"`
+	Principal                    string                `json:"principal" db:"principal"`
+	Scope                        string                `json:"scope" db:"scope"`
+	DisclosureFingerprint        string                `json:"disclosure_fingerprint" db:"disclosure_fingerprint"`
+	InputClasses                 []string              `json:"input_classes" db:"input_classes_json,json"`
+	RetainedClasses              []string              `json:"retained_classes" db:"retained_classes_json,json"`
+	AuthorizationGrantID         string                `json:"authorization_grant_id" db:"authorization_grant_id"`
+	AuthorizationIncarnationID   string                `json:"authorization_incarnation_id" db:"authorization_incarnation_id"`
+	AuthorizationRevocationFence int64                 `json:"authorization_revocation_fence" db:"authorization_revocation_fence"`
+	State                        string                `json:"state" db:"state"`
+	FailureCode                  *RenditionFailureCode `json:"failure_code,omitempty" db:"failure_code"`
+	AttachmentID                 string                `json:"attachment_id" db:"attachment_id"`
+	CreatedAt                    string                `json:"created_at" db:"created_at"`
+	UpdatedAt                    string                `json:"updated_at" db:"updated_at"`
 }
 
-var processingMetadataRequiredFields = map[string][]string{
-	metadataProcessingIncarnationType: {
-		metadataTypeField, "incarnation_id", metadataCreatedAtField,
-	},
-	metadataProcessingConsentGrantType: {
-		metadataTypeField, "grant_id", "consent_set_id", auditVaultIDField, "incarnation_id",
-		"principal", "scope", "profile_fingerprint", "disclosure_fingerprint",
-		"input_classes", "retained_artifact_classes", "revocation_fence",
-		"issued_at", "expires_at",
-	},
-	metadataProcessingConsentRevokeType: {
-		metadataTypeField, "revocation_id", auditVaultIDField, "incarnation_id",
-		"principal", "scope", "fence", "revoked_at",
-	},
-	metadataProcessingProfileType: {
-		metadataTypeField, "profile_fingerprint", "canonical_profile",
-		"rendition_request_fingerprint", "evidence_lexical_fingerprint",
-		"retention_disclosure_fingerprint", "attachment_policy_fingerprint",
-		"consent_fingerprint", "rendition_disclosure_fingerprint", "trust_boundary",
-	},
-	metadataRenditionBuildType: {
-		metadataTypeField, "build_id", auditVaultIDField, columnSourceSHA256,
-		"rendition_request_fingerprint", "evidence_lexical_fingerprint",
-		"captured_artifact_policy_fingerprint", "captured_artifact_policy",
-		"authorization_checksum", "provider_operation_id", "provider_receipt",
-		"evidence_checksum", "rendition_checksum", "markdown_checksum", "completeness",
-		"partial_success", "truncated", "warnings", "completed_at",
-		"declared_artifact_count", "unit_count", "lexical_segment_count",
-	},
-	metadataRenditionArtifactType: {
-		metadataTypeField, "build_id", "artifact_id", "role", columnBlobHash,
-		metadataSizeField, "checksum", "state",
-	},
-	metadataRenditionUnitType: {
-		metadataTypeField, "build_id", "unit_id", "evidence_unit_id", "order",
-		"checksum", "heading_path", "locator",
-	},
-	metadataRenditionSegmentType: {
-		metadataTypeField, "build_id", "segment_id", "unit_id", "order",
-		"char_start", "char_end", "checksum", "text",
-	},
-	metadataRenditionAttachType: {
-		metadataTypeField, "attachment_id", auditVaultIDField, "content_version_id",
-		"build_id", "processing_profile_fingerprint",
-		"retention_disclosure_fingerprint", "attachment_policy_fingerprint",
-		"consent_fingerprint", "rendition_disclosure_fingerprint", "trust_boundary",
-		"attached_at",
-	},
-	metadataRenditionHeadType: {
-		metadataTypeField, "content_version_id", "processing_profile_fingerprint",
-		"attachment_id", "published_at",
-	},
-	metadataLexicalGenerationType: {
-		metadataTypeField, "generation_id", "segment_count", "manifest_digest",
-		"build_ids", "build_digest", "built_at", "headed",
-	},
-	metadataCurrentRenditionRootType: {
-		metadataTypeField, "root_id", "root_kind", "target_kind", "target_id",
-		"fencing_token", "recorded_at", "active", "released_at",
-	},
-	metadataDerivativePurgeSuppressionType: {
-		metadataTypeField, columnSourceSHA256, "profile_fingerprint", "build_id",
-		"purged_at", "active", "superseded_at", "superseding_build_id",
-	},
-	metadataRenditionJobType: {
-		metadataTypeField, "job_id", auditVaultIDField, columnSourceSHA256,
-		"rendition_request_fingerprint", "evidence_lexical_fingerprint",
-		"captured_artifact_policy_fingerprint", "captured_artifact_policy",
-		"execution_identity_fingerprint", "execution_identity", "execution_snapshot",
-		"state", "phase", "claim_owner", "claim_epoch", "lease_expires_at", "available_at",
-		"provider_started", "provider_attempts", "provider_resume_handle", "selected_waiter_id",
-		"authorization_grant_id", "authorization_incarnation_id",
-		"authorization_revocation_fence", "lexical_generation_id", "failure_code",
-		metadataCreatedAtField, "updated_at",
-	},
-	metadataRenditionJobWaiterType: {
-		metadataTypeField, "waiter_id", "job_id", "content_version_id",
-		"profile_fingerprint", "principal", "scope", "disclosure_fingerprint",
-		"input_classes", "retained_classes", "authorization_grant_id",
-		"authorization_incarnation_id", "authorization_revocation_fence",
-		"state", "attachment_id",
-		metadataCreatedAtField, "updated_at",
-	},
+// processingMetadataTables exports the processing records in dependency order.
+var processingMetadataTables = []metadataRecordCodec{
+	newMetadataTable(metadataTable[metadataProcessingIncarnation]{
+		record: metadataProcessingIncarnation{Type: metadataProcessingIncarnationType}, table: "processing_incarnations",
+		suffix: `i WHERE EXISTS(SELECT 1 FROM processing_consent_grants g WHERE g.incarnation_id=i.incarnation_id)
+			OR EXISTS(SELECT 1 FROM processing_consent_revocations r WHERE r.incarnation_id=i.incarnation_id)
+			ORDER BY i.incarnation_id`,
+		validate: validateMetadataProcessingIncarnation}),
+	processingConsentRevocationMetadata, processingConsentGrantMetadata,
+	newMetadataTable(metadataTable[metadataProcessingProfile]{
+		record: metadataProcessingProfile{Type: metadataProcessingProfileType}, table: "processing_profiles",
+		suffix: "ORDER BY profile_fingerprint", insert: importMetadataProcessingProfile}),
+	newMetadataTable(metadataTable[metadataRenditionBuild]{
+		record: metadataRenditionBuild{Type: metadataRenditionBuildType}, table: "rendition_builds",
+		suffix: "ORDER BY build_id", validate: validateMetadataRenditionBuild}),
+	newMetadataTable(metadataTable[metadataRenditionArtifact]{
+		record: metadataRenditionArtifact{Type: metadataRenditionArtifactType, State: RenditionArtifactVerified},
+		table:  "rendition_artifacts", suffix: "ORDER BY build_id,artifact_id", validate: validateMetadataRenditionArtifact}),
+	newMetadataTable(metadataTable[metadataRenditionUnit]{
+		record: metadataRenditionUnit{Type: metadataRenditionUnitType}, table: "rendition_units",
+		suffix: "ORDER BY build_id,unit_order,unit_id", validate: validateMetadataRenditionUnit}),
+	newMetadataTable(metadataTable[metadataRenditionSegment]{
+		record: metadataRenditionSegment{Type: metadataRenditionSegmentType}, table: "rendition_lexical_segments",
+		suffix: "ORDER BY build_id,segment_order,segment_id", validate: validateMetadataRenditionSegment}),
+	newMetadataTable(metadataTable[metadataRenditionAttachment]{
+		record: metadataRenditionAttachment{Type: metadataRenditionAttachType}, table: "rendition_attachments",
+		suffix: "ORDER BY content_version_id,profile_fingerprint,attachment_id", validate: validateMetadataRenditionAttachment}),
+	newMetadataTable(metadataTable[metadataRenditionHead]{
+		record: metadataRenditionHead{Type: metadataRenditionHeadType}, table: "rendition_heads",
+		suffix: "ORDER BY content_version_id,profile_fingerprint",
+		validate: func(value metadataRenditionHead) error {
+			return validateRenditionHeadRecord(RenditionHeadRecord{
+				ContentVersionID:             value.ContentVersionID,
+				ProcessingProfileFingerprint: value.ProcessingProfileFingerprint,
+				AttachmentID:                 value.AttachmentID, PublishedAt: value.PublishedAt,
+			})
+		},
+		insert: importMetadataRenditionHead}),
+	// The lexical generation writes five tables, which the pristine check counts
+	// in its existence-gated loop.
+	newMetadataTable(metadataTable[metadataLexicalGeneration]{
+		record:    metadataLexicalGeneration{Type: metadataLexicalGenerationType},
+		exportAll: exportLexicalGenerations, insert: restoreLexicalGenerationTx}),
+	newMetadataTable(metadataTable[metadataRenditionJob]{
+		record: metadataRenditionJob{Type: metadataRenditionJobType}, table: "rendition_jobs",
+		validate: validateMetadataRenditionJob, exportAll: exportRenditionJobs, insert: importMetadataRenditionJob}),
+	newMetadataTable(metadataTable[metadataRenditionJobWaiter]{
+		record: metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}, table: "rendition_job_waiters",
+		suffix: "ORDER BY job_id,waiter_id", checkExport: true,
+		validate: func(value metadataRenditionJobWaiter) error {
+			_, err := validateMetadataRenditionJobWaiter(value)
+			return err
+		},
+		insert: importMetadataRenditionJobWaiter}),
 }
 
-func exportProcessingMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	if err := exportProcessingConsent(ctx, tx, write); err != nil {
-		return err
-	}
-	if err := exportProcessingProfiles(ctx, tx, write); err != nil {
-		return err
-	}
-	if err := exportRenditionBuilds(ctx, tx, write); err != nil {
-		return err
-	}
-	if err := exportRenditionArtifacts(ctx, tx, write); err != nil {
-		return err
-	}
-	if err := exportRenditionUnits(ctx, tx, write); err != nil {
-		return err
-	}
-	if err := exportRenditionSegments(ctx, tx, write); err != nil {
-		return err
-	}
-	if err := exportRenditionAttachments(ctx, tx, write); err != nil {
-		return err
-	}
-	if err := exportRenditionHeads(ctx, tx, write); err != nil {
-		return err
-	}
-	if err := exportLexicalGenerations(ctx, tx, write); err != nil {
-		return err
-	}
-	if err := exportRenditionJobs(ctx, tx, write); err != nil {
-		return err
-	}
-	return exportRenditionJobWaiters(ctx, tx, write)
-}
+var (
+	processingConsentRevocationMetadata = newMetadataTable(metadataTable[metadataProcessingConsentRevocation]{
+		record: metadataProcessingConsentRevocation{Type: metadataProcessingConsentRevokeType},
+		table:  "processing_consent_revocations", suffix: "ORDER BY incarnation_id,principal,scope,fence",
+		validate: validateMetadataProcessingConsentRevocation})
+	processingConsentGrantMetadata = newMetadataTable(metadataTable[metadataProcessingConsentGrant]{
+		record: metadataProcessingConsentGrant{Type: metadataProcessingConsentGrantType},
+		table:  "processing_consent_grants", suffix: "ORDER BY incarnation_id,issued_at,grant_id",
+		validate: func(value metadataProcessingConsentGrant) error {
+			_, err := validateMetadataProcessingConsentGrant(value)
+			return err
+		},
+		insert: importMetadataProcessingConsentGrant})
+	currentRenditionRootMetadata = newMetadataTable(metadataTable[metadataCurrentRenditionRoot]{
+		record: metadataCurrentRenditionRoot{Type: metadataCurrentRenditionRootType}, table: "current_rendition_roots",
+		suffix: "WHERE root_kind IN ('retention','audit') OR (root_kind='job' AND active=1) ORDER BY root_id",
+		validate: func(value metadataCurrentRenditionRoot) error {
+			return validateDurableCurrentRenditionRootMetadata(value, value.root())
+		},
+		insert: importMetadataCurrentRenditionRoot})
+	derivativePurgeSuppressionMetadata = newMetadataTable(metadataTable[metadataDerivativePurgeSuppression]{
+		record: metadataDerivativePurgeSuppression{Type: metadataDerivativePurgeSuppressionType},
+		table:  "derivative_purge_suppressions", suffix: "ORDER BY source_sha256,profile_fingerprint,build_id",
+		validate: validateMetadataDerivativePurgeSuppression})
+)
 
 func exportRenditionJobs(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
 	rows, err := tx.QueryContext(ctx, `
@@ -432,148 +395,6 @@ func exportRenditionJobs(ctx context.Context, tx metadataQuerier, write metadata
 		}
 	}
 	return rowsError("rendition job", rows)
-}
-
-func exportRenditionJobWaiters(
-	ctx context.Context, tx metadataQuerier, write metadataWrite,
-) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
-		       disclosure_fingerprint,input_classes_json,retained_classes_json,
-		       authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,
-		       state,failure_code,
-		       attachment_id,created_at,updated_at
-		FROM rendition_job_waiters ORDER BY job_id,waiter_id`)
-	if err != nil {
-		return fmt.Errorf("exporting rendition job waiters: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		record := metadataRenditionJobWaiter{Type: metadataRenditionJobWaiterType}
-		var inputs, retained string
-		var failure sql.NullString
-		if err := rows.Scan(&record.ID, &record.JobID, &record.ContentVersionID,
-			&record.ProfileFingerprint, &record.Principal, &record.Scope,
-			&record.DisclosureFingerprint, &inputs, &retained, &record.AuthorizationGrantID,
-			&record.AuthorizationIncarnationID, &record.AuthorizationRevocationFence,
-			&record.State, &failure,
-			&record.AttachmentID, &record.CreatedAt, &record.UpdatedAt); err != nil {
-			return fmt.Errorf("scanning rendition job waiter metadata: %w", err)
-		}
-		if err := json.Unmarshal([]byte(inputs), &record.InputClasses); err != nil {
-			return fmt.Errorf("decoding rendition job waiter input classes: %w", err)
-		}
-		if err := json.Unmarshal([]byte(retained), &record.RetainedClasses); err != nil {
-			return fmt.Errorf("decoding rendition job waiter retained classes: %w", err)
-		}
-		if failure.Valid {
-			code := RenditionFailureCode(failure.String)
-			record.FailureCode = &code
-		}
-		if _, err := validateMetadataRenditionJobWaiter(record); err != nil {
-			return fmt.Errorf("validating rendition job waiter metadata: %w", err)
-		}
-		if err := write(record); err != nil {
-			return err
-		}
-	}
-	return rowsError("rendition job waiter", rows)
-}
-
-func exportProcessingConsent(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	if err := exportProcessingIncarnations(ctx, tx, write); err != nil {
-		return err
-	}
-	if err := exportProcessingConsentRevocations(ctx, tx, write); err != nil {
-		return err
-	}
-	return exportProcessingConsentGrants(ctx, tx, write)
-}
-
-func exportProcessingIncarnations(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT i.incarnation_id,i.created_at
-		FROM processing_incarnations i
-		WHERE EXISTS(SELECT 1 FROM processing_consent_grants g
-		             WHERE g.incarnation_id=i.incarnation_id)
-		   OR EXISTS(SELECT 1 FROM processing_consent_revocations r
-		             WHERE r.incarnation_id=i.incarnation_id)
-		ORDER BY i.incarnation_id`)
-	if err != nil {
-		return fmt.Errorf("exporting processing incarnations: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		value := metadataProcessingIncarnation{Type: metadataProcessingIncarnationType}
-		if err := rows.Scan(&value.ID, &value.CreatedAt); err != nil {
-			return fmt.Errorf("scanning processing incarnation metadata: %w", err)
-		}
-		if err := write(value); err != nil {
-			return err
-		}
-	}
-	return rowsError("processing incarnation", rows)
-}
-
-func exportProcessingConsentRevocations(
-	ctx context.Context, tx metadataQuerier, write metadataWrite,
-) error {
-	revocations, err := tx.QueryContext(ctx, `
-		SELECT revocation_id,vault_uid,incarnation_id,principal,scope,fence,revoked_at
-		FROM processing_consent_revocations ORDER BY incarnation_id,principal,scope,fence`)
-	if err != nil {
-		return fmt.Errorf("exporting processing consent revocations: %w", err)
-	}
-	defer func() { _ = revocations.Close() }()
-	for revocations.Next() {
-		value := metadataProcessingConsentRevocation{Type: metadataProcessingConsentRevokeType}
-		if err := revocations.Scan(&value.ID, &value.VaultID, &value.ProcessingIncarnationID,
-			&value.Principal, &value.Scope, &value.Fence, &value.RevokedAt); err != nil {
-			return fmt.Errorf("scanning processing consent revocation metadata: %w", err)
-		}
-		if err := write(value); err != nil {
-			return err
-		}
-	}
-	return rowsError("processing consent revocation", revocations)
-}
-
-func exportProcessingConsentGrants(
-	ctx context.Context, tx metadataQuerier, write metadataWrite,
-) error {
-	grants, err := tx.QueryContext(ctx, `
-		SELECT grant_id,consent_set_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
-		       disclosure_fingerprint,input_classes_json,retained_classes_json,
-		       revocation_fence,issued_at,expires_at
-		FROM processing_consent_grants ORDER BY incarnation_id,issued_at,grant_id`)
-	if err != nil {
-		return fmt.Errorf("exporting processing consent grants: %w", err)
-	}
-	defer func() { _ = grants.Close() }()
-	for grants.Next() {
-		value := metadataProcessingConsentGrant{Type: metadataProcessingConsentGrantType}
-		var inputs, retained string
-		var expires sql.NullString
-		if err := grants.Scan(&value.ID, &value.ConsentSetID, &value.VaultID, &value.ProcessingIncarnationID,
-			&value.Principal, &value.Scope, &value.ProfileFingerprint,
-			&value.DisclosureFingerprint, &inputs, &retained, &value.RevocationFence,
-			&value.IssuedAt, &expires); err != nil {
-			return fmt.Errorf("scanning processing consent grant metadata: %w", err)
-		}
-		if err := json.Unmarshal([]byte(inputs), &value.InputClasses); err != nil {
-			return fmt.Errorf("decoding processing consent input classes: %w", err)
-		}
-		if err := json.Unmarshal([]byte(retained), &value.RetainedArtifactClasses); err != nil {
-			return fmt.Errorf("decoding processing consent retained classes: %w", err)
-		}
-		if expires.Valid {
-			value.ExpiresAt = &expires.String
-		}
-		if err := write(value); err != nil {
-			return err
-		}
-	}
-	return rowsError("processing consent grant", grants)
 }
 
 func exportLexicalGenerations(
@@ -652,593 +473,159 @@ func lexicalGenerationBuildIDsQuery(
 	return buildIDs, nil
 }
 
-func exportDurableCurrentRenditionRoots(
-	ctx context.Context, tx metadataQuerier, write metadataWrite,
-) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,
-		       active,released_at
-		FROM current_rendition_roots
-		WHERE root_kind IN ('retention','audit') OR (root_kind='job' AND active=1)
-		ORDER BY root_id`)
+func importMetadataProcessingConsentGrant(ctx context.Context, tx *sql.Tx, value metadataProcessingConsentGrant) error {
+	authority, err := validateMetadataProcessingConsentGrant(value)
 	if err != nil {
-		return fmt.Errorf("exporting durable current rendition roots: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		record := metadataCurrentRenditionRoot{Type: metadataCurrentRenditionRootType}
-		var released sql.NullString
-		if err := rows.Scan(&record.ID, &record.Kind, &record.TargetKind, &record.TargetID,
-			&record.FencingToken, &record.RecordedAt, &record.Active, &released); err != nil {
-			return fmt.Errorf("scanning durable current rendition root metadata: %w", err)
-		}
-		if released.Valid {
-			record.ReleasedAt = &released.String
-		}
-		if err := write(record); err != nil {
-			return err
-		}
-	}
-	return rowsError("durable current rendition root", rows)
-}
-
-func exportDerivativePurgeSuppressions(
-	ctx context.Context, tx metadataQuerier, write metadataWrite,
-) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT source_sha256,profile_fingerprint,build_id,purged_at,active,
-		       superseded_at,superseding_build_id
-		FROM derivative_purge_suppressions
-		ORDER BY source_sha256,profile_fingerprint,build_id`)
-	if err != nil {
-		return fmt.Errorf("exporting derivative purge suppressions: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		record := metadataDerivativePurgeSuppression{Type: metadataDerivativePurgeSuppressionType}
-		var supersededAt, supersedingBuildID sql.NullString
-		if err := rows.Scan(&record.SourceSHA256, &record.ProfileFingerprint, &record.BuildID,
-			&record.PurgedAt, &record.Active, &supersededAt, &supersedingBuildID); err != nil {
-			return fmt.Errorf("scanning derivative purge suppression metadata: %w", err)
-		}
-		if supersededAt.Valid {
-			record.SupersededAt = &supersededAt.String
-		}
-		if supersedingBuildID.Valid {
-			record.SupersedingBuildID = &supersedingBuildID.String
-		}
-		if err := write(record); err != nil {
-			return err
-		}
-	}
-	return rowsError("derivative purge suppression", rows)
-}
-
-func exportProcessingProfiles(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT profile_fingerprint,canonical_profile,rendition_request_fingerprint,
-		       evidence_lexical_fingerprint,retention_disclosure_fingerprint,
-		       attachment_policy_fingerprint,consent_fingerprint,
-		       rendition_disclosure_fingerprint,trust_boundary
-		FROM processing_profiles ORDER BY profile_fingerprint`)
-	if err != nil {
-		return fmt.Errorf("exporting processing profiles: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		record := metadataProcessingProfile{Type: metadataProcessingProfileType}
-		var canonical string
-		if err := rows.Scan(&record.Fingerprint, &canonical, &record.RenditionRequestFingerprint,
-			&record.EvidenceLexicalFingerprint, &record.RetentionDisclosureFingerprint,
-			&record.AttachmentPolicyFingerprint, &record.ConsentFingerprint,
-			&record.RenditionDisclosureFingerprint, &record.TrustBoundary); err != nil {
-			return fmt.Errorf("scanning processing profile metadata: %w", err)
-		}
-		record.CanonicalProfile = jsontext.Value(canonical)
-		if err := write(record); err != nil {
-			return err
-		}
-	}
-	return rowsError("processing profile", rows)
-}
-
-func exportRenditionBuilds(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT build_id,vault_uid,source_sha256,rendition_request_fingerprint,
-		       evidence_lexical_fingerprint,captured_artifact_policy_fingerprint,
-		       captured_artifact_policy_json,authorization_checksum,provider_operation_id,
-		       provider_receipt_json,evidence_checksum,rendition_checksum,markdown_checksum,
-		       completeness,partial_success,truncated,warnings_json,completed_at,
-		       declared_artifact_count,unit_count,lexical_segment_count
-		FROM rendition_builds ORDER BY build_id`)
-	if err != nil {
-		return fmt.Errorf("exporting rendition builds: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		record := metadataRenditionBuild{Type: metadataRenditionBuildType}
-		var policy, receipt, warnings string
-		if err := rows.Scan(&record.ID, &record.VaultID, &record.SourceSHA256,
-			&record.RenditionRequestFingerprint, &record.EvidenceLexicalFingerprint,
-			&record.CapturedArtifactPolicyFingerprint, &policy, &record.AuthorizationChecksum,
-			&record.ProviderOperationID, &receipt, &record.EvidenceChecksum,
-			&record.RenditionChecksum, &record.MarkdownChecksum, &record.Completeness,
-			&record.PartialSuccess, &record.Truncated, &warnings, &record.CompletedAt,
-			&record.DeclaredArtifactCount, &record.UnitCount, &record.LexicalSegmentCount); err != nil {
-			return fmt.Errorf("scanning rendition build metadata: %w", err)
-		}
-		record.CapturedArtifactPolicy = jsontext.Value(policy)
-		record.ProviderReceipt = jsontext.Value(receipt)
-		if err := json.Unmarshal([]byte(warnings), &record.Warnings); err != nil {
-			return fmt.Errorf("decoding rendition build warnings: %w", err)
-		}
-		if err := write(record); err != nil {
-			return err
-		}
-	}
-	return rowsError("rendition build", rows)
-}
-
-func exportRenditionArtifacts(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT build_id,artifact_id,role,blob_hash,size,checksum
-		FROM rendition_artifacts ORDER BY build_id,artifact_id`)
-	if err != nil {
-		return fmt.Errorf("exporting rendition artifacts: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		record := metadataRenditionArtifact{
-			Type: metadataRenditionArtifactType, State: RenditionArtifactVerified,
-		}
-		if err := rows.Scan(&record.BuildID, &record.ArtifactID, &record.Role,
-			&record.BlobHash, &record.Size, &record.Checksum); err != nil {
-			return fmt.Errorf("scanning rendition artifact metadata: %w", err)
-		}
-		if err := write(record); err != nil {
-			return err
-		}
-	}
-	return rowsError("rendition artifact", rows)
-}
-
-func exportRenditionUnits(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT build_id,unit_id,evidence_unit_id,unit_order,checksum,heading_path_json,locator_json
-		FROM rendition_units ORDER BY build_id,unit_order,unit_id`)
-	if err != nil {
-		return fmt.Errorf("exporting rendition units: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		record := metadataRenditionUnit{Type: metadataRenditionUnitType}
-		var headingPath, locator string
-		if err := rows.Scan(&record.BuildID, &record.UnitID, &record.EvidenceUnitID,
-			&record.Order, &record.Checksum, &headingPath, &locator); err != nil {
-			return fmt.Errorf("scanning rendition unit metadata: %w", err)
-		}
-		if err := json.Unmarshal([]byte(headingPath), &record.HeadingPath); err != nil {
-			return fmt.Errorf("decoding rendition heading path: %w", err)
-		}
-		if err := json.Unmarshal([]byte(locator), &record.Locator); err != nil {
-			return fmt.Errorf("decoding rendition locator: %w", err)
-		}
-		if err := write(record); err != nil {
-			return err
-		}
-	}
-	return rowsError("rendition unit", rows)
-}
-
-func exportRenditionSegments(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT build_id,segment_id,unit_id,segment_order,char_start,char_end,checksum,text
-		FROM rendition_lexical_segments ORDER BY build_id,segment_order,segment_id`)
-	if err != nil {
-		return fmt.Errorf("exporting rendition lexical segments: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		record := metadataRenditionSegment{Type: metadataRenditionSegmentType}
-		if err := rows.Scan(&record.BuildID, &record.SegmentID, &record.UnitID, &record.Order,
-			&record.CharStart, &record.CharEnd, &record.Checksum, &record.Text); err != nil {
-			return fmt.Errorf("scanning rendition lexical segment metadata: %w", err)
-		}
-		if err := write(record); err != nil {
-			return err
-		}
-	}
-	return rowsError("rendition lexical segment", rows)
-}
-
-func exportRenditionAttachments(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT attachment_id,vault_uid,content_version_id,build_id,profile_fingerprint,
-		       retention_disclosure_fingerprint,attachment_policy_fingerprint,
-		       consent_fingerprint,rendition_disclosure_fingerprint,trust_boundary,attached_at
-		FROM rendition_attachments
-		ORDER BY content_version_id,profile_fingerprint,attachment_id`)
-	if err != nil {
-		return fmt.Errorf("exporting rendition attachments: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		record := metadataRenditionAttachment{Type: metadataRenditionAttachType}
-		if err := rows.Scan(&record.AttachmentID, &record.VaultID, &record.ContentVersionID,
-			&record.BuildID, &record.ProcessingProfileFingerprint,
-			&record.RetentionDisclosureFingerprint, &record.AttachmentPolicyFingerprint,
-			&record.ConsentFingerprint, &record.RenditionDisclosureFingerprint,
-			&record.TrustBoundary, &record.AttachedAt); err != nil {
-			return fmt.Errorf("scanning rendition attachment metadata: %w", err)
-		}
-		if err := write(record); err != nil {
-			return err
-		}
-	}
-	return rowsError("rendition attachment", rows)
-}
-
-func exportRenditionHeads(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT content_version_id,profile_fingerprint,attachment_id,published_at
-		FROM rendition_heads ORDER BY content_version_id,profile_fingerprint`)
-	if err != nil {
-		return fmt.Errorf("exporting rendition heads: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		record := metadataRenditionHead{Type: metadataRenditionHeadType}
-		if err := rows.Scan(&record.ContentVersionID, &record.ProcessingProfileFingerprint,
-			&record.AttachmentID, &record.PublishedAt); err != nil {
-			return fmt.Errorf("scanning rendition head metadata: %w", err)
-		}
-		if err := write(record); err != nil {
-			return err
-		}
-	}
-	return rowsError("rendition head", rows)
-}
-
-func isProcessingMetadataType(kind string) bool {
-	_, ok := processingMetadataRequiredFields[kind]
-	return ok
-}
-
-func (s *Store) importProcessingMetadataRecord(
-	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value,
-) error {
-	switch kind {
-	case metadataProcessingIncarnationType:
-		var value metadataProcessingIncarnation
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if err := validateMetadataProcessingIncarnation(value); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx,
-			`INSERT INTO processing_incarnations(incarnation_id,created_at) VALUES(?,?)`,
-			value.ID, value.CreatedAt)
 		return err
-	case metadataProcessingConsentRevokeType:
-		var value metadataProcessingConsentRevocation
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if err := validateMetadataProcessingConsentRevocation(value); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO processing_consent_revocations(
-			revocation_id,vault_uid,incarnation_id,principal,scope,fence,revoked_at
-		) VALUES(?,?,?,?,?,?,?)`, value.ID, value.VaultID, value.ProcessingIncarnationID,
-			value.Principal, value.Scope, value.Fence, value.RevokedAt)
+	}
+	var expires any
+	if value.ExpiresAt != nil {
+		expires = *value.ExpiresAt
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO processing_consent_grants(
+		grant_id,consent_set_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
+		disclosure_fingerprint,input_classes_json,retained_classes_json,
+		revocation_fence,issued_at,expires_at
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.ConsentSetID, value.VaultID,
+		value.ProcessingIncarnationID, authority.principal, authority.scope,
+		authority.profile, authority.disclosure, authority.inputsJSON,
+		authority.retainedJSON, value.RevocationFence, value.IssuedAt, expires)
+	return err
+}
+
+func importMetadataProcessingProfile(ctx context.Context, tx *sql.Tx, value metadataProcessingProfile) error {
+	record, err := normalizeProcessingProfileRecord(ProcessingProfileRecord{
+		Fingerprint: value.Fingerprint, CanonicalProfile: value.CanonicalProfile,
+		RenditionRequestFingerprint:    value.RenditionRequestFingerprint,
+		EvidenceLexicalFingerprint:     value.EvidenceLexicalFingerprint,
+		RetentionDisclosureFingerprint: value.RetentionDisclosureFingerprint,
+		AttachmentPolicyFingerprint:    value.AttachmentPolicyFingerprint,
+		ConsentFingerprint:             value.ConsentFingerprint,
+		RenditionDisclosureFingerprint: value.RenditionDisclosureFingerprint,
+		TrustBoundary:                  value.TrustBoundary,
+	})
+	if err != nil {
 		return err
-	case metadataProcessingConsentGrantType:
-		var value metadataProcessingConsentGrant
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		authority, err := validateMetadataProcessingConsentGrant(value)
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO processing_profiles(
+			profile_fingerprint,canonical_profile,rendition_request_fingerprint,
+			evidence_lexical_fingerprint,retention_disclosure_fingerprint,
+			attachment_policy_fingerprint,consent_fingerprint,
+			rendition_disclosure_fingerprint,trust_boundary
+		) VALUES(?,?,?,?,?,?,?,?,?)`, record.Fingerprint, string(record.CanonicalProfile),
+		record.RenditionRequestFingerprint, record.EvidenceLexicalFingerprint,
+		record.RetentionDisclosureFingerprint, record.AttachmentPolicyFingerprint,
+		record.ConsentFingerprint, record.RenditionDisclosureFingerprint, record.TrustBoundary)
+	return err
+}
+
+func importMetadataRenditionHead(ctx context.Context, tx *sql.Tx, value metadataRenditionHead) error {
+	if err := validateImportedRenditionHead(ctx, tx, value); err != nil {
+		return err
+	}
+	return insertMetadataRecord(ctx, tx, "rendition_heads", value)
+}
+
+func importMetadataRenditionJob(ctx context.Context, tx *sql.Tx, value metadataRenditionJob) error {
+	identityJSON, _, err := document.CanonicalRenditionExecutionIdentityV1(
+		value.ExecutionIdentity)
+	if err != nil {
+		return err
+	}
+	var snapshotJSON any
+	if value.ExecutionSnapshot != nil {
+		encoded, err := document.CanonicalRenditionExecutionSnapshotV1(
+			*value.ExecutionSnapshot)
 		if err != nil {
 			return err
 		}
-		var expires any
-		if value.ExpiresAt != nil {
-			expires = *value.ExpiresAt
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO processing_consent_grants(
-			grant_id,consent_set_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
-			disclosure_fingerprint,input_classes_json,retained_classes_json,
-			revocation_fence,issued_at,expires_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.ConsentSetID, value.VaultID,
-			value.ProcessingIncarnationID, authority.principal, authority.scope,
-			authority.profile, authority.disclosure, authority.inputsJSON,
-			authority.retainedJSON, value.RevocationFence, value.IssuedAt, expires)
+		snapshotJSON = string(encoded)
+	}
+	selectedWaiterID := value.SelectedWaiterID
+	authorizationGrantID := value.AuthorizationGrantID
+	authorizationIncarnationID := value.AuthorizationIncarnationID
+	authorizationRevocationFence := value.AuthorizationRevocationFence
+	if value.State == RenditionJobQueued || value.State == RenditionJobRunning ||
+		value.State == RenditionJobRetryWait {
+		// A restore keeps sealed provider and staged local work, but imported
+		// consent belongs to the old processing incarnation. Force selection
+		// and authorization through fresh consent before any resumed provider
+		// call or local publication.
+		selectedWaiterID = nil
+		authorizationGrantID = nil
+		authorizationIncarnationID = nil
+		authorizationRevocationFence = nil
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO rendition_jobs(
+		job_id,vault_uid,source_sha256,rendition_request_fingerprint,
+		evidence_lexical_fingerprint,captured_artifact_policy_fingerprint,
+		captured_artifact_policy_json,execution_identity_fingerprint,
+		execution_identity_json,execution_snapshot_json,state,phase,claim_owner,
+		claim_epoch,lease_expires_at,available_at,provider_started,provider_attempts,
+		provider_resume_handle,selected_waiter_id,authorization_grant_id,
+		authorization_incarnation_id,authorization_revocation_fence,
+		lexical_generation_id,failure_code,created_at,updated_at
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		value.ID, value.VaultID, value.SourceSHA256, value.RenditionRequestFingerprint,
+		value.EvidenceLexicalFingerprint, value.CapturedArtifactPolicyFingerprint,
+		string(value.CapturedArtifactPolicy), value.ExecutionIdentityFingerprint,
+		string(identityJSON), snapshotJSON, value.State, value.Phase, value.ClaimOwner,
+		value.ClaimEpoch, value.LeaseExpiresAt, value.AvailableAt, value.ProviderStarted,
+		value.ProviderAttempts,
+		value.ProviderResumeHandle, selectedWaiterID, authorizationGrantID,
+		authorizationIncarnationID, authorizationRevocationFence,
+		value.LexicalGenerationID, value.FailureCode, value.CreatedAt, value.UpdatedAt)
+	return err
+}
+
+func importMetadataRenditionJobWaiter(ctx context.Context, tx *sql.Tx, value metadataRenditionJobWaiter) error {
+	authority, err := validateMetadataRenditionJobWaiter(value)
+	if err != nil {
 		return err
-	case metadataProcessingProfileType:
-		var value metadataProcessingProfile
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		record, err := normalizeProcessingProfileRecord(ProcessingProfileRecord{
-			Fingerprint: value.Fingerprint, CanonicalProfile: value.CanonicalProfile,
-			RenditionRequestFingerprint:    value.RenditionRequestFingerprint,
-			EvidenceLexicalFingerprint:     value.EvidenceLexicalFingerprint,
-			RetentionDisclosureFingerprint: value.RetentionDisclosureFingerprint,
-			AttachmentPolicyFingerprint:    value.AttachmentPolicyFingerprint,
-			ConsentFingerprint:             value.ConsentFingerprint,
-			RenditionDisclosureFingerprint: value.RenditionDisclosureFingerprint,
-			TrustBoundary:                  value.TrustBoundary,
-		})
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO processing_profiles(
-				profile_fingerprint,canonical_profile,rendition_request_fingerprint,
-				evidence_lexical_fingerprint,retention_disclosure_fingerprint,
-				attachment_policy_fingerprint,consent_fingerprint,
-				rendition_disclosure_fingerprint,trust_boundary
-			) VALUES(?,?,?,?,?,?,?,?,?)`, record.Fingerprint, string(record.CanonicalProfile),
-			record.RenditionRequestFingerprint, record.EvidenceLexicalFingerprint,
-			record.RetentionDisclosureFingerprint, record.AttachmentPolicyFingerprint,
-			record.ConsentFingerprint, record.RenditionDisclosureFingerprint, record.TrustBoundary)
+	}
+	var policyJSON string
+	if err := tx.QueryRowContext(ctx, `SELECT captured_artifact_policy_json
+		FROM rendition_jobs WHERE job_id=?`, value.JobID).Scan(&policyJSON); err != nil {
+		return fmt.Errorf("reading restored rendition job captured artifact policy: %w", err)
+	}
+	policy, err := normalizeCapturedArtifactPolicyV1(jsontext.Value(policyJSON))
+	if err != nil {
 		return err
-	case metadataRenditionBuildType:
-		var value metadataRenditionBuild
-		if err := decodeMetadataRecord(raw, &value); err != nil {
+	}
+	if !slices.Equal(authority.retained, policy.retainedRoles()) {
+		return errors.New(
+			"rendition waiter retained artifact classes do not match captured policy")
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO rendition_job_waiters(
+		waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
+		disclosure_fingerprint,input_classes_json,retained_classes_json,
+		authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,
+		state,failure_code,
+		attachment_id,created_at,updated_at
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.JobID, value.ContentVersionID,
+		value.ProfileFingerprint, authority.principal, authority.scope,
+		authority.disclosure, authority.inputsJSON, authority.retainedJSON,
+		value.AuthorizationGrantID, value.AuthorizationIncarnationID,
+		value.AuthorizationRevocationFence, value.State,
+		value.FailureCode, value.AttachmentID, value.CreatedAt, value.UpdatedAt)
+	return err
+}
+
+func importMetadataCurrentRenditionRoot(ctx context.Context, tx *sql.Tx, value metadataCurrentRenditionRoot) error {
+	if value.Active {
+		if err := requireCurrentRenditionTargetTx(ctx, tx, value.root()); err != nil {
 			return err
 		}
-		if err := validateMetadataRenditionBuild(value); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_builds(
-				build_id,vault_uid,source_sha256,rendition_request_fingerprint,
-				evidence_lexical_fingerprint,captured_artifact_policy_fingerprint,
-				captured_artifact_policy_json,authorization_checksum,provider_operation_id,
-				provider_receipt_json,evidence_checksum,rendition_checksum,markdown_checksum,
-				completeness,partial_success,truncated,warnings_json,completed_at,
-				declared_artifact_count,unit_count,lexical_segment_count
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.VaultID,
-			value.SourceSHA256, value.RenditionRequestFingerprint, value.EvidenceLexicalFingerprint,
-			value.CapturedArtifactPolicyFingerprint, string(value.CapturedArtifactPolicy),
-			value.AuthorizationChecksum, value.ProviderOperationID, string(value.ProviderReceipt),
-			value.EvidenceChecksum, value.RenditionChecksum, value.MarkdownChecksum,
-			value.Completeness, value.PartialSuccess, value.Truncated, mustCatalogJSON(value.Warnings),
-			value.CompletedAt, value.DeclaredArtifactCount, value.UnitCount, value.LexicalSegmentCount)
-		return err
-	case metadataRenditionArtifactType:
-		var value metadataRenditionArtifact
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if err := validateMetadataRenditionArtifact(value); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_artifacts(build_id,artifact_id,role,blob_hash,size,checksum)
-			VALUES(?,?,?,?,?,?)`, value.BuildID, value.ArtifactID, value.Role,
-			value.BlobHash, value.Size, value.Checksum)
-		return err
-	case metadataRenditionUnitType:
-		var value metadataRenditionUnit
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if err := validateMetadataRenditionUnit(value); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_units(
-				build_id,unit_id,evidence_unit_id,unit_order,checksum,heading_path_json,locator_json
-			) VALUES(?,?,?,?,?,?,?)`, value.BuildID, value.UnitID, value.EvidenceUnitID,
-			value.Order, value.Checksum, mustCatalogJSON(value.HeadingPath), mustCatalogJSON(value.Locator))
-		return err
-	case metadataRenditionSegmentType:
-		var value metadataRenditionSegment
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if err := validateMetadataRenditionSegment(value); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_lexical_segments(
-				build_id,segment_id,unit_id,segment_order,char_start,char_end,checksum,text
-			) VALUES(?,?,?,?,?,?,?,?)`, value.BuildID, value.SegmentID, value.UnitID,
-			value.Order, value.CharStart, value.CharEnd, value.Checksum, value.Text)
-		return err
-	case metadataRenditionAttachType:
-		var value metadataRenditionAttachment
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if err := validateMetadataRenditionAttachment(value); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_attachments(
-				attachment_id,vault_uid,content_version_id,build_id,profile_fingerprint,
-				retention_disclosure_fingerprint,attachment_policy_fingerprint,
-				consent_fingerprint,rendition_disclosure_fingerprint,trust_boundary,attached_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, value.AttachmentID, value.VaultID,
-			value.ContentVersionID, value.BuildID, value.ProcessingProfileFingerprint,
-			value.RetentionDisclosureFingerprint, value.AttachmentPolicyFingerprint,
-			value.ConsentFingerprint, value.RenditionDisclosureFingerprint,
-			value.TrustBoundary, value.AttachedAt)
-		return err
-	case metadataRenditionHeadType:
-		var value metadataRenditionHead
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if err := validateRenditionHeadRecord(RenditionHeadRecord{
-			ContentVersionID:             value.ContentVersionID,
-			ProcessingProfileFingerprint: value.ProcessingProfileFingerprint,
-			AttachmentID:                 value.AttachmentID, PublishedAt: value.PublishedAt,
-		}); err != nil {
-			return err
-		}
-		if err := validateImportedRenditionHead(ctx, tx, value); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO rendition_heads(content_version_id,profile_fingerprint,attachment_id,published_at)
-			VALUES(?,?,?,?)`, value.ContentVersionID, value.ProcessingProfileFingerprint,
-			value.AttachmentID, value.PublishedAt)
-		return err
-	case metadataLexicalGenerationType:
-		var value metadataLexicalGeneration
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		return restoreLexicalGenerationTx(ctx, tx, value)
-	case metadataRenditionJobType:
-		var value metadataRenditionJob
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if err := validateMetadataRenditionJob(value); err != nil {
-			return err
-		}
-		identityJSON, _, err := document.CanonicalRenditionExecutionIdentityV1(
-			value.ExecutionIdentity)
-		if err != nil {
-			return err
-		}
-		var snapshotJSON any
-		if value.ExecutionSnapshot != nil {
-			encoded, err := document.CanonicalRenditionExecutionSnapshotV1(
-				*value.ExecutionSnapshot)
-			if err != nil {
-				return err
-			}
-			snapshotJSON = string(encoded)
-		}
-		selectedWaiterID := value.SelectedWaiterID
-		authorizationGrantID := value.AuthorizationGrantID
-		authorizationIncarnationID := value.AuthorizationIncarnationID
-		authorizationRevocationFence := value.AuthorizationRevocationFence
-		if value.State == RenditionJobQueued || value.State == RenditionJobRunning ||
-			value.State == RenditionJobRetryWait {
-			// A restore keeps sealed provider and staged local work, but imported
-			// consent belongs to the old processing incarnation. Force selection
-			// and authorization through fresh consent before any resumed provider
-			// call or local publication.
-			selectedWaiterID = nil
-			authorizationGrantID = nil
-			authorizationIncarnationID = nil
-			authorizationRevocationFence = nil
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO rendition_jobs(
-			job_id,vault_uid,source_sha256,rendition_request_fingerprint,
-			evidence_lexical_fingerprint,captured_artifact_policy_fingerprint,
-			captured_artifact_policy_json,execution_identity_fingerprint,
-			execution_identity_json,execution_snapshot_json,state,phase,claim_owner,
-			claim_epoch,lease_expires_at,available_at,provider_started,provider_attempts,
-			provider_resume_handle,selected_waiter_id,authorization_grant_id,
-			authorization_incarnation_id,authorization_revocation_fence,
-			lexical_generation_id,failure_code,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			value.ID, value.VaultID, value.SourceSHA256, value.RenditionRequestFingerprint,
-			value.EvidenceLexicalFingerprint, value.CapturedArtifactPolicyFingerprint,
-			string(value.CapturedArtifactPolicy), value.ExecutionIdentityFingerprint,
-			string(identityJSON), snapshotJSON, value.State, value.Phase, value.ClaimOwner,
-			value.ClaimEpoch, value.LeaseExpiresAt, value.AvailableAt, value.ProviderStarted,
-			value.ProviderAttempts,
-			value.ProviderResumeHandle, selectedWaiterID, authorizationGrantID,
-			authorizationIncarnationID, authorizationRevocationFence,
-			value.LexicalGenerationID, value.FailureCode, value.CreatedAt, value.UpdatedAt)
-		return err
-	case metadataRenditionJobWaiterType:
-		var value metadataRenditionJobWaiter
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		authority, err := validateMetadataRenditionJobWaiter(value)
-		if err != nil {
-			return err
-		}
-		var policyJSON string
-		if err := tx.QueryRowContext(ctx, `SELECT captured_artifact_policy_json
-			FROM rendition_jobs WHERE job_id=?`, value.JobID).Scan(&policyJSON); err != nil {
-			return fmt.Errorf("reading restored rendition job captured artifact policy: %w", err)
-		}
-		policy, err := normalizeCapturedArtifactPolicyV1(jsontext.Value(policyJSON))
-		if err != nil {
-			return err
-		}
-		if !slices.Equal(authority.retained, policy.retainedRoles()) {
-			return errors.New(
-				"rendition waiter retained artifact classes do not match captured policy")
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO rendition_job_waiters(
-			waiter_id,job_id,content_version_id,profile_fingerprint,principal,scope,
-			disclosure_fingerprint,input_classes_json,retained_classes_json,
-			authorization_grant_id,authorization_incarnation_id,authorization_revocation_fence,
-			state,failure_code,
-			attachment_id,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, value.ID, value.JobID, value.ContentVersionID,
-			value.ProfileFingerprint, authority.principal, authority.scope,
-			authority.disclosure, authority.inputsJSON, authority.retainedJSON,
-			value.AuthorizationGrantID, value.AuthorizationIncarnationID,
-			value.AuthorizationRevocationFence, value.State,
-			value.FailureCode, value.AttachmentID, value.CreatedAt, value.UpdatedAt)
-		return err
-	case metadataCurrentRenditionRootType:
-		var value metadataCurrentRenditionRoot
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		root := CurrentRenditionRoot{
-			ID: value.ID, Kind: value.Kind, TargetKind: value.TargetKind,
-			TargetID: value.TargetID, FencingToken: value.FencingToken,
-			RecordedAt: value.RecordedAt,
-		}
-		if err := validateDurableCurrentRenditionRootMetadata(value, root); err != nil {
-			return err
-		}
-		if value.Active {
-			if err := requireCurrentRenditionTargetTx(ctx, tx, root); err != nil {
-				return err
-			}
-		}
-		var released any
-		if value.ReleasedAt != nil {
-			released = *value.ReleasedAt
-		}
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO current_rendition_roots(
-				root_id,root_kind,target_kind,target_id,fencing_token,recorded_at,expires_at,
-				active,released_at
-			) VALUES(?,?,?,?,?,?,NULL,?,?)`, root.ID, root.Kind, root.TargetKind,
-			root.TargetID, root.FencingToken, root.RecordedAt, value.Active, released)
-		return err
-	case metadataDerivativePurgeSuppressionType:
-		var value metadataDerivativePurgeSuppression
-		if err := decodeMetadataRecord(raw, &value); err != nil {
-			return err
-		}
-		if err := validateMetadataDerivativePurgeSuppression(value); err != nil {
-			return err
-		}
-		var supersededAt, supersedingBuildID any
-		if value.SupersededAt != nil {
-			supersededAt = *value.SupersededAt
-		}
-		if value.SupersedingBuildID != nil {
-			supersedingBuildID = *value.SupersedingBuildID
-		}
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO derivative_purge_suppressions(
-				source_sha256,profile_fingerprint,build_id,purged_at,active,
-				superseded_at,superseding_build_id
-			) VALUES(?,?,?,?,?,?,?)`, value.SourceSHA256, value.ProfileFingerprint,
-			value.BuildID, value.PurgedAt, value.Active, supersededAt, supersedingBuildID)
-		return err
-	default:
-		return fmt.Errorf("unknown processing metadata type %q", kind)
+	}
+	return insertMetadataRecord(ctx, tx, "current_rendition_roots", value)
+}
+
+func (value metadataCurrentRenditionRoot) root() CurrentRenditionRoot {
+	return CurrentRenditionRoot{
+		ID: value.ID, Kind: value.Kind, TargetKind: value.TargetKind,
+		TargetID: value.TargetID, FencingToken: value.FencingToken,
+		RecordedAt: value.RecordedAt,
 	}
 }
 
@@ -2555,10 +1942,10 @@ func validateProcessingConsentState(ctx context.Context, tx metadataQuerier) err
 	if err := validateProcessingIncarnations(ctx, tx); err != nil {
 		return err
 	}
-	if err := validateProcessingConsentRevocations(ctx, tx); err != nil {
+	if err := processingConsentRevocationMetadata.validateRows(ctx, tx); err != nil {
 		return err
 	}
-	if err := validateProcessingConsentGrants(ctx, tx); err != nil {
+	if err := processingConsentGrantMetadata.validateRows(ctx, tx); err != nil {
 		return err
 	}
 
@@ -2600,63 +1987,6 @@ func validateProcessingConsentState(ctx context.Context, tx metadataQuerier) err
 		}
 	}
 	return nil
-}
-
-func validateProcessingConsentRevocations(ctx context.Context, tx metadataQuerier) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT revocation_id,vault_uid,incarnation_id,principal,scope,fence,revoked_at
-		FROM processing_consent_revocations ORDER BY incarnation_id,principal,scope,fence`)
-	if err != nil {
-		return fmt.Errorf("validating processing consent revocations: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		value := metadataProcessingConsentRevocation{Type: metadataProcessingConsentRevokeType}
-		if err := rows.Scan(&value.ID, &value.VaultID, &value.ProcessingIncarnationID,
-			&value.Principal, &value.Scope, &value.Fence, &value.RevokedAt); err != nil {
-			return fmt.Errorf("scanning processing consent revocation metadata: %w", err)
-		}
-		if err := validateMetadataProcessingConsentRevocation(value); err != nil {
-			return err
-		}
-	}
-	return rowsError("processing consent revocation", rows)
-}
-
-func validateProcessingConsentGrants(ctx context.Context, tx metadataQuerier) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT grant_id,consent_set_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
-		       disclosure_fingerprint,input_classes_json,retained_classes_json,
-		       revocation_fence,issued_at,expires_at
-		FROM processing_consent_grants ORDER BY incarnation_id,issued_at,grant_id`)
-	if err != nil {
-		return fmt.Errorf("validating processing consent grants: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		value := metadataProcessingConsentGrant{Type: metadataProcessingConsentGrantType}
-		var inputs, retained string
-		var expires sql.NullString
-		if err := rows.Scan(&value.ID, &value.ConsentSetID, &value.VaultID, &value.ProcessingIncarnationID,
-			&value.Principal, &value.Scope, &value.ProfileFingerprint,
-			&value.DisclosureFingerprint, &inputs, &retained, &value.RevocationFence,
-			&value.IssuedAt, &expires); err != nil {
-			return fmt.Errorf("scanning processing consent grant metadata: %w", err)
-		}
-		if err := json.Unmarshal([]byte(inputs), &value.InputClasses); err != nil {
-			return fmt.Errorf("decoding processing consent input classes: %w", err)
-		}
-		if err := json.Unmarshal([]byte(retained), &value.RetainedArtifactClasses); err != nil {
-			return fmt.Errorf("decoding processing consent retained classes: %w", err)
-		}
-		if expires.Valid {
-			value.ExpiresAt = &expires.String
-		}
-		if _, err := validateMetadataProcessingConsentGrant(value); err != nil {
-			return err
-		}
-	}
-	return rowsError("processing consent grant", rows)
 }
 
 func validateProcessingIncarnations(ctx context.Context, tx metadataQuerier) error {
@@ -2809,39 +2139,7 @@ func validateCurrentRenditionRootState(ctx context.Context, tx metadataQuerier) 
 	if err := rowsError("staged rendition job", jobs); err != nil {
 		return err
 	}
-	return validateDerivativePurgeSuppressionState(ctx, tx)
-}
-
-func validateDerivativePurgeSuppressionState(
-	ctx context.Context, tx metadataQuerier,
-) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT source_sha256,profile_fingerprint,build_id,purged_at,active,
-		       superseded_at,superseding_build_id
-		FROM derivative_purge_suppressions
-		ORDER BY source_sha256,profile_fingerprint,build_id`)
-	if err != nil {
-		return fmt.Errorf("reading derivative purge suppression state: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		value := metadataDerivativePurgeSuppression{Type: metadataDerivativePurgeSuppressionType}
-		var supersededAt, supersedingBuildID sql.NullString
-		if err := rows.Scan(&value.SourceSHA256, &value.ProfileFingerprint, &value.BuildID,
-			&value.PurgedAt, &value.Active, &supersededAt, &supersedingBuildID); err != nil {
-			return err
-		}
-		if supersededAt.Valid {
-			value.SupersededAt = &supersededAt.String
-		}
-		if supersedingBuildID.Valid {
-			value.SupersedingBuildID = &supersedingBuildID.String
-		}
-		if err := validateMetadataDerivativePurgeSuppression(value); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
+	return derivativePurgeSuppressionMetadata.validateRows(ctx, tx)
 }
 
 func requireCanonicalProcessingJSON(raw jsontext.Value, subject string) (jsontext.Value, error) {

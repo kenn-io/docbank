@@ -27,11 +27,11 @@ const metadataTermReportHistoryType = "term_report_history"
 
 type metadataTermReportHistory struct {
 	Type        string `json:"type"`
-	ID          string `json:"id"`
-	ParentID    string `json:"parent_id"`
-	ObservedAt  string `json:"observed_at"`
-	RequestJSON []byte `json:"request_json" format:"byte"`
-	SummaryJSON []byte `json:"summary_json" format:"byte"`
+	ID          string `json:"id" db:"id"`
+	ParentID    string `json:"parent_id" db:"parent_id"`
+	ObservedAt  string `json:"observed_at" db:"observed_at"`
+	RequestJSON []byte `json:"request_json" format:"byte" db:"request_json"`
+	SummaryJSON []byte `json:"summary_json" format:"byte" db:"summary_json"`
 }
 
 const (
@@ -187,17 +187,13 @@ func exportTermReportHistory(ctx context.Context, q metadataQuerier, write metad
 	return rows.Err()
 }
 
-func importTermReportHistory(ctx context.Context, tx *sql.Tx, record metadataTermReportHistory) error {
-	if record.Type != metadataTermReportHistoryType {
-		return errors.New("invalid report history record type")
-	}
-	if _, err := decodeTermReportHistory(record.ID, record.ParentID, record.ObservedAt,
-		record.RequestJSON, record.SummaryJSON); err != nil {
+var termReportHistoryImportMetadata = newMetadataTable(metadataTable[metadataTermReportHistory]{
+	record: metadataTermReportHistory{Type: metadataTermReportHistoryType}, table: "term_report_history",
+	validate: func(record metadataTermReportHistory) error {
+		if record.Type != metadataTermReportHistoryType {
+			return errors.New("invalid report history record type")
+		}
+		_, err := decodeTermReportHistory(record.ID, record.ParentID, record.ObservedAt,
+			record.RequestJSON, record.SummaryJSON)
 		return err
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO term_report_history(
-		id,parent_id,observed_at,request_json,summary_json
-	) VALUES(?,?,?,?,?)`, record.ID, record.ParentID, record.ObservedAt,
-		record.RequestJSON, record.SummaryJSON)
-	return err
-}
+	}})

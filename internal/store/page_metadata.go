@@ -156,15 +156,23 @@ func exportPageMetadata(ctx context.Context, q metadataQuerier, write metadataWr
 	return nil
 }
 
-func importPageMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
-	var record metadataPageRecord
-	if err := decodeMetadataRecord(raw, &record); err != nil {
-		return err
-	}
-	if record.Type != kind || pageChecksum(record.CanonicalJSON) != record.Checksum {
+// pageMetadataTables registers the canonical page envelopes for import.
+var pageMetadataTables = []metadataRecordCodec{
+	newMetadataTable(metadataTable[metadataPageRecord]{record: metadataPageRecord{Type: metadataPageDocumentType},
+		table: "page_documents", insert: importPageMetadata}),
+	newMetadataTable(metadataTable[metadataPageRecord]{record: metadataPageRecord{Type: metadataPageRecipeType},
+		table: "page_recipes", insert: importPageMetadata}),
+	newMetadataTable(metadataTable[metadataPageRecord]{record: metadataPageRecord{Type: metadataPageImageType},
+		table: "page_images", insert: importPageMetadata}),
+	newMetadataTable(metadataTable[metadataPageRecord]{record: metadataPageRecord{Type: metadataPageJobType},
+		table: "page_render_jobs", insert: importPageMetadata}),
+}
+
+func importPageMetadata(ctx context.Context, tx *sql.Tx, record metadataPageRecord) error {
+	if pageChecksum(record.CanonicalJSON) != record.Checksum {
 		return ErrPageConflict
 	}
-	switch kind {
+	switch record.Type {
 	case metadataPageDocumentType:
 		d, _, err := document.DecodePageDocumentV1(record.CanonicalJSON)
 		if err != nil {

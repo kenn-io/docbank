@@ -77,52 +77,33 @@ func exportAuditMetadata(ctx context.Context, tx metadataQuerier, write metadata
 	if err := write(authority); err != nil {
 		return err
 	}
-	if err := exportAuditScopes(ctx, tx, write); err != nil {
+	if err := auditScopeMetadata.export(ctx, tx, write); err != nil {
 		return err
 	}
-	if err := exportAuditMemberships(ctx, tx, write); err != nil {
+	if err := auditMembershipMetadata.export(ctx, tx, write); err != nil {
 		return err
 	}
 	return exportAuditRecords(ctx, tx, write)
 }
 
-func exportAuditScopes(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT scope_id,target_node_id,enable_operation_id,
-		entry_count,chain_head FROM audit_scopes ORDER BY scope_id`)
-	if err != nil {
-		return fmt.Errorf("exporting audit scopes: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		value := metadataAuditScope{Type: metadataAuditScopeType}
-		if err := rows.Scan(&value.ScopeID, &value.TargetNodeID, &value.EnableOperationID,
-			&value.EntryCount, &value.ChainHead); err != nil {
-			return fmt.Errorf("scanning audit scope: %w", err)
-		}
-		if err := write(value); err != nil {
-			return err
-		}
-	}
-	return rowsError("audit scopes", rows)
-}
+var (
+	auditScopeMetadata = newMetadataTable(metadataTable[metadataAuditScope]{
+		record: metadataAuditScope{Type: metadataAuditScopeType}, table: "audit_scopes",
+		suffix: "ORDER BY scope_id", validate: validateAuditScopeRecord})
+	auditMembershipMetadata = newMetadataTable(metadataTable[metadataAuditMembership]{
+		record: metadataAuditMembership{Type: metadataAuditMembershipType}, table: "audit_memberships",
+		suffix: "ORDER BY scope_id,node_id", validate: validateAuditMembershipRecord})
+)
 
-func exportAuditMemberships(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT scope_id,node_id,baseline_digest
-		FROM audit_memberships ORDER BY scope_id,node_id`)
-	if err != nil {
-		return fmt.Errorf("exporting audit memberships: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		value := metadataAuditMembership{Type: metadataAuditMembershipType}
-		if err := rows.Scan(&value.ScopeID, &value.NodeID, &value.BaselineDigest); err != nil {
-			return fmt.Errorf("scanning audit membership: %w", err)
-		}
-		if err := write(value); err != nil {
-			return err
-		}
-	}
-	return rowsError("audit memberships", rows)
+// auditMetadataTables registers the audit records. exportAuditMetadata keeps the
+// export order because the authority row gates the whole group.
+var auditMetadataTables = []metadataRecordCodec{
+	newMetadataTable(metadataTable[metadataAuditAuthority]{
+		record: metadataAuditAuthority{Type: metadataAuditAuthorityType, Singleton: 1},
+		table:  "audit_authority", validate: validateAuditAuthorityRecord}),
+	auditScopeMetadata, auditMembershipMetadata,
+	newMetadataTable(metadataTable[metadataAuditRecord]{record: metadataAuditRecord{Type: metadataAuditRecordType},
+		table: "audit_records", insert: importAuditRecord}),
 }
 
 func exportAuditRecords(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
@@ -155,39 +136,6 @@ func exportAuditRecords(ctx context.Context, tx metadataQuerier, write metadataW
 		}
 	}
 	return rowsError("audit records", rows)
-}
-
-func importAuditAuthority(ctx context.Context, tx *sql.Tx, value metadataAuditAuthority) error {
-	if err := validateAuditAuthorityRecord(value); err != nil {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO audit_authority(
-		singleton,lineage_id,operation_sequence_high_water,allocation_genesis_digest,
-		allocation_entry_count,allocation_head) VALUES(1,?,?,?,?,?)`, value.LineageID,
-		value.OperationSequenceHighWater, value.AllocationGenesisDigest,
-		value.AllocationEntryCount, value.AllocationHead)
-	return err
-}
-
-func importAuditScope(ctx context.Context, tx *sql.Tx, value metadataAuditScope) error {
-	if err := validateAuditScopeRecord(value); err != nil {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO audit_scopes(
-		scope_id,target_node_id,enable_operation_id,entry_count,chain_head)
-		VALUES(?,?,?,?,?)`, value.ScopeID, value.TargetNodeID, value.EnableOperationID,
-		value.EntryCount, value.ChainHead)
-	return err
-}
-
-func importAuditMembership(ctx context.Context, tx *sql.Tx, value metadataAuditMembership) error {
-	if err := validateAuditMembershipRecord(value); err != nil {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO audit_memberships(
-		scope_id,node_id,baseline_digest) VALUES(?,?,?)`,
-		value.ScopeID, value.NodeID, value.BaselineDigest)
-	return err
 }
 
 func importAuditRecord(ctx context.Context, tx *sql.Tx, value metadataAuditRecord) error {

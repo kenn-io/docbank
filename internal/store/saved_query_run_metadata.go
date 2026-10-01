@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -10,20 +9,20 @@ import (
 
 type metadataSavedQueryRun struct {
 	Type                     string  `json:"type"`
-	RunID                    string  `json:"run_id"`
-	SavedQueryID             string  `json:"saved_query_id"`
-	SavedQueryRevision       int64   `json:"saved_query_revision"`
-	QueryFingerprint         string  `json:"query_fingerprint"`
-	SnapshotID               string  `json:"snapshot_id"`
-	MemberHash               string  `json:"member_hash"`
-	Total                    int64   `json:"total"`
-	TotalBytes               int64   `json:"total_bytes"`
-	RanAt                    string  `json:"ran_at"`
-	ExpiresAt                string  `json:"expires_at"`
-	PreviousRunID            *string `json:"previous_run_id"`
-	PreviousMemberHash       *string `json:"previous_member_hash"`
-	PreviousTotal            *int64  `json:"previous_total"`
-	PreviousQueryFingerprint *string `json:"previous_query_fingerprint"`
+	RunID                    string  `json:"run_id" db:"run_id"`
+	SavedQueryID             string  `json:"saved_query_id" db:"saved_query_id"`
+	SavedQueryRevision       int64   `json:"saved_query_revision" db:"saved_query_revision"`
+	QueryFingerprint         string  `json:"query_fingerprint" db:"query_fingerprint"`
+	SnapshotID               string  `json:"snapshot_id" db:"snapshot_id"`
+	MemberHash               string  `json:"member_hash" db:"member_hash"`
+	Total                    int64   `json:"total" db:"total"`
+	TotalBytes               int64   `json:"total_bytes" db:"total_bytes"`
+	RanAt                    string  `json:"ran_at" db:"ran_at"`
+	ExpiresAt                string  `json:"expires_at" db:"expires_at"`
+	PreviousRunID            *string `json:"previous_run_id" db:"previous_run_id"`
+	PreviousMemberHash       *string `json:"previous_member_hash" db:"previous_member_hash"`
+	PreviousTotal            *int64  `json:"previous_total" db:"previous_total"`
+	PreviousQueryFingerprint *string `json:"previous_query_fingerprint" db:"previous_query_fingerprint"`
 }
 
 func exportSavedQueryRuns(ctx context.Context, q metadataQuerier, write metadataWrite) error {
@@ -66,21 +65,9 @@ func savedQueryRunMetadata(run SavedQueryRun) metadataSavedQueryRun {
 	return record
 }
 
-func importSavedQueryRunMetadata(ctx context.Context, tx *sql.Tx, record metadataSavedQueryRun) error {
-	if err := validateSavedQueryRunMetadataRecord(record); err != nil {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO saved_query_runs(
-		run_id,saved_query_id,saved_query_revision,query_fingerprint,snapshot_id,
-		member_hash,total,total_bytes,ran_at,expires_at,previous_run_id,
-		previous_member_hash,previous_total,previous_query_fingerprint
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.RunID, record.SavedQueryID,
-		record.SavedQueryRevision, record.QueryFingerprint, record.SnapshotID,
-		record.MemberHash, record.Total, record.TotalBytes, record.RanAt,
-		record.ExpiresAt, record.PreviousRunID, record.PreviousMemberHash,
-		record.PreviousTotal, record.PreviousQueryFingerprint)
-	return err
-}
+var savedQueryRunImportMetadata = newMetadataTable(metadataTable[metadataSavedQueryRun]{
+	record: metadataSavedQueryRun{Type: metadataSavedQueryRunType}, table: "saved_query_runs",
+	validate: validateSavedQueryRunMetadataRecord})
 
 func validateSavedQueryRunMetadataRecord(record metadataSavedQueryRun) error {
 	if record.Type != metadataSavedQueryRunType {

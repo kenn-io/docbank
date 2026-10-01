@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json/jsontext"
-	"errors"
 	"fmt"
 	"slices"
 
@@ -170,127 +169,127 @@ func exportPackageMetadata(ctx context.Context, q metadataQuerier, write metadat
 	return nil
 }
 
-func importPackageMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
-	switch kind {
-	case metadataCollectionSnapshotType:
-		var record metadataCollectionSnapshot
-		if err := decodeMetadataRecord(raw, &record); err != nil {
-			return err
-		}
-		if record.Type != kind || pageChecksum(record.CanonicalJSON) != record.Checksum || validateUUIDv4(record.SnapshotID) != nil {
-			return ErrPackageConflict
-		}
-		snapshot, err := canonical.Decode[CollectionSnapshot](record.CanonicalJSON)
-		if err != nil || snapshot.SnapshotID != record.SnapshotID || snapshot.Checksum != "" {
-			return ErrPackageConflict
-		}
-		sourceJSON, err := canonical.Marshal(snapshot.SourceCollectionIDs)
+// packageMetadataTables registers the snapshot and package envelopes for import.
+var packageMetadataTables = []metadataRecordCodec{
+	newMetadataTable(metadataTable[metadataCollectionSnapshot]{
+		record: metadataCollectionSnapshot{Type: metadataCollectionSnapshotType}, table: "collection_snapshots",
+		insert: importCollectionSnapshotMetadata}),
+	newMetadataTable(metadataTable[metadataCollectionSnapshotMember]{
+		record: metadataCollectionSnapshotMember{Type: metadataCollectionSnapshotMemberType},
+		table:  "collection_snapshot_members", insert: importCollectionSnapshotMemberMetadata}),
+	newMetadataTable(metadataTable[metadataCollectionSnapshotRepresentation]{
+		record: metadataCollectionSnapshotRepresentation{Type: metadataCollectionSnapshotRepresentationType},
+		table:  "collection_snapshot_representations", insert: importCollectionSnapshotRepresentationMetadata}),
+	newMetadataTable(metadataTable[metadataPackage]{record: metadataPackage{Type: metadataPackageType},
+		table: "packages", insert: importPackageRecordMetadata}),
+	newMetadataTable(metadataTable[metadataPackageVolume]{record: metadataPackageVolume{Type: metadataPackageVolumeType},
+		table: "package_volumes", insert: importPackageVolumeMetadata}),
+}
+
+func importCollectionSnapshotMetadata(ctx context.Context, tx *sql.Tx, record metadataCollectionSnapshot) error {
+	if pageChecksum(record.CanonicalJSON) != record.Checksum || validateUUIDv4(record.SnapshotID) != nil {
+		return ErrPackageConflict
+	}
+	snapshot, err := canonical.Decode[CollectionSnapshot](record.CanonicalJSON)
+	if err != nil || snapshot.SnapshotID != record.SnapshotID || snapshot.Checksum != "" {
+		return ErrPackageConflict
+	}
+	sourceJSON, err := canonical.Marshal(snapshot.SourceCollectionIDs)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO collection_snapshots(
+		snapshot_id,vault_uid,predecessor_id,source_collection_ids_json,
+		member_count,page_count,member_hash,manifest_sha256,canonical_json,checksum,sealed_at
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, snapshot.SnapshotID, record.VaultID,
+		nullableString(snapshot.PredecessorID), sourceJSON, snapshot.MemberCount,
+		snapshot.PageCount, snapshot.MemberHash, snapshot.ManifestSHA256,
+		[]byte(record.CanonicalJSON), record.Checksum, snapshot.SealedAt)
+	return err
+}
+
+func importCollectionSnapshotMemberMetadata(ctx context.Context, tx *sql.Tx, record metadataCollectionSnapshotMember) error {
+	if pageChecksum(record.CanonicalJSON) != record.Checksum {
+		return ErrPackageConflict
+	}
+	member, err := canonical.Decode[CollectionSnapshotMember](record.CanonicalJSON)
+	if err != nil || member.Ordinal != record.Ordinal || len(member.Representations) != 0 {
+		return ErrPackageConflict
+	}
+	var selected any
+	if len(member.SelectedSourcePages) > 0 {
+		selected, err = canonical.Marshal(member.SelectedSourcePages)
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO collection_snapshots(
-			snapshot_id,vault_uid,predecessor_id,source_collection_ids_json,
-			member_count,page_count,member_hash,manifest_sha256,canonical_json,checksum,sealed_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, snapshot.SnapshotID, record.VaultID,
-			nullableString(snapshot.PredecessorID), sourceJSON, snapshot.MemberCount,
-			snapshot.PageCount, snapshot.MemberHash, snapshot.ManifestSHA256,
-			[]byte(record.CanonicalJSON), record.Checksum, snapshot.SealedAt)
-		return err
-	case metadataCollectionSnapshotMemberType:
-		var record metadataCollectionSnapshotMember
-		if err := decodeMetadataRecord(raw, &record); err != nil {
-			return err
-		}
-		if record.Type != kind || pageChecksum(record.CanonicalJSON) != record.Checksum {
-			return ErrPackageConflict
-		}
-		member, err := canonical.Decode[CollectionSnapshotMember](record.CanonicalJSON)
-		if err != nil || member.Ordinal != record.Ordinal || len(member.Representations) != 0 {
-			return ErrPackageConflict
-		}
-		var selected any
-		if len(member.SelectedSourcePages) > 0 {
-			selected, err = canonical.Marshal(member.SelectedSourcePages)
-			if err != nil {
-				return err
-			}
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO collection_snapshot_members(
-			snapshot_id,ordinal,occurrence_id,node_id,content_version_id,blob_sha256,size,
-			family_id,parent_occurrence_id,family_order,display_name,frozen_fields_json,
-			document_kind,selected_source_pages_json,selected_pdf_sha256,source_page_count,
-			canonical_json,checksum
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.SnapshotID, member.Ordinal,
-			member.OccurrenceID, member.NodeID, member.ContentVersionID, member.BlobSHA256,
-			member.Size, member.FamilyID, member.ParentOccurrenceID, member.FamilyOrder,
-			member.DisplayName, member.FrozenFieldsJSON, member.DocumentKind, selected,
-			member.SelectedPDFSHA256, member.SourcePageCount, []byte(record.CanonicalJSON), record.Checksum)
-		return err
-	case metadataCollectionSnapshotRepresentationType:
-		var record metadataCollectionSnapshotRepresentation
-		if err := decodeMetadataRecord(raw, &record); err != nil {
-			return err
-		}
-		if record.Type != kind || pageChecksum(record.CanonicalJSON) != record.Checksum {
-			return ErrPackageConflict
-		}
-		rep, err := canonical.Decode[CollectionSnapshotRepresentation](record.CanonicalJSON)
-		if err != nil || rep.OccurrenceID != record.OccurrenceID || rep.Role != record.Role || rep.Ordinal != record.Ordinal {
-			return ErrPackageConflict
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO collection_snapshot_representations(
-			snapshot_id,occurrence_id,role,ordinal,status,text_authority,content_version_id,
-			blob_sha256,size,media_type,page_number,verified_page_count,rendition_build_id,
-			lexical_generation_id,recipe_sha256,canonical_json,checksum
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.SnapshotID, rep.OccurrenceID,
-			rep.Role, rep.Ordinal, rep.Status, rep.TextAuthority, nullableString(rep.ContentVersionID),
-			nullableString(rep.BlobSHA256), rep.Size, rep.MediaType, rep.PageNumber, rep.VerifiedPageCount,
-			nullableString(rep.RenditionBuildID), nullableString(rep.LexicalGenerationID),
-			nullableString(rep.RecipeSHA256), []byte(record.CanonicalJSON), record.Checksum)
-		return err
-	case metadataPackageType:
-		var record metadataPackage
-		if err := decodeMetadataRecord(raw, &record); err != nil {
-			return err
-		}
-		if record.Type != kind || pageChecksum(record.CanonicalJSON) != record.Checksum {
-			return ErrPackageConflict
-		}
-		pkg, err := canonical.Decode[Package](record.CanonicalJSON)
-		if err != nil || pkg.PackageID != record.PackageID || len(pkg.Volumes) != 0 || validatePackageRequest(pkg.PackageRequest) != nil {
-			return ErrPackageConflict
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO packages(
-			package_id,snapshot_id,direction,package_name,party_label,profile_sha256,profile_json,
-			mapping_sha256,mapping_json,manifest_sha256,manifest_blob_sha256,
-			predecessor_package_id,relation,ingest_id,export_plan_id,state,produced_on,created_at,completed_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, pkg.PackageID, nullableString(pkg.SnapshotID),
-			pkg.Direction, pkg.PackageName, pkg.PartyLabel, pkg.ProfileSHA256, pkg.ProfileJSON,
-			pkg.MappingSHA256, pkg.MappingJSON, pkg.ManifestSHA256, pkg.ManifestBlobSHA256,
-			nullableString(pkg.PredecessorPackageID), pkg.Relation, nullableString(pkg.IngestID),
-			nullableString(pkg.ExportPlanID), pkg.State, nullableString(pkg.ProducedOn),
-			pkg.CreatedAt, nullableString(pkg.CompletedAt))
-		return err
-	case metadataPackageVolumeType:
-		var record metadataPackageVolume
-		if err := decodeMetadataRecord(raw, &record); err != nil {
-			return err
-		}
-		if record.Type != kind || pageChecksum(record.CanonicalJSON) != record.Checksum {
-			return ErrPackageConflict
-		}
-		volume, err := canonical.Decode[metadataPackageVolumePayload](record.CanonicalJSON)
-		if err != nil || volume.PackageID != record.PackageID || volume.Ordinal != record.Ordinal {
-			return ErrPackageConflict
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO package_volumes(
-			package_id,ordinal,volume_name,declared_root,mapped_root,resolved_root_sha256
-		) VALUES(?,?,?,?,?,?)`, record.PackageID, volume.Ordinal, volume.VolumeName,
-			volume.DeclaredRoot, volume.MappedRoot, volume.ResolvedRootSHA256)
-		return err
-	default:
-		return errors.New("unknown package authority record")
 	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO collection_snapshot_members(
+		snapshot_id,ordinal,occurrence_id,node_id,content_version_id,blob_sha256,size,
+		family_id,parent_occurrence_id,family_order,display_name,frozen_fields_json,
+		document_kind,selected_source_pages_json,selected_pdf_sha256,source_page_count,
+		canonical_json,checksum
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.SnapshotID, member.Ordinal,
+		member.OccurrenceID, member.NodeID, member.ContentVersionID, member.BlobSHA256,
+		member.Size, member.FamilyID, member.ParentOccurrenceID, member.FamilyOrder,
+		member.DisplayName, member.FrozenFieldsJSON, member.DocumentKind, selected,
+		member.SelectedPDFSHA256, member.SourcePageCount, []byte(record.CanonicalJSON), record.Checksum)
+	return err
+}
+
+func importCollectionSnapshotRepresentationMetadata(ctx context.Context, tx *sql.Tx, record metadataCollectionSnapshotRepresentation) error {
+	if pageChecksum(record.CanonicalJSON) != record.Checksum {
+		return ErrPackageConflict
+	}
+	rep, err := canonical.Decode[CollectionSnapshotRepresentation](record.CanonicalJSON)
+	if err != nil || rep.OccurrenceID != record.OccurrenceID || rep.Role != record.Role || rep.Ordinal != record.Ordinal {
+		return ErrPackageConflict
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO collection_snapshot_representations(
+		snapshot_id,occurrence_id,role,ordinal,status,text_authority,content_version_id,
+		blob_sha256,size,media_type,page_number,verified_page_count,rendition_build_id,
+		lexical_generation_id,recipe_sha256,canonical_json,checksum
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, record.SnapshotID, rep.OccurrenceID,
+		rep.Role, rep.Ordinal, rep.Status, rep.TextAuthority, nullableString(rep.ContentVersionID),
+		nullableString(rep.BlobSHA256), rep.Size, rep.MediaType, rep.PageNumber, rep.VerifiedPageCount,
+		nullableString(rep.RenditionBuildID), nullableString(rep.LexicalGenerationID),
+		nullableString(rep.RecipeSHA256), []byte(record.CanonicalJSON), record.Checksum)
+	return err
+}
+
+func importPackageRecordMetadata(ctx context.Context, tx *sql.Tx, record metadataPackage) error {
+	if pageChecksum(record.CanonicalJSON) != record.Checksum {
+		return ErrPackageConflict
+	}
+	pkg, err := canonical.Decode[Package](record.CanonicalJSON)
+	if err != nil || pkg.PackageID != record.PackageID || len(pkg.Volumes) != 0 || validatePackageRequest(pkg.PackageRequest) != nil {
+		return ErrPackageConflict
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO packages(
+		package_id,snapshot_id,direction,package_name,party_label,profile_sha256,profile_json,
+		mapping_sha256,mapping_json,manifest_sha256,manifest_blob_sha256,
+		predecessor_package_id,relation,ingest_id,export_plan_id,state,produced_on,created_at,completed_at
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, pkg.PackageID, nullableString(pkg.SnapshotID),
+		pkg.Direction, pkg.PackageName, pkg.PartyLabel, pkg.ProfileSHA256, pkg.ProfileJSON,
+		pkg.MappingSHA256, pkg.MappingJSON, pkg.ManifestSHA256, pkg.ManifestBlobSHA256,
+		nullableString(pkg.PredecessorPackageID), pkg.Relation, nullableString(pkg.IngestID),
+		nullableString(pkg.ExportPlanID), pkg.State, nullableString(pkg.ProducedOn),
+		pkg.CreatedAt, nullableString(pkg.CompletedAt))
+	return err
+}
+
+func importPackageVolumeMetadata(ctx context.Context, tx *sql.Tx, record metadataPackageVolume) error {
+	if pageChecksum(record.CanonicalJSON) != record.Checksum {
+		return ErrPackageConflict
+	}
+	volume, err := canonical.Decode[metadataPackageVolumePayload](record.CanonicalJSON)
+	if err != nil || volume.PackageID != record.PackageID || volume.Ordinal != record.Ordinal {
+		return ErrPackageConflict
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO package_volumes(
+		package_id,ordinal,volume_name,declared_root,mapped_root,resolved_root_sha256
+	) VALUES(?,?,?,?,?,?)`, record.PackageID, volume.Ordinal, volume.VolumeName,
+		volume.DeclaredRoot, volume.MappedRoot, volume.ResolvedRootSHA256)
+	return err
 }
 
 func validatePackageMetadataState(ctx context.Context, q metadataQuerier, vaultID string) error {

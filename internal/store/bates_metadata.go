@@ -23,64 +23,64 @@ const (
 // Explicit JSON tags keep JSONL stable across physical schema upgrades.
 type metadataBatesNamespaceRecord struct {
 	Type        string `json:"type"`
-	NamespaceID string `json:"namespace_id"`
-	Prefix      string `json:"prefix"`
-	Suffix      string `json:"suffix"`
-	Padding     int    `json:"padding"`
-	CreatedAt   string `json:"created_at"`
+	NamespaceID string `json:"namespace_id" db:"namespace_id"`
+	Prefix      string `json:"prefix" db:"prefix"`
+	Suffix      string `json:"suffix" db:"suffix"`
+	Padding     int    `json:"padding" db:"padding"`
+	CreatedAt   string `json:"created_at" db:"created_at"`
 }
 type metadataBatesCursorRecord struct {
 	Type         string `json:"type"`
-	NamespaceID  string `json:"namespace_id"`
-	NextSequence int64  `json:"next_sequence"`
+	NamespaceID  string `json:"namespace_id" db:"namespace_id"`
+	NextSequence int64  `json:"next_sequence" db:"next_sequence"`
 }
 type metadataBatesAllocationRecord struct {
 	Type          string  `json:"type"`
-	AllocationID  string  `json:"allocation_id"`
-	OperationID   string  `json:"operation_id"`
-	NamespaceID   string  `json:"namespace_id"`
-	SnapshotID    string  `json:"snapshot_id"`
-	RequestSHA256 string  `json:"request_sha256"`
-	RecipeSHA256  string  `json:"recipe_sha256"`
-	StartSequence int64   `json:"start_sequence"`
-	EndSequence   int64   `json:"end_sequence"`
-	State         string  `json:"state"`
-	CreatedAt     string  `json:"created_at"`
-	CommittedAt   *string `json:"committed_at"`
+	AllocationID  string  `json:"allocation_id" db:"allocation_id"`
+	OperationID   string  `json:"operation_id" db:"operation_id"`
+	NamespaceID   string  `json:"namespace_id" db:"namespace_id"`
+	SnapshotID    string  `json:"snapshot_id" db:"snapshot_id"`
+	RequestSHA256 string  `json:"request_sha256" db:"request_sha256"`
+	RecipeSHA256  string  `json:"recipe_sha256" db:"recipe_sha256"`
+	StartSequence int64   `json:"start_sequence" db:"start_sequence"`
+	EndSequence   int64   `json:"end_sequence" db:"end_sequence"`
+	State         string  `json:"state" db:"state"`
+	CreatedAt     string  `json:"created_at" db:"created_at"`
+	CommittedAt   *string `json:"committed_at" db:"committed_at"`
 }
 type metadataBatesPageLabelRecord struct {
 	Type         string `json:"type"`
-	AllocationID string `json:"allocation_id"`
-	Ordinal      int    `json:"ordinal"`
-	NamespaceID  string `json:"namespace_id"`
-	Sequence     int64  `json:"sequence"`
-	OccurrenceID string `json:"occurrence_id"`
-	SourcePage   int    `json:"source_page"`
-	OutputPage   int    `json:"output_page"`
-	Label        string `json:"label"`
+	AllocationID string `json:"allocation_id" db:"allocation_id"`
+	Ordinal      int    `json:"ordinal" db:"ordinal"`
+	NamespaceID  string `json:"namespace_id" db:"namespace_id"`
+	Sequence     int64  `json:"sequence" db:"sequence"`
+	OccurrenceID string `json:"occurrence_id" db:"occurrence_id"`
+	SourcePage   int    `json:"source_page" db:"source_page"`
+	OutputPage   int    `json:"output_page" db:"output_page"`
+	Label        string `json:"label" db:"label"`
 }
 type metadataBatesArtifactRecord struct {
 	Type           string         `json:"type"`
-	ArtifactID     string         `json:"artifact_id"`
-	AllocationID   string         `json:"allocation_id"`
-	BlobSHA256     string         `json:"blob_sha256"`
-	Size           int64          `json:"size"`
-	MediaType      string         `json:"media_type"`
-	PageCount      int            `json:"page_count"`
-	RecipeJSON     jsontext.Value `json:"recipe_json"`
-	ManifestSHA256 string         `json:"manifest_sha256"`
-	State          string         `json:"state"`
-	CreatedAt      string         `json:"created_at"`
+	ArtifactID     string         `json:"artifact_id" db:"artifact_id"`
+	AllocationID   string         `json:"allocation_id" db:"allocation_id"`
+	BlobSHA256     string         `json:"blob_sha256" db:"blob_hash"`
+	Size           int64          `json:"size" db:"size"`
+	MediaType      string         `json:"media_type" db:"media_type"`
+	PageCount      int            `json:"page_count" db:"page_count"`
+	RecipeJSON     jsontext.Value `json:"recipe_json" db:"recipe_json"`
+	ManifestSHA256 string         `json:"manifest_sha256" db:"manifest_sha256"`
+	State          string         `json:"state" db:"state"`
+	CreatedAt      string         `json:"created_at" db:"created_at"`
 }
 type metadataBatesArtifactPageRecord struct {
 	Type             string `json:"type"`
-	ArtifactID       string `json:"artifact_id"`
-	Ordinal          int    `json:"ordinal"`
-	OccurrenceID     string `json:"occurrence_id"`
-	SourceBlobSHA256 string `json:"source_blob_sha256"`
-	SourcePage       int    `json:"source_page"`
-	OutputPage       int    `json:"output_page"`
-	Label            string `json:"label"`
+	ArtifactID       string `json:"artifact_id" db:"artifact_id"`
+	Ordinal          int    `json:"ordinal" db:"ordinal"`
+	OccurrenceID     string `json:"occurrence_id" db:"occurrence_id"`
+	SourceBlobSHA256 string `json:"source_blob_sha256" db:"source_blob_sha256"`
+	SourcePage       int    `json:"source_page" db:"source_page"`
+	OutputPage       int    `json:"output_page" db:"output_page"`
+	Label            string `json:"label" db:"label"`
 }
 
 func exportBatesMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
@@ -184,94 +184,73 @@ func exportBatesLabels(ctx context.Context, q metadataQuerier, write metadataWri
 	return rows.Err()
 }
 
-func importBatesMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
-	switch kind {
-	case metadataBatesNamespace:
-		var r metadataBatesNamespaceRecord
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if r.Type != kind || validateUUIDv4(r.NamespaceID) != nil || r.Padding < 1 || r.Padding > maxBatesPadding ||
-			pdfstamp.ValidateLabelPart("prefix", r.Prefix) != nil || pdfstamp.ValidateLabelPart("suffix", r.Suffix) != nil || validateMetadataTime("Bates namespace", r.CreatedAt) != nil {
-			return invalidBatesRecord(kind, r.NamespaceID)
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO bates_namespaces(namespace_id,prefix,suffix,padding,created_at) VALUES(?,?,?,?,?)`, r.NamespaceID, r.Prefix, r.Suffix, r.Padding, r.CreatedAt)
-		return err
-	case metadataBatesNamespaceCursor:
-		var r metadataBatesCursorRecord
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if r.Type != kind || validateUUIDv4(r.NamespaceID) != nil || r.NextSequence < 1 {
-			return invalidBatesRecord(kind, r.NamespaceID)
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO bates_namespace_cursors(namespace_id,next_sequence) VALUES(?,?)`, r.NamespaceID, r.NextSequence)
-		return err
-	case metadataBatesAllocation:
-		var r metadataBatesAllocationRecord
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if r.Type != kind || validateUUIDv4(r.AllocationID) != nil || validateUUIDv4(r.OperationID) != nil ||
-			validateUUIDv4(r.NamespaceID) != nil || validateUUIDv4(r.SnapshotID) != nil ||
-			!canonical.IsSHA256Hex(r.RequestSHA256) || !canonical.IsSHA256Hex(r.RecipeSHA256) ||
-			r.StartSequence < 1 || r.EndSequence < r.StartSequence || r.EndSequence-r.StartSequence >= MaxBatesExportPages ||
-			validateMetadataTime("Bates allocation", r.CreatedAt) != nil ||
-			(r.State != batesAllocationStateReserved && r.State != batesAllocationStateCommitted) ||
-			(r.State == batesAllocationStateCommitted) != (r.CommittedAt != nil) {
-			return invalidBatesRecord(kind, r.AllocationID)
-		}
-		if r.CommittedAt != nil && validateMetadataTime("Bates committed at", *r.CommittedAt) != nil {
-			return invalidBatesRecord(kind, r.AllocationID)
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO bates_allocations(allocation_id,operation_id,namespace_id,snapshot_id,request_sha256,
-			recipe_sha256,start_sequence,end_sequence,state,created_at,committed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, r.AllocationID,
-			r.OperationID, r.NamespaceID, r.SnapshotID, r.RequestSHA256, r.RecipeSHA256, r.StartSequence, r.EndSequence, r.State,
-			r.CreatedAt, r.CommittedAt)
-		return err
-	case metadataBatesPageLabel:
-		var r metadataBatesPageLabelRecord
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if r.Type != kind || validateUUIDv4(r.AllocationID) != nil || validateUUIDv4(r.NamespaceID) != nil ||
-			r.Ordinal < 1 || r.Ordinal > MaxBatesExportPages || r.Sequence < 1 || r.OccurrenceID == "" || r.SourcePage < 1 ||
-			r.OutputPage < 1 || r.Label == "" {
-			return invalidBatesRecord(kind, fmt.Sprintf("%s/%d", r.AllocationID, r.Ordinal))
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO bates_page_labels(allocation_id,ordinal,namespace_id,sequence,occurrence_id,
-			source_page,output_page,label) VALUES(?,?,?,?,?,?,?,?)`, r.AllocationID, r.Ordinal, r.NamespaceID, r.Sequence,
-			r.OccurrenceID, r.SourcePage, r.OutputPage, r.Label)
-		return err
-	case metadataBatesArtifact:
-		var r metadataBatesArtifactRecord
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if r.Type != kind || validateUUIDv4(r.ArtifactID) != nil || validateUUIDv4(r.AllocationID) != nil ||
-			!canonical.IsSHA256Hex(r.BlobSHA256) || !canonical.IsSHA256Hex(r.ManifestSHA256) || r.Size < 1 ||
-			r.MediaType != batesArtifactMediaTypePDF || r.PageCount < 1 || r.PageCount > MaxBatesExportPages || r.State != batesArtifactStateVerified ||
-			len(r.RecipeJSON) == 0 || validateMetadataTime("Bates artifact", r.CreatedAt) != nil {
-			return invalidBatesRecord(kind, r.ArtifactID)
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO bates_artifacts(artifact_id,allocation_id,blob_hash,size,media_type,page_count,recipe_json,manifest_sha256,state,created_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?)`, r.ArtifactID, r.AllocationID, r.BlobSHA256, r.Size, r.MediaType,
-			r.PageCount, []byte(r.RecipeJSON), r.ManifestSHA256, r.State, r.CreatedAt)
-		return err
-	case metadataBatesArtifactPage:
-		var r metadataBatesArtifactPageRecord
-		if err := decodeMetadataRecord(raw, &r); err != nil {
-			return err
-		}
-		if r.Type != kind || validateUUIDv4(r.ArtifactID) != nil || r.Ordinal < 1 || r.Ordinal > MaxBatesExportPages || r.OccurrenceID == "" ||
-			!canonical.IsSHA256Hex(r.SourceBlobSHA256) || r.SourcePage < 1 || r.OutputPage < 1 || r.Label == "" {
-			return invalidBatesRecord(kind, fmt.Sprintf("%s/%d", r.ArtifactID, r.Ordinal))
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO bates_artifact_pages(artifact_id,ordinal,occurrence_id,source_blob_sha256,source_page,output_page,label)
-			VALUES(?,?,?,?,?,?,?)`, r.ArtifactID, r.Ordinal, r.OccurrenceID, r.SourceBlobSHA256, r.SourcePage, r.OutputPage, r.Label)
-		return err
+// batesMetadataTables registers the Bates ledger records for import. Their
+// exporters interleave each namespace, allocation and artifact with its rows.
+var batesMetadataTables = []metadataRecordCodec{
+	newMetadataTable(metadataTable[metadataBatesNamespaceRecord]{record: metadataBatesNamespaceRecord{Type: metadataBatesNamespace}, table: "bates_namespaces", validate: validateBatesNamespaceRecord}),
+	newMetadataTable(metadataTable[metadataBatesCursorRecord]{record: metadataBatesCursorRecord{Type: metadataBatesNamespaceCursor}, table: "bates_namespace_cursors", validate: validateBatesCursorRecord}),
+	newMetadataTable(metadataTable[metadataBatesAllocationRecord]{record: metadataBatesAllocationRecord{Type: metadataBatesAllocation}, table: "bates_allocations", validate: validateBatesAllocationRecord}),
+	newMetadataTable(metadataTable[metadataBatesPageLabelRecord]{record: metadataBatesPageLabelRecord{Type: metadataBatesPageLabel}, table: "bates_page_labels", validate: validateBatesPageLabelRecord}),
+	newMetadataTable(metadataTable[metadataBatesArtifactRecord]{record: metadataBatesArtifactRecord{Type: metadataBatesArtifact}, table: "bates_artifacts", validate: validateBatesArtifactRecord}),
+	newMetadataTable(metadataTable[metadataBatesArtifactPageRecord]{record: metadataBatesArtifactPageRecord{Type: metadataBatesArtifactPage}, table: "bates_artifact_pages", validate: validateBatesArtifactPageRecord}),
+}
+
+func validateBatesNamespaceRecord(r metadataBatesNamespaceRecord) error {
+	if r.Type != metadataBatesNamespace || validateUUIDv4(r.NamespaceID) != nil || r.Padding < 1 || r.Padding > maxBatesPadding ||
+		pdfstamp.ValidateLabelPart("prefix", r.Prefix) != nil || pdfstamp.ValidateLabelPart("suffix", r.Suffix) != nil || validateMetadataTime("Bates namespace", r.CreatedAt) != nil {
+		return invalidBatesRecord(metadataBatesNamespace, r.NamespaceID)
 	}
-	return fmt.Errorf("%w: unknown record type %q", ErrInvalidBatesLedger, kind)
+	return nil
+}
+
+func validateBatesCursorRecord(r metadataBatesCursorRecord) error {
+	if r.Type != metadataBatesNamespaceCursor || validateUUIDv4(r.NamespaceID) != nil || r.NextSequence < 1 {
+		return invalidBatesRecord(metadataBatesNamespaceCursor, r.NamespaceID)
+	}
+	return nil
+}
+
+func validateBatesAllocationRecord(r metadataBatesAllocationRecord) error {
+	if r.Type != metadataBatesAllocation || validateUUIDv4(r.AllocationID) != nil || validateUUIDv4(r.OperationID) != nil ||
+		validateUUIDv4(r.NamespaceID) != nil || validateUUIDv4(r.SnapshotID) != nil ||
+		!canonical.IsSHA256Hex(r.RequestSHA256) || !canonical.IsSHA256Hex(r.RecipeSHA256) ||
+		r.StartSequence < 1 || r.EndSequence < r.StartSequence || r.EndSequence-r.StartSequence >= MaxBatesExportPages ||
+		validateMetadataTime("Bates allocation", r.CreatedAt) != nil ||
+		(r.State != batesAllocationStateReserved && r.State != batesAllocationStateCommitted) ||
+		(r.State == batesAllocationStateCommitted) != (r.CommittedAt != nil) {
+		return invalidBatesRecord(metadataBatesAllocation, r.AllocationID)
+	}
+	if r.CommittedAt != nil && validateMetadataTime("Bates committed at", *r.CommittedAt) != nil {
+		return invalidBatesRecord(metadataBatesAllocation, r.AllocationID)
+	}
+	return nil
+}
+
+func validateBatesPageLabelRecord(r metadataBatesPageLabelRecord) error {
+	if r.Type != metadataBatesPageLabel || validateUUIDv4(r.AllocationID) != nil || validateUUIDv4(r.NamespaceID) != nil ||
+		r.Ordinal < 1 || r.Ordinal > MaxBatesExportPages || r.Sequence < 1 || r.OccurrenceID == "" || r.SourcePage < 1 ||
+		r.OutputPage < 1 || r.Label == "" {
+		return invalidBatesRecord(metadataBatesPageLabel, fmt.Sprintf("%s/%d", r.AllocationID, r.Ordinal))
+	}
+	return nil
+}
+
+func validateBatesArtifactRecord(r metadataBatesArtifactRecord) error {
+	if r.Type != metadataBatesArtifact || validateUUIDv4(r.ArtifactID) != nil || validateUUIDv4(r.AllocationID) != nil ||
+		!canonical.IsSHA256Hex(r.BlobSHA256) || !canonical.IsSHA256Hex(r.ManifestSHA256) || r.Size < 1 ||
+		r.MediaType != batesArtifactMediaTypePDF || r.PageCount < 1 || r.PageCount > MaxBatesExportPages || r.State != batesArtifactStateVerified ||
+		len(r.RecipeJSON) == 0 || validateMetadataTime("Bates artifact", r.CreatedAt) != nil {
+		return invalidBatesRecord(metadataBatesArtifact, r.ArtifactID)
+	}
+	return nil
+}
+
+func validateBatesArtifactPageRecord(r metadataBatesArtifactPageRecord) error {
+	if r.Type != metadataBatesArtifactPage || validateUUIDv4(r.ArtifactID) != nil || r.Ordinal < 1 || r.Ordinal > MaxBatesExportPages || r.OccurrenceID == "" ||
+		!canonical.IsSHA256Hex(r.SourceBlobSHA256) || r.SourcePage < 1 || r.OutputPage < 1 || r.Label == "" {
+		return invalidBatesRecord(metadataBatesArtifactPage, fmt.Sprintf("%s/%d", r.ArtifactID, r.Ordinal))
+	}
+	return nil
 }
 
 func invalidBatesRecord(kind, id string) error {

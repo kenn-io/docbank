@@ -108,33 +108,33 @@ type metadataHeader struct {
 
 type metadataBlob struct {
 	Type      string `json:"type"`
-	Hash      string `json:"hash"`
-	Size      int64  `json:"size"`
-	CreatedAt string `json:"created_at"`
+	Hash      string `json:"hash" db:"hash"`
+	Size      int64  `json:"size" db:"size"`
+	CreatedAt string `json:"created_at" db:"created_at"`
 }
 
 type metadataBlobChecksum struct {
 	Type       string `json:"type"`
-	BlobSHA256 string `json:"blob_sha256"`
-	MD5        string `json:"md5"`
+	BlobSHA256 string `json:"blob_sha256" db:"blob_sha256"`
+	MD5        string `json:"md5" db:"md5"`
 }
 
 type metadataSourceMetadataGeneration struct {
 	Type                 string `json:"type"`
-	GenerationID         string `json:"generation_id"`
-	SourceSHA256         string `json:"source_sha256"`
-	ContractVersion      string `json:"contract_version"`
-	ExtractorFingerprint string `json:"extractor_fingerprint"`
-	CanonicalJSON        []byte `json:"canonical_json" format:"byte"`
-	Checksum             string `json:"checksum"`
-	CreatedAt            string `json:"created_at"`
+	GenerationID         string `json:"generation_id" db:"generation_id"`
+	SourceSHA256         string `json:"source_sha256" db:"source_sha256"`
+	ContractVersion      string `json:"contract_version" db:"contract_version"`
+	ExtractorFingerprint string `json:"extractor_fingerprint" db:"extractor_fingerprint"`
+	CanonicalJSON        []byte `json:"canonical_json" format:"byte" db:"canonical_json"`
+	Checksum             string `json:"checksum" db:"checksum"`
+	CreatedAt            string `json:"created_at" db:"created_at"`
 }
 
 type metadataSourceMetadataHead struct {
 	Type         string `json:"type"`
-	SourceSHA256 string `json:"source_sha256"`
-	GenerationID string `json:"generation_id"`
-	PublishedAt  string `json:"published_at"`
+	SourceSHA256 string `json:"source_sha256" db:"source_sha256"`
+	GenerationID string `json:"generation_id" db:"generation_id"`
+	PublishedAt  string `json:"published_at" db:"published_at"`
 }
 
 type metadataVisualPreviewGeneration struct {
@@ -152,90 +152,90 @@ type metadataVisualPreviewGeneration struct {
 
 type metadataVisualPreviewHead struct {
 	Type             string `json:"type"`
-	ContentVersionID string `json:"content_version_id"`
-	GenerationID     string `json:"generation_id"`
-	PublishedAt      string `json:"published_at"`
+	ContentVersionID string `json:"content_version_id" db:"content_version_id"`
+	GenerationID     string `json:"generation_id" db:"generation_id"`
+	PublishedAt      string `json:"published_at" db:"published_at"`
 }
 
 type metadataNode struct {
 	Type             string  `json:"type"`
-	ID               int64   `json:"id"`
-	ParentID         *int64  `json:"parent_id"`
-	Name             string  `json:"name"`
-	Kind             string  `json:"kind"`
-	CurrentVersionID *string `json:"current_version_id"`
-	Revision         int64   `json:"revision"`
-	CreatedAt        string  `json:"created_at"`
-	ModifiedAt       string  `json:"modified_at"`
-	TrashedAt        *string `json:"trashed_at"`
-	TrashParent      *int64  `json:"trash_parent"`
-	TrashName        *string `json:"trash_name"`
+	ID               int64   `json:"id" db:"id"`
+	ParentID         *int64  `json:"parent_id" db:"parent_id"`
+	Name             string  `json:"name" db:"name"`
+	Kind             string  `json:"kind" db:"kind"`
+	CurrentVersionID *string `json:"current_version_id" db:"current_version_id"`
+	Revision         int64   `json:"revision" db:"revision"`
+	CreatedAt        string  `json:"created_at" db:"created_at"`
+	ModifiedAt       string  `json:"modified_at" db:"modified_at"`
+	TrashedAt        *string `json:"trashed_at" db:"trashed_at"`
+	TrashParent      *int64  `json:"trash_parent" db:"trash_parent"`
+	TrashName        *string `json:"trash_name" db:"trash_name"`
 }
 
 type metadataContentVersion struct {
 	Type                  string  `json:"type"`
-	VersionID             string  `json:"version_id"`
-	NodeID                int64   `json:"node_id"`
-	BlobHash              string  `json:"blob_hash"`
-	Size                  int64   `json:"size"`
-	MIMEType              *string `json:"mime_type"`
-	RecordedAt            string  `json:"recorded_at"`
-	NodeRevision          int64   `json:"node_revision"`
-	IntroducedOperationID string  `json:"introduced_operation_id"`
-	TransitionKind        string  `json:"transition_kind"`
-	SourceVersionID       *string `json:"source_version_id"`
+	VersionID             string  `json:"version_id" db:"version_id"`
+	NodeID                int64   `json:"node_id" db:"node_id"`
+	BlobHash              string  `json:"blob_hash" db:"blob_hash"`
+	Size                  int64   `json:"size" db:"size"`
+	MIMEType              *string `json:"mime_type" db:"mime_type"`
+	RecordedAt            string  `json:"recorded_at" db:"recorded_at"`
+	NodeRevision          int64   `json:"node_revision" db:"node_revision"`
+	IntroducedOperationID string  `json:"introduced_operation_id" db:"introduced_operation_id"`
+	TransitionKind        string  `json:"transition_kind" db:"transition_kind"`
+	SourceVersionID       *string `json:"source_version_id" db:"source_version_id"`
 }
 
 type metadataIngest struct {
 	Type       string `json:"type"`
-	ID         string `json:"ingest_id"`
-	StartedAt  string `json:"started_at"`
-	SourceKind string `json:"source_kind"`
-	SourceDesc string `json:"source_desc"`
+	ID         string `json:"ingest_id" db:"id"`
+	StartedAt  string `json:"started_at" db:"started_at"`
+	SourceKind string `json:"source_kind" db:"source_kind"`
+	SourceDesc string `json:"source_desc" db:"source_desc"`
 }
 
 type metadataProvenance struct {
 	Type          string  `json:"type"`
-	Identity      string  `json:"identity"`
-	NodeID        int64   `json:"node_id"`
-	IngestID      string  `json:"ingest_id"`
-	OriginalPath  string  `json:"original_path"`
-	OriginalMTime *string `json:"original_mtime"`
-	Supersedes    *string `json:"supersedes"`
+	Identity      string  `json:"identity" db:"identity"`
+	NodeID        int64   `json:"node_id" db:"node_id"`
+	IngestID      string  `json:"ingest_id" db:"ingest_id"`
+	OriginalPath  string  `json:"original_path" db:"original_path"`
+	OriginalMTime *string `json:"original_mtime" db:"original_mtime"`
+	Supersedes    *string `json:"supersedes" db:"supersedes"`
 }
 
 type metadataWatchSource struct {
 	Type      string `json:"type"`
-	WatchName string `json:"watch_name"`
-	SourceRef string `json:"source_ref"`
-	NodeID    int64  `json:"node_id"`
-	BlobHash  string `json:"blob_hash"`
-	Size      int64  `json:"size"`
+	WatchName string `json:"watch_name" db:"watch_name"`
+	SourceRef string `json:"source_ref" db:"source_ref"`
+	NodeID    int64  `json:"node_id" db:"node_id"`
+	BlobHash  string `json:"blob_hash" db:"blob_hash"`
+	Size      int64  `json:"size" db:"size"`
 }
 
 type metadataTag struct {
 	Type     string `json:"type"`
-	ID       string `json:"tag_id"`
-	Name     string `json:"name"`
-	Revision int64  `json:"revision"`
+	ID       string `json:"tag_id" db:"id"`
+	Name     string `json:"name" db:"name"`
+	Revision int64  `json:"revision" db:"revision"`
 }
 
 type metadataNodeTag struct {
 	Type   string `json:"type"`
-	NodeID int64  `json:"node_id"`
-	TagID  string `json:"tag_id"`
+	NodeID int64  `json:"node_id" db:"node_id"`
+	TagID  string `json:"tag_id" db:"tag_id"`
 }
 
 type metadataExtractedText struct {
 	Type             string  `json:"type"`
-	BlobHash         string  `json:"blob_hash"`
-	Extractor        string  `json:"extractor"`
-	ExtractorVersion int64   `json:"extractor_version"`
-	Status           string  `json:"status"`
-	Error            *string `json:"error"`
-	Attempts         int64   `json:"attempts"`
-	Text             *string `json:"text"`
-	ExtractedAt      string  `json:"extracted_at"`
+	BlobHash         string  `json:"blob_hash" db:"blob_hash"`
+	Extractor        string  `json:"extractor" db:"extractor"`
+	ExtractorVersion int64   `json:"extractor_version" db:"extractor_version"`
+	Status           string  `json:"status" db:"status"`
+	Error            *string `json:"error" db:"error"`
+	Attempts         int64   `json:"attempts" db:"attempts"`
+	Text             *string `json:"text" db:"text"`
+	ExtractedAt      string  `json:"extracted_at" db:"extracted_at"`
 }
 
 type metadataAuditRecord struct {
@@ -246,27 +246,129 @@ type metadataAuditRecord struct {
 
 type metadataAuditAuthority struct {
 	Type                       string `json:"type"`
-	LineageID                  string `json:"lineage_id"`
-	OperationSequenceHighWater uint64 `json:"operation_sequence_high_water"`
-	AllocationGenesisDigest    string `json:"allocation_genesis_digest"`
-	AllocationEntryCount       uint64 `json:"allocation_entry_count"`
-	AllocationHead             string `json:"allocation_head"`
+	LineageID                  string `json:"lineage_id" db:"lineage_id"`
+	OperationSequenceHighWater uint64 `json:"operation_sequence_high_water" db:"operation_sequence_high_water"`
+	AllocationGenesisDigest    string `json:"allocation_genesis_digest" db:"allocation_genesis_digest"`
+	AllocationEntryCount       uint64 `json:"allocation_entry_count" db:"allocation_entry_count"`
+	AllocationHead             string `json:"allocation_head" db:"allocation_head"`
+	Singleton                  int    `json:"-" db:"singleton"`
 }
 
 type metadataAuditScope struct {
 	Type              string `json:"type"`
-	ScopeID           string `json:"scope_id"`
-	TargetNodeID      uint64 `json:"target_node_id"`
-	EnableOperationID string `json:"enable_operation_id"`
-	EntryCount        uint64 `json:"entry_count"`
-	ChainHead         string `json:"chain_head"`
+	ScopeID           string `json:"scope_id" db:"scope_id"`
+	TargetNodeID      uint64 `json:"target_node_id" db:"target_node_id"`
+	EnableOperationID string `json:"enable_operation_id" db:"enable_operation_id"`
+	EntryCount        uint64 `json:"entry_count" db:"entry_count"`
+	ChainHead         string `json:"chain_head" db:"chain_head"`
 }
 
 type metadataAuditMembership struct {
 	Type           string `json:"type"`
-	ScopeID        string `json:"scope_id"`
-	NodeID         uint64 `json:"node_id"`
-	BaselineDigest string `json:"baseline_digest"`
+	ScopeID        string `json:"scope_id" db:"scope_id"`
+	NodeID         uint64 `json:"node_id" db:"node_id"`
+	BaselineDigest string `json:"baseline_digest" db:"baseline_digest"`
+}
+
+var (
+	nodeMetadata = newMetadataTable(metadataTable[metadataNode]{record: metadataNode{Type: "node"},
+		table: "nodes", suffix: "ORDER BY id", validate: validateNodeRecord, checkExport: true})
+	contentVersionMetadata = newMetadataTable(metadataTable[metadataContentVersion]{
+		record: metadataContentVersion{Type: "content_version"}, table: "content_versions",
+		suffix: "ORDER BY node_id, node_revision, version_id", validate: validateContentVersionRecord, checkExport: true})
+	ingestMetadata = newMetadataTable(metadataTable[metadataIngest]{record: metadataIngest{Type: metadataIngestType},
+		table: "ingests", suffix: "ORDER BY id", validate: validateIngestRecord, checkExport: true})
+	provenanceMetadata = newMetadataTable(metadataTable[metadataProvenance]{record: metadataProvenance{Type: metadataProvenanceType},
+		table: "provenance", suffix: "ORDER BY identity", validate: validateProvenanceRecord, checkExport: true})
+	watchSourceMetadata = newMetadataTable(metadataTable[metadataWatchSource]{record: metadataWatchSource{Type: metadataWatchSourceType},
+		table: "watch_sources", suffix: "ORDER BY watch_name, source_ref", validate: validateWatchSourceRecord, checkExport: true})
+	tagMetadata = newMetadataTable(metadataTable[metadataTag]{record: metadataTag{Type: "tag"},
+		table: "tags", suffix: "ORDER BY id", validate: validateTagRecord, checkExport: true})
+	nodeTagMetadata = newMetadataTable(metadataTable[metadataNodeTag]{record: metadataNodeTag{Type: "node_tag"},
+		table: "node_tags", suffix: "ORDER BY node_id, tag_id", validate: validateNodeTagRecord, checkExport: true})
+	visualPreviewHeadMetadata = newMetadataTable(metadataTable[metadataVisualPreviewHead]{
+		record: metadataVisualPreviewHead{Type: metadataVisualPreviewHeadType}, table: "visual_preview_heads",
+		suffix: "ORDER BY content_version_id", validate: validateVisualPreviewHeadRecord})
+)
+
+// coreMetadataTables registers the records of metadata.go and the one-record
+// files. Blobs, checksums, source metadata, visual preview generations and
+// extracted text keep their backup-scoped exporters.
+var coreMetadataTables = []metadataRecordCodec{
+	nodeMetadata, contentVersionMetadata, ingestMetadata, provenanceMetadata, watchSourceMetadata,
+	tagMetadata, nodeTagMetadata, visualPreviewHeadMetadata, collectionLabelMetadata,
+	provenanceVersionBindingMetadata, savedQueryMetadata, savedQueryRunImportMetadata,
+	termReportHistoryImportMetadata, batchTagReceiptMetadata,
+	newMetadataTable(metadataTable[metadataBlob]{record: metadataBlob{Type: "blob"}, table: "blobs",
+		validate: validateBlobRecord, insert: importBlobRecord}),
+	newMetadataTable(metadataTable[metadataBlobChecksum]{
+		record: metadataBlobChecksum{Type: metadataBlobChecksumType}, table: "blob_checksums",
+		validate: func(v metadataBlobChecksum) error {
+			return validateBlobChecksumRecord(BlobChecksumRecord{BlobSHA256: v.BlobSHA256, MD5: v.MD5})
+		},
+		insert: func(_ context.Context, tx *sql.Tx, v metadataBlobChecksum) error {
+			return ensureBlobChecksumTx(tx, BlobChecksumRecord{BlobSHA256: v.BlobSHA256, MD5: v.MD5})
+		}}),
+	newMetadataTable(metadataTable[metadataSourceMetadataGeneration]{
+		record: metadataSourceMetadataGeneration{Type: metadataSourceMetadataGenerationType},
+		table:  "source_metadata_generations", validate: validateSourceMetadataGenerationRecord}),
+	newMetadataTable(metadataTable[metadataSourceMetadataHead]{
+		record: metadataSourceMetadataHead{Type: metadataSourceMetadataHeadType}, table: "source_metadata_heads"}),
+	newMetadataTable(metadataTable[metadataVisualPreviewGeneration]{
+		record: metadataVisualPreviewGeneration{Type: metadataVisualPreviewGenerationType},
+		table:  "visual_preview_generations", validate: validateVisualPreviewGenerationRecord,
+		insert: importVisualPreviewGeneration}),
+	newMetadataTable(metadataTable[metadataExtractedText]{record: metadataExtractedText{Type: "extracted_text"},
+		table: "extracted_text", validate: validateExtractedTextRecord, insert: importExtractedText}),
+}
+
+func importBlobRecord(ctx context.Context, tx *sql.Tx, v metadataBlob) error {
+	if err := insertMetadataRecord(ctx, tx, "blobs", v); err != nil {
+		return err
+	}
+	generation, err := blobLocationGeneration()
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO blob_locations(
+			blob_hash, store_id, generation, kind, encoding, stored_size, pack_eligible
+		)
+		SELECT ?, store_id, ?, ?, ?, ?, CASE WHEN ? <= ? THEN 1 ELSE 0 END
+		FROM blob_stores WHERE role = ?`,
+		v.Hash, generation, blobLocationKindLoose, looseEncodingRaw, v.Size,
+		v.Size, maxPackEligibleBytes, blobStoreRolePrimary,
+	)
+	return err
+}
+
+func importVisualPreviewGeneration(ctx context.Context, tx *sql.Tx, v metadataVisualPreviewGeneration) error {
+	preview, _, err := document.DecodeVisualPreviewV1(v.CanonicalResult)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO visual_preview_generations(
+		generation_id,vault_uid,content_version_id,source_sha256,contract_version,
+		recipe_fingerprint,canonical_result,checksum,state,output_blob_hash,output_size,
+		output_media_type,output_width,output_height,failure_code,failure_detail,created_at
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.GenerationID, v.VaultID,
+		v.ContentVersionID, v.SourceSHA256, v.ContractVersion, v.RecipeFingerprint,
+		v.CanonicalResult, v.Checksum, preview.State, previewOutputHash(preview),
+		previewOutputSize(preview), previewOutputMediaType(preview), previewOutputWidth(preview),
+		previewOutputHeight(preview), previewFailureCode(preview), previewFailureDetail(preview),
+		v.CreatedAt)
+	return err
+}
+
+func importExtractedText(ctx context.Context, tx *sql.Tx, v metadataExtractedText) error {
+	if err := insertMetadataRecord(ctx, tx, "extracted_text", v); err != nil {
+		return err
+	}
+	var text any
+	if v.Status == ExtractionOK && v.Text != nil {
+		text = *v.Text
+	}
+	return replaceContentFTSTx(ctx, tx, v.BlobHash, v.Extractor, text)
 }
 
 // ExportMetadata writes a deterministic JSONL description of Docbank's
@@ -399,7 +501,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 		return err
 	}
 	if layout.hasPostV3Metadata() {
-		if err := exportCollectionLabels(ctx, tx, write); err != nil {
+		if err := collectionLabelMetadata.export(ctx, tx, write); err != nil {
 			return err
 		}
 	}
@@ -407,7 +509,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 		return err
 	}
 	if layout.hasPersons() {
-		if err := exportPersonMetadata(ctx, tx, write); err != nil {
+		if err := exportMetadataTables(ctx, tx, write, personMetadataTables); err != nil {
 			return err
 		}
 	}
@@ -423,7 +525,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 		return err
 	}
 	if layout.hasPostV3Metadata() {
-		if err := exportProvenanceVersionBindings(ctx, tx, write); err != nil {
+		if err := provenanceVersionBindingMetadata.export(ctx, tx, write); err != nil {
 			return err
 		}
 	}
@@ -456,11 +558,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if err := exportWatchSources(ctx, tx, write); err != nil {
 		return err
 	}
-	if err := exportTags(ctx, tx, write); err != nil {
+	if err := tagMetadata.export(ctx, tx, write); err != nil {
 		return err
 	}
 	if layout.hasPostV3Metadata() {
-		if err := exportSavedQueries(ctx, tx, write); err != nil {
+		if err := savedQueryMetadata.export(ctx, tx, write); err != nil {
 			return err
 		}
 		if err := exportSavedQueryRuns(ctx, tx, write); err != nil {
@@ -472,11 +574,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 			return err
 		}
 	}
-	if err := exportNodeTags(ctx, tx, write); err != nil {
+	if err := nodeTagMetadata.export(ctx, tx, write); err != nil {
 		return err
 	}
 	if layout.hasPostV3Metadata() {
-		if err := exportBatchTagReceipts(ctx, tx, write); err != nil {
+		if err := batchTagReceiptMetadata.export(ctx, tx, write); err != nil {
 			return err
 		}
 	}
@@ -489,16 +591,16 @@ func exportMetadataSnapshotWithVaultIdentity(
 	if !layout.hasPostV3Metadata() {
 		return nil
 	}
-	if err := exportProcessingMetadata(ctx, tx, write); err != nil {
+	if err := exportMetadataTables(ctx, tx, write, processingMetadataTables); err != nil {
 		return err
 	}
-	if err := exportEmbeddingMetadata(ctx, tx, write); err != nil {
+	if err := exportMetadataTables(ctx, tx, write, embeddingMetadataTables); err != nil {
 		return err
 	}
-	if err := exportDurableCurrentRenditionRoots(ctx, tx, write); err != nil {
+	if err := currentRenditionRootMetadata.export(ctx, tx, write); err != nil {
 		return err
 	}
-	if err := exportEmailMetadata(ctx, tx, write); err != nil {
+	if err := exportMetadataTables(ctx, tx, write, emailMetadataTables); err != nil {
 		return err
 	}
 	if layout.schemaVersion >= 13 {
@@ -512,11 +614,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 		}
 	}
 	if layout.schemaVersion >= 25 {
-		if err := exportPhotoMetadata(ctx, tx, write); err != nil {
+		if err := exportMetadataTables(ctx, tx, write, photoMetadataTables); err != nil {
 			return err
 		}
 	}
-	return exportDerivativePurgeSuppressions(ctx, tx, write)
+	return derivativePurgeSuppressionMetadata.export(ctx, tx, write)
 }
 
 type metadataWrite func(any) error
@@ -708,22 +810,17 @@ func exportVisualPreviews(ctx context.Context, tx metadataQuerier, write metadat
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("exporting visual preview generations: %w", err)
 	}
-	heads, err := tx.QueryContext(ctx, `SELECT content_version_id,generation_id,published_at
-		FROM visual_preview_heads ORDER BY content_version_id`)
-	if err != nil {
-		return fmt.Errorf("exporting visual preview heads: %w", err)
+	return visualPreviewHeadMetadata.export(ctx, tx, write)
+}
+
+func validateVisualPreviewHeadRecord(v metadataVisualPreviewHead) error {
+	if err := validateUUIDv4(v.ContentVersionID); err != nil {
+		return fmt.Errorf("invalid visual preview head content version: %w", err)
 	}
-	defer func() { _ = heads.Close() }()
-	for heads.Next() {
-		record := metadataVisualPreviewHead{Type: metadataVisualPreviewHeadType}
-		if err := heads.Scan(&record.ContentVersionID, &record.GenerationID, &record.PublishedAt); err != nil {
-			return fmt.Errorf("scanning visual preview head: %w", err)
-		}
-		if err := write(record); err != nil {
-			return err
-		}
+	if err := validateCatalogSHA256(v.GenerationID, "visual preview head generation ID"); err != nil {
+		return err
 	}
-	return rowsError("visual preview head", heads)
+	return validateMetadataTime("visual preview head published_at", v.PublishedAt)
 }
 
 func validateVisualPreviewGenerationRecord(record metadataVisualPreviewGeneration) error {
@@ -757,175 +854,23 @@ func validateVisualPreviewGenerationRecord(record metadataVisualPreviewGeneratio
 }
 
 func exportNodes(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT id, parent_id, name, kind, current_version_id, revision,
-		       created_at, modified_at, trashed_at, trash_parent, trash_name
-		FROM nodes ORDER BY id`)
-	if err != nil {
-		return fmt.Errorf("exporting nodes: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataNode{Type: "node"}
-		var parent, trashParent sql.NullInt64
-		var currentVersionID, trashedAt, trashName sql.NullString
-		if err := rows.Scan(&r.ID, &parent, &r.Name, &r.Kind, &currentVersionID,
-			&r.Revision, &r.CreatedAt, &r.ModifiedAt, &trashedAt, &trashParent, &trashName); err != nil {
-			return fmt.Errorf("scanning node metadata: %w", err)
-		}
-		r.ParentID, r.TrashParent = int64Ptr(parent), int64Ptr(trashParent)
-		r.CurrentVersionID = stringPtr(currentVersionID)
-		r.TrashedAt, r.TrashName = stringPtr(trashedAt), stringPtr(trashName)
-		if err := validateNodeRecord(r); err != nil {
-			return fmt.Errorf("validating node metadata for export: %w", err)
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rowsError("node", rows)
+	return nodeMetadata.export(ctx, tx, write)
 }
 
 func exportContentVersions(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT version_id, node_id, blob_hash, size, mime_type, recorded_at,
-		       node_revision, introduced_operation_id, transition_kind, source_version_id
-		FROM content_versions ORDER BY node_id, node_revision, version_id`)
-	if err != nil {
-		return fmt.Errorf("exporting content versions: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataContentVersion{Type: "content_version"}
-		var mimeType, sourceVersionID sql.NullString
-		if err := rows.Scan(&r.VersionID, &r.NodeID, &r.BlobHash, &r.Size,
-			&mimeType, &r.RecordedAt, &r.NodeRevision, &r.IntroducedOperationID,
-			&r.TransitionKind, &sourceVersionID); err != nil {
-			return fmt.Errorf("scanning content version metadata: %w", err)
-		}
-		r.MIMEType, r.SourceVersionID = stringPtr(mimeType), stringPtr(sourceVersionID)
-		if err := validateContentVersionRecord(r); err != nil {
-			return fmt.Errorf("validating content version metadata for export: %w", err)
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rowsError("content version", rows)
+	return contentVersionMetadata.export(ctx, tx, write)
 }
 
 func exportIngests(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id, started_at, source_kind, source_desc FROM ingests ORDER BY id`)
-	if err != nil {
-		return fmt.Errorf("exporting ingests: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataIngest{Type: metadataIngestType}
-		if err := rows.Scan(&r.ID, &r.StartedAt, &r.SourceKind, &r.SourceDesc); err != nil {
-			return fmt.Errorf("scanning ingest metadata: %w", err)
-		}
-		if err := validateIngestRecord(r); err != nil {
-			return fmt.Errorf("validating ingest metadata for export: %w", err)
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rowsError(metadataIngestType, rows)
+	return ingestMetadata.export(ctx, tx, write)
 }
 
 func exportProvenance(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT identity, node_id, ingest_id, original_path, original_mtime, supersedes
-		FROM provenance ORDER BY identity`)
-	if err != nil {
-		return fmt.Errorf("exporting provenance: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataProvenance{Type: metadataProvenanceType}
-		var mtime, supersedes sql.NullString
-		if err := rows.Scan(&r.Identity, &r.NodeID, &r.IngestID, &r.OriginalPath, &mtime, &supersedes); err != nil {
-			return fmt.Errorf("scanning provenance metadata: %w", err)
-		}
-		r.OriginalMTime = stringPtr(mtime)
-		r.Supersedes = stringPtr(supersedes)
-		if err := validateProvenanceRecord(r); err != nil {
-			return fmt.Errorf("validating provenance metadata for export: %w", err)
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rowsError(metadataProvenanceType, rows)
+	return provenanceMetadata.export(ctx, tx, write)
 }
 
-func exportWatchSources(
-	ctx context.Context, tx metadataQuerier, write metadataWrite,
-) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT watch_name, source_ref, node_id, blob_hash, size
-		FROM watch_sources ORDER BY watch_name, source_ref`)
-	if err != nil {
-		return fmt.Errorf("exporting watched sources: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataWatchSource{Type: metadataWatchSourceType}
-		if err := rows.Scan(&r.WatchName, &r.SourceRef, &r.NodeID, &r.BlobHash, &r.Size); err != nil {
-			return fmt.Errorf("scanning watched source metadata: %w", err)
-		}
-		if err := validateWatchSourceRecord(r); err != nil {
-			return fmt.Errorf("validating watched source metadata for export: %w", err)
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rowsError(metadataWatchSourceType, rows)
-}
-
-func exportTags(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id, name, revision FROM tags ORDER BY id`)
-	if err != nil {
-		return fmt.Errorf("exporting tags: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataTag{Type: "tag"}
-		if err := rows.Scan(&r.ID, &r.Name, &r.Revision); err != nil {
-			return fmt.Errorf("scanning tag metadata: %w", err)
-		}
-		if err := validateTagRecord(r); err != nil {
-			return fmt.Errorf("validating tag metadata for export: %w", err)
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rowsError("tag", rows)
-}
-
-func exportNodeTags(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `SELECT node_id, tag_id FROM node_tags ORDER BY node_id, tag_id`)
-	if err != nil {
-		return fmt.Errorf("exporting node tags: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		r := metadataNodeTag{Type: "node_tag"}
-		if err := rows.Scan(&r.NodeID, &r.TagID); err != nil {
-			return fmt.Errorf("scanning node tag metadata: %w", err)
-		}
-		if err := validateNodeTagRecord(r); err != nil {
-			return fmt.Errorf("validating node tag metadata for export: %w", err)
-		}
-		if err := write(r); err != nil {
-			return err
-		}
-	}
-	return rowsError("node tag", rows)
+func exportWatchSources(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
+	return watchSourceMetadata.export(ctx, tx, write)
 }
 
 func exportExtractedText(
@@ -1042,142 +987,35 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 	return nil
 }
 
+// metadataPristineStateTables lists the tables a restore target must have empty
+// that no backup record restores into: rebuildable projections, process state,
+// the side tables custom inserts write, and the media tables until #733. A
+// record's own table comes from its registration instead.
+var metadataPristineStateTables = []string{
+	"export_jobs", "document_event_state", "document_event_generations", "document_event_heads",
+	"document_events", "document_event_actors", "document_event_primaries", "document_event_builds",
+	"document_event_dirty", "document_event_attempts", "text_extraction_queue", "text_searchable_versions",
+	"vector_index_generations", "vector_index_heads", "vector_index_build_jobs", "vector_index_reader_leases",
+	"vector_index_unavailable_coverage", "rendition_blob_staging", "derivative_blob_purge_pending",
+	"derivative_pack_purge_pending", "document_people_generations", "document_people_heads",
+	"document_people_builds", "document_people", "package_preflights", "media_sources",
+	"media_source_versions", "media_source_heads", "media_occurrences", "media_visibility_fences",
+	"media_input_artifacts", "media_operations", "media_acquisitions", "media_protected_refs",
+	"audit_baselines", "email_document_relations", "mailbox_chunks", "page_frames", "content_fts",
+	"export_plans",
+}
+
+var pristineMetadataTables = pristineMetadataTableSum(metadataCodecs)
+
 func requirePristineMetadataTarget(ctx context.Context, tx *sql.Tx) error {
 	var nodes, other, packs int64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT
 		  (SELECT COUNT(*) FROM nodes),
-		  (SELECT COUNT(*) FROM blobs) + (SELECT COUNT(*) FROM content_versions)
-		    + (SELECT COUNT(*) FROM saved_queries)
-		    + (SELECT COUNT(*) FROM saved_query_runs)
-		    + (SELECT COUNT(*) FROM term_report_history)
-		    + (SELECT COUNT(*) FROM blob_checksums)
-		    + (SELECT COUNT(*) FROM email_generations)
-		    + (SELECT COUNT(*) FROM email_part_artifacts)
-		    + (SELECT COUNT(*) FROM email_attachments)
-		    + (SELECT COUNT(*) FROM email_heads)
-		    + (SELECT COUNT(*) FROM email_body_results)
-		    + (SELECT COUNT(*) FROM email_document_publications)
-		    + (SELECT COUNT(*) FROM email_document_relations)
-		    + (SELECT COUNT(*) FROM photo_assets)
-		    + (SELECT COUNT(*) FROM photo_files)
-		    + (SELECT COUNT(*) FROM photo_library_settings)
-		    + (SELECT COUNT(*) FROM photo_change_receipts)
-		    + (SELECT COUNT(*) FROM mailbox_containers)
-		    + (SELECT COUNT(*) FROM mailbox_chunks)
-		    + (SELECT COUNT(*) FROM mailbox_archives)
-		    + (SELECT COUNT(*) FROM mailbox_transfer_receipts)
-		    + (SELECT COUNT(*) FROM mailbox_transfer_heads)
-		    + (SELECT COUNT(*) FROM mailbox_jobs)
-		    + (SELECT COUNT(*) FROM mailbox_occurrences)
-		    + (SELECT COUNT(*) FROM source_metadata_generations)
-		    + (SELECT COUNT(*) FROM source_metadata_heads)
-		    + (SELECT COUNT(*) FROM visual_preview_generations)
-		    + (SELECT COUNT(*) FROM visual_preview_heads)
-		    + (SELECT COUNT(*) FROM page_documents)
-		    + (SELECT COUNT(*) FROM page_frames)
-		    + (SELECT COUNT(*) FROM page_recipes)
-		    + (SELECT COUNT(*) FROM page_images)
-		    + (SELECT COUNT(*) FROM page_render_jobs)
-		    + (SELECT COUNT(*) FROM export_sources)
-		    + (SELECT COUNT(*) FROM export_plans)
-		    + (SELECT COUNT(*) FROM export_jobs)
-		    + (SELECT COUNT(*) FROM collection_snapshots)
-		    + (SELECT COUNT(*) FROM collection_snapshot_members)
-		    + (SELECT COUNT(*) FROM collection_snapshot_representations)
-		    + (SELECT COUNT(*) FROM packages)
-		    + (SELECT COUNT(*) FROM package_volumes)
-		    + (SELECT COUNT(*) FROM package_records)
-		    + (SELECT COUNT(*) FROM package_labels)
-		    + (SELECT COUNT(*) FROM package_import_jobs)
-		    + (SELECT COUNT(*) FROM package_import_receipts)
-		    + (SELECT COUNT(*) FROM package_import_heads)
-		    + (SELECT COUNT(*) FROM bates_namespaces)
-		    + (SELECT COUNT(*) FROM bates_namespace_cursors)
-		    + (SELECT COUNT(*) FROM bates_allocations)
-		    + (SELECT COUNT(*) FROM bates_page_labels)
-		    + (SELECT COUNT(*) FROM bates_artifacts)
-		    + (SELECT COUNT(*) FROM bates_artifact_pages)
-		    + (SELECT COUNT(*) FROM ingests) + (SELECT COUNT(*) FROM provenance)
-		    + (SELECT COUNT(*) FROM provenance_version_bindings)
-		    + (SELECT COUNT(*) FROM document_event_state)
-		    + (SELECT COUNT(*) FROM document_event_generations)
-		    + (SELECT COUNT(*) FROM document_event_heads)
-		    + (SELECT COUNT(*) FROM document_events)
-		    + (SELECT COUNT(*) FROM document_event_actors)
-		    + (SELECT COUNT(*) FROM document_event_primaries)
-		    + (SELECT COUNT(*) FROM document_event_builds)
-		    + (SELECT COUNT(*) FROM document_event_dirty)
-		    + (SELECT COUNT(*) FROM document_event_attempts)
-		    + (SELECT COUNT(*) FROM collection_labels)
-		    + (SELECT COUNT(*) FROM watch_sources)
-		    + (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM node_tags)
-		    + (SELECT COUNT(*) FROM batch_tag_receipts)
-		    + (SELECT COUNT(*) FROM extracted_text)
-		    + (SELECT COUNT(*) FROM text_extraction_queue)
-		    + (SELECT COUNT(*) FROM text_searchable_versions)
-		    + (SELECT COUNT(*) FROM content_fts)
-		    + (SELECT COUNT(*) FROM audit_records)
-		    + (SELECT COUNT(*) FROM audit_authority)
-		    + (SELECT COUNT(*) FROM audit_scopes)
-		    + (SELECT COUNT(*) FROM audit_baselines)
-		    + (SELECT COUNT(*) FROM audit_memberships)
-		    + (SELECT COUNT(*) FROM processing_profiles)
-		    + (SELECT COUNT(*) FROM rendition_builds)
-		    + (SELECT COUNT(*) FROM rendition_artifacts)
-		    + (SELECT COUNT(*) FROM rendition_units)
-		    + (SELECT COUNT(*) FROM rendition_lexical_segments)
-		    + (SELECT COUNT(*) FROM rendition_attachments)
-		    + (SELECT COUNT(*) FROM rendition_heads)
-		    + (SELECT COUNT(*) FROM embedding_vector_spaces)
-		    + (SELECT COUNT(*) FROM embedding_input_generations)
-		    + (SELECT COUNT(*) FROM embedding_generation_inputs)
-		    + (SELECT COUNT(*) FROM embedding_vector_sets)
-		    + (SELECT COUNT(*) FROM embedding_vector_rows)
-		    + (SELECT COUNT(*) FROM embedding_sets)
-		    + (SELECT COUNT(*) FROM embedding_heads)
-		    + (SELECT COUNT(*) FROM embedding_failures)
-		    + (SELECT COUNT(*) FROM vector_index_generations)
-		    + (SELECT COUNT(*) FROM vector_index_heads)
-		    + (SELECT COUNT(*) FROM vector_index_build_jobs)
-		    + (SELECT COUNT(*) FROM vector_index_reader_leases)
-		    + (SELECT COUNT(*) FROM vector_index_unavailable_coverage)
-		    + (SELECT COUNT(*) FROM rendition_jobs)
-		    + (SELECT COUNT(*) FROM rendition_job_waiters)
-		    + (SELECT COUNT(*) FROM rendition_blob_staging)
-		    + (SELECT COUNT(*) FROM current_rendition_roots)
-		    + (SELECT COUNT(*) FROM derivative_purge_suppressions)
-		    + (SELECT COUNT(*) FROM derivative_blob_purge_pending)
-		    + (SELECT COUNT(*) FROM derivative_pack_purge_pending)
-		    + (SELECT COUNT(*) FROM processing_consent_grants)
-		    + (SELECT COUNT(*) FROM processing_consent_revocations)
-		    + (SELECT COUNT(*) FROM media_sources)
-		    + (SELECT COUNT(*) FROM media_source_versions)
-		    + (SELECT COUNT(*) FROM media_source_heads)
-		    + (SELECT COUNT(*) FROM media_occurrences)
-		    + (SELECT COUNT(*) FROM media_visibility_fences)
-		    + (SELECT COUNT(*) FROM media_input_artifacts)
-		    + (SELECT COUNT(*) FROM media_operations)
-		    + (SELECT COUNT(*) FROM media_acquisitions)
-		    + (SELECT COUNT(*) FROM media_protected_refs)
-		    + (SELECT COUNT(*) FROM persons)
-		    + (SELECT COUNT(*) FROM person_identities)
-		    + (SELECT COUNT(*) FROM person_external_identities)
-		    + (SELECT COUNT(*) FROM person_external_uid_aliases)
-		    + (SELECT COUNT(*) FROM person_aliases)
-		    + (SELECT COUNT(*) FROM person_merges)
-		    + (SELECT COUNT(*) FROM person_splits)
-		    + (SELECT COUNT(*) FROM custodian_assignments)
-		    + (SELECT COUNT(*) FROM person_match_candidates)
-		    + (SELECT COUNT(*) FROM person_document_assertions)
-		    + (SELECT COUNT(*) FROM document_people_generations)
-		    + (SELECT COUNT(*) FROM document_people_heads)
-		    + (SELECT COUNT(*) FROM document_people_builds)
-		    + (SELECT COUNT(*) FROM document_people)
+		  `+pristineMetadataTables+`
 		    + ABS((SELECT COUNT(*) FROM document_people_state) - 1)
 		    + (SELECT COUNT(*) FROM document_people_state
 		       WHERE singleton != 1 OR binding_epoch != 1 OR publication_epoch != 1 OR resolver_fingerprint != '')
-		    + (SELECT COUNT(*) FROM package_preflights)
 		    + (SELECT COUNT(*) FROM processing_incarnations
 		       WHERE incarnation_id != (SELECT incarnation_id
 		         FROM current_processing_incarnation WHERE singleton=1)),
@@ -1275,312 +1113,13 @@ func (s *Store) importMetadataRecord(
 	if err := requireMetadataFields(raw, required, metadataNullableFields[kind]); err != nil {
 		return err
 	}
-	if strings.HasPrefix(kind, "photo_") {
-		return importPhotoMetadataRecord(ctx, tx, kind, raw)
-	}
-	if strings.HasPrefix(kind, "email_") {
-		return importEmailMetadataRecord(ctx, tx, kind, raw)
-	}
-	if strings.HasPrefix(kind, "mailbox_") {
-		return importMailboxMetadataRecord(ctx, tx, kind, raw)
-	}
-	if isProcessingMetadataType(kind) {
-		return s.importProcessingMetadataRecord(ctx, tx, kind, raw)
-	}
-	if isEmbeddingMetadataType(kind) {
-		return importEmbeddingMetadataRecord(ctx, tx, kind, raw)
+	if codec, ok := metadataCodecs[kind]; ok {
+		return codec.importRecord(ctx, tx, raw)
 	}
 	if isMediaMetadataType(kind) {
 		return s.importMediaMetadataRecord(ctx, tx, kind, raw)
 	}
-	if isPersonMetadataType(kind) {
-		return importPersonMetadataRecord(ctx, tx, kind, raw)
-	}
-	switch kind {
-	case "blob":
-		var v metadataBlob
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validateBlobRecord(v); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO blobs(hash,size,created_at) VALUES(?,?,?)`,
-			v.Hash, v.Size, v.CreatedAt,
-		); err != nil {
-			return err
-		}
-		generation, err := blobLocationGeneration()
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO blob_locations(
-				blob_hash, store_id, generation, kind, encoding, stored_size, pack_eligible
-			)
-			SELECT ?, store_id, ?, ?, ?, ?, CASE WHEN ? <= ? THEN 1 ELSE 0 END
-			FROM blob_stores WHERE role = ?`,
-			v.Hash, generation, blobLocationKindLoose, looseEncodingRaw, v.Size,
-			v.Size, maxPackEligibleBytes, blobStoreRolePrimary,
-		)
-		return err
-	case metadataBlobChecksumType:
-		var v metadataBlobChecksum
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		record := BlobChecksumRecord{
-			BlobSHA256: v.BlobSHA256, MD5: v.MD5,
-		}
-		if err := validateBlobChecksumRecord(record); err != nil {
-			return err
-		}
-		return ensureBlobChecksumTx(tx, record)
-	case metadataSourceMetadataGenerationType:
-		var v metadataSourceMetadataGeneration
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validateSourceMetadataGenerationRecord(v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_generations(
-			generation_id,source_sha256,contract_version,extractor_fingerprint,canonical_json,checksum,created_at
-		) VALUES(?,?,?,?,?,?,?)`, v.GenerationID, v.SourceSHA256, v.ContractVersion,
-			v.ExtractorFingerprint, v.CanonicalJSON, v.Checksum, v.CreatedAt)
-		return err
-	case metadataSourceMetadataHeadType:
-		var v metadataSourceMetadataHead
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO source_metadata_heads(source_sha256,generation_id,published_at)
-			VALUES(?,?,?)`, v.SourceSHA256, v.GenerationID, v.PublishedAt)
-		return err
-	case metadataVisualPreviewGenerationType:
-		var v metadataVisualPreviewGeneration
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validateVisualPreviewGenerationRecord(v); err != nil {
-			return err
-		}
-		preview, _, err := document.DecodeVisualPreviewV1(v.CanonicalResult)
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO visual_preview_generations(
-			generation_id,vault_uid,content_version_id,source_sha256,contract_version,
-			recipe_fingerprint,canonical_result,checksum,state,output_blob_hash,output_size,
-			output_media_type,output_width,output_height,failure_code,failure_detail,created_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.GenerationID, v.VaultID,
-			v.ContentVersionID, v.SourceSHA256, v.ContractVersion, v.RecipeFingerprint,
-			v.CanonicalResult, v.Checksum, preview.State, previewOutputHash(preview),
-			previewOutputSize(preview), previewOutputMediaType(preview), previewOutputWidth(preview),
-			previewOutputHeight(preview), previewFailureCode(preview), previewFailureDetail(preview),
-			v.CreatedAt)
-		return err
-	case metadataPageDocumentType, metadataPageRecipeType, metadataPageImageType, metadataPageJobType:
-		return importPageMetadata(ctx, tx, kind, raw)
-	case metadataExportType:
-		return importBundleMetadata(ctx, tx, raw)
-	case metadataCollectionSnapshotType, metadataCollectionSnapshotMemberType,
-		metadataCollectionSnapshotRepresentationType, metadataPackageType, metadataPackageVolumeType:
-		return importPackageMetadata(ctx, tx, kind, raw)
-	case metadataPackageRecordType, metadataPackageLabelType, metadataPackageImportReceiptType,
-		metadataPackageImportHeadType, metadataPackageImportJobType:
-		return importPackageImportMetadata(ctx, tx, kind, raw)
-	case metadataBatesNamespace, metadataBatesNamespaceCursor, metadataBatesAllocation, metadataBatesPageLabel,
-		metadataBatesArtifact, metadataBatesArtifactPage:
-		return importBatesMetadata(ctx, tx, kind, raw)
-	case metadataVisualPreviewHeadType:
-		var v metadataVisualPreviewHead
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validateUUIDv4(v.ContentVersionID); err != nil {
-			return fmt.Errorf("invalid visual preview head content version: %w", err)
-		}
-		if err := validateCatalogSHA256(v.GenerationID, "visual preview head generation ID"); err != nil {
-			return err
-		}
-		if err := validateMetadataTime("visual preview head published_at", v.PublishedAt); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO visual_preview_heads(
-			content_version_id,generation_id,published_at) VALUES(?,?,?)`,
-			v.ContentVersionID, v.GenerationID, v.PublishedAt)
-		return err
-	case "node":
-		var v metadataNode
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validateNodeRecord(v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO nodes(id,parent_id,name,kind,current_version_id,revision,created_at,modified_at,trashed_at,trash_parent,trash_name) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			v.ID, v.ParentID, v.Name, v.Kind, v.CurrentVersionID, v.Revision, v.CreatedAt, v.ModifiedAt, v.TrashedAt, v.TrashParent, v.TrashName)
-		return err
-	case "content_version":
-		var v metadataContentVersion
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validateContentVersionRecord(v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO content_versions(
-			version_id,node_id,blob_hash,size,mime_type,recorded_at,node_revision,
-			introduced_operation_id,transition_kind,source_version_id
-		) VALUES(?,?,?,?,?,?,?,?,?,?)`, v.VersionID, v.NodeID, v.BlobHash, v.Size,
-			v.MIMEType, v.RecordedAt, v.NodeRevision, v.IntroducedOperationID,
-			v.TransitionKind, v.SourceVersionID)
-		if err != nil {
-			return err
-		}
-		return nil
-	case metadataIngestType:
-		var v metadataIngest
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validateIngestRecord(v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO ingests(id,started_at,source_kind,source_desc) VALUES(?,?,?,?)`, v.ID, v.StartedAt, v.SourceKind, v.SourceDesc)
-		return err
-	case metadataCollectionLabelType:
-		var v metadataCollectionLabel
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		return importCollectionLabel(ctx, tx, v)
-	case metadataProvenanceType:
-		var v metadataProvenance
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validateProvenanceRecord(v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO provenance(
-			identity,node_id,ingest_id,original_path,original_mtime,supersedes
-		) VALUES(?,?,?,?,?,?)`, v.Identity, v.NodeID, v.IngestID, v.OriginalPath,
-			v.OriginalMTime, v.Supersedes)
-		return err
-	case metadataProvenanceVersionBindingType:
-		var v metadataProvenanceVersionBinding
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		return importProvenanceVersionBinding(ctx, tx, v)
-	case metadataWatchSourceType:
-		var v metadataWatchSource
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validateWatchSourceRecord(v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO watch_sources(
-			watch_name,source_ref,node_id,blob_hash,size
-		) VALUES(?,?,?,?,?)`, v.WatchName, v.SourceRef, v.NodeID, v.BlobHash, v.Size)
-		return err
-	case "tag":
-		var v metadataTag
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validateTagRecord(v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx,
-			`INSERT INTO tags(id,name,revision) VALUES(?,?,?)`, v.ID, v.Name, v.Revision)
-		return err
-	case metadataSavedQueryType:
-		var v metadataSavedQuery
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		return importSavedQueryMetadata(ctx, tx, v)
-	case metadataSavedQueryRunType:
-		var v metadataSavedQueryRun
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		return importSavedQueryRunMetadata(ctx, tx, v)
-	case metadataTermReportHistoryType:
-		var v metadataTermReportHistory
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		return importTermReportHistory(ctx, tx, v)
-	case "node_tag":
-		var v metadataNodeTag
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validateNodeTagRecord(v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO node_tags(node_id,tag_id) VALUES(?,?)`, v.NodeID, v.TagID)
-		return err
-	case metadataBatchTagReceiptType:
-		var v metadataBatchTagReceipt
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		return importBatchTagReceipt(ctx, tx, v)
-	case "extracted_text":
-		var v metadataExtractedText
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validateExtractedTextRecord(v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO extracted_text(blob_hash,extractor,extractor_version,status,error,attempts,text,extracted_at) VALUES(?,?,?,?,?,?,?,?)`,
-			v.BlobHash, v.Extractor, v.ExtractorVersion, v.Status, v.Error, v.Attempts, v.Text, v.ExtractedAt)
-		if err != nil {
-			return err
-		}
-		var text any
-		if v.Status == ExtractionOK && v.Text != nil {
-			text = *v.Text
-		}
-		if err := replaceContentFTSTx(ctx, tx, v.BlobHash, v.Extractor, text); err != nil {
-			return err
-		}
-		return nil
-	case metadataAuditAuthorityType:
-		var v metadataAuditAuthority
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		return importAuditAuthority(ctx, tx, v)
-	case metadataAuditScopeType:
-		var v metadataAuditScope
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		return importAuditScope(ctx, tx, v)
-	case metadataAuditMembershipType:
-		var v metadataAuditMembership
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		return importAuditMembership(ctx, tx, v)
-	case metadataAuditRecordType:
-		var v metadataAuditRecord
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		return importAuditRecord(ctx, tx, v)
-	default:
-		return fmt.Errorf("unknown record type %q", kind)
-	}
+	return fmt.Errorf("unknown record type %q", kind)
 }
 
 const (
@@ -1618,141 +1157,6 @@ const (
 )
 
 var metadataHeaderFields = []string{metadataTypeField, "format", "version", auditVaultIDField, "node_sequence"}
-
-var metadataRequiredFields = map[string][]string{
-	"mailbox_job":                                {metadataTypeField, "job"},
-	"mailbox_occurrence":                         {metadataTypeField, "occurrence"},
-	"mailbox_container":                          {metadataTypeField, "container"},
-	"mailbox_archive":                            {metadataTypeField, "archive"},
-	"mailbox_transfer_receipt":                   {metadataTypeField, "receipt"},
-	"mailbox_transfer_head":                      {metadataTypeField, "archive_id", "reference", "receipt_id"},
-	"email_body_result":                          {"type", "email_attachment_id", "body_recipe_fingerprint", "state", "part_path", "rendition_attachment_id", "reason"},
-	"email_head":                                 {"type", "content_version_id", metadataAttachmentIDField, "published_at"},
-	"email_attachment":                           {"type", metadataAttachmentIDField, "content_version_id", "generation_id", "attached_at"},
-	"email_part_artifact":                        {"type", "generation_id", "part_path", "role", "blob_hash", "size"},
-	"email_generation":                           {"type", "generation_id", "source_sha256", "source_size", "recipe_fingerprint", "canonical_json", "checksum", "created_at"},
-	"email_document_publication":                 {"type", "request", "receipt"},
-	metadataExportType:                           {metadataTypeField, "kind", "id", "ordinal", "retain_until", "canonical_json", "checksum"},
-	metadataBatesNamespace:                       {metadataTypeField, "namespace_id", "prefix", "suffix", "padding", metadataCreatedAtField},
-	metadataBatesNamespaceCursor:                 {metadataTypeField, "namespace_id", "next_sequence"},
-	metadataBatesAllocation:                      {metadataTypeField, "allocation_id", auditOperationIDField, "namespace_id", "snapshot_id", "request_sha256", "recipe_sha256", "start_sequence", "end_sequence", auditStateField, metadataCreatedAtField, "committed_at"},
-	metadataBatesPageLabel:                       {metadataTypeField, "allocation_id", "ordinal", "namespace_id", "sequence", "occurrence_id", "source_page", "output_page", "label"},
-	metadataBatesArtifact:                        {metadataTypeField, "artifact_id", "allocation_id", "blob_sha256", metadataSizeField, "media_type", "page_count", "recipe_json", "manifest_sha256", auditStateField, metadataCreatedAtField},
-	metadataBatesArtifactPage:                    {metadataTypeField, "artifact_id", "ordinal", "occurrence_id", "source_blob_sha256", "source_page", "output_page", "label"},
-	metadataPageDocumentType:                     {metadataTypeField, "canonical_json", metadataPageChecksumField},
-	metadataPageRecipeType:                       {metadataTypeField, "canonical_json", metadataPageChecksumField},
-	metadataPageImageType:                        {metadataTypeField, "canonical_json", metadataPageChecksumField},
-	metadataPageJobType:                          {metadataTypeField, "canonical_json", metadataPageChecksumField},
-	"blob":                                       {metadataTypeField, "hash", metadataSizeField, metadataCreatedAtField},
-	metadataBlobChecksumType:                     {metadataTypeField, "blob_sha256", "md5"},
-	metadataSourceMetadataGenerationType:         {metadataTypeField, metadataGenerationIDField, columnSourceSHA256, "contract_version", "extractor_fingerprint", "canonical_json", "checksum", metadataCreatedAtField},
-	metadataSourceMetadataHeadType:               {metadataTypeField, columnSourceSHA256, metadataGenerationIDField, "published_at"},
-	metadataVisualPreviewGenerationType:          {metadataTypeField, metadataGenerationIDField, auditVaultIDField, metadataContentVersionIDField, columnSourceSHA256, "contract_version", "recipe_fingerprint", "canonical_result", "checksum", metadataCreatedAtField},
-	metadataVisualPreviewHeadType:                {metadataTypeField, metadataContentVersionIDField, metadataGenerationIDField, "published_at"},
-	metadataPhotoAssetType:                       {metadataTypeField, "asset_id", "kind", metadataRevisionField, "excluded_at", "display_file_id", "display_override_file_id", metadataCreatedAtField, metadataUpdatedAtField},
-	metadataPhotoFileType:                        {metadataTypeField, "file_id", "asset_id", metadataNodeIDField, "role", "sidecar_of_file_id", metadataCreatedAtField},
-	metadataPhotoSettingsType:                    {metadataTypeField, "preference", metadataRevisionField, metadataUpdatedAtField},
-	metadataPhotoReceiptType:                     {metadataTypeField, "receipt_id", "operation", "asset_id", "settings_key", "before_revision", "after_revision", "before_json", "after_json", metadataCreatedAtField},
-	metadataCollectionSnapshotType:               {metadataTypeField, "snapshot_id", "vault_id", metadataCanonicalJSONField, metadataPageChecksumField},
-	metadataCollectionSnapshotMemberType:         {metadataTypeField, "snapshot_id", "ordinal", metadataCanonicalJSONField, metadataPageChecksumField},
-	metadataCollectionSnapshotRepresentationType: {metadataTypeField, "snapshot_id", "occurrence_id", "role", "ordinal", metadataCanonicalJSONField, metadataPageChecksumField},
-	metadataPackageType:                          {metadataTypeField, "package_id", metadataCanonicalJSONField, metadataPageChecksumField},
-	metadataPackageVolumeType:                    {metadataTypeField, "package_id", "ordinal", metadataCanonicalJSONField, metadataPageChecksumField},
-	metadataPackageRecordType:                    {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
-	metadataPackageLabelType:                     {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
-	metadataPackageImportReceiptType:             {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
-	metadataPackageImportHeadType:                {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
-	metadataPackageImportJobType:                 {metadataTypeField, metadataCanonicalJSONField, metadataPageChecksumField},
-	metadataPersonType:                           personMetadataRequiredFields[metadataPersonType],
-	metadataPersonIdentityType:                   personMetadataRequiredFields[metadataPersonIdentityType],
-	metadataPersonExternalType:                   personMetadataRequiredFields[metadataPersonExternalType],
-	metadataPersonExternalAliasType:              personMetadataRequiredFields[metadataPersonExternalAliasType],
-	metadataPersonAliasType:                      personMetadataRequiredFields[metadataPersonAliasType],
-	metadataPersonMergeType:                      personMetadataRequiredFields[metadataPersonMergeType],
-	metadataPersonSplitType:                      personMetadataRequiredFields[metadataPersonSplitType],
-	metadataCustodianAssignmentType:              personMetadataRequiredFields[metadataCustodianAssignmentType],
-	metadataPersonAssertionType:                  personMetadataRequiredFields[metadataPersonAssertionType],
-	metadataPersonCandidateType:                  personMetadataRequiredFields[metadataPersonCandidateType],
-	"node":                                       {metadataTypeField, "id", "parent_id", "name", "kind", "current_version_id", metadataRevisionField, metadataCreatedAtField, "modified_at", "trashed_at", "trash_parent", "trash_name"},
-	"content_version":                            {metadataTypeField, "version_id", metadataNodeIDField, columnBlobHash, metadataSizeField, "mime_type", auditRecordedAtField, "node_revision", "introduced_operation_id", "transition_kind", auditSourceVersionIDField},
-	metadataIngestType:                           {metadataTypeField, metadataIngestIDField, "started_at", "source_kind", "source_desc"},
-	metadataCollectionLabelType:                  {metadataTypeField, metadataIngestIDField, "label", metadataRevisionField, metadataUpdatedAtField},
-	metadataProvenanceType:                       {metadataTypeField, "identity", metadataNodeIDField, metadataIngestIDField, "original_path", "original_mtime", "supersedes"},
-	metadataProvenanceVersionBindingType:         {metadataTypeField, "provenance_identity", metadataContentVersionIDField, "observed_at", "basis_ref"},
-	metadataWatchSourceType:                      {metadataTypeField, "watch_name", "source_ref", metadataNodeIDField, columnBlobHash, metadataSizeField},
-	"tag":                                        {metadataTypeField, "tag_id", "name", metadataRevisionField},
-	metadataSavedQueryType:                       {metadataTypeField, "saved_query_id", "name", "description", "kind", "payload", "fingerprint", metadataRevisionField, metadataCreatedAtField, metadataUpdatedAtField},
-	metadataSavedQueryRunType:                    {metadataTypeField, "run_id", "saved_query_id", "saved_query_revision", "query_fingerprint", "snapshot_id", "member_hash", "total", "total_bytes", "ran_at", "expires_at", "previous_run_id", "previous_member_hash", "previous_total", "previous_query_fingerprint"},
-	"node_tag":                                   {metadataTypeField, metadataNodeIDField, "tag_id"},
-	metadataBatchTagReceiptType:                  {metadataTypeField, auditOperationIDField, "request_digest", "receipt_json"},
-	"extracted_text":                             {metadataTypeField, columnBlobHash, "extractor", "extractor_version", "status", "error", "attempts", "text", "extracted_at"},
-	metadataAuditAuthorityType:                   {metadataTypeField, "lineage_id", "operation_sequence_high_water", "allocation_genesis_digest", "allocation_entry_count", "allocation_head"},
-	metadataAuditScopeType:                       {metadataTypeField, auditScopeIDField, "target_node_id", "enable_operation_id", "entry_count", "chain_head"},
-	metadataAuditMembershipType:                  {metadataTypeField, auditScopeIDField, metadataNodeIDField, "baseline_digest"},
-	metadataAuditRecordType:                      {metadataTypeField, "digest", "record"},
-	metadataProcessingIncarnationType:            processingMetadataRequiredFields[metadataProcessingIncarnationType],
-	metadataProcessingConsentGrantType:           processingMetadataRequiredFields[metadataProcessingConsentGrantType],
-	metadataProcessingConsentRevokeType:          processingMetadataRequiredFields[metadataProcessingConsentRevokeType],
-	metadataProcessingProfileType:                processingMetadataRequiredFields[metadataProcessingProfileType],
-	metadataRenditionBuildType:                   processingMetadataRequiredFields[metadataRenditionBuildType],
-	metadataRenditionArtifactType:                processingMetadataRequiredFields[metadataRenditionArtifactType],
-	metadataRenditionUnitType:                    processingMetadataRequiredFields[metadataRenditionUnitType],
-	metadataRenditionSegmentType:                 processingMetadataRequiredFields[metadataRenditionSegmentType],
-	metadataRenditionAttachType:                  processingMetadataRequiredFields[metadataRenditionAttachType],
-	metadataRenditionHeadType:                    processingMetadataRequiredFields[metadataRenditionHeadType],
-	metadataLexicalGenerationType:                processingMetadataRequiredFields[metadataLexicalGenerationType],
-	metadataCurrentRenditionRootType:             processingMetadataRequiredFields[metadataCurrentRenditionRootType],
-	metadataDerivativePurgeSuppressionType:       processingMetadataRequiredFields[metadataDerivativePurgeSuppressionType],
-	metadataRenditionJobType:                     processingMetadataRequiredFields[metadataRenditionJobType],
-	metadataRenditionJobWaiterType:               processingMetadataRequiredFields[metadataRenditionJobWaiterType],
-	metadataEmbeddingVectorSpaceType:             embeddingMetadataRequiredFields[metadataEmbeddingVectorSpaceType],
-	metadataEmbeddingGenerationType:              embeddingMetadataRequiredFields[metadataEmbeddingGenerationType],
-	metadataEmbeddingInputType:                   embeddingMetadataRequiredFields[metadataEmbeddingInputType],
-	metadataEmbeddingVectorSetType:               embeddingMetadataRequiredFields[metadataEmbeddingVectorSetType],
-	metadataEmbeddingVectorRowType:               embeddingMetadataRequiredFields[metadataEmbeddingVectorRowType],
-	metadataEmbeddingSetType:                     embeddingMetadataRequiredFields[metadataEmbeddingSetType],
-	metadataEmbeddingHeadType:                    embeddingMetadataRequiredFields[metadataEmbeddingHeadType],
-	metadataEmbeddingFailureType:                 embeddingMetadataRequiredFields[metadataEmbeddingFailureType],
-	metadataTermReportHistoryType:                {metadataTypeField, "id", "parent_id", "observed_at", "request_json", "summary_json"},
-}
-
-var metadataNullableFields = map[string]map[string]bool{
-	"email_body_result": {"part_path": true, "rendition_attachment_id": true, "reason": true},
-	"node": {
-		"parent_id": true, "current_version_id": true, "trashed_at": true,
-		"trash_parent": true, "trash_name": true,
-	},
-	"content_version":           {"mime_type": true, auditSourceVersionIDField: true},
-	metadataProvenanceType:      {"original_mtime": true, "supersedes": true},
-	metadataCollectionLabelType: {"label": true},
-	metadataPhotoAssetType:      {"excluded_at": true, "display_file_id": true, "display_override_file_id": true},
-	metadataPhotoFileType:       {"sidecar_of_file_id": true},
-	metadataPhotoSettingsType:   {"preference": true},
-	metadataPhotoReceiptType:    {"asset_id": true, "settings_key": true},
-	metadataSavedQueryRunType: {
-		"previous_run_id": true, "previous_member_hash": true,
-		"previous_total": true, "previous_query_fingerprint": true,
-	},
-	"extracted_text":                   {"error": true, "text": true},
-	metadataBatesAllocation:            {"committed_at": true},
-	metadataCurrentRenditionRootType:   {"released_at": true},
-	metadataEmbeddingGenerationType:    {"attachment_id": true},
-	metadataProcessingConsentGrantType: {"expires_at": true},
-	metadataPersonExternalType:         personMetadataNullableFields[metadataPersonExternalType],
-	metadataPersonAliasType:            personMetadataNullableFields[metadataPersonAliasType],
-	metadataCustodianAssignmentType:    personMetadataNullableFields[metadataCustodianAssignmentType],
-	metadataPersonCandidateType:        personMetadataNullableFields[metadataPersonCandidateType],
-	metadataRenditionJobType: {
-		"execution_snapshot": true, "claim_owner": true, "lease_expires_at": true,
-		"provider_resume_handle": true, "selected_waiter_id": true,
-		"authorization_grant_id": true, "authorization_incarnation_id": true,
-		"authorization_revocation_fence": true, "lexical_generation_id": true,
-		"failure_code": true,
-	},
-	metadataDerivativePurgeSuppressionType: {
-		"superseded_at": true, "superseding_build_id": true,
-	},
-}
 
 func decodeMetadataRecord(raw jsontext.Value, dst any) error {
 	return json.Unmarshal(raw, dst, json.RejectUnknownMembers(true))

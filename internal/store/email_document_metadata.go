@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
 	"errors"
 	"go.kenn.io/docbank/document"
 	"reflect"
@@ -13,6 +14,21 @@ type metadataEmailDocumentPublication struct {
 	Request document.EmailDocumentPublicationRequest `json:"request"`
 	Receipt document.EmailDocumentPublicationReceipt `json:"receipt"`
 }
+
+// emailDocumentPublicationMetadata decodes through the email document codec,
+// whose byte, depth and integer budgets decodeMetadataRecord lacks.
+var emailDocumentPublicationMetadata = newMetadataTable(metadataTable[metadataEmailDocumentPublication]{
+	record: metadataEmailDocumentPublication{Type: "email_document_publication"},
+	table:  "email_document_publications",
+	decode: func(raw jsontext.Value, v *metadataEmailDocumentPublication) error {
+		return document.UnmarshalEmailDocumentJSON(raw, v)
+	},
+	validate: func(v metadataEmailDocumentPublication) error {
+		return document.ValidateEmailDocumentReceipt(v.Receipt)
+	},
+	insert: func(ctx context.Context, tx *sql.Tx, v metadataEmailDocumentPublication) error {
+		return insertEmailDocumentPublication(ctx, tx, v.Request, v.Receipt)
+	}})
 
 func exportEmailDocumentMetadata(ctx context.Context, q metadataQuerier, write metadataWrite) error {
 	// Page keys so each receipt stays bounded without loading all publications.

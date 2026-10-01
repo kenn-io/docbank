@@ -181,15 +181,29 @@ func exportPackageImportMetadata(ctx context.Context, q metadataQuerier, write m
 	return jobs.Close()
 }
 
-func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
-	var row metadataPackageImportRow
-	if err := decodeMetadataRecord(raw, &row); err != nil {
-		return err
-	}
-	if row.Type != kind || pageChecksum(row.CanonicalJSON) != row.Checksum {
+// packageImportMetadataTables registers the package import envelopes, which
+// share one row shape.
+var packageImportMetadataTables = []metadataRecordCodec{
+	newMetadataTable(metadataTable[metadataPackageImportRow]{record: metadataPackageImportRow{Type: metadataPackageRecordType},
+		table: "package_records", insert: importPackageImportMetadata}),
+	newMetadataTable(metadataTable[metadataPackageImportRow]{record: metadataPackageImportRow{Type: metadataPackageLabelType},
+		table: "package_labels", insert: importPackageImportMetadata}),
+	newMetadataTable(metadataTable[metadataPackageImportRow]{
+		record: metadataPackageImportRow{Type: metadataPackageImportReceiptType}, table: "package_import_receipts",
+		insert: importPackageImportMetadata}),
+	newMetadataTable(metadataTable[metadataPackageImportRow]{
+		record: metadataPackageImportRow{Type: metadataPackageImportHeadType}, table: "package_import_heads",
+		insert: importPackageImportMetadata}),
+	newMetadataTable(metadataTable[metadataPackageImportRow]{
+		record: metadataPackageImportRow{Type: metadataPackageImportJobType}, table: "package_import_jobs",
+		insert: importPackageImportMetadata}),
+}
+
+func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, row metadataPackageImportRow) error {
+	if pageChecksum(row.CanonicalJSON) != row.Checksum {
 		return ErrPackageConflict
 	}
-	switch kind {
+	switch row.Type {
 	case metadataPackageRecordType:
 		record, err := canonical.Decode[PackageRecordRow](row.CanonicalJSON)
 		if err != nil || validatePackageRecord(record) != nil {

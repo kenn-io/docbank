@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
@@ -10,158 +9,59 @@ import (
 
 type metadataPhotoAsset struct {
 	Type                  string  `json:"type"`
-	AssetID               string  `json:"asset_id"`
-	Kind                  string  `json:"kind"`
-	Revision              int64   `json:"revision"`
-	ExcludedAt            *string `json:"excluded_at"`
-	DisplayFileID         *string `json:"display_file_id"`
-	DisplayOverrideFileID *string `json:"display_override_file_id"`
-	CreatedAt             string  `json:"created_at"`
-	UpdatedAt             string  `json:"updated_at"`
+	AssetID               string  `json:"asset_id" db:"asset_id"`
+	Kind                  string  `json:"kind" db:"kind"`
+	Revision              int64   `json:"revision" db:"revision"`
+	ExcludedAt            *string `json:"excluded_at" db:"excluded_at"`
+	DisplayFileID         *string `json:"display_file_id" db:"display_file_id"`
+	DisplayOverrideFileID *string `json:"display_override_file_id" db:"display_override_file_id"`
+	CreatedAt             string  `json:"created_at" db:"created_at"`
+	UpdatedAt             string  `json:"updated_at" db:"updated_at"`
 }
 
 type metadataPhotoFile struct {
 	Type        string  `json:"type"`
-	FileID      string  `json:"file_id"`
-	AssetID     string  `json:"asset_id"`
-	NodeID      int64   `json:"node_id"`
-	Role        string  `json:"role"`
-	SidecarOfID *string `json:"sidecar_of_file_id"`
-	CreatedAt   string  `json:"created_at"`
+	FileID      string  `json:"file_id" db:"file_id"`
+	AssetID     string  `json:"asset_id" db:"asset_id"`
+	NodeID      int64   `json:"node_id" db:"node_id"`
+	Role        string  `json:"role" db:"role"`
+	SidecarOfID *string `json:"sidecar_of_file_id" db:"sidecar_of_file_id"`
+	CreatedAt   string  `json:"created_at" db:"created_at"`
 }
 
 type metadataPhotoSettings struct {
 	Type       string  `json:"type"`
-	Preference *string `json:"preference"`
-	Revision   int64   `json:"revision"`
-	UpdatedAt  string  `json:"updated_at"`
+	Preference *string `json:"preference" db:"preference"`
+	Revision   int64   `json:"revision" db:"revision"`
+	UpdatedAt  string  `json:"updated_at" db:"updated_at"`
+	Singleton  int     `json:"-" db:"singleton"`
 }
 
 type metadataPhotoReceipt struct {
 	Type           string  `json:"type"`
-	ReceiptID      string  `json:"receipt_id"`
-	Operation      string  `json:"operation"`
-	AssetID        *string `json:"asset_id"`
-	SettingsKey    *string `json:"settings_key"`
-	BeforeRevision int64   `json:"before_revision"`
-	AfterRevision  int64   `json:"after_revision"`
-	BeforeJSON     string  `json:"before_json"`
-	AfterJSON      string  `json:"after_json"`
-	CreatedAt      string  `json:"created_at"`
+	ReceiptID      string  `json:"receipt_id" db:"receipt_id"`
+	Operation      string  `json:"operation" db:"operation"`
+	AssetID        *string `json:"asset_id" db:"asset_id"`
+	SettingsKey    *string `json:"settings_key" db:"settings_key"`
+	BeforeRevision int64   `json:"before_revision" db:"before_revision"`
+	AfterRevision  int64   `json:"after_revision" db:"after_revision"`
+	BeforeJSON     string  `json:"before_json" db:"before_json"`
+	AfterJSON      string  `json:"after_json" db:"after_json"`
+	CreatedAt      string  `json:"created_at" db:"created_at"`
 }
 
-func exportPhotoMetadata(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT asset_id, kind, revision, excluded_at, display_file_id,
-		       display_override_file_id, created_at, updated_at
-		FROM photo_assets ORDER BY asset_id`)
-	if err != nil {
-		return fmt.Errorf("exporting photo assets: %w", err)
-	}
-	for rows.Next() {
-		var record metadataPhotoAsset
-		if err := rows.Scan(&record.AssetID, &record.Kind, &record.Revision, &record.ExcludedAt, &record.DisplayFileID, &record.DisplayOverrideFileID, &record.CreatedAt, &record.UpdatedAt); err != nil {
-			_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
-			return err
-		}
-		record.Type = metadataPhotoAssetType
-		if err := validatePhotoAssetMetadataRecord(record); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := write(record); err != nil {
-			_ = rows.Close()
-			return err
-		}
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	rows, err = tx.QueryContext(ctx, `
-		SELECT file_id, asset_id, node_id, role, sidecar_of_file_id, created_at
-		FROM photo_files ORDER BY file_id`)
-	if err != nil {
-		return fmt.Errorf("exporting photo files: %w", err)
-	}
-	for rows.Next() {
-		var record metadataPhotoFile
-		if err := rows.Scan(&record.FileID, &record.AssetID, &record.NodeID, &record.Role, &record.SidecarOfID, &record.CreatedAt); err != nil {
-			_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
-			return err
-		}
-		record.Type = metadataPhotoFileType
-		if err := validatePhotoFileMetadataRecord(record); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := write(record); err != nil {
-			_ = rows.Close()
-			return err
-		}
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	var settings metadataPhotoSettings
-	var preference sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT preference, revision, updated_at FROM photo_library_settings WHERE singleton=1`).Scan(&preference, &settings.Revision, &settings.UpdatedAt)
-	if err == nil {
-		settings.Type = metadataPhotoSettingsType
-		if preference.Valid {
-			settings.Preference = new(preference.String)
-		}
-		if err := validatePhotoSettingsMetadataRecord(settings); err != nil {
-			return err
-		}
-		if err := write(settings); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("exporting photo settings: %w", err)
-	}
-	rows, err = tx.QueryContext(ctx, `
-		SELECT receipt_id, operation, asset_id, settings_key, before_revision,
-		       after_revision, before_json, after_json, created_at
-		FROM photo_change_receipts ORDER BY receipt_id`)
-	if err != nil {
-		return fmt.Errorf("exporting photo receipts: %w", err)
-	}
-	for rows.Next() {
-		var record metadataPhotoReceipt
-		var assetID, settingsKey sql.NullString
-		if err := rows.Scan(&record.ReceiptID, &record.Operation, &assetID, &settingsKey, &record.BeforeRevision, &record.AfterRevision, &record.BeforeJSON, &record.AfterJSON, &record.CreatedAt); err != nil {
-			_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
-			return err
-		}
-		if assetID.Valid {
-			record.AssetID = new(assetID.String)
-		}
-		if settingsKey.Valid {
-			record.SettingsKey = new(settingsKey.String)
-		}
-		record.Type = metadataPhotoReceiptType
-		if err := validatePhotoReceiptMetadataRecord(record); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := write(record); err != nil {
-			_ = rows.Close()
-			return err
-		}
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	return rows.Close()
+// photoMetadataTables exports the photo records in dependency order.
+var photoMetadataTables = []metadataRecordCodec{
+	newMetadataTable(metadataTable[metadataPhotoAsset]{record: metadataPhotoAsset{Type: metadataPhotoAssetType},
+		table: "photo_assets", suffix: "ORDER BY asset_id", validate: validatePhotoAssetMetadataRecord, checkExport: true}),
+	newMetadataTable(metadataTable[metadataPhotoFile]{record: metadataPhotoFile{Type: metadataPhotoFileType},
+		table: "photo_files", suffix: "ORDER BY file_id", validate: validatePhotoFileMetadataRecord, checkExport: true}),
+	newMetadataTable(metadataTable[metadataPhotoSettings]{
+		record: metadataPhotoSettings{Type: metadataPhotoSettingsType, Singleton: 1}, table: "photo_library_settings",
+		suffix: "WHERE singleton=1", validate: validatePhotoSettingsMetadataRecord, checkExport: true}),
+	newMetadataTable(metadataTable[metadataPhotoReceipt]{record: metadataPhotoReceipt{Type: metadataPhotoReceiptType},
+		table: "photo_change_receipts", suffix: "ORDER BY receipt_id", validate: validatePhotoReceiptMetadataRecord,
+		checkExport: true}),
 }
 
 func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
@@ -231,53 +131,6 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 	return validateMetadataTime("photo receipt created_at", v.CreatedAt)
 }
 
-func importPhotoMetadataRecord(ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value) error {
-	switch kind {
-	case metadataPhotoAssetType:
-		var v metadataPhotoAsset
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validatePhotoAssetMetadataRecord(v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO photo_assets(asset_id,kind,revision,excluded_at,display_file_id,display_override_file_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, v.AssetID, v.Kind, v.Revision, v.ExcludedAt, v.DisplayFileID, v.DisplayOverrideFileID, v.CreatedAt, v.UpdatedAt)
-		return err
-	case metadataPhotoFileType:
-		var v metadataPhotoFile
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validatePhotoFileMetadataRecord(v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO photo_files(file_id,asset_id,node_id,role,sidecar_of_file_id,created_at) VALUES(?,?,?,?,?,?)`, v.FileID, v.AssetID, v.NodeID, v.Role, v.SidecarOfID, v.CreatedAt)
-		return err
-	case metadataPhotoSettingsType:
-		var v metadataPhotoSettings
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validatePhotoSettingsMetadataRecord(v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO photo_library_settings(singleton,preference,revision,updated_at) VALUES(1,?,?,?)`, v.Preference, v.Revision, v.UpdatedAt)
-		return err
-	case metadataPhotoReceiptType:
-		var v metadataPhotoReceipt
-		if err := decodeMetadataRecord(raw, &v); err != nil {
-			return err
-		}
-		if err := validatePhotoReceiptMetadataRecord(v); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO photo_change_receipts(receipt_id,operation,asset_id,settings_key,before_revision,after_revision,before_json,after_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, v.ReceiptID, v.Operation, v.AssetID, v.SettingsKey, v.BeforeRevision, v.AfterRevision, v.BeforeJSON, v.AfterJSON, v.CreatedAt)
-		return err
-	default:
-		return fmt.Errorf("unknown photo metadata record %q", kind)
-	}
-}
-
 func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier) error {
 	if err := validatePhotoGraph(ctx, tx); err != nil {
 		return err
@@ -293,8 +146,10 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier) error {
 	if orphans > 0 {
 		return fmt.Errorf("%w: %d photo receipts reference missing assets or settings", ErrInvalidPhotoAsset, orphans)
 	}
-	if err := exportPhotoMetadata(ctx, tx, func(any) error { return nil }); err != nil {
-		return fmt.Errorf("validating photo metadata: %w", err)
+	for _, table := range photoMetadataTables {
+		if err := table.validateRows(ctx, tx); err != nil {
+			return fmt.Errorf("validating photo metadata: %w", err)
+		}
 	}
 	return nil
 }
