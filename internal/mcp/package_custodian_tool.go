@@ -81,21 +81,13 @@ func findPeople(ctx context.Context, lease *daemonLease, raw []byte) (personPage
 	if input.Limit == 0 {
 		input.Limit = 100
 	}
-	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (*api.PersonPage, error) {
-		return c.API().ListPeople(ctx, &apiclient.ListPeopleRequestOptions{Query: &apiclient.ListPeopleQuery{
-			Query: optionalString(input.Query), Cursor: optionalString(input.Cursor), Limit: &input.Limit,
-		}})
+	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.PersonPage, error) {
+		return c.People(ctx, input.Query, input.Cursor, input.Limit)
 	})
 	if err != nil {
 		return personPageOutput{}, err
 	}
-	if len(page.Items) > input.Limit {
-		return personPageOutput{}, errors.New("people page exceeded its requested bound")
-	}
-	if page.Items == nil {
-		page.Items = []api.PersonSummary{}
-	}
-	return personPageOutput{PersonPage: *page, privateCache: newPrivateCache()}, nil
+	return personPageOutput{PersonPage: page, privateCache: newPrivateCache()}, nil
 }
 
 type resolvePackageCustodianInput struct {

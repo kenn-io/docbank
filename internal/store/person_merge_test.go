@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,18 @@ func TestSplitRequiresExplicitMembership(t *testing.T) {
 	require.NoError(t, validatePersonSplitRequest(request))
 	request.IdentityIDs = append(request.IdentityIDs, request.IdentityIDs[0])
 	require.Error(t, validatePersonSplitRequest(request))
+}
+
+func TestSplitPersonInvalidRequestIsInvalidPerson(t *testing.T) {
+	t.Parallel()
+	request := PersonSplitRequest{
+		PersonID:    "00000000-0000-4000-8000-000000000001",
+		OperationID: "00000000-0000-4000-8000-000000000002",
+		Revision:    1,
+	}
+	if err := validatePersonSplitRequest(request); !errors.Is(err, ErrInvalidPerson) {
+		t.Fatalf("validatePersonSplitRequest() error = %v, want ErrInvalidPerson", err)
+	}
 }
 
 func addTestPersonIdentity(t *testing.T, s *Store, person Person, kind, value, evidenceID string) (Person, PersonIdentity) {
@@ -204,6 +217,11 @@ func TestSplitPersonMovesOnlyExplicitIdentitiesAndReplays(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, moved, 1)
 	replayed, err := s.SplitPerson(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, receipt, replayed)
+	request.AssignmentIDs = []string{}
+	request.External = []PersonExternalUID{}
+	replayed, err = s.SplitPerson(t.Context(), request)
 	require.NoError(t, err)
 	require.Equal(t, receipt, replayed)
 }

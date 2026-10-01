@@ -13,7 +13,7 @@ import (
 
 const maxPhotoResponseFiles = 256
 
-func photoIfMatch(revision int64) string {
+func revisionIfMatch(revision int64) string {
 	return strconv.Quote(strconv.FormatInt(revision, 10))
 }
 
@@ -42,8 +42,8 @@ func validatePhotoETag(etag string, revision int64) error {
 	if etag == "" {
 		return errors.New("photo response is missing ETag")
 	}
-	if etag != photoIfMatch(revision) {
-		return fmt.Errorf("photo response ETag %q, expected %q", etag, photoIfMatch(revision))
+	if etag != revisionIfMatch(revision) {
+		return fmt.Errorf("photo response ETag %q, expected %q", etag, revisionIfMatch(revision))
 	}
 	return nil
 }
@@ -55,10 +55,10 @@ func validatePhotoSettingsResponse(settings api.PhotoSettings, etag string) erro
 	return validatePhotoETag(etag, settings.Revision)
 }
 
-// photoMutationRequestError classifies a failure after a 2xx status as a
+// mutationRequestError classifies a failure after a 2xx status as a
 // response-decode error so MCP treats the outcome as unknown instead of
 // retrying a write the daemon may have committed.
-func photoMutationRequestError(response *http.Response, err error) error {
+func mutationRequestError(response *http.Response, err error) error {
 	if err != nil && response != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
 		return &responseDecodeError{err: err}
 	}
@@ -67,7 +67,7 @@ func photoMutationRequestError(response *http.Response, err error) error {
 
 func photoMutationResponse(response *http.Response, asset *api.PhotoAsset, err error, requestedID string) (api.PhotoAsset, error) {
 	if err != nil {
-		return api.PhotoAsset{}, photoMutationRequestError(response, err)
+		return api.PhotoAsset{}, mutationRequestError(response, err)
 	}
 	if err := validatePhotoAssetResponse(*asset, response.Header.Get("ETag"), requestedID); err != nil {
 		return api.PhotoAsset{}, &responseDecodeError{err: err}
@@ -155,7 +155,7 @@ func (c *Connection) AttachPhotoFile(ctx context.Context, assetID string, revisi
 	var response *http.Response
 	asset, err := c.apiWithResponse(&response).AttachPhotoFile(ctx, &apiclient.AttachPhotoFileRequestOptions{
 		PathParams: &apiclient.AttachPhotoFilePath{AssetID: assetID},
-		Header:     &apiclient.AttachPhotoFileHeaders{IfMatch: photoIfMatch(revision)},
+		Header:     &apiclient.AttachPhotoFileHeaders{IfMatch: revisionIfMatch(revision)},
 		Body:       &apiclient.AttachPhotoFileBody{NodeID: nodeID, Role: role, SidecarOfID: sidecarOfID},
 	})
 	result, err := photoMutationResponse(response, asset, err, assetID)
@@ -169,7 +169,7 @@ func (c *Connection) DetachPhotoFile(ctx context.Context, assetID string, revisi
 	var response *http.Response
 	asset, err := c.apiWithResponse(&response).DetachPhotoFile(ctx, &apiclient.DetachPhotoFileRequestOptions{
 		PathParams: &apiclient.DetachPhotoFilePath{AssetID: assetID, FileID: fileID},
-		Header:     &apiclient.DetachPhotoFileHeaders{IfMatch: photoIfMatch(revision)},
+		Header:     &apiclient.DetachPhotoFileHeaders{IfMatch: revisionIfMatch(revision)},
 		Query:      &apiclient.DetachPhotoFileQuery{ClearDependentSidecars: &clearDependentSidecars},
 	})
 	result, err := photoMutationResponse(response, asset, err, assetID)
@@ -183,7 +183,7 @@ func (c *Connection) ExcludePhotoAsset(ctx context.Context, assetID string, revi
 	var response *http.Response
 	asset, err := c.apiWithResponse(&response).ExcludePhotoAsset(ctx, &apiclient.ExcludePhotoAssetRequestOptions{
 		PathParams: &apiclient.ExcludePhotoAssetPath{AssetID: assetID},
-		Header:     &apiclient.ExcludePhotoAssetHeaders{IfMatch: photoIfMatch(revision)},
+		Header:     &apiclient.ExcludePhotoAssetHeaders{IfMatch: revisionIfMatch(revision)},
 		Body:       &apiclient.ExcludePhotoAssetBody{Excluded: excluded},
 	})
 	return photoMutationResponse(response, asset, err, assetID)
@@ -204,7 +204,7 @@ func (c *Connection) PromotePhotoNode(ctx context.Context, nodeID int64, expecte
 	}
 	options := &apiclient.PromotePhotoNodeRequestOptions{PathParams: &apiclient.PromotePhotoNodePath{NodeID: nodeID}, Body: &request}
 	if expectedRevision != nil {
-		ifMatch := photoIfMatch(*expectedRevision)
+		ifMatch := revisionIfMatch(*expectedRevision)
 		options.Header = &apiclient.PromotePhotoNodeHeaders{IfMatch: &ifMatch}
 	}
 	var response *http.Response
@@ -220,7 +220,7 @@ func (c *Connection) SetPhotoDisplay(ctx context.Context, assetID string, revisi
 	var response *http.Response
 	asset, err := c.apiWithResponse(&response).SetPhotoDisplay(ctx, &apiclient.SetPhotoDisplayRequestOptions{
 		PathParams: &apiclient.SetPhotoDisplayPath{AssetID: assetID},
-		Header:     &apiclient.SetPhotoDisplayHeaders{IfMatch: photoIfMatch(revision)},
+		Header:     &apiclient.SetPhotoDisplayHeaders{IfMatch: revisionIfMatch(revision)},
 		Body:       &apiclient.SetPhotoDisplayBody{FileID: fileID},
 	})
 	return photoMutationResponse(response, asset, err, assetID)
@@ -244,11 +244,11 @@ func (c *Connection) SetPhotoSettings(ctx context.Context, revision int64, prefe
 	}
 	var response *http.Response
 	settings, err := c.apiWithResponse(&response).SetPhotoSettings(ctx, &apiclient.SetPhotoSettingsRequestOptions{
-		Header: &apiclient.SetPhotoSettingsHeaders{IfMatch: photoIfMatch(revision)},
+		Header: &apiclient.SetPhotoSettingsHeaders{IfMatch: revisionIfMatch(revision)},
 		Body:   &apiclient.SetPhotoSettingsBody{Preference: preference},
 	})
 	if err != nil {
-		return api.PhotoSettings{}, photoMutationRequestError(response, err)
+		return api.PhotoSettings{}, mutationRequestError(response, err)
 	}
 	if err := validatePhotoSettingsResponse(*settings, response.Header.Get("ETag")); err != nil {
 		return api.PhotoSettings{}, &responseDecodeError{err: err}

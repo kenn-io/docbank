@@ -11,6 +11,77 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 )
 
+func TestPersonAuthorityLifecycleRoundTripsJSONL(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+	source := newTestStore(t)
+	person, err := source.CreatePerson(ctx, "Synthetic derived", "derived")
+	require.NoError(t, err)
+	person, err = source.UpdatePerson(ctx, person.PersonID, person.Revision, "Renamed derived")
+	require.NoError(t, err)
+	require.Equal(t, "curated", person.State)
+	identity, err := source.AddPersonIdentity(ctx, person.PersonID, person.Revision, PersonIdentity{
+		Kind: "email", ValueDisplay: "derived@example.test", Origin: "operator",
+		EvidenceKind: "operator_assertion", EvidenceID: "lifecycle-identity", Confidence: "operator_asserted",
+	})
+	require.NoError(t, err)
+	person, _, err = source.PersonByID(ctx, person.PersonID)
+	require.NoError(t, err)
+	require.NoError(t, source.RecordExternalUIDAliases(ctx, "msgvault", "synthetic", "current", []string{"retired"}))
+	_, err = source.LinkExternalIdentity(ctx, PersonExternalIdentity{PersonID: person.PersonID, System: "msgvault", ArchiveID: "synthetic",
+		UID: "current", UIDKind: "vcard_uid", UIDState: "current", DisplayNameSnapshot: person.DisplayName}, person.Revision)
+	require.NoError(t, err)
+	person, _, err = source.PersonByID(ctx, person.PersonID)
+	require.NoError(t, err)
+	version := seedDocumentPeopleEvent(t, source, "lifecycle.txt", "a9", nil)
+	assignment, err := source.SetCustodian(ctx, CustodianRequest{Scope: CustodianScope{Kind: "document", NodeID: version.NodeID, ContentVersionID: version.ID},
+		PersonID: person.PersonID, RawLabel: person.DisplayName, Rank: "primary", Basis: "operator_assigned", SourceRef: "lifecycle", IfMatchRevision: 1})
+	require.NoError(t, err)
+	_, err = source.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: version.ID, PersonID: person.PersonID,
+		Role: "author", Action: "assert", Note: "lifecycle", Revision: 1})
+	require.NoError(t, err)
+	evidence, err := canonical.Marshal([]PersonCandidateOccurrence{{ContentVersionID: version.ID, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "lifecycle"}})
+	require.NoError(t, err)
+	require.NoError(t, source.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		_, _, err := source.OpenPersonCandidate(ctx, tx, PersonMatchCandidate{ActorKey: "name_alias:lifecycle", DisplayName: person.DisplayName,
+			SuggestedPersonID: person.PersonID, Reason: "name_only", Evidence: evidence})
+		return err
+	}))
+	absorbed, err := source.CreatePerson(ctx, "Synthetic absorbed", "operator")
+	require.NoError(t, err)
+	mergeOperation, err := newUUIDv4()
+	require.NoError(t, err)
+	_, err = source.MergePersons(ctx, person.PersonID, absorbed.PersonID, mergeOperation, person.Revision, absorbed.Revision)
+	require.NoError(t, err)
+	person, _, err = source.PersonByID(ctx, person.PersonID)
+	require.NoError(t, err)
+	splitOperation, err := newUUIDv4()
+	require.NoError(t, err)
+	split, err := source.SplitPerson(ctx, PersonSplitRequest{PersonID: person.PersonID, OperationID: splitOperation,
+		DisplayName: "Synthetic split", Revision: person.Revision, IdentityIDs: []string{identity.IdentityID}, AssignmentIDs: []string{assignment.AssignmentID}})
+	require.NoError(t, err)
+	person, _, err = source.PersonByID(ctx, person.PersonID)
+	require.NoError(t, err)
+	retired, err := source.RetirePerson(ctx, person.PersonID, person.Revision)
+	require.NoError(t, err)
+	require.Equal(t, "retired", retired.State)
+	var aliasReason string
+	require.NoError(t, source.db.QueryRowContext(ctx, `SELECT reason FROM person_aliases WHERE retired_person_id=?`, person.PersonID).Scan(&aliasReason))
+	require.Equal(t, "deleted", aliasReason)
+	var exported bytes.Buffer
+	require.NoError(t, source.ExportMetadata(ctx, &exported))
+	for _, recordType := range []string{"person", "person_identity", "person_external_identity", "person_external_uid_alias",
+		"person_alias", "person_merge", "person_split", "custodian_assignment", "person_document_assertion", "person_match_candidate"} {
+		require.Contains(t, exported.String(), `"type":"`+recordType+`"`)
+	}
+	require.Contains(t, exported.String(), split.NewPersonID)
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	var repeated bytes.Buffer
+	require.NoError(t, target.ExportMetadata(ctx, &repeated))
+	require.Equal(t, exported.Bytes(), repeated.Bytes())
+}
+
 func TestExternalIdentityWritesRemainExportable(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
