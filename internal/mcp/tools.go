@@ -13,6 +13,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -192,7 +193,8 @@ func registerToolCatalog(
 		output := mustResolveSchema(tool.OutputSchema)
 		var handler sdkmcp.ToolHandler
 		switch tool.Name {
-		case "preview_export", "start_export", "get_export_status", "cancel_export", "release_export":
+		case "preview_export", "start_export", "get_export_status", "cancel_export", "release_export",
+			"download_export":
 			handler = exportToolHandler(lease, tool.Name, output, logger)
 		case processingToolDefinition.name:
 			handler = processingToolHandler(lease, plans, output, logger)
@@ -386,6 +388,12 @@ func stableDomainError(err error) (string, int) {
 		return "processing_outcome_unknown", 0
 	case errors.Is(err, errExportOutcomeUnknown):
 		return "export_outcome_unknown", 0
+	case errors.Is(err, errExportIntegrity):
+		return "export_integrity", 0
+	case errors.Is(err, errExportLocalIO):
+		return "export_local_io", 0
+	case errors.Is(err, bundle.ErrConflict):
+		return "export_conflict", 0
 	case errors.Is(err, errBatesOutcomeUnknown):
 		return "bates_outcome_unknown", 0
 	case errors.Is(err, errDaemonUnavailable):
@@ -457,6 +465,10 @@ func stableDomainError(err error) (string, int) {
 
 func domainErrorMessage(code string) string {
 	switch code {
+	case "export_integrity":
+		return "Export verification failed; nothing was published."
+	case "export_local_io":
+		return "The export file operation failed before publication; a private stage may remain."
 	case "validation":
 		return "The export request is invalid; check the supplied identities and values."
 	case "export_outcome_unknown":

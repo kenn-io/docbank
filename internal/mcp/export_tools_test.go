@@ -44,14 +44,16 @@ func TestNativeExportOptIn(t *testing.T) {
 			require.Contains(t, names, "get_export_status")
 			tools := listedToolsByName(t, listed)
 			for _, name := range []string{
-				"preview_export", "start_export", "cancel_export", "release_export",
+				"preview_export", "start_export", "cancel_export", "release_export", "download_export",
 			} {
 				if options.AllowExportWrites {
 					require.Contains(t, names, name)
 					annotations := objectField(t, tools[name], "annotations")
 					require.Equal(t, false, annotations["readOnlyHint"])
 					require.Equal(t, false, annotations["idempotentHint"])
-					require.Equal(t, name == "cancel_export" || name == "release_export",
+					destructive := name == "cancel_export" || name == "release_export" ||
+						name == "download_export"
+					require.Equal(t, destructive,
 						annotations["destructiveHint"])
 				} else {
 					require.NotContains(t, names, name)
@@ -66,7 +68,9 @@ func TestNativeExportOptIn(t *testing.T) {
 	}
 }
 
-func exportExchange(t *testing.T, server *Server, transport, method string, params map[string]any) []byte {
+func exportExchange(
+	t *testing.T, server *Server, transport, method string, params map[string]any,
+) []byte {
 	t.Helper()
 	raw := requestFor(method, params)
 	if transport == "stdio" {
@@ -331,7 +335,9 @@ func TestNativeExportLifecycleReplay(t *testing.T) {
 
 func TestNativeExportWriteRecovery(t *testing.T) {
 	for _, mode := range []string{"disconnect", "invalid response"} {
-		for _, name := range []string{"preview_export", "start_export", "cancel_export", "release_export"} {
+		for _, name := range []string{
+			"preview_export", "start_export", "cancel_export", "release_export",
+		} {
 			t.Run(mode+"/"+name, func(t *testing.T) {
 				jobID := uuid.New().String()
 				args := map[string]any{"job_id": jobID}

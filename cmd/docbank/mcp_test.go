@@ -89,7 +89,10 @@ func TestMCPCommandExposesTransportAndCapabilityFlags(t *testing.T) {
 	require.Equal(t, "mcp", command.Name())
 	var names []string
 	command.Flags().VisitAll(func(flag *pflag.Flag) { names = append(names, flag.Name) })
-	assert.ElementsMatch(t, []string{"allow-photo-edits", "allow-processing", "allow-package-writes", "listen", "transport"}, names)
+	assert.ElementsMatch(t, []string{
+		"allow-export-writes", "allow-photo-edits", "allow-processing",
+		"allow-package-writes", "listen", "transport",
+	}, names)
 	for _, forbidden := range []string{"token", "api-key", "daemon", "url", "remote"} {
 		assert.Nil(t, command.Flags().Lookup(forbidden))
 	}
@@ -147,7 +150,7 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 			assert.True(t, names["get_package_record"], "reads remain available with every flag combination")
 			assert.Equal(t, test.processing, names["start_processing"])
 			assert.True(t, names["get_export_status"])
-			for _, name := range []string{"preview_export", "start_export", "cancel_export", "release_export"} {
+			for _, name := range []string{"preview_export", "start_export", "cancel_export", "release_export", "download_export"} {
 				assert.Equal(t, test.exports, names[name], name)
 			}
 			for _, name := range []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian"} {

@@ -1,8 +1,10 @@
 # Native MCP exports: adversarial self-review
 
-Reviewed [the proposed design](2026-09-30-mcp-native-exports-design.md) against
+Historical design review of [the implemented design](2026-09-30-mcp-native-exports-design.md) against
 source revision `5f36ee4ec6245a1e558cac2de36218b52700a66f`.
-Design SHA-256:
+Current design SHA-256 (including the implemented status):
+`37ad4b307b9c04b810f39231caba8ed756a2b9531de7435d16677ad48b58c3e5`.
+Approved pre-implementation design SHA-256:
 `084ce6e2a54c83820a83bf4d20c825962e1f1b6e2ce19e3a27767242e6b900ec`.
 
 This is an inline author self-review, not an independent implementation review.
@@ -10,8 +12,8 @@ The source tree was clean at that baseline. At review, only the new design and
 this review were uncommitted; product code, generated clients, dependencies,
 and existing documentation were unchanged. There are no gitlinks/submodules.
 The Go module declares Go 1.27.0, MCP Go SDK v1.7.0, and jsonschema-go v0.4.3.
-The proposed MCP tools have not been executed; observations below are source
-checks, not test results for unbuilt behavior.
+At the time of this review, the MCP tools had not been built or executed.
+The observations below preserve that design evidence, not implementation test results.
 
 Read the repository instructions, documentation publishing guide, the CLI
 export design and review, and existing MCP/native-export guides. The baseline
@@ -26,7 +28,8 @@ The supplied adversarial review inspected clean commit
 and found no High or Medium issues. It approved implementation planning.
 For this revision, compared the spec against that exact commit and verified
 that relevant product source and dependencies still match the original clean
-baseline. Only the design and this review changed; the revised hash is above.
+baseline. Only the design and this review changed at that point; the approved
+pre-implementation hash is above.
 
 The five Low notes were checked against source and resolved as follows:
 

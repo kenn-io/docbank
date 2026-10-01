@@ -21,8 +21,9 @@ func previewExportSchemas() (schema, schema) {
 	source := objectSchema(schema{
 		"id": uuidSchema(), "request_sha256": sha256Schema(), "kind": enumSchema("explicit"),
 		"state": enumSchema("sealed"), "member_hash": sha256Schema(),
-		"total": integerSchema(1, bundle.ChunkMembers), "source_bytes": integerSchema(0, bundle.MaxRoleBytes),
-		"created_at": dateTimeSchema(), "expires_at": dateTimeSchema(),
+		"total":        integerSchema(1, bundle.ChunkMembers),
+		"source_bytes": integerSchema(0, bundle.MaxRoleBytes),
+		"created_at":   dateTimeSchema(), "expires_at": dateTimeSchema(),
 	}, "id", "request_sha256", "kind", "state", "member_hash", "total", "source_bytes",
 		"created_at", "expires_at")
 	plan := objectSchema(schema{
@@ -74,21 +75,33 @@ func startExportSchemas() (schema, schema) {
 }
 
 func getExportStatusSchemas() (schema, schema) {
-	return rootObjectSchema(schema{"job_id": uuidSchema()}, "job_id"),
+	return rootObjectSchema(schema{schemaJobIDField: uuidSchema()}, schemaJobIDField),
 		rootObjectSchema(withPrivateCache(schema{"job": exportJobSchema()}), cacheRequired("job")...)
 }
 
 //nolint:goconst // JSON Schema vocabulary is intentionally repeated.
 func cancelExportSchemas() (schema, schema) {
-	return rootObjectSchema(schema{"job_id": uuidSchema()}, "job_id"),
+	return rootObjectSchema(schema{schemaJobIDField: uuidSchema()}, schemaJobIDField),
 		rootObjectSchema(withPrivateCache(schema{
-			"job_id": uuidSchema(), "accepted": schema{"type": "boolean", "const": true},
-		}), cacheRequired("job_id", "accepted")...)
+			schemaJobIDField: uuidSchema(), "accepted": schema{"type": "boolean", "const": true},
+		}), cacheRequired(schemaJobIDField, "accepted")...)
 }
 
 func releaseExportSchemas() (schema, schema) {
-	return rootObjectSchema(schema{"job_id": uuidSchema()}, "job_id"),
+	return rootObjectSchema(schema{schemaJobIDField: uuidSchema()}, schemaJobIDField),
 		rootObjectSchema(withPrivateCache(schema{
-			"job_id": uuidSchema(), "released": schema{"type": "boolean", "const": true},
-		}), cacheRequired("job_id", "released")...)
+			schemaJobIDField: uuidSchema(), "released": schema{"type": "boolean", "const": true},
+		}), cacheRequired(schemaJobIDField, "released")...)
+}
+
+func downloadExportSchemas() (schema, schema) {
+	path := stringSchema(maxPathCharacters)
+	path["minLength"] = 1
+	return rootObjectSchema(schema{
+			schemaJobIDField: uuidSchema(), "destination_path": path, "overwrite": booleanSchema(),
+		}, schemaJobIDField, "destination_path"), rootObjectSchema(withPrivateCache(schema{
+			schemaJobIDField: uuidSchema(), "destination_path": path, "receipt": exportReceiptSchema(),
+			"state":          enumSchema("published", "published_durability_unknown"),
+			"cleanup_failed": booleanSchema(),
+		}), cacheRequired(schemaJobIDField, "destination_path", "receipt", "state", "cleanup_failed")...)
 }

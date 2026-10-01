@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-08-29
+last_edited: 2026-09-30
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's bounded, daemon-first document surface.
 ---
@@ -126,7 +126,7 @@ advertises no subscriptions. A call with an empty notification selection
 acknowledges the request and completes immediately.
 
 `--allow-export-writes` separately permits native export previews, job writes,
-and explicit release. Other write flags do not enable these tools.
+local download, and explicit release. Other write flags do not enable these tools.
 
 ## Tool catalog
 
@@ -406,7 +406,8 @@ originals and manage their export. Review the selection with the operator.
 | --- | --- |
 | `preview_export` | `source_operation_id`, `plan_operation_id`, and `members`. Returns a retained `plan`. |
 | `start_export` | `operation_id`, `plan_id`, and `fingerprint`. Returns the `job`; it does not wait for completion. |
-| `cancel_export` | `job_id`. Returns `accepted: true`; completed jobs conflict. |
+| `cancel_export` | `job_id`. Permanently stops active work. Returns `accepted: true`; completed jobs conflict. |
+| `download_export` | `job_id`, absolute `destination_path`, optional `overwrite` (default false). Returns the verified `receipt` and publication state. |
 | `release_export` | `job_id`. Deletes a terminal job and its retained archive, returning `released: true`. |
 
 List versions for each selected node. Copy `content_version_id` to `version_id`,
@@ -430,3 +431,37 @@ shared job slots until released or expired. Release does not delete originals or
 local downloads. `export_retained` means a download ticket or lease still holds
 the archive; retry release after it closes. The source and plan records have
 separate global limits. See [export limits and recovery](export-bundles.md).
+
+To save an export:
+
+1. Call `preview_export` with your exact members and two fresh operation IDs.
+2. Review `plan.total` and `plan.role_bytes`, then call `start_export` with a
+   fresh operation ID, `plan.id`, and `plan.fingerprint`.
+3. Call `get_export_status` with that job ID. When it completes, inspect
+   `job.receipt.size` before choosing a download transport.
+4. Call `download_export` with the job ID and a destination on the MCP host.
+5. After saving the file, call `release_export` to free the retained job slot.
+
+The destination parent must exist and resolve outside the Docbank data
+directory. An existing destination must be a regular file and requires
+`overwrite: true`. Verification occurs before publication: the daemon verifies
+the retained archive, then the MCP process streams it into a private stage and
+independently verifies the complete bundle against the job and ticket receipts.
+The result contains no ZIP bytes or download ticket. Download never releases,
+cancels, or recreates the job automatically.
+
+`state: "published"` means the verified file is saved.
+`state: "published_durability_unknown"` means the file became visible but the
+subsequent directory sync failed. Both return the receipt. `cleanup_failed: true`
+means private staging cleanup failed after publication; the saved file remains.
+Before publication, ordinary failures preserve the destination and attempt
+stage cleanup. `export_integrity` identifies a receipt or archive mismatch;
+`export_local_io` identifies a file-operation failure and warns that a stage
+may remain. A secondary cleanup failure does not replace the original error.
+
+The HTTP two-minute deadline includes daemon verification, transfer, and local
+verification. Archive size alone cannot predict whether all three fit. For a
+large job, use `docbank export download <job-id> <path>` against the same vault
+or a suitable stdio invocation. A later download obtains a fresh ticket and
+transfers the whole file again. A lost response or cancellation after publication
+can leave a verified destination: inspect that file before retrying with overwrite.

@@ -1,6 +1,6 @@
 # Native exports through local MCP
 
-Status: approved for implementation planning; not implemented. Adversarial
+Status: implemented. Adversarial
 review of `b7a70cc3` found no High or Medium findings. The contract below includes
 the accepted Low refinements and the reason for deferring batch catalog hashes.
 
@@ -328,7 +328,7 @@ publication semantics with their existing owners. Any shared-helper extraction
 for request value validation must serve this concrete adapter and preserve
 other callers; the daemon write helper remains unchanged. Update the MCP
 guide and link to the owning native export guide for shared limits/release rules
-when implemented. Actionable work and status remain in kata.
+for this capability. Actionable work and status remain in kata.
 
 These examples define observable behavior, not a requirement to duplicate the
 existing engine/verifier test suites:
@@ -371,4 +371,4 @@ existing engine/verifier test suites:
 Verification must exercise actual MCP discovery/calls and output schema checks,
 the real daemon path, and local file results. Retain both SQLite modes and
 supported platforms; no real developer corpus is needed. This specification
-does not claim the proposed tools have been implemented or tested.
+preserves design-review evidence; it is not an implementation review.
