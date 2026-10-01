@@ -335,6 +335,37 @@ local pointers, sidecar targets, selected display state, enum-like text,
 revisions, receipt JSON, and the complete graph before commit. Released
 metadata streams remain readable and restore an empty photo authority.
 
+### Photo technical projection
+
+`photo_technical_metadata` stores one derived row for each source metadata
+generation that has at least one photo fact. The row keeps typed camera, lens,
+exposure, dimension, capture, orientation, GPS, and coarse place fields.
+Generations without those facts, such as PDFs and email, have no row. Its
+foreign key cascades with the generation, so it never becomes a second blob or
+version authority.
+
+An exact content-version read first follows `content_versions.blob_hash` to
+the selected `source_metadata_heads` generation, validates that generation's
+canonical checksum, and then reads the matching projection. Two versions that
+share bytes therefore share one projection while retaining their own version
+IDs. A node move, replacement, revert, display choice, exclusion, or photo
+membership change does not rewrite the row.
+
+Source publication builds the projection before its existing generation and
+head transaction commits. Projection rows and the recipe marker stay out of
+metadata JSONL and backups because the source generations they derive from are
+already there.
+
+One refresh pass owns bulk projection. It deletes every row, projects every
+generation from its retained canonical JSON, and records the
+applied recipe in the one-row `photo_technical_metadata_state` table. Restore
+always runs it, so a restored vault rebuilds every row from its source
+generations. `Open` runs it only when the recorded recipe
+differs, so an unchanged store pays one single-row read. A recipe change costs
+one decode of every retained source generation and one gazetteer load when any
+has GPS; it reads no original blobs. A valid GPS pair can have no label when
+the embedded Natural Earth map has no matching country or simplified boundary.
+
 SQLite is Docbank's runtime query and transaction engine, but its historical
 page layout is not the intended long-lived backup contract. The logical
 boundary is deterministic JSONL headed by `docbank-metadata` and an integer

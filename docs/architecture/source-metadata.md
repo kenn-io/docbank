@@ -108,6 +108,33 @@ ensures reuse that active generation. The daemon backfill only processes
 originals missing a generation for its fingerprint, so it does not reactivate
 already-recorded evidence by itself.
 
+A generation with at least one camera, lens, exposure, dimension,
+capture-time, orientation, or GPS claim also gets one indexed photo technical
+projection row that maps those claims into nullable typed columns. Generations
+without any of them, such as PDFs and email, get no row. The store records the
+`photo-technical/v1` recipe that built its rows in a one-row state table,
+separately from extractor fingerprints, because the mapping and embedded map
+can change without changing the source evidence. When the recipe changes, the next store open re-projects every generation from
+its retained canonical JSON, without reading originals. Reads bind the
+projection to the requested content version through its blob hash and active
+source head, then validate the canonical source checksum. This keeps historical
+version reads exact and lets duplicate versions share one generation row.
+
+Capture timestamps retain normalized text, raw text, precision, timezone kind,
+and offset. A date-only value keeps its omitted timezone. The GPS adapter
+accepts only a finite, bounded latitude and longitude pair and keeps those
+coordinates when the offline Natural Earth resolver returns no label. Labels
+are coarse country, region, and nearby-city text. A region names the label
+only when a point inside the region lies in the photo's country, so overlapping
+simplified borders cannot pair one country with a neighbor's region. A city
+within 25 km names the label only when the map's country and region borders place it in the same
+country and region as the photo, so a city in a gap between simplified borders
+is never used. Ocean coordinates and border gaps remain unlabeled.
+
+Projection rows stay out of metadata JSONL and backups. Restore rebuilds them
+from the restored source generations' canonical evidence; no original blob
+read is needed.
+
 The HTTP node and content-version detail surfaces return the active generation.
 Embedded applications call `Vault.EnsureSourceMetadata` with an immutable
 content version ID to run the current local extractor synchronously for those

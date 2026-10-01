@@ -95,6 +95,10 @@ func (s *Store) PublishSourceMetadata(
 	if err != nil {
 		return SourceMetadataGeneration{}, fmt.Errorf("validating source metadata: %w", err)
 	}
+	photoFields, err := photoTechnicalFieldsForMetadata(metadata)
+	if err != nil {
+		return SourceMetadataGeneration{}, fmt.Errorf("projecting photo technical metadata: %w", err)
+	}
 	generation := SourceMetadataGeneration{
 		SourceSHA256: sourceSHA256, ContractVersion: metadata.ContractVersion,
 		ExtractorFingerprint: extractorFingerprint, CanonicalJSON: append([]byte(nil), canonical...),
@@ -124,6 +128,9 @@ func (s *Store) PublishSourceMetadata(
 			return errors.New("source metadata extractor identity already has different evidence")
 		}
 		generation = stored
+		if err := insertPhotoTechnicalMetadataTx(ctx, tx, generation.GenerationID, photoFields); err != nil {
+			return fmt.Errorf("recording photo technical metadata: %w", err)
+		}
 		var activeGeneration string
 		headErr := tx.QueryRowContext(ctx, `SELECT generation_id FROM source_metadata_heads
 			WHERE source_sha256=?`, sourceSHA256).Scan(&activeGeneration)
