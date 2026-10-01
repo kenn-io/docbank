@@ -21,11 +21,11 @@ type visualPreviewBlobs interface {
 }
 
 // EnsureVisualPreview retains one built-in recipe result; callers own the mutation gate.
-func EnsureVisualPreview(ctx context.Context, catalog *store.Store, blobs *blob.Store, versionID string, recipe document.VisualPreviewRecipeV1, activeHead bool) (store.VisualPreviewView, error) {
-	return ensureVisualPreview(ctx, catalog, blobs, versionID, recipe, activeHead)
+func EnsureVisualPreview(ctx context.Context, catalog *store.Store, blobs *blob.Store, versionID string, recipe document.VisualPreviewRecipeV1) (store.VisualPreviewView, error) {
+	return ensureVisualPreview(ctx, catalog, blobs, versionID, recipe)
 }
 
-func ensureVisualPreview(ctx context.Context, catalog *store.Store, blobs visualPreviewBlobs, versionID string, recipe document.VisualPreviewRecipeV1, activeHead bool) (store.VisualPreviewView, error) {
+func ensureVisualPreview(ctx context.Context, catalog *store.Store, blobs visualPreviewBlobs, versionID string, recipe document.VisualPreviewRecipeV1) (store.VisualPreviewView, error) {
 	if err := ctx.Err(); err != nil {
 		return store.VisualPreviewView{}, err
 	}
@@ -38,17 +38,14 @@ func ensureVisualPreview(ctx context.Context, catalog *store.Store, blobs visual
 	}
 	view, err := catalog.ContentVersionVisualPreviewByRecipe(ctx, versionID, fingerprint)
 	if err == nil {
-		if activeHead {
-			var physical *store.BlobPhysical
-			if output := view.Generation.Preview.Output; output != nil {
-				receipt, err := catalog.PhysicalContent(ctx, output.BlobSHA256)
-				if err != nil {
+		if recipe == CurrentVisualPreviewRecipe() {
+			_, headErr := catalog.ContentVersionVisualPreview(ctx, versionID)
+			if errors.Is(headErr, store.ErrNotFound) {
+				if _, err := catalog.PublishVisualPreview(ctx, versionID, view.Generation.CanonicalResult, nil); err != nil {
 					return store.VisualPreviewView{}, err
 				}
-				physical = &store.BlobPhysical{Encoding: receipt.Encoding, StoredBytes: receipt.StoredBytes, PackEligible: receipt.PackEligible}
-			}
-			if _, err := catalog.PublishVisualPreview(ctx, versionID, view.Generation.CanonicalResult, physical); err != nil {
-				return store.VisualPreviewView{}, err
+			} else if headErr != nil {
+				return store.VisualPreviewView{}, headErr
 			}
 		}
 		return view, nil
@@ -80,7 +77,7 @@ func ensureVisualPreview(ctx context.Context, catalog *store.Store, blobs visual
 		return store.VisualPreviewView{}, err
 	}
 	publish := catalog.PublishVisualPreviewGeneration
-	if activeHead {
+	if recipe == CurrentVisualPreviewRecipe() {
 		publish = catalog.PublishVisualPreview
 	}
 	if product.Preview.State != document.VisualPreviewReady {

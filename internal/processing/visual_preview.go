@@ -812,10 +812,6 @@ func visualPreviewDimensionsAllowed(width, height int) bool {
 		int64(width) <= visualPreviewMaxSourcePixels/int64(height)
 }
 
-func boundedVisualPreviewDimensions(width, height int) (int, int) {
-	return boundedVisualPreviewDimensionsForEdge(width, height, visualPreviewMaxEdgePixels)
-}
-
 func boundedVisualPreviewDimensionsForEdge(width, height, edge int) (int, int) {
 	if width <= edge && height <= edge {
 		return width, height

@@ -58,7 +58,7 @@ func (v *Vault) EnsureVisualPreviewForSize(ctx context.Context, versionID string
 	if err != nil {
 		return VisualPreview{}, err
 	}
-	view, err := internalprocessing.EnsureVisualPreview(ctx, v.metadata, v.blobs, versionID, recipe, size == VisualPreviewLarge)
+	view, err := internalprocessing.EnsureVisualPreview(ctx, v.metadata, v.blobs, versionID, recipe)
 	if err != nil {
 		return VisualPreview{}, visualPreviewProcessingError(err)
 	}

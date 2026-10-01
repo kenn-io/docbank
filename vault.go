@@ -642,7 +642,7 @@ func (v *Vault) EnsureVisualPreview(ctx context.Context, versionID string) (Visu
 	defer v.lifecycle.RUnlock()
 	v.mutation.Lock()
 	defer v.mutation.Unlock()
-	if _, err := internalprocessing.EnsureVisualPreview(ctx, v.metadata, v.blobs, versionID, internalprocessing.CurrentVisualPreviewRecipe(), true); err != nil {
+	if _, err := internalprocessing.EnsureVisualPreview(ctx, v.metadata, v.blobs, versionID, internalprocessing.CurrentVisualPreviewRecipe()); err != nil {
 		return VisualPreview{}, visualPreviewProcessingError(err)
 	}
 	view, err := v.metadata.ContentVersionVisualPreview(ctx, versionID)

@@ -624,25 +624,9 @@ func startProcessingJobs(
 	if err := supervisor.Start("extract:source-metadata", metadata.Run); err != nil {
 		return fmt.Errorf("starting source metadata backfill: %w", err)
 	}
-	gridRecipe, err := processing.VisualPreviewRecipeForSize("grid")
+	previews, err := newVisualPreviewBackfill(s, blobs, gate, logger)
 	if err != nil {
 		return err
-	}
-	_, gridFingerprint, err := document.MarshalVisualPreviewRecipeV1(gridRecipe)
-	if err != nil {
-		return err
-	}
-	previews := &processing.Backfill[store.PhotoVisualPreviewTarget]{
-		Name: "visual-previews", Page: 10, IdleDelay: time.Second,
-		List: func(ctx context.Context, after string, limit int) ([]store.PhotoVisualPreviewTarget, error) {
-			return s.MissingPhotoVisualPreviewTargetsAfter(ctx, gridFingerprint, after, limit)
-		},
-		Key:    func(target store.PhotoVisualPreviewTarget) string { return target.VersionID },
-		Mutate: gate.MutateContext, Logger: logger,
-		Process: func(ctx context.Context, target store.PhotoVisualPreviewTarget) error {
-			_, err := processing.EnsureVisualPreview(ctx, s, blobs, target.VersionID, gridRecipe, false)
-			return err
-		},
 	}
 	if err := supervisor.Start("derive:visual-previews", previews.Run); err != nil {
 		return fmt.Errorf("starting visual preview backfill: %w", err)
@@ -684,6 +668,31 @@ func startProcessingJobs(
 		return fmt.Errorf("starting document people derivation: %w", err)
 	}
 	return startPackagePreflightMaintenance(supervisor, s, gate, logger)
+}
+
+func newVisualPreviewBackfill(
+	s *store.Store, blobs *blob.Store, gate *api.OperationGate, logger *slog.Logger,
+) (*processing.Backfill[store.PhotoVisualPreviewTarget], error) {
+	gridRecipe, err := processing.VisualPreviewRecipeForSize("grid")
+	if err != nil {
+		return nil, err
+	}
+	_, gridFingerprint, err := document.MarshalVisualPreviewRecipeV1(gridRecipe)
+	if err != nil {
+		return nil, err
+	}
+	return &processing.Backfill[store.PhotoVisualPreviewTarget]{
+		Name: "visual-previews", Page: 10, IdleDelay: time.Second,
+		List: func(ctx context.Context, after string, limit int) ([]store.PhotoVisualPreviewTarget, error) {
+			return s.MissingPhotoVisualPreviewTargetsAfter(ctx, gridFingerprint, after, limit)
+		},
+		Key:    func(target store.PhotoVisualPreviewTarget) string { return target.VersionID },
+		Mutate: gate.MutateContext, Logger: logger,
+		Process: func(ctx context.Context, target store.PhotoVisualPreviewTarget) error {
+			_, err := processing.EnsureVisualPreview(ctx, s, blobs, target.VersionID, gridRecipe)
+			return err
+		},
+	}, nil
 }
 
 func startPackagePreflightMaintenance(

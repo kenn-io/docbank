@@ -42,7 +42,7 @@ func visualPreviewGenerationID(versionID, recipeFingerprint, checksum string) st
 }
 
 // PublishVisualPreview validates and atomically publishes one exact-version
-// result. Ready results also commit the already-durable output blob receipt.
+// result. Ready results commit a physical receipt or reuse existing output authority.
 // The active head advances only when recording a new generation or retrying
 // the current head. Retrying the identical publication is idempotent.
 func (s *Store) PublishVisualPreview(
@@ -68,9 +68,6 @@ func (s *Store) publishVisualPreview(ctx context.Context, versionID string, cano
 	if err != nil {
 		return VisualPreviewGeneration{}, fmt.Errorf("fingerprinting visual preview recipe: %w", err)
 	}
-	if preview.State == document.VisualPreviewReady && physical == nil {
-		return VisualPreviewGeneration{}, errors.New("ready visual preview requires physical blob authority")
-	}
 	if preview.State != document.VisualPreviewReady && physical != nil {
 		return VisualPreviewGeneration{}, errors.New("non-ready visual preview must not carry physical blob authority")
 	}
@@ -90,7 +87,23 @@ func (s *Store) publishVisualPreview(ctx context.Context, versionID string, cano
 			return errors.New("visual preview source does not match content version")
 		}
 		if preview.State == document.VisualPreviewReady {
-			if err := s.EnsureBlobTx(tx, preview.Output.BlobSHA256, preview.Output.Size, *physical); err != nil {
+			if physical == nil {
+				stored, readErr := visualPreviewGenerationByRecipeTx(ctx, tx, versionID, recipeFingerprint)
+				if errors.Is(readErr, ErrNotFound) {
+					return errors.New("ready visual preview requires a physical receipt or an existing generation")
+				}
+				if readErr != nil {
+					return readErr
+				}
+				if stored.GenerationID != generation.GenerationID || stored.Checksum != checksum ||
+					!bytes.Equal(stored.CanonicalResult, canonical) {
+					return errors.New("visual preview recipe already has a different result")
+				}
+				if _, err := requirePhysicalAuthorityTx(tx, preview.Output.BlobSHA256); err != nil {
+					return fmt.Errorf("checking existing visual preview output authority: %w", err)
+				}
+				generation = stored
+			} else if err := s.EnsureBlobTx(tx, preview.Output.BlobSHA256, preview.Output.Size, *physical); err != nil {
 				return fmt.Errorf("recording visual preview output: %w", err)
 			}
 		}
@@ -128,9 +141,9 @@ func (s *Store) publishVisualPreview(ctx context.Context, versionID string, cano
 			content_version_id,generation_id,published_at
 		) VALUES(?,?,?) ON CONFLICT(content_version_id) DO UPDATE SET
 			generation_id=excluded.generation_id,
- published_at=CASE WHEN ? != 0 THEN excluded.published_at ELSE visual_preview_heads.published_at END
+			published_at=excluded.published_at
 			WHERE ? != 0 OR visual_preview_heads.generation_id=excluded.generation_id`,
-			versionID, generation.GenerationID, nowRFC3339(), inserted, inserted)
+			versionID, generation.GenerationID, nowRFC3339(), inserted)
 		return execErr
 	})
 	return generation, err

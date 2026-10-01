@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"image/color"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/home"
@@ -52,7 +55,7 @@ func TestStartProcessingJobsRegistersVisualPreview(t *testing.T) {
 	require.NotContains(t, names, "process:renditions")
 }
 
-func TestVisualPreviewBackfillRediscoversMissingGeneration(t *testing.T) {
+func TestVisualPreviewBackfillProcessesGridAndLeavesLegacyHeadEmpty(t *testing.T) {
 	layout := home.Layout{Root: t.TempDir()}
 	require.NoError(t, layout.Ensure())
 	catalog, err := store.Open(layout.DBPath())
@@ -61,9 +64,10 @@ func TestVisualPreviewBackfillRediscoversMissingGeneration(t *testing.T) {
 	blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	source := mediatest.JPEG(1024, 768, color.White)
 	var versions []string
-	for _, name := range []string{"one.txt", "two.txt"} {
-		receipt, err := blobs.WriteDetailedContext(t.Context(), strings.NewReader(name))
+	for _, name := range []string{"one.jpg", "two.jpg"} {
+		receipt, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(source))
 		require.NoError(t, err)
 		encoding, err := receipt.EncodingName()
 		require.NoError(t, err)
@@ -77,29 +81,18 @@ func TestVisualPreviewBackfillRediscoversMissingGeneration(t *testing.T) {
 	require.NoError(t, err)
 	_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(recipe)
 	require.NoError(t, err)
-	_, err = processing.EnsureVisualPreview(t.Context(), catalog, blobs, versions[0], recipe, false)
+	_, err = processing.EnsureVisualPreview(t.Context(), catalog, blobs, versions[0], recipe)
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	processed := 0
-	backfill := processing.Backfill[store.PhotoVisualPreviewTarget]{
-		Name: "preview-test", Page: 10, IdleDelay: time.Second,
-		List: func(ctx context.Context, after string, limit int) ([]store.PhotoVisualPreviewTarget, error) {
-			return catalog.MissingPhotoVisualPreviewTargetsAfter(ctx, fingerprint, after, limit)
-		},
-		Key: func(target store.PhotoVisualPreviewTarget) string { return target.VersionID },
-		Process: func(ctx context.Context, target store.PhotoVisualPreviewTarget) error {
-			require.Equal(t, versions[1], target.VersionID)
-			_, err := processing.EnsureVisualPreview(ctx, catalog, blobs, target.VersionID, recipe, false)
-			if err == nil {
-				processed++
-				cancel()
-			}
-			return err
-		},
-	}
-	require.ErrorIs(t, backfill.Run(ctx), context.Canceled)
-	require.Equal(t, 1, processed)
+	backfill, err := newVisualPreviewBackfill(catalog, blobs, api.NewOperationGate(), slog.Default())
+	require.NoError(t, err)
+	backfill.DrainOnce = true
+	require.NoError(t, backfill.Run(t.Context()))
+	view, err := catalog.ContentVersionVisualPreviewByRecipe(t.Context(), versions[1], fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, document.VisualPreviewReady, view.Generation.Preview.State)
+	require.Equal(t, 512, view.Generation.Preview.Output.Width)
+	_, err = catalog.ContentVersionVisualPreview(t.Context(), versions[1])
+	require.ErrorIs(t, err, store.ErrNotFound)
 	remaining, err := catalog.MissingPhotoVisualPreviewTargetsAfter(t.Context(), fingerprint, "", 100)
 	require.NoError(t, err)
 	require.Empty(t, remaining)
