@@ -177,6 +177,9 @@ docbank photos assets display <asset-id> [file-id] [--revision REV]
 docbank photos settings show
 docbank photos settings set raw|image [--revision REV]
 docbank photos settings reset [--revision REV]
+docbank photos import <source-root> [destination] [--json]
+docbank photos imports show <import-id> [--json]
+docbank photos imports cancel <import-id> [--json]
 ```
 
 Photo commands emit JSON through the daemon. Image and concrete video files
@@ -184,10 +187,14 @@ are enrolled when created; generic RAW files require explicit promotion.
 Existing-asset and settings mutations read the current revision and retry
 once if another write changes it first. Pass `--revision` to fail with exit
 code 4 instead. `inspect` also accepts an `id:N` or path selector for a
-member file; `id:N` also finds a trashed member. Sidecars must point at a same-asset RAW member and never become
+member file; `id:N` also finds a trashed member. Sidecars must point at a same-asset RAW or image member and never become
 the display member.
 Photo assets, settings, and bounded decision receipts are included in JSONL
 backup and restore.
+`photos import` imports a daemon-host folder, one photo per same-folder,
+same-name group discovered in the scan; `imports show` lists every group that
+run left unpaired. Current duplicate owners preserve existing pairings. See
+[Photos](usage/photos.md#import-a-camera-folder).
 
 ## docbank people
 

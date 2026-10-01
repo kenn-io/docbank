@@ -48,14 +48,20 @@ func registerJobRoutes(api huma.API, d Deps) {
 				if redactErrors && errorDetail != "" {
 					errorDetail = "storage operation failed; inspect with the Docbank CLI for details"
 				}
-				out.Body.Items = append(out.Body.Items, Job{
+				job := Job{
 					Name: name, Status: string(operation.State),
 					StartedAt: operation.CreatedAt.Format(time.RFC3339Nano),
 					Error:     errorDetail, OperationID: operation.ID, Kind: operation.Kind,
 					CompletedObjects: operation.CompletedObjects,
 					TotalObjects:     operation.TotalObjects,
 					FinishedAt:       storageOperationAPI(operation).FinishedAt,
-				})
+					CancelRequested:  operation.CancelRequested,
+				}
+				if operation.Kind == store.StorageOperationKindPhotoImport {
+					job.CanCancel = operation.State == store.StorageOperationQueued || operation.State == store.StorageOperationRunning
+					job.Destination = photoImportRequest(operation).Destination
+				}
+				out.Body.Items = append(out.Body.Items, job)
 			}
 		}
 		if d.Jobs != nil {

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -163,4 +165,39 @@ func TestWithPhotoRevisionRetriesOnceOnlyWhenInferred(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrStaleRevision)
 	assert.Zero(t, reads)
 	assert.Equal(t, []int64{7}, writes)
+}
+
+func TestPhotoImportCommands(t *testing.T) {
+	for _, path := range [][]string{
+		{"photos", "import"}, {"photos", "imports", "show"}, {"photos", "imports", "cancel"},
+	} {
+		command, _, err := rootCmd.Find(path)
+		require.NoError(t, err, path)
+		assert.NotNil(t, command.Flags().Lookup("json"), path)
+	}
+}
+
+func TestPhotoImportOutputListsAmbiguousGroups(t *testing.T) {
+	previousJSON := photoImportJSON
+	photoImportJSON = false
+	t.Cleanup(func() { photoImportJSON = previousJSON })
+	var output bytes.Buffer
+	command := &cobra.Command{}
+	command.SetOut(&output)
+	run := api.PhotoImportRun{
+		ID: "run", State: "completed", TotalGroups: 4, CompletedGroups: 4, ChangedGroups: 1, AmbiguousGroups: 3,
+		Ambiguities: []api.PhotoImportAmbiguity{{Reason: "multiple_raw", Files: []api.PhotoImportAmbiguousFile{{
+			SourcePath: filepath.Join(t.TempDir(), "capture.ARW"), NodeID: 7, Role: "raw",
+			AssetID: "00000000-0000-4000-8000-000000000001",
+		}}}},
+	}
+	require.NoError(t, writePhotoImportOutput(command, run))
+	assert.Contains(t, output.String(), "ambiguous group 1 (multiple_raw)")
+	assert.Contains(t, output.String(), "id:7 raw 00000000-0000-4000-8000-000000000001")
+	assert.Contains(t, output.String(), "capture.ARW")
+	assert.Contains(t, output.String(), "photos assets attach")
+	assert.Contains(t, output.String(), "photos assets inspect <asset-id>")
+	assert.Contains(t, output.String(), "2 more ambiguous groups not listed")
+	assert.Contains(t, output.String(), "changed during import: 1")
+	assert.Contains(t, output.String(), "The sidecar follows on the next import.")
 }

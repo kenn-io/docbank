@@ -312,8 +312,8 @@ Photo tables index ordinary file nodes; they do not copy blob hashes, sizes,
 MIME data, or content versions. `photo_assets` owns asset kind, exclusion,
 revision, and selected or overridden display pointers. `photo_files` owns the
 role and same-asset sidecar relationship for each node. A sidecar never
-becomes a display member, and its source must be a RAW member in the same
-asset.
+becomes a display member, and its source must be a RAW or image member in the
+same asset.
 
 Image and concrete video files enroll at the end of each file creation owner.
 Email children are excluded through `email_document_relations`, while

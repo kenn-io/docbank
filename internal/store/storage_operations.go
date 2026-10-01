@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -21,6 +23,7 @@ const storageOperationFinalizingCursor = "@finalizing"
 const (
 	storageOperationKindPlace       = "place"
 	storageOperationKindEvacuate    = "evacuate"
+	StorageOperationKindPhotoImport = "photo_import"
 	storageOperationRoleSource      = "source"
 	storageOperationRoleDestination = "destination"
 
@@ -165,6 +168,30 @@ func (s *Store) CreateStorageOperation(
 	return created, err
 }
 
+// CreateLocalOperation records a durable job that references no blob store.
+// It lists, reports progress, cancels, and resumes like a storage operation.
+func (s *Store) CreateLocalOperation(ctx context.Context, kind, requestJSON string) (StorageOperation, error) {
+	digest := sha256.Sum256([]byte(requestJSON))
+	return s.CreateStorageOperation(ctx, StorageOperationCreate{
+		Kind: kind, RequestDigest: hex.EncodeToString(digest[:]),
+		RequestJSON: requestJSON, PlanJSON: "{}",
+	})
+}
+
+// SetStorageOperationTotal records a total that a running operation
+// discovers after it starts.
+func (s *Store) SetStorageOperationTotal(ctx context.Context, id string, total int64) error {
+	if total < 0 {
+		return errors.New("storage operation total must not be negative")
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE storage_operations SET total_objects=?,updated_at=?
+		WHERE operation_id=? AND state=?`,
+		total, nowRFC3339(), id, StorageOperationRunning,
+	)
+	return requireOneStorageOperationRow(result, err, id, "sizing")
+}
+
 // PruneExpiredStorageOperations removes terminal operation receipts after
 // their retention boundary while preserving every operation that still owns
 // pending physical cleanup.
@@ -232,7 +259,7 @@ func validateStorageOperationCreate(
 	input StorageOperationCreate,
 ) ([]StorageOperationStoreReference, error) {
 	switch input.Kind {
-	case storageOperationKindPlace, storageOperationKindEvacuate, "repair", "salvage":
+	case storageOperationKindPlace, storageOperationKindEvacuate, "repair", "salvage", StorageOperationKindPhotoImport:
 	default:
 		return nil, fmt.Errorf("unsupported storage operation kind %q", input.Kind)
 	}

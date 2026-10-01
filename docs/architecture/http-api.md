@@ -930,7 +930,8 @@ children. Processing metadata does not make its source an email child.
 resolved display pointer, its source (`asset`, `vault`, `default`, or `none`),
 and the asset ETag. The default order is RAW, image, then video; the vault
 `image` preference moves image before RAW, and an asset override wins. A
-sidecar must point at a same-asset RAW member and is never displayable.
+sidecar must point at a same-asset RAW or image member and is never
+displayable.
 
 Create and promote operate on live file nodes. Attach, detach, exclude,
 display, and settings mutations require `If-Match`; the store checks the
@@ -946,6 +947,13 @@ vaults skip automatic enrollment and refuse explicit photo mutations while
 preserving any graph that existed before audit was enabled. Display and
 settings writes are available through HTTP and the CLI; MCP exposes them only
 as reads in this slice.
+
+`POST /photos/imports` starts a folder import from a daemon-host path and
+returns `202`. The import is a durable job of kind `photo_import` in the jobs
+list: `GET /photos/imports` and `GET /photos/imports/{id}` report group
+counts and the groups left unpaired, and `POST /photos/imports/{id}/cancel`
+stops it before the next group. Browser sessions can read and cancel imports;
+source paths and raw errors are redacted for them.
 
 Person reads return the canonical row and, for `GET /people/by-id/{person_id}`,
 the identities and external UIDs used by split. Rename, retire, merge, and
