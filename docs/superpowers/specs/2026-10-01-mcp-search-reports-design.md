@@ -1,8 +1,8 @@
 # Frozen search reports through local MCP
 
-Status: proposed; not implemented. The maintainer selected the complete MCP
-report workflow for specification and adversarial review. This document does
-not approve implementation.
+Status: ready for implementation planning; not implemented. Adversarial review
+of `37916002` found one Medium clarification, incorporated below: the corrected
+date pager applies to every caller. Implementation still requires plan review.
 
 Source baseline: `3a23e5e61f26c0b8aef33582adaf2bbd7717f2a7`, after
 [native MCP exports](https://github.com/kenn-io/docbank/pull/749).
@@ -159,6 +159,8 @@ existing choices must be preserved without quote truncation or interpretation.
 The existing date endpoint bounds its page near 1 MiB before MCP wraps it;
 MCP emits the payload twice and caps the complete result at 1 MiB. Merely
 lowering the member count is insufficient: one member can have 256 candidates.
+This is the combined limit enforced by `Service.Prepare` after adding metadata,
+fallback, and extracted-text candidates, not just the text extractor's limit.
 Extend `report.DatePageRequest` with `MaxBytes int` encoded as
 `max_bytes,omitempty`. Omission or zero keeps the existing 1 MiB default.
 Positive values must be 64 KiB–1 MiB; reject other values with
@@ -174,8 +176,11 @@ fitted and a cursor to the first unreturned candidate. Do not drop evidence,
 advance past an unreturned candidate, return an empty nonterminal page, or
 raise a limit error merely because the remaining room is insufficient. If a
 single required member/candidate cannot fit an otherwise empty page, return
-`report_limit`. Web/CLI callers that omit the field keep the old byte ceiling
-and complete evidence, though page boundaries need not be byte-for-byte stable.
+`report_limit`. The corrected pager applies to every caller, including web and
+CLI requests that omit `max_bytes` or send zero. Those requests keep the 1 MiB
+default ceiling, not the existing bug that fails an already populated page
+when the next candidate does not fit. Return the populated page and its
+continuation cursor instead. Page boundaries need not be byte-for-byte stable.
 
 The 256 KiB payload bound leaves room for both MCP representations and metadata.
 The existing final result-size guard remains authoritative. Verify the full
@@ -193,6 +198,18 @@ engine's existing action-dependent rules. Reviewed timezone uses the MCP
 `sent`, `captured`, `signed`, `effective`, or `expiry`. No new date inference or
 free-form replacement evidence is introduced. Schema and cheap shape checks
 precede sending; the daemon validates the full choice semantics and evidence.
+
+The 1,000-choice count and 4,096-byte reason length are individual ceilings,
+not a promise that their simultaneous maxima fit a request. The complete MCP
+message, including JSON escaping and the protocol envelope, must fit within
+1 MiB. Larger reviews need shorter reasons where appropriate, or caller-chosen
+batches applied to each newly returned child. The adapter never splits a
+revision automatically. Each batch consumes another shared handle and keeps
+the original expiry; an initial report with no other owner handles permits
+at most seven such revisions before capacity is full. For a review that cannot
+fit those limits, use the existing HTTP or CLI revise path with its 8 MiB
+request ceiling to submit a larger batch. That still consumes a handle and
+does not bypass the shared capacity limit.
 
 Make one revision request against the original supplied ID. A parent with a
 large summary can still be revised because the result is a compact receipt.
@@ -367,9 +384,12 @@ mock report engines, or tests that search implementation text:
 4. Large date evidence spans the new byte-bounded pages without loss,
    duplication, partial-candidate truncation, empty-page loops, or oversized MCP
    wire results. Include one member spanning pages, heavily escaped strings,
-   and the case where the next candidate cannot fit the remainder. Omitted
-   `max_bytes` preserves existing clients' contract. Check the too-large
-   single-item error separately.
+   and the case where the next candidate cannot fit the remainder. Include a
+   regression with `max_bytes` omitted at the default 1 MiB ceiling: earlier
+   members fill the page, the next member's first candidate does not fit,
+   and the response succeeds with the earlier members and a cursor that resumes
+   at that candidate. Exercise explicit zero through the same default path.
+   Check the too-large single-item error separately.
 5. A child retains unmentioned parent choices and the original expiration;
    parent cursors do not work on it. Capacity includes children and other
    master-owner reports. Expiration/restart loses handles, not durable history.

@@ -3,7 +3,7 @@
 Reviewed design: [Frozen search reports through local MCP](2026-10-01-mcp-search-reports-design.md).
 
 - Source revision: `3a23e5e61f26c0b8aef33582adaf2bbd7717f2a7`.
-- Design SHA-256: `e25918c3aa62ce3589fedd59d9c68730df93f2d2fa866f774a359e7cc8ec538e`.
+- Design SHA-256: `5a7acf406816af99c29597801437ca292c064072a8dbfe0da36e88c03bee007e`.
 - Relevant source, dependencies, generated clients, and Git index matched that
   revision during review. Only this design and review were added on disk.
   There are no Git submodules. The committed documents make this input
@@ -11,9 +11,39 @@ Reviewed design: [Frozen search reports through local MCP](2026-10-01-mcp-search
 - Dependency versions read from `go.mod`: Go 1.27.0, Huma v2.38.0,
   MCP Go SDK v1.7.0, and jsonschema-go v0.4.3.
 
-This is an inline author review, not independent adversarial approval. The
-feature remains proposed. Source-backed behavior below was inspected, not
-newly exercised as an implemented MCP report workflow.
+This records the author review and disposition of the subsequent adversarial
+review. The feature remains unimplemented. Source-backed behavior below was
+inspected, not newly exercised as an implemented MCP report workflow.
+
+## Adversarial review disposition
+
+Reviewed commit: `379160028215a0219d1ce6b610f98b30dfa1efd2`. Its design hash was
+`e25918c3aa62ce3589fedd59d9c68730df93f2d2fa866f774a359e7cc8ec538e`. The source
+baseline is unchanged. The reviewer found no High issues and one Medium
+clarification; the following dispositions apply to the revised design hash above.
+
+- **Medium, shared pager: accepted.** `internal/reporting/cache.go:486` appends
+  a member, then trims candidates. At `:500` or `:509`, failure to fit another
+  candidate returns a limit error even when earlier entries could be returned.
+  This is a source-backed path in the shared web/CLI/MCP pager. The design now
+  requires the correction with omitted and zero `max_bytes`, and a default-size
+  regression that returns earlier members with a usable continuation cursor.
+  This review did not newly reproduce that path at runtime.
+- **Low, revision message size: accepted as documentation.** Keep the existing
+  per-field bounds and 1 MiB MCP envelope limit. Document caller-chosen batching,
+  the additional handle consumed by each batch, unchanged expiry, and the
+  existing 8 MiB HTTP/CLI alternative. Do not split a write automatically.
+- **Low, more than 256 candidates: not accepted.** The text extractor has a
+  256-candidate limit, but `internal/reporting/service.go:163` also checks the
+  combined member list after metadata, fallback, and extracted candidates
+  have been assembled. Lines 166–167 reject more than 256 before a frame is
+  admitted to the cache. The design now identifies that combined limit.
+- **Low, explicit release: deferred.** The eight-handle capacity and fixed
+  expiry stay explicit. A report-release operation can be separately scoped
+  if actual iterative use demonstrates the need; it is not included here.
+
+The author findings below record the initial drafting pass. Their design line
+numbers refer to `37916002`; source line numbers still match the baseline.
 
 ## Findings
 
@@ -136,6 +166,6 @@ the scope. In particular:
 
 ## Verdict
 
-Ready for independent specification review. No unresolved High or Medium issue
-remains in this author pass; that is not implementation or adversarial approval.
-Planning and product changes wait for review of the written contract.
+Ready for implementation planning after the accepted pager clarification.
+No unresolved High or Medium item remains from the supplied adversarial review.
+The rejected candidate-limit note has direct source evidence above.
