@@ -1,8 +1,8 @@
 # Native exports through local MCP
 
-Status: proposed design; not implemented. The maintainer selected a complete MCP
-workflow, including verified delivery to a local file. This written contract is
-for adversarial review before implementation planning.
+Status: approved for implementation planning; not implemented. Adversarial
+review of `b7a70cc3` found no High or Medium findings. The contract below includes
+the accepted Low refinements and the reason for deferring batch catalog hashes.
 
 Source baseline: `5f36ee4ec6245a1e558cac2de36218b52700a66f`, after
 [CLI exports and explicit release](https://github.com/kenn-io/docbank/pull/740).
@@ -51,9 +51,10 @@ The catalog is fixed at startup. Neither `--allow-package-writes` nor
 Preview creates retained source and plan records and can prevent pruning, so it
 is a write despite its name. A disabled tool is absent from discovery and cannot
 be called by name. Read-only status does not acquire a download ticket.
-Use read-only annotations only for status; mark download and release destructive
-because they can replace a destination or discard a retained archive. Other new
-writes are non-destructive. Use conservative false idempotence hints for the new
+Use read-only annotations only for status; mark cancel, download, and release
+destructive because they end active work, can replace a destination, or discard
+a retained archive. Preview and start are non-destructive.
+Use conservative false idempotence hints for the new
 writes; describe explicit replay separately rather than promising indefinite
 deduplication. Status retains the existing read-tool annotations.
 
@@ -78,6 +79,13 @@ The current MCP document and version results omit original-file hashes.
 version item and its output schema. Preserve existing fields, ordering, paging,
 and the 250-item page limit. This addition is available without write flags.
 Do not add another metadata endpoint or fetch original bytes to compute hashes.
+
+This means one version-list call per selected node, including current versions
+(and further pages if needed). A 500-node selection needs 500 such calls.
+Batch catalog hashes are deferred: both `store.DocumentSummary` and
+`api.DocumentSummary` omit them, so adding hashes to `list_documents` also changes
+the store projection and HTTP catalog contract. Keep this adapter increment
+bounded; do not hide that cost with automatic per-item lookups inside a tool.
 
 An agent discovers nodes using existing list/search tools, then lists versions
 for each chosen node. For preview it copies `node_id`, maps
@@ -173,10 +181,11 @@ expire after their original ten-minute admission windows even when a job extends
 their retention. After a delayed/lost start response, recover through the known
 job ID or the same start request, not by replaying preview.
 
-No write callback is retried automatically. Follow the single-attempt lease
-pattern in `daemonProcessingStart`; its processing-specific unknown-outcome text
-must not become an export response. A small helper extraction to supply an
-export-specific outcome error is allowed, preserving existing tools' behavior.
+No write callback is retried automatically. Reuse `daemonProcessingStart` for
+preview, start, cancel, and release; translate `errProcessingOutcomeUnknown` to
+an export-specific error at the call site, as the existing Bates tools do.
+Its processing-specific text must not become an export response. Do not extract
+or rename the shared helper for this increment.
 Do not wrap preview, start, cancel, release, or download in `daemonRead`,
 which can replay a callback after an initial transport failure. Status can use
 that existing read helper. Discard failed connections under the existing lease
@@ -191,6 +200,10 @@ for start, use status or identical start; for cancel, inspect status; for releas
 not-found establishes only that the job is no longer accessible. A released job
 ID must never be reused: its deleted replay authority can permit a fresh job
 while the plan remains eligible. These are explicit caller recovery actions.
+The first write through a cached connection after a daemon restart can report
+unknown outcome even when no request reached the new daemon. The helper does
+not distinguish that case or reconnect and replay the write. Explain this
+conservative result in the MCP guide and use the same ID-based recovery.
 
 Keep all engine limits: 32 global combined source/plan records, eight global
 retained jobs, two retained jobs per owner regardless of state, ten-minute
@@ -269,7 +282,12 @@ local verification, and response delivery. Stdio honors the caller's context
 and cancellation; it does not acquire that HTTP-specific deadline.
 
 The engine's 52 GiB archive ceiling is not a promise that every archive can be
-downloaded through MCP HTTP within two minutes. For a job that cannot finish
+downloaded through MCP HTTP within two minutes. The deadline covers server-side
+archive verification, transfer, and client-side verification. Tell callers to
+inspect `get_export_status` and its completed `job.receipt.size` before choosing
+HTTP delivery. Size is a planning aid, not a guaranteed time threshold; storage
+and transfer speed also matter. Do not add a hard size cutoff or extra automatic
+status call to download. For a job that cannot finish
 within that deadline, callers use `docbank export download <job-id> <path>`
 against the same selected vault, or a suitable stdio invocation. Do not extend
 timeouts, run a detached transfer, or weaken verification. Cancellation before
@@ -307,7 +325,8 @@ Catalog, schemas, bounded outputs, and adapter functions belong in `internal/mcp
 the startup flag belongs in `cmd/docbank/mcp.go`. Reuse generated API operations
 and the merged daemonconn download method. Keep engine, store, verifier, and
 publication semantics with their existing owners. Any shared-helper extraction
-must serve this concrete adapter and preserve other callers. Update the MCP
+for request value validation must serve this concrete adapter and preserve
+other callers; the daemon write helper remains unchanged. Update the MCP
 guide and link to the owning native export guide for shared limits/release rules
 when implemented. Actionable work and status remain in kata.
 
@@ -317,6 +336,7 @@ existing engine/verifier test suites:
 1. Default stdio and HTTP catalogs expose status and version hashes; all five
    export writes are absent and direct calls fail. The export flag enables them
    without enabling other write families, and unrelated flags do not enable them.
+   Discovery marks cancellation, download, and release destructive.
 2. Through a real MCP client and daemon using a synthetic vault, list a node's
    versions, construct members solely from those results, preview an old version,
    start, inspect completion, download, independently verify its original bytes,

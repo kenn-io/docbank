@@ -3,7 +3,7 @@
 Reviewed [the proposed design](2026-09-30-mcp-native-exports-design.md) against
 source revision `5f36ee4ec6245a1e558cac2de36218b52700a66f`.
 Design SHA-256:
-`38974c795f4134fd132058ac9774208c0d0d9f4ff3b48899697e813437daaba0`.
+`084ce6e2a54c83820a83bf4d20c825962e1f1b6e2ce19e3a27767242e6b900ec`.
 
 This is an inline author self-review, not an independent implementation review.
 The source tree was clean at that baseline. At review, only the new design and
@@ -17,6 +17,43 @@ Read the repository instructions, documentation publishing guide, the CLI
 export design and review, and existing MCP/native-export guides. The baseline
 includes merged PR #740, including its release and download corrections. Source
 references below are relative to that exact revision.
+
+## Review revision after maintainer approval
+
+The supplied adversarial review inspected clean commit
+`b7a70cc3e6abb4f69867e17e113fa66ef05c498e`, with original spec SHA-256
+`38974c795f4134fd132058ac9774208c0d0d9f4ff3b48899697e813437daaba0`,
+and found no High or Medium issues. It approved implementation planning.
+For this revision, compared the spec against that exact commit and verified
+that relevant product source and dependencies still match the original clean
+baseline. Only the design and this review changed; the revised hash is above.
+
+The five Low notes were checked against source and resolved as follows:
+
+1. Mark cancellation destructive. `internal/store/export_jobs.go:280` changes
+   state to canceled and advances the worker epoch; this ends active work.
+   Discovery should describe that effect even though no original is deleted.
+2. Reuse the write helper without extraction. The Bates call sites at
+   `internal/mcp/bates_tool.go:458` and `:517` already translate
+   `errProcessingOutcomeUnknown` to their own sentinel. Exports use that same
+   pattern; neither a renamed helper nor a new generic write boundary is needed.
+3. Defer the optional hash addition to the batch catalog. Confirmed the extra
+   version-list call per node and documented its cost. `api.DocumentSummary`
+   (`internal/api/document_query_types.go:19`) and `store.DocumentSummary`
+   (`internal/store/document_query.go:66`) both omit the hash, as does the query
+   projection at `:337`. Eliminating those calls entails a store/HTTP contract
+   extension, beyond the approved adapter scope. No per-item hidden lookup is
+   proposed. The version-list addition still uses an already returned hash.
+4. Recommend inspecting completed status receipt size before HTTP delivery.
+   The deadline covers server verification (`internal/exporter/worker.go:337`), transfer,
+   and local verification (`internal/daemonconn/export_download.go:68`). Size
+   alone cannot guarantee completion time, so this adds guidance, not a cutoff.
+5. Explain conservative unknown outcome after restart. The cached lease can
+   refer to a stopped daemon; `internal/mcp/daemon.go:271` makes one attempt and
+   discards on transport failure without proving whether dispatch occurred.
+   The next explicit call can reacquire; no automatic write replay is added.
+
+These are specification refinements, not product fixes made in this revision.
 
 ## Findings
 
@@ -115,6 +152,7 @@ Try to falsify these contracts:
 
 ## Verdict
 
-Ready for maintainer and independent adversarial review before implementation
-planning. No High or Medium issue remains in this author review. The selected
-scope remains proposed; implementation and its verification have not begun.
+Approved by the maintainer for implementation planning after adversarial review.
+No High or Medium issue remains in this author review. The accepted Low
+refinements are recorded above; implementation and its verification have not
+begun.
