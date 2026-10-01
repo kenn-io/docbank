@@ -46,7 +46,7 @@ func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T)
 	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
 		return daemonconn.New(daemon.URL, "synthetic-key"), nil
 	}, func(*daemonconn.Connection) error { return nil })
-	schemas := catalogMap(toolCatalog(false, false, false))
+	schemas := catalogMap(toolCatalog(ServerOptions{}))
 
 	tests := []struct {
 		name      string
@@ -79,7 +79,17 @@ func TestNineReadToolHandlersReturnBoundedPrivateStructuredResults(t *testing.T)
 				t.Helper()
 				assert.Contains(t, resourceLinkURIs(result), canonicalTestRenditionURI())
 			}},
-		{name: "list_document_versions", arguments: map[string]any{"node_id": 7, "limit": 1, "offset": 0}},
+		{name: "list_document_versions", arguments: map[string]any{"node_id": 7, "limit": 1, "offset": 0},
+			check: func(t *testing.T, output map[string]any, _ *sdkmcp.CallToolResult) {
+				t.Helper()
+				items, ok := output["items"].([]any)
+				require.True(t, ok)
+				require.Len(t, items, 1)
+				item, ok := items[0].(map[string]any)
+				require.True(t, ok)
+				require.Equal(t, strings.Repeat("a", 64), item["blob_hash"])
+				require.Equal(t, testVersionID, item["content_version_id"])
+			}},
 		{name: "read_rendition_text", arguments: map[string]any{"vault_id": testVaultID, "node_id": 7,
 			"content_version_id": testVersionID, "attachment_id": testAttachmentID, "offset": 1, "max_chars": 3},
 			check: func(t *testing.T, output map[string]any, _ *sdkmcp.CallToolResult) {
@@ -611,7 +621,8 @@ func newReadToolDaemon(t *testing.T) *httptest.Server {
 				ModifiedAt: "2026-08-28T00:00:00Z", Path: "/synthetic.md"})
 		case "/api/v1/nodes/7/versions":
 			writeDaemonJSON(t, response, api.ContentVersionPage{Items: []api.ContentVersion{{ID: testVersionID,
-				NodeID: 7, Size: 12, MimeType: "text/markdown", RecordedAt: "2026-08-28T00:00:00Z"}},
+				NodeID: 7, BlobHash: strings.Repeat("a", 64), Size: 12,
+				MimeType: "text/markdown", RecordedAt: "2026-08-28T00:00:00Z"}},
 				Total: 1, Limit: 1, Offset: 0})
 		case "/api/v1/processing/source-fences/resolve":
 			var input api.DocumentSourceFenceResolveRequest
@@ -700,7 +711,7 @@ func invokeReadTool(
 	if err != nil {
 		return nil, err
 	}
-	validator := mustResolveSchema(catalogMap(toolCatalog(false, false, false))[name].OutputSchema)
+	validator := mustResolveSchema(catalogMap(toolCatalog(ServerOptions{}))[name].OutputSchema)
 	result, err := executeReadTool(ctx, lease, newProcessingPlanRegistry(), name, validator, raw)
 	if domain, ok := domainToolError(err); ok {
 		return domain, nil

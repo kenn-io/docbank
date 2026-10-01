@@ -584,6 +584,7 @@ type listDocumentVersionsInput struct {
 type documentVersionOutput struct {
 	NodeID           int64  `json:"node_id"`
 	ContentVersionID string `json:"content_version_id"`
+	BlobHash         string `json:"blob_hash"`
 	Size             int64  `json:"size"`
 	MediaType        string `json:"media_type"`
 	RecordedAt       string `json:"recorded_at"`
@@ -647,7 +648,8 @@ func listDocumentVersions(
 			return listDocumentVersionsOutput{}, errors.New("document version response escaped its node")
 		}
 		output.Items[index] = documentVersionOutput{NodeID: version.NodeID,
-			ContentVersionID: version.ID, Size: version.Size, MediaType: version.MimeType,
+			ContentVersionID: version.ID, BlobHash: version.BlobHash,
+			Size: version.Size, MediaType: version.MimeType,
 			RecordedAt: version.RecordedAt, IsCurrent: version.ID == result.current}
 	}
 	return output, nil

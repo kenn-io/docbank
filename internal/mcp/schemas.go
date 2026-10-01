@@ -16,6 +16,7 @@ const (
 	personIDField         = "person_id"
 	schemaStateField      = "state"
 	schemaLimitField      = "limit"
+	schemaJobIDField      = "job_id"
 	schemaCreatedAtField  = "created_at"
 	jsonSchemaConst       = "const"
 	maxToolResponseBytes  = 1 << 20
@@ -107,12 +108,12 @@ func cursorSchema() schema {
 
 func packageImportOutputSchema() schema {
 	return rootObjectSchema(withPrivateCache(schema{
-		"operation_id": uuidSchema(), "job_id": uuidSchema(), packageIDField: uuidSchema(),
+		"operation_id": uuidSchema(), schemaJobIDField: uuidSchema(), packageIDField: uuidSchema(),
 		"preflight_id": uuidSchema(), schemaStateField: enumSchema("queued", "running", "complete", "partial", "failed", "cancelled"),
 		"committed": integerSchema(0, 100_000), "total": integerSchema(1, 100_000),
 		"gap_count": integerSchema(0, 100_000), "gaps": arraySchema(stringSchema(4096), 100),
 		schemaCreatedAtField: dateTimeSchema(), "updated_at": dateTimeSchema(),
-	}), cacheRequired("operation_id", "job_id", packageIDField, "preflight_id", schemaStateField, "committed", "total", "gap_count", schemaCreatedAtField, "updated_at")...)
+	}), cacheRequired("operation_id", schemaJobIDField, packageIDField, "preflight_id", schemaStateField, "committed", "total", "gap_count", schemaCreatedAtField, "updated_at")...)
 }
 
 func getPackageImportSchemas() (schema, schema) {
@@ -698,11 +699,12 @@ func listDocumentVersionsSchemas() (schema, schema) {
 	item := objectSchema(schema{
 		"node_id":            integerSchema(1, 0),
 		"content_version_id": uuidSchema(),
+		"blob_hash":          sha256Schema(),
 		"size":               integerSchema(0, 0),
 		"media_type":         stringSchema(255),
 		"recorded_at":        dateTimeSchema(),
 		"is_current":         booleanSchema(),
-	}, "node_id", "content_version_id", "size", "media_type", "recorded_at", "is_current")
+	}, "node_id", "content_version_id", "blob_hash", "size", "media_type", "recorded_at", "is_current")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"node_id": integerSchema(1, 0), "items": arraySchema(item, 250),
 		"total": integerSchema(0, 0), schemaLimitField: integerSchema(1, 250), "offset": integerSchema(0, 1_000_000),
@@ -785,12 +787,12 @@ func getProcessingPlanSchemas() (schema, schema) {
 }
 
 func getProcessingStatusSchemas() (schema, schema) {
-	input := rootObjectSchema(schema{"job_id": sha256Schema()}, "job_id")
+	input := rootObjectSchema(schema{schemaJobIDField: sha256Schema()}, schemaJobIDField)
 	output := rootObjectSchema(withPrivateCache(schema{
-		"job_id": sha256Schema(), "content_version_id": uuidSchema(), schemaStateField: stringSchema(64), "phase": stringSchema(64),
+		schemaJobIDField: sha256Schema(), "content_version_id": uuidSchema(), schemaStateField: stringSchema(64), "phase": stringSchema(64),
 		"failure_code": stringSchema(64), "embedding_job_ids": arraySchema(sha256Schema(), 64),
 		"completed_bindings": integerSchema(0, 64),
-	}), cacheRequired("job_id", schemaStateField, "phase", "embedding_job_ids", "completed_bindings")...)
+	}), cacheRequired(schemaJobIDField, schemaStateField, "phase", "embedding_job_ids", "completed_bindings")...)
 	return input, output
 }
 
@@ -819,10 +821,10 @@ func startProcessingSchemas() (schema, schema) {
 		"content_version_id": uuidSchema(), "plan_fingerprint": sha256Schema(),
 	}, "content_version_id", "plan_fingerprint")
 	output := rootObjectSchema(withPrivateCache(schema{
-		"job_id": sha256Schema(), "rendition_job_id": sha256Schema(), "attachment_id": sha256Schema(),
+		schemaJobIDField: sha256Schema(), "rendition_job_id": sha256Schema(), "attachment_id": sha256Schema(),
 		"embedding_job_ids": arraySchema(sha256Schema(), 64), "profile_fingerprint": sha256Schema(),
 		"content_version_id": uuidSchema(), schemaStateField: schema{"type": "string", jsonSchemaConst: "queued"},
-	}), cacheRequired("job_id", "embedding_job_ids", "profile_fingerprint", "content_version_id", schemaStateField)...)
+	}), cacheRequired(schemaJobIDField, "embedding_job_ids", "profile_fingerprint", "content_version_id", schemaStateField)...)
 	return input, output
 }
 

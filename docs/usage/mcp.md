@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-08-29
+last_edited: 2026-09-30
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's bounded, daemon-first document surface.
 ---
@@ -80,7 +80,7 @@ client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header;
 clients that require the MCP HTTP OAuth flow are unsupported.
 
-Both transports have the fixed 20-tool read catalog described below.
+Both transports have the fixed read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` separately permits load-file preflight, import, and
 custodian changes. `--allow-photo-edits` separately permits photo asset
@@ -125,6 +125,9 @@ return HTTP 202 with no body. `subscriptions/listen` uses SSE, but Docbank
 advertises no subscriptions. A call with an empty notification selection
 acknowledges the request and completes immediately.
 
+`--allow-export-writes` separately permits native export previews, job writes,
+local download, and explicit release. Other write flags do not enable these tools.
+
 ## Tool catalog
 
 All inputs and outputs use closed JSON Schema 2020-12 objects: unknown fields
@@ -134,11 +137,12 @@ links, is capped at 1 MiB.
 
 | Tool | Contract and important bounds |
 | --- | --- |
+| `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
 | `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity fails closed. |
-| `list_document_versions` | Lists immutable versions for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
+| `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
 | `read_rendition_text` | Reads the exact vault/node/version/attachment tuple described under [Resources](#resources-and-rendition-windows). |
 | `get_processing_plan` | Requires an exact node ID, content-version UUID, and 1–128-character processing profile name. Returns the complete provider, trust-boundary, retention, estimate, consent, and backup disclosure plus its fingerprint. |
 | `get_processing_status` | Reads one stable 64-hex-character job identity. A response contains at most 64 embedding job IDs. |
@@ -392,3 +396,78 @@ completion or client cancellation. Daemon restart, an idle shutdown, or a
 stale runtime record therefore produces a bounded failure or recovers on the
 next safe read without terminating stdio with diagnostics on stdout or leaving
 HTTP pinned to a dead client.
+
+## Native export jobs
+
+Start with `docbank mcp --allow-export-writes` to let a client retain exact
+originals and manage their export. Review the selection with the operator.
+
+| Tool | Required arguments and result |
+| --- | --- |
+| `preview_export` | `source_operation_id`, `plan_operation_id`, and `members`. Returns a retained `plan`. |
+| `start_export` | `operation_id`, `plan_id`, and `fingerprint`. Returns the `job`; it does not wait for completion. |
+| `cancel_export` | `job_id`. Permanently stops active work. Returns `accepted: true`; completed jobs conflict. |
+| `download_export` | `job_id`, absolute `destination_path`, optional `overwrite` (default false). Returns the verified `receipt` and publication state. |
+| `release_export` | `job_id`. Deletes a terminal job and its retained archive, returning `released: true`. |
+
+List versions for each selected node. Copy `content_version_id` to `version_id`,
+`blob_hash` to `sha256`, and copy `node_id` and `size` into each member. This takes
+one `list_document_versions` call per node, with more pages if needed. Each preview
+accepts 1–1,000 retained original versions totaling at most 50 GiB. It can include
+multiple versions of the same node. Size is required, including zero for an empty
+original. Optional `revision` is a current node precondition; omit it unless
+needed. A version's historical node revision is not that precondition.
+
+Generate all operation IDs before calling. After `export_outcome_unknown`, inspect
+the known job ID or explicitly replay the same request and IDs. The first write
+after a daemon restart can report this even when nothing was sent; Docbank does
+not reconnect and repeat writes automatically. Preview replay must keep member
+order and remains subject to its original ten-minute admission window. After a
+delayed start response, use job status instead of replaying preview. Never reuse
+a released job ID: its replay record has been deleted.
+
+MCP shares the API-key owner with the CLI. Completed jobs still occupy the two
+shared job slots until released or expired. Release does not delete originals or
+local downloads. `export_retained` means a download ticket or lease still holds
+the archive; retry release after it closes. The source and plan records have
+separate global limits. See [export limits and recovery](export-bundles.md).
+
+To save an export:
+
+1. Call `preview_export` with your exact members and two fresh operation IDs.
+2. Review `plan.total` and `plan.role_bytes`, then call `start_export` with a
+   fresh operation ID, `plan.id`, and `plan.fingerprint`.
+3. Call `get_export_status` with that job ID. When it completes, inspect
+   `job.receipt.size` before choosing a download transport.
+4. Call `download_export` with the job ID and a destination on the MCP host.
+5. After saving the file, call `release_export` to free the retained job slot.
+
+The destination parent must exist and resolve outside the Docbank data
+directory. An existing destination must be a regular file and requires
+`overwrite: true`. Verification occurs before publication: the daemon verifies
+the retained archive, then the MCP process streams it into a private stage and
+independently verifies the complete bundle against the job and ticket receipts.
+The result contains no ZIP bytes or download ticket. Download never releases,
+cancels, or recreates the job automatically.
+
+`state: "published"` means the verified file is saved.
+`state: "published_durability_unknown"` means the file became visible but the
+subsequent directory sync failed. Both return the receipt. `cleanup_failed: true`
+means private staging cleanup failed after publication; the saved file remains.
+Before publication, ordinary failures preserve the destination and attempt
+stage cleanup. `export_integrity` identifies a receipt or archive mismatch;
+`export_local_io` identifies a local file-operation failure. The operator log
+records the operation and its cause; the client receives a fixed message.
+A failed stage cleanup can leave a private stage behind and is logged separately.
+A secondary cleanup failure does not replace the original error.
+
+`export_unavailable` means the daemon has no export worker. That request made
+no change; check the daemon and retry. For `export_expired`, preview again with
+new IDs if admission expired, or release a retained job whose archive is missing.
+
+The HTTP two-minute deadline includes daemon verification, transfer, and local
+verification. Archive size alone cannot predict whether all three fit. For a
+large job, use `docbank export download <job-id> <path>` against the same vault
+or a suitable stdio invocation. A later download obtains a fresh ticket and
+transfers the whole file again. A lost response or cancellation after publication
+can leave a verified destination: inspect that file before retrying with overwrite.

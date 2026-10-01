@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-29
+last_edited: 2026-09-30
 title: Verified export bundles
 description: Download exact document versions, verified email PDFs and attachment sets in reconciled ZIP bundles.
 ---
@@ -8,7 +8,8 @@ description: Download exact document versions, verified email PDFs and attachmen
 
 Use the web app or authenticated HTTP API to export exact document versions,
 retained email PDFs, attachment originals, Markdown text, and page images.
-Use `docbank export` for original files selected by exact document-version identity.
+Use `docbank export` or the [native MCP export tools](mcp.md#native-export-jobs)
+for original files selected by exact document-version identity.
 Docbank freezes the selection and role receipts
 before writing the archive. A later edit to a saved query, tag, document head,
 or processing result does not change an admitted plan.

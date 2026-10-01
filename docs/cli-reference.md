@@ -1082,7 +1082,7 @@ contains a live scoped browser session and must be handled as a secret. See the
 
 ```text
 docbank mcp [--transport stdio|http] [--listen <loopback-ip:port>]
-            [--allow-processing] [--allow-package-writes]
+            [--allow-processing] [--allow-package-writes] [--allow-export-writes]
 ```
 
 Runs the selected vault's exact MCP `2026-07-28` server as another client of
@@ -1110,6 +1110,10 @@ processing](usage/document-processing.md) for the exact flow.
 `--allow-package-writes` separately adds load-file preflight, package import,
 and package custodian assignment and resolution. These tools can read local
 sources and change the vault without using the processing consent flow.
+
+`--allow-export-writes` separately adds native export previews, start, cancellation,
+local download, and explicit release. Status is available without write flags. See the
+[MCP export workflow](usage/mcp.md#native-export-jobs) for selection and recovery.
 
 `--allow-photo-edits` separately adds guarded photo asset mutations. Each
 write uses an asset revision and one daemon request. Display and settings
