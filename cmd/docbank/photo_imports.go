@@ -119,8 +119,9 @@ func writePhotoImportOutput(cmd *cobra.Command, run api.PhotoImportRun) error {
 		}
 	}
 	if len(run.Ambiguities) > 0 {
-		if _, err := fmt.Fprintln(out, "To pair a group, move its RAW and JPEG files into one photo: 'docbank photos assets inspect <asset-id>' shows file IDs, "+
-			"'docbank photos assets detach <asset-id> <file-id>' frees a file, and 'docbank photos assets attach <asset-id> id:<node>' adds it. The sidecar follows on the next import."); err != nil {
+		if _, err := fmt.Fprintln(out, "To pair a group, keep its RAW and JPEG in one photo. 'docbank photos assets inspect <asset-id>' shows file IDs. "+
+			"When detaching a RAW with sidecars, use 'docbank photos assets detach <asset-id> <file-id> --clear-dependent-sidecars'. "+
+			"Attach a RAW with 'docbank photos assets attach <asset-id> id:<node> --role raw' and a JPEG with 'docbank photos assets attach <asset-id> id:<node> --role image'. The sidecar follows on the next import."); err != nil {
 			return fmt.Errorf("writing photo import output: %w", err)
 		}
 	}
