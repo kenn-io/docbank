@@ -86,8 +86,8 @@ func writePhotoImportOutput(cmd *cobra.Command, run api.PhotoImportRun) error {
 		return writeCLIJSON(cmd.OutOrStdout(), run)
 	}
 	out := cmd.OutOrStdout()
-	if _, err := fmt.Fprintf(out, "import: %s\nstate: %s\nprogress: %d/%d groups\nadded: %d\nskipped: %d\nchanged during import: %d\nfailed: %d\nambiguous: %d\n",
-		run.ID, run.State, run.CompletedGroups, run.TotalGroups, run.AddedGroups, run.SkippedGroups, run.ChangedGroups, run.FailedGroups, run.AmbiguousGroups); err != nil {
+	if _, err := fmt.Fprintf(out, "import: %s\nstate: %s\nprogress: %d/%d groups\nadded: %d\nskipped: %d\nchanged during import: %d\nfailed: %d\nambiguous: %d\nunsupported files: %d\n",
+		run.ID, run.State, run.CompletedGroups, run.TotalGroups, run.AddedGroups, run.SkippedGroups, run.ChangedGroups, run.FailedGroups, run.AmbiguousGroups, run.UnsupportedFiles); err != nil {
 		return fmt.Errorf("writing photo import output: %w", err)
 	}
 	if run.Error != "" {

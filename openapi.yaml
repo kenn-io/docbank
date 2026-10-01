@@ -10967,6 +10967,10 @@ components:
           format: int64
           minimum: 0
           type: integer
+        unsupported_files:
+          format: int64
+          minimum: 0
+          type: integer
         updated_at:
           type: string
       required:
@@ -10980,6 +10984,7 @@ components:
         - changed_groups
         - failed_groups
         - ambiguous_groups
+        - unsupported_files
         - cancel_requested
         - started_at
         - updated_at

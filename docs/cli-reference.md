@@ -193,7 +193,7 @@ Photo assets, settings, and bounded decision receipts are included in JSONL
 backup and restore.
 `photos import` imports a daemon-host folder, one photo per same-folder,
 same-name group discovered in the scan; `imports show` lists every group that
-run left unpaired. Current duplicate owners preserve existing pairings. See
+run left unpaired and counts the unsupported files it skipped. Current duplicate owners preserve existing pairings. See
 [Photos](usage/photos.md#import-a-camera-folder).
 
 ## docbank people

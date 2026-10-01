@@ -26,23 +26,25 @@ type PhotoImportAmbiguousFile struct {
 }
 
 type PhotoImportRun struct {
-	ID              string                 `json:"id" format:"uuid"`
-	State           string                 `json:"state" enum:"queued,running,completed,failed,cancelled"`
-	SourceRoot      string                 `json:"source_root,omitzero"`
-	Destination     string                 `json:"destination"`
-	TotalGroups     int64                  `json:"total_groups" minimum:"0"`
-	CompletedGroups int64                  `json:"completed_groups" minimum:"0"`
-	AddedGroups     int64                  `json:"added_groups" minimum:"0"`
-	SkippedGroups   int64                  `json:"skipped_groups" minimum:"0"`
-	ChangedGroups   int64                  `json:"changed_groups" minimum:"0"`
-	FailedGroups    int64                  `json:"failed_groups" minimum:"0"`
-	AmbiguousGroups int64                  `json:"ambiguous_groups" minimum:"0"`
-	CancelRequested bool                   `json:"cancel_requested"`
-	Error           string                 `json:"error,omitzero"`
-	Ambiguities     []PhotoImportAmbiguity `json:"ambiguities,omitzero"`
-	StartedAt       string                 `json:"started_at"`
-	UpdatedAt       string                 `json:"updated_at"`
-	FinishedAt      string                 `json:"finished_at,omitzero"`
+	ID              string `json:"id" format:"uuid"`
+	State           string `json:"state" enum:"queued,running,completed,failed,cancelled"`
+	SourceRoot      string `json:"source_root,omitzero"`
+	Destination     string `json:"destination"`
+	TotalGroups     int64  `json:"total_groups" minimum:"0"`
+	CompletedGroups int64  `json:"completed_groups" minimum:"0"`
+	AddedGroups     int64  `json:"added_groups" minimum:"0"`
+	SkippedGroups   int64  `json:"skipped_groups" minimum:"0"`
+	ChangedGroups   int64  `json:"changed_groups" minimum:"0"`
+	FailedGroups    int64  `json:"failed_groups" minimum:"0"`
+	AmbiguousGroups int64  `json:"ambiguous_groups" minimum:"0"`
+	// UnsupportedFiles counts scanned files whose type the import does not read.
+	UnsupportedFiles int64                  `json:"unsupported_files" minimum:"0"`
+	CancelRequested  bool                   `json:"cancel_requested"`
+	Error            string                 `json:"error,omitzero"`
+	Ambiguities      []PhotoImportAmbiguity `json:"ambiguities,omitzero"`
+	StartedAt        string                 `json:"started_at"`
+	UpdatedAt        string                 `json:"updated_at"`
+	FinishedAt       string                 `json:"finished_at,omitzero"`
 }
 
 type PhotoImportRunList struct {
@@ -67,7 +69,7 @@ func fromStorePhotoImport(operation store.StorageOperation, browser bool) PhotoI
 		Destination: request.Destination, TotalGroups: operation.TotalObjects,
 		CompletedGroups: operation.CompletedObjects, AddedGroups: receipt.Added,
 		SkippedGroups: receipt.Skipped, ChangedGroups: receipt.Changed, FailedGroups: receipt.Failed,
-		AmbiguousGroups: receipt.Ambiguous, CancelRequested: operation.CancelRequested,
+		AmbiguousGroups: receipt.Ambiguous, UnsupportedFiles: receipt.Unsupported, CancelRequested: operation.CancelRequested,
 		StartedAt: operation.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: operation.UpdatedAt.Format(time.RFC3339Nano)}
 	if operation.FinishedAt != nil {
 		out.FinishedAt = operation.FinishedAt.Format(time.RFC3339Nano)

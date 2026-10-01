@@ -101,16 +101,17 @@ func TestPhotoImportDiscovery(t *testing.T) {
 	if err := os.Symlink(linkTarget, link); err != nil {
 		t.Skipf("symbolic links unavailable: %v", err)
 	}
-	candidates, err := discoverPhotoCandidates(t.Context(), root)
+	candidates, unsupported, err := discoverPhotoCandidates(t.Context(), root)
 	require.NoError(t, err)
 	require.Len(t, candidates, 3)
+	assert.Equal(t, int64(2), unsupported, ".DS_Store and notes.txt are counted, not imported")
 	assert.ElementsMatch(t, []string{keep, linkTarget, hidden}, []string{candidates[0].Path, candidates[1].Path, candidates[2].Path})
 
 	rootLink := filepath.Join(t.TempDir(), "camera-link")
 	if err := os.Symlink(root, rootLink); err != nil {
 		t.Skipf("root symbolic links unavailable: %v", err)
 	}
-	candidates, err = discoverPhotoCandidates(t.Context(), rootLink)
+	candidates, _, err = discoverPhotoCandidates(t.Context(), rootLink)
 	require.NoError(t, err)
 	assert.NotEmpty(t, candidates)
 }
@@ -289,7 +290,7 @@ func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 	assert.Equal(t, store.StorageOperationCompleted, completed.State)
 	assert.Equal(t, int64(3), completed.TotalObjects)
 	assert.Equal(t, int64(3), completed.CompletedObjects)
-	assert.JSONEq(t, `{"added":3,"skipped":0,"changed":0,"failed":0,"ambiguous":0}`, completed.ReceiptJSON)
+	assert.JSONEq(t, `{"added":3,"skipped":0,"changed":0,"failed":0,"ambiguous":0,"unsupported":0}`, completed.ReceiptJSON)
 
 	cancelled, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, request)
 	require.NoError(t, err)

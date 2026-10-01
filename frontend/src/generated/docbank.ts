@@ -4333,6 +4333,8 @@ export interface PhotoImportRun {
   state: PhotoImportRunState;
   /** @minimum 0 */
   total_groups: number;
+  /** @minimum 0 */
+  unsupported_files: number;
   updated_at: string;
 }
 

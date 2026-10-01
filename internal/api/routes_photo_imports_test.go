@@ -66,6 +66,13 @@ func TestPhotoImportRoutes(t *testing.T) {
 	defer func() { _ = invalidResponse.Body.Close() }()
 	assert.Equal(t, http.StatusUnprocessableEntity, invalidResponse.StatusCode)
 
+	for _, source := range []string{filepath.Join(root, "missing"), filepath.Join(root, "capture.JPG")} {
+		response, text := do(t, ts, http.MethodPost, "/api/v1/photos/imports", nil,
+			api.PhotoImportStartRequest{SourceRoot: source, Destination: "/photos"})
+		assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, text)
+		assert.Contains(t, text, "not an existing daemon-host folder")
+	}
+
 	remote := httptest.NewRecorder()
 	remoteRequest := httptest.NewRequest(http.MethodPost, "/api/v1/photos/imports", bytes.NewReader(body))
 	remoteRequest.RemoteAddr = "192.0.2.1:1234"

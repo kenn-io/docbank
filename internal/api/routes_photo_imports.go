@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -55,6 +57,10 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct{ Body PhotoImportStartRequest }) (*photoImportRunOutput, error) {
 		if !filepath.IsAbs(in.Body.SourceRoot) {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", "source_root must be an absolute daemon-host path")
+		}
+		if info, err := os.Stat(in.Body.SourceRoot); err != nil || !info.IsDir() {
+			return nil, NewError(http.StatusUnprocessableEntity, "validation",
+				fmt.Sprintf("source_root %q is not an existing daemon-host folder", in.Body.SourceRoot))
 		}
 		if in.Body.Destination == "" || in.Body.Destination[0] != '/' {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", "destination must be an absolute vault path")

@@ -949,9 +949,10 @@ settings writes are available through HTTP and the CLI; MCP exposes them only
 as reads in this slice.
 
 `POST /photos/imports` starts a folder import from a daemon-host path and
-returns `202`. The import is a durable job of kind `photo_import` in the jobs
-list: `GET /photos/imports` and `GET /photos/imports/{id}` report group
-counts and the groups left unpaired, and `POST /photos/imports/{id}/cancel`
+returns `202`, or `422` when the path is not an existing folder. The import is a
+durable job of kind `photo_import` in the jobs list: `GET /photos/imports` and
+`GET /photos/imports/{id}` report group counts, the number of unsupported files
+skipped, and the groups left unpaired, and `POST /photos/imports/{id}/cancel`
 stops it before the next group. Browser sessions can read and cancel imports;
 source paths and raw errors are redacted for them.
 

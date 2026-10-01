@@ -79,29 +79,32 @@ func GroupPhotoCandidates(candidates []PhotoImportCandidate) []PhotoImportGroup 
 	return groups
 }
 
-func discoverPhotoCandidates(ctx context.Context, root string) ([]PhotoImportCandidate, error) {
+func discoverPhotoCandidates(ctx context.Context, root string) ([]PhotoImportCandidate, int64, error) {
 	return discoverPhotoCandidatesChecked(root, ctx.Err)
 }
 
-func discoverPhotoCandidatesChecked(root string, check func() error) ([]PhotoImportCandidate, error) {
+// discoverPhotoCandidatesChecked returns the supported camera files under
+// root and how many other regular files it skipped.
+func discoverPhotoCandidatesChecked(root string, check func() error) ([]PhotoImportCandidate, int64, error) {
 	if root == "" {
-		return nil, errors.New("photo import root is empty")
+		return nil, 0, errors.New("photo import root is empty")
 	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	info, err := os.Lstat(absRoot)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if info.Mode()&fs.ModeSymlink != 0 {
 		absRoot, err = filepath.EvalSymlinks(absRoot)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	var candidates []PhotoImportCandidate
+	var unsupported int64
 	err = filepath.WalkDir(absRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if err := check(); err != nil {
 			return err
@@ -117,15 +120,16 @@ func discoverPhotoCandidatesChecked(root string, check func() error) ([]PhotoImp
 		}
 		source := store.ClassifyPhotoSource(entry.Name())
 		if source.Kind == store.PhotoSourceUnsupported {
+			unsupported++
 			return nil
 		}
 		candidates = append(candidates, PhotoImportCandidate{Path: path, Kind: source.Kind})
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("discover photo import sources: %w", err)
+		return nil, 0, fmt.Errorf("discover photo import sources: %w", err)
 	}
-	return candidates, nil
+	return candidates, unsupported, nil
 }
 
 type photoImportObservation struct {
@@ -272,10 +276,11 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 	if err := check(true); err != nil {
 		return report, err
 	}
-	candidates, err := discoverPhotoCandidatesChecked(root, checkPreparation)
+	candidates, unsupported, err := discoverPhotoCandidatesChecked(root, checkPreparation)
 	if err != nil {
 		return report, err
 	}
+	report.Receipt.Unsupported = unsupported
 	groups := GroupPhotoCandidates(candidates)
 	report.Total = len(groups)
 	if destination == "" {

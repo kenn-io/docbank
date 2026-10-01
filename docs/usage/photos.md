@@ -76,6 +76,13 @@ docbank photos imports show <import-id> [--json]
 docbank photos imports cancel <import-id> [--json]
 ```
 
+The import reads RAW files (`.ARW`, `.CR2`, `.CR3`, `.DNG`, `.NEF`, `.ORF`,
+`.RAF`, `.RW2`), images (`.JPG`, `.JPEG`, `.PNG`, `.GIF`, `.WEBP`, `.HEIC`),
+videos (`.MP4`, `.MOV`, `.M4V`, `.AVI`, `.MPG`), and `.XMP` sidecars. It leaves
+every other file out and reports how many it skipped as `unsupported files`.
+The source folder must exist when you start the import; otherwise the command
+fails with exit code 2 and no import starts.
+
 Files with the same folder and name, such as `IMG_0001.ARW`, `IMG_0001.JPG`,
 and `IMG_0001.XMP`, become one photo. The XMP sidecar attaches to the RAW, or
 to the JPEG when there is no RAW. An XMP with no same-name RAW or JPEG imports
@@ -83,7 +90,9 @@ as a plain file. A later full scan pairs companions when both source files
 are still present. Matching uses files in the scan and their current duplicate
 owners. A video always becomes its own photo. Each photo commits in one
 transaction, so a failure leaves no half photo behind, and running the same
-import again skips content already in the vault.
+import again skips content already in the vault. A file edited since it was
+imported, such as an XMP saved again by a photo editor, becomes a new version
+of the file already in the photo, not a second file.
 
 The import leaves a group unpaired and lists it in `imports show` when:
 

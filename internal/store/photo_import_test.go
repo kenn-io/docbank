@@ -20,6 +20,7 @@ func TestPhotoSourceClassification(t *testing.T) {
 	}{
 		{name: "capture.ARW", kind: PhotoSourceRAW, role: PhotoRoleRAW, mime: "image/x-sony-arw"},
 		{name: "capture.dNg", kind: PhotoSourceRAW, role: PhotoRoleRAW, mime: "image/x-adobe-dng"},
+		{name: "capture.CR3", kind: PhotoSourceRAW, role: PhotoRoleRAW, mime: "image/x-canon-cr3"},
 		{name: "capture.JPEG", kind: PhotoSourceImage, role: PhotoRoleImage, mime: "image/jpeg"},
 		{name: "capture.MP4", kind: PhotoSourceVideo, role: PhotoRoleVideo, mime: "video/mp4"},
 		{name: "capture.XMP", kind: PhotoSourceSidecar, role: PhotoRoleSidecar, mime: "application/rdf+xml"},
@@ -282,6 +283,65 @@ func TestPhotoImportDedupObservation(t *testing.T) {
 	var observations int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM provenance WHERE original_path=?`, filepath.Join(secondRoot, "IMG.DNG")).Scan(&observations))
 	assert.Equal(t, 1, observations)
+}
+
+func TestPhotoImportReusesOrdinaryRAWInAnotherFolder(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	inbox, err := s.Mkdir(ctx, s.RootID(), "Inbox")
+	require.NoError(t, err)
+	hash := fakeHash("ordinary-raw")
+	ordinary, err := s.CreateFile(ctx, inbox.ID, "capture.ARW", hash, 4, "image/x-sony-arw")
+	require.NoError(t, err)
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
+		photoImportTestMember(filepath.Join(t.TempDir(), "cam", "capture.ARW"), PhotoRoleRAW, hash, "image/x-sony-arw")))
+	require.NoError(t, err)
+	assert.True(t, result.Skipped)
+	assert.Equal(t, ordinary.ID, result.Nodes[0].ID)
+	var nodes int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&nodes))
+	assert.Equal(t, 1, nodes)
+}
+
+func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	root := filepath.Join(t.TempDir(), "cam")
+	raw := photoImportTestMember(filepath.Join(root, "IMG_0001.ARW"), PhotoRoleRAW, fakeHash("raw"), "image/x-sony-arw")
+	jpg := func(hash string) PhotoImportMember {
+		return photoImportTestMember(filepath.Join(root, "IMG_0001.JPG"), PhotoRoleImage, fakeHash(hash), "image/jpeg")
+	}
+	xmp := func(hash string) PhotoImportMember {
+		return photoImportTestMember(filepath.Join(root, "IMG_0001.XMP"), PhotoRoleSidecar, fakeHash(hash), "application/rdf+xml")
+	}
+	first, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v1"), xmp("xmp-v1")))
+	require.NoError(t, err)
+	sidecar := first.Nodes[2]
+
+	edited, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v1"), xmp("xmp-v2")))
+	require.NoError(t, err)
+	assert.True(t, edited.Added)
+	_, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, jpg("jpg-v2"), xmp("xmp-v2")))
+	require.NoError(t, err)
+
+	asset := mustPhotoAsset(t, s, first.Nodes[0].ID)
+	roles := make(map[string]int)
+	for _, file := range asset.Files {
+		roles[file.Role]++
+	}
+	assert.Equal(t, map[string]int{PhotoRoleRAW: 1, PhotoRoleImage: 1, PhotoRoleSidecar: 1}, roles)
+	var files int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE kind='file'`).Scan(&files))
+	assert.Equal(t, 3, files)
+	current, err := s.NodeByID(ctx, sidecar.ID)
+	require.NoError(t, err)
+	assert.Equal(t, fakeHash("xmp-v2"), current.BlobHash)
 }
 
 func TestPhotoImportDuplicateRawNextToSeparateJPEGIsReported(t *testing.T) {
