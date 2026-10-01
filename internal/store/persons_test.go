@@ -2,6 +2,7 @@ package store
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -71,6 +72,100 @@ func TestPersonMutationsAdvanceBindingEpoch(t *testing.T) {
 	require.Equal(t, "retired", retired.State)
 	_, err = s.UpdatePerson(ctx, person.PersonID, retired.Revision, "No")
 	require.ErrorIs(t, err, ErrPersonRetired)
+}
+
+func TestPersonMutationReturnsCommittedRevision(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+
+	// Keep the read pool's only connection occupied so a post-commit read cannot
+	// race the caller's next edit. The write pool remains available to observe
+	// and edit the committed row while the mutation is returning.
+	s.db.SetMaxOpenConns(1)
+	readConn, err := s.db.Conn(ctx)
+	require.NoError(t, err)
+	defer func() { _ = readConn.Close() }()
+
+	createdCh := make(chan struct {
+		person Person
+		err    error
+	}, 1)
+	go func() {
+		person, err := s.CreatePerson(ctx, "Synthetic", "operator")
+		createdCh <- struct {
+			person Person
+			err    error
+		}{person, err}
+	}()
+	require.Eventually(t, func() bool {
+		var id string
+		return s.writeDB.QueryRowContext(ctx,
+			`SELECT person_id FROM persons WHERE display_name=?`, "Synthetic").Scan(&id) == nil
+	}, 2*time.Second, 10*time.Millisecond)
+	var createdRowID string
+	require.NoError(t, s.writeDB.QueryRowContext(ctx,
+		`SELECT person_id FROM persons WHERE display_name=?`, "Synthetic").Scan(&createdRowID))
+	_, err = s.writeDB.ExecContext(ctx,
+		`UPDATE persons SET display_name=?,display_name_folded=?,revision=revision+1 WHERE person_id=?`,
+		"Later edit", "later edit", createdRowID)
+	require.NoError(t, err)
+	require.NoError(t, readConn.Close())
+	createdResult := <-createdCh
+	require.NoError(t, createdResult.err)
+	require.Equal(t, "Synthetic", createdResult.person.DisplayName)
+	require.Equal(t, int64(1), createdResult.person.Revision)
+
+	initial, err := s.CreatePerson(ctx, "Initial", "operator")
+	require.NoError(t, err)
+	readConn, err = s.db.Conn(ctx)
+	require.NoError(t, err)
+	updatedCh := make(chan struct {
+		person Person
+		err    error
+	}, 1)
+	go func() {
+		person, err := s.UpdatePerson(ctx, initial.PersonID, initial.Revision, "Committed rename")
+		updatedCh <- struct {
+			person Person
+			err    error
+		}{person, err}
+	}()
+	require.Eventually(t, func() bool {
+		var revision int64
+		return s.writeDB.QueryRowContext(ctx,
+			`SELECT revision FROM persons WHERE person_id=?`, initial.PersonID).Scan(&revision) == nil && revision == 2
+	}, 2*time.Second, 10*time.Millisecond)
+	_, err = s.writeDB.ExecContext(ctx,
+		`UPDATE persons SET display_name=?,display_name_folded=?,revision=revision+1 WHERE person_id=?`,
+		"Later edit", "later edit", initial.PersonID)
+	require.NoError(t, err)
+	require.NoError(t, readConn.Close())
+	updatedResult := <-updatedCh
+	require.NoError(t, updatedResult.err)
+	require.Equal(t, "Committed rename", updatedResult.person.DisplayName)
+	require.Equal(t, int64(2), updatedResult.person.Revision)
+}
+
+func TestPersonDetailResolvesAlias(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	survivor, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	absorbed, err := s.CreatePerson(ctx, "Ada old", "operator")
+	require.NoError(t, err)
+	absorbed, identity := addTestPersonIdentity(t, s, absorbed, "name_alias", "Ada old", "synthetic-alias")
+	operationID, err := newUUIDv4()
+	require.NoError(t, err)
+	_, err = s.MergePersons(ctx, survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
+	require.NoError(t, err)
+	detail, err := s.PersonDetail(ctx, absorbed.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, survivor.PersonID, detail.PersonID)
+	require.Equal(t, absorbed.PersonID, detail.ReachedThrough)
+	require.Len(t, detail.Identities, 1)
+	require.Equal(t, identity.IdentityID, detail.Identities[0].IdentityID)
 }
 
 func TestPersonAuthorityRejectsInvalidInputs(t *testing.T) {

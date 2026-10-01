@@ -23,6 +23,16 @@ type Person struct {
 	CreatedAt, UpdatedAt                                    string
 }
 
+// PersonDetail contains one snapshot of a person and the selectors needed to
+// choose explicit members for a split.
+type PersonDetail struct {
+	Person
+
+	ReachedThrough string
+	Identities     []PersonIdentity
+	External       []PersonExternalIdentity
+}
+
 type PersonIdentity struct {
 	IdentityID, PersonID, Kind, ValueNormalized, ValueDisplay, Normalization string
 	Origin, EvidenceKind, EvidenceID, Confidence, RecordedAt                 string
@@ -54,8 +64,14 @@ func (s *Store) CreatePerson(ctx context.Context, displayName, origin string) (P
 		return Person{}, err
 	}
 	now := nowRFC3339()
+	var created Person
 	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, displayName, document.FoldPersonName(displayName), origin, state, now, now); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
+			&created.PersonID, &created.DisplayName, &created.DisplayNameFolded, &created.Origin, &created.State,
+			&created.Revision, &created.CreatedAt, &created.UpdatedAt); err != nil {
 			return err
 		}
 		return advancePersonBindingEpochTx(ctx, tx)
@@ -63,14 +79,14 @@ func (s *Store) CreatePerson(ctx context.Context, displayName, origin string) (P
 	if err != nil {
 		return Person{}, err
 	}
-	person, _, err := s.PersonByID(ctx, id)
-	return person, err
+	return created, nil
 }
 
 func (s *Store) UpdatePerson(ctx context.Context, id string, revision int64, name string) (Person, error) {
 	if !validPersonName(name) {
 		return Person{}, ErrInvalidPerson
 	}
+	var updated Person
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		if err := fencePersonTx(ctx, tx, id, revision); err != nil {
 			return err
@@ -86,13 +102,17 @@ func (s *Store) UpdatePerson(ctx context.Context, id string, revision int64, nam
 		if count != 1 {
 			return ErrStaleRevision
 		}
+		if err := tx.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at FROM persons WHERE person_id=?`, id).Scan(
+			&updated.PersonID, &updated.DisplayName, &updated.DisplayNameFolded, &updated.Origin, &updated.State,
+			&updated.Revision, &updated.CreatedAt, &updated.UpdatedAt); err != nil {
+			return err
+		}
 		return advancePersonBindingEpochTx(ctx, tx)
 	})
 	if err != nil {
 		return Person{}, err
 	}
-	person, _, err := s.PersonByID(ctx, id)
-	return person, err
+	return updated, nil
 }
 
 // RetirePerson keeps document assertions as historical operator decisions.
@@ -161,9 +181,9 @@ func resolvePersonIDTx(ctx context.Context, tx *sql.Tx, id string) (string, erro
 	return id, nil
 }
 
-func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, error) {
+func personByIDTx(ctx context.Context, q metadataQuerier, id string) (Person, string, error) {
 	var person Person
-	err := s.db.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
+	err := q.QueryRowContext(ctx, `SELECT person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at
 		FROM persons WHERE person_id=COALESCE((SELECT surviving_person_id FROM person_aliases WHERE retired_person_id=?),?)
 		AND state<>'retired'`, id, id).Scan(&person.PersonID, &person.DisplayName, &person.DisplayNameFolded, &person.Origin,
 		&person.State, &person.Revision, &person.CreatedAt, &person.UpdatedAt)
@@ -178,6 +198,10 @@ func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, erro
 		reachedThrough = id
 	}
 	return person, reachedThrough, nil
+}
+
+func (s *Store) PersonByID(ctx context.Context, id string) (Person, string, error) {
+	return personByIDTx(ctx, s.db, id)
 }
 
 // PeopleByDisplayName returns active people in stable folded-name order.
@@ -286,12 +310,8 @@ func (s *Store) RemovePersonIdentity(ctx context.Context, personID, identityID s
 	})
 }
 
-func (s *Store) PersonIdentities(ctx context.Context, personID string) ([]PersonIdentity, error) {
-	person, _, err := s.PersonByID(ctx, personID)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT identity_id,person_id,kind,value_normalized,value_display,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at,scope_kind,scope_value FROM person_identities WHERE person_id=? ORDER BY kind,value_normalized,identity_id`, person.PersonID)
+func personIdentitiesTx(ctx context.Context, q metadataQuerier, personID string) ([]PersonIdentity, error) {
+	rows, err := q.QueryContext(ctx, `SELECT identity_id,person_id,kind,value_normalized,value_display,normalization,origin,evidence_kind,evidence_id,confidence,recorded_at,scope_kind,scope_value FROM person_identities WHERE person_id=? ORDER BY kind,value_normalized,identity_id`, personID)
 	if err != nil {
 		return nil, err
 	}
@@ -305,6 +325,38 @@ func (s *Store) PersonIdentities(ctx context.Context, personID string) ([]Person
 		identities = append(identities, identity)
 	}
 	return identities, rows.Err()
+}
+
+func (s *Store) PersonIdentities(ctx context.Context, personID string) ([]PersonIdentity, error) {
+	person, _, err := personByIDTx(ctx, s.db, personID)
+	if err != nil {
+		return nil, err
+	}
+	return personIdentitiesTx(ctx, s.db, person.PersonID)
+}
+
+func (s *Store) PersonDetail(ctx context.Context, personID string) (PersonDetail, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return PersonDetail{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	person, reachedThrough, err := personByIDTx(ctx, tx, personID)
+	if err != nil {
+		return PersonDetail{}, err
+	}
+	identities, err := personIdentitiesTx(ctx, tx, person.PersonID)
+	if err != nil {
+		return PersonDetail{}, err
+	}
+	external, err := personExternalIdentitiesTx(ctx, tx, person.PersonID)
+	if err != nil {
+		return PersonDetail{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return PersonDetail{}, err
+	}
+	return PersonDetail{Person: person, ReachedThrough: reachedThrough, Identities: identities, External: external}, nil
 }
 
 func fencePersonTx(ctx context.Context, tx *sql.Tx, personID string, revision int64) error {

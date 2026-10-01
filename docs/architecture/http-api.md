@@ -81,6 +81,10 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |
 | `POST /photos/assets/{asset_id}/exclude` · `POST /photos/nodes/{node_id}/promote` | change exclusion or explicitly promote a live file | Implemented |
 | `PUT /photos/assets/{asset_id}/display` · `GET\|PUT /photos/settings` | set an asset display override or vault preference | Implemented |
+| `GET /people` · `POST /people` | list, search, and create active canonical people | Implemented |
+| `GET /people/by-id/{person_id}` | inspect one person, its identities, and its external UIDs | Implemented |
+| `PATCH /people/by-id/{person_id}` · `POST /people/by-id/{person_id}/retire` | rename or retire one person under `If-Match` | Implemented |
+| `POST /people/by-id/{person_id}/merge` · `POST /people/by-id/{person_id}/split` | merge or split person authority under revision and operation fences | Implemented |
 | `GET /versions/{version_id}` · `GET /versions/{version_id}/content` | inspect or stream one immutable version by stable UUID | Implemented |
 | `GET\|POST /versions/{version_id}/email` | read or synchronously ensure canonical email metadata for one immutable version | Implemented |
 | `GET /versions/{version_id}/email/generations/{generation_id}` | read one immutable email generation attached to the exact version | Implemented |
@@ -943,6 +947,17 @@ preserving any graph that existed before audit was enabled. Display and
 settings writes are available through HTTP and the CLI; MCP exposes them only
 as reads in this slice.
 
+Person reads return the canonical row and, for `GET /people/by-id/{person_id}`,
+the identities and external UIDs used by split. Rename, retire, merge, and
+split check the person revision inside the store transaction. Merge checks
+the absorbed revision from the body. A successful merge or split advances the
+document-people binding epoch, so the daemon backfill republishes derived links.
+Split returns `source_revision_after` and an ETag for that accepted revision.
+The same operation request replays its original fence after later edits because
+the store binds the receipt to the original request digest. The 1 MiB request
+body limit applies before decoding, so an oversized split returns
+413 before the source revision changes.
+
 Every node carries a `revision` that bumps on each mutation (directories
 bump when their contents change). The granularity is deliberate: a
 global tree ETag would invalidate every agent's in-flight work whenever
@@ -974,6 +989,10 @@ and maintenance are explicit exceptions:
 | `PUT\|DELETE /nodes/{id}/tags/{tag_id}` | required — target node revision; the tag revision also advances on a real assignment change |
 | `POST /photos/assets/{asset_id}/files`, `DELETE /photos/assets/{asset_id}/files/{file_id}`, `POST /photos/assets/{asset_id}/exclude`, `PUT /photos/assets/{asset_id}/display` | required — photo asset revision |
 | `PUT /photos/settings` | required — photo library settings revision |
+| `PATCH /people/by-id/{person_id}` | required — person revision |
+| `POST /people/by-id/{person_id}/retire` | required — person revision |
+| `POST /people/by-id/{person_id}/merge` | required — survivor revision; the body carries the absorbed revision |
+| `POST /people/by-id/{person_id}/split` | required — source person revision |
 | `POST /path/move`, `POST /path/trash` | none — the path is resolved and mutated inside one store transaction, so there is no separate read for a revision to guard |
 | `POST /batch/move` | each path source resolves in the transaction; each stable-ID source carries its own required revision |
 | `POST /nodes` (create dir) | none — creation has no prior revision; a name collision is `409` |

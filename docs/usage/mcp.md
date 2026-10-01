@@ -147,7 +147,8 @@ links, is capped at 1 MiB.
 | `get_package_preflight` | Reads one retained preflight by its exact identity. |
 | `list_package_preflight_diagnostics` | Pages through bounded diagnostics for a retained preflight. |
 | `list_package_custodians` | Pages through active custodian claims for an exact package scope. |
-| `find_people` | Finds bounded canonical person candidates for custodian resolution. |
+| `find_people` | Finds bounded active canonical people by folded display-name prefix. |
+| `get_person` | Reads one person, its identities, and its external UIDs. |
 | `list_packages` | Pages through received and produced load-file packages. |
 | `get_package` | Reads one package and its retained source authority. |
 | `list_package_members` | Pages through a package's immutable document occurrences. |

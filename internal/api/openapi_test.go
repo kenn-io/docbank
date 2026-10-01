@@ -36,6 +36,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		"storageStatus", "storagePack", "storageRepack", "ingest", "uploadFile", "listTrash", "emptyTrash", "gc", "verify", "appendNodeProvenance",
 		"createPhotoAsset", "getPhotoAsset", "getPhotoAssetByNode", "attachPhotoFile", "detachPhotoFile",
 		"excludePhotoAsset", "promotePhotoNode", "setPhotoDisplay", "getPhotoSettings", "setPhotoSettings",
+		"createPerson", "getPerson", "renamePerson", "retirePerson", "mergePerson", "splitPerson",
 		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs"} {
 		assert.Contains(t, doc, op, "operation missing from OpenAPI doc")
 	}
@@ -174,6 +175,42 @@ func TestOpenAPISavedQueriesAreStructuredAndRevisionFenced(t *testing.T) {
 	}
 	require.NotNil(t, record.Properties["name"].MaxLength)
 	assert.Equal(t, 256, *record.Properties["name"].MaxLength)
+}
+
+func TestOpenAPIPeopleRoutesAreRevisionFenced(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	schemas := doc.Components.Schemas.Map()
+	create := doc.Paths["/api/v1/people"].Post
+	require.NotNil(t, create)
+	item := doc.Paths["/api/v1/people/by-id/{person_id}"]
+	require.NotNil(t, item)
+	require.NotNil(t, item.Get)
+	require.NotNil(t, item.Patch)
+	for _, path := range []string{
+		"/api/v1/people/by-id/{person_id}/retire",
+		"/api/v1/people/by-id/{person_id}/merge",
+		"/api/v1/people/by-id/{person_id}/split",
+	} {
+		require.NotNil(t, doc.Paths[path])
+	}
+	for _, operation := range []*huma.Operation{item.Patch, doc.Paths["/api/v1/people/by-id/{person_id}/retire"].Post,
+		doc.Paths["/api/v1/people/by-id/{person_id}/merge"].Post, doc.Paths["/api/v1/people/by-id/{person_id}/split"].Post} {
+		required := map[string]bool{}
+		for _, parameter := range operation.Parameters {
+			if parameter.In == "header" {
+				required[parameter.Name] = parameter.Required
+			}
+		}
+		assert.True(t, required["If-Match"])
+	}
+	for _, parameter := range create.Parameters {
+		assert.False(t, parameter.In == "header" && parameter.Name == "If-Match")
+	}
+	split := doc.Paths["/api/v1/people/by-id/{person_id}/split"].Post
+	splitResponse := resolveOpenAPISchema(t, schemas, split.Responses["200"].Content["application/json"].Schema)
+	assert.Contains(t, splitResponse.Properties, "source_revision_after")
+	assert.Contains(t, split.Responses["200"].Headers, "ETag")
 }
 
 func TestOpenAPIWorkspaceSnapshotsExposeStrictBoundedAuthority(t *testing.T) {

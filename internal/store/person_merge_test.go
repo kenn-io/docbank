@@ -1,9 +1,11 @@
 package store
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
 
 func TestSplitRequiresExplicitMembership(t *testing.T) {
@@ -15,6 +17,18 @@ func TestSplitRequiresExplicitMembership(t *testing.T) {
 	require.NoError(t, validatePersonSplitRequest(request))
 	request.IdentityIDs = append(request.IdentityIDs, request.IdentityIDs[0])
 	require.Error(t, validatePersonSplitRequest(request))
+}
+
+func TestSplitPersonInvalidRequestIsInvalidPerson(t *testing.T) {
+	t.Parallel()
+	request := PersonSplitRequest{
+		PersonID:    "00000000-0000-4000-8000-000000000001",
+		OperationID: "00000000-0000-4000-8000-000000000002",
+		Revision:    1,
+	}
+	if err := validatePersonSplitRequest(request); !errors.Is(err, ErrInvalidPerson) {
+		t.Fatalf("validatePersonSplitRequest() error = %v, want ErrInvalidPerson", err)
+	}
 }
 
 func addTestPersonIdentity(t *testing.T, s *Store, person Person, kind, value, evidenceID string) (Person, PersonIdentity) {
@@ -58,6 +72,31 @@ func TestMergePersonsDeduplicatesAliasesAndReplaysReceipt(t *testing.T) {
 	require.Equal(t, receipt, replayed)
 	_, err = s.MergePersons(t.Context(), survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision+1, absorbed.Revision)
 	require.ErrorIs(t, err, ErrPersonMergeConflict)
+}
+
+func TestMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	version := seedDocumentPeopleEvent(t, s, "custodian.txt", "d7", nil)
+	survivor, err := s.CreatePerson(t.Context(), "Ada", "operator")
+	require.NoError(t, err)
+	absorbed, err := s.CreatePerson(t.Context(), "A. Lovelace", "operator")
+	require.NoError(t, err)
+	// Each UUID-length assignment ID takes 38 receipt bytes with its quotes.
+	_, err = s.db.Exec(`WITH RECURSIVE seq(value) AS (
+		VALUES(1) UNION ALL SELECT value+1 FROM seq WHERE value<?
+	) INSERT INTO custodian_assignments(assignment_id,scope_kind,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,recorded_at)
+	SELECT printf('00000000-0000-4000-8000-%012d',value),'document',?,?,?,'Synthetic','synthetic','additional','operator_assigned','test',? FROM seq`,
+		document.MaxPersonMergeMovedBytes/38+1, version.NodeID, version.ID, absorbed.PersonID, nowRFC3339())
+	require.NoError(t, err)
+	operationID, err := newUUIDv4()
+	require.NoError(t, err)
+	_, err = s.MergePersons(t.Context(), survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
+	require.ErrorIs(t, err, ErrPersonMergeTooLarge)
+	resolved, through, err := s.PersonByID(t.Context(), absorbed.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, absorbed.PersonID, resolved.PersonID)
+	require.Empty(t, through, "a rejected merge leaves the absorbed person in place")
 }
 
 func TestMergeReceiptKeepsExternalTupleComponentsDistinct(t *testing.T) {
@@ -204,6 +243,11 @@ func TestSplitPersonMovesOnlyExplicitIdentitiesAndReplays(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, moved, 1)
 	replayed, err := s.SplitPerson(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, receipt, replayed)
+	request.AssignmentIDs = []string{}
+	request.External = []PersonExternalUID{}
+	replayed, err = s.SplitPerson(t.Context(), request)
 	require.NoError(t, err)
 	require.Equal(t, receipt, replayed)
 }

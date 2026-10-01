@@ -16,6 +16,10 @@ import (
 
 var ErrPersonMergeConflict = errors.New("person merge conflict")
 
+// ErrPersonMergeTooLarge reports a merge whose survivor would exceed a person
+// bound or whose moved records exceed the merge receipt limit.
+var ErrPersonMergeTooLarge = errors.New("person merge too large")
+
 type PersonMergeMoved struct {
 	DeduplicatedAssertions []PersonMergeDeduplicatedAssertion `json:"deduplicated_assertions"`
 	AssertionIDs           []string                           `json:"assertion_ids"`
@@ -64,8 +68,10 @@ type PersonMergeReceipt struct {
 
 type PersonSplitReceipt struct {
 	OperationID, SourcePersonID, NewPersonID string
-	MovedIdentityIDs                         []string
-	CreatedAt                                string
+	// SourceRevisionAfter is derived from the fenced request so stored receipts keep their shape.
+	SourceRevisionAfter int64 `json:"-"`
+	MovedIdentityIDs    []string
+	CreatedAt           string
 }
 
 type PersonSplitRequest struct {
@@ -78,13 +84,13 @@ type PersonSplitRequest struct {
 func validatePersonSplitRequest(request PersonSplitRequest) error {
 	if validateUUIDv4(request.PersonID) != nil || validateUUIDv4(request.OperationID) != nil || request.Revision < 1 ||
 		len(request.IdentityIDs)+len(request.AssignmentIDs)+len(request.External) == 0 {
-		return errors.New("split requires fenced explicit membership")
+		return fmt.Errorf("%w: split requires fenced explicit membership", ErrInvalidPerson)
 	}
 	for _, ids := range [][]string{request.IdentityIDs, request.AssignmentIDs} {
 		seen := map[string]bool{}
 		for _, id := range ids {
 			if validateUUIDv4(id) != nil || seen[id] {
-				return errors.New("invalid or repeated split identity")
+				return fmt.Errorf("%w: invalid or repeated split identity", ErrInvalidPerson)
 			}
 			seen[id] = true
 		}
@@ -93,7 +99,7 @@ func validatePersonSplitRequest(request PersonSplitRequest) error {
 	for _, identity := range request.External {
 		key := identity.System + "\x00" + identity.ArchiveID + "\x00" + identity.UID
 		if !validExternalTuple(identity.System, identity.ArchiveID, identity.UID) || seenExternal[key] {
-			return errors.New("invalid or repeated split external identity")
+			return fmt.Errorf("%w: invalid or repeated split external identity", ErrInvalidPerson)
 		}
 		seenExternal[key] = true
 	}
@@ -111,7 +117,7 @@ func requestDigest(value any) (string, error) {
 
 func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operationID string, survivorRevision, absorbedRevision int64) (PersonMergeReceipt, error) {
 	if survivorID == absorbedID || validateUUIDv4(survivorID) != nil || validateUUIDv4(absorbedID) != nil || validateUUIDv4(operationID) != nil || survivorRevision < 1 || absorbedRevision < 1 {
-		return PersonMergeReceipt{}, ErrPersonMergeConflict
+		return PersonMergeReceipt{}, fmt.Errorf("%w: invalid person merge identity or revision", ErrInvalidPerson)
 	}
 	requestHash, err := requestDigest([]any{survivorID, absorbedID, operationID, survivorRevision, absorbedRevision})
 	if err != nil {
@@ -137,11 +143,11 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if err := tx.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE person_id=?`, absorbedID).Scan(&absorbedName); err != nil {
 			return err
 		}
-		moved, err := collectPersonMergeMovedTx(ctx, tx, survivorID, absorbedID)
-		if err != nil {
+		if err := validatePersonMergeBoundsTx(ctx, tx, survivorID, absorbedID); err != nil {
 			return err
 		}
-		if err := validatePersonMergeBoundsTx(ctx, tx, survivorID, absorbedID); err != nil {
+		moved, err := collectPersonMergeMovedTx(ctx, tx, survivorID, absorbedID)
+		if err != nil {
 			return err
 		}
 		movedRaw, err := canonical.Marshal(moved)
@@ -149,7 +155,7 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 			return err
 		}
 		if len(movedRaw) > document.MaxPersonMergeMovedBytes {
-			return ErrPersonMergeConflict
+			return ErrPersonMergeTooLarge
 		}
 		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
 			return err
@@ -157,10 +163,12 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `DELETE FROM person_identities WHERE person_id=? AND EXISTS(SELECT 1 FROM person_identities keep WHERE keep.person_id=? AND keep.kind=person_identities.kind AND keep.value_normalized=person_identities.value_normalized AND (person_identities.kind='name_alias' OR (keep.scope_kind=person_identities.scope_kind AND keep.scope_value=person_identities.scope_value)))`, absorbedID, survivorID); err != nil {
 			return err
 		}
-		for _, table := range []string{"person_identities", "person_external_identities"} {
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`UPDATE %s SET person_id=? WHERE person_id=?`, table), survivorID, absorbedID); err != nil {
-				return err
-			}
+		now := nowRFC3339()
+		if _, err := tx.ExecContext(ctx, `UPDATE person_identities SET person_id=? WHERE person_id=?`, survivorID, absorbedID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE person_external_identities SET person_id=?,updated_at=? WHERE person_id=?`, survivorID, now, absorbedID); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,revision=revision+1 WHERE person_id=?`, survivorID, absorbedID); err != nil {
 			return err
@@ -187,7 +195,6 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `DELETE FROM persons WHERE person_id=?`, absorbedID); err != nil {
 			return err
 		}
-		now := nowRFC3339()
 		if _, err := tx.ExecContext(ctx, `INSERT INTO person_aliases(retired_person_id,surviving_person_id,reason,retired_at) VALUES(?,?,?,?)`, absorbedID, survivorID, "merged", now); err != nil {
 			return err
 		}
@@ -356,7 +363,23 @@ func validatePersonMergeBoundsTx(ctx context.Context, tx *sql.Tx, survivorID, ab
 		return err
 	}
 	if identities > document.MaxPersonIdentitiesPerPerson || external > document.MaxPersonExternalIdentities {
-		return ErrPersonMergeConflict
+		return ErrPersonMergeTooLarge
+	}
+	// Each moved ID appears in the receipt as a quoted JSON string, so the sum
+	// of their lengths plus quotes is a lower bound on the receipt size. Reject
+	// before collecting IDs that cannot fit.
+	var movedBytes int
+	if err := tx.QueryRowContext(ctx, `SELECT
+		COALESCE((SELECT SUM(length(identity_id)+2) FROM person_identities WHERE person_id=?),0)
+		+ COALESCE((SELECT SUM(length(assignment_id)+2) FROM custodian_assignments WHERE person_id=?),0)
+		+ COALESCE((SELECT SUM(length(assertion_id)+2) FROM person_document_assertions WHERE person_id=?),0)
+		+ COALESCE((SELECT SUM(length(candidate_id)+2) FROM person_match_candidates
+			WHERE suggested_person_id=? AND state='open'),0)`,
+		absorbedID, absorbedID, absorbedID, absorbedID).Scan(&movedBytes); err != nil {
+		return err
+	}
+	if movedBytes > document.MaxPersonMergeMovedBytes {
+		return ErrPersonMergeTooLarge
 	}
 	var conflict bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_document_assertions a
@@ -397,7 +420,11 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 			if storedHash != requestHash {
 				return ErrPersonMergeConflict
 			}
-			return json.Unmarshal(raw, &receipt, json.RejectUnknownMembers(true))
+			if err := json.Unmarshal(raw, &receipt, json.RejectUnknownMembers(true)); err != nil {
+				return err
+			}
+			receipt.SourceRevisionAfter = request.Revision + 1
+			return nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -468,7 +495,7 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
 			return err
 		}
-		receipt = PersonSplitReceipt{OperationID: request.OperationID, SourcePersonID: request.PersonID, NewPersonID: newID, MovedIdentityIDs: slices.Clone(request.IdentityIDs), CreatedAt: now}
+		receipt = PersonSplitReceipt{OperationID: request.OperationID, SourcePersonID: request.PersonID, NewPersonID: newID, SourceRevisionAfter: request.Revision + 1, MovedIdentityIDs: slices.Clone(request.IdentityIDs), CreatedAt: now}
 		raw, err = canonical.Marshal(receipt)
 		if err != nil {
 			return err
