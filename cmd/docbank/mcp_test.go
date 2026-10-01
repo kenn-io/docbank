@@ -105,11 +105,12 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 		os.Exit(0)
 	}
 	for _, test := range []struct {
-		args                 string
-		processing, packages bool
+		args                          string
+		processing, packages, exports bool
 	}{
 		{args: "mcp"},
 		{args: "mcp --allow-processing", processing: true},
+		{args: "mcp --allow-export-writes", exports: true},
 		{args: "mcp --allow-package-writes", packages: true},
 		{args: "mcp --allow-processing --allow-package-writes", processing: true, packages: true},
 	} {
@@ -145,6 +146,10 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 			}
 			assert.True(t, names["get_package_record"], "reads remain available with every flag combination")
 			assert.Equal(t, test.processing, names["start_processing"])
+			assert.True(t, names["get_export_status"])
+			for _, name := range []string{"preview_export", "start_export", "cancel_export", "release_export"} {
+				assert.Equal(t, test.exports, names[name], name)
+			}
 			for _, name := range []string{"preflight_load_file_package", "start_package_import", "resolve_package_custodian", "assign_package_custodian"} {
 				assert.Equal(t, test.packages, names[name], name)
 			}

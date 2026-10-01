@@ -80,7 +80,7 @@ client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header;
 clients that require the MCP HTTP OAuth flow are unsupported.
 
-Both transports have the fixed 20-tool read catalog described below.
+Both transports have the fixed read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` separately permits load-file preflight, import, and
 custodian changes. `--allow-photo-edits` separately permits photo asset
@@ -125,6 +125,9 @@ return HTTP 202 with no body. `subscriptions/listen` uses SSE, but Docbank
 advertises no subscriptions. A call with an empty notification selection
 acknowledges the request and completes immediately.
 
+`--allow-export-writes` separately permits native export previews, job writes,
+and explicit release. Other write flags do not enable these tools.
+
 ## Tool catalog
 
 All inputs and outputs use closed JSON Schema 2020-12 objects: unknown fields
@@ -134,6 +137,7 @@ links, is capped at 1 MiB.
 
 | Tool | Contract and important bounds |
 | --- | --- |
+| `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
 | `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. |
@@ -392,3 +396,37 @@ completion or client cancellation. Daemon restart, an idle shutdown, or a
 stale runtime record therefore produces a bounded failure or recovers on the
 next safe read without terminating stdio with diagnostics on stdout or leaving
 HTTP pinned to a dead client.
+
+## Native export jobs
+
+Start with `docbank mcp --allow-export-writes` to let a client retain exact
+originals and manage their export. Review the selection with the operator.
+
+| Tool | Required arguments and result |
+| --- | --- |
+| `preview_export` | `source_operation_id`, `plan_operation_id`, and `members`. Returns a retained `plan`. |
+| `start_export` | `operation_id`, `plan_id`, and `fingerprint`. Returns the `job`; it does not wait for completion. |
+| `cancel_export` | `job_id`. Returns `accepted: true`; completed jobs conflict. |
+| `release_export` | `job_id`. Deletes a terminal job and its retained archive, returning `released: true`. |
+
+List versions for each selected node. Copy `content_version_id` to `version_id`,
+`blob_hash` to `sha256`, and copy `node_id` and `size` into each member. This takes
+one `list_document_versions` call per node, with more pages if needed. Each preview
+accepts 1–1,000 retained original versions totaling at most 50 GiB. It can include
+multiple versions of the same node. Size is required, including zero for an empty
+original. Optional `revision` is a current node precondition; omit it unless
+needed. A version's historical node revision is not that precondition.
+
+Generate all operation IDs before calling. After `export_outcome_unknown`, inspect
+the known job ID or explicitly replay the same request and IDs. The first write
+after a daemon restart can report this even when nothing was sent; Docbank does
+not reconnect and repeat writes automatically. Preview replay must keep member
+order and remains subject to its original ten-minute admission window. After a
+delayed start response, use job status instead of replaying preview. Never reuse
+a released job ID: its replay record has been deleted.
+
+MCP shares the API-key owner with the CLI. Completed jobs still occupy the two
+shared job slots until released or expired. Release does not delete originals or
+local downloads. `export_retained` means a download ticket or lease still holds
+the archive; retry release after it closes. The source and plan records have
+separate global limits. See [export limits and recovery](export-bundles.md).

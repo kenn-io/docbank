@@ -19,8 +19,8 @@ import (
 
 const toolCatalogTTLMs = 60_000
 
-func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits bool) string {
-	if !allowProcessing && !allowPackageWrites && !allowPhotoEdits {
+func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits, allowExportWrites bool) string {
+	if !allowProcessing && !allowPackageWrites && !allowPhotoEdits && !allowExportWrites {
 		return "Docbank exposes a bounded read-only document and package surface."
 	}
 	instructions := "Docbank exposes bounded document and package reads."
@@ -32,6 +32,9 @@ func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits bo
 	}
 	if allowPhotoEdits {
 		instructions += " Photo edits change one asset at an expected revision."
+	}
+	if allowExportWrites {
+		instructions += " Export writes retain exact selections and save verified archives locally."
 	}
 	return instructions
 }
@@ -47,6 +50,7 @@ type toolDefinition struct {
 }
 
 var readToolDefinitions = []toolDefinition{
+	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
 	{name: "search_documents", title: "Search documents", description: "Search an exact bounded current-version source fence and report coverage.", schemas: searchDocumentsSchemas},
@@ -144,7 +148,7 @@ var photoWriteToolDefinitions = []toolDefinition{
 	{name: "promote_photo_asset", title: "Promote photo asset", description: "Promote one file node into a photo asset.", schemas: promotePhotoNodeSchemas, write: true},
 }
 
-func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*sdkmcp.Tool {
+func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits, allowExportWrites bool) []*sdkmcp.Tool {
 	definitions := slices.Clone(readToolDefinitions)
 	if allowProcessing {
 		definitions = append(definitions, processingToolDefinition)
@@ -157,6 +161,9 @@ func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*s
 	}
 	if allowPhotoEdits {
 		definitions = append(definitions, photoWriteToolDefinitions...)
+	}
+	if allowExportWrites {
+		definitions = append(definitions, exportWriteToolDefinitions...)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -176,15 +183,17 @@ func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits bool) []*s
 }
 
 func registerToolCatalog(
-	server *sdkmcp.Server, allowProcessing, allowPackageWrites, allowPhotoEdits bool,
+	server *sdkmcp.Server, allowProcessing, allowPackageWrites, allowPhotoEdits, allowExportWrites bool,
 	lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
 ) {
-	tools := toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits)
+	tools := toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits, allowExportWrites)
 	server.AddReceivingMiddleware(validateToolInputs(tools))
 	for _, tool := range tools {
 		output := mustResolveSchema(tool.OutputSchema)
 		var handler sdkmcp.ToolHandler
 		switch tool.Name {
+		case "preview_export", "start_export", "get_export_status", "cancel_export", "release_export":
+			handler = exportToolHandler(lease, tool.Name, output, logger)
 		case processingToolDefinition.name:
 			handler = processingToolHandler(lease, plans, output, logger)
 		case packageImportToolDefinition.name:
@@ -375,6 +384,8 @@ func stableDomainError(err error) (string, int) {
 		return "consent_required", 0
 	case errors.Is(err, errProcessingOutcomeUnknown):
 		return "processing_outcome_unknown", 0
+	case errors.Is(err, errExportOutcomeUnknown):
+		return "export_outcome_unknown", 0
 	case errors.Is(err, errBatesOutcomeUnknown):
 		return "bates_outcome_unknown", 0
 	case errors.Is(err, errDaemonUnavailable):
@@ -412,6 +423,9 @@ func stableDomainError(err error) (string, int) {
 		return "", 0
 	}
 	switch facts.Code {
+	case "validation", "export_conflict", "export_expired", "export_limit", "export_retained",
+		"export_role_unavailable", "export_timeout", "export_canceled", "export_failed":
+		return facts.Code, 0
 	case "not_found":
 		return "not_found", 0
 	case "stale_version":
@@ -443,6 +457,26 @@ func stableDomainError(err error) (string, int) {
 
 func domainErrorMessage(code string) string {
 	switch code {
+	case "validation":
+		return "The export request is invalid; check the supplied identities and values."
+	case "export_outcome_unknown":
+		return "The export outcome is unknown; inspect the supplied IDs before replaying the same request."
+	case "export_conflict":
+		return "The export request conflicts with retained authority or current job state."
+	case "export_expired":
+		return "The export admission or archive expired; retry release for a retained job with no archive."
+	case "export_limit":
+		return "An export limit was reached; release unneeded terminal jobs or narrow the selection."
+	case "export_retained":
+		return "A download ticket or lease still retains this export; retry release after it closes."
+	case "export_role_unavailable":
+		return "A required export role is unavailable."
+	case "export_timeout":
+		return "The export request timed out; inspect the job before retrying."
+	case "export_canceled":
+		return "The export request was canceled; inspect the job before retrying."
+	case "export_failed":
+		return "The export request failed; inspect the job before retrying."
 	case "package_incomplete":
 		return "The snapshot is missing a required representation for this export profile."
 	case "not_found":
