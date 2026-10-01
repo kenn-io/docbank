@@ -36,12 +36,7 @@ func (c *Connection) CreatePackageExport(ctx context.Context, request api.Packag
 		receipt.BatesAllocationID != request.BatesAllocationID {
 		return api.PackageExportTicket{}, integrityErrorf("load-file export receipt is inconsistent")
 	}
-	download, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+receipt.URL, nil)
-	if err != nil {
-		return api.PackageExportTicket{}, fmt.Errorf("building load-file export download: %w", err)
-	}
-	download.Header.Set("X-Api-Key", c.key)
-	response, err := c.hc.Do(download)
+	response, err := c.openTicketDownload(ctx, receipt.URL)
 	if err != nil {
 		return api.PackageExportTicket{}, err
 	}
@@ -82,12 +77,7 @@ func (c *Connection) CreatePackageExportTo(
 	if _, err := destination.Seek(0, io.SeekStart); err != nil {
 		return api.PackageExportTicket{}, err
 	}
-	download, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+receipt.URL, nil)
-	if err != nil {
-		return api.PackageExportTicket{}, fmt.Errorf("building load-file export download: %w", err)
-	}
-	download.Header.Set("X-Api-Key", c.key)
-	response, err := c.hc.Do(download)
+	response, err := c.openTicketDownload(ctx, receipt.URL)
 	if err != nil {
 		return api.PackageExportTicket{}, err
 	}

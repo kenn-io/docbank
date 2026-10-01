@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-19
+last_edited: 2026-09-29
 title: Verified export bundles
 description: Download exact document versions, verified email PDFs and attachment sets in reconciled ZIP bundles.
 ---
@@ -8,6 +8,7 @@ description: Download exact document versions, verified email PDFs and attachmen
 
 Use the web app or authenticated HTTP API to export exact document versions,
 retained email PDFs, attachment originals, Markdown text, and page images.
+Use `docbank export` for original files selected by exact document-version identity.
 Docbank freezes the selection and role receipts
 before writing the archive. A later edit to a saved query, tag, document head,
 or processing result does not change an admitted plan.
@@ -17,7 +18,100 @@ query. A completed mailbox import also offers **Export completed collection**.
 Review the frozen counts, start the export, then download its verified ZIP.
 Closing the drawer does not cancel an admitted job; reopen it in the same
 browser session to reconnect. Original files remain original bytes; the bundle
-does not redact or sanitize them. There is no CLI bundle-export command.
+does not redact or sanitize them.
+
+## Export original files from the CLI
+
+Create a JSON request with two caller-chosen UUIDv4 operation IDs and 1–1,000
+exact document versions. Obtain the node ID, version ID, SHA-256, and size from
+the document's receipts. This synthetic request selects one empty original:
+
+```json
+{
+  "source_operation_id": "11111111-1111-4111-8111-111111111111",
+  "plan_operation_id": "22222222-2222-4222-8222-222222222222",
+  "members": [{
+    "node_id": 12,
+    "version_id": "33333333-3333-4333-8333-333333333333",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "size": 0
+  }]
+}
+```
+
+Replace the synthetic identities with your own receipts. Save the request as
+`selection.json`, then run:
+
+```sh
+docbank export preview --request selection.json --json
+docbank export start <plan-id> --fingerprint <fingerprint> --operation-id <job-id> --json
+docbank export status <job-id> --json
+docbank export download <job-id> ./originals.zip
+docbank export release <job-id>
+```
+
+Review the preview before starting. It freezes the selection, reports planned
+original and metadata bytes, and returns a plan ID and fingerprint. Supply those
+values to `start` with a new job UUIDv4. Start returns immediately; use `status`
+to observe progress. Download requires `completed`. Use `cancel <job-id>` to
+request cancellation of active work; exiting the CLI does not cancel it.
+
+All six commands accept `--json`. Preview returns the plan, start/status return
+the job, and download returns the verified archive receipt after saving the file.
+Cancel returns `{"job_id":"…","accepted":true}`; release returns
+`{"job_id":"…","released":true}`. A failed job is still a successful status
+read; inspect its `state` and `failure`.
+
+The request file is limited to 1 MiB. Unknown fields and invalid values are
+usage errors checked before daemon access. IDs must be canonical UUIDv4 strings,
+hashes lowercase hexadecimal, node IDs positive, and sizes nonnegative. An
+optional nonnegative `revision` checks the node revision; zero or omission adds
+no precondition. Distinct retained versions of one node are allowed; duplicate
+node/version pairs are not. The daemon checks the complete identity and size.
+It never substitutes the current version. Names and paths are frozen at preview
+time. Only the selected originals are exported: no descendants, attachments, or
+renditions are added.
+
+Keep the request and operation IDs for retries. Repeat exactly the same request
+after a lost response; changed input under an existing ID conflicts. After a
+long interruption, inspect the known job ID or repeat `start`, rather than
+replaying preview: the source's ten-minute replay window can expire while its
+job remains available.
+
+Download streams to a private stage beside the destination, verifies the ZIP
+against the job fingerprint and receipts, then publishes the complete file.
+The parent directory must exist and be outside Docbank's data directory. An
+existing destination is preserved unless you pass `--overwrite`; replacement
+happens only after verification. Pre-publication failures leave it untouched.
+An error after publication explicitly reports that the verified file is already
+saved. Download does not release the retained job automatically.
+
+## Free a finished job slot
+
+All CLI calls and other API-key clients share two retained job slots. After two
+completed exports, another start returns `export_limit` until a job is released
+or expires and is cleaned up. Without release, completed jobs remain for 24 hours.
+
+Run `docbank export release <job-id>` after saving the archive or deciding it is
+no longer needed. The API equivalent is `DELETE /api/v1/exports/jobs/{id}`.
+Release accepts completed, failed, or canceled jobs and returns HTTP 204. It
+removes that job's retained archive and status, frees its slot, and leaves local
+downloads and source documents unchanged. Active jobs must be canceled first.
+
+An active download or unused ticket blocks release with `export_retained`;
+unused tickets expire after two minutes. Release does not interrupt a download.
+Even `download && release` can briefly return `export_retained` while the server
+finishes releasing the download lease. Retry release after a short delay.
+If release is interrupted after removing the archive, download returns
+`410 export_expired` with a hint to retry release and free the retained slot.
+If release fails, retry it. If its response was lost, a not-found status confirms
+the job is gone. Repeated release returns not found. Do not reuse a released
+job's operation ID: its replay protection has been removed.
+
+Release does not remove source and plan records before their original admission
+deadlines or another job's retention. The global cap of 32 source/plan records
+still applies: 16 fresh previews can fill it within ten minutes even if every
+job is released. Review the limits below when scheduling batches.
 
 ## Email PDFs and attachments
 
@@ -217,6 +311,6 @@ still reject the plan.
 
 There are at most 32 retained sources and plans combined, eight retained jobs
 globally, and two per owner. Completed, failed, and canceled jobs count until
-cleanup removes them. All clients using the daemon API key share the `master`
+explicit release or cleanup removes them. All clients using the daemon API key share the `master`
 owner and its two-job allowance. Over-limit work fails explicitly without
 truncating the selection.

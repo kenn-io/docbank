@@ -12,6 +12,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -195,8 +196,13 @@ func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 		ticket, err := client.DownloadExportArchive(t.Context(), &apiclient.DownloadExportArchiveRequestOptions{PathParams: &apiclient.DownloadExportArchivePath{ID: job.ID}, Body: &bundle.DownloadRequest{Basename: name}})
 		require.NoError(t, err)
 		require.Equal(t, job.Receipt, &ticket.Receipt)
-		resp, err := ts.Client().Get(ts.URL + ticket.URL)
-		require.NoError(t, err)
+		// Finish the handler and its lease cleanup before later removing the
+		// archive. Reading the HTTP body alone does not wait for server defers.
+		request := httptest.NewRequest(http.MethodGet, ts.URL+ticket.URL, nil)
+		request.RemoteAddr = "127.0.0.1:12345"
+		recorder := httptest.NewRecorder()
+		s.Server.Handler().ServeHTTP(recorder, request)
+		resp := recorder.Result()
 		_, params, err := mime.ParseMediaType(resp.Header.Get("Content-Disposition"))
 		require.NoError(t, err)
 		if name == "" {
@@ -215,6 +221,44 @@ func TestExportAPIWorkerVerifiedTicketPreservesRetainedArchive(t *testing.T) {
 		require.Equal(t, http.StatusNotFound, resp.StatusCode)
 		require.NoError(t, resp.Body.Close())
 	}
+	ticket, err := client.DownloadExportArchive(t.Context(), &apiclient.DownloadExportArchiveRequestOptions{
+		PathParams: &apiclient.DownloadExportArchivePath{ID: job.ID}, Body: &bundle.DownloadRequest{},
+	})
+	require.NoError(t, err)
+	response, body = do(t, ts, http.MethodDelete, "/api/v1/exports/jobs/"+job.ID, nil, nil)
+	require.Equal(t, http.StatusConflict, response.StatusCode, body)
+	require.Contains(t, body, "export_retained")
+	request := httptest.NewRequest(http.MethodGet, ts.URL+ticket.URL, nil)
+	request.RemoteAddr = "127.0.0.1:12345"
+	recorder := httptest.NewRecorder()
+	s.Server.Handler().ServeHTTP(recorder, request)
+	resp := recorder.Result()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	_, err = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	// Cancellation after unlink rolls back the row. Download must explain how
+	// to recover that retained job, rather than report an unexplained 500.
+	releaseCtx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	err = s.ReleaseExportJob(releaseCtx, "master", job.ID, func() error {
+		archive := filepath.Join(filepath.Dir(s.DBPath), "export-archives", job.ID+".zip")
+		if err := os.Remove(archive); err != nil {
+			return err
+		}
+		cancel()
+		return nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	response, body = do(t, ts, http.MethodPost,
+		"/api/v1/exports/jobs/"+job.ID+"/download", nil, bundle.DownloadRequest{})
+	require.Equal(t, http.StatusGone, response.StatusCode, body)
+	require.Contains(t, body, "export_expired")
+	require.Contains(t, body, "retry release")
+	response, body = do(t, ts, http.MethodDelete, "/api/v1/exports/jobs/"+job.ID, nil, nil)
+	require.Equal(t, http.StatusNoContent, response.StatusCode, body)
+	_, err = client.GetExportJob(t.Context(), &apiclient.GetExportJobRequestOptions{PathParams: &apiclient.GetExportJobPath{ID: job.ID}})
+	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
 func TestExportSavedQueryRetryDoesNotRerunChangedDefinition(t *testing.T) {
@@ -244,7 +288,7 @@ func TestExportSavedQueryRetryDoesNotRerunChangedDefinition(t *testing.T) {
 	require.True(t, response.StatusCode == http.StatusBadRequest || response.StatusCode == http.StatusUnprocessableEntity, body)
 }
 
-func TestExportBrowserOwnersAndRevocationFenceJobs(t *testing.T) {
+func TestExportBrowserOwnersReleaseAndRevocationFenceJobs(t *testing.T) {
 	t.Parallel()
 	var worker *exporter.Worker
 	ts, s := newTestServer(t, func(d *api.Deps) {
@@ -268,6 +312,31 @@ func TestExportBrowserOwnersAndRevocationFenceJobs(t *testing.T) {
 	response, body = do(t, ts, http.MethodGet, "/api/v1/exports/plans/"+plan.ID, map[string]string{"X-Api-Key": "", api.WebSessionHeader: second}, nil)
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/exports/jobs", headers, bundle.JobRequest{OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var job bundle.Job
+	require.NoError(t, json.Unmarshal([]byte(body), &job))
+	processed, err := worker.RunOne(t.Context())
+	require.NoError(t, err)
+	require.True(t, processed)
+	jobPath := "/api/v1/exports/jobs/" + job.ID
+	response, body = do(t, ts, http.MethodDelete, jobPath,
+		map[string]string{"X-Api-Key": "", api.WebSessionHeader: second}, nil)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	for _, path := range []string{
+		jobPath + "?unexpected=1",
+		"/api/v1/exports/plans/" + plan.ID,
+		"/api/v1/exports/sources/" + source.ID,
+	} {
+		response, body = do(t, ts, http.MethodDelete, path, headers, nil)
+		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	}
+	response, body = do(t, ts, http.MethodDelete, jobPath, headers, nil)
+	require.Equal(t, http.StatusNoContent, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodGet, jobPath, headers, nil)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/exports/jobs", headers, bundle.JobRequest{
+		OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint,
+	})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	claim, err := s.ClaimExportJob(t.Context())
 	require.NoError(t, err)

@@ -235,12 +235,14 @@ func TestExportLoadFilePackagePublishesIndependentlyVerifiedArchive(t *testing.T
 		case "/api/v1/packages/exports":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
-			assert.NoError(t, json.NewEncoder(w).Encode(api.PackageExportTicket{URL: "/download", Name: "production.zip",
+			assert.NoError(t, json.NewEncoder(w).Encode(api.PackageExportTicket{
+				URL:        "/api/daemon/web-download/file?ticket=synthetic-ticket",
+				Name:       "production.zip",
 				SnapshotID: snapshot.SnapshotID, ProfileID: "export-csv-natives-v1",
 				ArchiveSHA256: built.Receipt.ArchiveSHA256, ManifestSHA256: built.Receipt.ManifestSHA256,
 				CrosswalkSHA256: built.Receipt.CrosswalkSHA256, Size: built.Receipt.Size,
 				Records: built.Receipt.RecordCount, Pages: built.Receipt.PageCount}))
-		case "/download":
+		case "/api/daemon/web-download/file":
 			_, _ = w.Write(archive.Bytes())
 		default:
 			http.NotFound(w, r)

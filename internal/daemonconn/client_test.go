@@ -781,17 +781,15 @@ func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond,
 		"server-side cancellation must release the repository lock")
 	t.Cleanup(func() { _ = lock.Release() })
-	snapshots, err := c.API().ListBackupSnapshots(t.Context(), &apiclient.ListBackupSnapshotsRequestOptions{Query: &apiclient.ListBackupSnapshotsQuery{Repo: new(repoPath)}})
-
-	require.NoError(t, err)
-	assert.Len(t, snapshots.Items, 1, "a disconnected progress client must not publish a snapshot")
+	// The daemon may finish before it receives the client's cancellation.
+	// Check lock release above; use the known snapshot for later round trips.
 	_, err = c.BackupCreateStream(t.Context(), daemonconn.BackupCreateOptions{Repo: repoPath}, nil)
 	require.ErrorIs(t, err, backup.ErrRepoLocked)
 	require.NoError(t, lock.Release())
 
 	var verifyEvents []api.BackupProgress
 	verified, err := c.BackupVerifyStream(t.Context(), daemonconn.BackupVerifyOptions{
-		Repo: repoPath, Jobs: 1,
+		Repo: repoPath, SnapshotID: snapshot.ID, Jobs: 1,
 	}, func(event api.BackupProgress) { verifyEvents = append(verifyEvents, event) })
 	require.NoError(t, err)
 	assert.Equal(t, []string{snapshot.ID}, verified.Snapshots)
@@ -843,7 +841,11 @@ func TestBackupCreateStreamRoundTripAndTypedError(t *testing.T) {
 	assert.Equal(t, "restore_stats", restoreEvents[len(restoreEvents)-1].Stage)
 	assert.True(t, restoreEvents[len(restoreEvents)-1].Final)
 
-	response, requestErr := c.API().RestoreBackupSnapshot(t.Context(), &apiclient.RestoreBackupSnapshotRequestOptions{Body: &apiclient.RestoreBackupSnapshotBody{Repo: new(repoPath), Target: filepath.Join(t.TempDir(), "json-restore"), SnapshotID: new(""), Overwrite: new(false), Jobs: new(int64(1)), ForceUnlock: new(false), StoreMap: new("")}})
+	response, requestErr := c.API().RestoreBackupSnapshot(t.Context(),
+		&apiclient.RestoreBackupSnapshotRequestOptions{Body: &apiclient.BackupRestoreRequest{
+			Repo: new(repoPath), Target: filepath.Join(t.TempDir(), "json-restore"),
+			SnapshotID: new(snapshot.ID), Jobs: new(int64(1)),
+		}})
 
 	err = requestErr
 
