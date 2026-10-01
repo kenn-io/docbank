@@ -344,6 +344,29 @@ func TestPhotoImportEditedSourceBecomesNewVersion(t *testing.T) {
 	assert.Equal(t, fakeHash("xmp-v2"), current.BlobHash)
 }
 
+func TestPhotoImportEditedSourceLeavesSharedNodeAlone(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	first := photoImportTestMember(filepath.Join(t.TempDir(), "a", "IMG.ARW"), PhotoRoleRAW, fakeHash("raw-v1"), "image/x-sony-arw")
+	second := photoImportTestMember(filepath.Join(t.TempDir(), "b", "IMG.ARW"), PhotoRoleRAW, fakeHash("raw-v1"), "image/x-sony-arw")
+	original, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(first))
+	require.NoError(t, err)
+	shared, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(second))
+	require.NoError(t, err)
+	require.Equal(t, original.Nodes[0].ID, shared.Nodes[0].ID)
+
+	first.BlobHash = fakeHash("raw-v2")
+	edited, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(first))
+	require.NoError(t, err)
+	assert.NotEqual(t, original.Nodes[0].ID, edited.Nodes[0].ID)
+	kept, err := s.NodeByID(ctx, original.Nodes[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t, fakeHash("raw-v1"), kept.BlobHash)
+}
+
 func TestPhotoImportDuplicateRawNextToSeparateJPEGIsReported(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
