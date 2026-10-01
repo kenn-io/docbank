@@ -58,7 +58,7 @@ func TestMetadataTableCodec(t *testing.T) {
 
 	required, nullable := table.fields()
 	assert.Equal(t, strings.Fields("type name note count kind enabled tags raw blob state"), required)
-	assert.Equal(t, map[string]bool{"note": true, "count": true}, nullable)
+	assert.Equal(t, map[string]bool{"note": true, "count": true, "optional": true}, nullable)
 	assert.Equal(t, "scratch_record", table.kind())
 	assert.Equal(t, "name,note,count,kind,enabled,tags_json,raw_json,blob,singleton,optional", table.plan.list)
 
@@ -215,7 +215,8 @@ func TestMetadataCodecEmbeddingSchemaParity(t *testing.T) {
 }
 
 // metadataCodecBaseRequiredFields and metadataCodecBaseNullableFields copy the
-// hand-kept field maps at 0af2361e for every registered kind.
+// hand-kept field maps at 0af2361e for every registered kind, except that
+// rendition_job_waiter's failure_code is nullable so a rejected waiter restores.
 var metadataCodecBaseRequiredFields = map[string]string{
 	"audit_authority":                    "type lineage_id operation_sequence_high_water allocation_genesis_digest allocation_entry_count allocation_head",
 	"audit_membership":                   "type scope_id node_id baseline_digest",
@@ -334,6 +335,7 @@ var metadataCodecBaseNullableFields = map[string]string{
 	"processing_consent_grant":     "expires_at",
 	"provenance":                   "original_mtime supersedes",
 	"rendition_job":                "authorization_grant_id authorization_incarnation_id authorization_revocation_fence claim_owner execution_snapshot failure_code lease_expires_at lexical_generation_id provider_resume_handle selected_waiter_id",
+	"rendition_job_waiter":         "failure_code",
 	"saved_query_run":              "previous_member_hash previous_query_fingerprint previous_run_id previous_total",
 }
 

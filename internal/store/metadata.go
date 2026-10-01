@@ -1178,8 +1178,9 @@ func requireMetadataFields(raw jsontext.Value, required []string, nullable map[s
 			return fmt.Errorf("metadata field %q cannot be null", field)
 		}
 	}
+	// Nullable keys outside required come only from omitempty pointer fields, which may be absent.
 	for field := range fields {
-		if !allowed[field] {
+		if !allowed[field] && !nullable[field] {
 			return fmt.Errorf("metadata record contains unknown or non-canonical field %q", field)
 		}
 	}

@@ -86,6 +86,41 @@ func TestRenditionJobWaiterCannotAdoptReplacementConsent(t *testing.T) {
 	require.Equal(t, RenditionFailureConsent, rejected.FailureCode)
 }
 
+func TestRenditionJobWaiterRejectedRestoresFromBackup(t *testing.T) {
+	t.Parallel()
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	request := renditionJobTestRequest(versions[0], profile)
+	grantRenditionJobConsent(t, s, request)
+	job, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+
+	_, err = s.RevokeConsent(t.Context(), ProcessingConsentRevocationRequest{
+		Principal: request.Authorization.Principal, Scope: request.Authorization.Scope,
+	})
+	require.NoError(t, err)
+	grantRenditionJobConsent(t, s, request)
+	_, _, err = s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+
+	now := time.Now().UTC().Add(time.Second)
+	claim, err := s.ClaimRenditionJob(t.Context(), job.ID, "worker:replacement-consent", now, time.Minute)
+	require.NoError(t, err)
+	_, err = s.BeginRenditionProvider(t.Context(), claim, waiter.ID,
+		now.Add(time.Second), renditionJobTestSnapshot(request))
+	require.ErrorIs(t, err, ErrRenditionJobWaiterReselected)
+
+	var backup bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &backup))
+	require.Contains(t, backup.String(), `"failure_code":"consent"`)
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(backup.Bytes())))
+	rejected, err := restored.RenditionJobWaiterByID(t.Context(), waiter.ID)
+	require.NoError(t, err)
+	require.Equal(t, "rejected", rejected.State)
+	require.Equal(t, RenditionFailureConsent, rejected.FailureCode)
+}
+
 func TestRenditionJobsSeparateDifferentExecutionIdentities(t *testing.T) {
 	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
