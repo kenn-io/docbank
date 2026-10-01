@@ -32,7 +32,7 @@ type Store struct {
 // by this binary. It is intentionally independent of metadata JSONL's logical
 // format version: physical schema changes can rebuild through the same logical
 // format without changing that portable contract.
-const currentStorageSchemaVersion = 26
+const currentStorageSchemaVersion = 27
 
 const peopleStorageSchemaVersion = 15
 
@@ -62,6 +62,9 @@ func Open(path string, drivers ...docsqlite.Driver) (*Store, error) {
 		return nil, err
 	}
 	if _, err := s.MigrateLegacyPlainText(context.Background()); err != nil {
+		return nil, errors.Join(err, s.Close())
+	}
+	if err := s.refreshPhotoTechnicalMetadata(context.Background()); err != nil {
 		return nil, errors.Join(err, s.Close())
 	}
 	return s, nil

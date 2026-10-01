@@ -514,6 +514,53 @@ BEFORE UPDATE ON source_metadata_generations BEGIN
     SELECT RAISE(ABORT, 'source metadata generations are immutable');
 END;
 
+-- A derived technical projection exists for each immutable source generation
+-- that has at least one photo fact. Content versions bind to it through their
+-- blob and source head. Rows and the recipe marker below are absent from
+-- metadata-v1 export/import: restore rebuilds them from source generations.
+CREATE TABLE IF NOT EXISTS photo_technical_metadata (
+    generation_id          TEXT PRIMARY KEY
+        REFERENCES source_metadata_generations(generation_id) ON DELETE CASCADE,
+    camera_make            TEXT,
+    camera_model           TEXT,
+    lens_make              TEXT,
+    lens_model             TEXT,
+    iso                    INTEGER,
+    exposure_time_seconds  REAL,
+    f_number               REAL,
+    exposure_bias_ev       REAL,
+    focal_length_mm        REAL,
+    width_px               INTEGER,
+    height_px              INTEGER,
+    capture_time           TEXT,
+    capture_time_raw       TEXT,
+    capture_time_precision TEXT,
+    capture_time_timezone  TEXT,
+    capture_time_offset    TEXT,
+    orientation            INTEGER,
+    latitude               REAL,
+    longitude              REAL,
+    location_label         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS photo_technical_metadata_camera
+    ON photo_technical_metadata(camera_make, camera_model);
+CREATE INDEX IF NOT EXISTS photo_technical_metadata_lens
+    ON photo_technical_metadata(lens_make, lens_model);
+CREATE INDEX IF NOT EXISTS photo_technical_metadata_iso
+    ON photo_technical_metadata(iso);
+CREATE INDEX IF NOT EXISTS photo_technical_metadata_capture_time
+    ON photo_technical_metadata(capture_time);
+CREATE INDEX IF NOT EXISTS photo_technical_metadata_location
+    ON photo_technical_metadata(latitude, longitude);
+
+-- The projection recipe last applied to every source generation, including
+-- generations that yielded no row. A different recipe re-projects on open.
+CREATE TABLE IF NOT EXISTS photo_technical_metadata_state (
+    singleton         INTEGER PRIMARY KEY CHECK (singleton = 1),
+    projection_recipe TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS document_event_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1), contract_version TEXT NOT NULL,
     deriver_fingerprint TEXT NOT NULL, input_epoch INTEGER NOT NULL CHECK (input_epoch > 0),

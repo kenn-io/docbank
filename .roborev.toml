@@ -176,6 +176,12 @@ Key assumptions reviewers MUST account for:
    malformed success as an unknown outcome; they do not re-derive the
    store's decisions from the response.
 
+19. SOURCE PROJECTIONS FOLLOW EXTRACTOR OUTPUT: the generic source codec
+   retains typed claims without promising that every projection consumes
+   every value kind. Photo GPS extraction emits paired decimal strings.
+   Flag loss of an extractor-produced fact; require another representation
+   only when a producer or contract calls for it.
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.

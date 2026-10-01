@@ -1011,6 +1011,9 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 		if err != nil {
 			return err
 		}
+		if err := refreshPhotoTechnicalMetadataTx(ctx, tx); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE vault_metadata SET vault_uid = ? WHERE singleton = 1`, header.VaultID,
 		); err != nil {

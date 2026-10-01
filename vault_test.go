@@ -221,6 +221,8 @@ func TestVaultEnsureSourceMetadataProcessesExactVersion(t *testing.T) {
 	retry, err := vault.EnsureSourceMetadata(t.Context(), first.Version.ID)
 	require.NoError(t, err)
 	assert.Equal(t, metadata, retry)
+	_, err = vault.metadata.ContentVersionPhotoMetadata(t.Context(), first.Version.ID)
+	require.ErrorIs(t, err, store.ErrNotFound, "a calendar has no photo facts and gets no projection row")
 }
 
 func TestVaultEnsureSourceMetadataRefreshesOldExtractorGeneration(t *testing.T) {
