@@ -470,7 +470,7 @@ func domainErrorMessage(code string) string {
 	case "export_local_io":
 		return "The export file operation failed before publication; a private stage may remain."
 	case "validation":
-		return "The export request is invalid; check the supplied identities and values."
+		return "The request is invalid; check the supplied identities and values."
 	case "export_outcome_unknown":
 		return "The export outcome is unknown; inspect the supplied IDs before replaying the same request."
 	case "export_conflict":

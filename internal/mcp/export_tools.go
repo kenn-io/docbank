@@ -20,7 +20,8 @@ var exportWriteToolDefinitions = []toolDefinition{
 		write: true, destructive: true,
 		description: "Save a verified archive locally. Review the destination with the operator."},
 	{name: "preview_export", title: "Preview export", schemas: previewExportSchemas, write: true,
-		description: "Retain exact originals and a plan. Review membership with the operator."},
+		description: "Retain exact originals and a plan. Review membership with the operator. " +
+			"Original contents are exported without redaction or sanitization."},
 	{name: "start_export", title: "Start export", schemas: startExportSchemas, write: true,
 		description: "Start a reviewed export plan using caller-owned operation and plan identities."},
 	{name: "cancel_export", title: "Cancel export", schemas: cancelExportSchemas,
