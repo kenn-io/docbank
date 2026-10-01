@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/csv"
 	"errors"
-	"fmt"
 	"io"
 	"unicode/utf8"
 
@@ -20,7 +19,7 @@ func Convert(ctx context.Context, source ocr.Source, policy Policy) (result *Res
 		defer func() {
 			if closeErr := source.Content.Close(); closeErr != nil {
 				result = nil
-				err = errors.Join(err, errors.New("close CSV source failed"))
+				err = errors.Join(err, ocr.NewPreparationError("close CSV source failed", closeErr))
 			}
 		}()
 	}
@@ -31,26 +30,26 @@ func Convert(ctx context.Context, source ocr.Source, policy Policy) (result *Res
 		return nil, errors.New("CSV PDF policy is invalid; use NewPolicy")
 	}
 	if err := source.Validate(); err != nil {
-		return nil, err
+		return nil, ocr.NewPreparationError("CSV source metadata is invalid", err)
 	}
 	if source.MediaType != "text/csv" {
-		return nil, errors.New("CSV source requires text/csv")
+		return nil, ocr.NewPreparationError("CSV source requires text/csv", nil)
 	}
 	if source.Size > policy.limits.MaxSourceBytes {
-		return nil, errors.New("CSV source exceeds byte limit")
+		return nil, ocr.NewPreparationError("CSV source exceeds byte limit", nil)
 	}
 	content, err := io.ReadAll(io.LimitReader(contextReader{ctx, source.Content}, source.Size+1))
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return nil, errors.New("read CSV source failed")
+		return nil, ocr.NewPreparationError("read CSV source failed", err)
 	}
 	if int64(len(content)) != source.Size || digest(content) != source.SHA256 {
-		return nil, errors.New("CSV source does not match declared size and SHA-256")
+		return nil, ocr.NewPreparationError("CSV source does not match declared size and SHA-256", nil)
 	}
 	if !utf8.Valid(content) {
-		return nil, errors.New("CSV source is not UTF-8")
+		return nil, ocr.NewPreparationError("CSV source is not UTF-8", nil)
 	}
 	records, err := parse(ctx, content, policy.limits)
 	if err != nil {
@@ -62,10 +61,10 @@ func Convert(ctx context.Context, source ocr.Source, policy Policy) (result *Res
 	}
 	count, err := media.CountPDFPages(pdf)
 	if err != nil {
-		return nil, fmt.Errorf("verify generated PDF: %w", err)
+		return nil, ocr.NewPreparationError("generated CSV PDF could not be validated", err)
 	}
 	if count != int64(pages) || count > int64(policy.limits.MaxPages) {
-		return nil, errors.New("generated PDF page count does not match layout")
+		return nil, ocr.NewPreparationError("generated CSV PDF page count does not match layout", nil)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -103,21 +102,21 @@ func parse(ctx context.Context, content []byte, limits Limits) ([][]string, erro
 			break
 		}
 		if err != nil {
-			return nil, errors.New("CSV source has invalid record syntax")
+			return nil, ocr.NewPreparationError("CSV source has invalid record syntax", err)
 		}
 		if len(records) == limits.MaxRecords || len(record) > limits.MaxCells-cells {
-			return nil, errors.New("CSV source exceeds record or cell limit")
+			return nil, ocr.NewPreparationError("CSV source exceeds record or cell limit", nil)
 		}
 		for _, cell := range record {
 			if len(cell) > limits.MaxCellBytes {
-				return nil, errors.New("CSV source exceeds cell byte limit")
+				return nil, ocr.NewPreparationError("CSV source exceeds cell byte limit", nil)
 			}
 		}
 		cells += len(record)
 		records = append(records, record)
 	}
 	if len(records) == 0 {
-		return nil, errors.New("CSV source has no records")
+		return nil, ocr.NewPreparationError("CSV source has no records", nil)
 	}
 	return records, nil
 }

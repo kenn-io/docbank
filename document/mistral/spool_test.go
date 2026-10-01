@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/ocr"
 )
 
 func TestPrepareCreatesPrivateDetectedFileAndReleaseRemovesIt(t *testing.T) {
@@ -107,8 +108,8 @@ func TestPrepareFailsClosedAndRemovesPartialFile(t *testing.T) {
 		{name: "hash", source: &observedReadCloser{Reader: bytes.NewReader(content)}, size: int64(len(content)), hash: zeroSHA256(), mediaType: mediaTypePDF, wantError: "hash mismatch"},
 		{name: "size", source: &observedReadCloser{Reader: bytes.NewReader(content)}, size: int64(len(content) + 1), hash: hex.EncodeToString(digest[:]), mediaType: mediaTypePDF, wantError: "size mismatch"},
 		{name: "source exceeds reservation", source: &observedReadCloser{Reader: bytes.NewReader(content)}, size: int64(len(content) - 1), hash: hex.EncodeToString(digest[:]), mediaType: mediaTypePDF, wantError: "size mismatch"},
-		{name: "close", source: &observedReadCloser{Reader: bytes.NewReader(content), closeErr: errors.New("synthetic close")}, size: int64(len(content)), hash: hex.EncodeToString(digest[:]), mediaType: mediaTypePDF, wantError: "close Mistral OCR source"},
-		{name: "type", source: &observedReadCloser{Reader: bytes.NewReader(content)}, size: int64(len(content)), hash: hex.EncodeToString(digest[:]), mediaType: "text/plain", wantError: "not declared"},
+		{name: "close", source: &observedReadCloser{Reader: bytes.NewReader(content), closeErr: errors.New("synthetic close")}, size: int64(len(content)), hash: hex.EncodeToString(digest[:]), mediaType: mediaTypePDF, wantError: "temporary document storage or source I/O failed"},
+		{name: "type", source: &observedReadCloser{Reader: bytes.NewReader(content)}, size: int64(len(content)), hash: hex.EncodeToString(digest[:]), mediaType: "text/plain", wantError: "document format is invalid or does not match its declared media type"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -283,18 +284,23 @@ func TestPrepareClassifiesCapacityRefusals(t *testing.T) {
 	}
 	_, err := Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, options)
 	require.ErrorIs(t, err, ErrSpoolCapacity)
-	require.ErrorContains(t, err, "quota")
+	diagnostic, ok := errors.AsType[*ocr.PreparationError](err)
+	require.True(t, ok)
+	require.EqualError(t, diagnostic, "temporary document storage capacity is unavailable")
+	require.ErrorContains(t, diagnostic.Unwrap(), "quota")
 
 	options.MaxSpoolBytes = 2048
 	options.MinFreeBytes = math.MaxInt64
 	_, err = Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, options)
 	require.ErrorIs(t, err, ErrSpoolCapacity)
-	require.ErrorContains(t, err, "free-space reserve")
+	require.EqualError(t, err, "temporary document storage capacity is unavailable")
+	require.ErrorContains(t, errors.Unwrap(err), "free-space reserve")
 
 	options.MinFreeBytes = 1
 	require.NoError(t, os.Mkdir(filepath.Join(directory, "unsafe"), 0o700))
 	_, err = Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, options)
-	require.ErrorContains(t, err, "unsafe entry")
+	require.ErrorIs(t, err, ErrSpoolUnavailable)
+	require.ErrorContains(t, errors.Unwrap(err), "unsafe entry")
 	require.NotErrorIs(t, err, ErrSpoolCapacity)
 }
 
@@ -316,7 +322,8 @@ func TestPrepareRejectsPublicReservationLock(t *testing.T) {
 		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),
 		MaxSpoolBytes: 1024, MinFreeBytes: 1,
 	})
-	require.ErrorContains(t, err, "reservation lock")
+	require.ErrorIs(t, err, ErrSpoolUnavailable)
+	assert.ErrorContains(t, errors.Unwrap(err), "reservation lock")
 }
 
 func TestScavengeSpoolDirectoryRemovesOnlyStalePackageFilesAndFailsClosed(t *testing.T) {

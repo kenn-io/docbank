@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"go.kenn.io/docbank/document/internal/formatdetect"
+	"go.kenn.io/docbank/document/ocr"
 )
 
 const (
@@ -152,8 +154,16 @@ func Prepare(
 	policy Policy,
 	options PrepareOptions,
 ) (_ *PreparedDocument, err error) {
+	defer func() {
+		switch {
+		case errors.Is(err, ErrSpoolCapacity):
+			err = ocr.NewPreparationError("temporary document storage capacity is unavailable", err)
+		case errors.Is(err, ErrSpoolUnavailable):
+			err = ocr.NewPreparationError("temporary document storage or source I/O failed", err)
+		}
+	}()
 	if source == nil {
-		return nil, fmt.Errorf("%w: mistral OCR staging requires a source", ErrInvalidSource)
+		return nil, ocr.NewPreparationError("source content is required", ErrInvalidSource)
 	}
 	var closeSourceOnce sync.Once
 	var closeSourceErr error
@@ -183,14 +193,14 @@ func Prepare(
 		return nil, errors.New("mistral OCR staging has invalid bounds")
 	}
 	if options.ExpectedSize < 0 || options.ExpectedSize > maxDocumentBytes {
-		return nil, fmt.Errorf("%w: mistral OCR source size is outside policy bounds", ErrInvalidSource)
+		return nil, ocr.NewPreparationError("source size is outside policy bounds", ErrInvalidSource)
 	}
 	if len(options.ExpectedSHA256) != sha256.Size*2 ||
 		options.ExpectedSHA256 != strings.ToLower(options.ExpectedSHA256) {
-		return nil, fmt.Errorf("%w: mistral OCR staging requires a lowercase SHA-256", ErrInvalidSource)
+		return nil, ocr.NewPreparationError("source requires a lowercase SHA-256", ErrInvalidSource)
 	}
 	if _, decodeErr := hex.DecodeString(options.ExpectedSHA256); decodeErr != nil {
-		return nil, fmt.Errorf("%w: mistral OCR staging requires a lowercase SHA-256", ErrInvalidSource)
+		return nil, ocr.NewPreparationError("source requires a lowercase SHA-256", errors.Join(ErrInvalidSource, decodeErr))
 	}
 	if err := validatePrivateDirectory(options.Directory); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrSpoolUnavailable, err)
@@ -265,11 +275,11 @@ func Prepare(
 		return nil, fmt.Errorf("%w: close Mistral OCR source: %w", ErrSpoolUnavailable, sourceCloseErr)
 	}
 	if written != options.ExpectedSize || extraBytes != 0 {
-		return nil, fmt.Errorf("%w: mistral OCR source size mismatch", ErrInvalidSource)
+		return nil, ocr.NewPreparationError("source size mismatch", ErrInvalidSource)
 	}
 	actualHash := hex.EncodeToString(hash.Sum(nil))
 	if actualHash != options.ExpectedSHA256 {
-		return nil, fmt.Errorf("%w: mistral OCR source hash mismatch", ErrInvalidSource)
+		return nil, ocr.NewPreparationError("source hash mismatch", ErrInvalidSource)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -290,7 +300,11 @@ func Prepare(
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return nil, fmt.Errorf("%w: %w", ErrInvalidSource, err)
+		description := "document format is invalid or does not match its declared media type"
+		if errors.Is(err, formatdetect.ErrPDFStructure) {
+			description = "PDF structure is malformed"
+		}
+		return nil, ocr.NewPreparationError(description, errors.Join(ErrInvalidSource, err))
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -300,7 +314,7 @@ func Prepare(
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return nil, fmt.Errorf("%w: count local Mistral OCR units: %w", ErrInvalidSource, err)
+		return nil, ocr.NewPreparationError("document page or unit count could not be determined", errors.Join(ErrInvalidSource, err))
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
