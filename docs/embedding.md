@@ -524,6 +524,17 @@ supported embedded JPEG previews in ARW, DNG, CR2, NEF, and RAF camera RAW
 files. See [Visual previews](architecture/visual-previews.md) for format limits,
 output size, and recipe selection.
 
+Use `VisualPreviewForSize`, `EnsureVisualPreviewForSize`, and
+`OpenVisualPreviewForSize` with `VisualPreviewGrid`, `VisualPreviewFit`, or
+`VisualPreviewLarge` to read, produce, or stream an exact retained recipe.
+Their maximum edges are 512, 2560, and 4096 pixels. Grid and fit leave the
+legacy active head alone. A newly produced large result becomes active;
+reusing a cached result preserves a different head and repairs a missing one.
+
+`docbank.VisualPreviewSupportsMediaType(mediaType)` checks normalized media
+types without reading or decoding a source. It reports whether a decoder path
+exists. Individual files can still return unsupported or failed results.
+
 ## Inspect and repair stored content
 
 `Put` and `Create` receipts include `Physical`. This field describes the raw,

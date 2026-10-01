@@ -18,6 +18,7 @@ import (
 	"image/png"
 	"io"
 	"mime"
+	"strings"
 
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/webp"
@@ -50,6 +51,56 @@ var visualPreviewRecipe = document.VisualPreviewRecipeV1{
 	ProcessorFingerprint: fingerprintVisualPreviewProcessor(visualPreviewProcessorDescriptor),
 }
 
+// VisualPreviewRecipeForSize returns a canonical built-in size recipe.
+func VisualPreviewRecipeForSize(size string) (document.VisualPreviewRecipeV1, error) {
+	recipe := visualPreviewRecipe
+	switch size {
+	case "grid":
+		recipe.MaxEdgePixels = 512
+	case "fit":
+		recipe.MaxEdgePixels = 2560
+	case "large":
+		return recipe, nil
+	default:
+		return document.VisualPreviewRecipeV1{}, fmt.Errorf("unknown visual preview size %q", size)
+	}
+	descriptor := strings.Replace(visualPreviewProcessorDescriptor, "max-edge=4096", fmt.Sprintf("max-edge=%d", recipe.MaxEdgePixels), 1)
+	recipe.ProcessorFingerprint = fingerprintVisualPreviewProcessor(descriptor)
+	return recipe, nil
+}
+
+func validateBuiltInVisualPreviewRecipe(recipe document.VisualPreviewRecipeV1) error {
+	for _, size := range []string{"grid", "fit", "large"} {
+		builtIn, _ := VisualPreviewRecipeForSize(size)
+		if recipe == builtIn {
+			return nil
+		}
+	}
+	return errors.New("visual preview recipe is not a canonical built-in")
+}
+
+// VisualPreviewSupportsMediaType reports whether a decoder path exists.
+func VisualPreviewSupportsMediaType(mediaType string) bool {
+	return visualPreviewFormat(mediaType) != ""
+}
+
+func visualPreviewFormat(mediaType string) string {
+	switch visualPreviewSourceMediaType(mediaType) {
+	case "image/jpeg":
+		return "jpeg"
+	case "image/png":
+		return "png"
+	case "image/gif":
+		return "gif"
+	case "image/webp":
+		return "webp"
+	case "image/x-sony-arw", "image/x-adobe-dng", "image/x-canon-cr2", "image/x-nikon-nef", "image/x-fuji-raf":
+		return "raw"
+	default:
+		return ""
+	}
+}
+
 // VisualPreviewTarget identifies one exact immutable source to process.
 type VisualPreviewTarget struct {
 	SourceSHA256 string
@@ -63,7 +114,7 @@ type VisualPreviewProduct struct {
 	Output  []byte
 }
 
-// CurrentVisualPreviewRecipe returns the complete built-in preview identity.
+// CurrentVisualPreviewRecipe returns the legacy large preview identity.
 func CurrentVisualPreviewRecipe() document.VisualPreviewRecipeV1 {
 	return visualPreviewRecipe
 }
@@ -74,27 +125,34 @@ func CurrentVisualPreviewRecipe() document.VisualPreviewRecipeV1 {
 func ProduceVisualPreview(
 	ctx context.Context, source io.ReadSeeker, target VisualPreviewTarget,
 ) (VisualPreviewProduct, error) {
+	return ProduceVisualPreviewForRecipe(ctx, source, target, CurrentVisualPreviewRecipe())
+}
+
+// ProduceVisualPreviewForRecipe verifies the source and produces the selected built-in recipe.
+func ProduceVisualPreviewForRecipe(ctx context.Context, source io.ReadSeeker, target VisualPreviewTarget, recipe document.VisualPreviewRecipeV1) (VisualPreviewProduct, error) {
+	if err := validateBuiltInVisualPreviewRecipe(recipe); err != nil {
+		return VisualPreviewProduct{}, err
+	}
 	base := document.VisualPreviewV1{
 		ContractVersion: document.VisualPreviewContractV1,
 		SourceSHA256:    target.SourceSHA256,
-		Recipe:          CurrentVisualPreviewRecipe(),
+		Recipe:          recipe,
 	}
 	if err := verifySeekableSource(ctx, source, target.SourceSHA256, target.Size); err != nil {
 		return VisualPreviewProduct{}, sourceContentUnavailable(
 			fmt.Errorf("verifying visual preview source: %w", err))
 	}
 	mediaType := visualPreviewSourceMediaType(target.MediaType)
-	switch mediaType {
-	case "image/jpeg":
+	switch visualPreviewFormat(mediaType) {
+	case "jpeg":
 		return produceVisualPreviewJPEG(ctx, source, base)
-	case "image/png":
+	case "png":
 		return produceVisualPreviewPNG(ctx, source, target.Size, base)
-	case "image/gif":
+	case "gif":
 		return produceVisualPreviewGIF(source, base)
-	case "image/webp":
+	case "webp":
 		return produceVisualPreviewWebP(ctx, source, target.Size, base)
-	case "image/x-sony-arw", "image/x-adobe-dng", "image/x-canon-cr2", "image/x-nikon-nef",
-		"image/x-fuji-raf":
+	case "raw":
 		return produceVisualPreviewCameraRAW(ctx, source, target.Size, mediaType, base)
 	default:
 		base.State = document.VisualPreviewUnsupported
@@ -315,7 +373,7 @@ func encodeVisualPreview(
 	sourceWidth, sourceHeight, orientation int,
 ) (VisualPreviewProduct, error) {
 	orientedWidth, orientedHeight := visualPreviewOrientedDimensions(sourceWidth, sourceHeight, orientation)
-	width, height := boundedVisualPreviewDimensions(orientedWidth, orientedHeight)
+	width, height := boundedVisualPreviewDimensionsForEdge(orientedWidth, orientedHeight, base.Recipe.MaxEdgePixels)
 	resizeWidth, resizeHeight := width, height
 	if visualPreviewOrientationSwapsDimensions(orientation) {
 		resizeWidth, resizeHeight = height, width
@@ -755,13 +813,17 @@ func visualPreviewDimensionsAllowed(width, height int) bool {
 }
 
 func boundedVisualPreviewDimensions(width, height int) (int, int) {
-	if width <= visualPreviewMaxEdgePixels && height <= visualPreviewMaxEdgePixels {
+	return boundedVisualPreviewDimensionsForEdge(width, height, visualPreviewMaxEdgePixels)
+}
+
+func boundedVisualPreviewDimensionsForEdge(width, height, edge int) (int, int) {
+	if width <= edge && height <= edge {
 		return width, height
 	}
 	if width >= height {
-		return visualPreviewMaxEdgePixels,
-			max(1, (height*visualPreviewMaxEdgePixels+width/2)/width)
+		return edge,
+			max(1, (height*edge+width/2)/width)
 	}
-	return max(1, (width*visualPreviewMaxEdgePixels+height/2)/height),
-		visualPreviewMaxEdgePixels
+	return max(1, (width*edge+height/2)/height),
+		edge
 }

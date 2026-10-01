@@ -271,7 +271,7 @@ func readyVisualPreviewWithRecipe(
 		ContractVersion: document.VisualPreviewContractV1, SourceSHA256: source,
 		Recipe: recipe, State: document.VisualPreviewReady,
 		Output: &document.VisualPreviewOutputV1{BlobSHA256: output, Size: size,
-			MediaType: "image/jpeg", Width: 1600, Height: 900},
+			MediaType: "image/jpeg", Width: min(1600, recipe.MaxEdgePixels), Height: min(900, recipe.MaxEdgePixels)},
 	})
 	require.NoError(t, err)
 	return canonical
