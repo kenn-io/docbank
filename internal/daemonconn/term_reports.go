@@ -86,6 +86,9 @@ func (c *Connection) TermReportDates(ctx context.Context, id string, page report
 	if page.Limit < 0 || page.Limit > 100 || len(page.Cursor) > 4096 {
 		return report.DatePage{}, errors.New("invalid report date page bounds")
 	}
+	if _, err := page.ByteLimit(); err != nil {
+		return report.DatePage{}, err
+	}
 	response, err := c.API().GetTermReportDates(ctx, &apiclient.GetTermReportDatesRequestOptions{
 		PathParams: &apiclient.GetTermReportDatesPath{ID: id}, Body: &page})
 	if err != nil {

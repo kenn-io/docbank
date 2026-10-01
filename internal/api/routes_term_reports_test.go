@@ -373,3 +373,31 @@ func TestTermReportSelectedRequestContract(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, before.Total, after.Total)
 }
+
+func TestTermReportDatePageByteLimits(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	createFileWithContent(t, ts, s, "/alpha.txt", "alpha")
+	response, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/search-exports", map[string]string{"X-Api-Key": testAPIKey},
+		`{"version":1,"all_documents":true,"timezone":"UTC","coverage_mode":"available_only","terms":[{"number":1,"expression":"alpha","syntax":"simple","dates":{"start":"2020-01-01","end":"2100-01-01"}}]}`)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var summary report.Summary
+	require.NoError(t, json.Unmarshal([]byte(body), &summary))
+	for _, test := range []struct {
+		body   string
+		status int
+	}{
+		{`{}`, 200}, {`{"max_bytes":0}`, 200}, {`{"max_bytes":65536}`, 200},
+		{`{"max_bytes":-1}`, 413}, {`{"max_bytes":1}`, 413}, {`{"max_bytes":65535}`, 413},
+		{`{"max_bytes":1048577}`, 413},
+	} {
+		t.Run(test.body, func(t *testing.T) {
+			response, body := rawJSONRequest(t, ts.URL, http.MethodPost,
+				"/api/v1/search-exports/"+summary.ID+"/dates", map[string]string{"X-Api-Key": testAPIKey}, test.body)
+			require.Equal(t, test.status, response.StatusCode, body)
+			if test.status == 413 {
+				require.Contains(t, body, "report_limit")
+			}
+		})
+	}
+}

@@ -19,9 +19,11 @@ func TestTermReportClientReviewsAndDownloadsFrozenExport(t *testing.T) {
 			Dates: report.DateRange{Start: "2020-01-01", End: "2100-01-01"}}},
 	})
 	require.NoError(t, err)
-	page, err := client.TermReportDates(t.Context(), summary.ID, report.DatePageRequest{})
+	page, err := client.TermReportDates(t.Context(), summary.ID, report.DatePageRequest{MaxBytes: 64 << 10})
 	require.NoError(t, err)
 	require.Len(t, page.Members, 1)
+	_, err = client.TermReportDates(t.Context(), summary.ID, report.DatePageRequest{MaxBytes: 1})
+	require.ErrorIs(t, err, report.ErrReportLimit)
 	candidate := page.Members[0].Candidates[0]
 	revision, err := client.ReviseTermReport(t.Context(), summary.ID, []report.DateChoice{{
 		Document: candidate.Document, CandidateID: candidate.ID, EvidenceSHA256: candidate.Locator.EvidenceSHA256,

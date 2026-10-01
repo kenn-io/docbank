@@ -440,6 +440,9 @@ func (c *Cache) Dates(ctx context.Context, owner, id string, page report.DatePag
 	if page.Limit < 1 || page.Limit > 100 {
 		return report.DatePage{}, report.ErrReportLimit
 	}
+	if _, err := page.ByteLimit(); err != nil {
+		return report.DatePage{}, err
+	}
 	c.mu.Lock()
 	c.sweepExpiredLocked()
 	entry, err := c.lookupLocked(owner, id)
@@ -448,11 +451,9 @@ func (c *Cache) Dates(ctx context.Context, owner, id string, page report.DatePag
 		return report.DatePage{}, err
 	}
 	entry.frame.refs++
-	shared := entry.frame
-	selectedDates := slices.Clone(entry.selected)
-	choices := slices.Clone(entry.choices)
+	snapshot := *entry
 	c.mu.Unlock()
-	defer c.releaseFrame(shared)
+	defer c.releaseFrame(snapshot.frame)
 	cursor := dateCursor{Owner: owner, ID: id}
 	if page.Cursor != "" {
 		cursor, err = c.decodeCursor(page.Cursor, owner, id)
@@ -460,57 +461,103 @@ func (c *Cache) Dates(ctx context.Context, owner, id string, page report.DatePag
 			return report.DatePage{}, err
 		}
 	}
-	if cursor.Member > len(shared.value.Members) {
+	if cursor.Member > len(snapshot.frame.value.Members) {
 		return report.DatePage{}, ErrUnavailable
 	}
-	result := report.DatePage{Members: make([]report.DateReviewMember, 0, page.Limit)}
+	return c.datePage(ctx, cursor, page, &snapshot)
+}
+
+func (c *Cache) datePage(ctx context.Context, cursor dateCursor,
+	request report.DatePageRequest, entry *cacheEntry,
+) (report.DatePage, error) {
+	maxBytes, _ := request.ByteLimit()
+	members := entry.frame.value.Members
+	result := report.DatePage{Members: make([]report.DateReviewMember, 0, request.Limit)}
+	choices := make(map[report.Identity]*report.DateChoice, len(entry.choices))
+	for i := range entry.choices {
+		choices[entry.choices[i].Document] = &entry.choices[i]
+	}
 	candidates := 0
-	for cursor.Member < len(shared.value.Members) && len(result.Members) < page.Limit && candidates < 1000 {
+	for cursor.Member < len(members) && len(result.Members) < request.Limit && candidates < 1000 {
 		if err := ctx.Err(); err != nil {
 			return report.DatePage{}, err
 		}
-		member := shared.value.Members[cursor.Member]
+		member := members[cursor.Member]
 		if cursor.Candidate > len(member.Candidates) {
 			return report.DatePage{}, ErrUnavailable
 		}
 		remaining := min(len(member.Candidates)-cursor.Candidate, 1000-candidates)
 		item := report.DateReviewMember{Document: member.Identity,
-			Selection: selectedDates[cursor.Member], Candidates: slices.Clone(member.Candidates[cursor.Candidate : cursor.Candidate+remaining]),
-			CandidatesComplete: cursor.Candidate+remaining == len(member.Candidates)}
-		for i := range choices {
-			if choices[i].Document == member.Identity {
-				choice := choices[i]
-				item.Choice = &choice
-			}
-		}
+			Selection: entry.selected[cursor.Member], Choice: choices[member.Identity]}
+		previous := result.NextCursor
 		result.Members = append(result.Members, item)
-		for {
-			bytes, exceeded, err := canonical.BoundedSize(result, 1<<20)
-			if err != nil {
+		// Measure the complete response, including the cursor to the next item.
+		fits := func(count int) (bool, error) {
+			item.Candidates = member.Candidates[cursor.Candidate : cursor.Candidate+count]
+			item.CandidatesComplete = cursor.Candidate+count == len(member.Candidates)
+			result.Members[len(result.Members)-1] = item
+			next := cursor
+			next.Candidate += count
+			if item.CandidatesComplete {
+				next.Member++
+				next.Candidate = 0
+			}
+			result.NextCursor = ""
+			if next.Member < len(members) {
+				result.NextCursor = c.encodeCursor(next)
+			}
+			_, exceeded, err := canonical.BoundedSize(result, int64(maxBytes))
+			return !exceeded, err
+		}
+		fitsAll, err := fits(remaining)
+		if err != nil {
+			return report.DatePage{}, err
+		}
+		consumed := remaining
+		if !fitsAll {
+			// A partial list grows monotonically. Check the complete list first because
+			// its terminal cursor may disappear, making it smaller than a partial page.
+			lo, hi := 1, remaining-1
+			consumed = 0
+			for lo <= hi {
+				mid := lo + (hi-lo)/2
+				ok, err := fits(mid)
+				if err != nil {
+					return report.DatePage{}, err
+				}
+				if ok {
+					consumed = mid
+					lo = mid + 1
+				} else {
+					hi = mid - 1
+				}
+			}
+			if consumed == 0 {
+				result.Members = result.Members[:len(result.Members)-1]
+				result.NextCursor = previous
+				if len(result.Members) == 0 {
+					return report.DatePage{}, report.ErrReportLimit
+				}
+				return result, nil
+			}
+			if _, err := fits(consumed); err != nil {
 				return report.DatePage{}, err
 			}
-			if !exceeded && bytes <= 1<<20 {
-				break
-			}
-			if len(item.Candidates) == 0 {
-				return report.DatePage{}, report.ErrReportLimit
-			}
-			item.Candidates = item.Candidates[:len(item.Candidates)-1]
-			item.CandidatesComplete = false
-			result.Members[len(result.Members)-1] = item
 		}
-		consumed := len(item.Candidates)
+		// Returned slices must not let a caller mutate the retained evidence.
+		result.Members[len(result.Members)-1].Candidates = slices.Clone(item.Candidates)
+		if item.Choice != nil {
+			choice := *item.Choice
+			result.Members[len(result.Members)-1].Choice = &choice
+		}
 		candidates += consumed
 		cursor.Candidate += consumed
-		if cursor.Candidate == len(member.Candidates) {
+		if item.CandidatesComplete {
 			cursor.Member++
 			cursor.Candidate = 0
-		} else if consumed == 0 {
-			return report.DatePage{}, report.ErrReportLimit
+		} else {
+			return result, nil
 		}
-	}
-	if cursor.Member < len(shared.value.Members) {
-		result.NextCursor = c.encodeCursor(cursor)
 	}
 	return result, nil
 }

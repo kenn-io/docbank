@@ -295,8 +295,9 @@ type Summary struct {
 // DatePageRequest requests a bounded page of date candidates. A document's
 // candidates may span pages; DateReviewMember.CandidatesComplete marks completion.
 type DatePageRequest struct {
-	Cursor string `json:"cursor,omitempty"`
-	Limit  int    `json:"limit,omitempty"`
+	Cursor   string `json:"cursor,omitempty"`
+	Limit    int    `json:"limit,omitempty"`
+	MaxBytes int    `json:"max_bytes,omitempty"`
 }
 
 // DateReviewMember exposes one document's candidates and effective reviewed decision.

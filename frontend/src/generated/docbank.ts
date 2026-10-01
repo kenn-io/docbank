@@ -1560,6 +1560,7 @@ export interface DatePageRequest {
   readonly $schema?: string;
   cursor?: string;
   limit?: number;
+  max_bytes?: number;
 }
 
 export interface DateRange {
