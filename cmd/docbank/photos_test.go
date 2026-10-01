@@ -177,6 +177,13 @@ func TestPhotoImportCommands(t *testing.T) {
 	}
 }
 
+func TestPhotoImportRejectsEmptySource(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	_, err := runCLI(t, "photos", "import", "")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, commandExitCode(err, true))
+}
+
 func TestPhotoImportOutputListsAmbiguousGroups(t *testing.T) {
 	previousJSON := photoImportJSON
 	photoImportJSON = false

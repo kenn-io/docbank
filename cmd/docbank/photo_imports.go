@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -23,6 +24,10 @@ var photoImportCmd = &cobra.Command{
 		destination := photoImportDestination
 		if len(args) == 2 {
 			destination = args[1]
+		}
+		// filepath.Abs resolves an empty path to the working directory.
+		if args[0] == "" {
+			return usageError(errors.New("source-root must not be empty"))
 		}
 		root, err := filepath.Abs(args[0])
 		if err != nil {
