@@ -13,6 +13,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/cenkalti/backoff/v7"
+
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
@@ -112,22 +114,27 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) retryCatalog(ctx context.Context, operation func() error) error {
-	for {
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		if err := ctx.Err(); err != nil {
-			return err
+			return struct{}{}, backoff.Permanent(err)
 		}
 		err := operation()
+		if err == nil {
+			return struct{}{}, nil
+		}
 		if !w.catalog.RenditionJobErrorRetryable(err) {
-			return err
+			return struct{}{}, backoff.Permanent(err)
 		}
-		timer := time.NewTimer(250 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		return struct{}{}, err
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(250*time.Millisecond)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		retryErr := backoff.AsRetryError(err)
+		if !errors.Is(retryErr.Cause, backoff.ErrPermanent) && ctx.Err() != nil {
 			return ctx.Err()
-		case <-timer.C:
 		}
+		return retryErr.LastErr
 	}
+	return nil
 }
 
 func (w *Worker) retryCatalogMutation(ctx context.Context, operation func() error) error {
