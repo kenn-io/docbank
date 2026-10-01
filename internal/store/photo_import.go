@@ -150,8 +150,13 @@ func (s *Store) photoImportCurrentDuplicateTx(
 	var node Node
 	// Plain nodes count only for sidecars: a lone sidecar was imported as a plain file.
 	photoFilter := "pf.role=?"
-	if role == PhotoRoleSidecar {
+	roleArgs := []any{role}
+	switch role {
+	case PhotoRoleSidecar:
 		photoFilter = "(pf.node_id IS NULL OR pf.role=?)"
+	case PhotoRoleRAW:
+		photoFilter = "pf.role IN (?,?)"
+		roleArgs = append(roleArgs, PhotoRoleImage)
 	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT `+nodeCols+`, COALESCE(p.original_path, '')
@@ -160,7 +165,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 		LEFT JOIN provenance p ON p.node_id=n.id
 		  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
 		WHERE n.trashed_at IS NULL AND `+photoFilter+` AND cv.blob_hash=?
-		ORDER BY n.id, p.identity`, role, member.BlobHash)
+		ORDER BY n.id, p.identity`, append(roleArgs, member.BlobHash)...)
 	if err != nil {
 		return Node{}, false, fmt.Errorf("finding duplicate photo member: %w", err)
 	}
