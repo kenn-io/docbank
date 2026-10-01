@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -168,13 +170,12 @@ func TestWithPhotoRevisionRetriesOnceOnlyWhenInferred(t *testing.T) {
 }
 
 func TestPhotoImportCommands(t *testing.T) {
-	for _, path := range [][]string{
-		{"photos", "import"}, {"photos", "imports", "show"}, {"photos", "imports", "cancel"},
-	} {
-		command, _, err := rootCmd.Find(path)
-		require.NoError(t, err, path)
-		assert.NotNil(t, command.Flags().Lookup("json"), path)
-	}
+	command, _, err := rootCmd.Find([]string{"photos", "import"})
+	require.NoError(t, err)
+	assert.NotNil(t, command.Flags().Lookup("json"))
+	command, _, err = rootCmd.Find([]string{"photos", "imports"})
+	require.NoError(t, err)
+	assert.NotEqual(t, "imports", command.Name())
 }
 
 func TestPhotoImportRejectsEmptySource(t *testing.T) {
@@ -184,27 +185,46 @@ func TestPhotoImportRejectsEmptySource(t *testing.T) {
 	assert.Equal(t, exitUsage, commandExitCode(err, true))
 }
 
-func TestPhotoImportOutputListsAmbiguousGroups(t *testing.T) {
+func TestPhotoImportOutputPointsToJobs(t *testing.T) {
 	previousJSON := photoImportJSON
-	photoImportJSON = false
 	t.Cleanup(func() { photoImportJSON = previousJSON })
+	operation := api.StorageOperation{ID: "00000000-0000-4000-8000-000000000021", Kind: "photo_import", State: "queued"}
 	var output bytes.Buffer
 	command := &cobra.Command{}
 	command.SetOut(&output)
-	run := api.PhotoImportRun{
-		ID: "run", State: "completed", TotalGroups: 4, CompletedGroups: 4, ChangedGroups: 1, AmbiguousGroups: 3,
-		Ambiguities: []api.PhotoImportAmbiguity{{Reason: "multiple_raw", Files: []api.PhotoImportAmbiguousFile{{
-			SourcePath: filepath.Join(t.TempDir(), "capture.ARW"), NodeID: 7, Role: "raw",
-			AssetID: "00000000-0000-4000-8000-000000000001",
-		}}}},
+	photoImportJSON = false
+	require.NoError(t, writePhotoImportOutput(command, operation))
+	assert.Contains(t, output.String(), "docbank jobs show "+operation.ID+" --json")
+	assert.Contains(t, output.String(), "docbank jobs cancel "+operation.ID)
+	photoImportJSON = true
+	output.Reset()
+	require.NoError(t, writePhotoImportOutput(command, operation))
+	var accepted api.StorageOperation
+	require.NoError(t, json.Unmarshal(output.Bytes(), &accepted))
+	assert.Equal(t, operation, accepted)
+}
+
+func TestPhotoImportAmbiguitiesReachJobsShow(t *testing.T) {
+	_ = setupVaultHome(t)
+	source := t.TempDir()
+	for name, body := range map[string]string{"IMG_0001.ARW": "raw-one", "IMG_0001.DNG": "raw-two", "IMG_0001.JPG": "jpeg"} {
+		require.NoError(t, os.WriteFile(filepath.Join(source, name), []byte(body), 0o600))
 	}
-	require.NoError(t, writePhotoImportOutput(command, run))
-	assert.Contains(t, output.String(), "ambiguous group 1 (multiple_raw)")
-	assert.Contains(t, output.String(), "id:7 raw 00000000-0000-4000-8000-000000000001")
-	assert.Contains(t, output.String(), "capture.ARW")
-	assert.Contains(t, output.String(), "photos assets attach")
-	assert.Contains(t, output.String(), "photos assets inspect <asset-id>")
-	assert.Contains(t, output.String(), "2 more ambiguous groups not listed")
-	assert.Contains(t, output.String(), "changed during import: 1")
-	assert.Contains(t, output.String(), "The sidecar follows on the next import.")
+	output, err := runCLI(t, "photos", "import", source, "/photos", "--json")
+	require.NoError(t, err, output)
+	var accepted api.StorageOperation
+	require.NoError(t, json.Unmarshal([]byte(output), &accepted))
+	var completed api.StorageOperation
+	require.Eventually(t, func() bool {
+		shown, showErr := runCLI(t, "jobs", "show", accepted.ID, "--json")
+		return showErr == nil && json.Unmarshal([]byte(shown), &completed) == nil && completed.State == "completed"
+	}, 10*time.Second, 20*time.Millisecond)
+	receiptJSON, err := json.Marshal(completed.Receipt)
+	require.NoError(t, err)
+	var receipt store.PhotoImportReceipt
+	require.NoError(t, json.Unmarshal(receiptJSON, &receipt))
+	assert.Equal(t, int64(1), receipt.Ambiguous)
+	require.Len(t, receipt.Ambiguities, 1)
+	assert.Equal(t, store.PhotoImportMultipleRAW, receipt.Ambiguities[0].Reason)
+	assert.Len(t, receipt.Ambiguities[0].Files, 3)
 }

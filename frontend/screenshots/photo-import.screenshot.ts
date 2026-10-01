@@ -32,7 +32,7 @@ test("photo import progress and cancellation are visible", async ({ page }) => {
     await page.getByRole("button", { name: "Background jobs", exact: true }).click();
     await run("photos", "import", source, "/Photos/Trip");
     await page.getByRole("button", { name: "Refresh background jobs" }).click();
-    const progress = page.getByRole("progressbar", { name: "Photo import progress" });
+    const progress = page.getByRole("progressbar", { name: "Job progress" });
     await expect(progress).toBeVisible();
     const cancel = page.getByRole("button", { name: "Cancel photo import" });
     await expect(cancel).toBeVisible();

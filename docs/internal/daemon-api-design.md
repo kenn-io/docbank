@@ -172,7 +172,9 @@ and rechecks every source before committing its transaction. Matching uses
 scanned members and their current duplicate owners. Progress contains counts;
 the final receipt includes every scanned ambiguity. Added, skipped, changed,
 failed, and ambiguous counts, cancel, retention,
-and restart resume all come from the storage operation lifecycle.
+and restart resume all come from the storage operation lifecycle. Status and
+cancellation use the shared `/api/v1/jobs/{operation_id}` routes; there is no
+photo-specific read or cancel route.
 
 Similar-document reads use the processing service and store authority through
 `POST /api/v1/search/similar`. Keep query encoding and provider authorization

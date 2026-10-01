@@ -57,10 +57,7 @@ func registerJobRoutes(api huma.API, d Deps) {
 					FinishedAt:       storageOperationAPI(operation).FinishedAt,
 					CancelRequested:  operation.CancelRequested,
 				}
-				if operation.Kind == store.StorageOperationKindPhotoImport {
-					job.CanCancel = operation.State == store.StorageOperationQueued || operation.State == store.StorageOperationRunning
-					job.Destination = photoImportRequest(operation).Destination
-				}
+				job.CanCancel = operation.State == store.StorageOperationQueued || operation.State == store.StorageOperationRunning
 				out.Body.Items = append(out.Body.Items, job)
 			}
 		}
@@ -119,6 +116,14 @@ func registerJobRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		return &operationOutput{Body: storageOperationAPI(operation)}, nil
+		result := storageOperationAPI(operation)
+		if browserSessionRequest(ctx) {
+			// Receipts and raw errors can name daemon-host paths.
+			result.Receipt = nil
+			if result.Error != "" {
+				result.Error = "storage operation failed; inspect with the Docbank CLI for details"
+			}
+		}
+		return &operationOutput{Body: result}, nil
 	})
 }

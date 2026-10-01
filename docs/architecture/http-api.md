@@ -852,9 +852,20 @@ error.
 `GET /jobs` returns `{items: [...]}` in stable job-name order. Each item carries
 `name`, `status` (`running`, `completed`, `failed`, or `cancelled`), and a UTC
 `started_at`; terminal jobs add `finished_at`, and failures add a bounded
-`error`. Records describe this daemon run only and disappear when it restarts.
-The endpoint is observation, not control: stopping a task requires stopping or
-reconfiguring the daemon feature that owns it.
+`error`. Supervised task records describe this daemon run only and disappear
+when it restarts; stopping one requires stopping or reconfiguring the daemon
+feature that owns it.
+
+Durable storage operations, such as placement and photo imports, also appear as
+`storage:<operation_id>` items with `operation_id`, `kind`, object progress,
+`cancel_requested`, and `can_cancel` while queued or running.
+`GET /jobs/{operation_id}` returns the full operation and its receipt.
+`POST /jobs/{operation_id}/cancel` requests cancellation at the next durable
+object boundary and returns `409` once the operation is terminal or finalizing.
+A browser session may list jobs and cancel an operation by its UUID. It cannot
+read `GET /jobs/{operation_id}`, its error text is replaced with a generic
+message, and the cancel response omits the receipt, so host source paths stay
+with API-key clients.
 
 `GET /watches` returns `{items: [...]}` in stable watch-name order. Each item
 joins the effective machine-local source, virtual destination, settle and scan
@@ -949,12 +960,12 @@ settings writes are available through HTTP and the CLI; MCP exposes them only
 as reads in this slice.
 
 `POST /photos/imports` starts a folder import from a daemon-host path and
-returns `202`, or `422` when the path is not an existing folder. The import is a
-durable job of kind `photo_import` in the jobs list: `GET /photos/imports` and
-`GET /photos/imports/{id}` report group counts, the number of unsupported files
-skipped, and the groups left unpaired, and `POST /photos/imports/{id}/cancel`
-stops it before the next group. Browser sessions can read and cancel imports;
-source paths and raw errors are redacted for them.
+returns `202` with the queued `StorageOperation`, or `422` when the path is not
+an existing folder. The import is a durable job of kind `photo_import`.
+`GET /jobs/{operation_id}` returns its group progress and receipt: added,
+skipped, changed, failed, ambiguous and unsupported counts, plus the groups
+left unpaired. `POST /jobs/{operation_id}/cancel` stops it before the next
+group. Starting an import requires the API key on a loopback connection.
 
 Person reads return the canonical row and, for `GET /people/by-id/{person_id}`,
 the identities and external UIDs used by split. Rename, retire, merge, and

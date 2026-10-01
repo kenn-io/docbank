@@ -36,8 +36,8 @@
   const running = $derived(
     items.filter((job) => job.status === "running").length,
   );
-  const hasActivePhotoImport = (jobs: Job[]) =>
-    jobs.some((job) => job.kind === "photo_import" && (job.status === "running" || job.status === "queued"));
+  const hasActiveJob = (jobs: Job[]) =>
+    jobs.some((job) => job.status === "running" || job.status === "queued");
 
   onMount(() => {
     void refresh();
@@ -57,7 +57,7 @@
       const next = await generated.listJobs({ session }).then((result) => result.items);
       if (request !== generation) return;
       items = next;
-      if (hasActivePhotoImport(next)) {
+      if (hasActiveJob(next)) {
         poll = setTimeout(() => void refresh(true), 2000);
       }
     } catch (cause) {
@@ -68,7 +68,7 @@
         return;
       }
       error = cause instanceof Error ? cause.message : String(cause);
-      if (hasActivePhotoImport(items)) {
+      if (hasActiveJob(items)) {
         poll = setTimeout(() => void refresh(true), 2000);
       }
     } finally {
@@ -76,12 +76,12 @@
     }
   }
 
-  async function cancelPhotoImport(job: Job): Promise<void> {
+  async function cancelJob(job: Job): Promise<void> {
     if (!job.operation_id || !job.can_cancel) return;
     const id = job.operation_id;
     cancelling = new Set(cancelling).add(id);
     try {
-      await generated.cancelPhotoImport(id, { session });
+      await generated.cancelStorageOperation(id, { session });
       await refresh();
     } catch (cause) {
       if (generation >= 0) error = cause instanceof Error ? cause.message : String(cause);
@@ -167,8 +167,8 @@
               <Chip size="xs" tone={statusTone(job.status)} dot={job.status === "running"}>
                 {job.status}
               </Chip>
-              {#if job.kind === "photo_import" && job.can_cancel && !job.cancel_requested}
-                <Button size="sm" ariaLabel="Cancel photo import" disabled={cancelling.has(job.operation_id ?? "")} onclick={() => void cancelPhotoImport(job)}>Cancel</Button>
+              {#if job.operation_id && job.can_cancel && !job.cancel_requested}
+                <Button size="sm" ariaLabel={`Cancel ${job.kind === "photo_import" ? "photo import" : job.name}`} disabled={cancelling.has(job.operation_id)} onclick={() => void cancelJob(job)}>Cancel</Button>
               {/if}
             {/snippet}
             <dl>
@@ -177,16 +177,13 @@
                 <dt>Finished</dt>
                 <dd>{job.finished_at ? formatDate(job.finished_at) : "Still running"}</dd>
               </div>
-              {#if job.kind === "photo_import" && job.destination}
-                <div><dt>Destination</dt><dd>{job.destination}</dd></div>
-              {/if}
             </dl>
-            {#if job.kind === "photo_import" && job.total_objects !== undefined}
-              <progress aria-label="Photo import progress" aria-valuemin="0" aria-valuemax={job.total_objects} aria-valuenow={job.completed_objects ?? 0} max={job.total_objects} value={job.completed_objects ?? 0}></progress>
-              <p class="import-progress">{job.completed_objects ?? 0} of {job.total_objects} groups</p>
+            {#if job.operation_id && job.total_objects !== undefined}
+              <progress aria-label="Job progress" aria-valuemin="0" aria-valuemax={job.total_objects} aria-valuenow={job.completed_objects ?? 0} max={job.total_objects} value={job.completed_objects ?? 0}></progress>
+              <p class="job-progress">{job.completed_objects ?? 0} of {job.total_objects} {job.kind === "photo_import" ? "groups" : "objects"}</p>
             {/if}
-            {#if job.kind === "photo_import" && job.cancel_requested && job.status === "running"}
-              <p class="import-progress">Stops after the current group finishes.</p>
+            {#if job.cancel_requested && (job.status === "running" || job.status === "queued")}
+              <p class="job-progress">Cancellation requested. The job stops at its next safe point.</p>
             {/if}
             {#if job.error}
               <p class="job-error" role="alert">{job.error}</p>
@@ -295,7 +292,7 @@
     accent-color: var(--accent-blue);
   }
 
-  .import-progress {
+  .job-progress {
     margin: 0;
     color: var(--text-secondary);
     font-size: var(--font-size-sm);

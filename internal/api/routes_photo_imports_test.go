@@ -36,15 +36,17 @@ func TestPhotoImportRoutes(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = response.Body.Close() }()
 	require.Equal(t, http.StatusAccepted, response.StatusCode)
-	var started api.PhotoImportRun
+	var started api.StorageOperation
 	require.NoError(t, json.UnmarshalRead(response.Body, &started))
 	require.NotEmpty(t, started.ID)
+	assert.Equal(t, store.StorageOperationKindPhotoImport, started.Kind)
+	assert.Equal(t, "queued", started.State)
 
-	var latest api.PhotoImportRun
+	var latest api.StorageOperation
 	for range 300 {
-		get, getErr := ts.Client().Get(ts.URL + "/api/v1/photos/imports/" + started.ID)
+		get, getErr := ts.Client().Get(ts.URL + "/api/v1/jobs/" + started.ID)
 		require.NoError(t, getErr)
-		var output api.PhotoImportRun
+		var output api.StorageOperation
 		require.NoError(t, json.UnmarshalRead(get.Body, &output))
 		_ = get.Body.Close()
 		latest = output
@@ -54,9 +56,12 @@ func TestPhotoImportRoutes(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	assert.Equal(t, "completed", latest.State)
-	assert.Equal(t, int64(1), latest.AddedGroups)
-	assert.Equal(t, int64(1), latest.CompletedGroups)
-	assert.Equal(t, root, latest.SourceRoot)
+	assert.Equal(t, int64(1), latest.CompletedObjects)
+	receiptJSON, err := json.Marshal(latest.Receipt)
+	require.NoError(t, err)
+	var receipt store.PhotoImportReceipt
+	require.NoError(t, json.Unmarshal(receiptJSON, &receipt))
+	assert.Equal(t, int64(1), receipt.Added)
 
 	invalid, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/imports", bytes.NewReader([]byte(`{"source_root":"relative","destination":"/photos"}`)))
 	require.NoError(t, err)
@@ -81,15 +86,15 @@ func TestPhotoImportRoutes(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, remote.Code)
 }
 
-func TestPhotoImportCancelAndJobsCard(t *testing.T) {
+func TestPhotoImportCancelThroughJobs(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, nil)
 	operation, err := catalog.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport,
 		`{"source_root":"/private/camera","destination":"/photos"}`)
 	require.NoError(t, err)
-	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/imports/"+operation.ID+"/cancel", nil, nil)
+	response, body := do(t, ts, http.MethodPost, "/api/v1/jobs/"+operation.ID+"/cancel", nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var cancelled api.PhotoImportRun
+	var cancelled api.StorageOperation
 	require.NoError(t, json.Unmarshal([]byte(body), &cancelled))
 	assert.True(t, cancelled.CancelRequested)
 	assert.Equal(t, "queued", cancelled.State)
@@ -101,29 +106,24 @@ func TestPhotoImportCancelAndJobsCard(t *testing.T) {
 	require.Len(t, jobs.Items, 1)
 	assert.Equal(t, api.Job{Name: "storage:" + operation.ID, Status: "queued",
 		StartedAt: operation.CreatedAt.Format(time.RFC3339Nano), OperationID: operation.ID,
-		Kind: store.StorageOperationKindPhotoImport, CanCancel: true, CancelRequested: true,
-		Destination: "/photos"}, jobs.Items[0])
+		Kind: store.StorageOperationKindPhotoImport, CanCancel: true, CancelRequested: true}, jobs.Items[0])
 	assert.NotContains(t, body, "private")
 
 	require.NoError(t, catalog.FinishStorageOperation(t.Context(), operation.ID, store.StorageOperationCancelled, "{}", "", time.Time{}))
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/imports/"+operation.ID+"/cancel", nil, nil)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+operation.ID+"/cancel", nil, nil)
 	assert.Equal(t, http.StatusConflict, response.StatusCode, body)
-
-	other, err := catalog.CreateLocalOperation(t.Context(), "repair", `{}`)
-	require.NoError(t, err)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/imports/"+other.ID+"/cancel", nil, nil)
-	assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs", nil, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &jobs))
+	require.Len(t, jobs.Items, 1)
+	assert.False(t, jobs.Items[0].CanCancel)
 }
 
-func TestPhotoImportBrowserRedactsRunAndAllowsOnlyReadCancel(t *testing.T) {
+func TestPhotoImportJobsReceiptRedactsBrowserSession(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, nil)
 	source := filepath.Join(t.TempDir(), "camera")
 	request, err := json.Marshal(store.PhotoImportRequest{SourceRoot: source, Destination: "/photos"})
-	require.NoError(t, err)
-	operation, err := catalog.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, string(request))
-	require.NoError(t, err)
-	_, err = catalog.ClaimStorageOperation(t.Context(), operation.ID)
 	require.NoError(t, err)
 	receipt, err := json.Marshal(store.PhotoImportReceipt{Ambiguous: 1, Ambiguities: []store.PhotoImportAmbiguity{{
 		Reason: store.PhotoImportMultipleRAW, Files: []store.PhotoImportAmbiguousFile{{
@@ -132,38 +132,54 @@ func TestPhotoImportBrowserRedactsRunAndAllowsOnlyReadCancel(t *testing.T) {
 		}},
 	}}})
 	require.NoError(t, err)
-	require.NoError(t, catalog.FinishStorageOperation(t.Context(), operation.ID, store.StorageOperationFailed, string(receipt), "private error", time.Time{}))
+	running, err := catalog.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, string(request))
+	require.NoError(t, err)
+	_, err = catalog.ClaimStorageOperation(t.Context(), running.ID)
+	require.NoError(t, err)
+	require.NoError(t, catalog.AdvanceStorageOperation(t.Context(), running.ID, "", 0, 0, 0, string(receipt)))
+	failed, err := catalog.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, string(request))
+	require.NoError(t, err)
+	_, err = catalog.ClaimStorageOperation(t.Context(), failed.ID)
+	require.NoError(t, err)
+	require.NoError(t, catalog.FinishStorageOperation(t.Context(), failed.ID, store.StorageOperationFailed, string(receipt), "private error", time.Time{}))
 
-	response, body := do(t, ts, http.MethodGet, "/api/v1/photos/imports/"+operation.ID, nil, nil)
+	response, body := do(t, ts, http.MethodGet, "/api/v1/jobs/"+failed.ID, nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var operator api.StorageOperation
+	require.NoError(t, json.Unmarshal([]byte(body), &operator))
+	receiptJSON, err := json.Marshal(operator.Receipt)
+	require.NoError(t, err)
+	var operatorReceipt store.PhotoImportReceipt
+	require.NoError(t, json.Unmarshal(receiptJSON, &operatorReceipt))
+	require.Len(t, operatorReceipt.Ambiguities, 1)
+	assert.Equal(t, int64(7), operatorReceipt.Ambiguities[0].Files[0].NodeID)
 	assert.Contains(t, body, "private.ARW")
 	assert.Contains(t, body, "private error")
 
-	browserToken := issueWebSession(t, ts)
-	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/imports/"+operation.ID,
-		map[string]string{"X-Api-Key": "", api.WebSessionHeader: browserToken}, nil)
+	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)}
+	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs", browser, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	var browserRun api.PhotoImportRun
-	require.NoError(t, json.Unmarshal([]byte(body), &browserRun))
-	assert.Empty(t, browserRun.SourceRoot)
-	assert.Empty(t, browserRun.Error)
-	assert.Equal(t, int64(1), browserRun.AmbiguousGroups)
-	require.Len(t, browserRun.Ambiguities, 1)
-	assert.Empty(t, browserRun.Ambiguities[0].Files[0].SourcePath)
+	assert.NotContains(t, body, "private")
+	response, body = do(t, ts, http.MethodGet, "/api/v1/jobs/"+failed.ID, browser, nil)
+	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+running.ID+"/cancel?force=1", browser, nil)
+	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/not-a-uuid/cancel", browser, nil)
+	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
+
+	response, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+running.ID+"/cancel", browser, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var cancelled api.StorageOperation
+	require.NoError(t, json.Unmarshal([]byte(body), &cancelled))
+	assert.True(t, cancelled.CancelRequested)
+	assert.Nil(t, cancelled.Receipt)
 	assert.NotContains(t, body, "private")
 
-	startBody, err := json.Marshal(api.PhotoImportStartRequest{SourceRoot: source, Destination: "/photos"})
-	require.NoError(t, err)
-	startRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/imports", bytes.NewReader(startBody))
-	require.NoError(t, err)
-	startRequest.Header.Set("Content-Type", "application/json")
-	startRequest.Header.Set("X-Api-Key", "")
-	startRequest.Header.Set(api.WebSessionHeader, browserToken)
-	startResponse, err := ts.Client().Do(startRequest)
-	require.NoError(t, err)
-	defer func() { _ = startResponse.Body.Close() }()
-	assert.Equal(t, http.StatusForbidden, startResponse.StatusCode)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/imports", browser,
+		api.PhotoImportStartRequest{SourceRoot: source, Destination: "/photos"})
+	assert.Equal(t, http.StatusForbidden, response.StatusCode, body)
 }
+
 func TestPhotoImportGateAndActivity(t *testing.T) {
 	t.Parallel()
 	_, catalog := newTestServer(t, nil)

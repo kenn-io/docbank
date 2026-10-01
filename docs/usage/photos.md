@@ -72,14 +72,18 @@ vault folder:
 
 ```text
 docbank photos import <source-root> [destination] [--json]
-docbank photos imports show <import-id> [--json]
-docbank photos imports cancel <import-id> [--json]
+docbank jobs show <operation-id> --json
+docbank jobs cancel <operation-id>
 ```
+
+`photos import` queues the import as a background job and prints its operation
+ID. Follow and stop it like any other durable job: `jobs show` reports progress
+and the import receipt, and `jobs cancel` stops it.
 
 The import reads RAW files (`.ARW`, `.CR2`, `.CR3`, `.DNG`, `.NEF`, `.ORF`,
 `.RAF`, `.RW2`), images (`.JPG`, `.JPEG`, `.PNG`, `.GIF`, `.WEBP`, `.HEIC`),
 videos (`.MP4`, `.MOV`, `.M4V`, `.AVI`, `.MPG`), and `.XMP` sidecars. It leaves
-every other file out and reports how many it skipped as `unsupported files`.
+every other file out and counts it as `unsupported` in the receipt.
 The source folder must exist when you start the import; otherwise the command
 fails with exit code 2 and no import starts.
 
@@ -94,7 +98,8 @@ import again skips content already in the vault. A file edited since it was
 imported, such as an XMP saved again by a photo editor, becomes a new version
 of the file already in the photo, not a second file.
 
-The import leaves a group unpaired and lists it in `imports show` when:
+The import leaves a group unpaired and lists it under `ambiguities` in the
+receipt from `jobs show <operation-id> --json` when:
 
 - two RAW files share a name, such as `IMG_0001.ARW` and `IMG_0001.DNG`: each
   RAW and JPEG becomes its own photo and the sidecar stays a plain file;
@@ -103,15 +108,17 @@ The import leaves a group unpaired and lists it in `imports show` when:
 Pair the RAW and JPEG files yourself: `photos assets inspect <asset-id>` shows
 file IDs, `photos assets detach` frees a file, and `photos assets attach` adds
 it to the other photo. A later scan containing the sidecar and its image
-attaches it to the settled photo. Each import result lists all groups that
-remained ambiguous during that run.
+attaches it to the settled photo. The final receipt lists every group that
+remained ambiguous during that run, with each file's source path, node ID,
+role, and photo asset ID.
 
 The import hashes the discovered files, waits one second, then compares each
 durable copy with that observation. It hashes every group member again before
 committing. A changed or deleted source leaves the entire group out and counts
 as changed, even if its size and modification time stayed the same. Import
-again to pick it up. Progress and cancel appear in the web Jobs drawer. Cancel takes effect
-before the next group. A daemon restart resumes an unfinished import by
+again to pick it up. The web Jobs drawer shows progress and has a Cancel
+button while the import runs; it leaves out source paths and the unpaired-group
+list. Cancel takes effect before the next group. A daemon restart resumes an unfinished import by
 scanning the folder again.
 
 ## HTTP and JSONL

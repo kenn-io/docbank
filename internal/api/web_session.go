@@ -307,15 +307,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if batesBrowserRequestAllowed(r) {
 		return true
 	}
-	if r.URL.RawQuery == "" {
-		if path == "/api/v1/photos/imports" {
-			return method == http.MethodGet
-		}
-		if after, ok := strings.CutPrefix(path, "/api/v1/photos/imports/"); ok {
-			parts := strings.Split(after, "/")
-			return method == http.MethodGet && len(parts) == 1 && parts[0] != "" ||
-				method == http.MethodPost && len(parts) == 2 && parts[1] == "cancel" && parts[0] != ""
-		}
+	if after, ok := strings.CutPrefix(path, "/api/v1/jobs/"); ok {
+		parts := strings.Split(after, "/")
+		return method == http.MethodPost && r.URL.RawQuery == "" && len(parts) == 2 && parts[1] == "cancel" && validPageJobPathID(parts[0])
 	}
 	if path == "/api/v1/saved-queries" {
 		return method == http.MethodGet ||

@@ -178,8 +178,6 @@ docbank photos settings show
 docbank photos settings set raw|image [--revision REV]
 docbank photos settings reset [--revision REV]
 docbank photos import <source-root> [destination] [--json]
-docbank photos imports show <import-id> [--json]
-docbank photos imports cancel <import-id> [--json]
 ```
 
 Photo commands emit JSON through the daemon. Image and concrete video files
@@ -191,9 +189,12 @@ member file; `id:N` also finds a trashed member. Sidecars must point at a same-a
 the display member.
 Photo assets, settings, and bounded decision receipts are included in JSONL
 backup and restore.
-`photos import` imports a daemon-host folder, one photo per same-folder,
-same-name group discovered in the scan; `imports show` lists every group that
-run left unpaired and counts the unsupported files it skipped. Current duplicate owners preserve existing pairings. See
+`photos import` queues a background import of a daemon-host folder, one photo
+per same-folder, same-name group discovered in the scan, and prints the
+operation ID. `docbank jobs show <operation-id> --json` returns its progress
+and receipt, including every group the run left unpaired and the number of
+unsupported files it skipped; `docbank jobs cancel <operation-id>` stops it.
+Current duplicate owners preserve existing pairings. See
 [Photos](usage/photos.md#import-a-camera-folder).
 
 ## docbank people
