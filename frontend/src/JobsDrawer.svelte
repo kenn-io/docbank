@@ -30,26 +30,36 @@
   let loading = $state(true);
   let error = $state("");
   let generation = 0;
+  let poll: ReturnType<typeof setTimeout> | undefined;
+  let cancelling = $state(new Set<string>());
 
   const running = $derived(
     items.filter((job) => job.status === "running").length,
   );
+  const hasActiveJob = (jobs: Job[]) =>
+    jobs.some((job) => job.status === "running" || job.status === "queued");
 
   onMount(() => {
     void refresh();
     return () => {
-      generation += 1;
+      generation = -1;
+      clearTimeout(poll);
     };
   });
 
-  async function refresh(): Promise<void> {
+  async function refresh(quiet = false): Promise<void> {
+    if (generation < 0) return;
+    clearTimeout(poll);
     const request = ++generation;
-    loading = true;
+    if (!quiet) loading = true;
     error = "";
     try {
       const next = await generated.listJobs({ session }).then((result) => result.items);
       if (request !== generation) return;
       items = next;
+      if (hasActiveJob(next)) {
+        poll = setTimeout(() => void refresh(true), 2000);
+      }
     } catch (cause) {
       if (request !== generation) return;
       if (cause instanceof APIError && cause.status === 401) {
@@ -58,8 +68,29 @@
         return;
       }
       error = cause instanceof Error ? cause.message : String(cause);
+      if (hasActiveJob(items)) {
+        poll = setTimeout(() => void refresh(true), 2000);
+      }
     } finally {
       if (request === generation) loading = false;
+    }
+  }
+
+  async function cancelJob(job: Job): Promise<void> {
+    if (!job.operation_id || !job.can_cancel) return;
+    const id = job.operation_id;
+    cancelling = new Set(cancelling).add(id);
+    try {
+      await generated.cancelStorageOperation(id, { session });
+      await refresh();
+    } catch (cause) {
+      if (generation >= 0) error = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (generation >= 0) {
+        const next = new Set(cancelling);
+        next.delete(id);
+        cancelling = next;
+      }
     }
   }
 
@@ -130,12 +161,15 @@
             level="default"
             padding="sm"
             eyebrow="Background job"
-            title={job.name}
+            title={job.kind === "photo_import" ? "Photo import" : job.name}
           >
             {#snippet actions()}
               <Chip size="xs" tone={statusTone(job.status)} dot={job.status === "running"}>
                 {job.status}
               </Chip>
+              {#if job.operation_id && job.can_cancel && !job.cancel_requested}
+                <Button size="sm" ariaLabel={`Cancel ${job.kind === "photo_import" ? "photo import" : job.name}`} disabled={cancelling.has(job.operation_id)} onclick={() => void cancelJob(job)}>Cancel</Button>
+              {/if}
             {/snippet}
             <dl>
               <div><dt>Started</dt><dd>{formatDate(job.started_at)}</dd></div>
@@ -144,6 +178,13 @@
                 <dd>{job.finished_at ? formatDate(job.finished_at) : "Still running"}</dd>
               </div>
             </dl>
+            {#if job.operation_id && job.total_objects !== undefined}
+              <progress aria-label="Job progress" aria-valuemin="0" aria-valuemax={job.total_objects} aria-valuenow={job.completed_objects ?? 0} max={job.total_objects} value={job.completed_objects ?? 0}></progress>
+              <p class="job-progress">{job.completed_objects ?? 0} of {job.total_objects} {job.kind === "photo_import" ? "groups" : "objects"}</p>
+            {/if}
+            {#if job.cancel_requested && (job.status === "running" || job.status === "queued")}
+              <p class="job-progress">Cancellation requested. The job stops at its next safe point.</p>
+            {/if}
             {#if job.error}
               <p class="job-error" role="alert">{job.error}</p>
             {/if}
@@ -241,6 +282,17 @@
   }
 
   dd {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+
+  progress {
+    width: 100%;
+    accent-color: var(--accent-blue);
+  }
+
+  .job-progress {
     margin: 0;
     color: var(--text-secondary);
     font-size: var(--font-size-sm);

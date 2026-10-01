@@ -374,7 +374,10 @@ type ingestFileOptions struct {
 	exact             bool
 	completeReceipt   bool
 	observeMembership bool
-	directoryPlan     *IngestDirectoryPlan
+	// deferPhotoEnrollment lets a grouped photo import publish all of its
+	// nodes before it creates one shared asset.
+	deferPhotoEnrollment bool
+	directoryPlan        *IngestDirectoryPlan
 }
 
 func (s *Store) ingestFile(
@@ -595,8 +598,10 @@ func (s *Store) ingestFileTx(
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
 	}
-	if err := s.enrollNewPhotoFileTx(ctx, tx, receipt.Node); err != nil {
-		return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+	if !options.deferPhotoEnrollment {
+		if err := s.enrollNewPhotoFileTx(ctx, tx, receipt.Node); err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
 	}
 	if options.completeReceipt {
 		receipt.Physical, err = authorizedPhysicalContentTx(tx, blobHash)

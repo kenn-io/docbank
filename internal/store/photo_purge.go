@@ -14,7 +14,7 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		return nil
 	}
 	assetIDs := make(map[string]struct{})
-	var rawFileIDs []string
+	var targetFileIDs []string
 	for _, nodeID := range nodeIDs {
 		rows, err := tx.QueryContext(ctx, `SELECT asset_id, file_id, role FROM photo_files WHERE node_id=?`, nodeID)
 		if err != nil {
@@ -27,8 +27,8 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 				return err
 			}
 			assetIDs[assetID] = struct{}{}
-			if role == PhotoRoleRAW {
-				rawFileIDs = append(rawFileIDs, fileID)
+			if photoSidecarTargetRole(role) {
+				targetFileIDs = append(targetFileIDs, fileID)
 			}
 		}
 		if err := rows.Err(); err != nil {
@@ -39,10 +39,10 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 			return err
 		}
 	}
-	for _, rawFileID := range rawFileIDs {
-		rows, err := tx.QueryContext(ctx, `SELECT asset_id FROM photo_files WHERE sidecar_of_file_id=?`, rawFileID)
+	for _, targetFileID := range targetFileIDs {
+		rows, err := tx.QueryContext(ctx, `SELECT asset_id FROM photo_files WHERE sidecar_of_file_id=?`, targetFileID)
 		if err != nil {
-			return fmt.Errorf("finding sidecars for purged RAW %s: %w", rawFileID, err)
+			return fmt.Errorf("finding sidecars for purged photo source %s: %w", targetFileID, err)
 		}
 		for rows.Next() {
 			var assetID string
@@ -71,9 +71,9 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		}
 		before[assetID] = asset
 	}
-	for _, rawFileID := range rawFileIDs {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE sidecar_of_file_id=?`, rawFileID); err != nil {
-			return fmt.Errorf("removing sidecars for purged RAW %s: %w", rawFileID, err)
+	for _, targetFileID := range targetFileIDs {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE sidecar_of_file_id=?`, targetFileID); err != nil {
+			return fmt.Errorf("removing sidecars for purged photo source %s: %w", targetFileID, err)
 		}
 	}
 	for _, nodeID := range nodeIDs {

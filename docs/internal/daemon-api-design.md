@@ -157,6 +157,25 @@ opt-in through `docbank mcp --allow-photo-edits`; each write makes one daemon
 request and treats ambiguous transport failure as an unknown outcome. Display
 and settings writes remain HTTP and CLI operations.
 
+Grouped camera imports run as `storage_operations` rows of kind
+`photo_import`. `POST /api/v1/photos/imports` requires a configured background
+supervisor and rejects its absence before recording work. It records the source
+root and virtual destination as the request. The route returns its accepted
+operation id even if the configured supervisor cannot start the worker
+immediately. The worker hashes every
+discovered file before one settle wait outside the mutation gate. Preparation
+polls operator cancellation on a 100 ms cadence, with an immediate check
+before destination mutation. It completes the group already in progress before
+it stops.
+Each group holds the gate while it copies bytes, compares the copied hashes,
+and rechecks every source before committing its transaction. Matching uses
+scanned members and their current duplicate owners. Progress contains counts;
+the final receipt includes every scanned ambiguity. Added, skipped, changed,
+failed, and ambiguous counts, cancel, retention,
+and restart resume all come from the storage operation lifecycle. Status and
+cancellation use the shared `/api/v1/jobs/{operation_id}` routes; there is no
+photo-specific read or cancel route.
+
 Similar-document reads use the processing service and store authority through
 `POST /api/v1/search/similar`. Keep query encoding and provider authorization
 outside that call path. The store owns source validation, fenced membership,

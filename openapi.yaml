@@ -7127,6 +7127,10 @@ components:
     Job:
       additionalProperties: false
       properties:
+        can_cancel:
+          type: boolean
+        cancel_requested:
+          type: boolean
         completed_objects:
           format: int64
           type: integer
@@ -10851,6 +10855,32 @@ components:
         - created_at
       type: object
       x-go-type: api.PhotoFile
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoImportStartRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoImportStartRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        destination:
+          maxLength: 4096
+          minLength: 1
+          type: string
+        source_root:
+          maxLength: 4096
+          minLength: 1
+          type: string
+      required:
+        - source_root
+        - destination
+      type: object
+      x-go-type: api.PhotoImportStartRequest
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -21300,6 +21330,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Detach one file from a photo asset
+  /api/v1/photos/imports:
+    post:
+      operationId: startPhotoImport
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoImportStartRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageOperation"
+          description: Accepted
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Import grouped camera files from a daemon-host folder
   /api/v1/photos/nodes/{node_id}/asset:
     get:
       operationId: getPhotoAssetByNode
