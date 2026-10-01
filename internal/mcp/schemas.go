@@ -698,11 +698,12 @@ func listDocumentVersionsSchemas() (schema, schema) {
 	item := objectSchema(schema{
 		"node_id":            integerSchema(1, 0),
 		"content_version_id": uuidSchema(),
+		"blob_hash":          sha256Schema(),
 		"size":               integerSchema(0, 0),
 		"media_type":         stringSchema(255),
 		"recorded_at":        dateTimeSchema(),
 		"is_current":         booleanSchema(),
-	}, "node_id", "content_version_id", "size", "media_type", "recorded_at", "is_current")
+	}, "node_id", "content_version_id", "blob_hash", "size", "media_type", "recorded_at", "is_current")
 	output := rootObjectSchema(withPrivateCache(schema{
 		"node_id": integerSchema(1, 0), "items": arraySchema(item, 250),
 		"total": integerSchema(0, 0), schemaLimitField: integerSchema(1, 250), "offset": integerSchema(0, 1_000_000),
