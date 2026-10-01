@@ -64,7 +64,14 @@ func ensureVisualPreview(ctx context.Context, catalog *store.Store, blobs visual
 	if size != version.Size {
 		return store.VisualPreviewView{}, sourceContentUnavailable(errors.Join(errors.New("visual preview source size differs from version"), reader.Close()))
 	}
-	product, produceErr := ProduceVisualPreviewForRecipe(ctx, reader, VisualPreviewTarget{SourceSHA256: version.BlobHash, Size: version.Size, MediaType: version.MimeType}, recipe)
+	target := VisualPreviewTarget{SourceSHA256: version.BlobHash, Size: version.Size, MediaType: version.MimeType}
+	var product VisualPreviewProduct
+	var produceErr error
+	if recipe == CurrentVisualPreviewRecipe() {
+		product, produceErr = ProduceVisualPreview(ctx, reader, target)
+	} else {
+		product, produceErr = ProduceVisualPreviewForRecipe(ctx, reader, target, recipe)
+	}
 	closeErr := reader.Close()
 	if closeErr != nil {
 		closeErr = sourceContentUnavailable(closeErr)
