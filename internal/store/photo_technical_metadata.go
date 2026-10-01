@@ -361,31 +361,28 @@ func photoTechnicalRecipeCurrent(ctx context.Context, q metadataQuerier) (bool, 
 // drops every row, projects every generation from its retained canonical
 // JSON, and records the recipe it applied, so generations that yielded no
 // facts are not decoded again until it changes.
-// Pages are read and closed before writes so both SQLite drivers can advance
-// the same transaction safely.
+// Pages of generation IDs are read and closed before writes so both SQLite
+// drivers can advance the same transaction safely. Each generation's canonical
+// JSON, up to 8 MiB, is then read alone, so the pass holds one at a time.
 func refreshPhotoTechnicalMetadataTx(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM photo_technical_metadata`); err != nil {
 		return fmt.Errorf("removing stale photo technical metadata: %w", err)
 	}
-	type sourceRow struct {
-		generationID string
-		canonical    []byte
-	}
-	readPage := func(after string) ([]sourceRow, error) {
-		rows, err := tx.QueryContext(ctx, `SELECT generation_id,canonical_json
+	readPage := func(after string) ([]string, error) {
+		rows, err := tx.QueryContext(ctx, `SELECT generation_id
 			FROM source_metadata_generations WHERE generation_id>?
 			ORDER BY generation_id LIMIT 100`, after)
 		if err != nil {
 			return nil, fmt.Errorf("reading source metadata for photo projections: %w", err)
 		}
 		defer func() { _ = rows.Close() }()
-		var page []sourceRow
+		var page []string
 		for rows.Next() {
-			var item sourceRow
-			if err := rows.Scan(&item.generationID, &item.canonical); err != nil {
+			var generationID string
+			if err := rows.Scan(&generationID); err != nil {
 				return nil, err
 			}
-			page = append(page, item)
+			page = append(page, generationID)
 		}
 		return page, rows.Err()
 	}
@@ -397,9 +394,14 @@ func refreshPhotoTechnicalMetadataTx(ctx context.Context, tx *sql.Tx) error {
 		if len(page) == 0 {
 			break
 		}
-		for _, item := range page {
-			after = item.generationID
-			metadata, _, err := document.DecodeSourceMetadataV1(item.canonical)
+		for _, generationID := range page {
+			after = generationID
+			var canonical []byte
+			if err := tx.QueryRowContext(ctx, `SELECT canonical_json FROM source_metadata_generations
+				WHERE generation_id=?`, generationID).Scan(&canonical); err != nil {
+				return fmt.Errorf("reading source metadata %s for photo projection: %w", generationID, err)
+			}
+			metadata, _, err := document.DecodeSourceMetadataV1(canonical)
 			if err != nil {
 				// Reads already report corrupt evidence; it must not block opening the store.
 				continue
@@ -408,7 +410,7 @@ func refreshPhotoTechnicalMetadataTx(ctx context.Context, tx *sql.Tx) error {
 			if err != nil {
 				return err
 			}
-			if err := insertPhotoTechnicalMetadataTx(ctx, tx, item.generationID, fields); err != nil {
+			if err := insertPhotoTechnicalMetadataTx(ctx, tx, generationID, fields); err != nil {
 				return err
 			}
 		}
