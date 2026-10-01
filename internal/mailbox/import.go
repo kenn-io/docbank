@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
+
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -299,7 +301,7 @@ func (s *Service) failJob(ctx context.Context, j store.MailboxJob, cause error) 
 	if len(reason) > 4096 {
 		reason = "mailbox import failed"
 	}
-	for {
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		state := "failed"
 		current, err := s.Store.MailboxJob(ctx, j.Owner, j.ID)
 		if err == nil {
@@ -308,18 +310,20 @@ func (s *Service) failJob(ctx context.Context, j store.MailboxJob, cause error) 
 			}
 			err = s.finishJob(ctx, j, state, reason, false)
 		}
-		if errors.Is(err, store.ErrMailboxConflict) {
-			return nil
+		if err == nil || errors.Is(err, store.ErrMailboxConflict) {
+			return struct{}{}, nil
 		}
 		if !s.Store.RenditionJobErrorRetryable(err) {
-			return err
+			return struct{}{}, backoff.Permanent(err)
 		}
-		timer := time.NewTimer(250 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		return struct{}{}, err
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(250*time.Millisecond)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		retryErr := backoff.AsRetryError(err)
+		if !errors.Is(retryErr.Cause, backoff.ErrPermanent) && ctx.Err() != nil {
 			return ctx.Err()
-		case <-timer.C:
 		}
+		return retryErr.LastErr
 	}
+	return nil
 }

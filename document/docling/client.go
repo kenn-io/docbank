@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
+
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/internal/providerutil"
 	"go.kenn.io/docbank/document/providerhttp"
@@ -289,25 +291,33 @@ func (client *Client) awaitTask(run *rendering, task taskResponse) (taskResponse
 
 // awaitResult fetches the completed result, retrying transient failures.
 func (client *Client) awaitResult(run *rendering, taskID string) (doclingResult, error) {
-	for attempt := 1; ; attempt++ {
+	result, err := backoff.Retry(run.operation.Context(), func() (doclingResult, error) {
 		result, err := client.result(run, taskID)
 		if err == nil {
 			return result, nil
 		}
 		if operationErr := run.operation.Check(); operationErr != nil {
-			return doclingResult{}, provider.KnownJobError(operationErr)
+			return doclingResult{}, backoff.Permanent(provider.KnownJobError(operationErr))
 		}
 		if !document.IsRenditionProviderErrorRetryable(err) {
-			return doclingResult{}, err
+			return doclingResult{}, backoff.Permanent(err)
 		}
-		if attempt >= client.maxPollAttempts {
-			return doclingResult{}, provider.AmbiguousJob(err)
-		}
-		run.usage.Retries++
-		if err := run.operation.Wait(providerutil.RetryDelay(err, client.pollInterval)); err != nil {
-			return doclingResult{}, provider.KnownJobError(err)
+		return doclingResult{}, backoff.RetryAfter(providerutil.RetryDelay(err, client.pollInterval), err)
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(client.pollInterval)), backoff.WithMaxTries(uint(client.maxPollAttempts)), backoff.WithMaxElapsedTime(0),
+		backoff.WithNotify(func(error, time.Duration) { run.usage.Retries++ }))
+	if err == nil {
+		return result, nil
+	}
+	retryErr := backoff.AsRetryError(err)
+	if errors.Is(retryErr.Cause, backoff.ErrExhausted) {
+		return doclingResult{}, provider.AmbiguousJob(retryErr.LastErr)
+	}
+	if !errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+		if operationErr := run.operation.Check(); operationErr != nil {
+			return doclingResult{}, provider.KnownJobError(operationErr)
 		}
 	}
+	return doclingResult{}, retryErr.LastErr
 }
 
 func (client *Client) buildResult(
