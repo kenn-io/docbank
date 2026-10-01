@@ -16,11 +16,13 @@ import (
 )
 
 func TestPeopleMCPToolsAreReads(t *testing.T) {
-	readOnly := catalogMap(toolCatalog(false, false, false))
+	readOnly := catalogMap(toolCatalog(ServerOptions{}))
 	tool := readOnly["get_person"]
 	require.NotNil(t, tool)
 	assert.True(t, tool.Annotations.ReadOnlyHint)
-	withWrites := catalogMap(toolCatalog(true, true, true))
+	withWrites := catalogMap(toolCatalog(ServerOptions{
+		AllowProcessing: true, AllowPackageWrites: true, AllowPhotoEdits: true,
+	}))
 	for _, name := range []string{"create_person", "rename_person", "retire_person", "merge_people", "split_person"} {
 		assert.NotContains(t, withWrites, name)
 	}
