@@ -469,7 +469,9 @@ func exportBrowserRouteAllowed(r *http.Request) bool {
 		return false
 	}
 	if len(parts) == 2 {
-		return r.URL.RawQuery == "" && r.Method == http.MethodGet && (parts[0] == "plans" || parts[0] == "jobs")
+		return r.URL.RawQuery == "" &&
+			(r.Method == http.MethodGet && (parts[0] == "plans" || parts[0] == "jobs") ||
+				r.Method == http.MethodDelete && parts[0] == "jobs")
 	}
 	if len(parts) == 3 {
 		if parts[0] == "sources" && parts[2] == "email-pdf-recipes" {

@@ -288,7 +288,7 @@ func TestExportSavedQueryRetryDoesNotRerunChangedDefinition(t *testing.T) {
 	require.True(t, response.StatusCode == http.StatusBadRequest || response.StatusCode == http.StatusUnprocessableEntity, body)
 }
 
-func TestExportBrowserOwnersAndRevocationFenceJobs(t *testing.T) {
+func TestExportBrowserOwnersReleaseAndRevocationFenceJobs(t *testing.T) {
 	t.Parallel()
 	var worker *exporter.Worker
 	ts, s := newTestServer(t, func(d *api.Deps) {
@@ -312,6 +312,31 @@ func TestExportBrowserOwnersAndRevocationFenceJobs(t *testing.T) {
 	response, body = do(t, ts, http.MethodGet, "/api/v1/exports/plans/"+plan.ID, map[string]string{"X-Api-Key": "", api.WebSessionHeader: second}, nil)
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/exports/jobs", headers, bundle.JobRequest{OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var job bundle.Job
+	require.NoError(t, json.Unmarshal([]byte(body), &job))
+	processed, err := worker.RunOne(t.Context())
+	require.NoError(t, err)
+	require.True(t, processed)
+	jobPath := "/api/v1/exports/jobs/" + job.ID
+	response, body = do(t, ts, http.MethodDelete, jobPath,
+		map[string]string{"X-Api-Key": "", api.WebSessionHeader: second}, nil)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	for _, path := range []string{
+		jobPath + "?unexpected=1",
+		"/api/v1/exports/plans/" + plan.ID,
+		"/api/v1/exports/sources/" + source.ID,
+	} {
+		response, body = do(t, ts, http.MethodDelete, path, headers, nil)
+		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	}
+	response, body = do(t, ts, http.MethodDelete, jobPath, headers, nil)
+	require.Equal(t, http.StatusNoContent, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodGet, jobPath, headers, nil)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/exports/jobs", headers, bundle.JobRequest{
+		OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint,
+	})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	claim, err := s.ClaimExportJob(t.Context())
 	require.NoError(t, err)
