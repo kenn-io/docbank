@@ -43,7 +43,6 @@ const (
 // PhotoSource describes the stable policy for one source filename.
 type PhotoSource struct {
 	Kind      PhotoSourceKind
-	Extension string
 	MediaType string
 	Role      string
 	AssetKind string
@@ -66,7 +65,6 @@ var photoSourceExtensions = map[string]PhotoSource{
 	".m4v":  {Kind: PhotoSourceVideo, MediaType: "video/x-m4v", Role: PhotoRoleVideo, AssetKind: PhotoKindVideo},
 	".avi":  {Kind: PhotoSourceVideo, MediaType: "video/x-msvideo", Role: PhotoRoleVideo, AssetKind: PhotoKindVideo},
 	".mpg":  {Kind: PhotoSourceVideo, MediaType: "video/mpeg", Role: PhotoRoleVideo, AssetKind: PhotoKindVideo},
-	".mp2":  {Kind: PhotoSourceVideo, MediaType: "video/mpeg", Role: PhotoRoleVideo, AssetKind: PhotoKindVideo},
 	".xmp":  {Kind: PhotoSourceSidecar, MediaType: "application/rdf+xml", Role: PhotoRoleSidecar, AssetKind: PhotoKindPhoto},
 }
 
@@ -76,9 +74,8 @@ func ClassifyPhotoSource(name string) PhotoSource {
 	extension := strings.ToLower(filepath.Ext(name))
 	source, ok := photoSourceExtensions[extension]
 	if !ok {
-		return PhotoSource{Kind: PhotoSourceUnsupported, Extension: extension}
+		return PhotoSource{Kind: PhotoSourceUnsupported}
 	}
-	source.Extension = extension
 	return source
 }
 

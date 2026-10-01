@@ -24,6 +24,7 @@ func TestPhotoSourceClassification(t *testing.T) {
 		{name: "capture.MP4", kind: PhotoSourceVideo, role: PhotoRoleVideo, mime: "video/mp4"},
 		{name: "capture.XMP", kind: PhotoSourceSidecar, role: PhotoRoleSidecar, mime: "application/rdf+xml"},
 		{name: "capture.mp3", kind: PhotoSourceUnsupported},
+		{name: "capture.mp2", kind: PhotoSourceUnsupported},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

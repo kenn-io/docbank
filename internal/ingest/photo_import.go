@@ -20,14 +20,11 @@ import (
 )
 
 type PhotoImportCandidate struct {
-	Path      string
-	Kind      store.PhotoSourceKind
-	MediaType string
+	Path string
+	Kind store.PhotoSourceKind
 }
 
 type PhotoImportGroup struct {
-	Folder  string
-	Stem    string
 	Members []PhotoImportCandidate
 }
 
@@ -63,8 +60,7 @@ func GroupPhotoCandidates(candidates []PhotoImportCandidate) []PhotoImportGroup 
 		key := store.PhotoImportGroupKey(candidate.Path, candidate.Kind)
 		group := grouped[key]
 		if group == nil {
-			folder, stem := store.PhotoImportSourceKey(candidate.Path)
-			group = &PhotoImportGroup{Folder: folder, Stem: stem}
+			group = &PhotoImportGroup{}
 			grouped[key] = group
 		}
 		group.Members = append(group.Members, candidate)
@@ -123,7 +119,7 @@ func discoverPhotoCandidatesChecked(root string, check func() error) ([]PhotoImp
 		if source.Kind == store.PhotoSourceUnsupported {
 			return nil
 		}
-		candidates = append(candidates, PhotoImportCandidate{Path: path, Kind: source.Kind, MediaType: source.MediaType})
+		candidates = append(candidates, PhotoImportCandidate{Path: path, Kind: source.Kind})
 		return nil
 	})
 	if err != nil {
@@ -426,7 +422,7 @@ func (ing *Ingester) importPhotoGroup(
 			}
 			var err error
 			result, err = ing.Store.IngestPhotoGroup(ctx, run, store.PhotoImportGroup{
-				SourceFolder: group.Folder, Stem: group.Stem, DestinationID: destinationID, Members: members,
+				DestinationID: destinationID, Members: members,
 			})
 			return err
 		})

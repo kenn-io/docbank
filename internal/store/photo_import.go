@@ -29,8 +29,6 @@ type PhotoImportMember struct {
 // PhotoImportGroup is one same-folder, same-stem unit. DestinationID is a
 // virtual folder node and zero means the vault root.
 type PhotoImportGroup struct {
-	SourceFolder  string
-	Stem          string
 	DestinationID int64
 	Members       []PhotoImportMember
 }
@@ -95,12 +93,6 @@ func photoImportSourceKey(path string) (folder, stem string) {
 
 func photoImportSourcePath(path string) string {
 	return norm.NFC.String(filepath.Clean(path))
-}
-
-// PhotoImportSourceKey returns the normalized source folder and stem used by
-// grouped imports.
-func PhotoImportSourceKey(path string) (folder, stem string) {
-	return photoImportSourceKey(path)
 }
 
 // PhotoImportGroupKey returns the grouping identity for one discovered source.
@@ -292,9 +284,6 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 	}
 	if group.DestinationID == 0 {
 		group.DestinationID = s.RootID()
-	}
-	if group.SourceFolder == "" || group.Stem == "" {
-		group.SourceFolder, group.Stem = photoImportSourceKey(group.Members[0].OriginalPath)
 	}
 	return result, s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		count := len(group.Members)
