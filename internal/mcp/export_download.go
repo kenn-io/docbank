@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -17,7 +18,7 @@ import (
 
 var (
 	errExportIntegrity = errors.New("export verification failed")
-	errExportLocalIO   = errors.New("export file operation failed; a private stage may remain")
+	errExportLocalIO   = errors.New("export file operation failed")
 	publishExportFile  = filepublish.Publish
 	cleanupExportStage = (*filepublish.Stage).Cleanup
 )
@@ -40,7 +41,7 @@ type exportDownloadOutput struct {
 
 func downloadExport(
 	ctx context.Context, lease *daemonLease, raw []byte, logger *slog.Logger,
-) (output exportDownloadOutput, retErr error) {
+) (output exportDownloadOutput, err error) {
 	var input exportDownloadInput
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return output, err
@@ -49,22 +50,22 @@ func downloadExport(
 		if invalid, ok := errors.AsType[*jsonrpc.Error](err); ok {
 			return output, invalid
 		}
-		return output, errExportLocalIO
+		return output, fmt.Errorf("%w: check destination: %w", errExportLocalIO, err)
 	}
 	parent := filepath.Dir(input.DestinationPath)
 	stage, err := filepublish.CreateStage(parent, ".docbank-native-export-")
 	if err != nil {
-		return output, errExportLocalIO
+		return output, fmt.Errorf("%w: create stage: %w", errExportLocalIO, err)
 	}
 	defer func() {
-		if cleanupExportStage(stage) == nil {
+		cleanupErr := cleanupExportStage(stage)
+		if cleanupErr == nil {
 			return
 		}
-		logger.Warn("MCP export stage cleanup failed", "error_code", "export_local_io")
+		logger.Warn("MCP export stage cleanup failed",
+			"error_code", "export_local_io", "error", cleanupErr)
 		if output.State != "" {
 			output.CleanupFailed = true
-		} else if retErr == nil {
-			retErr = errExportLocalIO
 		}
 	}()
 	current, err := lease.acquire(ctx)
@@ -83,21 +84,22 @@ func downloadExport(
 		return output, exportDownloadError(ctx, err)
 	}
 	if err := stage.File.Sync(); err != nil {
-		return output, errExportLocalIO
+		return output, fmt.Errorf("%w: sync stage: %w", errExportLocalIO, err)
 	}
 	if err := stage.File.Close(); err != nil {
-		return output, errExportLocalIO
+		return output, fmt.Errorf("%w: close stage: %w", errExportLocalIO, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return output, err
 	}
 	published, err := publishExportFile(stage.Path(), input.DestinationPath, input.Overwrite)
 	if !published {
-		return output, errExportLocalIO
+		return output, fmt.Errorf("%w: publish: %w", errExportLocalIO, err)
 	}
 	state := "published"
 	if err != nil {
 		state = "published_durability_unknown"
+		logger.Warn("MCP export published with uncertain durability", "error", err)
 	}
 	return exportDownloadOutput{
 		privateCache: newPrivateCache(), JobID: input.JobID, DestinationPath: input.DestinationPath,
@@ -113,7 +115,7 @@ func exportDownloadError(ctx context.Context, err error) error {
 	case errors.Is(err, bundle.ErrConflict):
 		return bundle.ErrConflict
 	case errors.As(err, &fileErr):
-		return errExportLocalIO
+		return fmt.Errorf("%w: archive file: %w", errExportLocalIO, err)
 	}
 	if canceled := contextCancellation(ctx, err); canceled != nil {
 		return canceled

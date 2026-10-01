@@ -303,17 +303,19 @@ domain failures use existing bounded `{code,message}` tool errors with
 | `not_found` | This identity is unavailable to the caller. |
 | `validation` | The daemon rejected export input; correct it before retrying. |
 | `export_conflict` | A live precondition, reused ID, fingerprint, or job state conflicts; inspect the request/job. |
-| `export_expired` | Admission or retained bytes expired; a missing archive may still require explicit release. |
+| `export_expired` | Preview again with new IDs for expired admission; release a retained job whose archive is missing. |
+| `export_unavailable` | No export worker is available; this request made no change. Check the daemon and retry. |
 | `export_limit` | A selection/resource ceiling was reached; narrow the request, release an eligible job, or wait for cleanup. |
 | `export_retained` | A ticket/download still holds the archive; retry release after it ends. |
 | `export_role_unavailable` | A required role cannot be exported. |
 | `export_timeout`, `export_canceled`, `export_failed` | Preserve an explicit daemon problem code; no automatic retry or implication that the whole multi-call preview rolled back. |
 | `export_outcome_unknown` | An attempted daemon write has no conclusive response; recover by the caller-supplied IDs. |
 | `export_integrity` | Receipt, archive identity, or verification mismatch; nothing was published. |
-| `export_local_io` | Staging, sync, close, cleanup, or pre-publication file installation failed; a private stage may remain. |
+| `export_local_io` | A local file operation failed before publication; consult the operator log for the cause. Failed stage cleanup may leave a private stage. |
 
 Map only known daemon problem facts and local typed errors; never forward raw
-daemon messages, filesystem errors, ticket URLs, or error causes. Existing
+daemon messages, filesystem errors, ticket URLs, or error causes to clients.
+Local file-operation and stage-cleanup causes belong in the operator log. Existing
 daemon-unavailable and sanitized RPC errors cover other transport/internal
 failures. A canceled transport may prevent any response at all. Filesystem
 publication state is represented only by the download success contract above;

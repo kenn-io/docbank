@@ -21,7 +21,7 @@ import (
 )
 
 func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
-	tools := toolCatalog(false, false, false, false)
+	tools := toolCatalog(ServerOptions{})
 	wantNames := []string{
 		"get_export_status",
 		"get_vault_info", "list_documents", "search_documents", "get_document",
@@ -50,8 +50,8 @@ func TestDefaultToolCatalogIsFixedBoundedAndReadOnly(t *testing.T) {
 }
 
 func TestWriteToolsAreIndependentConstructionTimeOptIns(t *testing.T) {
-	readOnly := catalogNames(toolCatalog(false, false, false, false))
-	enabledTools := toolCatalog(true, true, false, false)
+	readOnly := catalogNames(toolCatalog(ServerOptions{}))
+	enabledTools := toolCatalog(ServerOptions{AllowProcessing: true, AllowPackageWrites: true})
 	enabled := catalogNames(enabledTools)
 	require.Equal(t, append(append([]string{}, readOnly...), "start_processing", "preflight_load_file_package", "start_package_import",
 		"resolve_package_custodian", "assign_package_custodian", "ensure_bates_namespace", "reserve_bates_range", "publish_bates_export",
@@ -104,7 +104,9 @@ func TestToolsListTransmitsRegisteredSchemasAnnotationsAndBounds(t *testing.T) {
 	assert.Equal(t, "complete", listed["resultType"])
 	assert.Empty(t, listed["nextCursor"])
 	wireTools := listedToolsByName(t, listed)
-	registered := catalogMap(toolCatalog(true, true, false, false))
+	registered := catalogMap(toolCatalog(ServerOptions{
+		AllowProcessing: true, AllowPackageWrites: true,
+	}))
 	require.Len(t, wireTools, len(registered))
 
 	for name, want := range registered {
@@ -197,7 +199,7 @@ func TestRegisteredToolsEnforceDaemonByteBounds(t *testing.T) {
 }
 
 func TestToolSchemasPinInputsBoundsAndStableIdentities(t *testing.T) {
-	tools := catalogMap(toolCatalog(true, true, false, false))
+	tools := catalogMap(toolCatalog(ServerOptions{AllowProcessing: true, AllowPackageWrites: true}))
 
 	assertSchemaAccepts(t, tools["get_vault_info"].InputSchema, map[string]any{})
 	assertSchemaRejects(t, tools["get_vault_info"].InputSchema, map[string]any{"extra": true})

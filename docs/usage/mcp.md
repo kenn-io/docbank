@@ -456,8 +456,14 @@ subsequent directory sync failed. Both return the receipt. `cleanup_failed: true
 means private staging cleanup failed after publication; the saved file remains.
 Before publication, ordinary failures preserve the destination and attempt
 stage cleanup. `export_integrity` identifies a receipt or archive mismatch;
-`export_local_io` identifies a file-operation failure and warns that a stage
-may remain. A secondary cleanup failure does not replace the original error.
+`export_local_io` identifies a local file-operation failure. The operator log
+records the operation and its cause; the client receives a fixed message.
+A failed stage cleanup can leave a private stage behind and is logged separately.
+A secondary cleanup failure does not replace the original error.
+
+`export_unavailable` means the daemon has no export worker. That request made
+no change; check the daemon and retry. For `export_expired`, preview again with
+new IDs if admission expired, or release a retained job whose archive is missing.
 
 The HTTP two-minute deadline includes daemon verification, transfer, and local
 verification. Archive size alone cannot predict whether all three fit. For a

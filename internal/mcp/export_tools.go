@@ -92,6 +92,9 @@ func exportToolHandler(
 		default:
 			err = errors.New("unknown export tool")
 		}
+		if errors.Is(err, errProcessingOutcomeUnknown) {
+			err = errExportOutcomeUnknown
+		}
 		if err != nil {
 			logOperationError(logger, name, err)
 			if domain, ok := domainToolError(err); ok {
@@ -144,9 +147,6 @@ func previewExport(ctx context.Context, lease *daemonLease, raw []byte) (exportP
 			},
 		})
 	})
-	if errors.Is(err, errProcessingOutcomeUnknown) {
-		return exportPlanOutput{}, errExportOutcomeUnknown
-	}
 	if err != nil {
 		return exportPlanOutput{}, err
 	}
@@ -161,9 +161,6 @@ func startExport(ctx context.Context, lease *daemonLease, raw []byte) (exportJob
 	job, err := daemonProcessingStart(ctx, lease, func(c *daemonconn.Connection) (*bundle.Job, error) {
 		return c.API().CreateExportJob(ctx, &apiclient.CreateExportJobRequestOptions{Body: &input})
 	})
-	if errors.Is(err, errProcessingOutcomeUnknown) {
-		return exportJobOutput{}, errExportOutcomeUnknown
-	}
 	if err != nil {
 		return exportJobOutput{}, err
 	}
@@ -199,9 +196,6 @@ func cancelExport(ctx context.Context, lease *daemonLease, raw []byte) (exportCa
 			Body:       &apiclient.CancelExportJobBody{},
 		})
 	})
-	if errors.Is(err, errProcessingOutcomeUnknown) {
-		return exportCancelOutput{}, errExportOutcomeUnknown
-	}
 	if err != nil {
 		return exportCancelOutput{}, err
 	}
@@ -220,9 +214,6 @@ func releaseExport(
 			PathParams: &apiclient.ReleaseExportJobPath{ID: input.JobID},
 		})
 	})
-	if errors.Is(err, errProcessingOutcomeUnknown) {
-		return exportReleaseOutput{}, errExportOutcomeUnknown
-	}
 	if err != nil {
 		return exportReleaseOutput{}, err
 	}

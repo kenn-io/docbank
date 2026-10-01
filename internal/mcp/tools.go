@@ -20,21 +20,22 @@ import (
 
 const toolCatalogTTLMs = 60_000
 
-func catalogInstructions(allowProcessing, allowPackageWrites, allowPhotoEdits, allowExportWrites bool) string {
-	if !allowProcessing && !allowPackageWrites && !allowPhotoEdits && !allowExportWrites {
+func catalogInstructions(options ServerOptions) string {
+	if !options.AllowProcessing && !options.AllowPackageWrites &&
+		!options.AllowPhotoEdits && !options.AllowExportWrites {
 		return "Docbank exposes a bounded read-only document and package surface."
 	}
 	instructions := "Docbank exposes bounded document and package reads."
-	if allowProcessing {
+	if options.AllowProcessing {
 		instructions += " start_processing requires a reviewed plan and prior operator consent."
 	}
-	if allowPackageWrites {
+	if options.AllowPackageWrites {
 		instructions += " Package writes can preflight local sources, import packages, assign or resolve custodians, and publish or export Bates PDFs. Bates reservation does not stamp or publish files."
 	}
-	if allowPhotoEdits {
+	if options.AllowPhotoEdits {
 		instructions += " Photo edits change one asset at an expected revision."
 	}
-	if allowExportWrites {
+	if options.AllowExportWrites {
 		instructions += " Export writes retain exact selections and save verified archives locally."
 	}
 	return instructions
@@ -149,21 +150,21 @@ var photoWriteToolDefinitions = []toolDefinition{
 	{name: "promote_photo_asset", title: "Promote photo asset", description: "Promote one file node into a photo asset.", schemas: promotePhotoNodeSchemas, write: true},
 }
 
-func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits, allowExportWrites bool) []*sdkmcp.Tool {
+func toolCatalog(options ServerOptions) []*sdkmcp.Tool {
 	definitions := slices.Clone(readToolDefinitions)
-	if allowProcessing {
+	if options.AllowProcessing {
 		definitions = append(definitions, processingToolDefinition)
 	}
-	if allowPackageWrites {
+	if options.AllowPackageWrites {
 		definitions = append(definitions, preflightLoadFilePackageToolDefinition, packageImportToolDefinition,
 			resolvePackageCustodianToolDefinition, assignPackageCustodianToolDefinition,
 			ensureBatesNamespaceToolDefinition, reserveBatesRangeToolDefinition, publishBatesExportToolDefinition,
 			exportBatesFileToolDefinition, exportLoadFilePackageToolDefinition)
 	}
-	if allowPhotoEdits {
+	if options.AllowPhotoEdits {
 		definitions = append(definitions, photoWriteToolDefinitions...)
 	}
-	if allowExportWrites {
+	if options.AllowExportWrites {
 		definitions = append(definitions, exportWriteToolDefinitions...)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
@@ -184,10 +185,10 @@ func toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits, allowExpo
 }
 
 func registerToolCatalog(
-	server *sdkmcp.Server, allowProcessing, allowPackageWrites, allowPhotoEdits, allowExportWrites bool,
+	server *sdkmcp.Server, options ServerOptions,
 	lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
 ) {
-	tools := toolCatalog(allowProcessing, allowPackageWrites, allowPhotoEdits, allowExportWrites)
+	tools := toolCatalog(options)
 	server.AddReceivingMiddleware(validateToolInputs(tools))
 	for _, tool := range tools {
 		output := mustResolveSchema(tool.OutputSchema)
@@ -432,7 +433,8 @@ func stableDomainError(err error) (string, int) {
 	}
 	switch facts.Code {
 	case "validation", "export_conflict", "export_expired", "export_limit", "export_retained",
-		"export_role_unavailable", "export_timeout", "export_canceled", "export_failed":
+		"export_role_unavailable", "export_timeout", "export_canceled", "export_failed",
+		"export_unavailable":
 		return facts.Code, 0
 	case "not_found":
 		return "not_found", 0
@@ -468,7 +470,7 @@ func domainErrorMessage(code string) string {
 	case "export_integrity":
 		return "Export verification failed; nothing was published."
 	case "export_local_io":
-		return "The export file operation failed before publication; a private stage may remain."
+		return "A local file operation failed before publication; check the operator log."
 	case "validation":
 		return "The request is invalid; check the supplied identities and values."
 	case "export_outcome_unknown":
@@ -476,7 +478,11 @@ func domainErrorMessage(code string) string {
 	case "export_conflict":
 		return "The export request conflicts with retained authority or current job state."
 	case "export_expired":
-		return "The export admission or archive expired; retry release for a retained job with no archive."
+		return "The export admission or archive expired. Preview again with new IDs for expired " +
+			"admission; release a retained job whose archive is missing."
+	case "export_unavailable":
+		return "The export worker is unavailable; this request made no change. " +
+			"Check the daemon and retry."
 	case "export_limit":
 		return "An export limit was reached; release unneeded terminal jobs or narrow the selection."
 	case "export_retained":
@@ -558,6 +564,11 @@ func sanitizedRPCError(_ error) *jsonrpc.Error {
 
 func logOperationError(logger *slog.Logger, operation string, err error) {
 	code, _ := stableDomainError(err)
+	if errors.Is(err, errExportLocalIO) {
+		logger.Error("MCP operation failed", "operation", operation,
+			"error_code", code, "error", err)
+		return
+	}
 	if code == "" {
 		code = "internal_error"
 		if boundary, ok := errors.AsType[*daemonBoundaryError](err); ok {

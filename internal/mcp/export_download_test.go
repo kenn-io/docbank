@@ -281,15 +281,26 @@ func TestNativeExportDownloadPublication(t *testing.T) {
 					return errors.Join(cleanup(stage), errors.New("synthetic cleanup failure"))
 				}
 			}
-			server := newServerWithOptionsAndDaemon(testImplementation(),
-				ServerOptions{AllowExportWrites: true}, exportTestLease(t, daemon.URL))
+			var diagnostics bytes.Buffer
+			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{
+				AllowExportWrites: true, Logger: slog.New(slog.NewTextHandler(&diagnostics, nil)),
+			}, exportTestLease(t, daemon.URL))
 			result := exportCall(t, server, "download_export", map[string]any{
 				"job_id": job.ID, "destination_path": destination,
 			})
+			if mode == "cleanup" || mode == "primary and cleanup" {
+				require.Contains(t, diagnostics.String(), "synthetic cleanup failure")
+			}
 			content, err := os.ReadFile(destination)
 			require.NoError(t, err)
 			if mode == "destination race" || mode == "primary and cleanup" {
 				require.Equal(t, "export_local_io", result["code"])
+				require.Contains(t, diagnostics.String(), "no-replace rename publication:")
+				encoded, err := json.Marshal(result)
+				require.NoError(t, err)
+				require.NotContains(t, string(encoded), destination)
+				require.NotContains(t, string(encoded), "publication:")
+				require.NotContains(t, string(encoded), "synthetic cleanup failure")
 				require.Equal(t, "concurrent destination", string(content))
 				return
 			}
@@ -298,6 +309,7 @@ func TestNativeExportDownloadPublication(t *testing.T) {
 			require.Equal(t, mode == "cleanup", result["cleanup_failed"])
 			if mode == "directory sync" {
 				require.Equal(t, "published_durability_unknown", result["state"])
+				require.Contains(t, diagnostics.String(), "synthetic directory sync failure")
 			} else {
 				require.Equal(t, "published", result["state"])
 			}

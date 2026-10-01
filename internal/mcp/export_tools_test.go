@@ -450,3 +450,42 @@ func TestNativeExportWriteRecoveryStoppedDaemon(t *testing.T) {
 	require.EqualValues(t, 1, attempts.Load())
 	require.EqualValues(t, 2, acquisitions.Load())
 }
+
+func TestNativeExportWorkerUnavailable(t *testing.T) {
+	f := newNativeExportFixture(t)
+	cfg := config.Default()
+	cfg.Server.APIKey = "synthetic-export-key"
+	apiServer := api.NewServer(api.Deps{
+		Store: f.catalog, Blobs: f.blobs, VaultRoot: t.TempDir(), Cfg: cfg,
+	})
+	t.Cleanup(apiServer.Close)
+	daemon := httptest.NewServer(apiServer.Handler())
+	t.Cleanup(daemon.Close)
+	server := newServerWithOptionsAndDaemon(testImplementation(),
+		ServerOptions{AllowExportWrites: true}, exportTestLease(t, daemon.URL))
+	for _, name := range []string{"start_export", "release_export", "download_export"} {
+		t.Run(name, func(t *testing.T) {
+			args := map[string]any{"job_id": uuid.New().String()}
+			switch name {
+			case "start_export":
+				args = map[string]any{
+					"operation_id": uuid.New().String(), "plan_id": uuid.New().String(),
+					"fingerprint": strings.Repeat("a", 64),
+				}
+			case "download_export":
+				activeServer := newServerWithOptionsAndDaemon(testImplementation(),
+					ServerOptions{AllowExportWrites: true}, f.lease)
+				member := f.addFile(t, "synthetic.txt", "synthetic original\n")
+				plan := previewNativeExport(t, activeServer, []bundle.Member{member})
+				args["job_id"] = startNativeExport(t, activeServer, plan)
+				processed, err := f.worker.RunOne(t.Context())
+				require.NoError(t, err)
+				require.True(t, processed)
+				args["destination_path"] = filepath.Join(t.TempDir(), "export.zip")
+			}
+			result := exportCall(t, server, name, args)
+			require.Equal(t, "export_unavailable", result["code"])
+			require.Contains(t, result["message"], "retry")
+		})
+	}
+}

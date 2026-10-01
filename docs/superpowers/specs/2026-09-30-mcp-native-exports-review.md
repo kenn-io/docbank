@@ -2,8 +2,8 @@
 
 Historical design review of [the implemented design](2026-09-30-mcp-native-exports-design.md) against
 source revision `5f36ee4ec6245a1e558cac2de36218b52700a66f`.
-Current design SHA-256 (including the implemented status):
-`37ad4b307b9c04b810f39231caba8ed756a2b9531de7435d16677ad48b58c3e5`.
+Current design SHA-256 (including implementation review clarifications):
+`922bd7aed98138a706896e915e324eb55c3c8317a3194e6980c3c0df2ac434af`.
 Approved pre-implementation design SHA-256:
 `084ce6e2a54c83820a83bf4d20c825962e1f1b6e2ce19e3a27767242e6b900ec`.
 
