@@ -166,18 +166,16 @@ func (s *Store) createExportSource(ctx context.Context, owner string, r bundle.S
 	created := false
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		previous, e := loadExportSource(ctx, tx, owner, r.OperationID)
-		if e == nil {
-			if previous.RequestSHA256 != digest {
-				return bundle.ErrConflict
-			}
+		previous, found, e := replayReceipt(previous, e, previous.RequestSHA256 == digest, bundle.ErrConflict)
+		if e != nil {
+			return e
+		}
+		if found {
 			if exportExpired(previous.ExpiresAt) {
 				return bundle.ErrExpired
 			}
 			source = previous
 			return nil
-		}
-		if !errors.Is(e, ErrNotFound) {
-			return e
 		}
 		var exists bool
 		if e = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM export_sources WHERE id=?)`, r.OperationID).Scan(&exists); e != nil {

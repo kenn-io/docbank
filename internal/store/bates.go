@@ -415,14 +415,12 @@ func (s *Store) ReserveBatesRange(ctx context.Context, r BatesPlanRequest) (Bate
 	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var priorDigest, priorID string
 		err := tx.QueryRowContext(ctx, `SELECT allocation_id,request_sha256 FROM bates_allocations WHERE operation_id=?`, r.OperationID).Scan(&priorID, &priorDigest)
-		if err == nil {
-			if priorDigest != digest {
-				return ErrBatesReservationConflict
-			}
-			allocation, err = loadBatesAllocation(ctx, tx, priorID)
+		priorID, found, err := replayReceipt(priorID, err, priorDigest == digest, ErrBatesReservationConflict)
+		if err != nil {
 			return err
 		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		if found {
+			allocation, err = loadBatesAllocation(ctx, tx, priorID)
 			return err
 		}
 		var namespace BatesNamespace

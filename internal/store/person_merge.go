@@ -125,13 +125,11 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 	}
 	var receipt PersonMergeReceipt
 	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		replayed, found, err := personMergeReceiptTx(ctx, tx, operationID, requestHash)
-		if err != nil {
-			return err
-		}
-		if found {
+		stored, err := personMergeReceiptTx(ctx, tx, operationID)
+		replayed, found, err := replayReceipt(stored, err, stored.RequestSHA256 == requestHash, ErrPersonMergeConflict)
+		if err != nil || found {
 			receipt = replayed
-			return nil
+			return err
 		}
 		if err := fencePersonTx(ctx, tx, survivorID, survivorRevision); err != nil {
 			return err
@@ -214,23 +212,20 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 	return receipt, err
 }
 
-func personMergeReceiptTx(ctx context.Context, tx *sql.Tx, operationID, requestHash string) (PersonMergeReceipt, bool, error) {
+func personMergeReceiptTx(ctx context.Context, tx *sql.Tx, operationID string) (PersonMergeReceipt, error) {
 	var receipt PersonMergeReceipt
 	var movedRaw []byte
 	err := tx.QueryRowContext(ctx, `SELECT merge_id,operation_id,request_sha256,survivor_person_id,absorbed_person_id,absorbed_display_name,moved_json,survivor_revision_before,survivor_revision_after,created_at FROM person_merges WHERE operation_id=?`, operationID).Scan(&receipt.MergeID, &receipt.OperationID, &receipt.RequestSHA256, &receipt.SurvivorPersonID, &receipt.AbsorbedPersonID, &receipt.AbsorbedDisplayName, &movedRaw, &receipt.SurvivorRevisionBefore, &receipt.SurvivorRevisionAfter, &receipt.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return PersonMergeReceipt{}, false, nil
+		return PersonMergeReceipt{}, ErrNotFound
 	}
 	if err != nil {
-		return PersonMergeReceipt{}, false, err
-	}
-	if receipt.RequestSHA256 != requestHash {
-		return PersonMergeReceipt{}, false, ErrPersonMergeConflict
+		return PersonMergeReceipt{}, err
 	}
 	if err := json.Unmarshal(movedRaw, &receipt.Moved, json.RejectUnknownMembers(true)); err != nil {
-		return PersonMergeReceipt{}, false, err
+		return PersonMergeReceipt{}, err
 	}
-	return receipt, true, nil
+	return receipt, nil
 }
 
 func collectPersonMergeMovedTx(ctx context.Context, tx *sql.Tx, survivorID, absorbedID string) (PersonMergeMoved, error) {
@@ -416,18 +411,16 @@ func (s *Store) SplitPerson(ctx context.Context, request PersonSplitRequest) (Pe
 		var storedHash string
 		var raw []byte
 		err := tx.QueryRowContext(ctx, `SELECT request_sha256,receipt_json FROM person_splits WHERE operation_id=?`, request.OperationID).Scan(&storedHash, &raw)
-		if err == nil {
-			if storedHash != requestHash {
-				return ErrPersonMergeConflict
-			}
+		raw, found, err := replayReceipt(raw, err, storedHash == requestHash, ErrPersonMergeConflict)
+		if err != nil {
+			return err
+		}
+		if found {
 			if err := json.Unmarshal(raw, &receipt, json.RejectUnknownMembers(true)); err != nil {
 				return err
 			}
 			receipt.SourceRevisionAfter = request.Revision + 1
 			return nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
 		}
 		if err := fencePersonTx(ctx, tx, request.PersonID, request.Revision); err != nil {
 			return err

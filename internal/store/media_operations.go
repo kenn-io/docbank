@@ -89,14 +89,10 @@ func (s *Store) withMediaOperationState(
 		err := tx.QueryRowContext(ctx, `SELECT principal,verb,request_sha256,receipt_json
 			FROM media_operations WHERE operation_id=?`, op.ID).Scan(
 			&principal, &verb, &digest, &storedReceipt)
-		if err == nil {
-			if principal != op.Principal || verb != op.Verb || digest != op.RequestSHA256 {
-				return ErrMediaOperationConflict
-			}
-			receipt = storedReceipt
-			return nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		same := principal == op.Principal && verb == op.Verb && digest == op.RequestSHA256
+		stored, found, err := replayReceipt(storedReceipt, err, same, ErrMediaOperationConflict)
+		if err != nil || found {
+			receipt = stored
 			return err
 		}
 		receipt, err = mutate(tx)

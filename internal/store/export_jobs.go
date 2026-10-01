@@ -80,20 +80,18 @@ func (s *Store) QueueExportJob(ctx context.Context, owner string, r bundle.JobRe
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var previous, actual string
 		e := tx.QueryRowContext(ctx, `SELECT request_sha256,owner FROM export_jobs WHERE id=?`, r.OperationID).Scan(&previous, &actual)
-		if e == nil {
-			if actual != owner {
-				return ErrNotFound
-			}
-			if previous != digest {
-				return bundle.ErrConflict
-			}
+		if e == nil && actual != owner {
+			return ErrNotFound
+		}
+		_, found, e := replayReceipt(previous, e, previous == digest, bundle.ErrConflict)
+		if e != nil {
+			return e
+		}
+		if found {
 			job, e = loadExportJob(ctx, tx, r.OperationID)
 			if e == nil && exportExpired(job.ExpiresAt) {
 				e = bundle.ErrExpired
 			}
-			return e
-		}
-		if !errors.Is(e, sql.ErrNoRows) {
 			return e
 		}
 		if e = tx.QueryRowContext(ctx, `SELECT owner FROM export_plans WHERE id=?`, r.PlanID).Scan(&actual); e != nil {

@@ -125,14 +125,9 @@ func (s *Store) QueuePageJob(ctx context.Context, id string, r PageJobRequest) (
 			return err
 		}
 		existing, err := loadPageJob(ctx, tx, `id=?`, id)
-		if err == nil {
-			if existing.RequestSHA256 != digest {
-				return ErrPageConflict
-			}
-			job = existing
-			return nil
-		}
-		if !errors.Is(err, ErrNotFound) {
+		replayed, found, err := replayReceipt(existing, err, existing.RequestSHA256 == digest, ErrPageConflict)
+		if err != nil || found {
+			job = replayed
 			return err
 		}
 		existing, err = loadPageJob(ctx, tx, `request_sha256=? AND state IN ('queued','running','completed')`, digest)

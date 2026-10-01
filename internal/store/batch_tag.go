@@ -97,16 +97,12 @@ func (s *Store) BatchTags(ctx context.Context, request BatchTagRequest) (BatchTa
 
 	var receipt BatchTagReceiptV1
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		stored, found, err := loadBatchTagReceiptTx(ctx, tx, request.OperationID)
-		if err != nil {
+		stored, err := loadBatchTagReceiptTx(ctx, tx, request.OperationID)
+		replayed, found, err := replayReceipt(stored, err, stored.RequestDigest == digest,
+			fmt.Errorf("operation %s: %w", request.OperationID, ErrBatchTagOperationConflict))
+		if err != nil || found {
+			receipt = replayed
 			return err
-		}
-		if found {
-			if stored.RequestDigest != digest {
-				return fmt.Errorf("operation %s: %w", request.OperationID, ErrBatchTagOperationConflict)
-			}
-			receipt = stored
-			return nil
 		}
 
 		tag, err := tagByIDTx(tx, request.TagID)
@@ -361,25 +357,25 @@ func (s *Store) persistBatchTagAuditTx(
 
 func loadBatchTagReceiptTx(
 	ctx context.Context, tx *sql.Tx, operationID string,
-) (BatchTagReceiptV1, bool, error) {
+) (BatchTagReceiptV1, error) {
 	var requestDigest string
 	var receiptJSON []byte
 	err := tx.QueryRowContext(ctx, `SELECT request_digest,receipt_json
 		FROM batch_tag_receipts WHERE operation_id=?`, operationID).Scan(&requestDigest, &receiptJSON)
 	if errors.Is(err, sql.ErrNoRows) {
-		return BatchTagReceiptV1{}, false, nil
+		return BatchTagReceiptV1{}, ErrNotFound
 	}
 	if err != nil {
-		return BatchTagReceiptV1{}, false, fmt.Errorf("loading batch tag receipt %s: %w", operationID, err)
+		return BatchTagReceiptV1{}, fmt.Errorf("loading batch tag receipt %s: %w", operationID, err)
 	}
 	receipt, err := decodeBatchTagReceiptV1(receiptJSON)
 	if err != nil {
-		return BatchTagReceiptV1{}, false, fmt.Errorf("validating batch tag receipt %s: %w", operationID, err)
+		return BatchTagReceiptV1{}, fmt.Errorf("validating batch tag receipt %s: %w", operationID, err)
 	}
 	if receipt.OperationID != operationID || receipt.RequestDigest != requestDigest {
-		return BatchTagReceiptV1{}, false, fmt.Errorf("batch tag receipt %s identity does not match its row", operationID)
+		return BatchTagReceiptV1{}, fmt.Errorf("batch tag receipt %s identity does not match its row", operationID)
 	}
-	return receipt, true, nil
+	return receipt, nil
 }
 
 func canonicalBatchTagReceiptV1JSON(receipt BatchTagReceiptV1) ([]byte, error) {

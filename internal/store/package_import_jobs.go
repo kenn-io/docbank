@@ -91,6 +91,18 @@ func loadPackageImportJobTx(ctx context.Context, q metadataQuerier, id string) (
 	return job, err
 }
 
+func packageImportJobByOperationTx(ctx context.Context, q metadataQuerier, owner, operationID string) (PackageImportJob, error) {
+	var id string
+	err := q.QueryRowContext(ctx, `SELECT id FROM package_import_jobs WHERE owner=? AND operation_id=?`, owner, operationID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PackageImportJob{}, ErrNotFound
+	}
+	if err != nil {
+		return PackageImportJob{}, err
+	}
+	return loadPackageImportJobTx(ctx, q, id)
+}
+
 // AdmitPackageImport publishes a received package, its source collection and
 // queued job in one logical transaction. A retry identified by owner and
 // operation returns the original job without creating another collection.
@@ -110,23 +122,13 @@ func (s *Store) AdmitPackageImport(ctx context.Context, run IngestRun, pkg Packa
 	}
 	var result PackageImportJob
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		var existingID string
-		err := tx.QueryRowContext(ctx, `SELECT id FROM package_import_jobs WHERE owner=? AND operation_id=?`,
-			request.Owner, request.OperationID).Scan(&existingID)
-		if err == nil {
-			result, err = loadPackageImportJobTx(ctx, tx, existingID)
-			if err != nil {
-				return err
-			}
-			// A racing retry arrives with a freshly allocated package ID, so the
-			// package identity is deliberately not part of the replay comparison.
-			if result.PreflightID != request.PreflightID || result.RequestSHA256 != request.RequestSHA256 ||
-				!bytes.Equal(result.JobJSON, request.JobJSON) {
-				return ErrPackageConflict
-			}
-			return nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		stored, err := packageImportJobByOperationTx(ctx, tx, request.Owner, request.OperationID)
+		// A racing retry arrives with a freshly allocated package ID, so the
+		// package identity is deliberately not part of the replay comparison.
+		replayed, found, err := replayReceipt(stored, err, stored.PreflightID == request.PreflightID &&
+			stored.RequestSHA256 == request.RequestSHA256 && bytes.Equal(stored.JobJSON, request.JobJSON), ErrPackageConflict)
+		if err != nil || found {
+			result = replayed
 			return err
 		}
 		var sourceKind, sourceLocator, profile, profileJSON, mapping, mappingJSON, manifest, manifestBlob string
@@ -212,15 +214,7 @@ func (s *Store) PackageImportJob(ctx context.Context, owner, operationID string)
 	if owner == "" || validateUUIDv4(operationID) != nil {
 		return PackageImportJob{}, ErrPackageConflict
 	}
-	var id string
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM package_import_jobs WHERE owner=? AND operation_id=?`, owner, operationID).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return PackageImportJob{}, ErrNotFound
-	}
-	if err != nil {
-		return PackageImportJob{}, err
-	}
-	return loadPackageImportJobTx(ctx, s.db, id)
+	return packageImportJobByOperationTx(ctx, s.db, owner, operationID)
 }
 
 // PackageImportProgress reports receipt heads without exposing private source
@@ -461,15 +455,8 @@ func (s *Store) CancelPackageImportJob(ctx context.Context, owner, operationID s
 	}
 	var result PackageImportJob
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		var id string
-		err := tx.QueryRowContext(ctx, `SELECT id FROM package_import_jobs WHERE owner=? AND operation_id=?`, owner, operationID).Scan(&id)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		if err != nil {
-			return err
-		}
-		result, err = loadPackageImportJobTx(ctx, tx, id)
+		var err error
+		result, err = packageImportJobByOperationTx(ctx, tx, owner, operationID)
 		if err != nil {
 			return err
 		}
@@ -495,11 +482,11 @@ func (s *Store) CancelPackageImportJob(ctx context.Context, owner, operationID s
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE package_import_jobs SET state='cancelled',epoch=epoch+1,
-			claim_owner=NULL,lease_expires_at=NULL,token='',updated_at=? WHERE id=?`, now, id)
+			claim_owner=NULL,lease_expires_at=NULL,token='',updated_at=? WHERE id=?`, now, result.ID)
 		if err != nil {
 			return err
 		}
-		result, err = loadPackageImportJobTx(ctx, tx, id)
+		result, err = loadPackageImportJobTx(ctx, tx, result.ID)
 		return err
 	})
 	return result, err

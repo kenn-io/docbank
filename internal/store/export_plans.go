@@ -124,13 +124,14 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var oldDigest, oldOwner string
 		e := tx.QueryRowContext(ctx, `SELECT owner,request_sha256 FROM export_plans WHERE id=?`, r.OperationID).Scan(&oldOwner, &oldDigest)
-		if e == nil {
-			if oldOwner != owner {
-				return ErrNotFound
-			}
-			if digest != oldDigest {
-				return bundle.ErrConflict
-			}
+		if e == nil && oldOwner != owner {
+			return ErrNotFound
+		}
+		_, found, e := replayReceipt(oldDigest, e, digest == oldDigest, bundle.ErrConflict)
+		if e != nil {
+			return e
+		}
+		if found {
 			plan, e = loadExportPlan(ctx, tx, r.OperationID)
 			if e != nil {
 				return e
@@ -142,9 +143,6 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 				return bundle.ErrConflict
 			}
 			return nil
-		}
-		if !errors.Is(e, sql.ErrNoRows) {
-			return e
 		}
 		source, e := loadExportSource(ctx, tx, owner, r.SourceID)
 		if e != nil {
