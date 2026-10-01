@@ -27,8 +27,12 @@ Create an operator-owned person with `docbank people create "Ada Lovelace"`.
 Read it with `docbank people show <person-id>` or
 `GET /api/v1/people/by-id/{person_id}`. The detail response includes identity
 IDs, external UIDs, the current revision, and the ID used to reach a merged
-person. Custodian assignment IDs for split come from the existing custodian
-listing for a scope, such as `list_package_custodians` in MCP.
+person. It does not list the person's custodian assignments.
+
+Split needs the ID of each custodian assignment it moves. The only listing of
+assignment IDs is per package: `GET /api/v1/packages/by-id/{package_id}/custodians`
+or `list_package_custodians` in MCP. Split by assignment therefore works only
+for package custodian claims.
 
 ## Edit people
 
@@ -46,20 +50,26 @@ in the request body. Merge and split require an operation UUID. Retrying the
 same request returns its saved receipt. A different request with the same UUID
 returns `person_merge_conflict`.
 
+A merge returns `422 person_merge_too_large`, and changes nothing, when:
+
+- the merged person would exceed the per-person limit on identities or
+  external UIDs, or
+- the absorbed person has more linked records than one merge receipt holds.
+  The receipt holds 256 KiB of moved IDs, about 6,900 identities, custodian
+  assignments, document assertions, and open match candidates combined.
+
 Split moves only the identity IDs, custodian assignment IDs, or external UIDs
 listed in the request. The new display name is required. The store validates
-that every selected member belongs to the source person. HTTP applies Huma's
-inherited 1 MiB request body limit before decoding; larger bodies return 413.
-Valid finite selections within that limit remain supported.
+that every selected member belongs to the source person. A split request
+larger than 1 MiB returns `413` and changes nothing.
 
 The split response includes `source_revision_after` and an ETag for that
 revision. Use this fence for the next source edit. Replaying the same split
-request returns the original fence, even after a later source edit. Stored
-split receipts keep their existing JSON fields.
+request returns the original fence, even after a later source edit.
 
-Every successful person edit advances the document-person binding epoch.
-Document links go stale until the daemon backfill republishes them. The
-authority rows remain available during that rebuild.
+After every successful person edit, the daemon rebuilds the links between
+documents and people in the background. Until that finishes, document views can
+show the earlier links. The person records themselves are already current.
 
 MCP offers the person reads only; edit people through the CLI or HTTP API.
 The CLI and MCP use the daemon, so they never open the vault directly.

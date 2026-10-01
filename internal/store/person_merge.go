@@ -16,6 +16,10 @@ import (
 
 var ErrPersonMergeConflict = errors.New("person merge conflict")
 
+// ErrPersonMergeTooLarge reports a merge whose survivor would exceed a person
+// bound or whose moved records exceed the merge receipt limit.
+var ErrPersonMergeTooLarge = errors.New("person merge too large")
+
 type PersonMergeMoved struct {
 	DeduplicatedAssertions []PersonMergeDeduplicatedAssertion `json:"deduplicated_assertions"`
 	AssertionIDs           []string                           `json:"assertion_ids"`
@@ -151,7 +155,7 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 			return err
 		}
 		if len(movedRaw) > document.MaxPersonMergeMovedBytes {
-			return ErrPersonMergeConflict
+			return ErrPersonMergeTooLarge
 		}
 		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
 			return err
@@ -359,20 +363,23 @@ func validatePersonMergeBoundsTx(ctx context.Context, tx *sql.Tx, survivorID, ab
 		return err
 	}
 	if identities > document.MaxPersonIdentitiesPerPerson || external > document.MaxPersonExternalIdentities {
-		return ErrPersonMergeConflict
+		return ErrPersonMergeTooLarge
 	}
-	// Each moved row adds at least a two-byte JSON element to the receipt, so
-	// more rows than half its limit cannot fit. Reject before collecting them.
-	var movedRows int
+	// Each moved ID appears in the receipt as a quoted JSON string, so the sum
+	// of their lengths plus quotes is a lower bound on the receipt size. Reject
+	// before collecting IDs that cannot fit.
+	var movedBytes int
 	if err := tx.QueryRowContext(ctx, `SELECT
-		(SELECT COUNT(*) FROM custodian_assignments WHERE person_id=?)
-		+ (SELECT COUNT(*) FROM person_document_assertions WHERE person_id=?)
-		+ (SELECT COUNT(*) FROM person_match_candidates WHERE suggested_person_id=? AND state='open')`,
-		absorbedID, absorbedID, absorbedID).Scan(&movedRows); err != nil {
+		COALESCE((SELECT SUM(length(identity_id)+2) FROM person_identities WHERE person_id=?),0)
+		+ COALESCE((SELECT SUM(length(assignment_id)+2) FROM custodian_assignments WHERE person_id=?),0)
+		+ COALESCE((SELECT SUM(length(assertion_id)+2) FROM person_document_assertions WHERE person_id=?),0)
+		+ COALESCE((SELECT SUM(length(candidate_id)+2) FROM person_match_candidates
+			WHERE suggested_person_id=? AND state='open'),0)`,
+		absorbedID, absorbedID, absorbedID, absorbedID).Scan(&movedBytes); err != nil {
 		return err
 	}
-	if movedRows > document.MaxPersonMergeMovedBytes/2 {
-		return ErrPersonMergeConflict
+	if movedBytes > document.MaxPersonMergeMovedBytes {
+		return ErrPersonMergeTooLarge
 	}
 	var conflict bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM person_document_assertions a

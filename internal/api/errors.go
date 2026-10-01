@@ -100,6 +100,7 @@ var storeErrCodes = []struct {
 	{store.ErrStaleRevision, http.StatusPreconditionFailed, "stale_revision"},
 	{store.ErrPersonIdentityConflict, http.StatusConflict, "person_identity_conflict"},
 	{store.ErrPersonMergeConflict, http.StatusConflict, "person_merge_conflict"},
+	{store.ErrPersonMergeTooLarge, http.StatusUnprocessableEntity, "person_merge_too_large"},
 	{store.ErrPersonRetired, http.StatusConflict, "person_retired"},
 	{store.ErrInvalidPerson, http.StatusUnprocessableEntity, "invalid_person"},
 	{store.ErrCustodianConflict, http.StatusConflict, "custodian_conflict"},

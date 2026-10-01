@@ -375,6 +375,7 @@ var codeToTypedErr = map[string]error{
 	"invalid_person":                store.ErrInvalidPerson,
 	"person_retired":                store.ErrPersonRetired,
 	"person_merge_conflict":         store.ErrPersonMergeConflict,
+	"person_merge_too_large":        store.ErrPersonMergeTooLarge,
 	"not_dir":                       store.ErrNotDir,
 	"not_file":                      store.ErrNotFile,
 	"provenance_mismatch":           store.ErrProvenanceMismatch,

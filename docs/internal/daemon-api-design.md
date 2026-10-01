@@ -208,17 +208,18 @@ must never enter logs or error strings.
 ### Person routes
 
 The daemon exposes the person store through `/api/v1/people`. The existing
-list route searches active names by folded prefix. The new `/by-id/` family
-avoids overlap with document-people rebuild routes. Reads return one person
-snapshot with identities and external UIDs.
+list route searches active names by folded prefix. Single-person routes live
+under `/by-id/` so they do not overlap the document-people rebuild routes.
+Reads return one person snapshot with identities and external UIDs.
 
 Create, rename, retire, merge, and split remain daemon-only. Rename, retire,
 merge, and split require `If-Match`. Merge also carries the absorbed
 revision in the body. Merge and split operation UUIDs replay their stored
-receipts. The store owns alias resolution, membership validation, revision
-fences, and binding-epoch changes. Browser sessions stay denied by default.
-MCP exposes the person reads only.
-Edits stay on HTTP and the CLI.
+receipts. Reads follow a merged person's ID to the survivor. Edits require the
+current person ID and return 404 for a merged ID. The store owns membership
+validation, revision fences, and binding-epoch changes. Browser sessions stay
+denied by default. MCP exposes the person reads only. Edits stay on HTTP and
+the CLI.
 
 ## Ingest boundary
 

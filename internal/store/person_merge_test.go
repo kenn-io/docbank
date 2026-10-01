@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
 
 func TestSplitRequiresExplicitMembership(t *testing.T) {
@@ -71,6 +72,31 @@ func TestMergePersonsDeduplicatesAliasesAndReplaysReceipt(t *testing.T) {
 	require.Equal(t, receipt, replayed)
 	_, err = s.MergePersons(t.Context(), survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision+1, absorbed.Revision)
 	require.ErrorIs(t, err, ErrPersonMergeConflict)
+}
+
+func TestMergePersonsRejectsMovedRecordsBeyondReceiptLimit(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	version := seedDocumentPeopleEvent(t, s, "custodian.txt", "d7", nil)
+	survivor, err := s.CreatePerson(t.Context(), "Ada", "operator")
+	require.NoError(t, err)
+	absorbed, err := s.CreatePerson(t.Context(), "A. Lovelace", "operator")
+	require.NoError(t, err)
+	// Each UUID-length assignment ID takes 38 receipt bytes with its quotes.
+	_, err = s.db.Exec(`WITH RECURSIVE seq(value) AS (
+		VALUES(1) UNION ALL SELECT value+1 FROM seq WHERE value<?
+	) INSERT INTO custodian_assignments(assignment_id,scope_kind,node_id,content_version_id,person_id,raw_label,raw_label_folded,rank,basis,source_ref,recorded_at)
+	SELECT printf('00000000-0000-4000-8000-%012d',value),'document',?,?,?,'Synthetic','synthetic','additional','operator_assigned','test',? FROM seq`,
+		document.MaxPersonMergeMovedBytes/38+1, version.NodeID, version.ID, absorbed.PersonID, nowRFC3339())
+	require.NoError(t, err)
+	operationID, err := newUUIDv4()
+	require.NoError(t, err)
+	_, err = s.MergePersons(t.Context(), survivor.PersonID, absorbed.PersonID, operationID, survivor.Revision, absorbed.Revision)
+	require.ErrorIs(t, err, ErrPersonMergeTooLarge)
+	resolved, through, err := s.PersonByID(t.Context(), absorbed.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, absorbed.PersonID, resolved.PersonID)
+	require.Empty(t, through, "a rejected merge leaves the absorbed person in place")
 }
 
 func TestMergeReceiptKeepsExternalTupleComponentsDistinct(t *testing.T) {

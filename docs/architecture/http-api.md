@@ -954,10 +954,9 @@ the absorbed revision from the body. A successful merge or split advances the
 document-people binding epoch, so the daemon backfill republishes derived links.
 Split returns `source_revision_after` and an ETag for that accepted revision.
 The same operation request replays its original fence after later edits because
-the store binds the receipt to the original request digest. Huma's inherited
-1 MiB request body limit applies before decoding, so an oversized split returns
-413 before the source revision changes. Finite selections within that limit
-remain supported.
+the store binds the receipt to the original request digest. The 1 MiB request
+body limit applies before decoding, so an oversized split returns
+413 before the source revision changes.
 
 Every node carries a `revision` that bumps on each mutation (directories
 bump when their contents change). The granularity is deliberate: a
