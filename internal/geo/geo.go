@@ -295,15 +295,16 @@ func interiorPoint(geom orb.Geometry) (orb.Point, bool) {
 // nearestCity scans cities linearly, applying the distance, country and
 // region gates. City membership comes from the same country and region
 // polygons as the query, so a city that falls in a border gap never matches a
-// known country or region. Returns "" if no city qualifies.
+// known country or region. A query without a region names no city. Returns ""
+// if no city qualifies.
 func nearestCity(pt orb.Point, cities []cityFeature, country, region string) string {
+	if region == "" {
+		return ""
+	}
 	bestName := ""
 	bestKm := cityMaxDistanceKm + 1
 	for _, c := range cities {
-		if country != "" && c.country != country {
-			continue
-		}
-		if region != "" && c.admin1 != region {
+		if c.country != country || c.admin1 != region {
 			continue
 		}
 		km := haversineKm(pt, c.point)

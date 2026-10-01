@@ -208,9 +208,9 @@ func TestNearestCityMembershipGates(t *testing.T) {
 			country: "A",
 			cities: []cityFeature{
 				{name: "other region", country: "A", admin1: "B", point: orb.Point{0.01, 0}},
-				{name: "farther", country: "A", admin1: "R", point: orb.Point{0.02, 0}},
+				{name: "unknown region", country: "A", admin1: "", point: orb.Point{0.02, 0}},
 			},
-			want: "other region",
+			want: "",
 		},
 	}
 	for _, tt := range tests {
