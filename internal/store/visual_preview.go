@@ -359,6 +359,8 @@ type PhotoVisualPreviewTarget struct {
 	MediaType    string
 }
 
+const liveIncludedPhotoDisplayPredicate = `a.kind='photo' AND a.excluded_at IS NULL AND n.trashed_at IS NULL`
+
 // MissingPhotoVisualPreviewTargetsAfter lists display versions without a recorded recipe.
 func (s *Store) MissingPhotoVisualPreviewTargetsAfter(ctx context.Context, recipeFingerprint, afterVersionID string, limit int) ([]PhotoVisualPreviewTarget, error) {
 	if limit <= 0 {
@@ -367,7 +369,7 @@ func (s *Store) MissingPhotoVisualPreviewTargetsAfter(ctx context.Context, recip
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT v.version_id,v.blob_hash,v.size,v.mime_type
  FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id
  JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
- WHERE a.kind='photo' AND a.excluded_at IS NULL AND n.trashed_at IS NULL
+ WHERE `+liveIncludedPhotoDisplayPredicate+`
  AND v.version_id>? AND NOT EXISTS (
  SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=?)
  ORDER BY v.version_id LIMIT ?`, afterVersionID, recipeFingerprint, limit)
@@ -384,4 +386,21 @@ func (s *Store) MissingPhotoVisualPreviewTargetsAfter(ctx context.Context, recip
 		targets = append(targets, target)
 	}
 	return targets, rows.Err()
+}
+
+// PhotoVisualPreviewTargetEligible rechecks that a listed target is still the
+// current display version of a live, included photo without this recipe.
+func (s *Store) PhotoVisualPreviewTargetEligible(ctx context.Context, target PhotoVisualPreviewTarget, recipeFingerprint string) (bool, error) {
+	var eligible bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (
+ SELECT 1 FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id
+ JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
+ WHERE `+liveIncludedPhotoDisplayPredicate+` AND v.version_id=? AND v.blob_hash=?
+ AND v.size=? AND v.mime_type=? AND NOT EXISTS (
+ SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=?))`,
+		target.VersionID, target.SourceSHA256, target.Size, target.MediaType, recipeFingerprint).Scan(&eligible)
+	if err != nil {
+		return false, fmt.Errorf("checking photo visual preview target eligibility: %w", err)
+	}
+	return eligible, nil
 }

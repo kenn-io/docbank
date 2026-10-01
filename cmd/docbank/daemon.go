@@ -689,7 +689,11 @@ func newVisualPreviewBackfill(
 		Key:    func(target store.PhotoVisualPreviewTarget) string { return target.VersionID },
 		Mutate: gate.MutateContext, Logger: logger,
 		Process: func(ctx context.Context, target store.PhotoVisualPreviewTarget) error {
-			_, err := processing.EnsureVisualPreview(ctx, s, blobs, target.VersionID, gridRecipe)
+			eligible, err := s.PhotoVisualPreviewTargetEligible(ctx, target, gridFingerprint)
+			if err != nil || !eligible {
+				return err
+			}
+			_, err = processing.EnsureVisualPreview(ctx, s, blobs, target.VersionID, gridRecipe)
 			return err
 		},
 	}, nil

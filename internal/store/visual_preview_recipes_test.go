@@ -153,6 +153,36 @@ func TestMissingPhotoVisualPreviewTargetsAfter(t *testing.T) {
 	require.Equal(t, targets[1], page[0])
 }
 
+func TestPhotoVisualPreviewTargetEligibilityRechecksListedTargets(t *testing.T) {
+	t.Parallel()
+	for _, change := range []string{"trash", "exclude"} {
+		t.Run(change, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			node, err := s.CreateFile(t.Context(), s.RootID(), "photo.jpg", fakeHash("89"), 12, "image/jpeg")
+			require.NoError(t, err)
+			asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+			require.NoError(t, err)
+			recipe := visualPreviewRecipe()
+			recipe.MaxEdgePixels = 512
+			_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(recipe)
+			require.NoError(t, err)
+			targets, err := s.MissingPhotoVisualPreviewTargetsAfter(t.Context(), fingerprint, "", 10)
+			require.NoError(t, err)
+			require.Len(t, targets, 1)
+			if change == "trash" {
+				_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
+			} else {
+				_, err = s.SetPhotoAssetExcluded(t.Context(), asset.ID, asset.Revision, true)
+			}
+			require.NoError(t, err)
+			eligible, err := s.PhotoVisualPreviewTargetEligible(t.Context(), targets[0], fingerprint)
+			require.NoError(t, err)
+			require.False(t, eligible)
+		})
+	}
+}
+
 func TestRestoreRetainsVisualPreviewRecipes(t *testing.T) {
 	t.Parallel()
 	source := newTestStore(t)
