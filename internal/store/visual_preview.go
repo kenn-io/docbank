@@ -351,7 +351,7 @@ func (s *Store) ContentVersionVisualPreviewByRecipe(ctx context.Context, version
 	return VisualPreviewView{Version: version, Generation: generation, PublishedAt: generation.CreatedAt}, nil
 }
 
-// PhotoVisualPreviewTarget identifies a current included photo display version.
+// PhotoVisualPreviewTarget identifies a live, included photo display version.
 type PhotoVisualPreviewTarget struct {
 	VersionID    string
 	SourceSHA256 string
@@ -367,7 +367,8 @@ func (s *Store) MissingPhotoVisualPreviewTargetsAfter(ctx context.Context, recip
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT v.version_id,v.blob_hash,v.size,v.mime_type
  FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id
  JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
- WHERE a.excluded_at IS NULL AND v.version_id>? AND NOT EXISTS (
+ WHERE a.kind='photo' AND a.excluded_at IS NULL AND n.trashed_at IS NULL
+ AND v.version_id>? AND NOT EXISTS (
  SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=?)
  ORDER BY v.version_id LIMIT ?`, afterVersionID, recipeFingerprint, limit)
 	if err != nil {

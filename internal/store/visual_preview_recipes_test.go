@@ -91,13 +91,26 @@ func TestMissingPhotoVisualPreviewTargetsAfter(t *testing.T) {
 	require.NoError(t, err)
 	var versions []string
 	var readyNode Node
-	for index, state := range []string{"missing", "ready", "unsupported", "failed", "excluded"} {
-		node, err := s.CreateFile(t.Context(), s.RootID(), state+".jpg", fakeHash(fmt.Sprintf("%02d", 70+index)), 12, "image/jpeg")
+	for index, state := range []string{"missing", "ready", "unsupported", "failed", "excluded", "trashed", "video"} {
+		name, mediaType := state+".jpg", "image/jpeg"
+		if state == "video" {
+			name, mediaType = state+".mp4", "video/mp4"
+		}
+		node, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash(fmt.Sprintf("%02d", 90+index)), 12, mediaType)
 		require.NoError(t, err)
 		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 		require.NoError(t, err)
+		if state == "video" {
+			require.Equal(t, PhotoKindVideo, asset.Kind)
+			continue
+		}
 		if state == "excluded" {
 			_, err = s.db.Exec(`UPDATE photo_assets SET excluded_at='2026-01-01T00:00:00Z' WHERE asset_id=?`, asset.ID)
+			require.NoError(t, err)
+			continue
+		}
+		if state == "trashed" {
+			_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
 			require.NoError(t, err)
 			continue
 		}
