@@ -178,6 +178,29 @@ func (s *Store) CreateLocalOperation(ctx context.Context, kind, requestJSON stri
 	})
 }
 
+// FinalizeLocalOperation reports whether a cancel request already reached a
+// running local operation. When none has, it marks the operation finalizing in
+// the same transaction, so a later cancel request is refused instead of being
+// accepted and then ignored.
+func (s *Store) FinalizeLocalOperation(ctx context.Context, id string) (bool, error) {
+	var cancelled bool
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		err := tx.QueryRowContext(ctx, `SELECT cancel_requested FROM storage_operations
+			WHERE operation_id=? AND state=?`, id, StorageOperationRunning).Scan(&cancelled)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("finalizing storage operation %s: %w", id, ErrNotFound)
+		}
+		if err != nil {
+			return fmt.Errorf("reading storage operation %s before finalizing: %w", id, err)
+		}
+		if cancelled {
+			return nil
+		}
+		return markStorageOperationFinalizingTx(ctx, tx, id)
+	})
+	return cancelled, err
+}
+
 // SetStorageOperationTotal records a total that a running operation
 // discovers after it starts.
 func (s *Store) SetStorageOperationTotal(ctx context.Context, id string, total int64) error {

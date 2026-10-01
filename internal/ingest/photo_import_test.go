@@ -262,6 +262,33 @@ func TestPhotoImportSettlesOnceOutsideTheGate(t *testing.T) {
 	}
 	assert.Less(t, elapsed-held, 6*interval)
 }
+func TestPhotoImportRunnerHonorsCancelAfterLastGroup(t *testing.T) {
+	ing := newTestIngester(t)
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0.JPG"), []byte("jpeg"), 0o600))
+	operation, err := ing.Store.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport,
+		fmt.Sprintf(`{"source_root":%q,"destination":"/photos"}`, root))
+	require.NoError(t, err)
+	runner := PhotoImportRunner{Ingester: ing}
+	calls := 0
+	// The second gated call commits the only group; a cancel right after it races the finish.
+	runner.Options.Mutate = func(ctx context.Context, fn func() error) error {
+		if err := fn(); err != nil {
+			return err
+		}
+		calls++
+		if calls == 2 {
+			return ing.Store.RequestStorageOperationCancel(ctx, operation.ID)
+		}
+		return nil
+	}
+	require.NoError(t, runner.Run(t.Context(), operation.ID))
+	finished, err := ing.Store.StorageOperation(t.Context(), operation.ID)
+	require.NoError(t, err)
+	assert.Equal(t, store.StorageOperationCancelled, finished.State)
+	assert.Equal(t, int64(1), finished.CompletedObjects)
+}
+
 func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 	ing := newTestIngester(t)
 	root := t.TempDir()

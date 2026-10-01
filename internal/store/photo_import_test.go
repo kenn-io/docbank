@@ -644,6 +644,30 @@ func TestPhotoImportOperationLifecycle(t *testing.T) {
 	_, err = s.CreateLocalOperation(ctx, "unknown", `{}`)
 	require.Error(t, err)
 }
+func TestFinalizeLocalOperationSettlesCancelRace(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	start := func() string {
+		operation, err := s.CreateLocalOperation(ctx, StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
+		require.NoError(t, err)
+		_, err = s.ClaimStorageOperation(ctx, operation.ID)
+		require.NoError(t, err)
+		return operation.ID
+	}
+	finalized := start()
+	cancelled, err := s.FinalizeLocalOperation(ctx, finalized)
+	require.NoError(t, err)
+	assert.False(t, cancelled)
+	require.ErrorIs(t, s.RequestStorageOperationCancel(ctx, finalized), ErrStorageOperationTerminal)
+
+	requested := start()
+	require.NoError(t, s.RequestStorageOperationCancel(ctx, requested))
+	cancelled, err = s.FinalizeLocalOperation(ctx, requested)
+	require.NoError(t, err)
+	assert.True(t, cancelled)
+}
+
 func TestPhotoImportRefusesAuditedVault(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

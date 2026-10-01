@@ -505,6 +505,14 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 		// Daemon shutdown is not an operator cancellation; the next start resumes.
 		return ctx.Err()
 	}
+	if !report.Cancelled {
+		// A cancel accepted after the last group must still win; later ones are refused.
+		cancelled, err := metadata.FinalizeLocalOperation(context.WithoutCancel(ctx), operationID)
+		if err != nil {
+			return errors.Join(importErr, err)
+		}
+		report.Cancelled = cancelled
+	}
 	state, failure := store.StorageOperationCompleted, ""
 	switch {
 	case report.Cancelled:
