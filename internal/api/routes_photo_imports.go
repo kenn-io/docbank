@@ -59,6 +59,9 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		if in.Body.Destination == "" || in.Body.Destination[0] != '/' {
 			return nil, NewError(http.StatusUnprocessableEntity, "validation", "destination must be an absolute vault path")
 		}
+		if d.Jobs == nil {
+			return nil, NewError(http.StatusServiceUnavailable, "photo_import_unavailable", "background job supervisor is unavailable")
+		}
 		request, err := json.Marshal(store.PhotoImportRequest{SourceRoot: in.Body.SourceRoot, Destination: in.Body.Destination})
 		if err != nil {
 			return nil, err
