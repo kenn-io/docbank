@@ -279,6 +279,17 @@ func (service *Service) ContinueMediaProcessing(ctx context.Context, continuatio
 		continuation.ProcessingAuthorization.PriorAuthorization == nil {
 		return service.failMediaProcessing(ctx, continuation, ErrPlanChanged)
 	}
+	derived, err := service.mediaOperationState(ctx, continuation)
+	if err != nil {
+		return err
+	}
+	// Completed work keeps its outcome when its input is revoked before the backfill runs.
+	if derived.OperationState == "succeeded" {
+		return service.mediaMutation(ctx, func() error {
+			_, err := service.catalog.FinishMediaProcessing(ctx, continuation.OperationID, continuation.ProcessingPrincipal, true)
+			return err
+		})
+	}
 	version, err := service.catalog.ContentVersionByID(ctx, continuation.ContentVersionID)
 	if err != nil {
 		return service.failMediaProcessing(ctx, continuation, err)
