@@ -115,6 +115,16 @@ search, recoverable trash, maintenance, and restore.
   Use `docbank backup create` to include retained content held only in secondary
   stores. See the [backup guide](docs/usage/backup.md) for the full rules.
 
+## Telemetry
+
+The daemon sends anonymous `daemon_started` and `daemon_active` events when it
+starts, `daemon_active` once a day while it runs, and an `app_opened` event
+when the web app opens (at most once per tab per UTC day). Events carry a
+random install ID, the version and commit, and the operating system and
+architecture, and never document content, names, paths or queries.
+`DOCBANK_TELEMETRY_ENABLED=0` turns both off; see
+[anonymous usage telemetry](docs/configuration.md#anonymous-usage-telemetry).
+
 ## Documentation
 
 - [Documentation homepage](https://docbank.ai) and [visual tour](docs/tour.md)

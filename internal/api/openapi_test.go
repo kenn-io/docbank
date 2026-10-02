@@ -38,7 +38,8 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		"createPhotoAsset", "getPhotoAsset", "getPhotoAssetByNode", "attachPhotoFile", "detachPhotoFile",
 		"excludePhotoAsset", "promotePhotoNode", "setPhotoDisplay", "getPhotoSettings", "setPhotoSettings",
 		"createPerson", "getPerson", "renamePerson", "retirePerson", "mergePerson", "splitPerson",
-		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs"} {
+		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs",
+		"reportTelemetryEvent"} {
 		assert.Contains(t, doc, op, "operation missing from OpenAPI doc")
 	}
 	assert.Contains(t, doc, "/api/daemon/shutdown", "offline clients need lifecycle operations")

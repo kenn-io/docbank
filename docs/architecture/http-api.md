@@ -786,10 +786,14 @@ its own shutdown token. The hidden `POST /api/daemon/web-session` exchanges
 that master authority for a random daemon-lifetime browser token, an
 independent upload-proof secret, and the fresh loopback origin dedicated to
 that daemon lifetime, while
-`DELETE /api/daemon/web-session` revokes the calling browser session. Those
-tokens authenticate only the explicit routes used by the built-in document,
+`DELETE /api/daemon/web-session` revokes the calling browser session.
+`POST /api/daemon/telemetry/events` takes one anonymous web application event,
+such as `app_opened`, from a browser session or the API key. The daemon answers
+400 for any event its allowlist omits and sends nothing when telemetry is off;
+see [anonymous usage telemetry](../configuration.md#anonymous-usage-telemetry).
+Browser session tokens authenticate only the explicit routes used by the built-in document,
 tag-definition/assignment, saved-definition, recoverable-trash, storage, job,
-configured-backup, and verified-download workflows; they are intentionally not another general API
+configured-backup, verified-download, and usage-event workflows; they are intentionally not another general API
 credential. Browser file bytes use the
 hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
 challenge proof over the upload secret before sending bytes, binds the socket

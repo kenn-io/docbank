@@ -6125,6 +6125,30 @@ export type ShutdownDaemonHeaders = {
 'X-Docbank-Daemon-Token': string;
 };
 
+export type ReportTelemetryEventBody = {
+  /**
+     * An event the daemon's telemetry allowlist names. Other events return 400.
+     * @minLength 1
+     */
+  event: string;
+};
+
+/**
+ * queued when the event will be sent; disabled when telemetry is off and nothing is sent.
+ */
+export type ReportTelemetryEvent202Status = typeof ReportTelemetryEvent202Status[keyof typeof ReportTelemetryEvent202Status];
+
+
+export const ReportTelemetryEvent202Status = {
+  queued: 'queued',
+  disabled: 'disabled',
+} as const;
+
+export type ReportTelemetryEvent202 = {
+  /** queued when the event will be sent; disabled when telemetry is off and nothing is sent. */
+  status: ReportTelemetryEvent202Status;
+};
+
 export type CancelWebDownloadParams = {
 ticket: string;
 };
@@ -7092,6 +7116,44 @@ return sessionEmpty<void>(getShutdownDaemonUrl(),
     method: 'POST',
     headers: { ...headers, ...getHeaders(options?.headers) }
 
+  }
+);}
+
+
+
+export const getReportTelemetryEventUrl = () => {
+
+
+
+
+  return `/api/daemon/telemetry/events`
+}
+
+/**
+ * @summary Report an anonymous web application usage event
+ */
+export const reportTelemetryEvent = async (reportTelemetryEventBody: ReportTelemetryEventBody, options?: Parameters<typeof sessionJSON>[1]): Promise<ReportTelemetryEvent202> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ReportTelemetryEvent202>(getReportTelemetryEventUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(reportTelemetryEventBody)
   }
 );}
 

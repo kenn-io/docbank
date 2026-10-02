@@ -37,7 +37,7 @@ func buildDocbankVersion(tb testing.TB, v string) string {
 		name += ".exe"
 	}
 	bin := filepath.Join(tb.TempDir(), name)
-	args := []string{"build", "-tags", "fts5"}
+	args := []string{"build", "-tags", "fts5,kit_posthog_disabled"}
 	if v != "" {
 		args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
 	}
@@ -85,6 +85,7 @@ func TestLifecycleStartStatusRestartStop(t *testing.T) {
 	require.NoError(t, err, out)
 	t.Cleanup(func() { _, _ = daemonconn.Stop(context.Background(), dir) })
 	startPID := parsePID(t, out)
+	require.NoFileExists(t, filepath.Join(dir, "telemetry.json"))
 	out, err = run("daemon", "status")
 	require.NoError(t, err, out)
 	assert.Contains(t, out, "running")

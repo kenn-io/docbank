@@ -34,6 +34,7 @@ selection, packed-storage status, and independently verified permanent-audit
 evidence. The processing plan, partial semantic coverage, and sanitized Markdown
 rendition are captured separately under `.superpowers/processing-screenshots/`
 for pull request review. Generated images are intentionally not committed to the main branch.
+The harness builds with `kit_posthog_disabled`, so its daemons send no usage telemetry.
 
 The command must produce the complete set listed in `scripts/docs-assets.txt`.
 Documentation builds consume a reviewed set and never run this harness.

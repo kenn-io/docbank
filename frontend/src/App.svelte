@@ -95,6 +95,7 @@
   import { APIError } from "./api-transport.js";
   import { changeNodeTag, documentSearch, liveNodeTags, resolveDocumentSourceFence } from "./receipts.js";
   import { takeFragmentSession } from "./browser-session.js";
+  import { startAppOpenedReporting } from "./app-opened.js";
   import { type AuditStatus, type DocumentSearchReport, type Node, type ProcessingProfileSummary, type SearchHit, type Tag, type TagAssignmentReceipt } from "./generated/docbank.js";
   import { downloadVisiblePageCSV, selectedVisibleCSVRows } from "./csv.js";
   import { basename, formatBytes, formatDate } from "./format.js";
@@ -438,6 +439,7 @@
       void loadRoot();
       void loadTagCatalog();
       void loadNaturalProfiles(session.token);
+      const stopAppOpened = startAppOpenedReporting(() => webSession);
       const channel = new VerifiedUploadChannel(session, undefined, () => {
         if (uploadChannel === channel) {
           uploadChannelError =
@@ -454,6 +456,7 @@
         },
       );
       return () => {
+        stopAppOpened();
         channel.close();
         detachShortcuts();
         snapshot.reset();

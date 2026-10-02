@@ -52,4 +52,15 @@ func registerDaemonOpenAPI(api huma.API) {
 			Schema: &huma.Schema{Type: openAPIStringType}}},
 		Responses: map[string]*huma.Response{"204": {Description: "Download discarded"}},
 	})
+	api.OpenAPI().AddOperation(&huma.Operation{
+		OperationID: "reportTelemetryEvent", Method: http.MethodPost, Path: telemetryEventsPath,
+		Summary: "Report an anonymous web application usage event",
+		RequestBody: &huma.RequestBody{Required: true, Content: map[string]*huma.MediaType{
+			jsonMediaType: {Schema: huma.SchemaFromType(registry, reflect.TypeFor[TelemetryEventRequest]())},
+		}},
+		Responses: map[string]*huma.Response{
+			"202": jsonResponse("Event queued, or dropped because telemetry is off", reflect.TypeFor[TelemetryEventReceipt]()),
+			"400": {Description: "Malformed body or an event the daemon does not allow"},
+		},
+	})
 }
