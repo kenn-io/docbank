@@ -461,53 +461,68 @@ func (f mediaStateFixture) run(t *testing.T, jobID string) error {
 
 func TestMediaBackfillPreservesCompletedRevokedInput(t *testing.T) {
 	t.Parallel()
-	f := newMediaStateFixture(t)
-	name, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, f.service.principal)
-	require.NoError(t, err)
-	f.service, err = NewService(ServiceConfig{
-		Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
-		SpoolDirectory: t.TempDir(), Principal: f.service.principal, Scope: f.service.scope,
-		Profiles: map[string]ProfileConfig{name: profile},
-	})
-	require.NoError(t, err)
-	f.selector.Profile = name
-	retained, err := f.service.SubmitSuppliedMedia(t.Context(), f.suppliedRequest("00000000-0000-4000-8000-000000000721", nil))
-	require.NoError(t, err)
-	_, err = f.service.DeclareMediaOccurrence(t.Context(), "00000000-0000-4000-8000-000000000725", retained.SourceID,
-		MediaOccurrenceInput{Ref: "second", Revision: "1"})
-	require.NoError(t, err)
-	text := "synthetic transcript\n"
-	input, err := f.service.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
-		OperationID: "00000000-0000-4000-8000-000000000722", SourceID: retained.SourceID, OccurrenceID: retained.OccurrenceID,
-		Kind: "transcript", Filename: "source.txt", MediaType: "text/plain",
-		SHA256: processingHash(text), ByteLength: int64(len(text)), Content: bytes.NewBufferString(text),
-	})
-	require.NoError(t, err)
-	plan, err := f.service.Plan(t.Context(), f.selector)
-	require.NoError(t, err)
-	_, err = f.service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: f.selector, PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
-	queued, err := f.service.RetryMedia(t.Context(), "00000000-0000-4000-8000-000000000723", retained.SourceID,
-		MediaProcessingRequest{Profile: name, SuppliedInputID: input.SuppliedInputID})
-	require.NoError(t, err)
-	require.NoError(t, f.run(t, queued.JobID))
-	targets, err := f.service.MediaProcessingTargets(t.Context(), "", 10)
-	require.NoError(t, err)
-	require.Len(t, targets, 1)
-	_, err = f.service.RevokeMediaOccurrence(t.Context(), "00000000-0000-4000-8000-000000000724", retained.OccurrenceID, "1")
-	require.NoError(t, err)
-	for _, phase := range []string{"before backfill", "after backfill"} {
-		t.Run(phase, func(t *testing.T) {
-			status, err := f.service.MediaStatus(t.Context(), retained.SourceID)
+	for _, completed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("completed=%t", completed), func(t *testing.T) {
+			f := newMediaStateFixture(t)
+			name, profile, err := NewSuppliedMediaProfile(f.catalog, f.blobs, f.service.principal)
 			require.NoError(t, err)
-			require.Equal(t, "succeeded", status.OperationState)
-			require.Equal(t, "stale", status.CoverageState)
+			f.service, err = NewService(ServiceConfig{
+				Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
+				SpoolDirectory: t.TempDir(), Principal: f.service.principal, Scope: f.service.scope,
+				Profiles: map[string]ProfileConfig{name: profile},
+			})
+			require.NoError(t, err)
+			f.selector.Profile = name
+			retained, err := f.service.SubmitSuppliedMedia(t.Context(), f.suppliedRequest("00000000-0000-4000-8000-000000000721", nil))
+			require.NoError(t, err)
+			_, err = f.service.DeclareMediaOccurrence(t.Context(), "00000000-0000-4000-8000-000000000725", retained.SourceID,
+				MediaOccurrenceInput{Ref: "second", Revision: "1"})
+			require.NoError(t, err)
+			text := "synthetic transcript\n"
+			input, err := f.service.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{
+				OperationID: "00000000-0000-4000-8000-000000000722", SourceID: retained.SourceID, OccurrenceID: retained.OccurrenceID,
+				Kind: "transcript", Filename: "source.txt", MediaType: "text/plain",
+				SHA256: processingHash(text), ByteLength: int64(len(text)), Content: bytes.NewBufferString(text),
+			})
+			require.NoError(t, err)
+			plan, err := f.service.Plan(t.Context(), f.selector)
+			require.NoError(t, err)
+			_, err = f.service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: f.selector, PlanFingerprint: plan.Fingerprint})
+			require.NoError(t, err)
+			queued, err := f.service.RetryMedia(t.Context(), "00000000-0000-4000-8000-000000000723", retained.SourceID,
+				MediaProcessingRequest{Profile: name, SuppliedInputID: input.SuppliedInputID})
+			require.NoError(t, err)
+			if completed {
+				require.NoError(t, f.run(t, queued.JobID))
+			}
+			targets, err := f.service.MediaProcessingTargets(t.Context(), "", 10)
+			require.NoError(t, err)
+			require.Len(t, targets, 1)
+			_, err = f.service.RevokeMediaOccurrence(t.Context(), "00000000-0000-4000-8000-000000000724", retained.OccurrenceID, "1")
+			require.NoError(t, err)
+			for _, phase := range []string{"before backfill", "after backfill"} {
+				t.Run(phase, func(t *testing.T) {
+					status, err := f.service.MediaStatus(t.Context(), retained.SourceID)
+					require.NoError(t, err)
+					require.Equal(t, map[bool]string{true: "succeeded", false: "queued"}[completed], status.OperationState)
+					require.Equal(t, "stale", status.CoverageState)
+				})
+				require.NoError(t, f.service.ContinueMediaProcessing(t.Context(), targets[0]))
+			}
+			targets, err = f.service.MediaProcessingTargets(t.Context(), "", 10)
+			require.NoError(t, err)
+			if completed {
+				require.Empty(t, targets)
+			} else {
+				require.Len(t, targets, 1)
+				require.NoError(t, f.run(t, queued.JobID))
+				require.NoError(t, f.service.ContinueMediaProcessing(t.Context(), targets[0]))
+				status, err := f.service.MediaStatus(t.Context(), retained.SourceID)
+				require.NoError(t, err)
+				require.Equal(t, "failed", status.OperationState)
+			}
 		})
-		require.NoError(t, f.service.ContinueMediaProcessing(t.Context(), targets[0]))
 	}
-	targets, err = f.service.MediaProcessingTargets(t.Context(), "", 10)
-	require.NoError(t, err)
-	require.Empty(t, targets)
 }
 
 // TestMediaAdmissionInterruptedBeforeJobResumesThroughBackfill catches a

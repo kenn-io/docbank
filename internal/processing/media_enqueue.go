@@ -279,26 +279,17 @@ func (service *Service) ContinueMediaProcessing(ctx context.Context, continuatio
 		continuation.ProcessingAuthorization.PriorAuthorization == nil {
 		return service.failMediaProcessing(ctx, continuation, ErrPlanChanged)
 	}
-	derived, err := service.mediaOperationState(ctx, continuation)
-	if err != nil {
-		return err
-	}
-	// Completed work keeps its outcome when its input is revoked before the backfill runs.
-	if derived.OperationState == "succeeded" {
-		return service.mediaMutation(context.WithoutCancel(ctx), func() error {
-			_, err := service.catalog.FinishMediaProcessing(context.WithoutCancel(ctx),
-				continuation.OperationID, continuation.ProcessingPrincipal, true)
-			return err
-		})
-	}
 	version, err := service.catalog.ContentVersionByID(ctx, continuation.ContentVersionID)
 	if err != nil {
 		return service.failMediaProcessing(ctx, continuation, err)
 	}
-	source := mediaSourceBinding{sourceID: continuation.SourceID, sourceVersionID: continuation.SourceVersionID}
-	if _, err := service.resolveMediaInputBinding(ctx, continuation.ProcessingProfile,
-		version.BlobHash, source, continuation.SuppliedInputID); err != nil {
-		return service.failMediaProcessing(ctx, continuation, err)
+	// An admitted rendition owns its outcome; revalidate input only before starting more work.
+	if continuation.JobID == "" || len(profile.portable.Embeddings) != 0 {
+		source := mediaSourceBinding{sourceID: continuation.SourceID, sourceVersionID: continuation.SourceVersionID}
+		if _, err := service.resolveMediaInputBinding(ctx, continuation.ProcessingProfile,
+			version.BlobHash, source, continuation.SuppliedInputID); err != nil {
+			return service.failMediaProcessing(ctx, continuation, err)
+		}
 	}
 	if continuation.JobID == "" {
 		_, err = service.completeMediaAdmission(ctx, continuation)
@@ -309,7 +300,7 @@ func (service *Service) ContinueMediaProcessing(ctx context.Context, continuatio
 		return service.failMediaProcessing(ctx, continuation, err)
 	}
 	switch {
-	case status.State == statusCompleted || status.Phase == "embedding":
+	case status.State == statusCompleted || status.State == statusPartial || status.Phase == "embedding":
 		if len(profile.portable.Embeddings) != 0 {
 			if _, runErr := service.runEmbeddings(ctx, version, profile,
 				continuation.ProcessingPrincipal, continuation.ProcessingScope,
