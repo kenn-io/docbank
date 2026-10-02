@@ -1669,6 +1669,44 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 	return jobIDs, nil
 }
 
+// renditionEvidence reads a build's normalized evidence and proves it is the
+// exact canonical bytes its artifact record names. It returns those bytes too.
+func (service *Service) renditionEvidence(
+	ctx context.Context, build store.RenditionBuildRecord,
+) (document.NormalizedEvidenceV1, []byte, error) {
+	var artifact store.RenditionArtifactRecord
+	for _, candidate := range build.Artifacts {
+		if candidate.Role == "normalized_evidence" {
+			artifact = candidate
+			break
+		}
+	}
+	if artifact.ID == "" || artifact.Size < 2 || artifact.Size > 64<<20 {
+		return document.NormalizedEvidenceV1{}, nil, errors.New("normalized evidence artifact is unavailable or exceeds bounds")
+	}
+	reader, size, err := service.blobs.OpenStreamContext(ctx, artifact.BlobHash)
+	if err != nil {
+		return document.NormalizedEvidenceV1{}, nil, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(reader, artifact.Size+1))
+	verifyErr := reader.Verify()
+	closeErr := reader.Close()
+	if readErr != nil || verifyErr != nil || closeErr != nil || size != artifact.Size || int64(len(data)) != artifact.Size {
+		return document.NormalizedEvidenceV1{}, nil, errors.Join(
+			errors.New("normalized evidence could not be read exactly"), readErr, verifyErr, closeErr)
+	}
+	var evidence document.NormalizedEvidenceV1
+	if err := json.Unmarshal(data, &evidence, json.RejectUnknownMembers(true)); err != nil {
+		return document.NormalizedEvidenceV1{}, nil, fmt.Errorf("decoding normalized evidence: %w", err)
+	}
+	evidence.Checksum = artifact.Checksum
+	canonical, checksum, err := document.MarshalNormalizedEvidenceV1(evidence)
+	if err != nil || checksum != artifact.Checksum || !bytes.Equal(canonical, data) {
+		return document.NormalizedEvidenceV1{}, nil, errors.New("normalized evidence is not exact canonical authority")
+	}
+	return evidence, data, nil
+}
+
 func (service *Service) chunkEmbeddingGeneration(ctx context.Context, version store.ContentVersion,
 	profile configuredProfile, binding document.EmbeddingBindingV1,
 ) (store.EmbeddingInputGenerationRecord, error) {
@@ -1676,35 +1714,9 @@ func (service *Service) chunkEmbeddingGeneration(ctx context.Context, version st
 	if err != nil {
 		return store.EmbeddingInputGenerationRecord{}, err
 	}
-	var artifact store.RenditionArtifactRecord
-	for _, candidate := range view.Build.Artifacts {
-		if candidate.Role == "normalized_evidence" {
-			artifact = candidate
-			break
-		}
-	}
-	if artifact.ID == "" || artifact.Size < 2 || artifact.Size > 64<<20 {
-		return store.EmbeddingInputGenerationRecord{}, errors.New("normalized evidence artifact is unavailable or exceeds bounds")
-	}
-	reader, size, err := service.blobs.OpenStreamContext(ctx, artifact.BlobHash)
+	evidence, data, err := service.renditionEvidence(ctx, view.Build)
 	if err != nil {
 		return store.EmbeddingInputGenerationRecord{}, err
-	}
-	data, readErr := io.ReadAll(io.LimitReader(reader, artifact.Size+1))
-	verifyErr := reader.Verify()
-	closeErr := reader.Close()
-	if readErr != nil || verifyErr != nil || closeErr != nil || size != artifact.Size || int64(len(data)) != artifact.Size {
-		return store.EmbeddingInputGenerationRecord{}, errors.Join(
-			errors.New("normalized evidence could not be read exactly"), readErr, verifyErr, closeErr)
-	}
-	var evidence document.NormalizedEvidenceV1
-	if err := json.Unmarshal(data, &evidence, json.RejectUnknownMembers(true)); err != nil {
-		return store.EmbeddingInputGenerationRecord{}, fmt.Errorf("decoding normalized evidence: %w", err)
-	}
-	evidence.Checksum = artifact.Checksum
-	canonical, checksum, err := document.MarshalNormalizedEvidenceV1(evidence)
-	if err != nil || checksum != artifact.Checksum || !bytes.Equal(canonical, data) {
-		return store.EmbeddingInputGenerationRecord{}, errors.New("normalized evidence is not exact canonical authority")
 	}
 	tokenizer := profile.tokenizers[binding.Name]
 	policy, err := document.NewInputPolicy(binding, tokenizer, profile.record.EvidenceLexicalFingerprint, nil)

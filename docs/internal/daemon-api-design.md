@@ -366,6 +366,28 @@ selected visible occurrence. They filter processing receipts to that same
 immutable version, so a transcript for an older recording revision cannot
 cover newer bytes.
 
+### Exact media transcript reads
+
+`GET /api/v1/media/sources/{source_id}/versions/{source_version_id}/transcript`
+requires `content_version_id` as a query parameter. The handler resolves the
+caller-visible source version to its content version and processing profile,
+compares them with the request, and reads the active rendition through
+`ActiveRendition`, the lookup behind rendition selection. It returns that
+build's normalized evidence units after checking them against the build's
+evidence checksum. When the build came from a supplied input, that input must
+be visible to the requested source version; otherwise the result is
+`evidence_state: "stale"` without transcript text.
+
+`evidence_state` is independent of `coverage_state` and `operation_state`.
+`ready` is the only state that carries a transcript; `pending` means admitted
+work is still running, `unavailable` means no readable retained artifact is
+available, and `stale` means the requested tuple or selected authority changed.
+The embedded API, daemon connection, generated clients, and
+`docbank media transcript SOURCE_ID --source-version-id ID
+--content-version-id ID` use this same read owner. The response contains
+origin, completeness, omission and truncation flags, and per-unit optional
+`time_span` and `speaker` facts; it exposes no rendition or blob identifiers.
+
 ## Change constraints
 
 - New data commands must be HTTP clients, never direct store callers.

@@ -3426,6 +3426,33 @@ export interface MediaSuppliedMetadata {
   sha256: string;
 }
 
+export interface MediaTranscriptUnit {
+  speaker?: string;
+  text: string;
+  time_span?: MediaTimeSpan;
+}
+
+export interface MediaTranscriptEvidence {
+  completeness: string;
+  has_omissions: boolean;
+  origin: string;
+  truncated: boolean;
+  units: MediaTranscriptUnit[];
+}
+
+export interface MediaTranscript {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  content_version_id: string;
+  coverage_state: string;
+  evidence_state: string;
+  operation_state: string;
+  source_id: string;
+  source_version_id: string;
+  transcript?: MediaTranscriptEvidence;
+  vault_uid: string;
+}
+
 export interface Member {
   node_id: number;
   revision?: number;
@@ -6465,6 +6492,14 @@ export type SubmitMediaSourceBodyTwo = {
 export type ImportMediaArtifactBody = {
   file: Blob | File;
   metadata: MediaArtifactMetadata;
+};
+
+export type GetMediaTranscriptParams = {
+/**
+ * @minLength 1
+ * @maxLength 256
+ */
+content_version_id: string;
 };
 
 export type MoveNodeHeaders = {
@@ -10834,6 +10869,41 @@ return sessionJSON<MediaReceipt>(getRetryMediaSourceUrl(sourceId),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(mediaRetryBody)
+  }
+);}
+
+
+
+export const getGetMediaTranscriptUrl = (sourceId: string,
+    sourceVersionId: string,
+    params: GetMediaTranscriptParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/media/sources/${encodeURIComponent(String(sourceId))}/versions/${encodeURIComponent(String(sourceVersionId))}/transcript?${stringifiedParams}` : `/api/v1/media/sources/${encodeURIComponent(String(sourceId))}/versions/${encodeURIComponent(String(sourceVersionId))}/transcript`
+}
+
+/**
+ * @summary Read one exact retained media transcript
+ */
+export const getMediaTranscript = async (sourceId: string,
+    sourceVersionId: string,
+    params: GetMediaTranscriptParams, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaTranscript> => {
+
+  return sessionJSON<MediaTranscript>(getGetMediaTranscriptUrl(sourceId,sourceVersionId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 

@@ -81,6 +81,31 @@ type MediaReceipt struct {
 	SuppliedInputID  string `json:"supplied_input_id,omitempty"`
 }
 
+type MediaTranscriptUnit struct {
+	Text     string         `json:"text"`
+	TimeSpan *MediaTimeSpan `json:"time_span,omitempty"`
+	Speaker  string         `json:"speaker,omitempty"`
+}
+
+type MediaTranscriptEvidence struct {
+	Origin       string                `json:"origin"`
+	Completeness string                `json:"completeness"`
+	Truncated    bool                  `json:"truncated"`
+	HasOmissions bool                  `json:"has_omissions"`
+	Units        []MediaTranscriptUnit `json:"units"`
+}
+
+type MediaTranscript struct {
+	VaultUID         string                   `json:"vault_uid"`
+	SourceID         string                   `json:"source_id"`
+	SourceVersionID  string                   `json:"source_version_id"`
+	ContentVersionID string                   `json:"content_version_id"`
+	EvidenceState    string                   `json:"evidence_state"`
+	CoverageState    string                   `json:"coverage_state"`
+	OperationState   string                   `json:"operation_state"`
+	Transcript       *MediaTranscriptEvidence `json:"transcript,omitempty"`
+}
+
 type MediaSourceRow struct {
 	SourceID         string `json:"source_id"`
 	SourceVersionID  string `json:"source_version_id,omitempty"`

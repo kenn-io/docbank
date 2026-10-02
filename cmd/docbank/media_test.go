@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,5 +37,18 @@ func TestOpenMediaUploadUsesFixedMediaTypes(t *testing.T) {
 			require.NoError(t, file.Close())
 			require.Equal(t, want, metadata.MediaType)
 		})
+	}
+}
+
+func TestMediaTranscriptCLIRequiresStableVersionFlags(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	for _, flags := range [][]string{
+		{"--source-version-id", "version"},
+		{"--content-version-id", "00000000-0000-4000-8000-000000000001"},
+	} {
+		_, err := runCLI(t, append([]string{"media", "transcript", "source"}, flags...)...)
+		exit, ok := errors.AsType[*exitError](err)
+		require.True(t, ok, "missing version flag must be a usage error: %v", err)
+		require.Equal(t, exitUsage, exit.code)
 	}
 }
