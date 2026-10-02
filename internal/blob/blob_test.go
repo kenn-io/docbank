@@ -8,12 +8,15 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -109,6 +112,85 @@ func TestCompressedWriteKeepsSmallObjectRaw(t *testing.T) {
 	require.FileExists(t, bs.path(receipt.Hash))
 	require.NoFileExists(t, bs.compressedPath(receipt.Hash))
 	assertVerifiedBlob(t, bs, receipt.Hash, content)
+}
+
+func TestCompressedWriteMinimumAcrossShortReads(t *testing.T) {
+	for _, size := range []int{0, 1023, 1024, 1025, 4097} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			bs := newTestBlobStoreWithOptions(t, Options{LooseCompression: testLooseCompression()})
+			content := bytes.Repeat([]byte("a"), size)
+			receipt, err := bs.WriteDetailedContext(t.Context(),
+				iotest.OneByteReader(bytes.NewReader(content)))
+			require.NoError(t, err)
+			wantEncoding := packstore.LooseEncodingRaw
+			if size >= 1024 {
+				wantEncoding = packstore.LooseEncodingZstd
+			}
+			require.Equal(t, wantEncoding, receipt.Encoding)
+			assertVerifiedBlob(t, bs, receipt.Hash, content)
+		})
+	}
+}
+
+func TestCompressedWritePreservesReadAheadFailure(t *testing.T) {
+	wantErr := errors.New("source read failed")
+	wrappedEOF := fmt.Errorf("source failure: %w", io.EOF)
+	for _, tc := range []struct {
+		name   string
+		reader io.Reader
+		err    error
+	}{
+		{"persistent", io.MultiReader(strings.NewReader("short prefix"), iotest.ErrReader(wantErr)), wantErr},
+		{"once", iotest.TimeoutReader(strings.NewReader("short prefix")), iotest.ErrTimeout},
+		{"wrapped EOF", iotest.ErrReader(wrappedEOF), wrappedEOF},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bs := newTestBlobStoreWithOptions(t, Options{LooseCompression: testLooseCompression()})
+			_, err := bs.WriteDetailedContext(t.Context(), tc.reader)
+			require.ErrorIs(t, err, tc.err)
+			blobs, err := bs.List()
+			require.NoError(t, err)
+			require.Empty(t, blobs)
+		})
+	}
+}
+
+func TestCompressedWriteStopsAtFirstEOF(t *testing.T) {
+	bs := newTestBlobStoreWithOptions(t, Options{LooseCompression: testLooseCompression()})
+	reads := 0
+	reader := blobReadFunc(func(p []byte) (int, error) {
+		reads++
+		if reads == 1 {
+			return copy(p, "prefix"), io.EOF
+		}
+		return copy(p, "later bytes"), io.EOF
+	})
+	receipt, err := bs.WriteDetailedContext(t.Context(), reader)
+	require.NoError(t, err)
+	require.Equal(t, 1, reads)
+	assertVerifiedBlob(t, bs, receipt.Hash, []byte("prefix"))
+}
+
+type blobReadFunc func([]byte) (int, error)
+
+func (read blobReadFunc) Read(p []byte) (int, error) { return read(p) }
+
+func TestCompressedWriteHonorsCancelledReadAhead(t *testing.T) {
+	bs := newTestBlobStoreWithOptions(t, Options{LooseCompression: testLooseCompression()})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	reads := 0
+	reader := blobReadFunc(func(p []byte) (int, error) {
+		reads++
+		cancel()
+		return copy(p, "prefix"), nil
+	})
+	_, err := bs.WriteDetailedContext(ctx, reader)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, 1, reads)
+	blobs, err := bs.List()
+	require.NoError(t, err)
+	require.Empty(t, blobs)
 }
 
 func TestCompressedWriteKeepsIncompressibleObjectRaw(t *testing.T) {

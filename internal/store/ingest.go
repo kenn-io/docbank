@@ -225,10 +225,14 @@ func resolveIngestNameTx(
 	tx *sql.Tx, parentID int64, name, blobHash, sourceKind string,
 ) (string, int64, bool, error) {
 	base, ext := splitSuffix(name)
+	// Start with the blob index, then look up each owning node by ID. Keeping
+	// this join order avoids scanning every sibling for each imported file.
 	rows, err := tx.Query(
-		`SELECT n.id, n.name, cv.blob_hash FROM nodes AS n
-		 JOIN content_versions AS cv ON cv.version_id = n.current_version_id
-		 WHERE n.parent_id = ? AND n.trashed_at IS NULL AND n.kind = 'file'`, parentID)
+		`SELECT n.id, n.name FROM content_versions AS cv
+		 CROSS JOIN nodes AS n ON n.id = cv.node_id
+		 WHERE cv.blob_hash = ? AND n.current_version_id = cv.version_id
+		   AND n.parent_id = ? AND n.trashed_at IS NULL AND n.kind = 'file'
+		 ORDER BY n.id`, blobHash, parentID)
 	if err != nil {
 		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
@@ -239,21 +243,14 @@ func resolveIngestNameTx(
 		inNameFamily bool
 	}
 	var sameHash []hashCandidate
-	taken := map[int]bool{}
 	for rows.Next() {
 		var sibID int64
-		var sibName, sibHash string
-		if err := rows.Scan(&sibID, &sibName, &sibHash); err != nil {
+		var sibName string
+		if err := rows.Scan(&sibID, &sibName); err != nil {
 			return "", 0, false, fmt.Errorf("scanning sibling: %w", err)
 		}
-		n, inNameFamily := parseSuffix(sibName, base, ext)
-		if sibHash == blobHash {
-			sameHash = append(sameHash, hashCandidate{nodeID: sibID, inNameFamily: inNameFamily})
-		}
-		if !inNameFamily {
-			continue
-		}
-		taken[n] = true
+		_, inNameFamily := parseSuffix(sibName, base, ext)
+		sameHash = append(sameHash, hashCandidate{nodeID: sibID, inNameFamily: inNameFamily})
 	}
 	if err := rows.Err(); err != nil {
 		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
@@ -269,25 +266,40 @@ func resolveIngestNameTx(
 			return "", candidate.nodeID, true, nil // already imported (possibly under a suffix)
 		}
 	}
-	// Directories can occupy candidate names too; they don't carry content,
-	// but their names are still taken. Probe them via the unique index by
-	// walking ordinals and consulting taken plus a dir-name check.
-	n := 1
-	for {
-		if !taken[n] {
-			candidate := suffixedName(base, ext, n)
-			var one int
-			err := tx.QueryRow(
-				`SELECT 1 FROM nodes WHERE parent_id = ? AND name = ? AND trashed_at IS NULL`,
-				parentID, candidate).Scan(&one)
-			if errors.Is(err, sql.ErrNoRows) {
-				return candidate, 0, false, nil
-			}
-			if err != nil {
-				return "", 0, false, fmt.Errorf("probing name %q: %w", candidate, err)
-			}
+	// Two disjoint index ranges cover the original name and every possible
+	// suffix. The upper bound ends in ')' (the byte after '('), so arbitrary
+	// Unicode and SQL wildcard characters in the basename stay literal.
+	conflicts, err := tx.Query(`
+		SELECT name, kind FROM nodes
+		WHERE parent_id = ? AND name = ? AND trashed_at IS NULL
+		UNION ALL
+		SELECT name, kind FROM nodes
+		WHERE parent_id = ? AND name >= ? AND name < ? AND trashed_at IS NULL`,
+		parentID, name, parentID, base+" (", base+" )")
+	if err != nil {
+		return "", 0, false, fmt.Errorf("listing conflicting names for %q: %w", name, err)
+	}
+	defer func() { _ = conflicts.Close() }()
+	taken := map[int]bool{}
+	for conflicts.Next() {
+		var sibling, kind string
+		if err := conflicts.Scan(&sibling, &kind); err != nil {
+			return "", 0, false, fmt.Errorf("scanning conflicting name: %w", err)
 		}
-		n++
+		n, inNameFamily := parseSuffix(sibling, base, ext)
+		// File suffix parsing also reserves noncanonical ordinals such as
+		// '(02)'. Directories have always reserved only the exact candidate.
+		if inNameFamily && (kind == "file" || sibling == suffixedName(base, ext, n)) {
+			taken[n] = true
+		}
+	}
+	if err := conflicts.Err(); err != nil {
+		return "", 0, false, fmt.Errorf("listing conflicting names for %q: %w", name, err)
+	}
+	for n := 1; ; n++ {
+		if !taken[n] {
+			return suffixedName(base, ext, n), 0, false, nil
+		}
 	}
 }
 
