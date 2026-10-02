@@ -154,3 +154,27 @@ func getReportDatesSchemas() (schema, schema) {
 			"report_id": reportIDSchema(), "page": page,
 		}), cacheRequired("report_id", "page")...)
 }
+func downloadReportSchemas() (schema, schema) {
+	path := stringSchema(maxPathCharacters)
+	path["minLength"] = 1
+	verification := objectSchema(schema{
+		"internally_consistent": schema{"type": "boolean", "const": true},
+		"source_verified":       schema{"type": "boolean", "const": false},
+	}, "internally_consistent", "source_verified")
+	return rootObjectSchema(schema{"report_id": reportIDSchema(), "destination_path": path,
+			"overwrite": booleanSchema()},
+			"report_id",
+			"destination_path"), rootObjectSchema(withPrivateCache(schema{
+			"report_id": reportIDSchema(), "destination_path": path, "bytes": integerSchema(1, 512<<20),
+			"sha256": sha256Schema(), "verification": verification,
+			"state": enumSchema("published",
+				"published_durability_unknown"),
+			"cleanup_failed": booleanSchema(),
+		}), cacheRequired("report_id",
+			"destination_path",
+			"bytes",
+			"sha256",
+			"verification",
+			"state",
+			"cleanup_failed")...)
+}

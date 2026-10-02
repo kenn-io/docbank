@@ -87,6 +87,8 @@ func (r *reportTools) handler(name string, validator *jsonschema.Resolved) sdkmc
 			output, err = r.summary(ctx, request.Params.Arguments)
 		case reportDatesTool.name:
 			output, err = r.dates(ctx, request.Params.Arguments)
+		case reportDownloadTool.name:
+			output, err = r.download(ctx, request.Params.Arguments)
 		case reportCreateTool.name:
 			output, err = r.create(ctx, request.Params.Arguments)
 		case reportReviseTool.name:

@@ -175,7 +175,7 @@ func toolCatalog(options ServerOptions) []*sdkmcp.Tool {
 		definitions = append(definitions, exportWriteToolDefinitions...)
 	}
 	if options.AllowReportWrites {
-		definitions = append(definitions, reportCreateTool, reportReviseTool)
+		definitions = append(definitions, reportCreateTool, reportReviseTool, reportDownloadTool)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -205,7 +205,8 @@ func registerToolCatalog(
 		output := mustResolveSchema(tool.OutputSchema)
 		var handler sdkmcp.ToolHandler
 		switch tool.Name {
-		case reportSummaryTool.name, reportDatesTool.name, reportCreateTool.name, reportReviseTool.name:
+		case reportSummaryTool.name, reportDatesTool.name, reportCreateTool.name, reportReviseTool.name,
+			reportDownloadTool.name:
 			handler = reports.handler(tool.Name, output)
 		case "preview_export", "start_export", "get_export_status", "cancel_export", "release_export",
 			"download_export":
@@ -400,6 +401,12 @@ func stableDomainError(err error) (string, int) {
 		return "consent_required", 0
 	case errors.Is(err, errProcessingOutcomeUnknown):
 		return "processing_outcome_unknown", 0
+	case errors.Is(err, errReportIntegrity):
+		return "report_integrity", 0
+	case errors.Is(err, errReportLocalIO):
+		return "report_local_io", 0
+	case errors.Is(err, daemonconn.ErrReportReviewRequired):
+		return "date_review_required", 0
 	case errors.Is(err, errReportOutcomeUnknown):
 		return "report_outcome_unknown", 0
 	case errors.Is(err, report.ErrReportLimit), errors.Is(err, report.ErrBudgetExhausted):
@@ -489,6 +496,10 @@ func stableDomainError(err error) (string, int) {
 
 func domainErrorMessage(code string) string {
 	switch code {
+	case "report_integrity":
+		return "The report summary, stream, or packet evidence disagreed; no file was published."
+	case "report_local_io":
+		return "A local file operation failed before publication; check the operator log."
 	case "invalid_report_request", "invalid_query", "invalid_profile", "invalid_report_scope":
 		return "Correct the report request, query, profile, or scope."
 	case "report_selection_changed":
@@ -607,7 +618,7 @@ func sanitizedRPCError(_ error) *jsonrpc.Error {
 
 func logOperationError(logger *slog.Logger, operation string, err error) {
 	code, _ := stableDomainError(err)
-	if errors.Is(err, errExportLocalIO) {
+	if errors.Is(err, errExportLocalIO) || errors.Is(err, errReportLocalIO) {
 		logger.Error("MCP operation failed", "operation", operation,
 			"error_code", code, "error", err)
 		return

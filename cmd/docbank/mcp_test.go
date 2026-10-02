@@ -152,7 +152,7 @@ func TestMCPCommandWriteFlagsSelectTools(t *testing.T) {
 			assert.Equal(t, test.processing, names["start_processing"])
 			assert.True(t, names["get_report_summary"])
 			assert.True(t, names["get_report_dates"])
-			for _, name := range []string{"create_report", "revise_report"} {
+			for _, name := range []string{"create_report", "revise_report", "download_report"} {
 				assert.Equal(t, test.reports, names[name], name)
 			}
 			assert.True(t, names["get_export_status"])

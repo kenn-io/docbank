@@ -16,7 +16,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -46,13 +45,13 @@ func TestMCPReportOptIn(t *testing.T) {
 				require.Equal(t, "daemon_unavailable", objectField(t, result, "structuredContent")["code"])
 			}
 			tools := listedToolsByName(t, listed)
-			for _, name := range []string{"create_report", "revise_report"} {
+			for _, name := range []string{"create_report", "revise_report", "download_report"} {
 				if options.AllowReportWrites {
 					require.Contains(t, names, name)
 					annotations := objectField(t, tools[name], "annotations")
 					require.Equal(t, false, annotations["readOnlyHint"])
 					require.Equal(t, false, annotations["idempotentHint"])
-					require.Equal(t, false, annotations["destructiveHint"])
+					require.Equal(t, name == "download_report", annotations["destructiveHint"])
 				} else {
 					require.NotContains(t, names, name)
 					before := calls.Load()
@@ -125,6 +124,29 @@ func TestMCPReportRequestBoundary(t *testing.T) {
 		change(args)
 		raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{
 			"name": "create_report", "arguments": map[string]any{"request": args},
+		}))
+		require.EqualValues(t, jsonrpc.CodeInvalidParams, decodeWireError(t, raw).Code)
+	}
+	for _, args := range []map[string]any{
+		{"report_id": "invalid"},
+		{"report_id": strings.Repeat("a", 48), "cursor": strings.Repeat("é", 2050)},
+		{"report_id": strings.Repeat("a", 48), "limit": 0},
+		{"report_id": strings.Repeat("a", 48), "max_bytes": 65536},
+	} {
+		raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+			"name": "get_report_dates", "arguments": args,
+		}))
+		require.EqualValues(t, jsonrpc.CodeInvalidParams, decodeWireError(t, raw).Code)
+	}
+	choice := report.DateChoice{Document: report.Identity{NodeID: 7, VersionID: testVersionID,
+		SHA256: strings.Repeat("a", 64)}, CandidateID: strings.Repeat("b", 64),
+		EvidenceSHA256: strings.Repeat("c", 64), Reason: " ", Action: "select"}
+	for _, reason := range []string{" ", strings.Repeat("é", 2049)} {
+		choice.Reason = reason
+		raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+			"name": "revise_report", "arguments": map[string]any{
+				"report_id": strings.Repeat("a", 48), "choices": []report.DateChoice{choice},
+			},
 		}))
 		require.EqualValues(t, jsonrpc.CodeInvalidParams, decodeWireError(t, raw).Code)
 	}
@@ -335,12 +357,11 @@ func TestMCPReportLargeSummaryKeepsHandle(t *testing.T) {
 	require.Equal(t, "report_limit", output["code"])
 	dates := exportCall(t, server, "get_report_dates", map[string]any{"report_id": id})
 	require.Contains(t, dates, "page")
-	file, err := os.Create(filepath.Join(t.TempDir(), "report.zip"))
-	require.NoError(t, err)
-	defer func() { _ = file.Close() }()
-	result, err := daemonconn.New(daemon.URL, "synthetic-export-key").DownloadTermReportTo(t.Context(), id, file, budget)
-	require.NoError(t, err)
-	require.True(t, result.Verification.InternallyConsistent)
+	output = exportCall(t, server, "download_report", map[string]any{
+		"report_id": id, "destination_path": filepath.Join(t.TempDir(), "report.zip"),
+	})
+	require.Equal(t, "published", output["state"])
+	require.Equal(t, true, objectField(t, output, "verification")["internally_consistent"])
 }
 
 func TestMCPReportResultMetadataLimit(t *testing.T) {
