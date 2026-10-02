@@ -1163,9 +1163,14 @@ func TestEmbeddingWorkerPublishesThroughRealCatalogAndBlobStore(t *testing.T) {
 			}
 			require.Equal(t, 1, heads)
 			require.NoError(t, fixture.catalog.VerifyRenditionBlobBytes(t.Context(), fixture.blobs))
+			providerCalls := fake.runtime.calls()
 			processed, err = worker.ScanOnce(t.Context())
 			require.NoError(t, err)
 			require.Zero(t, processed, "published work must not be sent to the provider again")
+			assert.Equal(t, providerCalls, fake.runtime.calls())
+			var reused bytes.Buffer
+			require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &reused))
+			assert.Equal(t, metadata.Bytes(), reused.Bytes(), "reusing published inputs must leave their stored identities and vector references unchanged")
 		})
 	}
 }
