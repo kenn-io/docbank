@@ -68,6 +68,17 @@ func (v *Vault) MediaStatus(ctx context.Context, sourceID string) (MediaReceipt,
 	return fromInternalMediaReceipt(receipt), err
 }
 
+// RemoteRecordingReceipt returns the saved receipt of one remote-recording
+// submission by its operation ID. Unknown IDs read as ErrNotFound.
+func (v *Vault) RemoteRecordingReceipt(ctx context.Context, operationID string) (MediaReceipt, error) {
+	if err := v.begin(); err != nil {
+		return MediaReceipt{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	receipt, err := v.processing.RemoteRecordingReceipt(ctx, operationID)
+	return fromInternalMediaReceipt(receipt), err
+}
+
 // MediaTranscript reads one exact retained transcript by stable media
 // identities. The result carries evidence, coverage, and latest operation
 // state separately.

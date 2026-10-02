@@ -40,6 +40,14 @@ func TestOpenMediaUploadUsesFixedMediaTypes(t *testing.T) {
 	}
 }
 
+func TestMediaOperationCLIRequiresOneID(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	_, err := runCLI(t, "media", "operation")
+	require.ErrorContains(t, err, "accepts 1 arg(s)")
+	// Argument validation fails before RunE starts, so main maps it to a usage exit.
+	require.Equal(t, exitUsage, commandExitCode(err, false))
+}
+
 func TestMediaTranscriptCLIRequiresStableVersionFlags(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
 	for _, flags := range [][]string{

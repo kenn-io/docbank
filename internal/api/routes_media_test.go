@@ -517,6 +517,76 @@ func TestMediaRouteRejectsCursorOwnedByAnotherPrincipal(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode)
 }
 
+func TestMediaOperationReceiptRecoversLostRemoteSubmission(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, configureMediaTestService(t))
+	c := daemonconn.New(ts.URL, testAPIKey)
+	operationID := "00000000-0000-4000-8000-000000000371"
+	path := "/api/v1/media/operations/" + operationID
+
+	missing, missingBody := get(t, ts, path, nil)
+	require.Equal(t, http.StatusNotFound, missing.StatusCode, missingBody)
+	require.Contains(t, missingBody, `"code":"not_found"`)
+	require.Equal(t, "no-store", missing.Header.Get("Cache-Control"))
+
+	submitted, err := c.SubmitRemoteRecording(t.Context(), api.MediaReferenceBody{
+		OperationID:  operationID,
+		ReferenceURL: "https://recordings.invalid/private?token=SYNTHETIC-SECRET",
+		Occurrence:   api.MediaOccurrenceBody{Ref: "lost-reply", Revision: "1"},
+	})
+	require.NoError(t, err)
+	recovered, err := c.MediaOperationReceipt(t.Context(), operationID)
+	require.NoError(t, err)
+	require.Equal(t, submitted, recovered)
+	found, foundBody := get(t, ts, path, nil)
+	require.Equal(t, http.StatusOK, found.StatusCode, foundBody)
+	require.Equal(t, "no-store", found.Header.Get("Cache-Control"))
+	require.NotContains(t, foundBody, "SYNTHETIC-SECRET")
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal([]byte(foundBody), &fields))
+	delete(fields, "$schema")
+	projected, err := json.Marshal(fields)
+	require.NoError(t, err)
+	var strict api.MediaReceipt
+	require.NoError(t, json.Unmarshal(projected, &strict, json.RejectUnknownMembers(true)))
+
+	gate := api.NewOperationGate()
+	name, profile, err := processing.NewSuppliedMediaProfile(catalog.Store, catalog.Blobs, "daemon:other")
+	require.NoError(t, err)
+	var tokenKey [32]byte
+	tokenKey[0] = 7
+	service, err := processing.NewService(processing.ServiceConfig{
+		Catalog: catalog.Store, Blobs: catalog.Blobs, Gate: gate,
+		SpoolDirectory: filepath.Join(filepath.Dir(catalog.DBPath), "blobs", "tmp"),
+		Principal:      "daemon:other",
+		Profiles:       map[string]processing.ProfileConfig{name: profile}, MediaTokenKey: tokenKey,
+	})
+	require.NoError(t, err)
+	cfg := config.Default()
+	cfg.Server.APIKey = testAPIKey
+	otherServer := api.NewServer(api.Deps{Store: catalog.Store, Blobs: catalog.Blobs,
+		VaultRoot: filepath.Dir(catalog.DBPath), Cfg: cfg, Gate: gate, Processing: service,
+		WebURL: testWebURL})
+	t.Cleanup(otherServer.Close)
+	otherHTTP := httptest.NewServer(otherServer.Handler())
+	t.Cleanup(otherHTTP.Close)
+	otherHTTP.Client().Transport = &apiKeyTransport{key: testAPIKey, next: otherHTTP.Client().Transport}
+	hidden, hiddenBody := get(t, otherHTTP, path, nil)
+	require.Equal(t, http.StatusNotFound, hidden.StatusCode, hiddenBody)
+	// $schema carries each test server's own address; the rest must match byte for byte.
+	require.Equal(t, strings.ReplaceAll(missingBody, ts.URL, ""), strings.ReplaceAll(hiddenBody, otherHTTP.URL, ""))
+
+	malformed, malformedBody := get(t, ts, "/api/v1/media/operations/not-a-uuid", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, malformed.StatusCode, malformedBody)
+	require.Equal(t, "no-store", malformed.Header.Get("Cache-Control"))
+	unauthorized, unauthorizedBody := get(t, ts, path, map[string]string{"X-Api-Key": ""})
+	require.Equal(t, http.StatusUnauthorized, unauthorized.StatusCode, unauthorizedBody)
+	browser, browserBody := get(t, ts, path,
+		map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)})
+	require.Equal(t, http.StatusForbidden, browser.StatusCode, browserBody)
+	require.Contains(t, browserBody, `"code":"web_session_read_only"`)
+}
+
 func configureMediaTestService(t *testing.T) func(*api.Deps) {
 	t.Helper()
 	return func(deps *api.Deps) {

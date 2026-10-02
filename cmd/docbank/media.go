@@ -97,6 +97,19 @@ var mediaStatusCmd = &cobra.Command{Use: "status <source-id>", Short: "Show curr
 		return writeCLIJSON(cmd.OutOrStdout(), receipt)
 	}}
 
+var mediaOperationCmd = &cobra.Command{Use: "operation <operation-id>", Short: "Show a saved recording-link receipt",
+	Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		receipt, err := c.MediaOperationReceipt(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		return writeCLIJSON(cmd.OutOrStdout(), receipt)
+	}}
+
 var mediaTranscriptCmd = &cobra.Command{Use: "transcript <source-id>", Short: "Read one exact retained transcript",
 	Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if mediaSourceVersionID == "" || mediaContentVersionID == "" {
@@ -321,7 +334,7 @@ func init() {
 	mediaConsentRevokeCmd.Flags().StringVar(&mediaOrigin, "origin", "", "registered origin ID")
 	mediaOccurrencesCmd.AddCommand(mediaOccurrencesListCmd, mediaOccurrencesDeclareCmd, mediaOccurrencesRevokeCmd)
 	mediaConsentCmd.AddCommand(mediaConsentGrantCmd, mediaConsentRevokeCmd)
-	mediaCmd.AddCommand(mediaSubmitCmd, mediaListCmd, mediaStatusCmd, mediaTranscriptCmd, mediaRetryCmd, mediaImportCmd,
+	mediaCmd.AddCommand(mediaSubmitCmd, mediaListCmd, mediaStatusCmd, mediaOperationCmd, mediaTranscriptCmd, mediaRetryCmd, mediaImportCmd,
 		mediaOccurrencesCmd, mediaOriginsCmd, mediaAcquisitionPlanCmd, mediaConsentCmd)
 	rootCmd.AddCommand(mediaCmd)
 }

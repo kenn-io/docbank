@@ -18743,6 +18743,31 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Revoke one caller-owned occurrence
+  /api/v1/media/operations/{operation_id}:
+    get:
+      operationId: getMediaOperationReceipt
+      parameters:
+        - in: path
+          name: operation_id
+          required: true
+          schema:
+            maxLength: 36
+            minLength: 1
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaReceipt"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read one remote-recording submission receipt
   /api/v1/media/origins:
     get:
       operationId: listMediaOrigins

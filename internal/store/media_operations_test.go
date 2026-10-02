@@ -141,3 +141,30 @@ func TestMediaOperationRespectsAuditedVaultGuard(t *testing.T) {
 	_, err := s.withMediaOperation(t.Context(), op, func(*sql.Tx) (string, error) { return `{}`, nil })
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
 }
+
+func TestRemoteRecordingReceiptScopesPrincipalAndVerb(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	_, operation := remoteStoreReference(t, s, testSHA256([]byte("receipt-source")),
+		"00000000-0000-4000-8000-000000000901", "receipt-occurrence")
+	stored, err := s.MediaOperationReceipt(ctx, operation)
+	require.NoError(t, err)
+
+	got, err := s.RemoteRecordingReceipt(ctx, operation.Principal, operation.ID)
+	require.NoError(t, err)
+	require.Equal(t, stored, got)
+
+	_, err = s.RemoteRecordingReceipt(ctx, "operator:other", operation.ID)
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.RemoteRecordingReceipt(ctx, operation.Principal, "00000000-0000-4000-8000-000000000902")
+	require.ErrorIs(t, err, ErrNotFound)
+	supplied, err := s.RetainSuppliedMedia(ctx, suppliedMediaPublicationFixture(t, s))
+	require.NoError(t, err)
+	_, err = s.RemoteRecordingReceipt(ctx, "operator", supplied.OperationID)
+	require.ErrorIs(t, err, ErrNotFound)
+
+	_, err = s.RemoteRecordingReceipt(ctx, operation.Principal, "not-a-uuid")
+	require.ErrorContains(t, err, "invalid")
+	require.NotErrorIs(t, err, ErrNotFound)
+}

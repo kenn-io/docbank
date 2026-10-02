@@ -72,6 +72,8 @@ func TestMediaClientRejectsDuplicateOrMismatchedIdentity(t *testing.T) {
 	require.ErrorContains(t, err, "duplicate")
 	_, err = c.MediaStatus(t.Context(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	require.ErrorContains(t, err, "different source")
+	_, err = c.MediaOperationReceipt(t.Context(), "00000000-0000-4000-8000-000000000002")
+	require.ErrorContains(t, err, "invalid media receipt identity")
 }
 
 func TestMediaClientAcceptsEarlyReplayResponse(t *testing.T) {

@@ -339,6 +339,17 @@ the same version. A transcript from an older version cannot cover newer bytes.
 Raw URLs and credential bindings never appear in receipts, errors, logs,
 renditions, search results, or portable metadata.
 
+#### Remote recording receipts
+
+`GET /api/v1/media/operations/{operation_id}` returns the receipt saved for one
+remote-recording submission under the daemon's media principal. Use it when a
+`POST /api/v1/media/sources` reply was lost: the operation ID is enough, and the
+caller never resends the protected link. An unknown ID, an ID owned by another
+principal, and an ID from any other media operation all return `404 not_found`.
+A malformed ID returns 422. Every response carries `Cache-Control: no-store`.
+A 404 describes only that read. A submission still in flight can commit
+afterward.
+
 #### Exact media transcript reads
 
 Read one retained transcript by its complete stable identity:

@@ -100,6 +100,19 @@ docbank media transcript SOURCE_ID \
   --content-version-id CONTENT_VERSION_ID
 ```
 
+## Recover a lost recording-link reply
+
+If a remote-recording submission's reply never arrived, read the saved receipt
+by the operation ID you sent. You don't need to keep the original link:
+
+```bash
+curl --fail-with-body   -H "X-Api-Key: $DOCBANK_API_KEY"   "$DOCBANK_URL/api/v1/media/operations/00000000-0000-4000-8000-000000000001"
+```
+
+A 404 means no committed receipt was visible at that moment. A submission still
+in flight can commit afterward. The equivalent CLI command is
+`docbank media operation OPERATION_ID`.
+
 ## Give an independent client a stable endpoint
 
 The docbank CLI can discover an ephemeral port and per-run key from the

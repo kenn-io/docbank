@@ -1424,6 +1424,7 @@ docbank media submit --file CALL.wav --operation-id UUID \
   --occurrence-ref REF --revision REV
 docbank media list
 docbank media status SOURCE_ID
+docbank media operation OPERATION_ID
 docbank media transcript SOURCE_ID --source-version-id SOURCE_VERSION_ID \
   --content-version-id CONTENT_VERSION_ID
 docbank media import-artifact SOURCE_ID --kind media --file CALL.wav \
@@ -1451,6 +1452,9 @@ revision, and startup probe result. The fields are `adapter_contract`,
 [origin listing contract](architecture/http-api.md#remote-recording-references).
 Self-hosted Cap registrations report `acquisition_available: false` until a
 later acquisition owner exists.
+
+`media operation` prints the saved receipt of a `media submit --reference-file`
+call by its operation ID, for use after a lost reply.
 
 `media submit` accepts bounded WAV and MP3 files. It verifies the declared
 size and SHA-256 computed by the CLI, retains the original bytes, and records

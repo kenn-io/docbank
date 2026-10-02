@@ -10669,6 +10669,30 @@ return sessionJSON<MediaReceipt>(getRevokeMediaOccurrenceUrl(occurrenceId),
 
 
 
+export const getGetMediaOperationReceiptUrl = (operationId: string,) => {
+
+
+
+
+  return `/api/v1/media/operations/${encodeURIComponent(String(operationId))}`
+}
+
+/**
+ * @summary Read one remote-recording submission receipt
+ */
+export const getMediaOperationReceipt = async (operationId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<MediaReceipt> => {
+
+  return sessionJSON<MediaReceipt>(getGetMediaOperationReceiptUrl(operationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
 export const getListMediaOriginsUrl = () => {
 
 

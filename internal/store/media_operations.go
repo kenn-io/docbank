@@ -53,6 +53,23 @@ func (s *Store) MediaOperationReceipt(
 	return receipt, nil
 }
 
+// RemoteRecordingReceipt returns the stored receipt of one remote-recording
+// submission owned by principal. Unknown IDs, other principals, and other
+// verbs are indistinguishable. A miss reports only this read.
+func (s *Store) RemoteRecordingReceipt(ctx context.Context, principal, operationID string) (string, error) {
+	if err := validateUUIDv4(operationID); err != nil {
+		return "", fmt.Errorf("invalid media operation ID: %w", err)
+	}
+	var receipt string
+	err := s.db.QueryRowContext(ctx, `SELECT receipt_json FROM media_operations
+		WHERE operation_id=? AND principal=? AND verb='submit_remote_recording'`,
+		operationID, principal).Scan(&receipt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return receipt, err
+}
+
 // withMediaOperation runs a local media mutation and stores its successful
 // canonical receipt in the same logical transaction. Identical retries read
 // that receipt without invoking mutate again.
