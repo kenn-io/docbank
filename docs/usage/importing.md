@@ -102,6 +102,42 @@ For each regular file, Docbank performs two steps:
 See [Storage](../architecture/storage.md) for the content records and
 [Editing & Versions](../architecture/editing-and-versions.md) for version identity.
 
+### MIME type detection
+
+Automatic MIME selection for local imports, `docbank put`, and load-file
+package staging inspects the first 512 bytes with Docbank's pinned signature
+detector. Recognized signatures take priority over the host's extension table,
+including JPEG, HEIC, and HEIF. `docbank put --mime-type` remains an explicit
+override. The `.eml` rule runs first and always uses `message/rfc822`.
+
+An extension can refine a broad detector result when it names the same MIME
+node, an alias, a child format, or another member of the `text/plain` family.
+Unknown bytes, including empty files, can use a valid extension mapping as
+their type. An unrelated, invalid, or binary ancestor mapping leaves the
+recognized detector result in place. Compatible resolver parameters remain
+on the selected value.
+
+The importer also has fixed suffix refinements for detector results that the
+pinned library cannot name as a subtype:
+
+- TIFF bytes with `.arw`, `.dng`, `.cr2`, or `.nef` use `image/x-sony-arw`,
+  `image/x-adobe-dng`, `image/x-canon-cr2`, or `image/x-nikon-nef`.
+- Unknown `.raf` bytes use the fixed `image/x-fuji-raf` type.
+- PNG or APNG bytes with `.png` or `.apng` use `image/png` and the existing
+  preview path.
+- Matroska bytes with `.mka` use `audio/x-matroska`.
+- Text-family bytes with `.xmp` use `application/rdf+xml`, including XMP
+  packets without an XML declaration.
+- Text-family bytes with `.md` or `.markdown` use `text/markdown`.
+- Text-family bytes with `.go`, `.rst`, `.yaml`/`.yml`, or `.tex` use
+  `text/x-go`, `text/x-rst`, `application/yaml`, or `application/x-tex`.
+
+The pinned detector sees these TIFF-based RAW formats as `image/tiff`; suffix
+rules add their stored subtype without trusting an arbitrary host mapping.
+Automatic local replacements and package staging use the same selector. Each
+content version keeps the MIME observation selected when that version was
+created; existing versions are not rewritten.
+
 Directory arguments walk recursively. The directory's basename becomes a
 folder under `--dest`, and everything below keeps its relative structure:
 

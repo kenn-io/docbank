@@ -468,7 +468,11 @@ func TestPreflightManifestBindsSameSizeSourceByteChanges(t *testing.T) {
 		return out
 	}
 	before := request()
-	require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", "IMAGES", "001", "DOC-A-1.tif"), []byte("synthetic-z1"), 0o600))
+	source := filepath.Join(root, "VOL001", "IMAGES", "001", "DOC-A-1.tif")
+	contents, err := os.ReadFile(source)
+	require.NoError(t, err)
+	contents[len(contents)-1] ^= 1
+	require.NoError(t, os.WriteFile(source, contents, 0o600))
 	after := request()
 	assert.Equal(t, before.SourceRef, after.SourceRef, "root inventory digest intentionally binds metadata")
 	assert.NotEqual(t, before.ManifestSHA256, after.ManifestSHA256, "manifest must bind retained source bytes")

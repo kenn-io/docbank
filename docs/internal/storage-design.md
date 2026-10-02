@@ -112,6 +112,15 @@ is harmless because no `blobs` row authorizes it; GC's physical scan can remove
 it. Reversing the order could commit a node whose bytes vanish after power
 loss, which is not recoverable through metadata.
 
+Local add, automatic `docbank put`, and load-file package staging use the same
+pinned byte detector after reading the source prefix and keep the `.eml` rule
+first. A valid extension refines unknown bytes, including empty files, a
+compatible hierarchy or alias, or one of the closed suffix cases. Explicit
+`put --mime-type` remains caller-controlled. The selected MIME type is recorded
+on each immutable content version. A changed source adds a version with its
+new observation, while unchanged bytes keep the existing version and MIME
+type.
+
 The dedup fast path validates that an existing canonical object is structurally
 eligible. It does not rehash same-sized bytes on every duplicate ingest because
 that doubles common-path I/O without systematically protecting existing

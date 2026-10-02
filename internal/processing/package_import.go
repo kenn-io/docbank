@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"os"
 	"path"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/ingest"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -953,10 +953,15 @@ func (w *PackageImportWorker) stageFile(ctx context.Context, job store.PackageIm
 	}
 	name := fmt.Sprintf("%s-%02d-%s%s", occurrence, ordinal, ref.Role, path.Ext(ref.RelPath))
 	original := ref.Volume + "/" + ref.RelPath
-	mediaType := mime.TypeByExtension(strings.ToLower(path.Ext(ref.RelPath)))
-	if mediaType == "" {
-		mediaType = "application/octet-stream"
+	head := make([]byte, 512)
+	n, readErr := io.ReadFull(source, head)
+	if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		return store.ContentWriteReceipt{}, false, fmt.Errorf("reading package source %s for MIME detection: %w", original, readErr)
 	}
+	if _, seekErr := source.Seek(0, io.SeekStart); seekErr != nil {
+		return store.ContentWriteReceipt{}, false, fmt.Errorf("rewinding package source %s after MIME detection: %w", original, seekErr)
+	}
+	mediaType := ingest.DetectMIME(ref.RelPath, head[:n])
 	var result store.ContentWriteReceipt
 	err = w.cfg.Mutate(ctx, func() error {
 		return w.cfg.Blobs.WithMutation(ctx, func() error {

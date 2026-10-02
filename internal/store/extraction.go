@@ -43,7 +43,8 @@ func supportsTextExtractionMIME(value string) bool {
 	}
 	mediaType = strings.ToLower(mediaType)
 	return strings.HasPrefix(mediaType, "text/") || mediaType == "application/json" ||
-		mediaType == "application/x-ndjson" || mediaType == "application/jsonl"
+		mediaType == "application/x-ndjson" || mediaType == "application/jsonl" ||
+		mediaType == "application/yaml" || mediaType == "application/x-tex"
 }
 
 func markTextSearchableVersionTx(tx *sql.Tx, versionID, mimeType string) error {
