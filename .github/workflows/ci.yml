@@ -212,13 +212,15 @@ jobs:
           version: v2.13.1
 
   windows:
-    name: Windows ${{ matrix.goarch }}
+    name: Windows ${{ matrix.goarch }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - { runner: namespace-profile-windows-8cpu, goarch: amd64 }
-          - { runner: windows-11-vs2026-arm, goarch: arm64 }
+          # The 4 vCPU arm64 runner is saturated by the full suite, so its packages split across two.
+          - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 1 }
+          - { runner: windows-11-vs2026-arm, goarch: arm64, shard: 2 }
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out repository
@@ -276,4 +278,4 @@ jobs:
           CGO_ENABLED: "1"
           GOARCH: ${{ matrix.goarch }}
         shell: pwsh
-        run: ./scripts/test-go-ci.ps1
+        run: ./scripts/test-go-ci.ps1 -Shard ${{ matrix.shard || 'all' }}
