@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/docbank/document/voyage"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/kit/secretref"
 )
 
 const (
@@ -48,6 +49,30 @@ func (resolver environmentCredentialSecrets) ResolveSecret(_ context.Context, na
 	return value, nil
 }
 
+// embeddingCredentialSecret resolves the configured Kit source for each call,
+// so file/env rotation does not change the immutable credential binding.
+type embeddingCredentialSecret struct {
+	binding string
+	ref     secretref.Ref
+}
+
+func (resolver embeddingCredentialSecret) ResolveSecret(ctx context.Context, name string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if name != resolver.binding {
+		return "", errors.New("embedding credential binding is unavailable")
+	}
+	secret, err := resolver.ref.Resolve()
+	if err != nil {
+		return "", errors.New("embedding credential is unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return secret.Value, nil
+}
+
 type embeddingRuntimeBundle struct {
 	registry    *processing.EmbeddingRuntimeRegistry
 	providers   map[string]document.EmbeddingProvider
@@ -66,11 +91,15 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 		portable := "credential:" + name
 		secrets.variables[portable] = binding.EnvironmentVariable
 	}
-	for name, configured := range cfg.EmbeddingProfiles {
+	for name := range cfg.EmbeddingProfiles {
+		configured, err := cfg.EmbeddingProfile(name)
+		if err != nil {
+			return embeddingRuntimeBundle{}, err
+		}
 		if configured.Runtime == nil {
 			continue
 		}
-		if _, ok := secrets.variables[configured.CredentialBinding]; !ok {
+		if _, ok := secrets.variables[configured.CredentialBinding]; !ok && configured.Embedder == nil {
 			return embeddingRuntimeBundle{}, errors.New("embedding credential binding is not configured")
 		}
 		modelInput, err := cfg.EmbeddingModelInput(name)
@@ -82,8 +111,17 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 		var classify func(error) (processing.EmbeddingProviderFailure, time.Duration)
 		switch configured.Runtime.AdapterContract {
 		case openAIEmbeddingAdapter:
+			var resolver openaicompat.SecretResolver = secrets
+			binding := configured.CredentialBinding
+			if configured.Embedder != nil {
+				if !configured.Embedder.APIKey.IsZero() {
+					resolver = embeddingCredentialSecret{binding: binding, ref: configured.Embedder.APIKey}
+				} else if _, exists := secrets.variables[binding]; !exists {
+					binding, resolver = "", nil
+				}
+			}
 			profile := openaicompat.Profile{Origin: configured.Runtime.Endpoint, Descriptor: descriptor,
-				ModelInput: modelInput, SecretBinding: configured.CredentialBinding,
+				ModelInput: modelInput, SecretBinding: binding,
 				DeploymentEpoch:        configured.Runtime.DeploymentEpoch,
 				ProviderRevisionHeader: configured.Runtime.ProviderRevisionHeader,
 				RequestTimeout:         configured.Runtime.RequestTimeout.Std(), MaxBatchItems: configured.MaxBatchItems,
@@ -93,7 +131,7 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 			descriptor, profile, err = finalizeOpenAIEmbeddingDescriptor(profile)
 			if err == nil {
 				profile.Descriptor = descriptor
-				provider, err = openaicompat.New(profile, secrets, &http.Client{})
+				provider, err = openaicompat.New(profile, resolver, &http.Client{})
 			}
 			classify = classifyOpenAIEmbeddingError
 		case voyageEmbeddingAdapter:
@@ -181,7 +219,11 @@ func executableProcessingProfiles(cfg config.Config,
 			}
 			configured.EmbeddingProviders[binding.Name] = provider
 			configured.EmbeddingClassifiers[binding.Name] = classifier
-			if runtime := cfg.EmbeddingProfiles[binding.Name].Runtime; runtime != nil {
+			bindingConfig, err := cfg.EmbeddingProfile(binding.Name)
+			if err != nil {
+				return nil, err
+			}
+			if runtime := bindingConfig.Runtime; runtime != nil {
 				deployment := runtime.DeploymentEpoch
 				if deployment == "" {
 					deployment = runtime.ModelRevision

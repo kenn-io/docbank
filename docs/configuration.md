@@ -408,9 +408,80 @@ Chunk bindings also pin their tokenizer and chunk policy in `.chunk`. Use the
 fingerprints from the exact provisioned profile and deployment; arbitrary
 fingerprints or an endpoint's model alias do not establish compatibility.
 
-Credentials are referenced by name, never stored as values in a processing
-profile. This fragment connects an existing `semantic` binding to a secret in
-the daemon's environment:
+#### Text-service configuration
+
+For OpenAI-compatible text services, prefer Kit's
+`[embedding_profiles.<name>.embedder]` schema. Keep DocBank's pinned descriptor,
+consent, input kind, byte limits, normalization, model-input contract and chunk
+policy in the existing profile tables.
+
+```toml
+[embedding_profiles.semantic]
+credential_binding = "credential:embedding-primary"
+# The remaining pinned profile fields are also required.
+
+[embedding_profiles.semantic.embedder]
+base_url = "https://embedding.example.invalid/v1"
+model = "provisioned-model"
+dims = 768
+fingerprint_salt = "deployment-v1"
+batch_size = 8
+timeout_seconds = 30
+api_key = { env = "DOCBANK_EMBEDDING_PRIMARY_KEY" }
+
+[embedding_profiles.semantic.runtime]
+# Retain the provisioned egress policy and max_request_bytes.
+# adapter_contract defaults to docbank-openai-compatible-embeddings/v1
+# when embedder is present.
+```
+
+`base_url` ends in `/v1` or `/v1/embeddings`. Public-IP HTTP endpoints are
+rejected. Plaintext private-network endpoints require
+`trust_private_network = true`; the existing CIDR and proxy controls still
+apply. The `fingerprint_salt` pins the model revision. Unless a
+`provider_revision_header` is configured, it also supplies the deployment epoch.
+
+The API key may be a literal string, `{ env = "NAME" }`, or
+`{ file = "/absolute/path/to/private.key" }`. Prefer environment or private-file
+references. Kit requires credential files to be private, regular files owned by
+the current user. File paths follow Kit's rules: `~/` expands to the daemon
+user's home, and relative paths use its working directory. Sources are resolved
+for each request; startup does not read them. A missing secret becomes an
+authorization failure when that provider is used. File changes take effect on
+the next request. Environment changes require restarting the daemon.
+
+Keep `credential_binding` as the stable portable name. It is the name, not
+the secret or its source, that enters the immutable profile. If `api_key` is
+unset, an existing `credential_bindings` entry still supplies the secret.
+Without either source, the text endpoint receives no Authorization header.
+Never put secret values in processing profiles, fingerprints, receipts,
+backups, or source-controlled configuration.
+
+Kit's default batch size is 32 and its default timeout is 30 seconds. When
+converting a legacy configuration, set these values explicitly to the existing
+limits. The same effective settings produce the same canonical identities and
+reuse existing generations. Changing the model, revision or input recipe still
+requires a matching pinned descriptor and profile.
+
+This adapter keeps DocBank's document/query formatting and chunk preparation.
+`input_type_mode` must be `"none"`; configure roles in `model_input`.
+`model_context_tokens` and `max_batch_tokens` must remain zero. Nonzero values
+are rejected because this adapter does not use Kit token packing. The
+profile's normalization setting remains authoritative: adopting Kit's schema
+does not normalize returned vectors.
+
+#### Legacy text-service configuration
+
+Existing `model`, `dimensions`, `max_batch_items`, runtime `endpoint`,
+`model_revision`, `request_timeout`, and named environment credentials remain
+supported. Prefer the `embedder` table for new text-service configurations.
+Native and multimodal providers retain their existing configuration.
+
+If both forms specify a setting, their effective values must agree. For
+example, `embedder.dims = 768` conflicts with `dimensions = 1024`. An explicit
+`api_key` and an existing named credential entry must reference the same
+environment variable; otherwise remove the legacy entry when switching
+sources. Profiles that share a credential name must agree on its source.
 
 ```toml
 [credential_bindings.embedding-primary]
@@ -423,18 +494,14 @@ credential_binding = "credential:embedding-primary"
 
 A missing or empty secret leaves ordinary document operations available.
 Affected embedding jobs record an authorization failure and can recover later.
-The daemon reads secrets from its own environment for each request. To change
-a secret, set the variable for the daemon and restart it; exporting a variable
-in another shell does not update a running daemon.
-
-Startup still fails for an undefined credential binding, invalid runtime
+Startup still fails for an undefined legacy credential binding, invalid runtime
 configuration, or mismatched descriptor.
 
 #### Runtime settings
 
 An optional `[embedding_profiles.<name>.runtime]` section makes a binding
 executable on this machine. Without it, the daemon does not claim that binding's
-work. Runtime configuration and environment-variable mappings are machine-local
+work. Runtime configuration and credential sources are machine-local
 and must be supplied separately after restoring a vault.
 
 | Fields | Meaning |
