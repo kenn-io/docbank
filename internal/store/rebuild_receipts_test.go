@@ -222,7 +222,5 @@ func TestRebuildReceiptsRejectCorruptRows(t *testing.T) {
 	_, err = s.db.Exec(`UPDATE document_event_builds SET scanned=scanned+1 WHERE operation_id=?`, events.OperationID)
 	require.NoError(t, err)
 	_, err = s.DocumentEventBuild(t.Context(), events.OperationID)
-	require.Error(t, err)
-	require.NotErrorIs(t, err, ErrNotFound)
-	require.NotErrorIs(t, err, ErrDocumentPeopleCorrupt)
+	require.ErrorIs(t, err, errDocumentEventBuildInvalid)
 }

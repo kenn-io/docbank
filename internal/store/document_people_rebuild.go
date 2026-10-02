@@ -52,7 +52,10 @@ var documentPeopleBuilds = rebuildReceiptTable{
 			LEFT JOIN document_people_heads ph ON ph.content_version_id=cv.version_id`,
 			b.TargetEpoch, b.DeriverFingerprint, b.TargetEpoch, b.DeriverFingerprint,
 			b.TargetEpoch, b.DeriverFingerprint).Scan(&c.selected, &c.published, &c.failed, &c.retrying)
-		return c, err
+		if err != nil {
+			return rebuildCounts{}, fmt.Errorf("counting document people rebuild progress: %w", err)
+		}
+		return c, nil
 	},
 }
 
