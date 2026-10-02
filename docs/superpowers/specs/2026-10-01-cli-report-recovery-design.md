@@ -1,7 +1,8 @@
 # Inspect and recover search reports from the CLI
 
 Status: implemented. This document records the command contract.
-The behavioral contract reviewed at `a3d4183a` is unchanged.
+Implements the contract reviewed at `a3d4183a`, with recovery advice clarified
+for unavailable handles during PR review.
 
 Source baseline: `b04894976863bfb92c9211216e50f2fad0aff3e6`, after PR #753.
 Scope decision: [bounded report/export workflow, #719](https://github.com/kenn-io/docbank/issues/719).
@@ -151,8 +152,10 @@ error names the new child, not its parent.
 
 For a failed complete-report download, the error points to
 `docbank search-export download <report-id> --output <path>` and advises checking
-the destination first. For a report still needing review, point to `show` or
-`dates`. If saving succeeded but writing the final status failed, say the
+the destination first. If the daemon returns `report_unavailable`, explain that
+the handle is unavailable and a new report is needed, rather than suggesting
+another download of that handle. For a report still needing review, point to
+`show` or `dates`. If saving succeeded but writing the final status failed, say the
 verified file was saved. Do not label an unconfirmed publication as successful.
 
 Keep required `--output` and current successful create/revise behavior. Do not

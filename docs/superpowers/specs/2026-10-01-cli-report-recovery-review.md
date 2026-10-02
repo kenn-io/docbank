@@ -4,8 +4,8 @@ Reviewed design: [Inspect and recover search reports from the CLI](2026-10-01-cl
 
 - Source revision: `b04894976863bfb92c9211216e50f2fad0aff3e6`.
 - Reviewed design SHA-256: `adb6732f72754e1f0871383d0263eb48d2795e7bc2ec679220a4e748d37f587d`.
-- Current design SHA-256 after the implementation status and baseline wording update:
-  `ffaa9e91679915424b610b04e3ff3f13421afc24a9a6b3925ef004fee3e03d3a`.
+- Current design SHA-256 after implementation and unavailable-handle advice clarification:
+  `45b36e673663917421a5320239ec11d0d015e85eef04e6b1b3d58644e1c2dd5e`.
 - During this review the only working-tree additions were this design and
   review. Product source, generated clients, dependencies, and existing tests
   matched the clean baseline. There are no Git submodules.
@@ -16,8 +16,9 @@ Reviewed design: [Inspect and recover search reports from the CLI](2026-10-01-cl
 The design is implemented. This document preserves the author's pre-implementation
 source check and disposition of the subsequent adversarial review. Test references
 in that historical review were source inspections, not execution evidence.
-The current design hash records only implementation status and baseline wording
-changes; the reviewed behavioral contract is unchanged.
+The current design hash includes implementation status, baseline wording, and
+the PR review clarification: unavailable handles advise creating a new report.
+The original error code and exit status remain unchanged.
 
 ## Adversarial review disposition
 

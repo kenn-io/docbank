@@ -45,6 +45,10 @@ func newReportDownloadCommand() *cobra.Command {
 }
 
 func reportDeliveryError(id, output string, err error) error {
+	if code, ok := daemonconn.ProblemCode(err); ok && code == "report_unavailable" {
+		return fmt.Errorf("report %s is unavailable; create a new report with "+
+			"docbank search-export create --input <request.json> --output <path>: %w", id, err)
+	}
 	if errors.Is(err, daemonconn.ErrReportReviewRequired) {
 		return fmt.Errorf("report %s needs date review; run docbank search-export dates %s, "+
 			"then docbank search-export revise %s --choices choices.json --output <path>: %w",

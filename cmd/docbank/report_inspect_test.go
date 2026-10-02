@@ -111,6 +111,8 @@ func TestReportCLIHistoryAfterRestart(t *testing.T) {
 	require.True(t, ok, "%v", err)
 	require.Equal(t, "report_unavailable", code)
 	require.Equal(t, exitGeneral, commandExitCode(err, true))
+	require.ErrorContains(t, err, "create a new report")
+	require.NotContains(t, err.Error(), "retrying")
 	_, err = os.Stat(destination)
 	require.ErrorIs(t, err, os.ErrNotExist)
 }

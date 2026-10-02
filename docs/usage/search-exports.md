@@ -123,8 +123,10 @@ the next offset when more receipts remain.
 
 After `create` or `revise` receives a valid summary, later errors retain the new
 report ID. Use `show` to inspect that result and `download` to retry delivery
-while it remains live. A revision error names the child report. If delivery did
-not finish cleanly, inspect the destination first: the verified file may already
+while it remains live. If the handle is unavailable after expiry or restart,
+create a new report; retrying that handle cannot recover it. A revision error
+names the child report. If delivery did not finish cleanly, inspect the
+destination first: the verified file may already
 have been published before a sync or staging-cleanup error. Verify an existing
 ZIP before deciding to retry or overwrite it. A failed final status print after
 a successful save explicitly says the file was saved.
