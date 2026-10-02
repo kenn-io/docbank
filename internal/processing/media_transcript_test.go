@@ -13,6 +13,7 @@ import (
 )
 
 func TestMediaTranscriptRequiresCanonicalContentVersionID(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	service, err := NewService(ServiceConfig{Catalog: fixture.catalog, Blobs: fixture.blobs,
 		Gate: newWorkerTestGate(), SpoolDirectory: t.TempDir(), Principal: "operator:transcript"})
@@ -34,6 +35,7 @@ func TestMediaTranscriptRequiresCanonicalContentVersionID(t *testing.T) {
 }
 
 func TestMediaTranscriptUsesCoverageProfileDuringRetry(t *testing.T) {
+	t.Parallel()
 	coverage := store.MediaPublicationReceipt{
 		ProcessingProfile: "generated-media", ProcessingProfileFingerprint: "generated-fingerprint",
 	}
@@ -47,6 +49,7 @@ func TestMediaTranscriptUsesCoverageProfileDuringRetry(t *testing.T) {
 }
 
 func TestMediaTranscriptMismatchedContentVersionReturnsStaleWithoutText(t *testing.T) {
+	t.Parallel()
 	fixture := newPublicationFixture(t)
 	raw := mediatest.WAV()
 	written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
@@ -129,6 +132,7 @@ func (f captionFixture) caption(t *testing.T, occurrenceID, cue string) MediaRec
 }
 
 func TestMediaTranscriptFollowsCoverageAndTheCurrentFile(t *testing.T) {
+	t.Parallel()
 	f := newCaptionFixture(t, "transcript-read")
 	request := MediaTranscriptRequest{SourceID: f.remote.SourceID,
 		SourceVersionID: f.videoReceipt.SourceVersionID, ContentVersionID: f.videoReceipt.ContentVersionID}
@@ -186,6 +190,7 @@ func TestMediaTranscriptFollowsCoverageAndTheCurrentFile(t *testing.T) {
 }
 
 func TestMediaTranscriptSharedRecordingKeepsForeignCaptionOut(t *testing.T) {
+	t.Parallel()
 	f := newCaptionFixture(t, "transcript-shared")
 	queuedA := f.caption(t, f.remote.OccurrenceID, "caption A")
 	runLoomRenditionJob(t, f.captions, queuedA.JobID)

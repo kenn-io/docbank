@@ -63,6 +63,7 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 }
 
 func TestOpenAPIMediaTranscriptRouteUsesTheStableTuple(t *testing.T) {
+	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()
 	path := doc.Paths["/api/v1/media/sources/{source_id}/versions/{source_version_id}/transcript"]
 	require.NotNil(t, path)

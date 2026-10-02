@@ -204,6 +204,7 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 }
 
 func TestMediaTranscriptHTTPReturnsUnavailableWithoutProcessing(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	response, body := get(t, ts,
 		"/api/v1/media/sources/missing/versions/missing/transcript?content_version_id=00000000-0000-4000-8000-000000000001",
