@@ -259,8 +259,7 @@ func TestTrashEmptyRetainsMediaAuthorityAndDeletesUnrelatedRoots(t *testing.T) {
 			switch authority {
 			case "source version":
 				_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES(
-					'source-version','source',1,?,?,?,?,?,?)`, protected.CurrentVersionID,
-					protected.BlobHash, protected.Size, `{}`, digestCatalogJSON([]byte(`{}`)), stamp)
+					'source-version','source',1,?,?,?)`, protected.CurrentVersionID, `{}`, stamp)
 			case "input artifact":
 				_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
 					'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)

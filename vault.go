@@ -412,10 +412,15 @@ func openVaultWithRootOpener(
 	if err != nil {
 		return nil, err
 	}
-	continuation := &internalprocessing.MediaContinuationWorker{Service: processingService, IdleDelay: 25 * time.Millisecond}
+	mediaContinuations := &internalprocessing.Backfill[store.MediaPublicationReceipt]{
+		Name: "media-continuations", Page: 50, IdleDelay: 25 * time.Millisecond,
+		List:    processingService.MediaProcessingTargets,
+		Key:     func(receipt store.MediaPublicationReceipt) string { return receipt.OperationID },
+		Process: processingService.ContinueMediaProcessing,
+	}
 	vault.startProcessingWorker(workerContext, packageWorker.Run)
 	vault.startProcessingWorker(workerContext, worker.Run)
-	vault.startProcessingWorker(workerContext, continuation.Run)
+	vault.startProcessingWorker(workerContext, mediaContinuations.Run)
 	if embeddingWorker != nil {
 		vault.startProcessingWorker(workerContext, embeddingWorker.Run)
 	}

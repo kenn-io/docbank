@@ -36,16 +36,22 @@ func TestMediaTranscriptRequiresCanonicalContentVersionID(t *testing.T) {
 
 func TestMediaTranscriptUsesCoverageProfileDuringRetry(t *testing.T) {
 	t.Parallel()
-	coverage := store.MediaPublicationReceipt{
+	coverage := store.MediaPublicationReceipt{OperationState: "succeeded",
 		ProcessingProfile: "generated-media", ProcessingProfileFingerprint: "generated-fingerprint",
 	}
-	processing := store.MediaPublicationReceipt{
+	processing := store.MediaPublicationReceipt{OperationState: "queued",
 		ProcessingProfile: SuppliedCaptionProfileName, ProcessingProfileFingerprint: "supplied-fingerprint",
 	}
-	item := store.MediaSourceProjection{CoverageReceipt: &coverage, ProcessingReceipt: &processing}
-	require.Equal(t, "generated-fingerprint", mediaTranscriptProfile(&Service{}, item))
+	profile := func() string {
+		t.Helper()
+		item := store.MediaSourceProjection{ProcessingReceipts: []store.MediaPublicationReceipt{processing, coverage}}
+		fingerprint, err := (&Service{}).mediaTranscriptProfile(t.Context(), item)
+		require.NoError(t, err)
+		return fingerprint
+	}
+	require.Equal(t, "generated-fingerprint", profile())
 	coverage.ProcessingProfile, coverage.ProcessingProfileFingerprint = "removed-profile", ""
-	require.Empty(t, mediaTranscriptProfile(&Service{}, item), "a later retry cannot stand in for the covering profile")
+	require.Empty(t, profile(), "a later retry cannot stand in for the covering profile")
 }
 
 func TestMediaTranscriptMismatchedContentVersionReturnsStaleWithoutText(t *testing.T) {
@@ -204,8 +210,7 @@ func TestMediaTranscriptSharedRecordingKeepsForeignCaptionOut(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, f.fixture.catalog.PublishMediaSourceVersion(t.Context(), store.MediaSourceVersionInput{
 		ID: sourceVersionB, SourceID: f.remote.SourceID, Revision: 2, ExpectedHeadRevision: 1,
-		ContentVersionID: f.videoReceipt.ContentVersionID, SourceSHA256: processingSHA256(f.video),
-		SourceBytes: int64(len(f.video)), CaptureJSON: "{}", ClaimSHA256: processingSHA256([]byte("{}")),
+		ContentVersionID: f.videoReceipt.ContentVersionID, CaptureJSON: "{}",
 		BindOccurrenceIDs: []string{occurrenceB},
 	}))
 	queuedB := f.caption(t, occurrenceB, "caption B")

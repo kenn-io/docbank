@@ -44,8 +44,6 @@ func configureLoomManualTestService(t *testing.T) func(*api.Deps) {
 		workerContext, cancelWorker := context.WithCancel(context.Background())
 		var workers sync.WaitGroup
 		workers.Go(func() { _ = worker.Run(workerContext) })
-		continuation := &processing.MediaContinuationWorker{Service: service, IdleDelay: time.Millisecond}
-		workers.Go(func() { _ = continuation.Run(workerContext) })
 		t.Cleanup(func() { cancelWorker(); workers.Wait() })
 	}
 }

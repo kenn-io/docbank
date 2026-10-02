@@ -97,7 +97,11 @@ func (service *Service) MediaTranscript(
 		result.EvidenceState = mediaTranscriptEvidenceStale
 		return result, nil
 	}
-	view, err := service.catalog.ActiveRendition(ctx, request.ContentVersionID, mediaTranscriptProfile(service, item))
+	profile, err := service.mediaTranscriptProfile(ctx, item)
+	if err != nil {
+		return result, err
+	}
+	view, err := service.catalog.ActiveRendition(ctx, request.ContentVersionID, profile)
 	if errors.Is(err, store.ErrNotFound) {
 		if receipt.CoverageState != "transcribed" &&
 			(receipt.OperationState == "queued" || receipt.OperationState == "running") {
@@ -150,19 +154,18 @@ func (service *Service) MediaTranscript(
 
 // mediaTranscriptProfile names the profile of the receipt that covers the
 // source, so a pending retry under another profile does not hide it.
-func mediaTranscriptProfile(service *Service, item store.MediaSourceProjection) string {
-	receipt := item.CoverageReceipt
-	if receipt == nil {
-		receipt = item.ProcessingReceipt
-	}
-	if receipt == nil {
-		return ""
+func (service *Service) mediaTranscriptProfile(
+	ctx context.Context, item store.MediaSourceProjection,
+) (string, error) {
+	_, receipt, err := service.mediaProcessingAttempts(ctx, item.ProcessingReceipts)
+	if err != nil || receipt == nil {
+		return "", err
 	}
 	if receipt.ProcessingProfileFingerprint != "" {
-		return receipt.ProcessingProfileFingerprint
+		return receipt.ProcessingProfileFingerprint, nil
 	}
 	if profile, ok := service.profiles[receipt.ProcessingProfile]; ok {
-		return profile.record.Fingerprint
+		return profile.record.Fingerprint, nil
 	}
-	return ""
+	return "", nil
 }

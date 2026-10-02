@@ -25,7 +25,6 @@ func TestMediaSourceKeyKeepsRemoteIdentitiesSeparate(t *testing.T) {
 	var n int
 	require.NoError(t, s.db.QueryRow(`SELECT count(*) FROM sqlite_schema
 		WHERE type='table' AND name IN ('media_sources','media_source_versions',
-		'media_source_heads','media_occurrences','media_visibility_fences',
-		'media_input_artifacts','media_operations','media_acquisitions','media_protected_refs')`).Scan(&n))
-	require.Equal(t, 9, n)
+		'media_occurrences','media_input_artifacts','media_operations')`).Scan(&n))
+	require.Equal(t, 5, n)
 }

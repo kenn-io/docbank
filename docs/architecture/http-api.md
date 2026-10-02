@@ -313,8 +313,8 @@ publication.
 
 The store publishes the verified original and binds it to the selected visible
 occurrence in one transaction. A pending occurrence receives a new source
-version, while an existing exact version can be reused without moving the
-source head. A changed original for a bound occurrence returns
+version, while an existing exact version can be reused without adding a
+revision. A changed original for a bound occurrence returns
 `409 source_conflict`. A caption or transcript must follow the original. A
 caption with `application/x-subrip` stays a retained input until the caller
 selects the `supplied-captions` profile. That profile publishes timed
@@ -333,7 +333,8 @@ ordinary processing API with that recording's node and current content version.
 Status and list responses select the source version bound to the visible
 occurrence they report. They show `content_available` and `unprocessed` after
 the original is retained, then use processing receipts for that same source
-version. A failed retry can leave an earlier successful transcript visible for
+version. A processing receipt's state comes from its processing job when read.
+A failed retry can leave an earlier successful transcript visible for
 the same version. A transcript from an older version cannot cover newer bytes.
 Raw URLs and credential bindings never appear in receipts, errors, logs,
 renditions, search results, or portable metadata.

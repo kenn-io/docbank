@@ -1290,17 +1290,14 @@ func TestEmbeddedMediaEmbeddingContinuationSeparatesReplacementConsentAcrossRest
 		require.NoError(collect, statusErr)
 		require.Equal(collect, "succeeded", status.OperationState)
 	}, 10*time.Second, 20*time.Millisecond)
-	operationDB, err := store.DefaultSQLiteDriver().Open(filepath.Join(config.Root, "docbank.db"),
-		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
-	require.NoError(t, err)
-	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		var state string
-		stateErr := operationDB.QueryRowContext(t.Context(),
-			`SELECT state FROM media_operations WHERE operation_id='00000000-0000-4000-8000-000000000453'`).Scan(&state)
-		require.NoError(collect, stateErr)
-		require.Equal(collect, "succeeded", state)
-	}, 10*time.Second, 20*time.Millisecond)
-	require.NoError(t, operationDB.Close())
+	// Replaying a retry reads its receipt, whose state comes from the bound job.
+	operationState := func(operationID string) string {
+		replayed, replayErr := vault.RetryMedia(t.Context(), operationID, receipt.SourceID,
+			docbank.MediaProcessingRequest{Profile: "media-semantic"})
+		require.NoError(t, replayErr)
+		return replayed.OperationState
+	}
+	require.Equal(t, "succeeded", operationState("00000000-0000-4000-8000-000000000453"))
 	providerCalls := embedder.calls.Load()
 	_, err = vault.RevokeProcessingPlanConsent(t.Context())
 	require.NoError(t, err)
@@ -1323,32 +1320,20 @@ func TestEmbeddedMediaEmbeddingContinuationSeparatesReplacementConsentAcrossRest
 	}, 10*time.Second, 20*time.Millisecond)
 	require.Equal(t, providerCalls, embedder.calls.Load(),
 		"fresh authority must reuse the already published vector generation")
-	operationDB, err = store.DefaultSQLiteDriver().Open(filepath.Join(config.Root, "docbank.db"),
-		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
-	require.NoError(t, err)
+	require.Equal(t, "failed", operationState("00000000-0000-4000-8000-000000000452"))
+	require.Equal(t, "succeeded", operationState("00000000-0000-4000-8000-000000000453"))
+	// The backfill records the outcome after the embedding job and index rebuild finish.
 	require.EventuallyWithT(t, func(collect *assert.CollectT) {
-		var state string
-		stateErr := operationDB.QueryRowContext(t.Context(),
-			`SELECT state FROM media_operations WHERE operation_id='00000000-0000-4000-8000-000000000454'`).Scan(&state)
-		require.NoError(collect, stateErr)
-		require.Equal(collect, "succeeded", state)
+		replayed, replayErr := vault.RetryMedia(t.Context(), "00000000-0000-4000-8000-000000000454",
+			receipt.SourceID, docbank.MediaProcessingRequest{Profile: "media-semantic"})
+		require.NoError(collect, replayErr)
+		require.Equal(collect, "succeeded", replayed.OperationState)
 	}, 10*time.Second, 20*time.Millisecond)
-	require.NoError(t, operationDB.Close())
 	require.NoError(t, vault.Close())
 	db, err = store.DefaultSQLiteDriver().Open(filepath.Join(config.Root, "docbank.db"),
 		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, db.Close()) }()
-	var oldOperationState, newOperationState, reusedOperationState string
-	require.NoError(t, db.QueryRowContext(t.Context(),
-		`SELECT state FROM media_operations WHERE operation_id='00000000-0000-4000-8000-000000000452'`).Scan(&oldOperationState))
-	require.NoError(t, db.QueryRowContext(t.Context(),
-		`SELECT state FROM media_operations WHERE operation_id='00000000-0000-4000-8000-000000000453'`).Scan(&newOperationState))
-	require.NoError(t, db.QueryRowContext(t.Context(),
-		`SELECT state FROM media_operations WHERE operation_id='00000000-0000-4000-8000-000000000454'`).Scan(&reusedOperationState))
-	require.Equal(t, "failed", oldOperationState)
-	require.Equal(t, "succeeded", newOperationState)
-	require.Equal(t, "succeeded", reusedOperationState)
 	var failedJobs, completedJobs, vectorSets int
 	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT
 		COUNT(*) FILTER (WHERE state='failed'),COUNT(*) FILTER (WHERE state='completed')

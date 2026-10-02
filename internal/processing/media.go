@@ -326,7 +326,6 @@ func (service *Service) SubmitSuppliedMedia(
 	if err != nil {
 		return MediaReceipt{}, fmt.Errorf("encoding media timestamp: %w", err)
 	}
-	claim := sha256.Sum256(messageJSON)
 	requestIdentity, err := canonical.Marshal(suppliedOperationIdentity{
 		SourceSHA256: request.SHA256, SourceBytes: request.ByteLength,
 		MediaType: request.MediaType, Filename: request.Filename,
@@ -345,6 +344,9 @@ func (service *Service) SubmitSuppliedMedia(
 		Verb: "submit_supplied_media", RequestSHA256: hex.EncodeToString(requestDigest[:]), SourceID: sourceID}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, operation); replayErr == nil {
 		stored, decodeErr := canonical.Decode[store.MediaPublicationReceipt]([]byte(replay))
+		if decodeErr == nil {
+			stored, decodeErr = service.mediaOperationState(ctx, stored)
+		}
 		return mediaReceiptFromStore(stored), decodeErr
 	} else if !errors.Is(replayErr, store.ErrNotFound) {
 		return MediaReceipt{}, replayErr
@@ -382,7 +384,6 @@ func (service *Service) SubmitSuppliedMedia(
 	publication := store.MediaPublicationRequest{
 		Operation: operation,
 		SourceID:  sourceID, CaptureJSON: string(messageJSON),
-		ClaimSHA256:         hex.EncodeToString(claim[:]),
 		ProcessingProfile:   selectedProcessingProfile(request.Processing),
 		SuppliedInputID:     selectedProcessingInputID(request.Processing),
 		ProcessingPrincipal: processingPrincipal, ProcessingScope: processingScope,
@@ -426,25 +427,11 @@ func (service *Service) SubmitSuppliedMedia(
 			return MediaReceipt{}, err
 		}
 	}
-	if mediaProcessingRequested(request.Processing) && stored.JobID == "" && stored.OperationState == "queued" {
-		selector := Selector{NodeID: stored.ProcessingNodeID, ContentVersionID: stored.ContentVersionID,
-			Profile: request.Processing.Profile}
-		source := mediaSourceBinding{sourceID: stored.SourceID, sourceVersionID: stored.SourceVersionID}
-		plan, planErr := service.Plan(ctx, selector)
-		if planErr != nil {
-			return MediaReceipt{}, errors.Join(planErr, service.failMediaProcessing(ctx, stored, planErr))
-		}
-		job, enqueueErr := service.EnqueueAuthorized(ctx, selector, source, plan.Fingerprint,
-			processingAuthorization, request.Processing.SuppliedInputID)
-		if enqueueErr != nil {
-			return MediaReceipt{}, errors.Join(enqueueErr, service.failMediaProcessing(ctx, stored, enqueueErr))
-		}
-		stored, err = service.recordMediaProcessingJob(ctx, stored, job.ID)
-		if err != nil {
-			return MediaReceipt{}, err
-		}
+	if stored, err = service.completeMediaAdmission(ctx, stored); err != nil {
+		return MediaReceipt{}, err
 	}
-	return mediaReceiptFromStore(stored), nil
+	stored, err = service.mediaOperationState(ctx, stored)
+	return mediaReceiptFromStore(stored), err
 }
 
 func mediaReceiptFromStore(stored store.MediaPublicationReceipt) MediaReceipt {

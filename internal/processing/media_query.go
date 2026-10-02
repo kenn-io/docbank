@@ -48,17 +48,16 @@ type MediaOccurrencePage struct {
 }
 
 type mediaPageClaim struct {
-	Version, Principal, Kind, SourceID string
-	Fence                              int64
-	Offset, Limit                      int
+	Version, Principal, Kind, SourceID, After string
+	Limit                                     int
 }
 
 func (service *Service) ListMediaSources(ctx context.Context, options MediaListOptions) (MediaSourcePage, error) {
-	offset, fence, err := service.mediaPage(ctx, "sources", options)
+	after, err := service.mediaPage("sources", options)
 	if err != nil {
 		return MediaSourcePage{}, err
 	}
-	items, total, err := service.catalog.MediaSources(ctx, service.principal, offset, options.Limit)
+	items, total, more, err := service.catalog.MediaSources(ctx, service.principal, after, options.Limit)
 	if err != nil {
 		return MediaSourcePage{}, err
 	}
@@ -81,10 +80,10 @@ func (service *Service) ListMediaSources(ctx context.Context, options MediaListO
 			Filename: item.Filename, CaptureLabel: capture, Outcome: receipt.Outcome,
 			CoverageState: receipt.CoverageState})
 	}
-	if offset+len(items) < total {
-		result.NextCursor, err = service.signMediaPage(mediaPageClaim{Version: "v1",
+	if more {
+		result.NextCursor, err = service.signMediaPage(mediaPageClaim{Version: "v2",
 			Principal: service.principal, Kind: "sources",
-			Fence: fence, Offset: offset + len(items), Limit: options.Limit})
+			After: items[len(items)-1].SourceID, Limit: options.Limit})
 	}
 	return result, err
 }
@@ -111,19 +110,15 @@ func (service *Service) mediaSourceReceipt(
 		receipt.Outcome = "content_available"
 		receipt.CoverageState = "unprocessed"
 	}
-	if item.ProcessingReceipt != nil {
-		receipt.OperationState = item.ProcessingReceipt.OperationState
-		receipt.OperationID = item.ProcessingReceipt.OperationID
-		receipt.JobID = item.ProcessingReceipt.JobID
-		receipt.SuppliedInputID = item.ProcessingReceipt.SuppliedInputID
+	processing, coverage, err := service.mediaProcessingAttempts(ctx, item.ProcessingReceipts)
+	if err != nil {
+		return MediaReceipt{}, err
 	}
-	coverage := item.CoverageReceipt
-	if coverage == nil {
-		coverage = item.ProcessingReceipt
-	}
-	if coverage == nil {
+	if processing == nil {
 		return receipt, nil
 	}
+	receipt.OperationState, receipt.OperationID = processing.OperationState, processing.OperationID
+	receipt.JobID, receipt.SuppliedInputID = processing.JobID, processing.SuppliedInputID
 	receipt.CoverageState = coverage.CoverageState
 	if coverage.SuppliedInputID != "" {
 		visible, err := service.catalog.MediaInputBindingVisible(ctx, service.principal,
@@ -138,12 +133,33 @@ func (service *Service) mediaSourceReceipt(
 	return receipt, nil
 }
 
+// mediaProcessingAttempts derives the newest-first receipts' states and returns
+// the current attempt and the receipt that covers the version: the newest
+// success, or the current attempt when none succeeded.
+func (service *Service) mediaProcessingAttempts(
+	ctx context.Context, receipts []store.MediaPublicationReceipt,
+) (processing, coverage *store.MediaPublicationReceipt, err error) {
+	for _, stored := range receipts {
+		derived, err := service.mediaOperationState(ctx, stored)
+		if err != nil {
+			return nil, nil, err
+		}
+		if processing == nil {
+			processing, coverage = &derived, &derived
+		}
+		if derived.OperationState == "succeeded" {
+			return processing, &derived, nil
+		}
+	}
+	return processing, coverage, nil
+}
+
 func (service *Service) ListMediaOccurrences(ctx context.Context, options MediaListOptions) (MediaOccurrencePage, error) {
-	offset, fence, err := service.mediaPage(ctx, "occurrences", options)
+	after, err := service.mediaPage("occurrences", options)
 	if err != nil {
 		return MediaOccurrencePage{}, err
 	}
-	items, total, err := service.catalog.MediaOccurrences(ctx, service.principal, options.SourceID, offset, options.Limit)
+	items, total, more, err := service.catalog.MediaOccurrences(ctx, service.principal, options.SourceID, after, options.Limit)
 	if err != nil {
 		return MediaOccurrencePage{}, err
 	}
@@ -158,10 +174,10 @@ func (service *Service) ListMediaOccurrences(ctx context.Context, options MediaL
 			Revision: item.Revision, Filename: item.Filename, PersonRef: item.PersonRef,
 			SpeakerLabel: item.SpeakerLabel, Message: timestamp})
 	}
-	if offset+len(items) < total {
-		result.NextCursor, err = service.signMediaPage(mediaPageClaim{Version: "v1",
+	if more {
+		result.NextCursor, err = service.signMediaPage(mediaPageClaim{Version: "v2",
 			Principal: service.principal, Kind: "occurrences", SourceID: options.SourceID,
-			Fence: fence, Offset: offset + len(items), Limit: options.Limit})
+			After: items[len(items)-1].OccurrenceID, Limit: options.Limit})
 	}
 	return result, err
 }
@@ -227,29 +243,22 @@ func (service *Service) RevokeMediaOccurrence(
 	return mediaReceiptFromStore(stored), err
 }
 
-func (service *Service) mediaPage(
-	ctx context.Context, kind string, options MediaListOptions,
-) (int, int64, error) {
+func (service *Service) mediaPage(kind string, options MediaListOptions) (string, error) {
 	if service == nil {
-		return 0, 0, ErrMediaCapabilityUnavailable
+		return "", ErrMediaCapabilityUnavailable
 	}
 	if options.Limit < 1 || options.Limit > 250 {
-		return 0, 0, errors.New("media page limit must be between 1 and 250")
-	}
-	fence, err := service.catalog.MediaVisibilityFence(ctx, service.principal)
-	if err != nil {
-		return 0, 0, err
+		return "", errors.New("media page limit must be between 1 and 250")
 	}
 	if options.Cursor == "" {
-		return 0, fence, nil
+		return "", nil
 	}
 	claim, err := service.verifyMediaPage(options.Cursor)
-	if err != nil || claim.Version != "v1" || claim.Principal != service.principal || claim.Kind != kind ||
-		claim.SourceID != options.SourceID ||
-		claim.Limit != options.Limit || claim.Fence != fence || claim.Offset < 0 {
-		return 0, 0, ErrMediaCursorInvalid
+	if err != nil || claim.Version != "v2" || claim.Principal != service.principal || claim.Kind != kind ||
+		claim.SourceID != options.SourceID || claim.Limit != options.Limit || claim.After == "" {
+		return "", ErrMediaCursorInvalid
 	}
-	return claim.Offset, fence, nil
+	return claim.After, nil
 }
 
 func (service *Service) signMediaPage(claim mediaPageClaim) (string, error) {

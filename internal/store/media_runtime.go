@@ -20,7 +20,6 @@ type MediaPublicationRequest struct {
 	Physical                                                           BlobPhysical
 	Occurrence                                                         MediaOccurrenceInput
 	CaptureJSON                                                        string
-	ClaimSHA256                                                        string
 	ProcessingProfile                                                  string
 	SuppliedInputID                                                    string
 	ProcessingPrincipal, ProcessingScope, ProcessingProfileFingerprint string
@@ -74,10 +73,11 @@ func (s *Store) SuppliedMediaContentVersion(
 	ctx context.Context, sourceID, sourceSHA256 string, sourceBytes int64,
 ) (ContentVersion, error) {
 	var versionID string
-	err := s.db.QueryRowContext(ctx, `SELECT v.content_version_id FROM media_source_heads h
-		JOIN media_source_versions v ON v.source_version_id=h.source_version_id
-		WHERE h.source_id=? AND v.source_sha256=? AND v.source_bytes=?`,
-		sourceID, sourceSHA256, sourceBytes).Scan(&versionID)
+	err := s.db.QueryRowContext(ctx, `SELECT v.content_version_id FROM media_source_versions v
+		JOIN content_versions c ON c.version_id=v.content_version_id
+		WHERE v.source_id=? AND v.revision=(SELECT MAX(revision) FROM media_source_versions WHERE source_id=?)
+			AND c.blob_hash=? AND c.size=?`,
+		sourceID, sourceID, sourceSHA256, sourceBytes).Scan(&versionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ContentVersion{}, ErrNotFound
 	}
@@ -104,9 +104,10 @@ func (s *Store) SuppliedTranscriptForSource(
 		FROM media_input_artifacts i
 		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
 		JOIN media_source_versions v ON v.source_version_id=i.source_version_id
+		JOIN content_versions c ON c.version_id=v.content_version_id
 		WHERE o.caller_principal=? AND o.visible=1 AND i.kind='transcript'
 		  AND i.source_id=o.source_id AND v.source_id=o.source_id
-		  AND o.source_version_id=v.source_version_id AND v.source_sha256=?
+		  AND o.source_version_id=v.source_version_id AND c.blob_hash=?
 		ORDER BY i.created_at DESC,i.input_id DESC LIMIT 1`, principal, sourceSHA256).Scan(
 		&result.InputID, &result.OccurrenceID, &result.SourceVersionID,
 		&result.ContentVersionID, &result.InputSHA256, &result.Kind,
@@ -144,10 +145,11 @@ func (s *Store) SuppliedTranscriptForSourceID(
 		FROM media_input_artifacts i
 		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
 		JOIN media_source_versions v ON v.source_version_id=i.source_version_id
+		JOIN content_versions c ON c.version_id=v.content_version_id
 		WHERE o.caller_principal=? AND o.visible=1 AND i.kind=?
 		  AND i.source_id=? AND i.source_id=o.source_id
 		  AND o.source_version_id=v.source_version_id AND v.source_id=?
-		  AND v.source_sha256=?`
+		  AND c.blob_hash=?`
 	args := []any{principal, kind, sourceID, sourceID, sourceSHA256}
 	if inputID != "" {
 		query += " AND i.input_id=?"
@@ -218,9 +220,10 @@ func (s *Store) SuppliedTranscriptBindingForSource(
 		FROM media_input_artifacts i
 		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
 		JOIN media_source_versions v ON v.source_version_id=i.source_version_id
+		JOIN content_versions c ON c.version_id=v.content_version_id
 		WHERE i.input_id=? AND o.caller_principal=? AND o.visible=1 AND i.kind=?
 		  AND i.source_id=o.source_id AND v.source_id=o.source_id
-		  AND o.source_version_id=v.source_version_id AND v.source_sha256=?`,
+		  AND o.source_version_id=v.source_version_id AND c.blob_hash=?`,
 		inputID, principal, kind, sourceSHA256).Scan(&result.InputID, &result.OccurrenceID,
 		&result.SourceVersionID, &result.ContentVersionID, &result.InputSHA256,
 		&result.Kind, &result.Origin, &result.Provider, &result.Language)
@@ -276,8 +279,7 @@ func (s *Store) RetainSuppliedMedia(
 	if !canonical.IsSHA256Hex(request.SourceID) || !canonical.IsSHA256Hex(request.ContentVersion.BlobHash) {
 		return MediaPublicationReceipt{}, ErrMediaSourceConflict
 	}
-	if _, err := canonicalJSONText(request.CaptureJSON, "media capture claim"); err != nil ||
-		!canonical.IsSHA256Hex(request.ClaimSHA256) {
+	if err := canonicalJSONText(request.CaptureJSON, "media capture claim"); err != nil {
 		return MediaPublicationReceipt{}, ErrMediaSourceConflict
 	}
 	if request.ProcessingProfile != "" {
@@ -301,11 +303,7 @@ func (s *Store) RetainSuppliedMedia(
 		return MediaPublicationReceipt{}, ErrMediaOperationConflict
 	}
 
-	operation := s.withMediaOperation
-	if request.ProcessingProfile != "" {
-		operation = s.withQueuedMediaOperation
-	}
-	receiptJSON, err := operation(ctx, request.Operation, func(tx *sql.Tx) (string, error) {
+	receiptJSON, err := s.withMediaOperation(ctx, request.Operation, func(tx *sql.Tx) (string, error) {
 		if request.ContentVersion.ID == "" {
 			version, err := s.sealMediaContentTx(ctx, tx, request.VirtualPath, request.ContentVersion, request.Physical)
 			if err != nil {
@@ -318,20 +316,16 @@ func (s *Store) RetainSuppliedMedia(
 		}
 		var sourceVersionID string
 		var revision int64
-		err := tx.QueryRowContext(ctx, `SELECT h.source_version_id,h.revision
-			FROM media_source_heads h JOIN media_source_versions v
-			ON v.source_version_id=h.source_version_id
-			WHERE h.source_id=? AND v.content_version_id=? AND v.source_sha256=? AND v.source_bytes=?`,
-			request.SourceID, request.ContentVersion.ID, request.ContentVersion.BlobHash,
-			request.ContentVersion.Size).Scan(&sourceVersionID, &revision)
+		err := tx.QueryRowContext(ctx, `SELECT source_version_id,revision FROM media_source_versions
+			WHERE source_id=? AND content_version_id=?
+				AND revision=(SELECT MAX(revision) FROM media_source_versions WHERE source_id=?)`,
+			request.SourceID, request.ContentVersion.ID, request.SourceID).Scan(&sourceVersionID, &revision)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return "", err
 		}
 		if errors.Is(err, sql.ErrNoRows) {
-			if scanErr := tx.QueryRowContext(ctx, `SELECT revision FROM media_source_heads WHERE source_id=?`,
-				request.SourceID).Scan(&revision); errors.Is(scanErr, sql.ErrNoRows) {
-				revision = 0
-			} else if scanErr != nil {
+			if scanErr := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision),0) FROM media_source_versions WHERE source_id=?`,
+				request.SourceID).Scan(&revision); scanErr != nil {
 				return "", scanErr
 			}
 			if revision != 0 {
@@ -365,9 +359,8 @@ func (s *Store) RetainSuppliedMedia(
 		if revision == 0 {
 			if err := s.publishMediaSourceVersionTx(ctx, tx, MediaSourceVersionInput{
 				ID: sourceVersionID, SourceID: request.SourceID,
-				ContentVersionID: request.ContentVersion.ID, SourceSHA256: request.ContentVersion.BlobHash,
-				CaptureJSON: request.CaptureJSON, ClaimSHA256: request.ClaimSHA256,
-				Revision: 1, ExpectedHeadRevision: 0, SourceBytes: request.ContentVersion.Size,
+				ContentVersionID: request.ContentVersion.ID, CaptureJSON: request.CaptureJSON,
+				Revision: 1, ExpectedHeadRevision: 0,
 				BindOccurrenceIDs: []string{occurrenceID},
 			}); err != nil {
 				return "", err
@@ -425,7 +418,7 @@ func (s *Store) FailMediaProcessing(
 	ctx context.Context, operationID, principal string,
 ) (MediaPublicationReceipt, error) {
 	return s.updateMediaProcessingReceipt(ctx, operationID, principal, func(receipt *MediaPublicationReceipt) error {
-		receipt.OperationState = mediaOperationFailed
+		receipt.OperationState = MediaOperationFailed
 		receipt.CoverageState = mediaCoverageUnavailable
 		return nil
 	})
@@ -441,32 +434,24 @@ func (s *Store) FinishMediaProcessing(
 			receipt.OperationState = mediaOperationSucceeded
 			receipt.CoverageState = "transcribed"
 		} else {
-			receipt.OperationState = mediaOperationFailed
+			receipt.OperationState = MediaOperationFailed
 			receipt.CoverageState = mediaCoverageUnavailable
 		}
 		return nil
 	})
 }
 
-// MediaProcessingContinuations returns a bounded deterministic page of
-// durable supplied-media processing intents that still need supervision.
+// MediaProcessingContinuations returns one principal's queued processing
+// receipts in operation ID order after the cursor.
 func (s *Store) MediaProcessingContinuations(
-	ctx context.Context, limit int, principals ...string,
+	ctx context.Context, principal, after string, limit int,
 ) ([]MediaPublicationReceipt, error) {
 	if limit < 1 || limit > 250 {
 		return nil, errors.New("media continuation limit must be between 1 and 250")
 	}
-	query := `SELECT receipt_json FROM media_operations
-		WHERE verb IN ('submit_supplied_media','retry_media') AND state IN ('queued','running')`
-	args := []any{}
-	if len(principals) > 0 {
-		query += ` AND principal=?`
-		args = append(args, principals[0])
-	}
-	query += ` ORDER BY CASE WHEN receipt_json LIKE '%"job_id"%' THEN 1 ELSE 0 END,
-		updated_at,operation_id LIMIT ?`
-	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT receipt_json FROM media_operations
+		WHERE verb IN ('submit_supplied_media','retry_media') AND json_extract(receipt_json,'$.operation_state')='queued'
+			AND principal=? AND operation_id>? ORDER BY operation_id LIMIT ?`, principal, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -526,9 +511,8 @@ func (s *Store) updateMediaProcessingReceipt(
 		if err := validateMediaReceipt(string(encoded)); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE media_operations SET state=?,receipt_json=?,updated_at=?
-			WHERE operation_id=? AND principal=?`, result.OperationState, string(encoded), nowRFC3339(),
-			operationID, principal)
+		_, err = tx.ExecContext(ctx, `UPDATE media_operations SET receipt_json=?,updated_at=?
+			WHERE operation_id=? AND principal=?`, string(encoded), nowRFC3339(), operationID, principal)
 		return err
 	})
 	return result, err

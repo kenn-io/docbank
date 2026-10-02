@@ -514,9 +514,6 @@ func runLoomRenditionJob(t *testing.T, service *Service, jobID string) {
 	require.NoError(t, err)
 	_, err = worker.RunJob(t.Context(), waiter.JobID)
 	require.NoError(t, err)
-	continuation := &MediaContinuationWorker{Service: service, IdleDelay: time.Millisecond}
-	_, err = continuation.RunOne(t.Context())
-	require.NoError(t, err)
 }
 
 type countingReader struct{ reads int }

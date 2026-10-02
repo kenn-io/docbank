@@ -108,13 +108,14 @@ func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
 	grantCount := bytes.Count(grantsBefore.Bytes(), []byte(`"type":"processing_consent_grant"`))
 	require.Equal(t, 1, grantCount)
 	sourceDigest := sha256.Sum256(raw)
-	mediaReceipt, err := service.SubmitSuppliedMedia(t.Context(), SuppliedMediaRequest{
+	submit := SuppliedMediaRequest{
 		OperationID: "00000000-0000-4000-8000-000000000101",
 		Filename:    "source.wav", MediaType: "audio/wav", SHA256: hex.EncodeToString(sourceDigest[:]),
 		ByteLength: int64(len(raw)), ExistingContentVersionID: version.ID,
 		Occurrence: MediaOccurrenceInput{Ref: "message-1", Revision: "1", Filename: "source.wav"},
 		Processing: &MediaProcessingRequest{Profile: "speech"},
-	})
+	}
+	mediaReceipt, err := service.SubmitSuppliedMedia(t.Context(), submit)
 	require.NoError(t, err)
 	require.Equal(t, "queued", mediaReceipt.OperationState)
 	require.Equal(t, "pending", mediaReceipt.CoverageState)
@@ -154,6 +155,11 @@ func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
 	terminal, err := service.Status(t.Context(), mediaReceipt.JobID)
 	require.NoError(t, err)
 	require.Equal(t, "completed", terminal.State)
+	replayed, err := service.SubmitSuppliedMedia(t.Context(), submit)
+	require.NoError(t, err)
+	require.Equal(t, mediaReceipt.JobID, replayed.JobID)
+	require.Equal(t, []string{"succeeded", "transcribed"}, []string{replayed.OperationState, replayed.CoverageState},
+		"replay derives state from the completed job")
 	badReceipt := store.MediaPublicationReceipt{VaultUID: fixture.catalog.VaultID(),
 		SourceID: mediaReceipt.SourceID, SourceVersionID: mediaReceipt.SourceVersionID,
 		ContentVersionID: mediaReceipt.ContentVersionID, OccurrenceID: mediaReceipt.OccurrenceID,
@@ -166,23 +172,24 @@ func TestMediaEnqueueAuthorizedReturnsBeforeProvider(t *testing.T) {
 		RequestSHA256: processingHash("bad-continuation"), SourceID: mediaReceipt.SourceID,
 	}, badReceipt)
 	require.NoError(t, err)
-	continuation := &MediaContinuationWorker{Service: service, IdleDelay: time.Millisecond}
-	processed, err := continuation.RunOne(t.Context())
-	require.NoError(t, err)
-	require.True(t, processed)
+	require.NoError(t, service.ContinueMediaProcessing(t.Context(), badReceipt))
 	failed, err := fixture.catalog.MediaOperationReceipt(t.Context(), store.MediaOperation{
 		ID: badReceipt.OperationID, Principal: service.principal, Verb: "retry_media",
 		RequestSHA256: processingHash("bad-continuation"), SourceID: mediaReceipt.SourceID})
 	require.NoError(t, err)
 	require.Contains(t, failed, `"operation_state":"failed"`)
-	processed, err = continuation.RunOne(t.Context())
+	pending, err := service.MediaProcessingTargets(t.Context(), "", 10)
 	require.NoError(t, err)
-	require.True(t, processed)
-	pending, err := fixture.catalog.MediaProcessingContinuations(t.Context(), 10)
+	require.Len(t, pending, 1, "only the completed submission awaits its recorded outcome")
+	require.NoError(t, service.ContinueMediaProcessing(t.Context(), pending[0]))
+	pending, err = service.MediaProcessingTargets(t.Context(), "", 10)
 	require.NoError(t, err)
 	require.Empty(t, pending)
 }
 
+// TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen catches
+// an interrupted or abandoned embedding job ending its media operation instead
+// of resuming.
 func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -226,6 +233,8 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 	require.NoError(t, json.Unmarshal(record.CanonicalProfile, &portable))
 	portable.Rendition.TrustBoundary = string(renderer.Descriptor().TrustBoundary)
 	portable.Embeddings = []document.EmbeddingBindingV1{direct}
+	// Required, so an abandoned job is not reported as an optional partial result.
+	portable.Embeddings[0].Activation = document.EmbeddingRequired
 	embedder := &embeddingWorkerProvider{runtime: embeddingFixture.runtime,
 		binding: direct.Name, descriptor: embeddingFixture.descriptor}
 	spool := filepath.Join(root, "spool")
@@ -276,16 +285,18 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 	require.NoError(t, err)
 	_, err = renditionWorker.RunJob(t.Context(), waiter.JobID)
 	require.NoError(t, err)
-	continuations, err := catalog.MediaProcessingContinuations(t.Context(), 10, service.principal)
+	targets, err := service.MediaProcessingTargets(t.Context(), "", 10)
 	require.NoError(t, err)
-	require.Len(t, continuations, 1)
+	require.Len(t, targets, 1)
+	target := targets[0]
+	derived, err := service.mediaOperationState(t.Context(), target)
+	require.NoError(t, err)
+	require.Equal(t, "queued", derived.OperationState, "a published rendition still awaits its embeddings")
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
-	processed, err := (&MediaContinuationWorker{Service: service}).runContinuation(cancelled, continuations[0])
-	require.ErrorIs(t, err, context.Canceled)
-	require.False(t, processed)
+	require.ErrorIs(t, service.ContinueMediaProcessing(cancelled, target), context.Canceled)
 	require.Zero(t, embeddingFixture.runtime.calls(), "cancellation must stop before embedding egress")
-	pending, err := catalog.MediaProcessingContinuations(t.Context(), 10, service.principal)
+	pending, err := service.MediaProcessingTargets(t.Context(), "", 10)
 	require.NoError(t, err)
 	require.Len(t, pending, 1, "cancellation must preserve resumable media intent")
 
@@ -306,7 +317,7 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 	runContext, stopRun := context.WithTimeout(t.Context(), 10*time.Second)
 	finished := make(chan struct{})
 	go func() {
-		processed, err = (&MediaContinuationWorker{Service: service}).RunOne(runContext)
+		err = service.ContinueMediaProcessing(runContext, target)
 		close(finished)
 	}()
 	t.Cleanup(func() { stopRun(); <-finished })
@@ -314,40 +325,40 @@ func TestMediaContinuationCancellationBeforeEmbeddingResumesAfterReopen(t *testi
 		status, statusErr := service.Status(t.Context(), receipt.JobID)
 		return statusErr == nil && status.State == "retry_wait"
 	}, 10*time.Second, time.Millisecond)
-	pending, readErr := catalog.MediaProcessingContinuations(t.Context(), 10, service.principal)
+	pending, readErr := service.MediaProcessingTargets(t.Context(), "", 10)
 	require.NoError(t, readErr)
 	require.Len(t, pending, 1, "retrying embeddings must not finish the media intent")
 	stopRun()
 	<-finished
 	require.ErrorIs(t, err, context.Canceled)
-	require.False(t, processed)
 	clockOffset.Store(int64(2 * time.Minute))
+	// A fenced attempt abandons the embedding job. Re-running embeddings reopens it.
+	waiting, err := service.Status(t.Context(), receipt.JobID)
+	require.NoError(t, err)
+	require.Len(t, waiting.EmbeddingJobIDs, 1)
+	at := service.clock()
+	claim, _, claimed, err := catalog.ClaimEmbeddingWork(t.Context(), waiting.EmbeddingJobIDs[0], "fenced-worker",
+		at, time.Minute, []string{embeddingFixture.descriptor.Fingerprint})
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, catalog.AbandonEmbeddingWork(t.Context(), claim, at))
+	abandoned, err := service.MediaStatus(t.Context(), receipt.SourceID)
+	require.NoError(t, err)
+	require.Equal(t, "queued", abandoned.OperationState, "an abandoned embedding job can still finish")
 	resumeContext, stopResume := context.WithTimeout(t.Context(), 10*time.Second)
 	defer stopResume()
-	processed, err = (&MediaContinuationWorker{Service: service}).RunOne(resumeContext)
-	require.NoError(t, err)
-	require.True(t, processed)
+	require.NoError(t, service.ContinueMediaProcessing(resumeContext, target))
 	require.Positive(t, embeddingFixture.runtime.calls())
 	status, err := service.Status(t.Context(), receipt.JobID)
 	require.NoError(t, err)
 	require.Equal(t, "completed", status.State)
 	require.Equal(t, 1, status.CompletedBindings)
-	pending, err = catalog.MediaProcessingContinuations(t.Context(), 10, service.principal)
+	pending, err = service.MediaProcessingTargets(t.Context(), "", 10)
 	require.NoError(t, err)
 	require.Empty(t, pending)
-}
-
-func TestMediaContinuationTransientCatalogReadRetriesNextTick(t *testing.T) {
-	t.Parallel()
-	fixture := newPublicationFixture(t)
-	worker := &MediaContinuationWorker{Service: &Service{
-		catalog: fixture.catalog, gate: newWorkerTestGate(),
-	}}
-	processed, err := worker.failContinuation(t.Context(),
-		store.MediaPublicationReceipt{}, fmt.Errorf("reading processing status: %w", sql.ErrConnDone))
-	require.ErrorIs(t, err, sql.ErrConnDone)
-	require.False(t, processed,
-		"transient catalog failures must remain pending for the next tick")
+	recorded, err := service.MediaStatus(t.Context(), receipt.SourceID)
+	require.NoError(t, err)
+	require.Equal(t, []string{"succeeded", "transcribed"}, []string{recorded.OperationState, recorded.CoverageState})
 }
 
 type mediaWorkerProvider struct{ *workerProvider }
@@ -362,94 +373,211 @@ func (provider *mediaWorkerProvider) Render(
 	return result, err
 }
 
-func TestMediaCancellationAndTransientEnqueueFailuresRemainResumable(t *testing.T) {
+// mediaStateFixture is one WAV original and a consented rendition profile
+// whose synthetic provider runs only when a test drives the worker.
+type mediaStateFixture struct {
+	publicationFixture
+
+	service  *Service
+	provider *mediaWorkerProvider
+	version  store.ContentVersion
+	selector Selector
+}
+
+func newMediaStateFixture(t *testing.T) mediaStateFixture {
+	t.Helper()
+	fixture := newPublicationFixture(t)
+	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
+		ID: "synthetic.media-worker-v1", ContractVersion: document.RenditionProviderContractVersion,
+		PolicyFingerprint: processingHash("media-worker-policy"),
+		TrustBoundary:     document.RenditionTrustLocalProcess,
+		SupportedFormats: []document.RenditionFormatCapability{{
+			MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile,
+		}},
+		ReturnsStructured: true,
+		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
+	})
+	require.NoError(t, err)
+	provider := &mediaWorkerProvider{workerProvider: &workerProvider{descriptor: descriptor}}
+	record := workerProcessingProfile(t, provider.Descriptor())
+	var portable document.ProcessingProfileV1
+	require.NoError(t, json.Unmarshal(record.CanonicalProfile, &portable))
+	portable.Rendition.TrustBoundary = string(provider.Descriptor().TrustBoundary)
+	service, err := NewService(ServiceConfig{
+		Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(),
+		SpoolDirectory: t.TempDir(), Principal: "operator:synthetic", Scope: "document-processing",
+		Profiles: map[string]ProfileConfig{"speech": {Profile: portable, RenditionProvider: provider}},
+	})
+	require.NoError(t, err)
+	f := mediaStateFixture{publicationFixture: fixture, service: service, provider: provider}
+	f.version, f.selector = f.addWAV(t, "source.wav", mediatest.WAV())
+	plan, err := service.Plan(t.Context(), f.selector)
+	require.NoError(t, err)
+	_, err = service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: f.selector, PlanFingerprint: plan.Fingerprint})
+	require.NoError(t, err)
+	return f
+}
+
+func (f mediaStateFixture) addWAV(t *testing.T, name string, raw []byte) (store.ContentVersion, Selector) {
+	t.Helper()
+	written, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
+	require.NoError(t, err)
+	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), name,
+		written.Hash, written.Size, "audio/wav", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	version, err := f.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
+	require.NoError(t, err)
+	return version, Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "speech"}
+}
+
+func (f mediaStateFixture) suppliedRequest(operationID string, processing *MediaProcessingRequest) SuppliedMediaRequest {
+	return SuppliedMediaRequest{OperationID: operationID, Filename: "source.wav", MediaType: "audio/wav",
+		SHA256: f.version.BlobHash, ByteLength: f.version.Size, ExistingContentVersionID: f.version.ID,
+		Occurrence: MediaOccurrenceInput{Ref: "message", Revision: "1"}, Processing: processing}
+}
+
+func (f mediaStateFixture) enqueue(t *testing.T, selector Selector) Job {
+	t.Helper()
+	plan, err := f.service.Plan(t.Context(), selector)
+	require.NoError(t, err)
+	job, err := f.service.EnqueueAuthorized(t.Context(), selector, mediaSourceBinding{}, plan.Fingerprint,
+		f.service.renditionConsentRequest(f.service.profiles["speech"]), "")
+	require.NoError(t, err)
+	return job
+}
+
+func (f mediaStateFixture) run(t *testing.T, jobID string) error {
+	t.Helper()
+	waiter, err := f.catalog.RenditionJobWaiterByID(t.Context(), jobID)
+	require.NoError(t, err)
+	worker, err := NewRenditionWorker(RenditionWorkerConfig{
+		Catalog: f.catalog, Blobs: f.blobs, Runtime: f.service.renditions, Gate: newWorkerTestGate(),
+		Owner: "media-state-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
+	})
+	require.NoError(t, err)
+	_, err = worker.RunJob(t.Context(), waiter.JobID)
+	return err
+}
+
+// TestMediaAdmissionInterruptedBeforeJobResumesThroughBackfill catches a
+// receipt committed without its job staying unbound after an interruption.
+func TestMediaAdmissionInterruptedBeforeJobResumesThroughBackfill(t *testing.T) {
 	t.Parallel()
 	for _, retry := range []bool{false, true} {
 		t.Run(fmt.Sprintf("retry=%t", retry), func(t *testing.T) {
-			fixture := newPublicationFixture(t)
-			descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
-				ID: "synthetic.media-worker-v1", ContractVersion: document.RenditionProviderContractVersion,
-				PolicyFingerprint: processingHash("media-worker-policy"),
-				TrustBoundary:     document.RenditionTrustLocalProcess,
-				SupportedFormats: []document.RenditionFormatCapability{{
-					MediaFamily: "audio", MediaType: "audio/wav", InputKind: document.RenditionInputOriginalFile,
-				}},
-				ReturnsStructured: true,
-				ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
-			})
-			require.NoError(t, err)
-			provider := &mediaWorkerProvider{workerProvider: &workerProvider{descriptor: descriptor}}
-			raw := mediatest.WAV()
-			written, err := fixture.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
-			require.NoError(t, err)
-			node, err := fixture.catalog.CreateFile(t.Context(), fixture.catalog.RootID(), "source.wav",
-				written.Hash, written.Size, "audio/wav", processingBlobPhysical(t, written))
-			require.NoError(t, err)
-			record := workerProcessingProfile(t, provider.Descriptor())
-			var portable document.ProcessingProfileV1
-			require.NoError(t, json.Unmarshal(record.CanonicalProfile, &portable))
-			portable.Rendition.TrustBoundary = string(provider.Descriptor().TrustBoundary)
-			service, err := NewService(ServiceConfig{
-				Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(),
-				SpoolDirectory: t.TempDir(), Principal: "operator:synthetic", Scope: "document-processing",
-				Profiles: map[string]ProfileConfig{"speech": {Profile: portable, RenditionProvider: provider}},
-			})
-			require.NoError(t, err)
-			version, err := fixture.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
-			require.NoError(t, err)
-
-			request := SuppliedMediaRequest{
-				OperationID: "00000000-0000-4000-8000-000000000711", Filename: "source.wav",
-				MediaType: "audio/wav", SHA256: version.BlobHash, ByteLength: version.Size,
-				ExistingContentVersionID: version.ID, Occurrence: MediaOccurrenceInput{Ref: "cancelled", Revision: "1"},
+			f := newMediaStateFixture(t)
+			service := f.service
+			request := f.suppliedRequest("00000000-0000-4000-8000-000000000711", nil)
+			admit := func(ctx context.Context) (MediaReceipt, error) {
+				request.Processing = &MediaProcessingRequest{Profile: "speech"}
+				return service.SubmitSuppliedMedia(ctx, request)
 			}
-			var retained MediaReceipt
+			operationID := request.OperationID
 			if retry {
-				retained, err = service.SubmitSuppliedMedia(t.Context(), request)
+				retained, err := service.SubmitSuppliedMedia(t.Context(), request)
 				require.NoError(t, err)
+				operationID = "00000000-0000-4000-8000-000000000712"
+				admit = func(ctx context.Context) (MediaReceipt, error) {
+					return service.RetryMedia(ctx, operationID, retained.SourceID, MediaProcessingRequest{Profile: "speech"})
+				}
 			}
-			selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "speech"}
-			plan, err := service.Plan(t.Context(), selector)
-			require.NoError(t, err)
-			_, err = service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint})
-			require.NoError(t, err)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			gate := service.gate
 			service.gate = &cancelMediaAfterCommitGate{processingOperationGate: gate, cancel: cancel}
-			operationID := request.OperationID
-			if retry {
-				operationID = "00000000-0000-4000-8000-000000000712"
-				_, err = service.RetryMedia(ctx, operationID, retained.SourceID, MediaProcessingRequest{Profile: "speech"})
-			} else {
-				request.Processing = &MediaProcessingRequest{Profile: "speech"}
-				_, err = service.SubmitSuppliedMedia(ctx, request)
-			}
+			_, err := admit(ctx)
 			service.gate = gate
 			require.ErrorIs(t, err, context.Canceled)
-			pending, err := service.catalog.MediaProcessingContinuations(t.Context(), 10, service.principal)
+			// A restarted process keeps only the catalog; the job-less receipt is its sole record.
+			service, err = NewService(ServiceConfig{Catalog: f.catalog, Blobs: f.blobs, Gate: newWorkerTestGate(),
+				SpoolDirectory: t.TempDir(), Principal: "operator:synthetic", Scope: "document-processing",
+				Profiles: map[string]ProfileConfig{"speech": {Profile: service.profiles["speech"].portable,
+					RenditionProvider: f.provider}}})
 			require.NoError(t, err)
-			require.Len(t, pending, 1, "a committed enqueue intent must survive caller cancellation")
-			require.Equal(t, operationID, pending[0].OperationID)
-			require.Empty(t, pending[0].JobID)
-			workerContext, stopWorker := context.WithTimeout(t.Context(), 10*time.Second)
-			defer stopWorker()
-			failAt := 1 // Retry enqueue failure after admission.
-			if retry {
-				failAt = 2 // Retry receipt persistence after a successful enqueue.
-			}
-			service.gate = &retryMediaMutationGate{processingOperationGate: gate,
-				failAt: failAt, cancel: stopWorker}
-			err = (&MediaContinuationWorker{Service: service, IdleDelay: time.Millisecond}).Run(workerContext)
-			require.ErrorIs(t, err, context.Canceled, "transient storage errors must not stop the worker")
-			service.gate = gate
-			pending, err = service.catalog.MediaProcessingContinuations(t.Context(), 10, service.principal)
+			targets, err := service.MediaProcessingTargets(t.Context(), "", 10)
 			require.NoError(t, err)
-			require.Len(t, pending, 1)
-			require.NotEmpty(t, pending[0].JobID, "the worker must resume enqueueing after cancellation")
-			require.Zero(t, provider.calls)
+			require.Len(t, targets, 1, "a committed admission must survive caller cancellation")
+			require.Equal(t, operationID, targets[0].OperationID)
+			require.Empty(t, targets[0].JobID)
+
+			require.NoError(t, service.ContinueMediaProcessing(t.Context(), targets[0]))
+			replayed, err := admit(t.Context())
+			require.NoError(t, err)
+			require.NotEmpty(t, replayed.JobID, "the backfill binds the job the replay reports")
+			require.Equal(t, "queued", replayed.OperationState)
+			status, err := service.Status(t.Context(), replayed.JobID)
+			require.NoError(t, err)
+			require.Equal(t, "queued", status.State)
+			require.Zero(t, f.provider.calls)
+			require.NoError(t, f.run(t, replayed.JobID))
+			targets, err = service.MediaProcessingTargets(t.Context(), "", 10)
+			require.NoError(t, err)
+			require.Len(t, targets, 1, "a queued receipt stays listed until its outcome is recorded")
+			require.NoError(t, service.ContinueMediaProcessing(t.Context(), targets[0]))
+			targets, err = service.MediaProcessingTargets(t.Context(), "", 10)
+			require.NoError(t, err)
+			require.Empty(t, targets)
 		})
 	}
+}
+
+// TestMediaOperationStateFollowsJob catches a receipt reporting a state its
+// bound rendition job does not have.
+func TestMediaOperationStateFollowsJob(t *testing.T) {
+	t.Parallel()
+	f := newMediaStateFixture(t)
+	ctx := t.Context()
+	job := f.enqueue(t, f.selector)
+	failingRaw := mediatest.WAV()
+	failingRaw[len(failingRaw)-1]++
+	_, failingSelector := f.addWAV(t, "failing.wav", failingRaw)
+	failingJob := f.enqueue(t, failingSelector)
+	coverage := map[string]string{"queued": "pending", "succeeded": "transcribed", "failed": "unavailable"}
+	receipt := func(jobID, state string) store.MediaPublicationReceipt {
+		return store.MediaPublicationReceipt{OperationID: "00000000-0000-4000-8000-000000000901", JobID: jobID,
+			ProcessingProfile: "speech", ProcessingProfileFingerprint: f.service.profiles["speech"].record.Fingerprint,
+			OperationState: state, CoverageState: coverage[state]}
+	}
+	derive := func(service *Service, stored store.MediaPublicationReceipt) string {
+		t.Helper()
+		derived, err := service.mediaOperationState(ctx, stored)
+		require.NoError(t, err)
+		return derived.OperationState + "/" + derived.CoverageState
+	}
+	// A restore starts a new processing incarnation while both jobs are queued.
+	var archive bytes.Buffer
+	require.NoError(t, f.catalog.ExportMetadata(ctx, &archive))
+	restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	require.NoError(t, restored.ImportMetadata(ctx, &archive))
+
+	unprocessed := receipt(job.ID, "succeeded")
+	unprocessed.ProcessingProfile, unprocessed.CoverageState = "", "unprocessed"
+	for _, check := range []struct {
+		name, want string
+		service    *Service
+		stored     store.MediaPublicationReceipt
+	}{
+		{"rendition queued", "queued/pending", f.service, receipt(job.ID, "queued")},
+		{"older processing incarnation", "failed/unavailable", &Service{catalog: restored}, receipt(job.ID, "queued")},
+		{"unknown job while queued", "failed/unavailable", f.service, receipt(processingHash("missing"), "queued")},
+		{"unknown job after success", "succeeded/transcribed", f.service, receipt(processingHash("missing"), "succeeded")},
+		{"admission without a job", "queued/pending", f.service, receipt("", "queued")},
+		{"no processing profile", "succeeded/unprocessed", f.service, unprocessed},
+	} {
+		require.Equal(t, check.want, derive(check.service, check.stored), check.name)
+	}
+	require.NoError(t, f.run(t, job.ID))
+	require.Equal(t, "succeeded/transcribed", derive(f.service, receipt(job.ID, "queued")), "rendition completed")
+	changedProfile := receipt(job.ID, "queued")
+	changedProfile.ProcessingProfileFingerprint = processingHash("earlier-speech-profile")
+	require.Equal(t, "failed/unavailable", derive(f.service, changedProfile),
+		"the backfill fails a receipt whose profile changed after admission")
+	require.Equal(t, "failed/unavailable", derive(f.service, receipt(job.ID, "failed")), "stored failure wins")
+	f.provider.renderErr = workerProviderError(t, document.RenditionErrorUnsupportedInput)
+	_ = f.run(t, failingJob.ID)
+	require.Equal(t, "failed/unavailable", derive(f.service, receipt(failingJob.ID, "queued")), "rendition failed")
 }
 
 // Cancel after the actual store commit, before request-owned planning/enqueue.
@@ -467,22 +595,20 @@ func (gate *cancelMediaAfterCommitGate) MutateContext(ctx context.Context, fn fu
 	return err
 }
 
-// Inject one transient mutation failure, then stop after the resumed receipt is committed.
-type retryMediaMutationGate struct {
-	processingOperationGate
-
-	call, failAt int
-	cancel       context.CancelFunc
-}
-
-func (gate *retryMediaMutationGate) MutateContext(ctx context.Context, fn func() error) error {
-	gate.call++
-	if gate.call == gate.failAt {
-		return sql.ErrConnDone
-	}
-	err := gate.processingOperationGate.MutateContext(ctx, fn)
-	if err == nil && gate.call == gate.failAt+2 {
-		gate.cancel()
-	}
-	return err
+// TestMediaProcessingTransientStorageErrorKeepsReceiptQueued catches a
+// temporary catalog failure permanently failing a media operation.
+func TestMediaProcessingTransientStorageErrorKeepsReceiptQueued(t *testing.T) {
+	t.Parallel()
+	f := newMediaStateFixture(t)
+	_, err := f.service.SubmitSuppliedMedia(t.Context(), f.suppliedRequest("00000000-0000-4000-8000-000000000921",
+		&MediaProcessingRequest{Profile: "speech"}))
+	require.NoError(t, err)
+	targets, err := f.service.MediaProcessingTargets(t.Context(), "", 10)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	transient := fmt.Errorf("reading processing status: %w", sql.ErrConnDone)
+	require.ErrorIs(t, f.service.failMediaProcessing(t.Context(), targets[0], transient), sql.ErrConnDone)
+	targets, err = f.service.MediaProcessingTargets(t.Context(), "", 10)
+	require.NoError(t, err)
+	require.Len(t, targets, 1, "the backfill retries the receipt")
 }

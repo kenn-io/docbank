@@ -310,9 +310,14 @@ func runServe(ctx context.Context) (retErr error) {
 	); err != nil {
 		return err
 	}
-	if err := jobSupervisor.Start("process:media-continuations", (&processing.MediaContinuationWorker{
-		Service: processingService, IdleDelay: time.Second,
-	}).Run); err != nil {
+	mediaContinuations := &processing.Backfill[store.MediaPublicationReceipt]{
+		Name: "media-continuations", Page: 50, IdleDelay: time.Second,
+		List:    processingService.MediaProcessingTargets,
+		Key:     func(receipt store.MediaPublicationReceipt) string { return receipt.OperationID },
+		Process: processingService.ContinueMediaProcessing,
+		Logger:  logger,
+	}
+	if err := jobSupervisor.Start("process:media-continuations", mediaContinuations.Run); err != nil {
 		return fmt.Errorf("starting media processing continuations: %w", err)
 	}
 	if len(mediaOriginProbes) > 0 {

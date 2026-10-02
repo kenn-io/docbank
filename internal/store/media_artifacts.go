@@ -21,7 +21,7 @@ type MediaInputArtifactRequest struct {
 func (s *Store) QueueMediaRetry(
 	ctx context.Context, op MediaOperation, receipt MediaPublicationReceipt,
 ) (MediaPublicationReceipt, error) {
-	receiptRaw, err := s.withQueuedMediaOperation(ctx, op, func(*sql.Tx) (string, error) {
+	receiptRaw, err := s.withMediaOperation(ctx, op, func(*sql.Tx) (string, error) {
 		encoded, err := canonical.Marshal(receipt)
 		return string(encoded), err
 	})
@@ -136,10 +136,8 @@ func (s *Store) RetainRemoteRecordingMedia(
 			err := tx.QueryRowContext(ctx, `SELECT v.source_version_id,v.content_version_id
 				FROM media_source_versions v JOIN content_versions c
 				ON c.version_id=v.content_version_id
-				WHERE v.source_id=? AND v.source_sha256=? AND v.source_bytes=?
-					AND c.blob_hash=? AND c.size=? AND COALESCE(c.mime_type,'')=?
-				ORDER BY v.revision DESC LIMIT 1`, sourceID, request.InputSHA, request.ByteLength,
-				request.InputSHA, request.ByteLength, request.MediaType).Scan(&sourceVersionID, &contentVersionID)
+				WHERE v.source_id=? AND c.blob_hash=? AND c.size=? AND COALESCE(c.mime_type,'')=?
+				ORDER BY v.revision DESC LIMIT 1`, sourceID, request.InputSHA, request.ByteLength, request.MediaType).Scan(&sourceVersionID, &contentVersionID)
 			if errors.Is(err, sql.ErrNoRows) {
 				content, sealErr := s.sealMediaContentTx(ctx, tx, request.VirtualPath, ContentVersion{
 					BlobHash: request.InputSHA, Size: request.ByteLength, MimeType: request.MediaType}, request.Physical)
@@ -147,10 +145,7 @@ func (s *Store) RetainRemoteRecordingMedia(
 					return "", sealErr
 				}
 				var currentRevision int64
-				headErr := tx.QueryRowContext(ctx, `SELECT revision FROM media_source_heads WHERE source_id=?`, sourceID).Scan(&currentRevision)
-				if errors.Is(headErr, sql.ErrNoRows) {
-					currentRevision = 0
-				} else if headErr != nil {
+				if headErr := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision),0) FROM media_source_versions WHERE source_id=?`, sourceID).Scan(&currentRevision); headErr != nil {
 					return "", headErr
 				}
 				sourceVersionID, sealErr = newUUIDv4()
@@ -159,9 +154,8 @@ func (s *Store) RetainRemoteRecordingMedia(
 				}
 				if err := s.publishMediaSourceVersionTx(ctx, tx, MediaSourceVersionInput{
 					ID: sourceVersionID, SourceID: sourceID, ContentVersionID: content.ID,
-					SourceSHA256: request.InputSHA, SourceBytes: request.ByteLength,
-					CaptureJSON: captureJSON, ClaimSHA256: digestCatalogJSON([]byte(captureJSON)),
-					Revision: currentRevision + 1, ExpectedHeadRevision: currentRevision,
+					CaptureJSON: captureJSON,
+					Revision:    currentRevision + 1, ExpectedHeadRevision: currentRevision,
 					BindOccurrenceIDs: []string{request.OccurrenceID},
 				}); err != nil {
 					return "", err

@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"time"
 
 	"go.kenn.io/docbank/internal/store"
 )
 
 var ErrMediaProcessingUnsupported = errors.New("media processing is unsupported")
+
+// Aggregate job states that decide a media operation's outcome.
+const statusFailed, statusAbandoned, statusCompleted, statusPartial = "failed", "abandoned", "completed", "partial"
 
 func (service *Service) mediaProcessingProfile(name string) (configuredProfile, error) {
 	profile, ok := service.profiles[name]
@@ -166,65 +168,108 @@ func (service *Service) resolveMediaInputBinding(
 	return input.InputID, nil
 }
 
-// MediaContinuationWorker resumes durable enqueue intents and records their
-// terminal aggregate state. It performs provider work only through the
-// existing supervised rendition and embedding queues.
-type MediaContinuationWorker struct {
-	Service   *Service
-	IdleDelay time.Duration
+// completeMediaAdmission binds the rendition job for a processing receipt
+// whose admission committed without one. Other receipts return unchanged.
+func (service *Service) completeMediaAdmission(
+	ctx context.Context, stored store.MediaPublicationReceipt,
+) (store.MediaPublicationReceipt, error) {
+	if stored.ProcessingProfile == "" || stored.JobID != "" || stored.OperationState != "queued" {
+		return stored, nil
+	}
+	selector := Selector{NodeID: stored.ProcessingNodeID, ContentVersionID: stored.ContentVersionID,
+		Profile: stored.ProcessingProfile}
+	source := mediaSourceBinding{sourceID: stored.SourceID, sourceVersionID: stored.SourceVersionID}
+	plan, err := service.Plan(ctx, selector)
+	if err != nil {
+		return store.MediaPublicationReceipt{}, errors.Join(err, service.failMediaProcessing(ctx, stored, err))
+	}
+	job, err := service.EnqueueAuthorized(ctx, selector, source, plan.Fingerprint,
+		stored.ProcessingAuthorization, stored.SuppliedInputID)
+	if err != nil {
+		return store.MediaPublicationReceipt{}, errors.Join(err, service.failMediaProcessing(ctx, stored, err))
+	}
+	return service.recordMediaProcessingJob(ctx, stored, job.ID)
 }
 
-func (worker *MediaContinuationWorker) Run(ctx context.Context) error {
-	if worker == nil || worker.Service == nil {
-		return errors.New("media continuation service is required")
+// mediaOperationState derives a queued processing receipt's state from the
+// rendition waiter it binds. Terminal outcomes are recorded once by the
+// backfill, and a receipt without a job reports what admission stored.
+func (service *Service) mediaOperationState(
+	ctx context.Context, stored store.MediaPublicationReceipt,
+) (store.MediaPublicationReceipt, error) {
+	if stored.ProcessingProfile == "" || stored.JobID == "" || stored.OperationState != "queued" {
+		return stored, nil
 	}
-	delay := worker.IdleDelay
-	if delay <= 0 {
-		delay = time.Second
+	derived := stored
+	derived.OperationState, derived.CoverageState = store.MediaOperationFailed, "unavailable"
+	status, err := service.Status(ctx, stored.JobID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		// Purge and version delete remove waiters; in-flight work then fails.
+		return derived, nil
+	case err != nil:
+		return store.MediaPublicationReceipt{}, err
 	}
-	for {
-		processed, err := worker.RunOne(ctx)
-		if err != nil && (ctx.Err() != nil || !worker.Service.mediaProcessingRetryable(err)) {
-			return err
+	switch status.State {
+	case statusFailed, statusAbandoned:
+		// The backfill can reopen an abandoned or authorization-failed embedding
+		// job, so it records embedding outcomes.
+		if status.Phase == "embedding" {
+			derived.OperationState, derived.CoverageState = "queued", "pending"
 		}
-		if processed && err == nil {
-			continue
+		return derived, nil
+	case statusCompleted, statusPartial:
+		// The backfill fails a receipt whose profile changed after admission.
+		profile, ok := service.profiles[stored.ProcessingProfile]
+		if !ok || profile.record.Fingerprint != stored.ProcessingProfileFingerprint {
+			return derived, nil
 		}
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
+		// Embedding profiles finish when the backfill records it, after it rebuilds the index.
+		if len(profile.portable.Embeddings) == 0 {
+			derived.OperationState, derived.CoverageState = "succeeded", "transcribed"
+			return derived, nil
 		}
+		derived.OperationState, derived.CoverageState = "queued", "pending"
+		return derived, nil
 	}
+	current, err := service.admittedByCurrentIncarnation(ctx, stored.JobID)
+	if err != nil {
+		return store.MediaPublicationReceipt{}, err
+	}
+	if current {
+		derived.OperationState, derived.CoverageState = "queued", "pending"
+	}
+	return derived, nil
 }
 
-func (worker *MediaContinuationWorker) RunOne(ctx context.Context) (bool, error) {
-	if worker == nil || worker.Service == nil {
-		return false, errors.New("media continuation service is required")
-	}
-	service := worker.Service
-	continuations, err := service.catalog.MediaProcessingContinuations(ctx, 250, service.principal)
-	if err != nil || len(continuations) == 0 {
+// admittedByCurrentIncarnation reports whether the job's waiter holds authority
+// from the current processing incarnation. Restore grants no provider
+// authority, so unfinished work admitted by an earlier incarnation cannot finish.
+func (service *Service) admittedByCurrentIncarnation(ctx context.Context, jobID string) (bool, error) {
+	waiter, err := service.catalog.RenditionJobWaiterByID(ctx, jobID)
+	if err != nil {
 		return false, err
 	}
-	for _, continuation := range continuations {
-		processed, processErr := worker.runContinuation(ctx, continuation)
-		if processErr != nil || processed {
-			return processed, processErr
-		}
+	incarnation, err := service.catalog.CurrentProcessingIncarnation(ctx)
+	if err != nil {
+		return false, err
 	}
-	return false, nil
+	return waiter.AuthorizationIncarnationID == incarnation.ID, nil
 }
 
-func (worker *MediaContinuationWorker) runContinuation(
-	ctx context.Context, continuation store.MediaPublicationReceipt,
-) (bool, error) {
-	service := worker.Service
+// MediaProcessingTargets lists this principal's queued processing receipts.
+func (service *Service) MediaProcessingTargets(
+	ctx context.Context, after string, limit int,
+) ([]store.MediaPublicationReceipt, error) {
+	return service.catalog.MediaProcessingContinuations(ctx, service.principal, after, limit)
+}
+
+// ContinueMediaProcessing finishes interrupted admission, runs the embeddings a
+// completed media rendition needs, and records the terminal outcome.
+func (service *Service) ContinueMediaProcessing(ctx context.Context, continuation store.MediaPublicationReceipt) error {
 	profile, err := service.mediaProcessingProfile(continuation.ProcessingProfile)
 	if err != nil {
-		return worker.failContinuation(ctx, continuation, err)
+		return service.failMediaProcessing(ctx, continuation, err)
 	}
 	want := service.renditionConsentRequest(profile)
 	if continuation.ProcessingPrincipal != service.principal ||
@@ -232,75 +277,65 @@ func (worker *MediaContinuationWorker) runContinuation(
 		continuation.ProcessingProfileFingerprint != profile.record.Fingerprint ||
 		!sameMediaAuthorization(continuation.ProcessingAuthorization, want) ||
 		continuation.ProcessingAuthorization.PriorAuthorization == nil {
-		return worker.failContinuation(ctx, continuation, ErrPlanChanged)
+		return service.failMediaProcessing(ctx, continuation, ErrPlanChanged)
 	}
 	version, err := service.catalog.ContentVersionByID(ctx, continuation.ContentVersionID)
 	if err != nil {
-		return worker.failContinuation(ctx, continuation, err)
+		return service.failMediaProcessing(ctx, continuation, err)
 	}
 	source := mediaSourceBinding{sourceID: continuation.SourceID, sourceVersionID: continuation.SourceVersionID}
 	if _, err := service.resolveMediaInputBinding(ctx, continuation.ProcessingProfile,
 		version.BlobHash, source, continuation.SuppliedInputID); err != nil {
-		return worker.failContinuation(ctx, continuation, err)
+		return service.failMediaProcessing(ctx, continuation, err)
 	}
 	if continuation.JobID == "" {
-		selector := Selector{NodeID: continuation.ProcessingNodeID,
-			ContentVersionID: continuation.ContentVersionID, Profile: continuation.ProcessingProfile}
-		plan, err := service.Plan(ctx, selector)
-		if err != nil {
-			return worker.failContinuation(ctx, continuation, err)
-		}
-		job, err := service.EnqueueAuthorized(ctx, selector, source, plan.Fingerprint,
-			continuation.ProcessingAuthorization, continuation.SuppliedInputID)
-		if err != nil {
-			return worker.failContinuation(ctx, continuation, err)
-		}
-		_, err = service.recordMediaProcessingJob(ctx, continuation, job.ID)
-		return true, err
+		_, err = service.completeMediaAdmission(ctx, continuation)
+		return err
 	}
 	status, err := service.Status(ctx, continuation.JobID)
 	if err != nil {
-		return worker.failContinuation(ctx, continuation, err)
+		return service.failMediaProcessing(ctx, continuation, err)
 	}
 	switch {
-	case status.State == "completed" || status.Phase == "embedding":
+	case status.State == statusCompleted || status.Phase == "embedding":
 		if len(profile.portable.Embeddings) != 0 {
-			version, readErr := service.catalog.ContentVersionByID(ctx, continuation.ContentVersionID)
-			if readErr != nil {
-				return worker.failContinuation(ctx, continuation, readErr)
-			}
 			if _, runErr := service.runEmbeddings(ctx, version, profile,
 				continuation.ProcessingPrincipal, continuation.ProcessingScope,
 				continuation.ProcessingAuthorization.PriorAuthorization.GrantID, nil); runErr != nil {
-				// Consent denial is a job outcome. Let failContinuation handle
-				// concurrent shutdown without reporting it as a worker failure.
+				// Consent denial is a job outcome; other errors during shutdown are not.
 				if ctx.Err() != nil && !isEmbeddingConsentFailure(runErr) {
-					return false, runErr
+					return runErr
 				}
-				return worker.failContinuation(ctx, continuation, runErr)
+				return service.failMediaProcessing(ctx, continuation, runErr)
 			}
 			status, err = service.Status(ctx, continuation.JobID)
 			if err != nil {
-				return worker.failContinuation(ctx, continuation, err)
+				return service.failMediaProcessing(ctx, continuation, err)
 			}
 			switch status.State {
-			case "failed", "abandoned":
-				return worker.failContinuation(ctx, continuation, ErrRenditionFailed)
-			case "completed", "partial":
+			case statusFailed, statusAbandoned:
+				return service.failMediaProcessing(ctx, continuation, ErrRenditionFailed)
+			case statusCompleted, statusPartial:
 			default:
-				return false, nil
+				return nil
 			}
 		}
-		err = service.mediaMutation(context.WithoutCancel(ctx), func() error {
+		return service.mediaMutation(context.WithoutCancel(ctx), func() error {
 			_, updateErr := service.catalog.FinishMediaProcessing(context.WithoutCancel(ctx),
 				continuation.OperationID, continuation.ProcessingPrincipal, true)
 			return updateErr
 		})
-		return true, err
-	case status.State == "failed" || status.State == "abandoned":
-		return worker.failContinuation(ctx, continuation, ErrRenditionFailed)
+	case status.State == statusFailed || status.State == statusAbandoned:
+		return service.failMediaProcessing(ctx, continuation, ErrRenditionFailed)
 	default:
-		return false, nil
+		current, err := service.admittedByCurrentIncarnation(ctx, continuation.JobID)
+		if err != nil {
+			return service.failMediaProcessing(ctx, continuation, err)
+		}
+		if !current {
+			return service.failMediaProcessing(ctx, continuation, ErrRenditionFailed)
+		}
+		return nil
 	}
 }
 
@@ -323,13 +358,6 @@ func (service *Service) recordMediaProcessingJob(
 		return err
 	})
 	return stored, err
-}
-
-func (worker *MediaContinuationWorker) failContinuation(
-	ctx context.Context, continuation store.MediaPublicationReceipt, cause error,
-) (bool, error) {
-	err := worker.Service.failMediaProcessing(ctx, continuation, cause)
-	return err == nil, err
 }
 
 func (service *Service) mediaProcessingRetryable(err error) bool {

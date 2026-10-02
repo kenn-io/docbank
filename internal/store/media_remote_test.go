@@ -59,7 +59,7 @@ func TestRetainRemoteRecordingMedia(t *testing.T) {
 	require.NotEmpty(t, firstReceipt.ContentVersionID)
 	require.Equal(t, first.InputID, firstReceipt.SuppliedInputID)
 
-	require.NoError(t, s.DeclareMediaOccurrence(t.Context(), MediaOccurrenceInput{
+	require.NoError(t, declareTestOccurrence(t.Context(), s, MediaOccurrenceInput{
 		ID: "remote-occurrence-b", SourceID: sourceID, Principal: "operator:remote",
 		Ref: "remote-occurrence-b", Revision: "1", Filename: "recording-b.wav", MessageJSON: "{}",
 	}))
@@ -72,7 +72,7 @@ func TestRetainRemoteRecordingMedia(t *testing.T) {
 	require.Equal(t, firstReceipt.ContentVersionID, secondReceipt.ContentVersionID)
 
 	secondHash := testSHA256([]byte("remote-original-b"))
-	require.NoError(t, s.DeclareMediaOccurrence(t.Context(), MediaOccurrenceInput{
+	require.NoError(t, declareTestOccurrence(t.Context(), s, MediaOccurrenceInput{
 		ID: "remote-occurrence-c", SourceID: sourceID, Principal: "operator:remote",
 		Ref: "remote-occurrence-c", Revision: "1", Filename: "recording-c.wav", MessageJSON: "{}",
 	}))
@@ -82,9 +82,19 @@ func TestRetainRemoteRecordingMedia(t *testing.T) {
 	thirdReceipt, err := s.RetainRemoteRecordingMedia(t.Context(), third)
 	require.NoError(t, err)
 	require.NotEqual(t, firstReceipt.SourceVersionID, thirdReceipt.SourceVersionID)
-	var headRevision int64
-	require.NoError(t, s.db.QueryRow(`SELECT revision FROM media_source_heads WHERE source_id=?`, sourceID).Scan(&headRevision))
+	var headRevision, thirdRevision int64
+	require.NoError(t, s.db.QueryRow(`SELECT MAX(revision) FROM media_source_versions WHERE source_id=?`, sourceID).Scan(&headRevision))
 	require.Equal(t, int64(2), headRevision)
+	current, err := s.MediaSource(t.Context(), "operator:remote", sourceID)
+	require.NoError(t, err)
+	require.Equal(t, thirdReceipt.SourceVersionID, current.SourceVersionID)
+	require.NoError(t, s.db.QueryRow(`SELECT revision FROM media_source_versions WHERE source_version_id=?`, current.SourceVersionID).Scan(&thirdRevision))
+	require.Equal(t, int64(2), thirdRevision)
+	// A publisher that read revision 1 before the winner committed loses.
+	require.ErrorIs(t, s.PublishMediaSourceVersion(t.Context(), MediaSourceVersionInput{
+		ID: "racing-version", SourceID: sourceID, ContentVersionID: thirdReceipt.ContentVersionID,
+		CaptureJSON: "{}", Revision: 2, ExpectedHeadRevision: 1,
+	}), ErrMediaSourceConflict)
 
 	changed := remoteStoreArtifact("00000000-0000-4000-8000-000000000805", sourceID,
 		retained.OccurrenceID, firstReceipt.SourceVersionID, testSHA256([]byte("changed-input")), secondHash, 10,
@@ -92,12 +102,11 @@ func TestRetainRemoteRecordingMedia(t *testing.T) {
 	_, err = s.RetainRemoteRecordingMedia(t.Context(), changed)
 	require.ErrorIs(t, err, ErrMediaSourceConflict)
 
-	require.NoError(t, s.DeclareMediaOccurrence(t.Context(), MediaOccurrenceInput{
+	require.NoError(t, declareTestOccurrence(t.Context(), s, MediaOccurrenceInput{
 		ID: "remote-occurrence-revoked", SourceID: sourceID, Principal: "operator:remote",
 		Ref: "remote-occurrence-revoked", Revision: "1", Filename: "revoked.wav", MessageJSON: "{}",
 	}))
-	_, err = s.RevokeMediaOccurrence(t.Context(), "operator:remote", "remote-occurrence-revoked")
-	require.NoError(t, err)
+	require.NoError(t, revokeTestOccurrence(t.Context(), s, "operator:remote", "remote-occurrence-revoked"))
 	revoked := remoteStoreArtifact("00000000-0000-4000-8000-000000000806", sourceID,
 		"remote-occurrence-revoked", "", testSHA256([]byte("revoked-input")), firstHash, 10,
 		BlobPhysical{Encoding: "raw", StoredBytes: 10, Created: true})

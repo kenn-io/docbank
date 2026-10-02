@@ -999,8 +999,7 @@ var metadataPristineStateTables = []string{
 	"vector_index_unavailable_coverage", "rendition_blob_staging", "derivative_blob_purge_pending",
 	"derivative_pack_purge_pending", "document_people_generations", "document_people_heads",
 	"document_people_builds", "document_people", "package_preflights", "media_sources",
-	"media_source_versions", "media_source_heads", "media_occurrences", "media_visibility_fences",
-	"media_input_artifacts", "media_operations", "media_acquisitions", "media_protected_refs",
+	"media_source_versions", "media_occurrences", "media_input_artifacts", "media_operations",
 	"audit_baselines", "email_document_relations", "mailbox_chunks", "page_frames", "content_fts",
 	"export_plans",
 }

@@ -19,9 +19,9 @@ var ErrMediaSourceConflict = errors.New("media source revision conflict")
 // MediaSourceVersionInput publishes one exact retained recording revision.
 // ExpectedHeadRevision is zero when the source has no published head.
 type MediaSourceVersionInput struct {
-	ID, SourceID, ContentVersionID, SourceSHA256, CaptureJSON, ClaimSHA256 string
-	Revision, ExpectedHeadRevision, SourceBytes                            int64
-	BindOccurrenceIDs                                                      []string
+	ID, SourceID, ContentVersionID, CaptureJSON string
+	Revision, ExpectedHeadRevision              int64
+	BindOccurrenceIDs                           []string
 }
 
 // MediaSourceKey returns the vault-scoped identity for supplied bytes or one
@@ -54,8 +54,7 @@ func MediaSourceKey(kind, vaultUID, provider, originScope, sourceKey string) (st
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// PublishMediaSourceVersion atomically appends an immutable revision, advances
-// its source head, and binds only explicitly selected pending occurrences.
+// PublishMediaSourceVersion atomically appends an immutable revision and binds only explicitly selected pending occurrences.
 func (s *Store) PublishMediaSourceVersion(ctx context.Context, in MediaSourceVersionInput) error {
 	if err := validateMediaSourceVersionInput(in); err != nil {
 		return err
@@ -67,17 +66,12 @@ func (s *Store) publishMediaSourceVersionTx(ctx context.Context, tx *sql.Tx, in 
 	if err := validateMediaSourceVersionInput(in); err != nil {
 		return err
 	}
-	var coreHash string
-	var coreBytes int64
-	if err := tx.QueryRowContext(ctx, `SELECT blob_hash,size FROM content_versions
-			WHERE version_id=?`, in.ContentVersionID).Scan(&coreHash, &coreBytes); err != nil {
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM content_versions WHERE version_id=?`, in.ContentVersionID).Scan(&exists); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
 		return err
-	}
-	if coreHash != in.SourceSHA256 || coreBytes != in.SourceBytes {
-		return ErrMediaSourceConflict
 	}
 	var sourceID string
 	if err := tx.QueryRowContext(ctx, `SELECT source_id FROM media_sources WHERE source_id=?`, in.SourceID).Scan(&sourceID); err != nil {
@@ -87,10 +81,7 @@ func (s *Store) publishMediaSourceVersionTx(ctx context.Context, tx *sql.Tx, in 
 		return err
 	}
 	var currentRevision int64
-	err := tx.QueryRowContext(ctx, `SELECT revision FROM media_source_heads WHERE source_id=?`, in.SourceID).Scan(&currentRevision)
-	if errors.Is(err, sql.ErrNoRows) {
-		currentRevision = 0
-	} else if err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision),0) FROM media_source_versions WHERE source_id=?`, in.SourceID).Scan(&currentRevision); err != nil {
 		return err
 	}
 	if currentRevision != in.ExpectedHeadRevision || in.Revision != currentRevision+1 {
@@ -111,20 +102,12 @@ func (s *Store) publishMediaSourceVersionTx(ctx context.Context, tx *sql.Tx, in 
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO media_source_versions(
-			source_version_id,source_id,revision,content_version_id,source_sha256,
-			source_bytes,capture_json,claim_sha256,created_at
-		) VALUES(?,?,?,?,?,?,?,?,?)`, in.ID, in.SourceID, in.Revision, in.ContentVersionID,
-		in.SourceSHA256, in.SourceBytes, in.CaptureJSON, in.ClaimSHA256, nowRFC3339()); err != nil {
+			source_version_id,source_id,revision,content_version_id,capture_json,created_at
+		) VALUES(?,?,?,?,?,?)`, in.ID, in.SourceID, in.Revision, in.ContentVersionID, in.CaptureJSON, nowRFC3339()); err != nil {
 		if s.driver.IsUniqueViolation(err) {
 			return ErrMediaSourceConflict
 		}
 		return fmt.Errorf("publishing media source version: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO media_source_heads(source_id,source_version_id,revision)
-			VALUES(?,?,?) ON CONFLICT(source_id) DO UPDATE SET
-			source_version_id=excluded.source_version_id,revision=excluded.revision`,
-		in.SourceID, in.ID, in.Revision); err != nil {
-		return err
 	}
 	for _, occurrenceID := range in.BindOccurrenceIDs {
 		if _, err := tx.ExecContext(ctx, `UPDATE media_occurrences SET source_version_id=?
@@ -148,16 +131,10 @@ func validateMediaSourceVersionInput(in MediaSourceVersionInput) error {
 			return err
 		}
 	}
-	if in.Revision < 1 || in.ExpectedHeadRevision < 0 || in.SourceBytes < 0 ||
-		!canonical.IsSHA256Hex(in.SourceSHA256) || !canonical.IsSHA256Hex(in.ClaimSHA256) {
+	if in.Revision < 1 || in.ExpectedHeadRevision < 0 || len(in.CaptureJSON) == 0 || len(in.CaptureJSON) > 64<<10 {
 		return ErrMediaSourceConflict
 	}
-	if len(in.CaptureJSON) == 0 || len(in.CaptureJSON) > 64<<10 {
-		return ErrMediaSourceConflict
-	}
-	canonicalJSON, err := canonicalJSONText(in.CaptureJSON, "media capture claim")
-	if err != nil ||
-		digestCatalogJSON(canonicalJSON) != in.ClaimSHA256 {
+	if err := canonicalJSONText(in.CaptureJSON, "media capture claim"); err != nil {
 		return ErrMediaSourceConflict
 	}
 	seen := make(map[string]struct{}, len(in.BindOccurrenceIDs))

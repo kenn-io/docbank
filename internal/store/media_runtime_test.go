@@ -16,7 +16,7 @@ func suppliedMediaPublicationFixture(t *testing.T, s *Store) MediaPublicationReq
 	return MediaPublicationRequest{
 		Operation: MediaOperation{ID: "00000000-0000-4000-8000-000000000061", Principal: "operator",
 			Verb: "submit_supplied_media", RequestSHA256: testSHA256([]byte("request")), SourceID: sourceID},
-		SourceID: sourceID, ContentVersion: version, CaptureJSON: "{}", ClaimSHA256: digestCatalogJSON([]byte("{}")),
+		SourceID: sourceID, ContentVersion: version, CaptureJSON: "{}",
 		Occurrence: MediaOccurrenceInput{SourceID: sourceID, Principal: "operator", Ref: "recording",
 			Revision: "1", Filename: "recording.mp3", MessageJSON: "{}"},
 	}
@@ -33,9 +33,6 @@ func TestRetainSuppliedMediaReusesCallerRevisionAcrossOperations(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, first.OccurrenceID, second.OccurrenceID)
 	require.Equal(t, first.SourceVersionID, second.SourceVersionID)
-	var fence int64
-	require.NoError(t, s.db.QueryRow(`SELECT fence FROM media_visibility_fences WHERE caller_principal='operator'`).Scan(&fence))
-	require.Equal(t, int64(1), fence)
 	request.Operation.ID = "00000000-0000-4000-8000-000000000063"
 	request.Occurrence.Filename = "changed.mp3"
 	_, err = s.RetainSuppliedMedia(t.Context(), request)

@@ -17,16 +17,15 @@ var ErrMediaOperationConflict = errors.New("media operation conflict")
 
 const (
 	mediaOperationQueued     = "queued"
-	mediaOperationRunning    = "running"
 	mediaOperationSucceeded  = "succeeded"
-	mediaOperationFailed     = "failed"
+	MediaOperationFailed     = "failed"
 	mediaCoverageUnavailable = "unavailable"
 )
 
 // MediaOperation binds a caller mutation to one canonical request digest and
 // its durable replay receipt.
 type MediaOperation struct {
-	ID, Principal, Verb, RequestSHA256, State, SourceID, ReceiptJSON string
+	ID, Principal, Verb, RequestSHA256, SourceID, ReceiptJSON string
 }
 
 // MediaOperationReceipt resolves an exact successful/queued replay before
@@ -36,7 +35,7 @@ func (s *Store) MediaOperationReceipt(
 	ctx context.Context, op MediaOperation,
 ) (string, error) {
 	if err := validateMediaOperation(MediaOperation{ID: op.ID, Principal: op.Principal,
-		Verb: op.Verb, RequestSHA256: op.RequestSHA256, State: mediaOperationQueued, SourceID: op.SourceID}); err != nil {
+		Verb: op.Verb, RequestSHA256: op.RequestSHA256, SourceID: op.SourceID}); err != nil {
 		return "", err
 	}
 	var principal, verb, digest, receipt string
@@ -58,23 +57,6 @@ func (s *Store) MediaOperationReceipt(
 // canonical receipt in the same logical transaction. Identical retries read
 // that receipt without invoking mutate again.
 func (s *Store) withMediaOperation(
-	ctx context.Context, op MediaOperation, mutate func(*sql.Tx) (string, error),
-) (string, error) {
-	op.State = mediaOperationSucceeded
-	return s.withMediaOperationState(ctx, op, mutate)
-}
-
-// withQueuedMediaOperation records queue admission before any worker-owned
-// external action. Later claim-fenced lifecycle updates may replace its state
-// and receipt without changing the immutable request identity.
-func (s *Store) withQueuedMediaOperation(
-	ctx context.Context, op MediaOperation, mutate func(*sql.Tx) (string, error),
-) (string, error) {
-	op.State = mediaOperationQueued
-	return s.withMediaOperationState(ctx, op, mutate)
-}
-
-func (s *Store) withMediaOperationState(
 	ctx context.Context, op MediaOperation, mutate func(*sql.Tx) (string, error),
 ) (string, error) {
 	if err := validateMediaOperation(op); err != nil {
@@ -118,9 +100,9 @@ func (s *Store) withMediaOperationState(
 			stamp = last.Add(time.Nanosecond).UTC().Format(timestampLayout)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO media_operations(
-			operation_id,principal,verb,request_sha256,state,source_id,receipt_json,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?)`, op.ID, op.Principal, op.Verb, op.RequestSHA256,
-			op.State, nullableMediaID(op.SourceID), receipt, stamp, stamp); err != nil {
+			operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at
+		) VALUES(?,?,?,?,?,?,?,?)`, op.ID, op.Principal, op.Verb, op.RequestSHA256,
+			nullableMediaID(op.SourceID), receipt, stamp, stamp); err != nil {
 			if s.driver.IsUniqueViolation(err) {
 				return ErrMediaOperationConflict
 			}
@@ -139,9 +121,6 @@ func validateMediaOperation(op MediaOperation) error {
 		return err
 	}
 	if !validMediaOperationVerb(op.Verb) || !canonical.IsSHA256Hex(op.RequestSHA256) {
-		return ErrMediaOperationConflict
-	}
-	if op.State != mediaOperationQueued && op.State != mediaOperationSucceeded {
 		return ErrMediaOperationConflict
 	}
 	if op.SourceID != "" {
