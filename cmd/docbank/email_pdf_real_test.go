@@ -34,7 +34,7 @@ func TestEmailPDFRealDaemonCLI(t *testing.T) {
 	require.NoError(t, os.Mkdir(vault, 0700))
 	invoke := func(ctx context.Context, args ...string) ([]byte, error) {
 		cmd := exec.CommandContext(ctx, binary, args...) //nolint:gosec // Explicit qualification binary; arguments are synthetic test inputs.
-		cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C.UTF-8", "DOCBANK_HOME=" + vault}
+		cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C.UTF-8", "DOCBANK_HOME=" + vault, "DOCBANK_TELEMETRY_ENABLED=0"}
 		for _, key := range []string{"XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"} {
 			if value := os.Getenv(key); value != "" {
 				cmd.Env = append(cmd.Env, key+"="+value)
