@@ -176,5 +176,26 @@ Both tests passed on Linux amd64 with `CGO_ENABLED=1` and `CGO_ENABLED=0`:
 go test -tags fts5 ./cmd/docbank -run '^TestReportPDF' -count=1
 ```
 
-The complete `report` package also passed with CGO SQLite. These are local Linux
-results; no macOS or Windows execution is claimed.
+At implementation revision `5454e879`, a fresh whole-branch review found no
+Critical, Important, or Minor issues and no behaviors it declined to judge.
+The reviewer reran the focused date and PDF tests in both SQLite modes.
+
+Final local checks on Linux amd64 passed:
+
+```sh
+CGO_ENABLED=1 make test
+CGO_ENABLED=0 go test -timeout 20m -tags fts5 -parallel 8 ./...
+CGO_ENABLED=1 go test -race -tags fts5 ./report ./cmd/docbank \
+  -run '^(TestReportPDF|TestContentDates)' -count=1
+make lint
+make docs-build
+prek run
+```
+
+The two default-parallel pure-Go `make test` attempts failed different existing
+API deadline tests: storage evacuation, then browser-upload shutdown. Each
+passed three isolated repetitions. The full suite passed with eight parallel
+tests per package; neither unrelated test nor its product code was changed.
+The release-script and timing-budget checks in both `make test` attempts passed.
+These results do not establish that the default-parallel timing failures are
+fixed. No macOS or Windows execution is claimed.
