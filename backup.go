@@ -98,18 +98,19 @@ type BackupProgress struct {
 
 // BackupSnapshot summarizes one immutable recovery point.
 type BackupSnapshot struct {
-	ID              string
-	ParentID        string
-	CreatedAt       string
-	Tag             string
-	MetadataFormat  string
-	Nodes           int64
-	Files           int64
-	Blobs           int64
-	BlobBytes       int64
-	PacksAdded      int
-	BytesAdded      int64
-	DurationSeconds float64
+	ID               string
+	MinReaderVersion int
+	ParentID         string
+	CreatedAt        string
+	Tag              string
+	MetadataFormat   string
+	Nodes            int64
+	Files            int64
+	Blobs            int64
+	BlobBytes        int64
+	PacksAdded       int
+	BytesAdded       int64
+	DurationSeconds  float64
 }
 
 // BackupVerifyProblem identifies one repository-integrity finding.
@@ -427,7 +428,8 @@ func backupSnapshot(manifest *backup.Manifest) (BackupSnapshot, error) {
 	}
 	return BackupSnapshot{
 		ID: manifest.SnapshotID, ParentID: manifest.ParentID, CreatedAt: manifest.CreatedAt,
-		Tag: manifest.Options.Tag, MetadataFormat: metadataFormat,
+		MinReaderVersion: manifest.MinReaderVersion,
+		Tag:              manifest.Options.Tag, MetadataFormat: metadataFormat,
 		Nodes: stats.Nodes, Files: stats.Files, Blobs: stats.Blobs, BlobBytes: stats.BlobBytes,
 		PacksAdded: len(manifest.NewPacks), BytesAdded: manifest.BytesAdded,
 		DurationSeconds: manifest.DurationSeconds,

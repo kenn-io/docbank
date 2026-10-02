@@ -772,7 +772,11 @@ return err
 ```
 
 Use `OpenBackupRepository` after process restart. `Snapshots` lists recovery
-points in chronological order.
+points in chronological order. Save the repository's `ID()` and the returned
+snapshot's `ID` and `MinReaderVersion` with your recovery record.
+`MinReaderVersion` names the required backup format reader, not a Docbank release.
+Pass the saved snapshot ID to verification and restore so a newer backup on a
+shared repository cannot change which recovery point you use.
 
 Capture prevents content reclamation for the whole snapshot. Ordinary appends
 resume once Docbank fixes the SQLite view that the backup will use. Physical
@@ -788,6 +792,20 @@ To include your application's catalog in the same backup:
 Your application must coordinate its own writes during `Prepare`; Docbank's
 freeze pauses Docbank mutations, not changes to an unrelated application
 database. The callback must not call vault mutations while that lock is held.
+
+Extras larger than 64 MiB stream through bounded chunks, including files over
+4 GiB. Those snapshots require backup reader version 6. Once one exists, older
+readers cannot list snapshots, create backups, prune, or restore or verify the
+latest snapshot; verification of all snapshots also fails. They can still
+restore or verify a supported older snapshot by explicit ID. Upgrade every
+reader before writing large extras to a shared repository. Existing extras
+larger than 64 MiB are stored again as chunks on their first capture; their old
+whole-file blobs remain until the older snapshots are removed and pruned.
+
+Capture fails if an extra's length changes after it is opened. This does not
+detect in-place changes, so the immutable-source requirement still applies.
+Restore stages all extras as complete temporary files before replacing their
+destinations. Allow disk space for those copies alongside any existing files.
 
 Mark files containing credentials or tokens as `Sensitive`. Docbank rejects
 sensitive files in a plaintext repository unless your application explicitly
@@ -809,6 +827,7 @@ if err != nil {
     return err
 }
 _, err = repository.Restore(ctx, docbank.BackupRestoreOptions{
+    SnapshotID: snapshotID,
     Target: restoreRoot,
     ProtectedRoots: applicationStorageRoots,
 })
