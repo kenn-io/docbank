@@ -21,6 +21,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/report"
 )
 
@@ -103,6 +104,44 @@ func TestMCPReportDownloadPublication(t *testing.T) {
 	require.Equal(t, packet, saved)
 	args["overwrite"] = true
 	require.Equal(t, "published", exportCall(t, server, "download_report", args)["state"])
+}
+
+func TestMCPReportDownloadDropsInterruptedConnection(t *testing.T) {
+	summary, packet := reportArchiveFixture(t)
+	interrupted := httptest.NewServer(reportArchiveHandler(t, summary, packet[:len(packet)/2]))
+	defer interrupted.Close()
+	restarted := httptest.NewServer(reportArchiveHandler(t, summary, packet))
+	defer restarted.Close()
+	var acquisitions atomic.Int32
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		url := interrupted.URL
+		if acquisitions.Add(1) > 1 {
+			url = restarted.URL
+		}
+		connection := daemonconn.New(url, "synthetic-report-key")
+		t.Cleanup(func() { require.NoError(t, connection.Close()) })
+		return connection, nil
+	}, func(c *daemonconn.Connection) error { return c.Close() })
+	server := newServerWithOptionsAndDaemon(testImplementation(),
+		ServerOptions{AllowReportWrites: true}, lease)
+	directory := t.TempDir()
+	destination := filepath.Join(directory, "report.zip")
+	args := map[string]any{"report_id": summary.ID, "destination_path": destination}
+	raw := exchangeRaw(t, server, requestFor("tools/call", map[string]any{
+		"name": "download_report", "arguments": args,
+	}))
+	require.EqualValues(t, jsonrpc.CodeInternalError, decodeWireError(t, raw).Code)
+	require.EqualValues(t, 1, acquisitions.Load(), "interrupted downloads are not replayed")
+	entries, err := os.ReadDir(directory)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+
+	output := exportCall(t, server, "download_report", args)
+	require.Equal(t, "published", output["state"])
+	require.EqualValues(t, 2, acquisitions.Load(), "an explicit retry acquires the current daemon")
+	saved, err := os.ReadFile(destination)
+	require.NoError(t, err)
+	require.Equal(t, packet, saved)
 }
 
 func TestMCPReportDownloadAfterPublication(t *testing.T) {

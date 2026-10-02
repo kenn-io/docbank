@@ -71,7 +71,8 @@ func (r *reportTools) download(
 	}
 	defer func() {
 		if cleanupErr := cleanupReportStage(stage); cleanupErr != nil {
-			r.logger.Warn("MCP report stage cleanup failed", "error_code", "report_local_io", "error", cleanupErr)
+			r.logger.Warn("MCP report stage cleanup failed",
+				"error_code", "report_local_io", "error", cleanupErr)
 			if output.State != "" {
 				output.CleanupFailed = true
 			}

@@ -176,6 +176,9 @@ func TestTermReportDownloadBindsSummaryAndPacket(t *testing.T) {
 				require.Equal(t, []bool{true}, member.Hits)
 			case "needs review":
 				require.ErrorIs(t, err, daemonconn.ErrReportReviewRequired)
+			case "short":
+				require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+				require.NotErrorIs(t, err, daemonconn.ErrIntegrity)
 			case "budget":
 				require.ErrorIs(t, err, report.ErrBudgetExhausted)
 			case "closed file":
@@ -191,10 +194,14 @@ func TestTermReportDownloadBindsSummaryAndPacket(t *testing.T) {
 	}
 }
 
-func TestTermReportStreamRejectsExtraBytes(t *testing.T) {
+func TestTermReportStreamRejectsSizeOrDigestMismatch(t *testing.T) {
 	sum := sha256.Sum256([]byte("packet"))
-	stream := daemonconn.TermReportStream{ReadCloser: io.NopCloser(strings.NewReader("packet!")),
-		Size: 6, SHA256: hex.EncodeToString(sum[:])}
-	_, err := stream.CopyVerified(io.Discard)
-	require.ErrorIs(t, err, daemonconn.ErrIntegrity)
+	for _, body := range []string{"packet!", "packe", "PACKET"} {
+		t.Run(body, func(t *testing.T) {
+			stream := daemonconn.TermReportStream{ReadCloser: io.NopCloser(strings.NewReader(body)),
+				Size: 6, SHA256: hex.EncodeToString(sum[:])}
+			_, err := stream.CopyVerified(io.Discard)
+			require.ErrorIs(t, err, daemonconn.ErrIntegrity)
+		})
+	}
 }

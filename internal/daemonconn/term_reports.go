@@ -112,7 +112,8 @@ func (c *Connection) ReviseTermReport(ctx context.Context, id string, choices []
 		return report.Summary{}, err
 	}
 	if err := validateTermReportSummary(*response); err != nil || response.ParentID != id {
-		return report.Summary{}, &responseDecodeError{err: errors.New("report revision differs from requested parent")}
+		return report.Summary{}, &responseDecodeError{
+			err: errors.New("report revision differs from requested parent")}
 	}
 	return *response, nil
 }
@@ -127,14 +128,12 @@ type TermReportStream struct {
 }
 
 func (s *TermReportStream) CopyVerified(output io.Writer) (int64, error) {
-	if s == nil || s.ReadCloser == nil || output == nil || s.Size < 0 || s.Size > 512<<20 || !canonical.IsSHA256Hex(s.SHA256) {
+	if s == nil || s.ReadCloser == nil || output == nil ||
+		s.Size < 0 || s.Size > 512<<20 || !canonical.IsSHA256Hex(s.SHA256) {
 		return 0, integrityErrorf("invalid report download authority")
 	}
 	hash := sha256.New()
 	written, err := io.Copy(io.MultiWriter(output, hash), io.LimitReader(s, s.Size+1))
-	if errors.Is(err, io.ErrUnexpectedEOF) {
-		return written, integrityErrorf("report download ended before its advertised size")
-	}
 	if err != nil {
 		return written, err
 	}
