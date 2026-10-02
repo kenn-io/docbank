@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
+
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -118,13 +120,20 @@ func openCurrentStore(path string, driver docsqlite.Driver) (*Store, error) {
 // against racing a read-then-insert into the one_root unique index.
 func (s *Store) bootstrap() error {
 	deadline := time.Now().Add(5 * time.Second)
-	for {
+	_, err := backoff.Retry(context.Background(), func() (struct{}, error) {
 		err := s.bootstrapTx()
-		if err == nil || !s.driver.IsBusy(err) || time.Now().After(deadline) {
-			return err
+		if err == nil {
+			return struct{}{}, nil
 		}
-		time.Sleep(10 * time.Millisecond)
+		if !s.driver.IsBusy(err) || time.Now().After(deadline) {
+			return struct{}{}, backoff.Permanent(err)
+		}
+		return struct{}{}, err
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(10*time.Millisecond)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		return backoff.AsRetryError(err).LastErr
 	}
+	return nil
 }
 
 func (s *Store) bootstrapTx() error {

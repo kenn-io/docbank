@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -163,4 +167,64 @@ func TestWithPhotoRevisionRetriesOnceOnlyWhenInferred(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrStaleRevision)
 	assert.Zero(t, reads)
 	assert.Equal(t, []int64{7}, writes)
+}
+
+func TestPhotoImportCommands(t *testing.T) {
+	command, _, err := rootCmd.Find([]string{"photos", "import"})
+	require.NoError(t, err)
+	assert.NotNil(t, command.Flags().Lookup("json"))
+	command, _, err = rootCmd.Find([]string{"photos", "imports"})
+	require.NoError(t, err)
+	assert.NotEqual(t, "imports", command.Name())
+}
+
+func TestPhotoImportRejectsEmptySource(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	_, err := runCLI(t, "photos", "import", "")
+	require.Error(t, err)
+	assert.Equal(t, exitUsage, commandExitCode(err, true))
+}
+
+func TestPhotoImportOutputPointsToJobs(t *testing.T) {
+	previousJSON := photoImportJSON
+	t.Cleanup(func() { photoImportJSON = previousJSON })
+	operation := api.StorageOperation{ID: "00000000-0000-4000-8000-000000000021", Kind: "photo_import", State: "queued"}
+	var output bytes.Buffer
+	command := &cobra.Command{}
+	command.SetOut(&output)
+	photoImportJSON = false
+	require.NoError(t, writePhotoImportOutput(command, operation))
+	assert.Contains(t, output.String(), "docbank jobs show "+operation.ID+" --json")
+	assert.Contains(t, output.String(), "docbank jobs cancel "+operation.ID)
+	photoImportJSON = true
+	output.Reset()
+	require.NoError(t, writePhotoImportOutput(command, operation))
+	var accepted api.StorageOperation
+	require.NoError(t, json.Unmarshal(output.Bytes(), &accepted))
+	assert.Equal(t, operation, accepted)
+}
+
+func TestPhotoImportAmbiguitiesReachJobsShow(t *testing.T) {
+	_ = setupVaultHome(t)
+	source := t.TempDir()
+	for name, body := range map[string]string{"IMG_0001.ARW": "raw-one", "IMG_0001.DNG": "raw-two", "IMG_0001.JPG": "jpeg"} {
+		require.NoError(t, os.WriteFile(filepath.Join(source, name), []byte(body), 0o600))
+	}
+	output, err := runCLI(t, "photos", "import", source, "/photos", "--json")
+	require.NoError(t, err, output)
+	var accepted api.StorageOperation
+	require.NoError(t, json.Unmarshal([]byte(output), &accepted))
+	var completed api.StorageOperation
+	require.Eventually(t, func() bool {
+		shown, showErr := runCLI(t, "jobs", "show", accepted.ID, "--json")
+		return showErr == nil && json.Unmarshal([]byte(shown), &completed) == nil && completed.State == "completed"
+	}, 10*time.Second, 20*time.Millisecond)
+	receiptJSON, err := json.Marshal(completed.Receipt)
+	require.NoError(t, err)
+	var receipt store.PhotoImportReceipt
+	require.NoError(t, json.Unmarshal(receiptJSON, &receipt))
+	assert.Equal(t, int64(1), receipt.Ambiguous)
+	require.Len(t, receipt.Ambiguities, 1)
+	assert.Equal(t, store.PhotoImportMultipleRAW, receipt.Ambiguities[0].Reason)
+	assert.Len(t, receipt.Ambiguities[0].Files, 3)
 }

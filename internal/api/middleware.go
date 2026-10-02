@@ -256,7 +256,8 @@ func loopbackMiddleware(next http.Handler) http.Handler {
 }
 
 func isServerPathIngestRoute(path string) bool {
-	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight" || path == "/api/v1/packages/preflights"
+	return path == "/api/v1/ingest" || path == "/api/v1/ingest/stream" || path == "/api/v1/ingest/preflight" ||
+		path == "/api/v1/packages/preflights" || path == "/api/v1/photos/imports"
 }
 
 func isLoopbackRemote(remoteAddr string) bool {

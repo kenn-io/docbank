@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
+
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/store"
@@ -676,21 +678,27 @@ func (worker *RenditionWorker) mutate(ctx context.Context, operation func() erro
 
 func (worker *RenditionWorker) retryCatalog(ctx context.Context, operation func() error) error {
 	delay := min(worker.idleDelay, 250*time.Millisecond)
-	for {
+	_, err := backoff.Retry(ctx, func() (struct{}, error) {
 		err := operation()
 		if err == nil {
-			return nil
+			return struct{}{}, nil
 		}
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return struct{}{}, backoff.Permanent(ctx.Err())
 		}
 		if !worker.catalog.RenditionJobErrorRetryable(err) {
-			return renditionWorkerFatal(err)
+			return struct{}{}, backoff.Permanent(renditionWorkerFatal(err))
 		}
-		if err := waitRenditionWorker(ctx, delay); err != nil {
-			return err
+		return struct{}{}, err
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(delay)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+	if err != nil {
+		retryErr := backoff.AsRetryError(err)
+		if !errors.Is(retryErr.Cause, backoff.ErrPermanent) && ctx.Err() != nil {
+			return ctx.Err()
 		}
+		return retryErr.LastErr
 	}
+	return nil
 }
 
 func (worker *RenditionWorker) catalogOnce(ctx context.Context, operation func() error) error {

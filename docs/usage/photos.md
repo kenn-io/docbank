@@ -24,7 +24,8 @@ explicit asset operations or permanent node deletion.
 An asset can contain `raw`, `image`, `video`, and `sidecar` members. The
 default display order is RAW, image, then video. A vault preference can select
 image before RAW, and an asset override wins over the vault preference.
-Sidecars never display and must point at a RAW member in the same asset.
+Sidecars never display and must point at a RAW or image member in the same
+asset.
 Removing the selected member chooses another displayable member atomically,
 or stores a null display when none remains. Assets are limited to 256 files.
 
@@ -64,6 +65,62 @@ explicit `--revision` no longer matched, or the one automatic retry lost to
 another write. Read the asset or settings again before retrying. The daemon performs role,
 ownership, sidecar, display, and audit checks.
 
+## Import a camera folder
+
+`photos import` reads a folder on the daemon host and imports its photos into a
+vault folder:
+
+```text
+docbank photos import <source-root> [destination] [--json]
+docbank jobs show <operation-id> --json
+docbank jobs cancel <operation-id>
+```
+
+`photos import` queues the import as a background job and prints its operation
+ID. Follow and stop it like any other durable job: `jobs show` reports progress
+and the import receipt, and `jobs cancel` stops it.
+
+The import reads RAW files (`.ARW`, `.CR2`, `.CR3`, `.DNG`, `.NEF`, `.ORF`,
+`.RAF`, `.RW2`), images (`.JPG`, `.JPEG`, `.PNG`, `.GIF`, `.WEBP`, `.HEIC`),
+videos (`.MP4`, `.MOV`, `.M4V`, `.AVI`, `.MPG`), and `.XMP` sidecars. It leaves
+every other file out and counts it as `unsupported` in the receipt.
+The source folder must exist when you start the import; otherwise the command
+fails with exit code 2 and no import starts.
+
+Files with the same folder and name, such as `IMG_0001.ARW`, `IMG_0001.JPG`,
+and `IMG_0001.XMP`, become one photo. The XMP sidecar attaches to the RAW, or
+to the JPEG when there is no RAW. An XMP with no same-name RAW or JPEG imports
+as a plain file. A later full scan pairs companions when both source files
+are still present. Matching uses files in the scan and their current duplicate
+owners. A video always becomes its own photo. Each photo commits in one
+transaction, so a failure leaves no half photo behind, and running the same
+import again skips content already in the vault. A file edited since it was
+imported, such as an XMP saved again by a photo editor, becomes a new version
+of the file already in the photo, not a second file.
+
+The import leaves a group unpaired and lists it under `ambiguities` in the
+receipt from `jobs show <operation-id> --json` when:
+
+- two RAW files share a name, such as `IMG_0001.ARW` and `IMG_0001.DNG`: each
+  RAW and JPEG becomes its own photo and the sidecar stays a plain file;
+- same-name files already sit in separate photos: nothing is merged.
+
+Pair the RAW and JPEG files yourself: `photos assets inspect <asset-id>` shows
+file IDs, `photos assets detach` frees a file, and `photos assets attach` adds
+it to the other photo. A later scan containing the sidecar and its image
+attaches it to the settled photo. The final receipt lists every group that
+remained ambiguous during that run, with each file's source path, node ID,
+role, and photo asset ID.
+
+The import hashes the discovered files, waits one second, then compares each
+durable copy with that observation. It hashes every group member again before
+committing. A changed or deleted source leaves the entire group out and counts
+as changed, even if its size and modification time stayed the same. Import
+again to pick it up. The web Jobs drawer shows progress and has a Cancel
+button while the import runs; it leaves out source paths and the unpaired-group
+list. Cancel takes effect before the next group. A daemon restart resumes an unfinished import by
+scanning the folder again.
+
 ## HTTP and JSONL
 
 The daemon exposes asset inspection by asset ID or node ID, plus create,
@@ -86,5 +143,5 @@ an empty asset identity.
 Automatic enrollment and explicit graph writes are skipped or refused when
 audit authority is active, according to the existing audit boundary. The
 preexisting graph is preserved and becomes read-only when audit is enabled.
-Import grouping, browsing and query predicates, technical photo metadata,
-owners, and browser UI belong to later slices.
+Browsing and query predicates, technical photo metadata, owners, and browser
+UI belong to later slices.

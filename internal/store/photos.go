@@ -688,17 +688,17 @@ func (s *Store) AttachPhotoFile(ctx context.Context, assetID string, revision, n
 		}
 		if role == PhotoRoleSidecar {
 			if sidecar == nil {
-				return false, fmt.Errorf("%w: sidecar requires a raw target", ErrInvalidPhotoAsset)
+				return false, fmt.Errorf("%w: sidecar requires a RAW or image target", ErrInvalidPhotoAsset)
 			}
 			target, ok := photoFileByID(asset.Files, *sidecar)
 			if !ok {
 				return false, fmt.Errorf("%w: sidecar target not found", ErrInvalidPhotoAsset)
 			}
-			if target.Role != PhotoRoleRAW {
-				return false, fmt.Errorf("%w: sidecar target must be same-asset raw", ErrInvalidPhotoAsset)
+			if !photoSidecarTargetRole(target.Role) {
+				return false, fmt.Errorf("%w: sidecar target must be a same-asset RAW or image", ErrInvalidPhotoAsset)
 			}
 		} else if sidecar != nil {
-			return false, fmt.Errorf("%w: only sidecars may point to raw files", ErrInvalidPhotoAsset)
+			return false, fmt.Errorf("%w: only sidecars may point to RAW or image files", ErrInvalidPhotoAsset)
 		}
 		return true, s.insertPhotoFileTx(ctx, tx, PhotoFile{
 			AssetID: asset.ID, NodeID: node.ID, Role: role, SidecarOfID: sidecar, CreatedAt: nowRFC3339(),
@@ -707,7 +707,7 @@ func (s *Store) AttachPhotoFile(ctx context.Context, assetID string, revision, n
 }
 
 // DetachPhotoFile removes one member. Dependent sidecars are removed only
-// when ClearDependentSidecars is explicit; otherwise a RAW target is refused.
+// when ClearDependentSidecars is explicit; otherwise a photo source is refused.
 func (s *Store) DetachPhotoFile(ctx context.Context, assetID string, revision int64, fileID string, options PhotoDetachOptions) (PhotoAsset, error) {
 	if fileID == "" {
 		return PhotoAsset{}, fmt.Errorf("%w: file_id is required", ErrInvalidPhotoAsset)
@@ -717,7 +717,7 @@ func (s *Store) DetachPhotoFile(ctx context.Context, assetID string, revision in
 		if !ok {
 			return false, ErrNotFound
 		}
-		if file.Role == PhotoRoleRAW {
+		if photoSidecarTargetRole(file.Role) {
 			dependents := 0
 			for _, member := range asset.Files {
 				if member.SidecarOfID != nil && *member.SidecarOfID == fileID {
@@ -725,7 +725,7 @@ func (s *Store) DetachPhotoFile(ctx context.Context, assetID string, revision in
 				}
 			}
 			if dependents > 0 && !options.ClearDependentSidecars {
-				return false, fmt.Errorf("%w: RAW file has dependent sidecars", ErrInvalidPhotoAsset)
+				return false, fmt.Errorf("%w: photo source has dependent sidecars", ErrInvalidPhotoAsset)
 			}
 			if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE asset_id=? AND sidecar_of_file_id=?`, asset.ID, fileID); err != nil {
 				return false, err

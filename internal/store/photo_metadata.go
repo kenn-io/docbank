@@ -107,7 +107,7 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 		return errors.New("invalid photo receipt metadata")
 	}
 	switch v.Operation {
-	case "create", "promote", "attach", "detach", "exclude", "display", "purge", "settings_recompute":
+	case "create", "promote", "attach", "detach", "exclude", "display", "purge", "settings_recompute", "import":
 		if v.AssetID == nil || v.SettingsKey != nil {
 			return errors.New("invalid photo receipt asset/settings identity")
 		}

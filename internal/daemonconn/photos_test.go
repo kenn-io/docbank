@@ -4,8 +4,10 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 )
@@ -99,4 +101,37 @@ func TestPhotoNodeAddressedResponsesMustContainTheNode(t *testing.T) {
 	require.True(t, IsResponseDecodeError(err))
 	_, err = client.AttachPhotoFile(t.Context(), assetID, 1, 1, "image", nil)
 	require.NoError(t, err)
+}
+
+func TestPhotoImportClients(t *testing.T) {
+	operation := api.StorageOperation{ID: "00000000-0000-4000-8000-000000000021", Kind: "photo_import", State: "queued",
+		CreatedAt: "2026-09-22T00:00:00Z", UpdatedAt: "2026-09-22T00:00:00Z"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/photos/imports" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		body, err := json.Marshal(operation)
+		if err != nil {
+			t.Errorf("marshal response: %v", err)
+			return
+		}
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+	client := New(server.URL, "synthetic-key")
+	sourceRoot := filepath.Join(t.TempDir(), "camera")
+	started, err := client.StartPhotoImport(t.Context(), sourceRoot, "/photos")
+	require.NoError(t, err)
+	assert.Equal(t, operation.ID, started.ID)
+
+	for _, malformed := range []api.StorageOperation{{}, {ID: operation.ID, Kind: "repair", State: "queued"},
+		{ID: operation.ID, Kind: "photo_import", State: "completed", FinishedAt: "2026-09-22T00:00:00Z"}} {
+		operation = malformed
+		_, err = client.StartPhotoImport(t.Context(), sourceRoot, "/photos")
+		require.Error(t, err)
+		assert.True(t, IsResponseDecodeError(err))
+	}
 }

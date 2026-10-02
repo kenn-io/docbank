@@ -8,6 +8,8 @@ import (
 	"io"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
+
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/jobs"
@@ -69,23 +71,28 @@ func (r PlacementRunner) Start(
 		return errors.New("placement runner requires a job supervisor")
 	}
 	return supervisor.Start("storage:"+operationID, func(ctx context.Context) error {
-		for {
-			err := r.Run(ctx, operationID)
-			if !errors.Is(err, errStorageOperationDeferred) {
-				return err
-			}
-			delay := r.RetryDelay
-			if delay <= 0 {
-				delay = time.Second
-			}
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
+		delay := r.RetryDelay
+		if delay <= 0 {
+			delay = time.Second
 		}
+		_, err := backoff.Retry(ctx, func() (struct{}, error) {
+			err := r.Run(ctx, operationID)
+			if err == nil {
+				return struct{}{}, nil
+			}
+			if !errors.Is(err, errStorageOperationDeferred) {
+				return struct{}{}, backoff.Permanent(err)
+			}
+			return struct{}{}, err
+		}, backoff.WithBackOff(backoff.NewConstantBackOff(delay)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
+		if err != nil {
+			retryErr := backoff.AsRetryError(err)
+			if !errors.Is(retryErr.Cause, backoff.ErrPermanent) && ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return retryErr.LastErr
+		}
+		return nil
 	})
 }
 
