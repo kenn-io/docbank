@@ -3,7 +3,9 @@
 Reviewed design: [Inspect and recover search reports from the CLI](2026-10-01-cli-report-recovery-design.md).
 
 - Source revision: `b04894976863bfb92c9211216e50f2fad0aff3e6`.
-- Design SHA-256: `adb6732f72754e1f0871383d0263eb48d2795e7bc2ec679220a4e748d37f587d`.
+- Reviewed design SHA-256: `adb6732f72754e1f0871383d0263eb48d2795e7bc2ec679220a4e748d37f587d`.
+- Current design SHA-256 after the status-only banner update:
+  `afaef93387299bebfa10afcd9e8e4074d9c0877ad8b168529b90fbfd48b82260`.
 - During this review the only working-tree additions were this design and
   review. Product source, generated clients, dependencies, and existing tests
   matched the clean baseline. There are no Git submodules.
@@ -11,9 +13,42 @@ Reviewed design: [Inspect and recover search reports from the CLI](2026-10-01-cl
   generated-client library v3.75.15, and Kit v0.29.0. This proposal does not
   change dependencies or rely on new third-party behavior.
 
-This is the author's source check, not an independent adversarial review or
-runtime qualification. The commands remain proposed. Existing tests cited
-below were inspected, not rerun as evidence of a feature that is not built.
+This records the author's source check and disposition of the subsequent
+adversarial review. The design is approved for planning but remains unimplemented.
+Existing tests cited below were inspected, not rerun as evidence of a feature
+that is not built. Both design hashes are recorded above; the status-only
+banner update leaves the reviewed behavior unchanged.
+
+## Adversarial review disposition
+
+The supplied review covered clean commit `a3d4183a`, with no High or Medium
+findings, and found the design ready for implementation planning. The source
+still matches the recorded baseline. Its three Low notes resolve as follows:
+
+- **Post-publication cleanup: accept conservative wording.**
+  `cmd/docbank/report.go:93` joins staging cleanup into the return error after
+  `publishGetFile` can have succeeded. `cmd/docbank/get_publish.go:23` names
+  publication on a directory-sync failure, but a cleanup error need not do so.
+  Use neutral recovery wording for every publication-helper error: delivery did
+  not finish cleanly; inspect the destination before retrying. Preserve the
+  underlying cause and any existing published-file message. A later status-write
+  failure after a nil download result can positively say the file was saved.
+  Do not add a publication-state API for this slice.
+- **Data-directory destination restriction: defer.**
+  `cmd/docbank/get.go:183` has no such check, so existing create/revise and the
+  proposed download share that behavior. Native export checks the parent through
+  `home.Layout.ContainsDirectory` in `cmd/docbank/export_download.go:27`; MCP's
+  `validateExportDestination` also checks it. A consistent restriction would
+  change existing CLI behavior and is not part of this approved recovery scope.
+- **Existing dates ID preflight: defer.**
+  `cmd/docbank/report.go:216` acquires the daemon before calling the client,
+  whose `TermReportDates` validates the ID. The new commands validate first and
+  return usage exit 2 as specified. Changing the existing dates command's exit
+  behavior is optional adjacent work, not required for the new commands.
+
+These dispositions clarify the reviewed implementation boundary without changing
+the design's behavior. The earlier author findings and their design line numbers
+below remain tied to `a3d4183a`.
 
 ## Findings
 
@@ -111,5 +146,6 @@ and source evidence; do not implement. In particular:
 
 ## Verdict
 
-Ready for independent adversarial review. The design remains proposed; this
-author check does not approve implementation or close the umbrella workflow.
+Ready for implementation planning after adversarial review. No High or Medium
+finding remains. The commands are not implemented, and the umbrella's broader
+workflow acceptance assessment remains open.

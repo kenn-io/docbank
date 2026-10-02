@@ -1,7 +1,7 @@
 # Inspect and recover search reports from the CLI
 
-Status: proposed design; not implemented. Written for adversarial review before
-implementation planning.
+Status: reviewed design; not implemented. Approved for implementation planning.
+The behavioral contract reviewed at `a3d4183a` is unchanged.
 
 Source baseline: `b04894976863bfb92c9211216e50f2fad0aff3e6`, after PR #753.
 Scope decision: [bounded report/export workflow, #719](https://github.com/kenn-io/docbank/issues/719).
