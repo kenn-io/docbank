@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -37,6 +38,10 @@ func createCLIReport(t *testing.T) (report.Summary, report.Request) {
 	source := writeSourceFile(t, "synthetic-report.txt", "synthetic alpha")
 	_, err := runCLI(t, "add", source, "--dest", "/")
 	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		out, searchErr := runCLI(t, "search", "alpha")
+		return searchErr == nil && strings.Contains(out, "/synthetic-report.txt")
+	}, 15*time.Second, 25*time.Millisecond, "synthetic text was not searchable")
 	connection, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
 	node, err := connection.API().ResolvePath(t.Context(), &apiclient.ResolvePathRequestOptions{
@@ -100,6 +105,14 @@ func TestReportCLIHistoryAfterRestart(t *testing.T) {
 	require.True(t, ok, "%v", err)
 	require.Equal(t, "report_unavailable", code)
 	require.Equal(t, exitGeneral, commandExitCode(err, true))
+	destination := filepath.Join(t.TempDir(), "expired.zip")
+	_, err = runCLI(t, "search-export", "download", summary.ID, "--output", destination)
+	code, ok = daemonconn.ProblemCode(err)
+	require.True(t, ok, "%v", err)
+	require.Equal(t, "report_unavailable", code)
+	require.Equal(t, exitGeneral, commandExitCode(err, true))
+	_, err = os.Stat(destination)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestReportSummaryOutput(t *testing.T) {

@@ -271,5 +271,6 @@ func init() {
 	}
 	root.AddCommand(terms, verify, csv, dates, revise)
 	root.AddCommand(newReportShowCommand(), newReportHistoryCommand())
+	root.AddCommand(newReportDownloadCommand())
 	rootCmd.AddCommand(root)
 }
