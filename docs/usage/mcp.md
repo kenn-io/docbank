@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-30
+last_edited: 2026-10-01
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's bounded, daemon-first document surface.
 ---
@@ -84,7 +84,9 @@ Both transports have the fixed read catalog described below.
 `--allow-processing` adds only guarded processing start.
 `--allow-package-writes` separately permits load-file preflight, import, and
 custodian changes. `--allow-photo-edits` separately permits photo asset
-mutations. Enable any combination of flags when starting the process.
+mutations. `--allow-export-writes` enables native export jobs and local downloads.
+`--allow-report-writes` enables frozen report creation, revision, and local
+delivery. Each flag is independent; enable the combination you need at startup.
 
 ## Exact protocol contract
 
@@ -125,9 +127,6 @@ return HTTP 202 with no body. `subscriptions/listen` uses SSE, but Docbank
 advertises no subscriptions. A call with an empty notification selection
 acknowledges the request and completes immediately.
 
-`--allow-export-writes` separately permits native export previews, job writes,
-local download, and explicit release. Other write flags do not enable these tools.
-
 ## Tool catalog
 
 All inputs and outputs use closed JSON Schema 2020-12 objects: unknown fields
@@ -137,6 +136,8 @@ links, is capped at 1 MiB.
 
 | Tool | Contract and important bounds |
 | --- | --- |
+| `get_report_summary` | Reads an owned frozen report by its 48-character lowercase hexadecimal ID. If the full summary exceeds the result cap, returns `report_limit`; the handle remains usable. |
+| `get_report_dates` | Reads frozen date evidence with an optional opaque cursor and 1–100 members, default 50. Requests a 256 KiB page; candidates can continue on the next page. |
 | `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
@@ -471,3 +472,97 @@ large job, use `docbank export download <job-id> <path>` against the same vault
 or a suitable stdio invocation. A later download obtains a fresh ticket and
 transfers the whole file again. A lost response or cancellation after publication
 can leave a verified destination: inspect that file before retrying with overwrite.
+
+## Frozen search reports
+
+Enable report writes to capture exact current versions, review dates, and save
+an evidence ZIP on the machine running MCP:
+
+```bash
+docbank mcp --allow-report-writes
+# Include original-file exports in the same workflow:
+docbank mcp --allow-report-writes --allow-export-writes
+```
+
+| Tool | Contract |
+| --- | --- |
+| `create_report` | Takes a version 1 `request` with `selected_documents`, `timezone`, and `terms`. Captures 1–1,000 current document identities and 1–128 term rows. |
+| `revise_report` | Takes `report_id` and 1–1,000 reviewed date `choices`. Creates a child, retaining unmentioned parent choices and the original expiration. |
+| `download_report` | Takes `report_id`, an absolute `destination_path`, and optional `overwrite` (default false). Saves a verified ZIP outside the data directory. |
+
+These writes require the report flag. The two inspection tools remain available
+without it and can inspect CLI-created whole-vault or collection reports too.
+Creation through MCP accepts only exact current document selections. It starts
+no processing or provider work.
+
+1. Use `list_documents` or search to choose node/current-version pairs. For each
+   node, call `list_document_versions` and match the exact version to obtain
+   `blob_hash`. `get_document` inspects a chosen pair; it requires both IDs.
+2. Build `selected_documents.documents` with each positive `node_id`, canonical
+   lowercase UUIDv4 `version_id`, and lowercase SHA-256 `sha256`. Select each
+   node once. Use the [report request format](search-exports.md)
+   for terms, inclusive date cutoffs, timezone, and optional processing profile.
+3. Call `create_report`. Omitted `coverage_mode` means `strict`; choose
+   `available_only` explicitly if incomplete evidence is acceptable. A changed
+   selection returns `report_selection_changed`; refresh and reselect rather
+   than substituting newer versions automatically.
+4. For `needs_review`, page through `get_report_dates`. Keep each member's
+   earlier candidates when `candidates_complete` is false. Continue with the
+   returned cursor until `next_cursor` is absent. Review the evidence with the
+   operator, then submit the existing [date-choice format](search-exports.md)
+   to `revise_report`. Restart date paging on the child; parent cursors cannot
+   be used on it.
+5. Read counts and coverage through `get_report_summary`. Download a complete
+   report before it expires. To export the same originals, pass the selected
+   identities and their version-list sizes to `preview_export` separately.
+
+Creation rejects `all_documents: true`, `collection_ids`, and `date_choices`.
+Unknown fields and explicit nulls are invalid. Expressions allow 8,192 Unicode
+characters. Profile and timezone strings allow 128 UTF-8 bytes. A selection's
+member count is not the coverage `scoped` count: members without usable dates
+can remain in an available-only packet without contributing to counted coverage.
+
+Create and revise return compact receipts: `report_id`, optional `parent_id`,
+`state`, `observed_at`, `expires_at`, and `unresolved_dates`. Complete receipts
+also contain `bundle_bytes` and `bundle_sha256`; needs-review receipts omit them.
+A large warning summary does not prevent delivery of the new handle. If full
+summary inspection returns `report_limit`, read it through HTTP; dates,
+revision, and download remain available.
+
+A revision allows 1,000 choices and 4,096 UTF-8 bytes per reason, but the entire
+MCP message must fit within 1 MiB, including escaping and its envelope. The two
+individual maxima do not fit together. Choose shorter reasons where appropriate
+or submit batches to successive children. Docbank never splits a revision for
+you. For a larger batch, the existing HTTP/CLI revision path accepts 8 MiB.
+
+CLI and MCP share eight report handles. Every revision uses another slot; an
+initial report plus seven revisions fills those slots if no other reports are
+retained. All descendants expire 30 minutes after the original observation.
+Download frees no slot, and there is no report release operation. Wait for expiry
+when capacity is full. The engine also permits two simultaneous builds and 64
+handles or pending builds globally. Restart loses live handles; history receipts
+do not restore their artifacts.
+
+Writes are never automatically replayed. `report_outcome_unknown` means a create
+or revise call may have succeeded without a usable reply. Inspect history with
+the operator through web/HTTP; there is no idempotent replay or reliable lookup
+for a lost reply. A deliberate retry creates another observation or child and
+uses another slot. The first write after a daemon restart may also return this
+conservative error on a stale connection.
+
+Downloads compare the summary, stream size and digest, and independently
+verified packet before publication. The CLI uses the same verification path.
+Success reports `internally_consistent: true` and `source_verified: false`;
+this does not establish authenticity of the source vault. The receipt's state
+is `published`, or `published_durability_unknown` if the file was saved but the
+final directory sync failed. `cleanup_failed` separately reports a staging
+cleanup failure. Local causes go to the operator log. If the reply is lost,
+inspect and verify the destination before retrying.
+
+Read `bundle_bytes` before choosing a transport. MCP HTTP's two-minute deadline
+covers transfer, verification, and publication; large ZIPs may not finish.
+Use stdio for the same live handle, or download through HTTP and run
+`docbank search-export verify`. ZIPs are capped at 512 MiB, and concurrent MCP
+downloads share a 1 GiB verification budget. `report_limit` can also mean that
+this shared allowance is exhausted. Source changes after capture leave the
+frozen report's evidence and counts unchanged.

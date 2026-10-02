@@ -3,7 +3,7 @@
 Reviewed design: [Frozen search reports through local MCP](2026-10-01-mcp-search-reports-design.md).
 
 - Source revision: `3a23e5e61f26c0b8aef33582adaf2bbd7717f2a7`.
-- Design SHA-256: `5a7acf406816af99c29597801437ca292c064072a8dbfe0da36e88c03bee007e`.
+- Approved design at `ce27b956`, SHA-256: `5a7acf406816af99c29597801437ca292c064072a8dbfe0da36e88c03bee007e`.
 - Relevant source, dependencies, generated clients, and Git index matched that
   revision during review. Only this design and review were added on disk.
   There are no Git submodules. The committed documents make this input
@@ -12,14 +12,15 @@ Reviewed design: [Frozen search reports through local MCP](2026-10-01-mcp-search
   MCP Go SDK v1.7.0, and jsonschema-go v0.4.3.
 
 This records the author review and disposition of the subsequent adversarial
-review. The feature remains unimplemented. Source-backed behavior below was
-inspected, not newly exercised as an implemented MCP report workflow.
+review before implementation. The feature is now implemented; the source claims
+below describe the historical review baseline, not a current test report.
+The design status banner was updated after implementation.
 
 ## Adversarial review disposition
 
 Reviewed commit: `379160028215a0219d1ce6b610f98b30dfa1efd2`. Its design hash was
-`e25918c3aa62ce3589fedd59d9c68730df93f2d2fa866f774a359e7cc8ec538e`. The source
-baseline is unchanged. The reviewer found no High issues and one Medium
+`e25918c3aa62ce3589fedd59d9c68730df93f2d2fa866f774a359e7cc8ec538e`.
+That review used the same source baseline. The reviewer found no High issues and one Medium
 clarification; the following dispositions apply to the revised design hash above.
 
 - **Medium, shared pager: accepted.** `internal/reporting/cache.go:486` appends

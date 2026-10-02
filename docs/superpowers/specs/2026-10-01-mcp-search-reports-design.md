@@ -1,8 +1,8 @@
 # Frozen search reports through local MCP
 
-Status: ready for implementation planning; not implemented. Adversarial review
-of `37916002` found one Medium clarification, incorporated below: the corrected
-date pager applies to every caller. Implementation still requires plan review.
+Status: implemented. The corrected date pager applies to every caller.
+The owning [MCP guide](../../usage/mcp.md#frozen-search-reports) describes usage
+and the retained limits.
 
 Source baseline: `3a23e5e61f26c0b8aef33582adaf2bbd7717f2a7`, after
 [native MCP exports](https://github.com/kenn-io/docbank/pull/749).

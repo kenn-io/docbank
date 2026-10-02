@@ -167,7 +167,8 @@ func TestCacheRevisionKeepsEarlierDateChoices(t *testing.T) {
 	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
 	budget := report.NewBudget(16 << 20)
 	defer func() { _ = budget.Close() }()
-	cache := NewCache(func() time.Time { return now }, budget)
+	clock := now
+	cache := NewCache(func() time.Time { return clock }, budget)
 	members := make([]report.Member, 2)
 	for index := range members {
 		members[index] = testMember()
@@ -189,6 +190,10 @@ func TestCacheRevisionKeepsEarlierDateChoices(t *testing.T) {
 	if err != nil || first.State != "needs_review" || first.UnresolvedDates != 2 {
 		t.Fatalf("first=%+v err=%v", first, err)
 	}
+	parentPage, err := cache.Dates(t.Context(), "owner", first.ID, report.DatePageRequest{Limit: 1})
+	if err != nil || parentPage.NextCursor == "" {
+		t.Fatalf("parent page=%+v err=%v", parentPage, err)
+	}
 	choice := func(index int) report.DateChoice {
 		return report.DateChoice{Document: members[index].Identity, CandidateID: "a",
 			EvidenceSHA256: strings.Repeat("b", 64), Reason: "Reviewed synthetic source", Action: "select"}
@@ -204,6 +209,27 @@ func TestCacheRevisionKeepsEarlierDateChoices(t *testing.T) {
 	page, err := cache.Dates(context.Background(), "owner", third.ID, report.DatePageRequest{Limit: 10})
 	if err != nil || len(page.Members) != 2 || page.Members[0].Choice == nil || page.Members[1].Choice == nil {
 		t.Fatalf("review page=%+v err=%v", page, err)
+	}
+	if _, err := cache.Dates(t.Context(), "owner", third.ID,
+		report.DatePageRequest{Cursor: parentPage.NextCursor}); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("parent cursor accepted on child: %v", err)
+	}
+	latest := third
+	for count := 3; count < 8; count++ {
+		clock = clock.Add(time.Minute)
+		latest, err = cache.Revise(t.Context(), "owner", latest.ID, svc, nil)
+		if err != nil || !latest.ExpiresAt.Equal(first.ExpiresAt) {
+			t.Fatalf("revision %d expiry=%v err=%v", count, latest.ExpiresAt, err)
+		}
+	}
+	if _, err := cache.Revise(t.Context(), "owner", latest.ID, svc, nil); !errors.Is(err, ErrCapacity) {
+		t.Fatalf("ninth handle: %v", err)
+	}
+	clock = now.Add(31 * time.Minute)
+	for _, id := range []string{first.ID, second.ID, third.ID, latest.ID} {
+		if _, err := cache.Summary("owner", id); !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("expired child: %v", err)
+		}
 	}
 	cache.InvalidateAll()
 }
