@@ -20,23 +20,23 @@ import (
 	"go.kenn.io/docbank/internal/home"
 )
 
-func buildDocbank(t *testing.T) string {
-	t.Helper()
-	return buildDocbankVersion(t, "")
+func buildDocbank(tb testing.TB) string {
+	tb.Helper()
+	return buildDocbankVersion(tb, "")
 }
 
 // buildDocbankVersion builds the binary, stamping internal/version.Version
 // when v is non-empty (an unstamped build reports "dev").
-func buildDocbankVersion(t *testing.T, v string) string {
-	t.Helper()
+func buildDocbankVersion(tb testing.TB, v string) string {
+	tb.Helper()
 	if testing.Short() {
-		t.Skip("integration test: builds the binary")
+		tb.Skip("integration test: builds the binary")
 	}
 	name := "docbank"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	bin := filepath.Join(t.TempDir(), name)
+	bin := filepath.Join(tb.TempDir(), name)
 	args := []string{"build", "-tags", "fts5"}
 	if v != "" {
 		args = append(args, "-ldflags", "-X go.kenn.io/docbank/internal/version.Version="+v)
@@ -45,7 +45,7 @@ func buildDocbankVersion(t *testing.T, v string) string {
 	cmd := exec.Command("go", args...)
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
 	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
+	require.NoError(tb, err, string(out))
 	return bin
 }
 
