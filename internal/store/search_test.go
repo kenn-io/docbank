@@ -2189,3 +2189,15 @@ func TestTextExtractionQueueDefersFailuresBehindReadyWork(t *testing.T) {
 	assert.Equal(t, hashes[64], pending[0].BlobHash,
 		"deferred failures must not starve later ready work")
 }
+
+func TestFTSPrefixPreparationPreservesBytes(t *testing.T) {
+	t.Parallel()
+	for input, expected := range map[string]string{
+		"": "", " \t\n": "", "alpha beta": `"alpha"* "beta"*`,
+		`a"b OR c*`:          `"a""b"* "OR"* "c*"*`,
+		"alpha\u00a0日本語":     `"alpha"* "日本語"*`,
+		`name:thing (value)`: `"name:thing"* "(value)"*`,
+	} {
+		assert.Equal(t, expected, ftsQuery(input))
+	}
+}
