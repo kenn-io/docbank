@@ -1,6 +1,6 @@
 # Inspect and recover search reports from the CLI
 
-Status: reviewed design; not implemented. Approved for implementation planning.
+Status: implemented. This document records the command contract.
 The behavioral contract reviewed at `a3d4183a` is unchanged.
 
 Source baseline: `b04894976863bfb92c9211216e50f2fad0aff3e6`, after PR #753.
@@ -13,10 +13,10 @@ its evidence ZIP without capturing the vault again or spending another report
 slot. This also provides a CLI destination for an MCP-created report whose
 download exceeds the MCP HTTP time limit.
 
-The existing CLI can create, revise, inspect dates, verify a saved ZIP, and
-extract its CSV. It cannot show a live summary, list recorded runs, or download
-by an existing ID. Create and revise also return download errors without the
-new report ID, although they have already received it from the daemon.
+At the source baseline, the CLI could create, revise, inspect dates, verify a
+saved ZIP, and extract its CSV. It could not show a live summary, list recorded
+runs, or download by an existing ID. Create and revise also returned download
+errors without the new report ID after receiving it from the daemon.
 
 This proposal takes only the inspection and download outcomes from closed PRs
 [#456](https://github.com/kenn-io/docbank/pull/456) and

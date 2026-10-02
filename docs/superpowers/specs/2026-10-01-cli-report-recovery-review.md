@@ -4,8 +4,8 @@ Reviewed design: [Inspect and recover search reports from the CLI](2026-10-01-cl
 
 - Source revision: `b04894976863bfb92c9211216e50f2fad0aff3e6`.
 - Reviewed design SHA-256: `adb6732f72754e1f0871383d0263eb48d2795e7bc2ec679220a4e748d37f587d`.
-- Current design SHA-256 after the status-only banner update:
-  `afaef93387299bebfa10afcd9e8e4074d9c0877ad8b168529b90fbfd48b82260`.
+- Current design SHA-256 after the implementation status and baseline wording update:
+  `ffaa9e91679915424b610b04e3ff3f13421afc24a9a6b3925ef004fee3e03d3a`.
 - During this review the only working-tree additions were this design and
   review. Product source, generated clients, dependencies, and existing tests
   matched the clean baseline. There are no Git submodules.
@@ -13,17 +13,17 @@ Reviewed design: [Inspect and recover search reports from the CLI](2026-10-01-cl
   generated-client library v3.75.15, and Kit v0.29.0. This proposal does not
   change dependencies or rely on new third-party behavior.
 
-This records the author's source check and disposition of the subsequent
-adversarial review. The design is approved for planning but remains unimplemented.
-Existing tests cited below were inspected, not rerun as evidence of a feature
-that is not built. Both design hashes are recorded above; the status-only
-banner update leaves the reviewed behavior unchanged.
+The design is implemented. This document preserves the author's pre-implementation
+source check and disposition of the subsequent adversarial review. Test references
+in that historical review were source inspections, not execution evidence.
+The current design hash records only implementation status and baseline wording
+changes; the reviewed behavioral contract is unchanged.
 
 ## Adversarial review disposition
 
 The supplied review covered clean commit `a3d4183a`, with no High or Medium
-findings, and found the design ready for implementation planning. The source
-still matches the recorded baseline. Its three Low notes resolve as follows:
+findings, and found the design ready for implementation planning. At that
+review, product source matched the recorded baseline. Its three Low notes resolve as follows:
 
 - **Post-publication cleanup: accept conservative wording.**
   `cmd/docbank/report.go:93` joins staging cleanup into the return error after

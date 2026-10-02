@@ -993,6 +993,9 @@ Export dated search counts and retain the evidence needed to check them.
 | `revise <export-id> --choices choices.json --output reviewed.zip` | Apply a JSON array of reviewed date choices to the frozen observation. |
 | `verify <report.zip>` | Verify internal packet consistency offline. |
 | `csv <report.zip> --output search-export.csv` | Verify the packet and extract its CSV offline. |
+| `show <report-id> [--json]` | Inspect a live report summary, counts, coverage, and expiry. |
+| `history [--offset N] [--limit N] [--json]` | List recorded requests and outcomes; history does not guarantee live availability. |
+| `download <report-id> --output report.zip` | Save the existing verified ZIP without creating another report. |
 
 Commands with `--output` also accept `--overwrite`. Existing destinations are
 otherwise preserved. See [Search exports](usage/search-exports.md) for the
