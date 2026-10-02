@@ -42,14 +42,9 @@ func (s *Store) publishEmailDocumentsTx(
 	var receipt document.EmailDocumentPublicationReceipt
 	err = func() error {
 		old, err := loadEmailDocumentPublication(ctx, tx, request.OperationID)
-		if err == nil {
-			if old.Receipt.RequestDigest != digest {
-				return ErrEmailDocumentConflict
-			}
-			receipt = old.Receipt
-			return nil
-		}
-		if !errors.Is(err, ErrNotFound) {
+		replayed, found, err := replayReceipt(old.Receipt, err, old.Receipt.RequestDigest == digest, ErrEmailDocumentConflict)
+		if err != nil || found {
+			receipt = replayed
 			return err
 		}
 		view, parts, err := emailDocumentSource(ctx, tx, request)
