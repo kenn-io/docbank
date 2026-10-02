@@ -22,10 +22,20 @@ const (
 
 const monthPattern = `(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)`
 const dateTokenPattern = `(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}|` + monthPattern + `\s+\d{1,2},?\s+\d{4})`
+const dateLabelPattern = `(?i)\b(document\s+dated|date\s+of\s+document|signed\s+on|` +
+	`executed\s+on|effective\s+date|commencement\s+date|expires\s+on)`
+
+// Rendition Markdown escapes punctuation. Match its original bytes so evidence
+// offsets and quotes still refer to the retained artifact, not decoded text.
+const markdownDateTokenPattern = `(?:\d{4}\\?-\d{2}\\?-\d{2}|` +
+	`\d{1,2}\\?/\d{1,2}\\?/\d{4}|` + monthPattern + `\s+\d{1,2}(?:\\?,)?\s+\d{4})`
 
 var (
-	labeledDatePattern = regexp.MustCompile(`(?i)\b(document\s+dated|date\s+of\s+document|signed\s+on|executed\s+on|effective\s+date|commencement\s+date|expires\s+on)\s*[:,-]?\s*(` + dateTokenPattern + `)`)
-	bareDatePattern    = regexp.MustCompile(`(?i)\b` + dateTokenPattern + `\b`)
+	labeledDatePattern         = regexp.MustCompile(dateLabelPattern + `\s*[:,-]?\s*(` + dateTokenPattern + `)`)
+	bareDatePattern            = regexp.MustCompile(`(?i)\b` + dateTokenPattern + `\b`)
+	labeledMarkdownDatePattern = regexp.MustCompile(
+		dateLabelPattern + `\s*(?:\\?[:,-])?\s*(` + markdownDateTokenPattern + `)`)
+	bareMarkdownDatePattern = regexp.MustCompile(`(?i)\b` + markdownDateTokenPattern + `\b`)
 )
 
 type pageSpan struct {
@@ -113,7 +123,12 @@ func ExtractContentDates(ctx context.Context, budget Budget, identity Identity, 
 			return reserveErr
 		}
 		releases = append(releases, release)
-		value, rejection := normalizeContentToken(raw)
+		token := raw
+		if binding.Kind == "rendition" {
+			// The token pattern permits backslashes only before date punctuation.
+			token = strings.ReplaceAll(token, `\`, "")
+		}
+		value, rejection := normalizeContentToken(token)
 		locator := Locator{
 			EvidenceID: binding.GenerationID, EvidenceSHA256: textSHA,
 			RenditionID: binding.RenditionID, TextSHA256: textSHA,
@@ -129,12 +144,16 @@ func ExtractContentDates(ctx context.Context, budget Budget, identity Identity, 
 		result = append(result, candidate)
 		return nil
 	}
+	labeledPattern, barePattern := labeledDatePattern, bareDatePattern
+	if binding.Kind == "rendition" {
+		labeledPattern, barePattern = labeledMarkdownDatePattern, bareMarkdownDatePattern
+	}
 	labeled := make([]byteSpan, 0, 4)
 	for cursor := 0; cursor < len(text); {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		match := labeledDatePattern.FindSubmatchIndex(text[cursor:])
+		match := labeledPattern.FindSubmatchIndex(text[cursor:])
 		if match == nil {
 			break
 		}
@@ -156,7 +175,7 @@ func ExtractContentDates(ctx context.Context, budget Budget, identity Identity, 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		match := bareDatePattern.FindIndex(text[cursor:])
+		match := barePattern.FindIndex(text[cursor:])
 		if match == nil {
 			break
 		}

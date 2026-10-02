@@ -271,6 +271,11 @@ report or extend its lifetime. History remains readable after source deletion
 and restore; rerunning a saved selection requires its versions to be live and
 current again.
 
+After restoring a vault, configure the same portable processing profile before
+rerunning its saved requests. The [backup](backup.md) excludes `config.toml`;
+preserve the restored target's storage settings when adding the profile. History
+does not retain date choices, so a fresh report may need date review again.
+
 Large selections enlarge durable history: 100 requests near the 8 MiB ceiling
 can approach 800 MiB of request JSON, also carried by metadata export. History
 pages stop at 16 MiB; automation must advance its offset by the returned item

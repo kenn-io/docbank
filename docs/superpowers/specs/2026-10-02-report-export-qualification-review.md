@@ -2,6 +2,12 @@
 
 Reviewed design: [Qualify retained PDF reports, native exports, and restore](2026-10-02-report-export-qualification-design.md).
 
+Status: implemented. The initial source review below is historical; execution
+found a content-date defect that it missed. See the implementation evidence at
+the end for that correction and the retained-PDF qualification results.
+
+## Initial source review
+
 - Source revision: `2d100a274a548a9eb1e7f9aaef12eab478c78a1f`.
 - Design SHA-256: `a1bd8500e394bb80c47f658fbed3adcc6629e609d9338f16f5628f841e2ee219`.
 - The design was reviewed as an uncommitted addition. Only the design and this
@@ -10,9 +16,9 @@ Reviewed design: [Qualify retained PDF reports, native exports, and restore](202
 - Relevant dependency versions: Go 1.27.0, fpdf v0.9.0, pdfcpu v0.15.0,
   Huma v2.38.0, Cobra v1.10.2, and Kit v0.29.0, from `go.mod`.
 
-This is the author's source check, not an independent adversarial review. The
-design is proposed. Existing component tests passed as recorded below; the
-combined PDF and restored-daemon scenario has not been implemented or run.
+This was the author's source check, not an independent adversarial review. At
+that point the design was proposed. Only the existing component tests had run;
+the combined PDF and restored-daemon scenario had not been implemented.
 
 ## Findings
 
@@ -124,8 +130,51 @@ Do not implement. In particular:
 4. Is this a reasonable single test-focused PR? Does it claim coverage of an
    untested provider, attachment, browser, platform, or maintenance boundary?
 
-## Verdict
+## Initial verdict
 
-Ready for adversarial specification review. The design is bounded and its
-existing-capability claims are source-backed. Implementation planning and
-execution remain pending the maintainer's review of the written specification.
+The design was ready for adversarial specification review. Its bounded scope
+and source checks were sufficient for planning, but did not prove the combined
+workflow. The maintainer subsequently authorized inline implementation.
+
+## Implementation evidence
+
+Implementation is based on `6c922f78`, including the reviewed design originally
+committed as `9f3dd967`. The original review hash above identifies the proposal;
+it does not describe the updated implemented design.
+
+Implemented design SHA-256:
+`42619af3f2db9382bb00efc2f0d52d87c642f4da7bd22822e0c4d7e5834cb3c9`.
+
+The three specification-review notes are resolved:
+
+- Each publication has distinct build, attachment, and lexical-generation IDs.
+  A temporary fixture probe reused one generation ID; the second publication
+  failed its exact-build coverage check before daemon startup. The review's
+  prediction of silent missing text did not occur through this publisher.
+- The fixture uses pdfcpu v0.15.0 to parse every generated PDF as one page.
+- One configuration supplies all portable profile blocks. Every source and
+  restored daemon startup asserts the same canonical profile fingerprint.
+  Restored storage settings are preserved and evidence is never republished.
+
+The first complete workflow run returned a complete report without date review,
+with three fallback dates instead of one. Rendition generation escapes ISO
+dates as `2024\-05\-06`; the date scanner did not recognize them. The focused
+scanner test reproduced zero candidates before the correction. The scanner now
+handles rendition punctuation escapes without changing retained evidence or its
+offsets. Numeric-date order and explicit interpretation use the same retained
+tokens. The focused tests cover ISO dates, month names, numeric dates, ambiguity,
+quotes, hashes, and byte offsets.
+
+`TestReportPDFWorkflow` now exercises the real CLI report/review/export/release
+flow and strict missing-evidence refusal. `TestReportPDFRestore` checks frozen
+bytes after replacement and trash, both physical snapshots and restore proofs,
+history recovery without live handles or choices, renewed review from unchanged
+selection, refusal of changed selection, and exact historical original export.
+Both tests passed on Linux amd64 with `CGO_ENABLED=1` and `CGO_ENABLED=0`:
+
+```sh
+go test -tags fts5 ./cmd/docbank -run '^TestReportPDF' -count=1
+```
+
+The complete `report` package also passed with CGO SQLite. These are local Linux
+results; no macOS or Windows execution is claimed.
