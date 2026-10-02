@@ -778,3 +778,29 @@ func TestSharedTransportKeepsPreMigrationFingerprints(t *testing.T) {
 		assert.Equal(t, test.policy, profile.Descriptor.PolicyFingerprint)
 	}
 }
+
+func TestSharedAdmissionRejectsBeforeTransport(t *testing.T) {
+	var calls atomic.Int64
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return jsonResponse(request, http.StatusOK, successIndexedResponse), nil
+	})
+	profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileBGEM3}))
+	profile.Origin = "http://192.0.2.1:8080"
+	profile.Descriptor = descriptorFor(t, profile)
+	_, err := New(profile, nil, &http.Client{Transport: transport})
+	require.Error(t, err)
+	assert.Zero(t, calls.Load())
+
+	profile.Origin = "http://127.0.0.1:11434"
+	profile.Descriptor = descriptorFor(t, profile)
+	client := newTestClient(t, profile, nil, transport)
+	for _, text := range []string{" \t\n", "\u200b"} {
+		inputs := testInputs()
+		inputs[0].Text = text
+		_, err = client.Embed(t.Context(), inputs, testAuthorization(profile.Descriptor))
+		require.ErrorIs(t, err, ErrPermanentResponse)
+		require.NotErrorIs(t, err, ErrMalformedResponse)
+	}
+	assert.Zero(t, calls.Load())
+}

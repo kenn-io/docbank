@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/docbank/document/providerhttp"
 	"go.kenn.io/kit/embedclient"
 	"go.kenn.io/kit/embedconfig"
+	"go.kenn.io/kit/vector"
 )
 
 const (
@@ -151,6 +152,7 @@ type Client struct {
 	descriptor document.EmbeddingDescriptor
 	secrets    SecretResolver
 	http       *http.Client
+	text       *embedclient.Client
 }
 
 type wireResponse struct {
@@ -241,7 +243,19 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 	isolate.Jar = nil
 	isolate.Timeout = 0
 	normalized.Descriptor = cloneDescriptor(descriptor)
-	return &Client{profile: normalized, descriptor: cloneDescriptor(descriptor), secrets: secrets, http: &isolate}, nil
+	client := &Client{profile: normalized, descriptor: cloneDescriptor(descriptor), secrets: secrets, http: &isolate}
+	client.text, err = embedclient.New(embedclient.Options{
+		Model: embedconfig.Model{Name: client.descriptor.Model, Dimensions: client.descriptor.Dimension,
+			Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone, EncodingFormat: "float"},
+		Deployment: embedconfig.Deployment{BaseURL: client.profile.Origin + "/v1", TrustPrivateNetwork: true},
+		Batch:      embedconfig.Batch{Items: client.profile.MaxBatchItems},
+		Transport:  embedconfig.Transport{MaxResponseBytes: int(client.profile.MaxResponseBytes)},
+		HTTP:       &http.Client{Transport: responsePolicy{client: client}, CheckRedirect: providerhttp.RefuseRedirects},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("openaicompat: configure text transport: %w", err)
+	}
+	return client, nil
 }
 
 // Descriptor returns a defensive copy of the immutable provider contract.
@@ -291,22 +305,14 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, client.profile.RequestTimeout)
 	defer cancel()
-	shared, err := embedclient.New(embedclient.Options{
-		Model: embedconfig.Model{Name: client.descriptor.Model, Dimensions: client.descriptor.Dimension,
-			Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone, EncodingFormat: "float"},
-		Deployment: embedconfig.Deployment{BaseURL: client.profile.Origin + "/v1", TrustPrivateNetwork: true},
-		Batch:      embedconfig.Batch{Items: client.profile.MaxBatchItems},
-		Transport:  embedconfig.Transport{MaxResponseBytes: int(client.profile.MaxResponseBytes)},
-		HTTP:       &http.Client{Transport: responsePolicy{client: client}, CheckRedirect: providerhttp.RefuseRedirects},
-	})
-	if err != nil {
-		return document.EmbeddingResult{}, fmt.Errorf("openaicompat: configure text transport: %w", err)
-	}
 	// Formatting already applied the individual document/query role. This
 	// wire contract has no input_type, so send the original batch as one call.
 	// Kit performs no fitting, normalization, retry, or storage operation here.
-	vectors, err := shared.EncodeFunc(embedconfig.RoleDocument)(requestCtx, rendered)
+	vectors, err := client.text.EncodeFunc(embedconfig.RoleDocument)(requestCtx, rendered)
 	if err != nil {
+		if errors.Is(err, vector.ErrEmptyEmbeddingInput) {
+			return document.EmbeddingResult{}, fmt.Errorf("openaicompat: empty prepared input: %w", ErrPermanentResponse)
+		}
 		if transport, ok := errors.AsType[*embedclient.TransportError](err); ok {
 			// The policy transport returns DocBank's existing classifications.
 			return document.EmbeddingResult{}, fmt.Errorf("openaicompat: embedding request: %w", transport.Err)
