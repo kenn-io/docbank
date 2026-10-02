@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -228,63 +229,61 @@ type closerFunc func() error
 func (f closerFunc) Close() error { return f() }
 
 func TestCloseWithinReturnsAtDeadline(t *testing.T) {
-	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
-	called := make(chan struct{})
-	closer := closerFunc(func() error {
-		close(called)
-		<-release
-		return nil
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		called := make(chan struct{})
+		closer := closerFunc(func() error {
+			close(called)
+			<-release
+			return nil
+		})
+		start := time.Now()
+		CloseWithin(closer, 50*time.Millisecond, discardLogger())
+		assert.Equal(t, 50*time.Millisecond, time.Since(start))
+		<-called
+		close(release)
 	})
-	start := time.Now()
-	CloseWithin(closer, 50*time.Millisecond, discardLogger())
-	elapsed := time.Since(start)
-	assert.GreaterOrEqual(t, elapsed, 50*time.Millisecond)
-	assert.Less(t, elapsed, 2*time.Second)
-	select {
-	case <-called:
-	case <-time.After(time.Second):
-		t.Fatal("closer was not called")
-	}
 }
 
-// TestHeartbeatDrainsBeforeClose repeats runServe's defer order: the reporter
-// close is deferred before the supervisor drain, so it runs after the heartbeat exits.
+// TestHeartbeatDrainsBeforeClose checks that the supervisor drain returns only
+// after the heartbeat job exits, so a reporter close deferred before the
+// supervisor (runServe's order) starts after the heartbeat has stopped.
 func TestHeartbeatDrainsBeforeClose(t *testing.T) {
-	logger := discardLogger()
-	captureRelease := make(chan struct{})
-	heartbeatInCapture := make(chan struct{})
-	var heartbeatExited, closeSawHeartbeatExited atomic.Bool
-	closeStarted := make(chan struct{})
-	closer := closerFunc(func() error {
-		closeSawHeartbeatExited.Store(heartbeatExited.Load())
-		close(closeStarted)
-		time.Sleep(20 * time.Millisecond)
-		return nil
-	})
-	var drainErr error
-	func() {
-		defer CloseWithin(closer, time.Second, logger)
-		supervisor := jobs.New(t.Context(), logger)
-		defer func() {
-			drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			drainErr = supervisor.Shutdown(drainCtx)
-		}()
-		var once sync.Once
-		require.NoError(t, supervisor.Start(HeartbeatJobName, func(ctx context.Context) error {
-			defer heartbeatExited.Store(true)
-			runHeartbeat(ctx, func(string) error {
-				once.Do(func() { close(heartbeatInCapture) })
-				<-captureRelease
-				return nil
-			}, nil, logger)
+	synctest.Test(t, func(t *testing.T) {
+		logger := discardLogger()
+		captureRelease := make(chan struct{})
+		heartbeatInCapture := make(chan struct{})
+		var heartbeatExited, closeSawHeartbeatExited atomic.Bool
+		closeStarted := make(chan struct{})
+		closer := closerFunc(func() error {
+			closeSawHeartbeatExited.Store(heartbeatExited.Load())
+			close(closeStarted)
 			return nil
-		}))
-		<-heartbeatInCapture
-		time.AfterFunc(50*time.Millisecond, func() { close(captureRelease) })
-	}()
-	require.NoError(t, drainErr)
-	<-closeStarted
-	assert.True(t, closeSawHeartbeatExited.Load(), "reporter close started before the heartbeat returned")
+		})
+		var drainErr error
+		func() {
+			defer CloseWithin(closer, time.Second, logger)
+			supervisor := jobs.New(t.Context(), logger)
+			defer func() {
+				drainCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				drainErr = supervisor.Shutdown(drainCtx)
+			}()
+			var once sync.Once
+			require.NoError(t, supervisor.Start(HeartbeatJobName, func(ctx context.Context) error {
+				defer heartbeatExited.Store(true)
+				runHeartbeat(ctx, func(string) error {
+					once.Do(func() { close(heartbeatInCapture) })
+					<-captureRelease
+					return nil
+				}, nil, logger)
+				return nil
+			}))
+			<-heartbeatInCapture
+			time.AfterFunc(50*time.Millisecond, func() { close(captureRelease) })
+		}()
+		require.NoError(t, drainErr)
+		<-closeStarted
+		assert.True(t, closeSawHeartbeatExited.Load(), "reporter close started before the heartbeat returned")
+	})
 }

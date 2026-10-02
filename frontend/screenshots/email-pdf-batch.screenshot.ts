@@ -48,6 +48,7 @@ test("real Takeout exports verified PDFs and explicit attachment occurrences thr
     cwd: repository,
     env: {
       PATH: process.env.PATH, LANG: "C.UTF-8", DOCBANK_HOME: vault,
+      DOCBANK_TELEMETRY_ENABLED: process.env.DOCBANK_TELEMETRY_ENABLED,
       XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
       DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS,
     },

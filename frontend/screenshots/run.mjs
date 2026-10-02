@@ -13,7 +13,7 @@ const output = path.join(workspaceRoot, "screenshots");
 const staging = path.join(workspaceRoot, ".screenshots.next");
 const manifestPath = path.join(repositoryRoot, "scripts", "docs-assets.txt");
 
-const build = spawnSync("make", ["build", "BUILD_TAGS=fts5 kit_posthog_disabled"], {
+const build = spawnSync("make", ["build"], {
   cwd: repositoryRoot,
   stdio: "inherit",
 });
