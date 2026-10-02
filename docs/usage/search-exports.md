@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-29
+last_edited: 2026-10-02
 title: Search exports
 description: Export dated search counts as CSV, review date evidence, and verify a frozen evidence ZIP.
 ---
@@ -80,9 +80,61 @@ docbank search-export revise <export-id> --choices choices.json --output reviewe
 ```
 
 Use `--cursor` with the returned `next_cursor` to continue reading dates.
-`create`, `revise`, and `csv` refuse to replace an existing output unless
+`create`, `revise`, `download`, and `csv` refuse to replace an existing output unless
 `--overwrite` is supplied. `verify` and `csv` work offline without a vault;
 both verify the packet before accepting its counts.
+
+## Inspect or recover an existing export
+
+Use a known report ID to read its live summary or save its verified evidence ZIP:
+
+```bash
+docbank search-export show <report-id>
+docbank search-export show <report-id> --json
+docbank search-export download <report-id> --output recovered.zip
+docbank search-export csv recovered.zip --output recovered.csv
+```
+
+`show` includes counts, coverage, and expiry. A report awaiting date review has
+no counts or download yet; use `dates` and `revise` to resolve its evidence.
+`download` saves the existing ZIP without creating a report, using another slot,
+or extending expiry. It supports relative paths and refuses an existing file
+unless you supply `--overwrite`. It does not download CSV directly; extract CSV
+from the saved ZIP offline.
+
+List recorded runs, including their original requests, through history:
+
+```bash
+docbank search-export history --offset 0 --limit 20
+docbank search-export history --offset 0 --limit 20 --json
+```
+
+History is vault-wide, including browser-created reports. Its recorded state
+does not promise that a report is still live or belongs to the CLI. `show` and
+`download` require a live handle owned by the CLI's API key; they do not recreate
+an expired or unavailable report from history. CLI and MCP share that owner.
+
+History keeps the latest 100 receipts. Offset ranges from 0 to 100; limit ranges
+from 1 to 50 and defaults to 20. JSON returns the stored `{items, total}` page,
+including full request selections. A page may contain fewer items than requested
+to stay within its byte limit. Continue at the current offset plus the number
+of returned items, rather than adding the requested limit. Human output prints
+the next offset when more receipts remain.
+
+After `create` or `revise` receives a valid summary, later errors retain the new
+report ID. Use `show` to inspect that result and `download` to retry delivery
+while it remains live. If the handle is unavailable after expiry or restart,
+create a new report; retrying that handle cannot recover it. A revision error
+names the child report. If delivery did not finish cleanly, inspect the
+destination first: the verified file may already
+have been published before a sync or staging-cleanup error. Verify an existing
+ZIP before deciding to retry or overwrite it. A failed final status print after
+a successful save explicitly says the file was saved.
+
+This recovery requires a known ID. If a create or revise reply was lost before
+the CLI received a valid summary, it cannot identify the result reliably.
+History can help an operator investigate, but it cannot prove which call created
+a receipt. Repeating create or revise may consume another slot.
 
 ## Request and reviewed-date format
 
@@ -209,7 +261,10 @@ against the original documents.
 Live export handles and date pages expire 30 minutes after observation and
 are lost on daemon restart. Handles belong to the requesting API or browser
 session; ending a browser session invalidates its handles. Download the ZIP
-before expiry. History receipts survive backup and restore, but neither
+before expiry. CLI and MCP share eight live report slots; every revision takes
+another slot. All descendants expire 30 minutes after the original observation.
+Downloading does not free a slot, and there is no release command. History
+receipts survive backup and restore, but neither
 history nor a backup of history restores live artifacts or date-review pages.
 Source replacement, trash, or pruning does not invalidate an already captured
 report or extend its lifetime. History remains readable after source deletion

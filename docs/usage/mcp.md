@@ -526,7 +526,8 @@ Create and revise return compact receipts: `report_id`, optional `parent_id`,
 `state`, `observed_at`, `expires_at`, and `unresolved_dates`. Complete receipts
 also contain `bundle_bytes` and `bundle_sha256`; needs-review receipts omit them.
 A large warning summary does not prevent delivery of the new handle. If full
-summary inspection returns `report_limit`, read it through HTTP; dates,
+summary inspection returns `report_limit`, use
+`docbank search-export show <report-id> --json` or read it through HTTP; dates,
 revision, and download remain available.
 
 A revision allows 1,000 choices and 4,096 UTF-8 bytes per reason, but the entire
@@ -545,8 +546,9 @@ do not restore their artifacts.
 
 Writes are never automatically replayed. `report_outcome_unknown` means a create
 or revise call may have succeeded without a usable reply. Inspect history with
-the operator through web/HTTP; there is no idempotent replay or reliable lookup
-for a lost reply. A deliberate retry creates another observation or child and
+the operator using `docbank search-export history --json`, or through web/HTTP.
+History records requests and outcomes but does not establish live availability
+or reliably identify a lost reply. There is no idempotent replay. A deliberate retry creates another observation or child and
 uses another slot. The first write after a daemon restart may also return this
 conservative error on a stale connection.
 
@@ -561,8 +563,12 @@ inspect and verify the destination before retrying.
 
 Read `bundle_bytes` before choosing a transport. MCP HTTP's two-minute deadline
 covers transfer, verification, and publication; large ZIPs may not finish.
-Use stdio for the same live handle, or download through HTTP and run
-`docbank search-export verify`. ZIPs are capped at 512 MiB, and concurrent MCP
+Use stdio for the same live handle, or
+`docbank search-export download <report-id> --output report.zip` against the same
+vault. The CLI verifies the existing packet outside the MCP HTTP deadline and
+does not create another report. See [CLI report recovery](search-exports.md#inspect-or-recover-an-existing-export)
+for inspection, history paging, and recovery after a local save error. ZIPs are
+capped at 512 MiB, and concurrent MCP
 downloads share a 1 GiB verification budget. `report_limit` can also mean that
 this shared allowance is exhausted. Source changes after capture leave the
 frozen report's evidence and counts unchanged.

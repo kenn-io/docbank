@@ -142,22 +142,25 @@ func init() {
 			return err
 		}
 		if err := writeReportCoverage(cmd.OutOrStdout(), summary); err != nil {
-			return err
+			return fmt.Errorf("report %s; inspect with docbank search-export show %s: %w",
+				summary.ID, summary.ID, err)
 		}
 		if summary.State == "needs_review" {
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "export %s needs date review; run docbank search-export dates %s, then docbank search-export revise %s --choices choices.json --output %s\n",
 				summary.ID, summary.ID, summary.ID, output)
 			if err != nil {
-				return fmt.Errorf("writing report review instructions: %w", err)
+				return fmt.Errorf("report %s; run docbank search-export dates %s; "+
+					"writing review instructions: %w", summary.ID, summary.ID, err)
 			}
 			return nil
 		}
 		if err := downloadReportPacket(cmd.Context(), connection, summary.ID, output, overwrite); err != nil {
-			return err
+			return reportDeliveryError(summary.ID, output, err)
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s · export %s · internally verified; source evidence not checked offline\n", output, summary.ID)
 		if err != nil {
-			return fmt.Errorf("writing report output: %w", err)
+			return fmt.Errorf("report %s verified file is saved at %q; writing report output: %w",
+				summary.ID, output, err)
 		}
 		return nil
 	}
@@ -251,24 +254,29 @@ func init() {
 			return err
 		}
 		if err := writeReportCoverage(cmd.OutOrStdout(), summary); err != nil {
-			return err
+			return fmt.Errorf("report %s; inspect with docbank search-export show %s: %w",
+				summary.ID, summary.ID, err)
 		}
 		if summary.State == "needs_review" {
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "export %s still needs date review; run docbank search-export dates %s\n", summary.ID, summary.ID)
 			if err != nil {
-				return fmt.Errorf("writing report revision status: %w", err)
+				return fmt.Errorf("report %s; run docbank search-export dates %s; "+
+					"writing revision status: %w", summary.ID, summary.ID, err)
 			}
 			return nil
 		}
 		if err := downloadReportPacket(cmd.Context(), connection, summary.ID, revisionOutput, revisionOverwrite); err != nil {
-			return err
+			return reportDeliveryError(summary.ID, revisionOutput, err)
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s · export %s · internally verified; source evidence not checked offline\n", revisionOutput, summary.ID)
 		if err != nil {
-			return fmt.Errorf("writing report revision status: %w", err)
+			return fmt.Errorf("report %s verified file is saved at %q; writing revision status: %w",
+				summary.ID, revisionOutput, err)
 		}
 		return nil
 	}
 	root.AddCommand(terms, verify, csv, dates, revise)
+	root.AddCommand(newReportShowCommand(), newReportHistoryCommand())
+	root.AddCommand(newReportDownloadCommand())
 	rootCmd.AddCommand(root)
 }

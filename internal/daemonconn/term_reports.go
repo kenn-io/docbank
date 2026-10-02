@@ -15,7 +15,8 @@ import (
 	"go.kenn.io/docbank/report"
 )
 
-func validTermReportID(id string) bool {
+// IsTermReportID reports whether id is a canonical frozen report handle.
+func IsTermReportID(id string) bool {
 	if len(id) != 48 {
 		return false
 	}
@@ -29,7 +30,7 @@ func lowerHex(value string) string {
 }
 
 func validateTermReportSummary(summary report.Summary) error {
-	if !validTermReportID(summary.ID) || summary.ObservedAt.IsZero() ||
+	if !IsTermReportID(summary.ID) || summary.ObservedAt.IsZero() ||
 		!summary.ExpiresAt.After(summary.ObservedAt) || len(summary.Terms) == 0 ||
 		len(summary.Terms) > 128 {
 		return errors.New("report summary lacks bounded frozen authority")
@@ -66,7 +67,7 @@ func (c *Connection) CreateTermReport(ctx context.Context, request report.Reques
 }
 
 func (c *Connection) GetTermReport(ctx context.Context, id string) (report.Summary, error) {
-	if !validTermReportID(id) {
+	if !IsTermReportID(id) {
 		return report.Summary{}, errors.New("report ID must be 48 lowercase hexadecimal characters")
 	}
 	response, err := c.API().GetTermReport(ctx, &apiclient.GetTermReportRequestOptions{
@@ -81,7 +82,7 @@ func (c *Connection) GetTermReport(ctx context.Context, id string) (report.Summa
 }
 
 func (c *Connection) TermReportDates(ctx context.Context, id string, page report.DatePageRequest) (report.DatePage, error) {
-	if !validTermReportID(id) {
+	if !IsTermReportID(id) {
 		return report.DatePage{}, errors.New("report ID must be 48 lowercase hexadecimal characters")
 	}
 	if page.Limit < 0 || page.Limit > 100 || len(page.Cursor) > 4096 {
@@ -102,7 +103,7 @@ func (c *Connection) TermReportDates(ctx context.Context, id string, page report
 }
 
 func (c *Connection) ReviseTermReport(ctx context.Context, id string, choices []report.DateChoice) (report.Summary, error) {
-	if !validTermReportID(id) {
+	if !IsTermReportID(id) {
 		return report.Summary{}, errors.New("report ID must be 48 lowercase hexadecimal characters")
 	}
 	response, err := c.API().ReviseTermReport(ctx, &apiclient.ReviseTermReportRequestOptions{
@@ -144,7 +145,7 @@ func (s *TermReportStream) CopyVerified(output io.Writer) (int64, error) {
 }
 
 func (c *Connection) OpenTermReport(ctx context.Context, id, format string) (*TermReportStream, error) {
-	if !validTermReportID(id) || (format != "csv" && format != "bundle") {
+	if !IsTermReportID(id) || (format != "csv" && format != "bundle") {
 		return nil, errors.New("invalid report handle or format")
 	}
 	var response *http.Response
