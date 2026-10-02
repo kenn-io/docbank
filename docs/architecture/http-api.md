@@ -616,7 +616,7 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 | `POST /` | Version 1 request, up to 8 MiB; returns a summary with state `complete` or `needs_review`. Counts and downloads are withheld in `needs_review`. |
 | `GET /` | `offset` (0–100) and `limit` (1–50, default 20); returns `items` containing reusable `request` and `summary`, and `total`. Lists vault history, including expired receipts. |
 | `GET /{id}` | Returns the caller's live frozen summary. |
-| `POST /{id}/dates` | JSON `{"cursor":"","limit":50}`; limit is 1–100. Returns `members` and an optional `next_cursor`. A page may stop within a member's candidates; check `candidates_complete` and continue with the opaque cursor. |
+| `POST /{id}/dates` | JSON `{"cursor":"","limit":50,"max_bytes":262144}`; limit is 1–100. Omitted or zero `max_bytes` defaults to 1 MiB; positive values must be 64 KiB–1 MiB. Returns `members` and an optional `next_cursor`. A page may stop within a member's candidates; check `candidates_complete` and continue with the opaque cursor. |
 | `POST /{id}/revisions` | JSON `{"choices":[...]}`, up to 8 MiB; returns a new summary bound to the original observation and expiry. |
 | `GET /{id}/csv` | API-key download of `search-export.csv`. |
 | `GET /{id}/bundle` | API-key download of `search-export.zip`. |
@@ -635,7 +635,11 @@ returned items when the byte limit shortens a page. Source deletion does not
 remove a receipt or revoke an already captured report.
 
 The create and history paths have no trailing slash. Date pages are limited to
-1,000 candidates and 1 MiB even when the requested member limit is larger.
+1,000 candidates and the selected byte ceiling even when the requested member
+limit is larger. The ceiling includes the continuation cursor. A populated
+page stops before the next candidate that cannot fit, returning a cursor to
+that candidate. This applies to the default 1 MiB pages too. An invalid byte
+ceiling or a required first item that cannot fit returns `413 report_limit`.
 Direct downloads include `Content-Length` and `X-Docbank-Report-SHA256` for the
 complete artifact. Browser sessions use the one-use ticket route instead.
 An export handle or cursor from another owner is unavailable to the caller.

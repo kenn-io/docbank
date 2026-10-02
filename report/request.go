@@ -232,3 +232,14 @@ func validateSelectedMembers(request Request, members []Member) error {
 	}
 	return nil
 }
+
+// ByteLimit returns the encoded date-page ceiling, including its cursor.
+func (p DatePageRequest) ByteLimit() (int, error) {
+	if p.MaxBytes == 0 {
+		return 1 << 20, nil
+	}
+	if p.MaxBytes < 64<<10 || p.MaxBytes > 1<<20 {
+		return 0, fmt.Errorf("%w: date page max_bytes must be 65536 through 1048576", ErrReportLimit)
+	}
+	return p.MaxBytes, nil
+}

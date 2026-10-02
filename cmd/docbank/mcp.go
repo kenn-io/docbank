@@ -22,6 +22,7 @@ var (
 	mcpAllowPackageWrites bool
 	mcpAllowPhotoEdits    bool
 	mcpAllowExportWrites  bool
+	mcpAllowReportWrites  bool
 )
 
 var mcpCmd = &cobra.Command{
@@ -49,7 +50,8 @@ func runMCP(cmd *cobra.Command) (retErr error) {
 
 	server := docmcp.NewServerWithOptions(docmcp.ServerOptions{
 		AllowProcessing: mcpAllowProcessing, AllowPackageWrites: mcpAllowPackageWrites,
-		AllowPhotoEdits: mcpAllowPhotoEdits, AllowExportWrites: mcpAllowExportWrites, Logger: logger,
+		AllowPhotoEdits: mcpAllowPhotoEdits, AllowExportWrites: mcpAllowExportWrites,
+		AllowReportWrites: mcpAllowReportWrites, Logger: logger,
 	})
 	switch mcpTransport {
 	case "stdio":
@@ -143,5 +145,7 @@ func init() {
 		"expose guarded photo asset mutations")
 	mcpCmd.Flags().BoolVar(&mcpAllowExportWrites, "allow-export-writes", false,
 		"allow native export preview, start, cancel, local download, and explicit release")
+	mcpCmd.Flags().BoolVar(&mcpAllowReportWrites, "allow-report-writes", false,
+		"allow frozen report creation, reviewed revisions, and verified local downloads")
 	rootCmd.AddCommand(mcpCmd)
 }

@@ -233,5 +233,12 @@ pending exports overall and eight per owner.
 Downloads of completed CSV and ZIP files are exempt from the server's
 60-second request timeout. Client cancellation still stops the transfer.
 
+Local MCP clients can select exact current documents, review frozen dates, and
+save the same verified ZIP with `docbank mcp --allow-report-writes`. See the
+[MCP report workflow](mcp.md#frozen-search-reports) for discovery, message limits,
+and shared handle capacity. Date pages return a continuation when the next
+complete evidence item cannot fit; quotes are never truncated. HTTP clients
+can request smaller pages with `max_bytes`.
+
 See the [HTTP contract](../architecture/http-api.md#search-exports) for endpoints,
 authentication, paging, and errors.

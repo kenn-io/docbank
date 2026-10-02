@@ -3394,6 +3394,9 @@ components:
         limit:
           format: int64
           type: integer
+        max_bytes:
+          format: int64
+          type: integer
       type: object
       x-go-type: report.DatePageRequest
       x-go-type-import:

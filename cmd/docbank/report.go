@@ -107,20 +107,9 @@ func downloadReportPacket(ctx context.Context, connection *daemonconn.Connection
 	id, output string, overwrite bool,
 ) error {
 	return publishReportOutput(output, overwrite, func(file *os.File) error {
-		stream, err := connection.OpenTermReport(ctx, id, "bundle")
-		if err != nil {
-			return err
-		}
-		defer func() { _ = stream.Close() }()
-		if _, err := stream.CopyVerified(file); err != nil {
-			return err
-		}
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return err
-		}
 		budget := report.NewBudget(report.DefaultBudgetBytes)
 		defer func() { _ = budget.Close() }()
-		_, err = report.VerifyBundle(ctx, budget, file, stream.Size)
+		_, err := connection.DownloadTermReportTo(ctx, id, file, budget)
 		return err
 	})
 }

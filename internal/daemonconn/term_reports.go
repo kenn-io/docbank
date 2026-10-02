@@ -11,6 +11,7 @@ import (
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/report"
 )
 
@@ -59,7 +60,7 @@ func (c *Connection) CreateTermReport(ctx context.Context, request report.Reques
 		return report.Summary{}, err
 	}
 	if err := validateTermReportSummary(*response); err != nil {
-		return report.Summary{}, err
+		return report.Summary{}, &responseDecodeError{err: err}
 	}
 	return *response, nil
 }
@@ -86,6 +87,9 @@ func (c *Connection) TermReportDates(ctx context.Context, id string, page report
 	if page.Limit < 0 || page.Limit > 100 || len(page.Cursor) > 4096 {
 		return report.DatePage{}, errors.New("invalid report date page bounds")
 	}
+	if _, err := page.ByteLimit(); err != nil {
+		return report.DatePage{}, err
+	}
 	response, err := c.API().GetTermReportDates(ctx, &apiclient.GetTermReportDatesRequestOptions{
 		PathParams: &apiclient.GetTermReportDatesPath{ID: id}, Body: &page})
 	if err != nil {
@@ -108,7 +112,8 @@ func (c *Connection) ReviseTermReport(ctx context.Context, id string, choices []
 		return report.Summary{}, err
 	}
 	if err := validateTermReportSummary(*response); err != nil || response.ParentID != id {
-		return report.Summary{}, errors.New("report revision differs from requested parent")
+		return report.Summary{}, &responseDecodeError{
+			err: errors.New("report revision differs from requested parent")}
 	}
 	return *response, nil
 }
@@ -123,8 +128,9 @@ type TermReportStream struct {
 }
 
 func (s *TermReportStream) CopyVerified(output io.Writer) (int64, error) {
-	if s == nil || s.ReadCloser == nil || output == nil || s.Size < 0 || s.Size > 512<<20 || len(s.SHA256) != 64 {
-		return 0, errors.New("invalid report download authority")
+	if s == nil || s.ReadCloser == nil || output == nil ||
+		s.Size < 0 || s.Size > 512<<20 || !canonical.IsSHA256Hex(s.SHA256) {
+		return 0, integrityErrorf("invalid report download authority")
 	}
 	hash := sha256.New()
 	written, err := io.Copy(io.MultiWriter(output, hash), io.LimitReader(s, s.Size+1))
@@ -132,7 +138,7 @@ func (s *TermReportStream) CopyVerified(output io.Writer) (int64, error) {
 		return written, err
 	}
 	if written != s.Size || hex.EncodeToString(hash.Sum(nil)) != s.SHA256 {
-		return written, errors.New("report download differs from advertised size or digest")
+		return written, integrityErrorf("report download differs from advertised size or digest")
 	}
 	return written, nil
 }
@@ -154,13 +160,13 @@ func (c *Connection) OpenTermReport(ctx context.Context, id, format string) (*Te
 		return nil, err
 	}
 	if response == nil || response.Body == nil {
-		return nil, errors.New("report download has no response body")
+		return nil, integrityErrorf("report download has no response body")
 	}
 	size, err := strconv.ParseInt(response.Header.Get("Content-Length"), 10, 64)
 	digest := response.Header.Get("X-Docbank-Report-Sha256")
-	if err != nil || size < 0 || size > 512<<20 || len(digest) != 64 {
+	if err != nil || size < 0 || size > 512<<20 || !canonical.IsSHA256Hex(digest) {
 		_ = response.Body.Close()
-		return nil, errors.New("report download lacks bounded size or digest")
+		return nil, integrityErrorf("report download lacks bounded size or digest")
 	}
 	return &TermReportStream{ReadCloser: response.Body, Size: size, SHA256: digest}, nil
 }
