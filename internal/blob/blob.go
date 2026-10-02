@@ -3,6 +3,8 @@
 package blob
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/md5" //nolint:gosec // Auxiliary MD5 is interoperability metadata; SHA-256 remains authoritative.
 	"encoding/hex"
@@ -611,12 +613,34 @@ func (s *Store) WriteContext(ctx context.Context, r io.Reader) (string, int64, e
 // representation. The caller holds a mutation lease across the subsequent
 // metadata transaction.
 func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteReceipt, error) {
+	if err := ctx.Err(); err != nil {
+		return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
+	}
+	compression := s.compression
+	if compression.Enabled && compression.MinBytes > 0 {
+		// Kit decides whether to keep compressed bytes after encoding. Avoid
+		// constructing an encoder at all for files below our minimum. Bound
+		// read-ahead even when embedded callers configure a larger minimum.
+		prefix := int(min(compression.MinBytes, 4<<10))
+		buffered := bufio.NewReaderSize(contextReader{ctx: ctx, reader: r}, prefix)
+		head, err := buffered.Peek(prefix)
+		switch err {
+		case nil:
+			r = buffered
+		case io.EOF: // Match io.Copy: only exact EOF ends the stream successfully.
+			compression.Enabled = false
+			// Peek consumes EOF. Replay its bytes without reading past that EOF.
+			r = bytes.NewReader(head)
+		default:
+			return WriteReceipt{}, fmt.Errorf("reading blob prefix: %w", err)
+		}
+	}
 	auxiliary := md5.New() //nolint:gosec // Interoperability-only digest; SHA-256 remains authoritative.
 	result, err := s.loose.Write(ctx, io.TeeReader(r, auxiliary), packstore.WriteOptions{
 		Durability:  packstore.DurablePublication,
 		Dedup:       packstore.VerifyTypeAndSize,
 		MaxBytes:    MaxIngestBytes,
-		Compression: s.compression,
+		Compression: compression,
 	})
 	if err != nil {
 		return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
@@ -624,6 +648,20 @@ func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteRec
 	receipt := writeReceipt(result)
 	receipt.MD5 = hex.EncodeToString(auxiliary.Sum(nil))
 	return receipt, nil
+}
+
+// contextReader keeps read-ahead subject to cancellation between source reads,
+// just like the subsequent copy into Kit's loose writer.
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }
 
 // RepairContext verifies trusted bytes against one required logical identity

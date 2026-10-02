@@ -489,3 +489,73 @@ func TestIngestFileDoesNotMatchUnknownOriginOutsideNameFamily(t *testing.T) {
 	assert.NotEqual(t, manual.ID, imported.ID)
 	assert.Equal(t, "report.pdf", imported.Name)
 }
+
+func TestIngestNameConflictsUseLiteralSuffixFamily(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, want string }{
+		{"résumé_%[x].pdf", "résumé_%[x] (3).pdf"},
+		{".notes", ".notes (3)"},
+		{"report (2).pdf", "report (2) (3).pdf"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			name := tc.name
+			s := newTestStore(t)
+			ctx := t.Context()
+			base, ext := splitSuffix(name)
+			_, err := s.Mkdir(ctx, s.RootID(), name)
+			require.NoError(t, err)
+			_, err = s.CreateFile(ctx, s.RootID(), base+" (02)"+ext,
+				fakeHash("a1"), 1, "application/octet-stream")
+			require.NoError(t, err)
+			// A noncanonical directory does not reserve the canonical ordinal.
+			_, err = s.Mkdir(ctx, s.RootID(), base+" (03)"+ext)
+			require.NoError(t, err)
+			_, err = s.Mkdir(ctx, s.RootID(), base+" (3)"+ext+".other")
+			require.NoError(t, err)
+			run, err := s.BeginIngest(ctx, "cli", "synthetic source")
+			require.NoError(t, err)
+			node, added, err := s.IngestFile(ctx, run, s.RootID(), name,
+				fakeHash("b2"), 1, "application/octet-stream", "/source/"+name, "")
+			require.NoError(t, err)
+			require.True(t, added)
+			require.Equal(t, tc.want, node.Name)
+		})
+	}
+}
+
+func TestIngestMatchesOnlyLiveCurrentContentInDestination(t *testing.T) {
+	t.Parallel()
+	for _, state := range []string{"other directory", "trashed", "old version"} {
+		t.Run(state, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			run, err := s.BeginIngest(ctx, "cli", "synthetic source")
+			require.NoError(t, err)
+			original, _, err := s.IngestFile(ctx, run, s.RootID(), "report.pdf",
+				fakeHash("a1"), 1, "application/pdf", "/source/report.pdf", "")
+			require.NoError(t, err)
+			wantName := "report.pdf"
+			switch state {
+			case "other directory":
+				dir, err := s.Mkdir(ctx, s.RootID(), "other")
+				require.NoError(t, err)
+				_, _, err = s.Move(ctx, original.ID, dir.ID, original.Name, UnconditionalRev)
+				require.NoError(t, err)
+			case "trashed":
+				_, _, err := s.Trash(ctx, original.ID, UnconditionalRev)
+				require.NoError(t, err)
+			case "old version":
+				_, _, err := s.ReplaceContent(ctx, original.ID, UnconditionalRev,
+					fakeHash("b2"), 1, "application/pdf")
+				require.NoError(t, err)
+				wantName = "report (2).pdf"
+			}
+			imported, added, err := s.IngestFile(ctx, run, s.RootID(), "report.pdf",
+				fakeHash("a1"), 1, "application/pdf", "/source/report.pdf", "")
+			require.NoError(t, err)
+			require.True(t, added)
+			require.NotEqual(t, original.ID, imported.ID)
+			require.Equal(t, wantName, imported.Name)
+		})
+	}
+}
