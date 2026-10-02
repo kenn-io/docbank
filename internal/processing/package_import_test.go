@@ -9,6 +9,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"mime"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/store"
+	"golang.org/x/image/tiff"
 )
 
 type packageImportTestEnv struct {
@@ -108,7 +110,9 @@ func newPackageImportTestEnvWithNativeFile(t *testing.T, count int, acceptPartia
 			}
 			for page := 1; page <= pageCount; page++ {
 				pageName := fmt.Sprintf("%s-%d.tif", letter, page)
-				pageBytes := []byte(fmt.Sprintf("synthetic page %s-%d", letter, page))
+				var encoded bytes.Buffer
+				require.NoError(t, tiff.Encode(&encoded, image.NewGray(image.Rect(0, 0, index+1, page)), nil))
+				pageBytes := encoded.Bytes()
 				require.NoError(t, os.WriteFile(filepath.Join(root, "VOL001", pageName), pageBytes, 0o600))
 				files = append(files, loadfile.FileRef{Role: "page_image", Volume: "VOL001", RelPath: pageName,
 					Declared: pageName, SHA256: packageImportTestHash(pageBytes), Size: int64(len(pageBytes)), Status: "available"})

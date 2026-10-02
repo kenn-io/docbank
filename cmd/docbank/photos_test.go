@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"fmt"
+	"image/color"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -21,7 +23,7 @@ import (
 
 func TestPhotosCLIEnrollsAddedImage(t *testing.T) {
 	_ = setupVaultHome(t)
-	source := writeSourceFile(t, "synthetic-image.jpeg", "synthetic image bytes")
+	source := writeSourceFile(t, "synthetic-image.jpeg", string(mediatest.JPEG(2, 2, color.White)))
 	_, err := runCLI(t, "add", source, "--dest", "/inbox")
 	require.NoError(t, err)
 	c, err := daemonconn.Ensure(t.Context())
@@ -81,7 +83,7 @@ func TestPhotosCLIWorkflow(t *testing.T) {
 	}
 
 	_ = setupVaultHome(t)
-	source := writeSourceFile(t, "workflow-image.jpeg", "synthetic image bytes")
+	source := writeSourceFile(t, "workflow-image.jpeg", string(mediatest.JPEG(2, 2, color.White)))
 	_, err := runCLI(t, "add", source, "--dest", "/inbox")
 	require.NoError(t, err)
 	c, err := daemonconn.Ensure(t.Context())

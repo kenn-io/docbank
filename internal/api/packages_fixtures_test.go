@@ -1,7 +1,9 @@
 package api_test
 
 import (
+	"bytes"
 	"encoding/json/v2"
+	"image"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +12,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/sqlite"
+	"golang.org/x/image/tiff"
 )
 
 type packageTableCounts struct {
@@ -38,13 +41,15 @@ func syntheticPackageRoot(t *testing.T) string {
 	onePagePDF, err := os.ReadFile(filepath.Join("..", "..", "document", "testdata", "scanassessment", "blank.pdf"))
 	require.NoError(t, err)
 	files := map[string][]byte{
-		"VOL001/DATA/ab-package.dat":    []byte("þDOCIDþ\x14þNATIVEþ\r\nþDOC-Aþ\x14þNATIVES/DOC-A.pdfþ\r\nþDOC-Bþ\x14þNATIVES/DOC-B.pdfþ\r\n"),
-		"VOL001/DATA/ab-package.opt":    []byte("DOC-A,VOL001,IMAGES\\001\\DOC-A-1.tif,Y,,,2\r\nDOC-A,VOL001,IMAGES\\001\\DOC-A-2.tif,,,,\r\nDOC-B,VOL001,IMAGES\\001\\DOC-B-1.tif,Y,,,1\r\n"),
-		"VOL001/IMAGES/001/DOC-A-1.tif": []byte("synthetic-a1"),
-		"VOL001/IMAGES/001/DOC-A-2.tif": []byte("synthetic-a2"),
-		"VOL001/IMAGES/001/DOC-B-1.tif": []byte("synthetic-b1"),
-		"VOL001/NATIVES/DOC-A.pdf":      twoPagePDF,
-		"VOL001/NATIVES/DOC-B.pdf":      onePagePDF,
+		"VOL001/DATA/ab-package.dat": []byte("þDOCIDþ\x14þNATIVEþ\r\nþDOC-Aþ\x14þNATIVES/DOC-A.pdfþ\r\nþDOC-Bþ\x14þNATIVES/DOC-B.pdfþ\r\n"),
+		"VOL001/DATA/ab-package.opt": []byte("DOC-A,VOL001,IMAGES\\001\\DOC-A-1.tif,Y,,,2\r\nDOC-A,VOL001,IMAGES\\001\\DOC-A-2.tif,,,,\r\nDOC-B,VOL001,IMAGES\\001\\DOC-B-1.tif,Y,,,1\r\n"),
+		"VOL001/NATIVES/DOC-A.pdf":   twoPagePDF,
+		"VOL001/NATIVES/DOC-B.pdf":   onePagePDF,
+	}
+	for index, name := range []string{"DOC-A-1.tif", "DOC-A-2.tif", "DOC-B-1.tif"} {
+		var page bytes.Buffer
+		require.NoError(t, tiff.Encode(&page, image.NewGray(image.Rect(0, 0, index+1, 1)), nil))
+		files["VOL001/IMAGES/001/"+name] = page.Bytes()
 	}
 	for name, data := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
