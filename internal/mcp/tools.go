@@ -16,13 +16,14 @@ import (
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/report"
 )
 
 const toolCatalogTTLMs = 60_000
 
 func catalogInstructions(options ServerOptions) string {
 	if !options.AllowProcessing && !options.AllowPackageWrites &&
-		!options.AllowPhotoEdits && !options.AllowExportWrites {
+		!options.AllowPhotoEdits && !options.AllowExportWrites && !options.AllowReportWrites {
 		return "Docbank exposes a bounded read-only document and package surface."
 	}
 	instructions := "Docbank exposes bounded document and package reads."
@@ -38,6 +39,11 @@ func catalogInstructions(options ServerOptions) string {
 	if options.AllowExportWrites {
 		instructions += " Export writes retain exact selections and save verified archives locally."
 	}
+	if options.AllowReportWrites {
+		instructions += " Report writes capture exact current selections and reviewed date choices. " +
+			"CLI and MCP share eight retained report handles; each revision uses a slot. " +
+			"All descendants expire 30 minutes after the original observation. Download frees no slot."
+	}
 	return instructions
 }
 
@@ -52,6 +58,7 @@ type toolDefinition struct {
 }
 
 var readToolDefinitions = []toolDefinition{
+	reportSummaryTool, reportDatesTool,
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
 	{name: "list_documents", title: "List documents", description: "Page through current, live documents with bounded stable ordering.", schemas: listDocumentsSchemas},
@@ -167,6 +174,9 @@ func toolCatalog(options ServerOptions) []*sdkmcp.Tool {
 	if options.AllowExportWrites {
 		definitions = append(definitions, exportWriteToolDefinitions...)
 	}
+	if options.AllowReportWrites {
+		definitions = append(definitions, reportCreateTool, reportReviseTool)
+	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
 		input, output := definition.schemas()
@@ -188,12 +198,15 @@ func registerToolCatalog(
 	server *sdkmcp.Server, options ServerOptions,
 	lease *daemonLease, plans *processingPlanRegistry, logger *slog.Logger,
 ) {
+	reports := &reportTools{lease: lease, budget: report.NewBudget(report.DefaultBudgetBytes), logger: logger}
 	tools := toolCatalog(options)
 	server.AddReceivingMiddleware(validateToolInputs(tools))
 	for _, tool := range tools {
 		output := mustResolveSchema(tool.OutputSchema)
 		var handler sdkmcp.ToolHandler
 		switch tool.Name {
+		case reportSummaryTool.name, reportDatesTool.name, reportCreateTool.name, reportReviseTool.name:
+			handler = reports.handler(tool.Name, output)
 		case "preview_export", "start_export", "get_export_status", "cancel_export", "release_export",
 			"download_export":
 			handler = exportToolHandler(lease, tool.Name, output, logger)
@@ -387,6 +400,10 @@ func stableDomainError(err error) (string, int) {
 		return "consent_required", 0
 	case errors.Is(err, errProcessingOutcomeUnknown):
 		return "processing_outcome_unknown", 0
+	case errors.Is(err, errReportOutcomeUnknown):
+		return "report_outcome_unknown", 0
+	case errors.Is(err, report.ErrReportLimit), errors.Is(err, report.ErrBudgetExhausted):
+		return "report_limit", 0
 	case errors.Is(err, errExportOutcomeUnknown):
 		return "export_outcome_unknown", 0
 	case errors.Is(err, errExportIntegrity):
@@ -432,6 +449,11 @@ func stableDomainError(err error) (string, int) {
 		return "", 0
 	}
 	switch facts.Code {
+	case "invalid_report_request", "invalid_query", "invalid_profile", "invalid_report_scope",
+		"report_selection_changed", "invalid_report_choice", "stale_evidence", "incomplete_coverage",
+		"incomplete_date_coverage", "date_review_required", "report_unavailable", "report_capacity",
+		"report_limit", "report_timeout":
+		return facts.Code, 0
 	case "validation", "export_conflict", "export_expired", "export_limit", "export_retained",
 		"export_role_unavailable", "export_timeout", "export_canceled", "export_failed",
 		"export_unavailable":
@@ -467,6 +489,27 @@ func stableDomainError(err error) (string, int) {
 
 func domainErrorMessage(code string) string {
 	switch code {
+	case "invalid_report_request", "invalid_query", "invalid_profile", "invalid_report_scope":
+		return "Correct the report request, query, profile, or scope."
+	case "report_selection_changed":
+		return "The selected documents changed; refresh and explicitly reselect current versions."
+	case "invalid_report_choice", "stale_evidence":
+		return "Inspect this report's date evidence and correct the reviewed choice."
+	case "incomplete_coverage", "incomplete_date_coverage":
+		return "The captured evidence is insufficient for strict reporting."
+	case "date_review_required":
+		return "Inspect the date evidence and revise this report before downloading counts."
+	case "report_unavailable":
+		return "Reporting or this owned handle is unavailable; it may have expired or been lost on restart."
+	case "report_capacity":
+		return "Report capacity is full; wait for builds to finish or retained handles to expire."
+	case "report_limit":
+		return "A report size or verification budget limit was reached; narrow the request or use HTTP/CLI."
+	case "report_timeout":
+		return "The daemon report build deadline was reached."
+	case "report_outcome_unknown":
+		return "The call may have created a report without a usable reply. Do not retry automatically; " +
+			"inspect report history with the operator. A deliberate retry consumes another handle."
 	case "export_integrity":
 		return "Export verification failed; nothing was published."
 	case "export_local_io":

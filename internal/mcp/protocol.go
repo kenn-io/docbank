@@ -38,6 +38,7 @@ type ServerOptions struct {
 	AllowPackageWrites bool
 	AllowPhotoEdits    bool
 	AllowExportWrites  bool
+	AllowReportWrites  bool
 	Logger             *slog.Logger
 }
 
@@ -107,18 +108,29 @@ func enforcePrivateResultCap(implementation *sdkmcp.Implementation, logger *slog
 			result.SetMeta(metadata)
 			encoded, marshalErr := json.Marshal(result)
 			if marshalErr != nil {
-				logOperationError(logger, method, marshalErr)
-				return nil, sanitizedRPCError(marshalErr)
+				return privateResultError(logger, method, request, marshalErr)
 			}
 			// The SDK adds the complete resultType after receiving middleware.
 			const sdkResultTypeReserve = 64
 			if len(encoded) > maxToolResponseBytes-sdkResultTypeReserve {
-				logOperationError(logger, method, errToolResultTooLarge)
-				return nil, sanitizedRPCError(errToolResultTooLarge)
+				return privateResultError(logger, method, request, errToolResultTooLarge)
 			}
 			return result, nil
 		}
 	}
+}
+
+func privateResultError(logger *slog.Logger, method string, request sdkmcp.Request,
+	failure error,
+) (sdkmcp.Result, error) {
+	if call, ok := request.(*sdkmcp.CallToolRequest); ok && call.Params != nil {
+		failure = reportResultError(call.Params.Name, failure)
+	}
+	logOperationError(logger, method, failure)
+	if domain, known := domainToolError(failure); known {
+		return domain, nil
+	}
+	return nil, sanitizedRPCError(failure)
 }
 
 // Run serves one MCP connection after wrapping it in the exact-version gate.
