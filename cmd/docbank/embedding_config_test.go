@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/kit/safefileio"
 )
 
 func TestKitEmbeddingConfigCredentialsPreserveDescriptorAndRequests(t *testing.T) {
@@ -77,6 +78,12 @@ api_key = %s
 				_, err = provider.Embed(t.Context(), inputs, auth)
 				require.ErrorIs(t, err, openaicompat.ErrUnauthorized)
 				assert.Zero(t, calls.Load())
+			}
+			if source == "file" {
+				// Mode 0600 alone does not establish a protected Windows DACL.
+				file, err := safefileio.CreatePrivateFile(keyFile)
+				require.NoError(t, err)
+				require.NoError(t, file.Close())
 			}
 			for _, value := range []string{"synthetic-first", "synthetic-rotated"} {
 				if source == "inline" && value != "synthetic-first" {
