@@ -182,6 +182,12 @@ Key assumptions reviewers MUST account for:
    Flag loss of an extractor-produced fact; require another representation
    only when a producer or contract calls for it.
 
+20. UNRELEASED SCHEMA IS DISPOSABLE: upgrade paths start only from a
+   released schema. A table or column that no tagged release shipped can
+   change or disappear in place without a schema version bump or an
+   upgrade adapter, because only unreleased builds ever created it. DO
+   flag a change to a layout that a tagged release contains.
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.

@@ -231,7 +231,7 @@ func TestRemoteRecordingAcquireUnavailable(t *testing.T) {
 	hinted.CredentialBinding = strings.Repeat("c", 257)
 	_, err = service.SubmitRemoteRecording(t.Context(), hinted)
 	require.ErrorContains(t, err, "credential binding")
-	items, total, err := fixture.catalog.MediaSources(t.Context(), service.principal, 0, 10)
+	items, total, _, err := fixture.catalog.MediaSources(t.Context(), service.principal, "", 10)
 	require.NoError(t, err)
 	require.Empty(t, items)
 	require.Zero(t, total)

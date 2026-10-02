@@ -66,7 +66,7 @@ func (s *Store) RecordMediaOccurrenceRevocation(
 		if revision != expectedRevision {
 			return "", ErrMediaOccurrenceConflict
 		}
-		if _, err := revokeMediaOccurrenceTx(ctx, tx, op.Principal, occurrenceID); err != nil {
+		if err := revokeMediaOccurrenceTx(ctx, tx, op.Principal, occurrenceID); err != nil {
 			return "", err
 		}
 		receipt := MediaPublicationReceipt{VaultUID: s.vaultID, SourceID: op.SourceID,
@@ -79,15 +79,6 @@ func (s *Store) RecordMediaOccurrenceRevocation(
 		return MediaPublicationReceipt{}, err
 	}
 	return canonical.Decode[MediaPublicationReceipt]([]byte(receiptRaw))
-}
-
-// DeclareMediaOccurrence records a caller revision once and advances that
-// caller's visibility fence only when a new visible occurrence is inserted.
-func (s *Store) DeclareMediaOccurrence(ctx context.Context, in MediaOccurrenceInput) error {
-	if err := validateMediaOccurrenceInput(in); err != nil {
-		return err
-	}
-	return s.withLogicalTx(ctx, func(tx *sql.Tx) error { return s.declareMediaOccurrenceTx(ctx, tx, in) })
 }
 
 func (s *Store) declareMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, in MediaOccurrenceInput) error {
@@ -119,40 +110,22 @@ func (s *Store) declareMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, in Med
 		}
 		return fmt.Errorf("declaring media occurrence: %w", err)
 	}
-	return advanceMediaVisibilityFenceTx(ctx, tx, in.Principal)
+	return nil
 }
 
-// RevokeMediaOccurrence hides one caller-owned occurrence. Repeated revocation
-// returns the existing fence and does not create an observable extra change.
-func (s *Store) RevokeMediaOccurrence(ctx context.Context, principal, id string) (int64, error) {
-	if err := validateBoundedMediaText("media principal", principal, 256, false); err != nil {
-		return 0, err
-	}
-	if err := validateBoundedMediaText("media occurrence ID", id, 256, false); err != nil {
-		return 0, err
-	}
-	var fence int64
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		fence, err = revokeMediaOccurrenceTx(ctx, tx, principal, id)
-		return err
-	})
-	return fence, err
-}
-
-func revokeMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, principal, id string) (int64, error) {
+func revokeMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, principal, id string) error {
 	var visible int
 	if err := tx.QueryRowContext(ctx, `SELECT visible FROM media_occurrences
 			WHERE occurrence_id=? AND caller_principal=?`, id, principal).Scan(&visible); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, ErrNotFound
+			return ErrNotFound
 		}
-		return 0, err
+		return err
 	}
 	if visible != 0 {
 		if _, err := tx.ExecContext(ctx, `UPDATE media_occurrences SET visible=0,revoked_at=?
 				WHERE occurrence_id=? AND caller_principal=?`, nowRFC3339(), id, principal); err != nil {
-			return 0, err
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM rendition_heads WHERE attachment_id IN (
 			SELECT a.attachment_id FROM rendition_attachments a
@@ -160,16 +133,10 @@ func revokeMediaOccurrenceTx(ctx context.Context, tx *sql.Tx, principal, id stri
 			JOIN media_input_artifacts i ON i.occurrence_id=?
 			WHERE j.execution_identity_json LIKE '%"input_binding":"' || i.input_id || '"%'
 		)`, id); err != nil {
-			return 0, fmt.Errorf("revoking input-bound rendition heads: %w", err)
-		}
-		if err := advanceMediaVisibilityFenceTx(ctx, tx, principal); err != nil {
-			return 0, err
+			return fmt.Errorf("revoking input-bound rendition heads: %w", err)
 		}
 	}
-	var fence int64
-	err := tx.QueryRowContext(ctx, `SELECT fence FROM media_visibility_fences
-		WHERE caller_principal=?`, principal).Scan(&fence)
-	return fence, err
+	return nil
 }
 
 func validateMediaOccurrenceInput(in MediaOccurrenceInput) error {
@@ -196,7 +163,7 @@ func validateMediaOccurrenceInput(in MediaOccurrenceInput) error {
 	if len(in.MessageJSON) == 0 || len(in.MessageJSON) > 64<<10 || !utf8.ValidString(in.MessageJSON) {
 		return errors.New("media message claim must be bounded canonical JSON")
 	}
-	if _, err := canonicalJSONText(in.MessageJSON, "media message claim"); err != nil {
+	if err := canonicalJSONText(in.MessageJSON, "media message claim"); err != nil {
 		return errors.New("media message claim must be bounded canonical JSON")
 	}
 	return nil
@@ -253,13 +220,6 @@ func mediaOccurrenceByRevisionTx(
 	}
 	found.SourceVersionID = sourceVersion.String
 	return found, true, nil
-}
-
-func advanceMediaVisibilityFenceTx(ctx context.Context, tx *sql.Tx, principal string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO media_visibility_fences(caller_principal,fence,updated_at)
-		VALUES(?,1,?) ON CONFLICT(caller_principal) DO UPDATE SET
-		fence=media_visibility_fences.fence+1,updated_at=excluded.updated_at`, principal, nowRFC3339())
-	return err
 }
 
 func nullableMediaID(value string) any {

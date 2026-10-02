@@ -958,7 +958,6 @@ CREATE INDEX IF NOT EXISTS content_versions_blob ON content_versions(blob_hash);
 
 -- Media source authority separates an immutable recording identity and its
 -- exact revisions from each caller's independently revocable occurrence.
--- Private acquisition references remain runtime-only and are never exported.
 CREATE TABLE IF NOT EXISTS media_sources (
     source_id       TEXT PRIMARY KEY,
     kind            TEXT NOT NULL,
@@ -973,18 +972,9 @@ CREATE TABLE IF NOT EXISTS media_source_versions (
     source_id          TEXT NOT NULL REFERENCES media_sources(source_id),
     revision           INTEGER NOT NULL,
     content_version_id TEXT NOT NULL REFERENCES content_versions(version_id),
-    source_sha256      TEXT NOT NULL,
-    source_bytes       INTEGER NOT NULL,
     capture_json       TEXT NOT NULL,
-    claim_sha256       TEXT NOT NULL,
     created_at         TEXT NOT NULL,
     UNIQUE (source_id, revision)
-);
-
-CREATE TABLE IF NOT EXISTS media_source_heads (
-    source_id         TEXT PRIMARY KEY REFERENCES media_sources(source_id),
-    source_version_id TEXT REFERENCES media_source_versions(source_version_id),
-    revision          INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS media_occurrences (
@@ -1002,12 +992,6 @@ CREATE TABLE IF NOT EXISTS media_occurrences (
     first_seen_at         TEXT NOT NULL,
     revoked_at            TEXT,
     UNIQUE (caller_principal, caller_occurrence_ref, caller_revision)
-);
-
-CREATE TABLE IF NOT EXISTS media_visibility_fences (
-    caller_principal TEXT PRIMARY KEY,
-    fence            INTEGER NOT NULL,
-    updated_at       TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS media_input_artifacts (
@@ -1029,42 +1013,10 @@ CREATE TABLE IF NOT EXISTS media_operations (
     principal     TEXT NOT NULL,
     verb          TEXT NOT NULL,
     request_sha256 TEXT NOT NULL,
-    state         TEXT NOT NULL,
     source_id     TEXT REFERENCES media_sources(source_id),
     receipt_json  TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS media_acquisitions (
-    acquisition_id      TEXT PRIMARY KEY,
-    operation_id        TEXT NOT NULL REFERENCES media_operations(operation_id),
-    occurrence_id       TEXT NOT NULL REFERENCES media_occurrences(occurrence_id),
-    source_id           TEXT NOT NULL REFERENCES media_sources(source_id),
-    origin_id           TEXT NOT NULL,
-    resolver_fingerprint TEXT NOT NULL,
-    request_sha256      TEXT NOT NULL,
-    authorization_json  TEXT NOT NULL,
-    state               TEXT NOT NULL,
-    stage               TEXT NOT NULL,
-    outcome             TEXT NOT NULL,
-    failure_code        TEXT NOT NULL,
-    attempt             INTEGER NOT NULL,
-    claim_owner         TEXT,
-    claim_epoch         INTEGER NOT NULL,
-    lease_expires_at    TEXT,
-    available_at        TEXT NOT NULL,
-    received_bytes      INTEGER NOT NULL,
-    started_at          TEXT,
-    finished_at         TEXT
-);
-
-CREATE TABLE IF NOT EXISTS media_protected_refs (
-    acquisition_id    TEXT PRIMARY KEY REFERENCES media_acquisitions(acquisition_id),
-    occurrence_id     TEXT NOT NULL REFERENCES media_occurrences(occurrence_id),
-    request_url       TEXT NOT NULL,
-    credential_binding TEXT NOT NULL,
-    expires_at        TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS media_versions_content
@@ -1073,8 +1025,6 @@ CREATE INDEX IF NOT EXISTS media_occurrences_principal
     ON media_occurrences(caller_principal, visible, source_id, occurrence_id);
 CREATE INDEX IF NOT EXISTS media_occurrences_source
     ON media_occurrences(source_id, visible, caller_principal, occurrence_id);
-CREATE INDEX IF NOT EXISTS media_acquisitions_claimable
-    ON media_acquisitions(state, available_at, lease_expires_at, acquisition_id);
 
 CREATE TRIGGER IF NOT EXISTS media_sources_immutable_update
 BEFORE UPDATE ON media_sources BEGIN

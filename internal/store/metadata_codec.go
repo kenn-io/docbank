@@ -287,5 +287,5 @@ var metadataCodecs = indexMetadataCodecs(
 	},
 )
 
-// Media's eight kinds merge in from media_metadata.go's init until #733 converts them.
+// Media's five kinds merge in from media_metadata.go's init until #733 converts them.
 var metadataRequiredFields, metadataNullableFields = metadataFieldMaps(metadataCodecs)

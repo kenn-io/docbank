@@ -41,141 +41,108 @@ func TestMediaMetadataRoundTripSanitizesRuntimeAuthority(t *testing.T) {
 	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','remote_recording','cap.cloud','app',?,?)`,
 		strings.Repeat("c", 64), stamp)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?,?,?,?)`,
-		recording.CurrentVersionID, fakeHash("a1"), 10, `{}`, digestCatalogJSON([]byte(`{}`)), stamp)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_source_heads VALUES('source','source-version',1)`)
+	_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
+		recording.CurrentVersionID, `{}`, stamp)
 	require.NoError(t, err)
 	_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
 		'occurrence','source','source-version','operator','remote-ref','1','recording.mp3','','','{}',1,?,NULL)`, stamp)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_visibility_fences VALUES('operator',1,?)`, stamp)
 	require.NoError(t, err)
 	_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
 		'input','occurrence','source','source-version',?,'caption','supplied','cap.cloud','en',?,?)`,
 		caption.CurrentVersionID, fakeHash("b2"), stamp)
 	require.NoError(t, err)
 	_, err = s.db.Exec(`INSERT INTO media_operations VALUES(?, 'operator','submit_remote_recording',?,
-		'queued','source','{"outcome":"queued"}',?,?)`, opID, strings.Repeat("d", 64), stamp, stamp)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_acquisitions VALUES(
-		'acquisition',?,'occurrence','source','cap-origin',?,?,?,'running','download','','',1,
-		'worker',1,?,?,0,?,NULL)`, opID, strings.Repeat("e", 64), strings.Repeat("f", 64),
-		`{"grant":"secret-authorization"}`, stamp, stamp, stamp)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_protected_refs VALUES(
-		'acquisition','occurrence','https://private.example/share/token','credential-secret',?)`, stamp)
+		'source','{"outcome":"queued"}',?,?)`, opID, strings.Repeat("d", 64), stamp, stamp)
 	require.NoError(t, err)
 
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	for _, kind := range []string{
-		"media_source", "media_source_version", "media_source_head", "media_occurrence",
-		"media_visibility_fence", "media_input_artifact", "media_operation", "media_acquisition_receipt",
-	} {
-		require.Contains(t, exported.String(), `"type":"`+kind+`"`)
-	}
-	require.NotContains(t, exported.String(), "private.example")
-	require.NotContains(t, exported.String(), "credential-secret")
-	require.NotContains(t, exported.String(), "secret-authorization")
-
 	restored := newTestStore(t)
 	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
 	for _, table := range []string{
-		"media_sources", "media_source_versions", "media_source_heads", "media_occurrences",
-		"media_visibility_fences", "media_input_artifacts", "media_operations", "media_acquisitions",
+		"media_sources", "media_source_versions", "media_occurrences", "media_input_artifacts", "media_operations",
 	} {
 		var count int
 		require.NoError(t, restored.db.QueryRow(`SELECT count(*) FROM `+table).Scan(&count))
 		require.Equal(t, 1, count, table)
 	}
-	var protected int
-	require.NoError(t, restored.db.QueryRow(`SELECT count(*) FROM media_protected_refs`).Scan(&protected))
-	require.Zero(t, protected)
-	var operationState, acquisitionState, outcome, failureCode, authorization string
-	var claimOwner, leaseExpires sql.NullString
-	require.NoError(t, restored.db.QueryRow(`SELECT o.state,a.state,a.outcome,a.failure_code,
-		a.authorization_json,a.claim_owner,a.lease_expires_at FROM media_operations o
-		JOIN media_acquisitions a ON a.operation_id=o.operation_id`).Scan(
-		&operationState, &acquisitionState, &outcome, &failureCode, &authorization, &claimOwner, &leaseExpires))
-	require.Equal(t, "failed", operationState)
-	require.Equal(t, "failed", acquisitionState)
-	require.Equal(t, "access_required", outcome)
-	require.Equal(t, "consent_absent", failureCode)
-	require.JSONEq(t, `{}`, authorization)
-	require.False(t, claimOwner.Valid)
-	require.False(t, leaseExpires.Valid)
 }
 
-func TestMediaMetadataRestoreTerminatesProcessingReceipts(t *testing.T) {
+// TestMediaMetadataRestoreKeepsProcessingReceipts catches restore losing a
+// recording's newest version or a recorded processing outcome, or resuming
+// admission that never bound a job.
+func TestMediaMetadataRestoreKeepsProcessingReceipts(t *testing.T) {
 	t.Parallel()
-	for _, verb := range []string{"submit_supplied_media", "retry_media"} {
-		for _, completed := range []bool{false, true} {
-			name := verb + "/pending"
-			if completed {
-				name = verb + "/completed"
-			}
-			t.Run(name, func(t *testing.T) {
-				s := newTestStore(t)
-				request := suppliedMediaPublicationFixture(t, s)
-				consent := testProviderAuthorizationRequest()
-				consent.Principal = request.Operation.Principal
-				_, err := s.GrantConsent(t.Context(), grantRequestForAuthorization(consent, nil))
-				require.NoError(t, err)
-				authorization, err := s.AuthorizeProviderOperation(t.Context(), consent)
-				require.NoError(t, err)
-				consent.PriorAuthorization = &authorization
-				if verb == "submit_supplied_media" {
-					request.ProcessingProfile = "speech"
-					request.ProcessingPrincipal = consent.Principal
-					request.ProcessingScope = consent.Scope
-					request.ProcessingProfileFingerprint = consent.ProfileFingerprint
-					request.ProcessingAuthorization = consent
-				}
-				receipt, err := s.RetainSuppliedMedia(t.Context(), request)
-				require.NoError(t, err)
-				operation := request.Operation
-				if verb == "retry_media" {
-					operation.ID = "00000000-0000-4000-8000-000000000071"
-					operation.Verb = verb
-					receipt.OperationID = operation.ID
-					receipt.OperationState, receipt.CoverageState = "queued", "pending"
-					receipt.ProcessingProfile = "speech"
-					receipt.ProcessingPrincipal = consent.Principal
-					receipt.ProcessingScope = consent.Scope
-					receipt.ProcessingProfileFingerprint = consent.ProfileFingerprint
-					receipt.ProcessingAuthorization = consent
-					_, err = s.QueueMediaRetry(t.Context(), operation, receipt)
-					require.NoError(t, err)
-				}
-				receipt, err = s.SetMediaProcessingJob(t.Context(), operation.ID, operation.Principal, testSHA256([]byte("processing-job")))
-				require.NoError(t, err)
-				if completed {
-					receipt, err = s.FinishMediaProcessing(t.Context(), operation.ID, operation.Principal, true)
-					require.NoError(t, err)
-				}
-				var exported bytes.Buffer
-				require.NoError(t, s.ExportMetadata(t.Context(), &exported))
-				restored := newTestStore(t)
-				require.NoError(t, restored.ImportMetadata(t.Context(), &exported))
-				replayed, err := restored.MediaOperationReceipt(t.Context(), operation)
-				require.NoError(t, err)
-				actual, err := canonical.Decode[MediaPublicationReceipt]([]byte(replayed))
-				require.NoError(t, err)
-				if !completed {
-					receipt.OperationState, receipt.CoverageState, receipt.JobID = "failed", "unavailable", ""
-				}
-				require.Equal(t, receipt, actual, "replay must report the restored processing result")
-				status, err := restored.MediaSource(t.Context(), operation.Principal, operation.SourceID)
-				require.NoError(t, err)
-				require.NotNil(t, status.ProcessingReceipt)
-				require.Equal(t, receipt, *status.ProcessingReceipt, "status must use the same terminal receipt")
-				pending, err := restored.MediaProcessingContinuations(t.Context(), 10)
-				require.NoError(t, err)
-				require.Empty(t, pending)
-			})
-		}
+	s := newTestStore(t)
+	ctx := t.Context()
+	request := suppliedMediaPublicationFixture(t, s)
+	consent := testProviderAuthorizationRequest()
+	consent.Principal = request.Operation.Principal
+	_, err := s.GrantConsent(ctx, grantRequestForAuthorization(consent, nil))
+	require.NoError(t, err)
+	authorization, err := s.AuthorizeProviderOperation(ctx, consent)
+	require.NoError(t, err)
+	consent.PriorAuthorization = &authorization
+	request.ProcessingProfile, request.ProcessingPrincipal = "speech", consent.Principal
+	request.ProcessingScope, request.ProcessingProfileFingerprint = consent.Scope, consent.ProfileFingerprint
+	request.ProcessingAuthorization = consent
+	noJob, err := s.RetainSuppliedMedia(ctx, request)
+	require.NoError(t, err)
+	bound := request.Operation
+	bound.ID, bound.Verb = "00000000-0000-4000-8000-000000000071", "retry_media"
+	boundReceipt := noJob
+	boundReceipt.OperationID = bound.ID
+	_, err = s.QueueMediaRetry(ctx, bound, boundReceipt)
+	require.NoError(t, err)
+	boundReceipt, err = s.SetMediaProcessingJob(ctx, bound.ID, bound.Principal, testSHA256([]byte("processing-job")))
+	require.NoError(t, err)
+	finished := bound
+	finished.ID = "00000000-0000-4000-8000-000000000072"
+	finishedReceipt := noJob
+	finishedReceipt.OperationID = finished.ID
+	_, err = s.QueueMediaRetry(ctx, finished, finishedReceipt)
+	require.NoError(t, err)
+	_, err = s.SetMediaProcessingJob(ctx, finished.ID, finished.Principal, testSHA256([]byte("finished-job")))
+	require.NoError(t, err)
+	finishedReceipt, err = s.FinishMediaProcessing(ctx, finished.ID, finished.Principal, true)
+	require.NoError(t, err)
+
+	sourceID := testSHA256([]byte("remote-source"))
+	reference, _ := remoteStoreReference(t, s, sourceID, "00000000-0000-4000-8000-000000000821", "remote-a")
+	_, err = s.RetainRemoteRecordingMedia(ctx, remoteStoreArtifact("00000000-0000-4000-8000-000000000822", sourceID,
+		reference.OccurrenceID, "", testSHA256([]byte("remote-input-a")), testSHA256([]byte("remote-original-a")), 10,
+		BlobPhysical{Encoding: "raw", StoredBytes: 10, Created: true}))
+	require.NoError(t, err)
+	require.NoError(t, declareTestOccurrence(ctx, s, MediaOccurrenceInput{ID: "remote-b", SourceID: sourceID,
+		Principal: "operator:remote", Ref: "remote-b", Revision: "1", MessageJSON: "{}"}))
+	latest, err := s.RetainRemoteRecordingMedia(ctx, remoteStoreArtifact("00000000-0000-4000-8000-000000000823", sourceID,
+		"remote-b", "", testSHA256([]byte("remote-input-b")), testSHA256([]byte("remote-original-b")), 10,
+		BlobPhysical{Encoding: "raw", StoredBytes: 10, Created: true}))
+	require.NoError(t, err)
+
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(ctx, &exported))
+	status, err := restored.MediaSource(ctx, "operator:remote", sourceID)
+	require.NoError(t, err)
+	require.Equal(t, latest.SourceVersionID, status.SourceVersionID)
+	require.Equal(t, latest.ContentVersionID, status.ContentVersionID)
+	replay := func(op MediaOperation) MediaPublicationReceipt {
+		raw, err := restored.MediaOperationReceipt(ctx, op)
+		require.NoError(t, err)
+		receipt, err := canonical.Decode[MediaPublicationReceipt]([]byte(raw))
+		require.NoError(t, err)
+		return receipt
 	}
+	restoredNoJob := replay(request.Operation)
+	require.Equal(t, []string{"failed", "unavailable"}, []string{restoredNoJob.OperationState, restoredNoJob.CoverageState})
+	require.Equal(t, boundReceipt, replay(bound), "a receipt with a job derives its state from that job")
+	require.Equal(t, finishedReceipt, replay(finished), "a recorded outcome survives restore")
+	pending, err := restored.MediaProcessingContinuations(ctx, "operator", "", 10)
+	require.NoError(t, err)
+	require.Len(t, pending, 1, "only the job-bound queued receipt awaits an outcome")
+	require.Equal(t, bound.ID, pending[0].OperationID)
 }
 
 func TestMediaMetadataMissingCurrentTableFailsValidation(t *testing.T) {
@@ -199,10 +166,8 @@ func TestPruneContentVersionsRetainsMediaOriginalAndInputAuthority(t *testing.T)
 	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 		strings.Repeat("c", 64), stamp)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?,?,?,?)`,
-		created.CurrentVersionID, fakeHash("a1"), 10, `{}`, digestCatalogJSON([]byte(`{}`)), stamp)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_source_heads VALUES('source','source-version',1)`)
+	_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
+		created.CurrentVersionID, `{}`, stamp)
 	require.NoError(t, err)
 	_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
 		'occurrence','source','source-version','operator','ref','1','','','','{}',1,?,NULL)`, stamp)
@@ -246,8 +211,7 @@ func TestPruneContentVersionsRetainsMediaRevertAncestryIncludingAllPrior(t *test
 			require.NoError(t, err)
 			require.NoError(t, s.PublishMediaSourceVersion(ctx, MediaSourceVersionInput{
 				ID: "source-version", SourceID: "source", Revision: 1,
-				ContentVersionID: revertVersion.ID, SourceSHA256: created.BlobHash, SourceBytes: created.Size,
-				CaptureJSON: "{}", ClaimSHA256: digestCatalogJSON([]byte("{}")),
+				ContentVersionID: revertVersion.ID, CaptureJSON: "{}",
 			}))
 
 			selector := VersionPruneSelector{AllPrior: true}
@@ -299,8 +263,7 @@ func TestPruneContentVersionsRetainsMediaRevertAncestryIncludingAllPrior(t *test
 		require.NoError(t, err)
 		require.NoError(t, s.PublishMediaSourceVersion(ctx, MediaSourceVersionInput{
 			ID: "source-version", SourceID: "source", Revision: 1,
-			ContentVersionID: pinnedRevert.ID, SourceSHA256: created.BlobHash, SourceBytes: created.Size,
-			CaptureJSON: "{}", ClaimSHA256: digestCatalogJSON([]byte("{}")),
+			ContentVersionID: pinnedRevert.ID, CaptureJSON: "{}",
 		}))
 		updated, replacementAfterRevert, err := s.ReplaceContent(
 			ctx, created.ID, reverted.Revision, fakeHash("d4"), 40, "audio/mpeg")
@@ -356,8 +319,8 @@ func TestMediaMetadataRejectsNonObjectTimestampClaim(t *testing.T) {
 	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
 		strings.Repeat("c", 64), stamp)
 	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?,?,?,?)`,
-		file.CurrentVersionID, fakeHash("a1"), 10, `[]`, digestCatalogJSON([]byte(`[]`)), stamp)
+	_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
+		file.CurrentVersionID, `[]`, stamp)
 	require.NoError(t, err)
 	err = s.ExportMetadata(ctx, &bytes.Buffer{})
 	require.ErrorContains(t, err, "capture claim")
@@ -375,8 +338,6 @@ func TestMediaInputArtifactBytesBelongToBackupAuthority(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
 		'occurrence','source',NULL,'operator','ref','1','','','','{}',1,?,NULL)`, stamp)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_visibility_fences VALUES('operator',1,?)`, stamp)
 	require.NoError(t, err)
 	_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
 		'input','occurrence','source',NULL,?,'caption','supplied','cap.cloud','en',?,?)`,

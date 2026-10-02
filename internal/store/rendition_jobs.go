@@ -1505,8 +1505,9 @@ func mediaInputBindingVisibleForSourceTx(
 	err := tx.QueryRowContext(ctx, `SELECT 1 FROM media_input_artifacts i
 		JOIN media_occurrences o ON o.occurrence_id=i.occurrence_id
 		JOIN media_source_versions v ON v.source_version_id=i.source_version_id
+		JOIN content_versions c ON c.version_id=v.content_version_id
 		WHERE i.input_id=? AND o.caller_principal=? AND o.visible=1
-			AND v.source_sha256=? AND o.source_version_id=i.source_version_id`,
+			AND c.blob_hash=? AND o.source_version_id=i.source_version_id`,
 		inputID, principal, sourceSHA256).Scan(&found)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil

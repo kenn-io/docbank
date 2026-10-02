@@ -20,21 +20,19 @@ func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
 	sourceID := strings.Repeat("a", 64)
 	_, err = s.db.Exec(`INSERT INTO media_sources VALUES(?,?,?,?,?,?)`, sourceID, "supplied_media", "", "", sourceID, nowRFC3339())
 	require.NoError(t, err)
-	require.NoError(t, s.DeclareMediaOccurrence(ctx, MediaOccurrenceInput{
+	require.NoError(t, declareTestOccurrence(ctx, s, MediaOccurrenceInput{
 		ID: "occurrence-a", SourceID: sourceID, Principal: "operator:test", Ref: "call-a", Revision: "1", MessageJSON: "{}",
 	}))
 	require.NoError(t, s.PublishMediaSourceVersion(ctx, MediaSourceVersionInput{
 		ID: "source-version-a", SourceID: sourceID, Revision: 1, ContentVersionID: first.CurrentVersionID,
-		SourceSHA256: fakeHash("a1"), SourceBytes: first.Size, CaptureJSON: "{}",
-		ClaimSHA256: digestCatalogJSON([]byte("{}")), BindOccurrenceIDs: []string{"occurrence-a"},
+		CaptureJSON: "{}", BindOccurrenceIDs: []string{"occurrence-a"},
 	}))
-	require.NoError(t, s.DeclareMediaOccurrence(ctx, MediaOccurrenceInput{
+	require.NoError(t, declareTestOccurrence(ctx, s, MediaOccurrenceInput{
 		ID: "occurrence-b", SourceID: sourceID, Principal: "operator:test", Ref: "call-b", Revision: "1", MessageJSON: "{}",
 	}))
 	require.NoError(t, s.PublishMediaSourceVersion(ctx, MediaSourceVersionInput{
 		ID: "source-version-b", SourceID: sourceID, Revision: 2, ContentVersionID: second.CurrentVersionID,
-		SourceSHA256: fakeHash("b2"), SourceBytes: second.Size, CaptureJSON: "{}",
-		ClaimSHA256: digestCatalogJSON([]byte("{}")), ExpectedHeadRevision: 1, BindOccurrenceIDs: []string{"occurrence-b"},
+		CaptureJSON: "{}", ExpectedHeadRevision: 1, BindOccurrenceIDs: []string{"occurrence-b"},
 	}))
 	for _, receipt := range []struct {
 		versionID, contentVersionID, occurrenceID, operationID, requestHash, createdAt string
@@ -48,8 +46,8 @@ func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
 			OperationState: "succeeded", CoverageState: "unprocessed"}
 		raw, err := canonical.Marshal(publication)
 		require.NoError(t, err)
-		_, err = s.db.Exec(`INSERT INTO media_operations(operation_id,principal,verb,request_sha256,state,source_id,receipt_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`,
-			receipt.operationID, "operator:test", "submit_supplied_media", receipt.requestHash, "succeeded", sourceID, string(raw), receipt.createdAt, receipt.createdAt)
+		_, err = s.db.Exec(`INSERT INTO media_operations(operation_id,principal,verb,request_sha256,source_id,receipt_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`,
+			receipt.operationID, "operator:test", "submit_supplied_media", receipt.requestHash, sourceID, string(raw), receipt.createdAt, receipt.createdAt)
 		require.NoError(t, err)
 	}
 

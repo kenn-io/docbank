@@ -269,6 +269,9 @@ func (service *Service) RetryMedia(
 		Verb: "retry_media", RequestSHA256: hex.EncodeToString(digest[:]), SourceID: sourceID}
 	if replay, replayErr := service.catalog.MediaOperationReceipt(ctx, operation); replayErr == nil {
 		stored, decodeErr := canonical.Decode[store.MediaPublicationReceipt]([]byte(replay))
+		if decodeErr == nil {
+			stored, decodeErr = service.mediaOperationState(ctx, stored)
+		}
 		return mediaReceiptFromStore(stored), decodeErr
 	} else if !errors.Is(replayErr, store.ErrNotFound) {
 		return MediaReceipt{}, replayErr
@@ -293,8 +296,7 @@ func (service *Service) RetryMedia(
 	}
 	processingRequest.SuppliedInputID = binding
 	selector := Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: processingRequest.Profile}
-	plan, err := service.Plan(ctx, selector)
-	if err != nil {
+	if _, err := service.Plan(ctx, selector); err != nil {
 		return MediaReceipt{}, err
 	}
 	authorization := service.renditionConsentRequest(profile)
@@ -317,15 +319,13 @@ func (service *Service) RetryMedia(
 		stored, queueErr = service.catalog.QueueMediaRetry(ctx, operation, receipt)
 		return queueErr
 	})
-	if err != nil || stored.JobID != "" {
-		return mediaReceiptFromStore(stored), err
-	}
-	job, err := service.EnqueueAuthorized(ctx, selector, source, plan.Fingerprint,
-		authorization, processingRequest.SuppliedInputID)
 	if err != nil {
-		return MediaReceipt{}, errors.Join(err, service.failMediaProcessing(ctx, stored, err))
+		return MediaReceipt{}, err
 	}
-	stored, err = service.recordMediaProcessingJob(ctx, stored, job.ID)
+	if stored, err = service.completeMediaAdmission(ctx, stored); err != nil {
+		return MediaReceipt{}, err
+	}
+	stored, err = service.mediaOperationState(ctx, stored)
 	return mediaReceiptFromStore(stored), err
 }
 

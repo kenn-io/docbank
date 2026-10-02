@@ -30,25 +30,17 @@ func TestMediaRetryAdmissionOrderWithEqualClockTimes(t *testing.T) {
 				SourceID: sourceID, RequestSHA256: strings.Repeat("b", 64)}, receipt)
 			require.NoError(t, err)
 		}
-		_, err = s.FinishMediaProcessing(ctx, older, "operator", true)
+		receipts, err := s.mediaProcessingReceiptsForVersion(ctx, "operator", sourceID, sourceVersionID)
 		require.NoError(t, err)
-		current, err := s.latestMediaProcessingReceiptForVersion(ctx, "operator", sourceID, sourceVersionID, false)
-		require.NoError(t, err)
-		require.Equal(t, newer, current.OperationID)
-		coverage, err := s.latestMediaProcessingReceiptForVersion(ctx, "operator", sourceID, sourceVersionID, true)
-		require.NoError(t, err)
-		require.Equal(t, older, coverage.OperationID)
+		require.Equal(t, []string{newer, older}, []string{receipts[0].OperationID, receipts[1].OperationID})
 
 		var exported bytes.Buffer
 		require.NoError(t, s.ExportMetadata(ctx, &exported))
 		restored := newTestStore(t)
 		require.NoError(t, restored.ImportMetadata(ctx, &exported))
-		current, err = restored.latestMediaProcessingReceiptForVersion(ctx, "operator", sourceID, sourceVersionID, false)
+		receipts, err = restored.mediaProcessingReceiptsForVersion(ctx, "operator", sourceID, sourceVersionID)
 		require.NoError(t, err)
-		require.Equal(t, newer, current.OperationID)
-		coverage, err = restored.latestMediaProcessingReceiptForVersion(ctx, "operator", sourceID, sourceVersionID, true)
-		require.NoError(t, err)
-		require.Equal(t, older, coverage.OperationID)
+		require.Equal(t, []string{newer, older}, []string{receipts[0].OperationID, receipts[1].OperationID})
 	})
 }
 
@@ -148,55 +140,4 @@ func TestMediaOperationRespectsAuditedVaultGuard(t *testing.T) {
 	}
 	_, err := s.withMediaOperation(t.Context(), op, func(*sql.Tx) (string, error) { return `{}`, nil })
 	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-}
-
-func TestQueuedMediaOperationPersistsAdmissionBeforeWorkerExecution(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	op := MediaOperation{
-		ID: "00000000-0000-4000-8000-000000000005", Principal: "operator",
-		Verb: "submit_remote_recording", RequestSHA256: strings.Repeat("f", 64),
-	}
-	calls := 0
-	first, err := s.withQueuedMediaOperation(t.Context(), op, func(*sql.Tx) (string, error) {
-		calls++
-		return `{"outcome":"queued"}`, nil
-	})
-	require.NoError(t, err)
-	second, err := s.withQueuedMediaOperation(t.Context(), op, func(*sql.Tx) (string, error) {
-		calls++
-		return `{}`, nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, first, second)
-	require.Equal(t, 1, calls)
-	var state string
-	require.NoError(t, s.db.QueryRow(`SELECT state FROM media_operations WHERE operation_id=?`, op.ID).Scan(&state))
-	require.Equal(t, mediaOperationQueued, state)
-}
-
-func TestMediaContinuationsPrioritizeUnenqueuedWorkAndFilterPrincipal(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	_, err := s.db.Exec(`INSERT INTO media_sources VALUES(?, 'supplied_media','','',?,?)`,
-		strings.Repeat("a", 64), strings.Repeat("a", 64), nowRFC3339())
-	require.NoError(t, err)
-	queue := func(id, principal, jobID string) {
-		t.Helper()
-		receipt := MediaPublicationReceipt{VaultUID: s.VaultID(), SourceID: strings.Repeat("a", 64),
-			SourceVersionID: "source-version", ContentVersionID: "content-version", OccurrenceID: "occurrence",
-			OperationID: id, JobID: jobID, OperationState: mediaOperationQueued, CoverageState: "pending",
-			ProcessingProfile: "supplied-transcript", ProcessingPrincipal: principal}
-		_, err := s.QueueMediaRetry(t.Context(), MediaOperation{ID: id, Principal: principal,
-			Verb: "retry_media", RequestSHA256: strings.Repeat("b", 64), SourceID: receipt.SourceID}, receipt)
-		require.NoError(t, err)
-	}
-	queue("00000000-0000-4000-8000-000000000051", "operator", strings.Repeat("c", 64))
-	queue("00000000-0000-4000-8000-000000000052", "operator", "")
-	queue("00000000-0000-4000-8000-000000000053", "other", "")
-	items, err := s.MediaProcessingContinuations(t.Context(), 10, "operator")
-	require.NoError(t, err)
-	require.Len(t, items, 2)
-	require.Equal(t, "00000000-0000-4000-8000-000000000052", items[0].OperationID)
-	require.Equal(t, "00000000-0000-4000-8000-000000000051", items[1].OperationID)
 }

@@ -407,21 +407,17 @@ func TestRemoteRecordingManualStatus(t *testing.T) {
 		firstImport.SourceVersionID, "first exact transcript")
 	secondTranscript := importRemoteTranscript(t, service, retained.SourceID, second.OccurrenceID,
 		secondImport.SourceVersionID, "second exact transcript")
-	firstOperation := queueRemoteAttempt(t, fixture.catalog, service, retained.SourceID, firstImport, firstTranscript,
-		"first-attempt")
-	_, err = fixture.catalog.FinishMediaProcessing(t.Context(), firstOperation.OperationID, service.principal, true)
-	require.NoError(t, err)
+	queueRemoteAttempt(t, fixture.catalog, service, retained.SourceID, firstImport, firstTranscript,
+		"first-attempt", "succeeded")
 	status, err := service.MediaStatus(t.Context(), retained.SourceID)
 	require.NoError(t, err)
 	require.Equal(t, secondImport.SourceVersionID, status.SourceVersionID)
 	require.Equal(t, "unprocessed", status.CoverageState)
 
-	secondOperation := queueRemoteAttempt(t, fixture.catalog, service, retained.SourceID, secondImport,
-		secondTranscript, "second-success-final")
-	_, err = fixture.catalog.FinishMediaProcessing(t.Context(), secondOperation.OperationID, service.principal, true)
-	require.NoError(t, err)
+	queueRemoteAttempt(t, fixture.catalog, service, retained.SourceID, secondImport,
+		secondTranscript, "second-success-final", "succeeded")
 	failedRetry := queueRemoteAttempt(t, fixture.catalog, service, retained.SourceID, secondImport,
-		secondTranscript, "second-failed")
+		secondTranscript, "second-failed", "queued")
 	_, err = fixture.catalog.FailMediaProcessing(t.Context(), failedRetry.OperationID, service.principal)
 	require.NoError(t, err)
 	status, err = service.MediaStatus(t.Context(), retained.SourceID)
@@ -493,15 +489,16 @@ func importRemoteTranscript(
 
 func queueRemoteAttempt(
 	t *testing.T, catalog *store.Store, service *Service, sourceID string,
-	retained MediaReceipt, inputID, suffix string,
+	retained MediaReceipt, inputID, suffix, state string,
 ) store.MediaPublicationReceipt {
 	t.Helper()
 	operation := store.MediaOperation{ID: uuid.New().String(), Principal: service.principal,
 		Verb: "retry_media", RequestSHA256: processingHash(suffix), SourceID: sourceID}
 	receipt := store.MediaPublicationReceipt{VaultUID: retained.VaultUID, SourceID: sourceID,
 		SourceVersionID: retained.SourceVersionID, ContentVersionID: retained.ContentVersionID,
-		OccurrenceID: retained.OccurrenceID, OperationID: operation.ID, OperationState: "queued",
-		CoverageState: "pending", ProcessingProfile: "speech", SuppliedInputID: inputID}
+		OccurrenceID: retained.OccurrenceID, OperationID: operation.ID, OperationState: state,
+		CoverageState:     map[string]string{"queued": "pending", "succeeded": "transcribed"}[state],
+		ProcessingProfile: "speech", SuppliedInputID: inputID}
 	_, err := catalog.QueueMediaRetry(t.Context(), operation, receipt)
 	require.NoError(t, err)
 	return receipt

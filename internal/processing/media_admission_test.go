@@ -61,7 +61,7 @@ func TestReferencedMediaUsesUploadEligibilityAndLimit(t *testing.T) {
 				require.Equal(t, retained, repeated)
 			} else {
 				require.Error(t, err)
-				_, total, err := fixture.catalog.MediaSources(t.Context(), service.principal, 0, 10)
+				_, total, _, err := fixture.catalog.MediaSources(t.Context(), service.principal, "", 10)
 				require.NoError(t, err)
 				require.Zero(t, total)
 			}

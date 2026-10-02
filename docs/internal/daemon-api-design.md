@@ -314,7 +314,7 @@ embed IDs are interchangeable. Loom references use provider `loom`; an
 access.
 
 For a recognized Cap URL, `acquire: true` is admitted and retained as an
-`unsupported` outcome. It creates no acquisition queue row, so the caller
+`unsupported` outcome. Docbank has no acquisition queue, so the caller
 continues through the manual artifact path below. Cap's documented Developer
 API lists videos, status, deletion, and usage, but has no download or caption
 route, and it covers only videos created through the calling developer app. A
@@ -364,7 +364,9 @@ after the caller reviews a processing plan, grants consent, and requests an
 explicit retry. Status and list reads use the source version bound to the
 selected visible occurrence. They filter processing receipts to that same
 immutable version, so a transcript for an older recording revision cannot
-cover newer bytes.
+cover newer bytes. Status and replay derive processing state from the bound
+job. The `media-continuations` backfill finishes admission interrupted before a
+job was bound and enqueues embedding jobs once a media rendition is published.
 
 ### Exact media transcript reads
 

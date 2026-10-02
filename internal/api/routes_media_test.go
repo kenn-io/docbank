@@ -125,18 +125,26 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	_, err = c.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: processingPlan.Fingerprint}})
 
 	require.NoError(t, err)
-	queued, err := c.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
+	retry := api.MediaRetryBody{
 		OperationID: "00000000-0000-4000-8000-000000000305",
 		Processing: &api.MediaProcessingBody{Profile: processing.SuppliedMediaProfileName,
 			SuppliedInputID: artifact.SuppliedInputID},
-	})
+	}
+	queued, err := c.RetryMedia(t.Context(), receipt.SourceID, retry)
 	require.NoError(t, err)
 	require.NotEmpty(t, queued.JobID)
+	require.Equal(t, "queued", queued.OperationState)
 	require.Eventually(t, func() bool {
 		status, statusErr := c.MediaStatus(t.Context(), receipt.SourceID)
 		return statusErr == nil && status.OperationID == queued.OperationID &&
 			status.OperationState == "succeeded" && status.CoverageState == "transcribed"
 	}, 30*time.Second, 20*time.Millisecond)
+	// msgvault replays the same request to read its receipt; the state comes from the job.
+	replayed, err := c.RetryMedia(t.Context(), receipt.SourceID, retry)
+	require.NoError(t, err)
+	require.Equal(t, []string{"succeeded", "transcribed"}, []string{replayed.OperationState, replayed.CoverageState})
+	replayed.OperationState, replayed.CoverageState = queued.OperationState, queued.CoverageState
+	require.Equal(t, queued, replayed, "job, operation, version, occurrence and input IDs are unchanged")
 	jobStatus, err := c.ProcessingStatus(t.Context(), queued.JobID)
 	require.NoError(t, err)
 	require.Equal(t, "completed", jobStatus.State)
@@ -539,8 +547,6 @@ func configureMediaTestService(t *testing.T) func(*api.Deps) {
 		workerContext, cancelWorker := context.WithCancel(context.Background())
 		var workers sync.WaitGroup
 		workers.Go(func() { _ = worker.Run(workerContext) })
-		continuation := &processing.MediaContinuationWorker{Service: service, IdleDelay: time.Millisecond}
-		workers.Go(func() { _ = continuation.Run(workerContext) })
 		t.Cleanup(func() { cancelWorker(); workers.Wait() })
 	}
 }
