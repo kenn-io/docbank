@@ -534,7 +534,7 @@ func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Ca
 		reference := EvidenceReference{Kind: hit.EvidenceKind, VaultID: searcher.backend.VaultID(),
 			NodeID: hit.Node.ID, NodeRevision: hit.Node.Revision, ContentVersionID: hit.Node.CurrentVersionID,
 			BuildID: hit.BuildID, SegmentID: hit.SegmentID, BlobHash: hit.BlobHash}
-		span, err := mediaTimeSpan(hit.Locator)
+		span, err := MediaTimeSpanFromLocator(hit.Locator)
 		if err != nil {
 			return nil, false, err
 		}

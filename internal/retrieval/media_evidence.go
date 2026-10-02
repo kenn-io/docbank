@@ -21,7 +21,9 @@ type MediaEvidenceBlobReader interface {
 	OpenStreamContext(ctx context.Context, hash string) (packstore.VerifiedReadCloser, int64, error)
 }
 
-func mediaTimeSpan(locator document.EvidenceLocatorV1) (*MediaTimeSpan, error) {
+// MediaTimeSpanFromLocator converts a retained segment locator without
+// inventing timing for untimed evidence.
+func MediaTimeSpanFromLocator(locator document.EvidenceLocatorV1) (*MediaTimeSpan, error) {
 	if locator.Kind != document.EvidenceLocatorSegment {
 		return nil, nil //nolint:nilnil // Absence is the truthful result for an untimed locator.
 	}
@@ -142,7 +144,7 @@ func (resolver *MediaEvidenceResolver) load(ctx context.Context, artifacts store
 	}
 	inputs := make(map[string]mediaEvidenceInput, len(generation.Inputs))
 	for _, input := range generation.Inputs {
-		span, err := mediaTimeSpan(evidence.Units[input.SourceSpan.UnitIndex].Locator)
+		span, err := MediaTimeSpanFromLocator(evidence.Units[input.SourceSpan.UnitIndex].Locator)
 		if err != nil {
 			return nil, err
 		}

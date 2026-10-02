@@ -338,6 +338,30 @@ the same version. A transcript from an older version cannot cover newer bytes.
 Raw URLs and credential bindings never appear in receipts, errors, logs,
 renditions, search results, or portable metadata.
 
+#### Exact media transcript reads
+
+Read one retained transcript by its complete stable identity:
+
+```text
+GET /api/v1/media/sources/{source_id}/versions/{source_version_id}/transcript?content_version_id={content_version_id}
+```
+
+Authentication supplies the vault and principal. The source version and
+expected content version must match the caller-visible occurrence. The
+response carries `evidence_state`, `coverage_state`, and `operation_state`
+separately; only `evidence_state: "ready"` includes `transcript`. The units are
+the normalized evidence of the active rendition for that content version and
+processing profile, the same build `/api/v1/renditions/select` serves. Each
+unit keeps its text, an optional `speaker`, and an optional `time_span` with
+`start_ms` and `end_ms`, the same shape search evidence uses. Untimed units
+omit `time_span`. `origin` is `supplied` when the build came from a supplied transcript
+or caption, and `generated` otherwise.
+
+A content version that no longer matches the source version or is no longer
+the file's current version, or a build whose supplied input this source
+version cannot see, returns `stale` with no text.
+Unknown or hidden sources return `404` and invalid identities return `422`.
+
 #### Processing consent
 
 To grant consent without running document processing, send

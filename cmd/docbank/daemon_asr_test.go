@@ -296,6 +296,14 @@ func TestDaemonDoclingASRAdjacentProfiles(t *testing.T) {
 		require.Equal(collect, "transcribed", status.CoverageState)
 	}, 10*time.Second, 20*time.Millisecond)
 	assert.Zero(t, provider.requests.Load(), "supplied transcript selection must not call Docling")
+	transcriptOutput, err := runCLI(t, "media", "transcript", receipt.SourceID,
+		"--source-version-id", receipt.SourceVersionID, "--content-version-id", receipt.ContentVersionID)
+	require.NoError(t, err)
+	assert.Contains(t, transcriptOutput, `"evidence_state":"ready"`)
+	assert.Contains(t, transcriptOutput, `"coverage_state":"transcribed"`)
+	assert.Contains(t, transcriptOutput, `"operation_state":"succeeded"`)
+	assert.Contains(t, transcriptOutput, `"origin":"supplied"`)
+	assert.Contains(t, transcriptOutput, "supplied transcript remains exact")
 
 	stream, err := daemon.RenditionForSelector(t.Context(), selector, 1<<20)
 	require.NoError(t, err)

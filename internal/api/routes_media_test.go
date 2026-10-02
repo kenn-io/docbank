@@ -34,6 +34,20 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	unauthorized, body := get(t, ts, "/api/v1/media/sources?limit=10",
 		map[string]string{"X-Api-Key": ""})
 	require.Equal(t, 401, unauthorized.StatusCode, body)
+	browserToken := issueWebSession(t, ts)
+	browserDenied, browserBody := get(t, ts,
+		"/api/v1/media/sources/missing/versions/missing/transcript?content_version_id=00000000-0000-4000-8000-000000000001",
+		map[string]string{"X-Api-Key": "", api.WebSessionHeader: browserToken})
+	require.Equal(t, http.StatusForbidden, browserDenied.StatusCode, browserBody)
+	require.Contains(t, browserBody, `"code":"web_session_read_only"`)
+	invalidTranscript, invalidBody := get(t, ts,
+		"/api/v1/media/sources/missing/versions/missing/transcript?content_version_id=bad",
+		nil)
+	require.Equal(t, http.StatusUnprocessableEntity, invalidTranscript.StatusCode, invalidBody)
+	missingTranscript, missingBody := get(t, ts,
+		"/api/v1/media/sources/missing/versions/missing/transcript?content_version_id=00000000-0000-4000-8000-000000000001",
+		nil)
+	require.Equal(t, http.StatusNotFound, missingTranscript.StatusCode, missingBody)
 	c := daemonconn.New(ts.URL, testAPIKey)
 	spoofed, spoofedBody := do(t, ts, http.MethodPost, "/api/v1/media/sources", nil,
 		map[string]any{"operation_id": "00000000-0000-4000-8000-000000000300",
@@ -140,6 +154,18 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}}})
 	require.NoError(t, err)
 	require.NotEmpty(t, search.Results)
+	transcriptResult, err := c.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, "ready", transcriptResult.EvidenceState)
+	require.NotNil(t, transcriptResult.Transcript)
+	require.Equal(t, "supplied", transcriptResult.Transcript.Origin)
+	require.Len(t, transcriptResult.Transcript.Units, 1)
+	require.Equal(t, "synthetic exact phrase\n", transcriptResult.Transcript.Units[0].Text)
+	staleTranscript, err := c.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID,
+		"00000000-0000-4000-8000-000000000001")
+	require.NoError(t, err)
+	require.Equal(t, "stale", staleTranscript.EvidenceState)
+	require.Nil(t, staleTranscript.Transcript)
 
 	origins, err := c.MediaOrigins(t.Context())
 	require.NoError(t, err)
@@ -175,6 +201,15 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	})
 	require.NotContains(t, remote.SourceID, "private-id")
 	require.NotContains(t, body, catalog.BlobsDir)
+}
+
+func TestMediaTranscriptHTTPReturnsUnavailableWithoutProcessing(t *testing.T) {
+	ts, _ := newTestServer(t, nil)
+	response, body := get(t, ts,
+		"/api/v1/media/sources/missing/versions/missing/transcript?content_version_id=00000000-0000-4000-8000-000000000001",
+		nil)
+	require.Equal(t, http.StatusServiceUnavailable, response.StatusCode, body)
+	require.Contains(t, body, `"code":"capability_unavailable"`)
 }
 
 func TestMediaUploadsOutliveRequestTimeout(t *testing.T) {

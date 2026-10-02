@@ -67,7 +67,7 @@ func (s *Store) MediaSources(
 			return nil, 0, err
 		}
 		item.Receipt, item.ProcessingReceipt, item.CoverageReceipt, err = s.latestMediaReceipts(ctx, principal,
-			item.SourceID, item.SourceVersionID)
+			item.SourceID, item.SourceVersionID, false)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -79,14 +79,41 @@ func (s *Store) MediaSources(
 func (s *Store) MediaSource(
 	ctx context.Context, principal, sourceID string,
 ) (MediaSourceProjection, error) {
+	return s.mediaSourceProjection(ctx, principal, sourceID, "")
+}
+
+// MediaSourceVersion returns the caller-visible projection for one exact
+// source revision. An exact revision is selected before receipts are read so
+// equal bytes under another source cannot supply its metadata.
+func (s *Store) MediaSourceVersion(
+	ctx context.Context, principal, sourceID, sourceVersionID string,
+) (MediaSourceProjection, error) {
+	if err := validateBoundedMediaText("media source", sourceID, 256, false); err != nil {
+		return MediaSourceProjection{}, err
+	}
+	if err := validateBoundedMediaText("media source version", sourceVersionID, 256, false); err != nil {
+		return MediaSourceProjection{}, err
+	}
+	return s.mediaSourceProjection(ctx, principal, sourceID, sourceVersionID)
+}
+
+func (s *Store) mediaSourceProjection(
+	ctx context.Context, principal, sourceID, sourceVersionID string,
+) (MediaSourceProjection, error) {
 	var item MediaSourceProjection
-	err := s.db.QueryRowContext(ctx, `SELECT o.source_id,s.kind,COALESCE(o.source_version_id,''),
+	query := `SELECT o.source_id,s.kind,COALESCE(o.source_version_id,''),
 		COALESCE(v.content_version_id,''),o.occurrence_id,o.caller_filename,o.message_json
 		FROM media_occurrences o
 		JOIN media_sources s ON s.source_id=o.source_id
 		LEFT JOIN media_source_versions v ON v.source_version_id=o.source_version_id
-		WHERE o.caller_principal=? AND o.visible=1 AND o.source_id=?
-		ORDER BY o.first_seen_at DESC,o.occurrence_id DESC LIMIT 1`, principal, sourceID).Scan(
+		WHERE o.caller_principal=? AND o.visible=1 AND o.source_id=?`
+	args := []any{principal, sourceID}
+	if sourceVersionID != "" {
+		query += ` AND o.source_version_id=?`
+		args = append(args, sourceVersionID)
+	}
+	query += ` ORDER BY o.first_seen_at DESC,o.occurrence_id DESC LIMIT 1`
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(
 		&item.SourceID, &item.Kind, &item.SourceVersionID, &item.ContentVersionID, &item.OccurrenceID,
 		&item.Filename, &item.CaptureJSON)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -96,7 +123,7 @@ func (s *Store) MediaSource(
 		return MediaSourceProjection{}, err
 	}
 	item.Receipt, item.ProcessingReceipt, item.CoverageReceipt, err = s.latestMediaReceipts(ctx, principal,
-		sourceID, item.SourceVersionID)
+		sourceID, item.SourceVersionID, sourceVersionID != "")
 	return item, err
 }
 
@@ -143,14 +170,24 @@ func (s *Store) MediaSourceBindingForContentVersion(
 }
 
 func (s *Store) latestMediaReceipts(
-	ctx context.Context, principal, sourceID, sourceVersionID string,
+	ctx context.Context, principal, sourceID, sourceVersionID string, exactVersion bool,
 ) (MediaPublicationReceipt, *MediaPublicationReceipt, *MediaPublicationReceipt, error) {
 	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT receipt_json FROM media_operations
+	query := `SELECT receipt_json FROM media_operations
 		WHERE principal=? AND source_id=?
-			AND verb IN ('submit_supplied_media','submit_remote_recording')
-		ORDER BY updated_at DESC,operation_id DESC LIMIT 1`,
-		principal, sourceID).Scan(&raw)
+			AND verb IN ('submit_supplied_media','submit_remote_recording')`
+	args := []any{principal, sourceID}
+	if exactVersion {
+		query += ` AND (json_extract(receipt_json, '$.source_version_id')=?
+			OR COALESCE(json_extract(receipt_json, '$.source_version_id'), '')='')`
+		args = append(args, sourceVersionID)
+		query += ` ORDER BY CASE WHEN json_extract(receipt_json, '$.source_version_id')=? THEN 0 ELSE 1 END,
+			updated_at DESC,operation_id DESC LIMIT 1`
+		args = append(args, sourceVersionID)
+	} else {
+		query += ` ORDER BY updated_at DESC,operation_id DESC LIMIT 1`
+	}
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MediaPublicationReceipt{}, nil, nil, ErrNotFound
 	}
