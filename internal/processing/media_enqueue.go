@@ -285,8 +285,9 @@ func (service *Service) ContinueMediaProcessing(ctx context.Context, continuatio
 	}
 	// Completed work keeps its outcome when its input is revoked before the backfill runs.
 	if derived.OperationState == "succeeded" {
-		return service.mediaMutation(ctx, func() error {
-			_, err := service.catalog.FinishMediaProcessing(ctx, continuation.OperationID, continuation.ProcessingPrincipal, true)
+		return service.mediaMutation(context.WithoutCancel(ctx), func() error {
+			_, err := service.catalog.FinishMediaProcessing(context.WithoutCancel(ctx),
+				continuation.OperationID, continuation.ProcessingPrincipal, true)
 			return err
 		})
 	}
