@@ -202,6 +202,11 @@
     return candidate.rejection === "ambiguous_numeric_date" || candidate.rejection === "timezone_omitted";
   }
 
+  function displayDate(candidate: DateCandidate): string {
+    return candidate.source_class === "content" && candidate.locator.rendition_id
+      ? candidate.raw.replace(/\\([-/,])/g, "$1") : candidate.raw;
+  }
+
   function choose(member: DateReviewMember, candidate: DateCandidate): void {
     const key = documentKey(member);
     choices = { ...choices, [key]: { action: canInterpret(candidate) ? "interpret" : "select",
@@ -340,7 +345,7 @@
                     {#if member.selection.date}<span>Selected {member.selection.date} ({member.selection.reason})</span>{:else}<span>Date unresolved</span>{/if}
                     {#each member.candidates as candidate (candidate.id)}
                       <label class="candidate"><input type="radio" name={`review-${documentKey(member)}`} disabled={!!candidate.rejection && !canInterpret(candidate)} checked={choices[documentKey(member)]?.candidate_id === candidate.id} onchange={() => choose(member, candidate)} />
-                        <span>{candidate.role} · {candidate.raw} · {candidate.source_class}{candidate.rejection ? ` · ${candidate.rejection}` : ""}</span></label>
+                        <span>{candidate.role} · {displayDate(candidate)} · {candidate.source_class}{candidate.rejection ? ` · ${candidate.rejection}` : ""}</span></label>
                     {/each}
                     {#if choices[documentKey(member)]}
                       {@const candidate = member.candidates.find(item => item.id === choices[documentKey(member)].candidate_id)}

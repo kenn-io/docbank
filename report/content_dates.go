@@ -31,7 +31,8 @@ const markdownDateTokenPattern = `(?:\d{4}\\?-\d{2}\\?-\d{2}|` +
 	`\d{1,2}\\?/\d{1,2}\\?/\d{4}|` + monthPattern + `\s+\d{1,2}(?:\\?,)?\s+\d{4})`
 
 var (
-	labeledDatePattern         = regexp.MustCompile(dateLabelPattern + `\s*[:,-]?\s*(` + dateTokenPattern + `)`)
+	labeledDatePattern = regexp.MustCompile(
+		dateLabelPattern + `\s*[:,-]?\s*(` + dateTokenPattern + `)`)
 	bareDatePattern            = regexp.MustCompile(`(?i)\b` + dateTokenPattern + `\b`)
 	labeledMarkdownDatePattern = regexp.MustCompile(
 		dateLabelPattern + `\s*(?:\\?[:,-])?\s*(` + markdownDateTokenPattern + `)`)

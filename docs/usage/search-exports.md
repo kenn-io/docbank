@@ -272,7 +272,8 @@ and restore; rerunning a saved selection requires its versions to be live and
 current again.
 
 After restoring a vault, configure the same portable processing profile before
-rerunning its saved requests. The [backup](backup.md) excludes `config.toml`;
+rerunning its saved requests. The
+[backup](backup.md#where-does-restored-content-go) excludes `config.toml`;
 preserve the restored target's storage settings when adding the profile. History
 does not retain date choices, so a fresh report may need date review again.
 

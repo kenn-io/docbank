@@ -67,7 +67,8 @@ Signed on June 3\, 2024. Document dated 03\/04\/2020. Mentioned 2024\-08\-09.`)
 			candidate.Role != want.role || candidate.Rejection != want.rejection {
 			t.Fatalf("candidate %d: %+v; want %+v", i, candidate, want)
 		}
-		if candidate.Locator.Quote != string(text[candidate.Locator.StartByte:candidate.Locator.EndByte]) ||
+		quote := string(text[candidate.Locator.StartByte:candidate.Locator.EndByte])
+		if candidate.Locator.Quote != quote ||
 			candidate.Locator.TextSHA256 != binding.ArtifactSHA256 ||
 			!strings.Contains(candidate.Locator.Quote, want.raw) {
 			t.Fatalf("retained Markdown evidence changed: %+v", candidate.Locator)

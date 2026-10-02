@@ -220,6 +220,10 @@ unless the mapping explicitly selects both `remote_only` and
 [Multi-store Storage](storage.md#backup-and-restore) for the file format and
 trust boundary.
 
+Backups exclude `config.toml`. Reconfigure processing profiles and other local
+settings on the restored target before using them; preserve the target's storage
+bindings described below.
+
 Restore also verifies that mapped filesystem stores do not overlap the live
 source vault or backup repository. Before publication it gives an otherwise
 empty target a minimal owner-private `config.toml` containing the mapped
