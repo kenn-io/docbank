@@ -103,9 +103,6 @@ func (l Layout) BlobTmpDir() string       { return filepath.Join(l.Root, "blobs"
 func (l Layout) EmailPDFSpoolDir() string { return filepath.Join(l.Root, "email-pdf-spool") }
 func (l Layout) LogsDir() string          { return filepath.Join(l.Root, "logs") }
 
-// TelemetryInstallPath holds the anonymous usage-telemetry install ID; it exists only after telemetry ran enabled.
-func (l Layout) TelemetryInstallPath() string { return filepath.Join(l.Root, "telemetry.json") }
-
 // ContainsDirectory reports whether dir resolves to the vault root or a
 // descendant. File identities also account for case-insensitive spellings.
 func (l Layout) ContainsDirectory(dir string) (bool, error) {

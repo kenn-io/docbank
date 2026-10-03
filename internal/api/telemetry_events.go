@@ -2,11 +2,7 @@ package api
 
 import "net/http"
 
-const (
-	telemetryEventsPath = "/api/daemon/telemetry/events"
-	// Room for an event name; the reporter drops every property its allowlist omits.
-	telemetryEventMaxBodyBytes = 4096
-)
+const telemetryEventsPath = "/api/daemon/telemetry/events"
 
 // TelemetryEventRequest documents what the web application posts; the daemon's reporter decodes it.
 type TelemetryEventRequest struct {
@@ -23,8 +19,5 @@ func registerTelemetryEvents(mux *http.ServeMux, capture http.Handler) {
 	if capture == nil {
 		return
 	}
-	mux.HandleFunc("POST "+telemetryEventsPath, func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, telemetryEventMaxBodyBytes)
-		capture.ServeHTTP(w, r)
-	})
+	mux.Handle("POST "+telemetryEventsPath, capture)
 }

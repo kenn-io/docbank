@@ -172,7 +172,7 @@ Every daemon runs three jobs that derive information from retained content:
 `process:renditions` runs only when a rendition provider is bound to the daemon.
 Its presence in `docbank jobs` means the daemon can process renditions.
 `telemetry:heartbeat` runs only while anonymous usage telemetry is on. It sends
-`daemon_started` and `daemon_active` at start, `daemon_active` every 24 hours,
+`daemon_started` and `daemon_active` at each daemon start, `daemon_active` every 24 hours,
 and touches no vault data.
 Configured watched inboxes add one `watch:<name>` runner each.
 

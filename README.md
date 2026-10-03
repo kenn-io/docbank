@@ -117,10 +117,10 @@ search, recoverable trash, maintenance, and restore.
 
 ## Telemetry
 
-The daemon sends anonymous `daemon_started` and `daemon_active` events when it
-starts, `daemon_active` once a day while it runs, and an `app_opened` event
-when the web app opens (at most once per tab per UTC day). Events carry a
-random install ID, the version and commit, and the operating system and
+The daemon sends anonymous `daemon_started` and `daemon_active` events each
+time it starts, `daemon_active` once a day while it runs, and an `app_opened`
+event when the web app opens (about once per browser per UTC day). Events
+carry a random per-vault install ID, the version and commit, and the operating system and
 architecture, and never document content, names, paths or queries.
 `DOCBANK_TELEMETRY_ENABLED=0` turns both off; see
 [anonymous usage telemetry](docs/configuration.md#anonymous-usage-telemetry).

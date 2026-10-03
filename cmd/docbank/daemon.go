@@ -219,11 +219,13 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := blobs.CleanTmp(); err != nil {
 		return err
 	}
-	telemetryReporter := telemetry.New(telemetry.Options{
-		InstallPath: layout.TelemetryInstallPath(), Version: version.Version, Commit: version.Commit, Logger: logger,
-	})
+	telemetryReporter := telemetry.New(telemetry.Options{Dir: layout.Root, Version: version.Version, Commit: version.Commit, Logger: logger})
 	// Registered before the supervisor's drain defer so it runs after the heartbeat has finished.
-	defer telemetry.CloseWithin(telemetryReporter, telemetry.CloseTimeout, logger)
+	defer func() {
+		if err := telemetryReporter.Close(); err != nil {
+			logger.Warn("telemetry close failed", "error", err)
+		}
+	}()
 	jobSupervisor := jobs.New(sigCtx, logger)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(

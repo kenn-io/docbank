@@ -439,7 +439,7 @@
       void loadRoot();
       void loadTagCatalog();
       void loadNaturalProfiles(session.token);
-      const stopAppOpened = startAppOpenedReporting(() => webSession);
+      const stopAppOpened = startAppOpenedReporting(session.token);
       const channel = new VerifiedUploadChannel(session, undefined, () => {
         if (uploadChannel === channel) {
           uploadChannelError =

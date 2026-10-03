@@ -54,7 +54,7 @@ The directory layout is created on first use:
 ├── logs/                # JSON logs from background daemons
 ├── web-launch/          # owner-private browser authentication handoff
 ├── web-downloads/       # private, temporary verified browser downloads
-├── telemetry.json       # anonymous telemetry install ID; created only while telemetry is on, kept if it is later turned off
+├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created only while telemetry is on, kept if it is later turned off
 ├── config.toml          # optional; see below
 ├── vault.lock           # advisory lock, held by a daemon or target restore
 └── daemon.<pid>.json    # runtime record of a live daemon
@@ -73,7 +73,7 @@ running processes. You can omit them from backups. Delete them only when no
 daemon or restore is running. `docbank daemon stop` removes its own runtime
 record on graceful shutdown.
 
-Deleting `telemetry.json` while the daemon is stopped gives the vault a new
+Deleting `telemetry-install.json` while the daemon is stopped gives the vault a new
 anonymous install ID.
 
 Use `docbank backup create` to capture every retained blob from a verified
@@ -612,23 +612,28 @@ The daemon validates its listening address at startup. An invalid setting makes
 | `DOCBANK_HOME` | Vault location; see [Vault location](#vault-location) above. |
 | `DOCBANK_LOCK_DIR` | Absolute lock-registry directory for an isolated environment whose account home is unwritable. Defaults to the operating-system account home's `.local/state/docbank/target-locks`, independent of `HOME` and XDG settings. All processes sharing or restoring overlapping vault trees must use the same directory; stop them before changing this setting. Keep it outside vaults and restore targets. Never delete it while any participating process runs. |
 | `DOCBANK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) for `docbank daemon run` and `docbank mcp`, foreground or background. Invalid values are ignored and fall back to `info`. |
-| `DOCBANK_TELEMETRY_ENABLED` | `0` turns off anonymous usage telemetry. Read when the daemon starts; restart the daemon after changing it. |
-| `TELEMETRY_ENABLED` | `0` has the same effect; shared with other Kenn tools. |
+| `DOCBANK_TELEMETRY_ENABLED` | `0`, `false`, `no` or `off` turns off anonymous usage telemetry. Read when the daemon starts; restart the daemon after changing it. |
+| `TELEMETRY_ENABLED` | The same values have the same effect; shared with other Kenn tools. |
 
 ## Anonymous usage telemetry
 
 The daemon reports anonymous usage events so the Docbank team can count
-installs that run and people who open the web app. It sends them in HTTPS
+vaults whose daemon runs and vaults whose web app gets opened. Counts are per
+vault, not per person: one person with three vaults counts three times. It sends them in HTTPS
 batches to PostHog's US ingest endpoint (PostHog project 434713). The browser
 never contacts PostHog: the web app posts its event to its own daemon, which
 sends it.
 
 Docbank sends three events:
 
-- `daemon_started` and `daemon_active` when the daemon starts, then
-  `daemon_active` every 24 hours while it runs.
+- `daemon_started` and `daemon_active` at each daemon start, then
+  `daemon_active` every 24 hours while it runs. A background daemon exits
+  after `idle_timeout` (30 minutes by default) and starts again on the next
+  command, so most of these go out at a daemon start, and `daemon_started`
+  counts starts rather than installs.
 - `app_opened` when the web app loads, and again on the first window focus of
-  a later UTC day, so one tab counts at most once per UTC day.
+  a later UTC day. The browser remembers the day it sent one, so a browser
+  counts about once per UTC day.
 
 Each event carries exactly these fields:
 
@@ -647,7 +652,7 @@ values. PostHog does see the request's source IP address; Docbank asks it not
 to geolocate. Separately configured document providers are unrelated to usage
 telemetry and unchanged by it.
 
-The install ID lives in `telemetry.json` at the vault root (see the
+The install ID lives in `telemetry-install.json` at the vault root (see the
 [layout](#vault-location) above). The daemon creates it the first time it runs
 with telemetry on, and never while telemetry is off. Each vault has its own ID.
 
