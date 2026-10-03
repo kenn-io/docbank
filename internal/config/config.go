@@ -687,7 +687,7 @@ func validateProcessingProfiles(c Config) error {
 		if err := validateEmbeddingProfileConfig(profile, prefix); err != nil {
 			return err
 		}
-		if profile.Runtime != nil && profile.Embedder == nil {
+		if profile.Runtime != nil && (profile.Embedder == nil || profile.Embedder.APIKey.IsZero()) {
 			credentialName := strings.TrimPrefix(profile.CredentialBinding, "credential:")
 			if _, ok := c.CredentialBindings[credentialName]; !ok {
 				return fmt.Errorf("%s runtime credential binding %q is not defined", prefix, profile.CredentialBinding)

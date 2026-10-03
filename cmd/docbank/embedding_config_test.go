@@ -131,6 +131,7 @@ func TestKitEmbeddingConfigRequiresCredentialSource(t *testing.T) {
 	}
 	cfg.EmbeddingProfiles["semantic"] = p
 	cfg.CredentialBindings = nil
+	require.ErrorContains(t, cfg.Validate(), "runtime credential binding \"credential:semantic\" is not defined")
 	_, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
 	require.EqualError(t, err, "configuring embedding runtime \"semantic\": credential source is not configured")
 	assert.Equal(t, "credential:semantic", cfg.EmbeddingProfiles["semantic"].CredentialBinding)
@@ -138,6 +139,7 @@ func TestKitEmbeddingConfigRequiresCredentialSource(t *testing.T) {
 	// Declaring the source restores the existing descriptor without reading
 	// the unavailable secret during startup.
 	p.Embedder.APIKey = secretref.Ref{Env: variable}
+	require.NoError(t, cfg.Validate())
 	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
 	require.NoError(t, err)
 	assert.Equal(t, descriptor, bundle.providers["semantic"].Descriptor())
