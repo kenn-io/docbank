@@ -15,7 +15,6 @@ const (
 	metadataPackageRecordType        = "package_record"
 	metadataPackageLabelType         = "package_label"
 	metadataPackageImportReceiptType = "package_import_receipt"
-	metadataPackageImportHeadType    = "package_import_head"
 	metadataPackageImportJobType     = "package_import_job"
 )
 
@@ -36,12 +35,6 @@ type metadataPackageImportRow struct {
 	Type          string         `json:"type"`
 	CanonicalJSON jsontext.Value `json:"canonical_json"`
 	Checksum      string         `json:"checksum"`
-}
-
-type packageImportHeadRow struct {
-	PackageID string `json:"package_id"`
-	RecordKey string `json:"record_key"`
-	ReceiptID string `json:"receipt_id"`
 }
 
 func writePackageImportMetadataRow(write metadataWrite, kind string, value any) error {
@@ -132,30 +125,6 @@ func exportPackageImportMetadata(ctx context.Context, q metadataQuerier, write m
 	if err := receipts.Close(); err != nil {
 		return err
 	}
-	heads, err := q.QueryContext(ctx, `SELECT package_id,record_key,receipt_id FROM package_import_heads
-		ORDER BY package_id,record_key`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = heads.Close() }()
-	for heads.Next() {
-		var head packageImportHeadRow
-		if err := heads.Scan(&head.PackageID, &head.RecordKey, &head.ReceiptID); err != nil {
-			_ = heads.Close()
-			return err
-		}
-		if err := writePackageImportMetadataRow(write, metadataPackageImportHeadType, head); err != nil {
-			_ = heads.Close()
-			return err
-		}
-	}
-	if err := heads.Err(); err != nil {
-		_ = heads.Close()
-		return err
-	}
-	if err := heads.Close(); err != nil {
-		return err
-	}
 	jobs, err := q.QueryContext(ctx, `SELECT id,owner,operation_id,request_sha256,preflight_id,package_id,
 		job_json,state,created_at,updated_at FROM package_import_jobs ORDER BY id`)
 	if err != nil {
@@ -190,9 +159,6 @@ var packageImportMetadataTables = []metadataRecordCodec{
 		table: "package_labels", insert: importPackageImportMetadata}),
 	newMetadataTable(metadataTable[metadataPackageImportRow]{
 		record: metadataPackageImportRow{Type: metadataPackageImportReceiptType}, table: "package_import_receipts",
-		insert: importPackageImportMetadata}),
-	newMetadataTable(metadataTable[metadataPackageImportRow]{
-		record: metadataPackageImportRow{Type: metadataPackageImportHeadType}, table: "package_import_heads",
 		insert: importPackageImportMetadata}),
 	newMetadataTable(metadataTable[metadataPackageImportRow]{
 		record: metadataPackageImportRow{Type: metadataPackageImportJobType}, table: "package_import_jobs",
@@ -235,15 +201,6 @@ func importPackageImportMetadata(ctx context.Context, tx *sql.Tx, row metadataPa
 			receipt.ReceiptID, receipt.PackageID, receipt.RecordKey, receipt.OccurrenceID,
 			nullableString(receipt.ContentVersionID), receipt.State, receipt.ReceiptJSON, receipt.RecordedAt)
 		return err
-	case metadataPackageImportHeadType:
-		head, err := canonical.Decode[packageImportHeadRow](row.CanonicalJSON)
-		if err != nil || validateUUIDv4(head.PackageID) != nil || !canonical.IsSHA256Hex(head.RecordKey) ||
-			validateUUIDv4(head.ReceiptID) != nil {
-			return fmt.Errorf("%w: package import head %s/%s", ErrPackageConflict, head.PackageID, head.RecordKey)
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO package_import_heads(package_id,record_key,receipt_id)
-			VALUES(?,?,?)`, head.PackageID, head.RecordKey, head.ReceiptID)
-		return err
 	case metadataPackageImportJobType:
 		job, err := canonical.Decode[packageImportJobRow](row.CanonicalJSON)
 		if err != nil || validatePackageImportJobRequest(job.PackageImportJobRequest) != nil ||
@@ -279,8 +236,6 @@ func validatePackageImportMetadataState(ctx context.Context, q metadataQuerier) 
 		`SELECT EXISTS(SELECT 1 FROM package_import_receipts r LEFT JOIN package_records p
 			ON p.package_id=r.package_id AND p.row_id=r.record_key
 			WHERE r.state='committed' AND (p.row_id IS NULL OR p.occurrence_id<>r.occurrence_id))`,
-		`SELECT EXISTS(SELECT 1 FROM package_import_heads h JOIN package_import_receipts r ON r.receipt_id=h.receipt_id
-			WHERE h.package_id<>r.package_id OR h.record_key<>r.record_key)`,
 		`SELECT EXISTS(SELECT 1 FROM package_import_receipts r JOIN packages p ON p.package_id=r.package_id
 			WHERE r.state='committed' AND NOT EXISTS (
 				SELECT 1 FROM provenance_version_bindings b JOIN provenance v ON v.identity=b.provenance_identity
@@ -298,18 +253,6 @@ func validatePackageImportMetadataState(ctx context.Context, q metadataQuerier) 
 		if invalid {
 			return ErrPackageConflict
 		}
-	}
-	// Portable receipts are identity claims, not a queue. Every head must resolve.
-	var heads, resolved int
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM package_import_heads`).Scan(&heads); err != nil {
-		return err
-	}
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM package_import_heads h
-		JOIN package_import_receipts r ON r.receipt_id=h.receipt_id`).Scan(&resolved); err != nil {
-		return err
-	}
-	if heads != resolved {
-		return fmt.Errorf("%w: missing package receipt head", ErrPackageConflict)
 	}
 	return nil
 }

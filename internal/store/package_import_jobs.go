@@ -217,7 +217,7 @@ func (s *Store) PackageImportJob(ctx context.Context, owner, operationID string)
 	return packageImportJobByOperationTx(ctx, s.db, owner, operationID)
 }
 
-// PackageImportProgress reports receipt heads without exposing private source
+// PackageImportProgress reports import receipts without exposing private source
 // paths or the worker lease. Gaps are bounded for status responses.
 type PackageImportProgress struct {
 	Committed int
@@ -238,21 +238,19 @@ func (s *Store) PackageImportProgress(ctx context.Context, packageID string) (Pa
 				THEN json_array_length(CAST(r.receipt_json AS TEXT),'$.gaps')
 			WHEN r.state IN ('rejected','skipped') THEN 1
 			ELSE 0 END),0)
-		FROM package_import_heads h JOIN package_import_receipts r ON r.receipt_id=h.receipt_id
-		WHERE h.package_id=?`, packageID).Scan(&progress.Committed, &progress.GapCount)
+		FROM package_import_receipts r WHERE r.package_id=?`, packageID).Scan(&progress.Committed, &progress.GapCount)
 	if err != nil {
 		return PackageImportProgress{}, fmt.Errorf("reading package import progress: %w", err)
 	}
 	rows, err := s.db.QueryContext(ctx, `WITH package_gaps(record_key,gap_ordinal,gap) AS (
-		SELECT h.record_key,CAST(j.key AS INTEGER),CAST(j.value AS TEXT)
-		FROM package_import_heads h JOIN package_import_receipts r ON r.receipt_id=h.receipt_id
+		SELECT r.record_key,CAST(j.key AS INTEGER),CAST(j.value AS TEXT)
+		FROM package_import_receipts r
 		JOIN json_each(CAST(r.receipt_json AS TEXT),'$.gaps') j
-		WHERE h.package_id=? AND instr(CAST(r.receipt_json AS TEXT),'"gaps":[')>0
+		WHERE r.package_id=? AND instr(CAST(r.receipt_json AS TEXT),'"gaps":[')>0
 			AND instr(CAST(r.receipt_json AS TEXT),'"gaps":[]')=0
 		UNION ALL
-		SELECT h.record_key,0,h.record_key FROM package_import_heads h
-		JOIN package_import_receipts r ON r.receipt_id=h.receipt_id
-		WHERE h.package_id=? AND r.state IN ('rejected','skipped')
+		SELECT r.record_key,0,r.record_key FROM package_import_receipts r
+		WHERE r.package_id=? AND r.state IN ('rejected','skipped')
 			AND NOT (instr(CAST(r.receipt_json AS TEXT),'"gaps":[')>0
 				AND instr(CAST(r.receipt_json AS TEXT),'"gaps":[]')=0)
 	)
@@ -413,12 +411,10 @@ func (s *Store) FinishPackageImportJob(ctx context.Context, id string, epoch int
 			var members, receipts, matched int
 			err = tx.QueryRowContext(ctx, `SELECT
 				(SELECT COUNT(*) FROM collection_snapshot_members WHERE snapshot_id=?),
-				(SELECT COUNT(*) FROM package_import_heads h JOIN package_import_receipts r
-					ON r.receipt_id=h.receipt_id WHERE h.package_id=? AND r.state='committed'),
+				(SELECT COUNT(*) FROM package_import_receipts r WHERE r.package_id=? AND r.state='committed'),
 				(SELECT COUNT(*) FROM collection_snapshot_members m
 					JOIN package_import_receipts r ON r.package_id=? AND r.occurrence_id=m.occurrence_id
 						AND r.content_version_id=m.content_version_id
-					JOIN package_import_heads h ON h.receipt_id=r.receipt_id
 					WHERE m.snapshot_id=?)`, snapshotID, pkg.PackageID, pkg.PackageID, snapshotID).Scan(&members, &receipts, &matched)
 			if err != nil {
 				return err

@@ -348,12 +348,7 @@ CREATE TRIGGER IF NOT EXISTS package_import_receipts_immutable_update
 BEFORE UPDATE ON package_import_receipts BEGIN
     SELECT RAISE(ABORT, 'package import receipts are immutable');
 END;
-CREATE TABLE IF NOT EXISTS package_import_heads (
-    package_id TEXT NOT NULL REFERENCES packages(package_id),
-    record_key TEXT NOT NULL,
-    receipt_id TEXT NOT NULL REFERENCES package_import_receipts(receipt_id),
-    PRIMARY KEY (package_id, record_key)
-);
+CREATE UNIQUE INDEX IF NOT EXISTS package_import_receipts_record ON package_import_receipts(package_id, record_key);
 
 -- Physical page frames are independent of optional renderer recipes.
 CREATE TABLE IF NOT EXISTS page_documents (
@@ -2436,12 +2431,7 @@ CREATE TABLE IF NOT EXISTS mailbox_transfer_receipts (
     receipt_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS mailbox_transfer_versions ON mailbox_transfer_receipts(target_version_id);
-CREATE TABLE IF NOT EXISTS mailbox_transfer_heads (
-    archive_id TEXT NOT NULL REFERENCES mailbox_archives(id),
-    source_ref TEXT NOT NULL,
-    receipt_id TEXT NOT NULL REFERENCES mailbox_transfer_receipts(id),
-    PRIMARY KEY(archive_id,source_ref)
-);
+CREATE INDEX IF NOT EXISTS mailbox_transfer_receipts_source ON mailbox_transfer_receipts(archive_id, source_ref);
 CREATE TABLE IF NOT EXISTS mailbox_jobs (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,

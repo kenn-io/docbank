@@ -35,11 +35,11 @@ var metadataCodecGoldenKinds = []string{
 	"provenance_version_binding", "saved_query", "saved_query_run", "term_report_history",
 	"batch_tag_receipt", "email_generation", "email_part_artifact", "email_attachment", "email_head",
 	"email_body_result", "email_document_publication", "mailbox_container", "mailbox_archive",
-	"mailbox_transfer_receipt", "mailbox_transfer_head", "mailbox_job", "mailbox_occurrence",
+	"mailbox_transfer_receipt", "mailbox_job", "mailbox_occurrence",
 	"page_document", "page_recipe", "page_image", "page_render_job", "export_authority",
 	"collection_snapshot", "collection_snapshot_member", "collection_snapshot_representation",
 	"package", "package_volume", "package_record", "package_label", "package_import_receipt",
-	"package_import_head", "package_import_job", "bates_namespace", "bates_namespace_cursor",
+	"package_import_job", "bates_namespace", "bates_namespace_cursor",
 	"bates_allocation", "bates_page_label", "bates_artifact", "bates_artifact_page",
 	"photo_asset", "photo_file", "photo_library_settings", "photo_change_receipt",
 	"processing_incarnation", "processing_consent_revocation", "processing_consent_grant",
@@ -65,12 +65,12 @@ var metadataCodecGoldenTables = []string{
 	"term_report_history", "batch_tag_receipts", "email_generations", "email_part_artifacts",
 	"email_attachments", "email_heads", "email_body_results", "email_document_publications",
 	"email_document_relations", "mailbox_containers", "mailbox_chunks", "mailbox_archives",
-	"mailbox_transfer_receipts", "mailbox_transfer_heads", "mailbox_jobs", "mailbox_occurrences",
+	"mailbox_transfer_receipts", "mailbox_jobs", "mailbox_occurrences",
 	"page_documents", "page_frames", "page_recipes", "page_images", "page_render_jobs",
 	"export_sources", "export_members", "export_plans", "export_documents", "export_role_roots",
 	"collection_snapshots", "collection_snapshot_members", "collection_snapshot_representations",
 	"packages", "package_volumes", "package_records", "package_labels", "package_import_receipts",
-	"package_import_heads", "package_import_jobs", "bates_namespaces", "bates_namespace_cursors",
+	"package_import_jobs", "bates_namespaces", "bates_namespace_cursors",
 	"bates_allocations", "bates_page_labels", "bates_artifacts", "bates_artifact_pages",
 	"photo_assets", "photo_files", "photo_library_settings", "photo_change_receipts",
 	"processing_incarnations", "processing_consent_revocations", "processing_consent_grants",
@@ -129,7 +129,6 @@ var metadataCodecGoldenValidatorCases = map[string][2]string{
 	"package_record":                     {"checksum", `"synthetic-invalid"`},
 	"package_label":                      {"checksum", `"synthetic-invalid"`},
 	"package_import_receipt":             {"checksum", `"synthetic-invalid"`},
-	"package_import_head":                {"checksum", `"synthetic-invalid"`},
 	"package_import_job":                 {"checksum", `"synthetic-invalid"`},
 	"bates_namespace":                    {"padding", `0`},
 	"bates_namespace_cursor":             {"next_sequence", `0`},
@@ -184,7 +183,7 @@ var metadataCodecGoldenValidatorCases = map[string][2]string{
 // they get no validator mutation.
 var metadataCodecGoldenUnvalidatedKinds = []string{
 	"email_generation", "email_part_artifact", "email_attachment", "email_head", "email_body_result",
-	"source_metadata_head", "mailbox_transfer_head",
+	"source_metadata_head",
 }
 
 func TestMetadataCodecGolden(t *testing.T) {
@@ -242,6 +241,46 @@ func TestMetadataCodecGolden(t *testing.T) {
 		}
 		metadataCodecGoldenCompare(t, update, metadataCodecGoldenRejectionsPath, results)
 	})
+}
+
+func TestMetadataImportSkipsRetiredImportHeads(t *testing.T) {
+	t.Parallel()
+	const packageHead = `{"type":"package_import_head","canonical_json":{"package_id":"a6129936-2b9d-4481-b1e4-bdd26ebdd6e3","receipt_id":"8bf36b52-6b43-4981-9326-1f0351b7d907","record_key":"f05aa7c938488650168f684ab57f7e77fe09e09f47bac6b667e50debb73a3c15"},"checksum":"567f241f450cb07c5a114fc5aa10b6736f2054e5f8c024dc616876eecd1ec587"}`
+	const mailboxHead = `{"type":"mailbox_transfer_head","archive_id":"external-synthetic","reference":"message-1","receipt_id":"ccbe7622-0d64-4dd2-8d35-77fd9c47c0af"}`
+	golden, err := os.ReadFile(metadataCodecGoldenPath)
+	require.NoError(t, err)
+	lines := bytes.Split(bytes.TrimSpace(golden), []byte{'\n'})
+	var legacy bytes.Buffer
+	for index, line := range lines {
+		legacy.Write(line)
+		legacy.WriteByte('\n')
+		kind := metadataCodecGoldenLineType(t, line)
+		if index+1 < len(lines) && metadataCodecGoldenLineType(t, lines[index+1]) == kind {
+			continue
+		}
+		switch kind {
+		case "package_import_receipt":
+			legacy.WriteString(packageHead + "\n")
+		case "mailbox_transfer_receipt":
+			legacy.WriteString(mailboxHead + "\n")
+		}
+	}
+	plain, restored := newTestStore(t), newTestStore(t)
+	require.NoError(t, plain.ImportMetadata(t.Context(), bytes.NewReader(golden)))
+	require.NoError(t, restored.ImportMetadata(t.Context(), &legacy))
+	for _, table := range metadataCodecGoldenTables {
+		require.Equal(t, metadataCodecGoldenTableRows(t, plain, table), metadataCodecGoldenTableRows(t, restored, table), table)
+	}
+	for _, source := range []*Store{plain, restored} {
+		selected, err := loadPackageImportHeadTx(t.Context(), source.db, "a6129936-2b9d-4481-b1e4-bdd26ebdd6e3", "f05aa7c938488650168f684ab57f7e77fe09e09f47bac6b667e50debb73a3c15")
+		require.NoError(t, err)
+		require.Equal(t, "8bf36b52-6b43-4981-9326-1f0351b7d907", selected.ReceiptID)
+		var owner string
+		require.NoError(t, source.db.QueryRowContext(t.Context(), `SELECT owner FROM mailbox_archives WHERE id=?`, "external-synthetic").Scan(&owner))
+		mailbox, err := mailboxTransferHead(t.Context(), source.db, owner, "external-synthetic", "message-1")
+		require.NoError(t, err)
+		require.Equal(t, "ccbe7622-0d64-4dd2-8d35-77fd9c47c0af", mailbox.ID)
+	}
 }
 
 func TestMetadataCodecCorruptWaiterFailsExport(t *testing.T) {

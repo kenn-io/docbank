@@ -74,7 +74,7 @@ var (
 var currentSchemaTables = [...]string{
 	"blobs", "blob_packs", "vault_metadata",
 	"mailbox_containers", "mailbox_chunks",
-	"mailbox_archives", "mailbox_transfer_receipts", "mailbox_transfer_heads",
+	"mailbox_archives", "mailbox_transfer_receipts",
 	"mailbox_jobs", "mailbox_occurrences",
 	"email_document_publications", "email_document_relations",
 	"photo_assets", "photo_files", "photo_library_settings", "photo_change_receipts",
@@ -85,7 +85,7 @@ var currentSchemaTables = [...]string{
 	"term_report_history",
 	"export_sources", "export_chunks", "export_members", "export_plans", "export_documents", "export_role_roots", "export_jobs",
 	"collection_snapshots", "collection_snapshot_members", "collection_snapshot_representations", "packages", "package_volumes",
-	"package_records", "package_labels", "package_import_jobs", "package_import_receipts", "package_import_heads",
+	"package_records", "package_labels", "package_import_jobs", "package_import_receipts",
 	"bates_namespaces", "bates_namespace_cursors", "bates_allocations", "bates_page_labels",
 	"bates_artifacts", "bates_artifact_pages",
 	"page_documents", "page_frames", "page_recipes", "page_images", "page_render_jobs",

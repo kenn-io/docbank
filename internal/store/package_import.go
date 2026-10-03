@@ -168,8 +168,7 @@ func loadPackageImportHeadTx(ctx context.Context, tx metadataQuerier, packageID,
 	var receipt PackageImportReceipt
 	err := tx.QueryRowContext(ctx, `SELECT r.receipt_id,r.package_id,r.record_key,r.occurrence_id,
 		COALESCE(r.content_version_id,''),r.state,r.receipt_json,r.recorded_at
-		FROM package_import_heads h JOIN package_import_receipts r ON r.receipt_id=h.receipt_id
-		WHERE h.package_id=? AND h.record_key=?`, packageID, key).Scan(
+		FROM package_import_receipts r WHERE r.package_id=? AND r.record_key=?`, packageID, key).Scan(
 		&receipt.ReceiptID, &receipt.PackageID, &receipt.RecordKey, &receipt.OccurrenceID,
 		&receipt.ContentVersionID, &receipt.State, &receipt.ReceiptJSON, &receipt.RecordedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -310,11 +309,6 @@ func (s *Store) commitPackageRecord(ctx context.Context, record PackageRecordRow
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO package_import_heads(package_id,record_key,receipt_id)
-			VALUES(?,?,?)`, receipt.PackageID, receipt.RecordKey, receipt.ReceiptID)
-		if err != nil {
-			return err
-		}
 		result = receipt
 		return nil
 	})
@@ -355,9 +349,7 @@ func (s *Store) AssignPackageLabels(ctx context.Context, packageID, occurrenceID
 	}
 	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var boundVersion string
-		if err := tx.QueryRowContext(ctx, `SELECT r.content_version_id FROM package_import_heads h
-			JOIN package_import_receipts r ON r.receipt_id=h.receipt_id
-			WHERE h.package_id=? AND r.occurrence_id=?`, packageID, occurrenceID).Scan(&boundVersion); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT content_version_id FROM package_import_receipts WHERE package_id=? AND occurrence_id=?`, packageID, occurrenceID).Scan(&boundVersion); err != nil {
 			return err
 		}
 		if boundVersion != contentVersionID {

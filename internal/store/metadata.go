@@ -1102,9 +1102,15 @@ func (s *Store) importMetadataLines(
 	}
 }
 
+// Retired import heads point at the same receipts selected directly from their ledgers.
+var retiredMetadataKinds = map[string]bool{"package_import_head": true, "mailbox_transfer_head": true}
+
 func (s *Store) importMetadataRecord(
 	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value,
 ) error {
+	if retiredMetadataKinds[kind] {
+		return nil
+	}
 	required, ok := metadataRequiredFields[kind]
 	if !ok {
 		return fmt.Errorf("unknown record type %q", kind)
