@@ -533,20 +533,15 @@ func (c *PackCatalog) DeleteIndexEntry(ctx context.Context, hash packstore.Hash)
 }
 
 func (c *PackCatalog) ListPackUsage(ctx context.Context) ([]packstore.PackUsage, error) {
+	// The blob_pack_summary_* triggers in schema.sql maintain these summaries
+	// when mappings or blob membership change. Reporting usage visits packs.
 	rows, err := c.store.db.QueryContext(ctx, `
-		SELECT p.pack_id, p.entry_count, p.stored_bytes, p.created_at,
-		       COUNT(b.hash),
-		       COALESCE(SUM(CASE WHEN b.hash IS NOT NULL THEN i.stored_len ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN b.hash IS NOT NULL THEN i.raw_len ELSE 0 END), 0),
-		       COALESCE(MAX(CASE WHEN b.hash IS NOT NULL THEN i.stored_len ELSE 0 END), 0),
-		       COALESCE(MAX(CASE WHEN b.hash IS NOT NULL THEN i.raw_len ELSE 0 END), 0)
-		FROM blob_packs p
-		LEFT JOIN blob_pack_entries i
-		  ON i.store_id = p.store_id AND i.pack_id = p.pack_id
-		LEFT JOIN blobs b ON b.hash = i.blob_hash
-		WHERE p.store_id = ?
-		GROUP BY p.store_id, p.pack_id, p.entry_count, p.stored_bytes, p.created_at
-		ORDER BY p.created_at, p.pack_id`, c.store.primaryStoreID)
+		SELECT pack_id, entry_count, stored_bytes, created_at,
+		       live_entries, live_stored_bytes, live_raw_bytes,
+		       max_live_stored_len, max_live_raw_len
+		FROM blob_packs
+		WHERE store_id = ?
+		ORDER BY created_at, pack_id`, c.store.primaryStoreID)
 	if err != nil {
 		return nil, fmt.Errorf("listing blob pack usage: %w", err)
 	}
