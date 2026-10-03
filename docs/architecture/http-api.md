@@ -78,6 +78,8 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /nodes/{id}/provenance` | inspect immutable ingest-origin facts newest-first, paginated (`limit`/`offset`) | Implemented |
 | `POST /nodes/{id}/provenance` | append an immutable origin fact under the node revision | Implemented |
 | `GET /photos/assets/{asset_id}` · `GET /photos/nodes/{node_id}/asset` | inspect one bounded photo graph by asset or member node | Implemented |
+| `POST /photos/assets/query` | list matching assets once each with a whole-query total and keyset cursor | Implemented |
+| `GET /photos/assets/{asset_id}/previews/{generation_id}` | read verified bytes for an eligible display preview | Implemented |
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |
 | `POST /photos/assets/{asset_id}/exclude` · `POST /photos/nodes/{node_id}/promote` | change exclusion or explicitly promote a live file | Implemented |
 | `PUT /photos/assets/{asset_id}/display` · `GET\|PUT /photos/settings` | set an asset display override or vault preference | Implemented |
@@ -570,10 +572,6 @@ return `409 derivative_purge_plan_changed`; invalid selections return
 
 ### Query compilation preview
 
-`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` and `cursor`, returning one item per eligible matching asset, whole-query `total` and optional forward `next_cursor`. The supported sort fields are `capture_time`, `import_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Capture keys sort missing evidence last, then use ascending asset UUID for ties. Cursors expire after 15 minutes and bind resolved saved-query revisions, effective coverage and page size. Invalid options return `invalid_photo_query`; invalid or changed bindings return `invalid_photo_cursor`; expiry returns `cursor_expired`. Invalid expressions retain their operand positions.
-
-`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag, `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-store`. Browser sessions permit the exact list POST and preview GET with empty query strings. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
-
 `POST /queries/parse` accepts one QueryV1 object and returns its canonical
 `query`, `query_fingerprint`, and `dependencies` (`kind`, stable `id`, and
 observed `revision`). Definition reads share one read transaction. No result
@@ -1025,6 +1023,10 @@ an existing folder. The import is a durable job of kind `photo_import`.
 skipped, changed, failed, ambiguous and unsupported counts, plus the groups
 left unpaired. `POST /jobs/{operation_id}/cancel` stops it before the next
 group. Starting an import requires the API key on a loopback connection.
+
+`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` and `cursor`, returning one item per eligible matching asset, whole-query `total` and optional forward `next_cursor`. The supported sort fields are `capture_time`, `import_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Capture keys sort missing evidence last, then use ascending asset UUID for ties. Cursors expire after 15 minutes and bind resolved saved-query revisions, effective coverage and page size. Invalid options return `invalid_photo_query`; invalid or changed bindings return `invalid_photo_cursor`; expiry returns `cursor_expired`. Invalid expressions retain their operand positions.
+
+`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag, `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-store`. Browser sessions permit the exact list POST and preview GET with empty query strings. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
 
 Person reads return the canonical row and, for `GET /people/by-id/{person_id}`,
 the identities and external UIDs used by split. Rename, retire, merge, and

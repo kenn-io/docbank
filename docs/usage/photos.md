@@ -156,10 +156,6 @@ an empty asset identity.
 Automatic enrollment and explicit graph writes are skipped or refused when
 audit authority is active, according to the existing audit boundary. The
 preexisting graph is preserved and becomes read-only when audit is enabled.
-!!! info "Planned"
-
-    Owners and the Photos workspace remain planned capabilities.
-
 ## Browse photo assets over HTTP
 
 `POST /api/v1/photos/assets/query` accepts a `query` object using [QueryV1](../architecture/http-api.md#saved-query-and-highlight-definitions), optional `coverage`, `page_size` from 1 through 250 and `cursor`. It returns `items`, the complete matching asset `total` and an optional `next_cursor`. The default page size is 50. Send the same intent and page options with each continuation. An edited saved query invalidates its earlier cursor; cursors expire after 15 minutes. Ordinary file changes follow live ordering and can move across the previous page boundary.
