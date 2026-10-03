@@ -65,7 +65,7 @@ func registerMediaRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		Path: "/api/v1/media/operations/{operation_id}", Summary: "Read one remote-recording submission receipt",
 		Middlewares: huma.Middlewares{noStoreMediaReceipt}},
 		func(ctx context.Context, input *struct {
-			OperationID string `path:"operation_id" minLength:"1" maxLength:"36"`
+			OperationID string `path:"operation_id" format:"uuid" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
 		}) (*receiptOutput, error) {
 			if d.Processing == nil {
 				return nil, mediaUnavailable()

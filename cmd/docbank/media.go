@@ -5,11 +5,13 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"os"
 	"path/filepath"
 	"strings"
+	"uuid"
 
 	"github.com/spf13/cobra"
 
@@ -99,11 +101,15 @@ var mediaStatusCmd = &cobra.Command{Use: "status <source-id>", Short: "Show curr
 
 var mediaOperationCmd = &cobra.Command{Use: "operation <operation-id>", Short: "Show a saved recording-link receipt",
 	Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		operationID, err := uuid.Parse(args[0])
+		if err != nil {
+			return usageError(fmt.Errorf("operation ID must be a UUID: %w", err))
+		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		receipt, err := c.MediaOperationReceipt(cmd.Context(), args[0])
+		receipt, err := c.MediaOperationReceipt(cmd.Context(), operationID)
 		if err != nil {
 			return err
 		}

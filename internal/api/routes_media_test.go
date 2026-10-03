@@ -16,6 +16,7 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/require"
 
@@ -487,27 +488,7 @@ func TestMediaRouteRejectsCursorOwnedByAnotherPrincipal(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, page.NextCursor)
 
-	gate := api.NewOperationGate()
-	name, profile, err := processing.NewSuppliedMediaProfile(catalog.Store, catalog.Blobs, "daemon:other")
-	require.NoError(t, err)
-	var tokenKey [32]byte
-	tokenKey[0] = 7
-	service, err := processing.NewService(processing.ServiceConfig{
-		Catalog: catalog.Store, Blobs: catalog.Blobs, Gate: gate,
-		SpoolDirectory: filepath.Join(filepath.Dir(catalog.DBPath), "blobs", "tmp"),
-		Principal:      "daemon:other",
-		Profiles:       map[string]processing.ProfileConfig{name: profile}, MediaTokenKey: tokenKey,
-	})
-	require.NoError(t, err)
-	cfg := config.Default()
-	cfg.Server.APIKey = testAPIKey
-	otherServer := api.NewServer(api.Deps{Store: catalog.Store, Blobs: catalog.Blobs,
-		VaultRoot: filepath.Dir(catalog.DBPath), Cfg: cfg, Gate: gate, Processing: service,
-		WebURL: testWebURL})
-	t.Cleanup(otherServer.Close)
-	otherHTTP := httptest.NewServer(otherServer.Handler())
-	t.Cleanup(otherHTTP.Close)
-	otherHTTP.Client().Transport = &apiKeyTransport{key: testAPIKey, next: otherHTTP.Client().Transport}
+	otherHTTP := newOtherPrincipalMediaServer(t, catalog)
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
 		otherHTTP.URL+"/api/v1/media/sources?limit=1&cursor="+url.QueryEscape(page.NextCursor), nil)
 	require.NoError(t, err)
@@ -535,7 +516,7 @@ func TestMediaOperationReceiptRecoversLostRemoteSubmission(t *testing.T) {
 		Occurrence:   api.MediaOccurrenceBody{Ref: "lost-reply", Revision: "1"},
 	})
 	require.NoError(t, err)
-	recovered, err := c.MediaOperationReceipt(t.Context(), operationID)
+	recovered, err := c.MediaOperationReceipt(t.Context(), uuid.MustParse(operationID))
 	require.NoError(t, err)
 	require.Equal(t, submitted, recovered)
 	found, foundBody := get(t, ts, path, nil)
@@ -550,6 +531,26 @@ func TestMediaOperationReceiptRecoversLostRemoteSubmission(t *testing.T) {
 	var strict api.MediaReceipt
 	require.NoError(t, json.Unmarshal(projected, &strict, json.RejectUnknownMembers(true)))
 
+	otherHTTP := newOtherPrincipalMediaServer(t, catalog)
+	hidden, hiddenBody := get(t, otherHTTP, path, nil)
+	require.Equal(t, http.StatusNotFound, hidden.StatusCode, hiddenBody)
+	// $schema carries each test server's own address; the rest must match byte for byte.
+	require.Equal(t, strings.ReplaceAll(missingBody, ts.URL, ""), strings.ReplaceAll(hiddenBody, otherHTTP.URL, ""))
+
+	malformed, malformedBody := get(t, ts, "/api/v1/media/operations/not-a-uuid", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, malformed.StatusCode, malformedBody)
+	require.Equal(t, "no-store", malformed.Header.Get("Cache-Control"))
+	unauthorized, unauthorizedBody := get(t, ts, path, map[string]string{"X-Api-Key": ""})
+	require.Equal(t, http.StatusUnauthorized, unauthorized.StatusCode, unauthorizedBody)
+	browser, browserBody := get(t, ts, path,
+		map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)})
+	require.Equal(t, http.StatusForbidden, browser.StatusCode, browserBody)
+	require.Contains(t, browserBody, `"code":"web_session_read_only"`)
+}
+
+// newOtherPrincipalMediaServer serves the same vault under a second media principal.
+func newOtherPrincipalMediaServer(t *testing.T, catalog *testStore) *httptest.Server {
+	t.Helper()
 	gate := api.NewOperationGate()
 	name, profile, err := processing.NewSuppliedMediaProfile(catalog.Store, catalog.Blobs, "daemon:other")
 	require.NoError(t, err)
@@ -571,20 +572,7 @@ func TestMediaOperationReceiptRecoversLostRemoteSubmission(t *testing.T) {
 	otherHTTP := httptest.NewServer(otherServer.Handler())
 	t.Cleanup(otherHTTP.Close)
 	otherHTTP.Client().Transport = &apiKeyTransport{key: testAPIKey, next: otherHTTP.Client().Transport}
-	hidden, hiddenBody := get(t, otherHTTP, path, nil)
-	require.Equal(t, http.StatusNotFound, hidden.StatusCode, hiddenBody)
-	// $schema carries each test server's own address; the rest must match byte for byte.
-	require.Equal(t, strings.ReplaceAll(missingBody, ts.URL, ""), strings.ReplaceAll(hiddenBody, otherHTTP.URL, ""))
-
-	malformed, malformedBody := get(t, ts, "/api/v1/media/operations/not-a-uuid", nil)
-	require.Equal(t, http.StatusUnprocessableEntity, malformed.StatusCode, malformedBody)
-	require.Equal(t, "no-store", malformed.Header.Get("Cache-Control"))
-	unauthorized, unauthorizedBody := get(t, ts, path, map[string]string{"X-Api-Key": ""})
-	require.Equal(t, http.StatusUnauthorized, unauthorized.StatusCode, unauthorizedBody)
-	browser, browserBody := get(t, ts, path,
-		map[string]string{"X-Api-Key": "", api.WebSessionHeader: issueWebSession(t, ts)})
-	require.Equal(t, http.StatusForbidden, browser.StatusCode, browserBody)
-	require.Contains(t, browserBody, `"code":"web_session_read_only"`)
+	return otherHTTP
 }
 
 func configureMediaTestService(t *testing.T) func(*api.Deps) {

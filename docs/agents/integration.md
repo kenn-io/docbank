@@ -115,6 +115,9 @@ A 404 means no committed receipt was visible at that moment. A submission still
 in flight can commit afterward. The equivalent CLI command is
 `docbank media operation OPERATION_ID`.
 
+The receipt records the submission as it was saved. For the source's current
+state, run `docbank media status SOURCE_ID` with the receipt's `source_id`.
+
 ## Give an independent client a stable endpoint
 
 The docbank CLI can discover an ephemeral port and per-run key from the

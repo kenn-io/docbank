@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"uuid"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/canonical"
@@ -90,13 +91,14 @@ func (c *Connection) MediaStatus(ctx context.Context, sourceID string) (api.Medi
 	return result, validateMediaReceipt(result, "", err)
 }
 
-func (c *Connection) MediaOperationReceipt(ctx context.Context, operationID string) (api.MediaReceipt, error) {
+func (c *Connection) MediaOperationReceipt(ctx context.Context, operationID uuid.UUID) (api.MediaReceipt, error) {
 	var result api.MediaReceipt
-	apiResponse, err := c.API().GetMediaOperationReceipt(ctx, &apiclient.GetMediaOperationReceiptRequestOptions{PathParams: &apiclient.GetMediaOperationReceiptPath{OperationID: operationID}})
+	apiResponse, err := c.API().GetMediaOperationReceipt(ctx, &apiclient.GetMediaOperationReceiptRequestOptions{
+		PathParams: &apiclient.GetMediaOperationReceiptPath{OperationID: operationID}})
 	if err == nil {
 		result = *apiResponse
 	}
-	return result, validateMediaReceipt(result, operationID, err)
+	return result, validateMediaReceipt(result, operationID.String(), err)
 }
 
 func (c *Connection) MediaTranscript(

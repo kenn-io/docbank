@@ -20469,7 +20469,7 @@ type RevokeMediaOccurrencePath struct {
 }
 
 type GetMediaOperationReceiptPath struct {
-	OperationID string `json:"operation_id"`
+	OperationID uuid.UUID `json:"operation_id"`
 }
 
 type GetMediaSourcePath struct {
