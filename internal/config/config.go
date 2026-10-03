@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/storenamespace"
+	"go.kenn.io/kit/embedconfig"
 )
 
 // Duration is a time.Duration that unmarshals from a TOML string such as
@@ -213,6 +214,9 @@ type MediaOriginConfig struct {
 // EmbeddingProfileConfig names a deployment binding for one pinned embedding
 // descriptor and semantic input kind.
 type EmbeddingProfileConfig struct {
+	// Embedder is the preferred text-service configuration. The overlapping
+	// flat fields remain supported for legacy configurations.
+	Embedder                 *embedconfig.Embedder     `toml:"embedder" sensitive:"true"`
 	Activation               string                    `toml:"activation"`
 	AuthorizationFingerprint string                    `toml:"authorization_fingerprint"`
 	Chunk                    EmbeddingChunkConfig      `toml:"chunk"`
@@ -671,7 +675,11 @@ func validateProcessingProfiles(c Config) error {
 			}
 		}
 	}
-	for name, profile := range c.EmbeddingProfiles {
+	for name := range c.EmbeddingProfiles {
+		profile, err := c.EmbeddingProfile(name)
+		if err != nil {
+			return err
+		}
 		prefix := fmt.Sprintf("[embedding_profiles.%s]", name)
 		if err := validateProfileName(name, prefix); err != nil {
 			return err
@@ -679,7 +687,7 @@ func validateProcessingProfiles(c Config) error {
 		if err := validateEmbeddingProfileConfig(profile, prefix); err != nil {
 			return err
 		}
-		if profile.Runtime != nil {
+		if profile.Runtime != nil && (profile.Embedder == nil || profile.Embedder.APIKey.IsZero()) {
 			credentialName := strings.TrimPrefix(profile.CredentialBinding, "credential:")
 			if _, ok := c.CredentialBindings[credentialName]; !ok {
 				return fmt.Errorf("%s runtime credential binding %q is not defined", prefix, profile.CredentialBinding)
@@ -1096,9 +1104,9 @@ func (c Config) assembleProcessingProfile(name string) (ResolvedProcessingProfil
 			return ResolvedProcessingProfile{}, fmt.Errorf("[processing_profiles.%s] embedding %q is duplicated", name, bindingName)
 		}
 		seen[bindingName] = struct{}{}
-		binding, exists := c.EmbeddingProfiles[bindingName]
-		if !exists {
-			return ResolvedProcessingProfile{}, fmt.Errorf("[processing_profiles.%s] embedding %q is not defined", name, bindingName)
+		binding, err := c.EmbeddingProfile(bindingName)
+		if err != nil {
+			return ResolvedProcessingProfile{}, err
 		}
 		if err := validateEmbeddingProfileConfig(binding, fmt.Sprintf("[embedding_profiles.%s]", bindingName)); err != nil {
 			return ResolvedProcessingProfile{}, err

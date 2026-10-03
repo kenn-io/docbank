@@ -53,6 +53,13 @@ supported packages and virtual-unit counting.
 
 ## Credentials and hosted runtimes
 
+For text embedding services, prefer Kit's
+`[embedding_profiles.<name>.embedder]` settings. They support typed API-key
+references to an environment variable or private file. Existing flat embedding
+settings and named environment credentials remain supported as legacy input.
+See [text-service configuration](../configuration.md#text-service-configuration)
+for the fields, conversion rules and adapter limits.
+
 `[credential_bindings.<name>]` names one environment variable. It holds only
 the environment-variable name in `config.toml`; the secret value stays in that
 environment and is resolved only by the selected provider adapter. Do not put
