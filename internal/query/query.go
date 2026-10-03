@@ -59,6 +59,16 @@ type Sort struct {
 // Filters contains the complete set of typed QueryV1 facets. Slice fields are
 // set-valued after normalization.
 type Filters struct {
+	Kinds         []string   `json:"kinds,omitzero"`
+	Cameras       []string   `json:"cameras,omitzero"`
+	Lenses        []string   `json:"lenses,omitzero"`
+	ISOMin        *int64     `json:"iso_min,omitzero"`
+	ISOMax        *int64     `json:"iso_max,omitzero"`
+	CaptureAfter  string     `json:"capture_after,omitzero"`
+	CaptureBefore string     `json:"capture_before,omitzero"`
+	GPSBounds     *GPSBounds `json:"gps_bounds,omitzero"`
+	AssetIDs      []string   `json:"asset_ids,omitzero"`
+
 	Paths                []string `json:"paths,omitempty"`
 	ExcludePaths         []string `json:"exclude_paths,omitempty"`
 	CollectionIDs        []string `json:"collection_ids,omitempty"`
@@ -93,6 +103,16 @@ type sortInput struct {
 }
 
 type filtersInput struct {
+	Kinds         *[]string  `json:"kinds"`
+	Cameras       *[]string  `json:"cameras"`
+	Lenses        *[]string  `json:"lenses"`
+	ISOMin        *int64     `json:"iso_min"`
+	ISOMax        *int64     `json:"iso_max"`
+	CaptureAfter  *string    `json:"capture_after"`
+	CaptureBefore *string    `json:"capture_before"`
+	GPSBounds     *GPSBounds `json:"gps_bounds"`
+	AssetIDs      *[]string  `json:"asset_ids"`
+
 	Paths                *[]string `json:"paths"`
 	ExcludePaths         *[]string `json:"exclude_paths"`
 	CollectionIDs        *[]string `json:"collection_ids"`
@@ -117,7 +137,7 @@ var optionalFilterFields = map[string]struct{}{
 	"tag_ids": {}, "exclude_tag_ids": {}, "no_tags": {}, "media_families": {},
 	"mime_types": {}, "extensions": {}, "modified_after": {}, "modified_before": {},
 	"size_min": {}, "size_max": {}, "text_coverage": {}, "has_duplicates": {},
-	"collapse_duplicates": {},
+	"collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {},
 }
 
 // Parse validates and normalizes one bounded QueryV1 JSON value.
@@ -146,6 +166,9 @@ func Parse(raw []byte) (Query, error) {
 		if input.Filters.ModifiedAfter != nil && *input.Filters.ModifiedAfter == "" ||
 			input.Filters.ModifiedBefore != nil && *input.Filters.ModifiedBefore == "" {
 			return Query{}, errors.New("query timestamps must be nonempty RFC3339 values")
+		}
+		if input.Filters.CaptureAfter != nil && *input.Filters.CaptureAfter == "" || input.Filters.CaptureBefore != nil && *input.Filters.CaptureBefore == "" {
+			return Query{}, errors.New("capture date must be nonempty")
 		}
 		value.Filters = input.Filters.value()
 	}
@@ -201,6 +224,34 @@ func Fingerprint(value Query) (string, error) {
 
 func (input filtersInput) value() Filters {
 	value := Filters{}
+	if input.Kinds != nil {
+		value.Kinds = *input.Kinds
+	}
+	if input.Cameras != nil {
+		value.Cameras = *input.Cameras
+	}
+	if input.Lenses != nil {
+		value.Lenses = *input.Lenses
+	}
+	if input.ISOMin != nil {
+		value.ISOMin = input.ISOMin
+	}
+	if input.ISOMax != nil {
+		value.ISOMax = input.ISOMax
+	}
+	if input.CaptureAfter != nil {
+		value.CaptureAfter = *input.CaptureAfter
+	}
+	if input.CaptureBefore != nil {
+		value.CaptureBefore = *input.CaptureBefore
+	}
+	if input.GPSBounds != nil {
+		value.GPSBounds = input.GPSBounds
+	}
+	if input.AssetIDs != nil {
+		value.AssetIDs = *input.AssetIDs
+	}
+
 	if input.Paths != nil {
 		value.Paths = *input.Paths
 	}
@@ -268,7 +319,7 @@ func normalizeQuery(value Query) (Query, error) {
 	if !oneOf(value.Mode, "lexical", "semantic", "hybrid") {
 		return Query{}, errors.New("query mode is unknown")
 	}
-	if !oneOf(value.Sort.Field, "name", "path", "modified_at", "size", "media_type", "relevance") ||
+	if !oneOf(value.Sort.Field, "name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time") ||
 		!oneOf(value.Sort.Direction, "asc", "desc") {
 		return Query{}, errors.New("query sort is invalid")
 	}
@@ -282,6 +333,10 @@ func normalizeQuery(value Query) (Query, error) {
 
 func normalizeFilters(value Filters) (Filters, error) {
 	var err error
+	value, err = normalizePhotoFilters(value)
+	if err != nil {
+		return Filters{}, err
+	}
 	if value.Paths, err = normalizeSet(value.Paths, maxIDValues, validVirtualPath, "paths"); err != nil {
 		return Filters{}, err
 	}

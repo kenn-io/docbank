@@ -566,7 +566,7 @@ var expressionFields = map[string]struct{}{
 	"name": {}, "path": {}, "tag": {}, "collection": {}, "saved": {},
 	"mime": {}, "extension": {}, "media_family": {},
 	"modified_after": {}, "modified_before": {}, "size_min": {}, "size_max": {},
-	"text_coverage": {}, "has_duplicates": {},
+	"text_coverage": {}, "has_duplicates": {}, "kind": {}, "camera": {}, "lens": {}, "iso": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps": {}, "asset": {},
 }
 
 func expressionError(start, end int, message string) *ExpressionError {

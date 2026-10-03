@@ -1,6 +1,7 @@
 package sqlite_test
 
 import (
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -35,6 +36,8 @@ func exerciseQueryFunctions(t *testing.T, driver docsqlite.Driver) {
 		require.Equal(t, test.family, family, "%q / %q", test.mime, test.name)
 	}
 
+	exercisePhotoCaptureFunction(t, db)
+
 	// Force a second physical connection: the predicate must not depend on the
 	// first connection's local registration or pool reuse.
 	first, err := db.Conn(t.Context())
@@ -47,4 +50,33 @@ func exerciseQueryFunctions(t *testing.T, driver docsqlite.Driver) {
 	require.NoError(t, second.QueryRowContext(t.Context(),
 		`SELECT docbank_query_media_family_v1('application/pdf', 'report.txt')`).Scan(&family))
 	require.Equal(t, "document", family)
+}
+
+func exercisePhotoCaptureFunction(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, tc := range []struct{ value, precision, zone, offset, key string }{
+		{"", "", "", "", ""}, {"2024-01-02T03:04:05+02:30", "second", "offset", "+02:30", "2024-01-02T00:34:05.000000000"}, {"2024-01-02T03:04:05.1234567891Z", "fraction", "utc", "", "2024-01-02T03:04:05.123456789"}, {"0000-01-01", "date", "omitted", "", ""},
+	} {
+		var key string
+		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT docbank_query_capture_time_v1(?,?,?,?)`, tc.value, tc.precision, tc.zone, tc.offset).Scan(&key))
+		require.Equal(t, tc.key, key)
+	}
+	var key string
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT docbank_query_capture_time_v1(COALESCE(NULL,''),'','','')`).Scan(&key))
+	require.Empty(t, key)
+	require.Error(t, db.QueryRowContext(t.Context(), `SELECT docbank_query_capture_time_v1('bad','date','omitted','')`).Scan(&key))
+}
+
+func TestPhotoCaptureTimeFunction(t *testing.T) {
+	for _, name := range sql.Drivers() {
+		if name != "sqlite" && name != "docbank-sqlite3-query-v1" {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			db, err := sql.Open(name, filepath.Join(t.TempDir(), "capture.db"))
+			require.NoError(t, err)
+			defer func() { require.NoError(t, db.Close()) }()
+			exercisePhotoCaptureFunction(t, db)
+		})
+	}
 }

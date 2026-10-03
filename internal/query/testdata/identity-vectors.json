@@ -54,6 +54,24 @@
       "input_json": "{\"filters\":{\"modified_after\":\"2026-09-09T00:00:00.123456789+00:00\",\"mime_types\":[\"application/x~synthetic\"]}}",
       "canonical_utf8": "{\"filters\":{\"mime_types\":[\"application/x~synthetic\"],\"modified_after\":\"2026-09-09T00:00:00.123456789Z\"},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
       "fingerprint": "sha256:dbc6e8cac96d94ccb8c55dcebc63c4db7aae7e9ee1f23cc9c05fceda89a2a44b"
+    },
+    {
+      "name": "photo_normalized",
+      "input_json": "{\"filters\":{\"kinds\":[\"video\",\"photo\",\"photo\"],\"cameras\":[\"Synthetic Camera\",\"Synthetic Camera\"],\"lenses\":[\"Lens 雪\"],\"iso_min\":0,\"iso_max\":400,\"capture_after\":\"2024-01-01\",\"capture_before\":\"2025-01-01\",\"gps_bounds\":{\"south\":\"-00.000\",\"west\":\"0170.00\",\"north\":\"090.000\",\"east\":\"-170.000\"},\"asset_ids\":[\"00000000-0000-4000-8000-000000000001\"]},\"sort\":{\"field\":\"capture_time\",\"direction\":\"desc\"}}",
+      "canonical_utf8": "{\"filters\":{\"asset_ids\":[\"00000000-0000-4000-8000-000000000001\"],\"cameras\":[\"Synthetic Camera\"],\"capture_after\":\"2024-01-01\",\"capture_before\":\"2025-01-01\",\"gps_bounds\":{\"east\":\"-170\",\"north\":\"90\",\"south\":\"0\",\"west\":\"170\"},\"iso_max\":400,\"iso_min\":0,\"kinds\":[\"photo\",\"video\"],\"lenses\":[\"Lens 雪\"]},\"mode\":\"lexical\",\"sort\":{\"direction\":\"desc\",\"field\":\"capture_time\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:b8ceca8875b0eba03c6b0201d3915077f1c8ccd0a42cfbaa5567a57f9bd7d410"
+    },
+    {
+      "name": "photo_optional_nulls",
+      "input_json": "{\"filters\":{\"kinds\":null,\"cameras\":null,\"lenses\":null,\"iso_min\":null,\"iso_max\":null,\"capture_after\":null,\"capture_before\":null,\"gps_bounds\":null,\"asset_ids\":null}}",
+      "canonical_utf8": "{\"filters\":{},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:5e60ffa8c5c733830f8dddba716f9bfce8a17121b5f8eb4de97cf23cf2fbe460"
+    },
+    {
+      "name": "photo_import_sort",
+      "input_json": "{\"sort\":{\"field\":\"import_time\"}}",
+      "canonical_utf8": "{\"filters\":{},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"import_time\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:4b41467eb19bddedfad3a345276886421fa589a66ed11858a5fd788ebca1a78a"
     }
   ],
   "highlight_sets": [

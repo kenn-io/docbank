@@ -2776,14 +2776,32 @@ export interface ExportJob {
   state: string;
 }
 
+export interface GPSBounds {
+  east: string;
+  north: string;
+  south: string;
+  west: string;
+}
+
 export interface Filters {
+  asset_ids?: string[];
+  cameras?: string[];
+  capture_after?: string;
+  capture_before?: string;
   collapse_duplicates?: boolean;
   collection_ids?: string[];
   exclude_collection_ids?: string[];
   exclude_paths?: string[];
   exclude_tag_ids?: string[];
   extensions?: string[];
+  gps_bounds?: GPSBounds;
   has_duplicates?: boolean;
+  /** @nullable */
+  iso_max?: number | null;
+  /** @nullable */
+  iso_min?: number | null;
+  kinds?: string[];
+  lenses?: string[];
   media_families?: string[];
   mime_types?: string[];
   modified_after?: string;
@@ -4274,6 +4292,304 @@ export interface PhotoAsset {
   updated_at: string;
 }
 
+export type PhotoBrowseRowKind = typeof PhotoBrowseRowKind[keyof typeof PhotoBrowseRowKind];
+
+
+export const PhotoBrowseRowKind = {
+  photo: 'photo',
+  video: 'video',
+} as const;
+
+export type PhotoPreviewSlotMediaType = typeof PhotoPreviewSlotMediaType[keyof typeof PhotoPreviewSlotMediaType];
+
+
+export const PhotoPreviewSlotMediaType = {
+  'image/jpeg': 'image/jpeg',
+} as const;
+
+export type PhotoPreviewSlotState = typeof PhotoPreviewSlotState[keyof typeof PhotoPreviewSlotState];
+
+
+export const PhotoPreviewSlotState = {
+  missing: 'missing',
+  ready: 'ready',
+  unsupported: 'unsupported',
+  failed: 'failed',
+} as const;
+
+export interface PhotoPreviewSlot {
+  /** @pattern ^[0-9a-f]{64}$ */
+  generation_id?: string;
+  /** @minimum 1 */
+  height?: number;
+  media_type?: PhotoPreviewSlotMediaType;
+  /** @pattern ^[0-9a-f]{64}$ */
+  sha256?: string;
+  /** @minimum 1 */
+  size?: number;
+  state: PhotoPreviewSlotState;
+  url?: string;
+  /** @minimum 1 */
+  width?: number;
+}
+
+export interface PhotoPreviewSlots {
+  fit: PhotoPreviewSlot;
+  grid: PhotoPreviewSlot;
+  large: PhotoPreviewSlot;
+}
+
+export interface PhotoBrowseRow {
+  asset_id: string;
+  /** @nullable */
+  capture_time: string | null;
+  /** @nullable */
+  capture_time_offset: string | null;
+  /** @nullable */
+  capture_time_precision: string | null;
+  /** @nullable */
+  capture_time_timezone: string | null;
+  content_version_id: string;
+  display_file_id: string;
+  /** @nullable */
+  height_px: number | null;
+  import_time: string;
+  kind: PhotoBrowseRowKind;
+  media_type: string;
+  name: string;
+  /** @minimum 1 */
+  node_id: number;
+  previews: PhotoPreviewSlots;
+  /** @minimum 1 */
+  revision: number;
+  /** @nullable */
+  width_px: number | null;
+}
+
+export interface PhotoBrowsePage {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: PhotoBrowseRow[];
+  next_cursor?: string;
+  /** @minimum 0 */
+  total: number;
+}
+
+export type WorkspaceQueryCoverageConfiguration = typeof WorkspaceQueryCoverageConfiguration[keyof typeof WorkspaceQueryCoverageConfiguration];
+
+
+export const WorkspaceQueryCoverageConfiguration = {
+  configured: 'configured',
+  unconfigured: 'unconfigured',
+  profile_required: 'profile_required',
+} as const;
+
+export interface WorkspaceQueryCoverage {
+  configuration: WorkspaceQueryCoverageConfiguration;
+  /** @pattern ^[0-9a-f]{64}$ */
+  profile_fingerprint?: string;
+}
+
+export type SavedQueryFiltersSchemaKindsItem = typeof SavedQueryFiltersSchemaKindsItem[keyof typeof SavedQueryFiltersSchemaKindsItem];
+
+
+export const SavedQueryFiltersSchemaKindsItem = {
+  photo: 'photo',
+  video: 'video',
+} as const;
+
+export type SavedQueryFiltersSchemaMediaFamiliesItem = typeof SavedQueryFiltersSchemaMediaFamiliesItem[keyof typeof SavedQueryFiltersSchemaMediaFamiliesItem];
+
+
+export const SavedQueryFiltersSchemaMediaFamiliesItem = {
+  email: 'email',
+  document: 'document',
+  spreadsheet: 'spreadsheet',
+  presentation: 'presentation',
+  image: 'image',
+  audio_video: 'audio_video',
+  text: 'text',
+  source_code: 'source_code',
+  web: 'web',
+  calendar: 'calendar',
+  archive: 'archive',
+  cad: 'cad',
+  unknown: 'unknown',
+} as const;
+
+export type SavedQueryFiltersSchemaTextCoverageItem = typeof SavedQueryFiltersSchemaTextCoverageItem[keyof typeof SavedQueryFiltersSchemaTextCoverageItem];
+
+
+export const SavedQueryFiltersSchemaTextCoverageItem = {
+  complete: 'complete',
+  partial: 'partial',
+  failed: 'failed',
+  unprocessed: 'unprocessed',
+  none: 'none',
+  unavailable: 'unavailable',
+} as const;
+
+export type SavedQueryFiltersSchemaGpsBounds = {
+  /** @maxLength 64 */
+  east: string;
+  /** @maxLength 64 */
+  north: string;
+  /** @maxLength 64 */
+  south: string;
+  /** @maxLength 64 */
+  west: string;
+};
+
+export interface SavedQueryFiltersSchema {
+  /** @maxItems 64 */
+  asset_ids?: string[];
+  /** @maxItems 64 */
+  cameras?: string[];
+  /** @nullable */
+  capture_after?: string | null;
+  /** @nullable */
+  capture_before?: string | null;
+  /** @nullable */
+  collapse_duplicates?: boolean | null;
+  /** @maxItems 64 */
+  collection_ids?: string[];
+  /** @maxItems 64 */
+  exclude_collection_ids?: string[];
+  /** @maxItems 64 */
+  exclude_paths?: string[];
+  /** @maxItems 64 */
+  exclude_tag_ids?: string[];
+  /**
+     * @maxItems 32
+     * @items.pattern ^[a-z0-9](?:[a-z0-9_-]{0,31})$
+     */
+  extensions?: string[];
+  gps_bounds?: SavedQueryFiltersSchemaGpsBounds;
+  /** @nullable */
+  has_duplicates?: boolean | null;
+  /**
+     * @minimum 0
+     * @maximum 9007199254740991
+     * @nullable
+     */
+  iso_max?: number | null;
+  /**
+     * @minimum 0
+     * @maximum 9007199254740991
+     * @nullable
+     */
+  iso_min?: number | null;
+  /** @maxItems 64 */
+  kinds?: SavedQueryFiltersSchemaKindsItem[];
+  /** @maxItems 64 */
+  lenses?: string[];
+  /** @maxItems 13 */
+  media_families?: SavedQueryFiltersSchemaMediaFamiliesItem[];
+  /** @maxItems 64 */
+  mime_types?: string[];
+  /** @nullable */
+  modified_after?: string | null;
+  /** @nullable */
+  modified_before?: string | null;
+  /** @nullable */
+  no_tags?: boolean | null;
+  /** @maxItems 64 */
+  paths?: string[];
+  /**
+     * @minimum 0
+     * @maximum 9007199254740991
+     * @nullable
+     */
+  size_max?: number | null;
+  /**
+     * @minimum 0
+     * @maximum 9007199254740991
+     * @nullable
+     */
+  size_min?: number | null;
+  /** @maxItems 64 */
+  tag_ids?: string[];
+  /** @maxItems 6 */
+  text_coverage?: SavedQueryFiltersSchemaTextCoverageItem[];
+}
+
+export type SavedQueryV1SchemaMode = typeof SavedQueryV1SchemaMode[keyof typeof SavedQueryV1SchemaMode];
+
+
+export const SavedQueryV1SchemaMode = {
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+} as const;
+
+export type SavedQuerySortSchemaDirection = typeof SavedQuerySortSchemaDirection[keyof typeof SavedQuerySortSchemaDirection];
+
+
+export const SavedQuerySortSchemaDirection = {
+  asc: 'asc',
+  desc: 'desc',
+} as const;
+
+export type SavedQuerySortSchemaField = typeof SavedQuerySortSchemaField[keyof typeof SavedQuerySortSchemaField];
+
+
+export const SavedQuerySortSchemaField = {
+  name: 'name',
+  path: 'path',
+  modified_at: 'modified_at',
+  size: 'size',
+  media_type: 'media_type',
+  relevance: 'relevance',
+  capture_time: 'capture_time',
+  import_time: 'import_time',
+} as const;
+
+export interface SavedQuerySortSchema {
+  direction?: SavedQuerySortSchemaDirection;
+  field?: SavedQuerySortSchemaField;
+}
+
+export type SavedQueryV1SchemaSyntax = typeof SavedQueryV1SchemaSyntax[keyof typeof SavedQueryV1SchemaSyntax];
+
+
+export const SavedQueryV1SchemaSyntax = {
+  simple: 'simple',
+  advanced: 'advanced',
+} as const;
+
+export type SavedQueryV1SchemaV = typeof SavedQueryV1SchemaV[keyof typeof SavedQueryV1SchemaV];
+
+
+export const SavedQueryV1SchemaV = {
+  NUMBER_1: 1,
+} as const;
+
+export interface SavedQueryV1Schema {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  filters?: SavedQueryFiltersSchema;
+  mode?: SavedQueryV1SchemaMode;
+  sort?: SavedQuerySortSchema;
+  syntax?: SavedQueryV1SchemaSyntax;
+  /** @maxLength 8192 */
+  text?: string;
+  v?: SavedQueryV1SchemaV;
+}
+
+export interface PhotoBrowseRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  coverage?: WorkspaceQueryCoverage;
+  /** @maxLength 32768 */
+  cursor?: string;
+  /**
+     * @minimum 1
+     * @maximum 250
+     */
+  page_size?: number;
+  query: SavedQueryV1Schema;
+}
+
 export interface PhotoImportStartRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4825,146 +5141,6 @@ export interface QueryHighlightPreview {
   terms: string[];
 }
 
-export type SavedQueryFiltersSchemaMediaFamiliesItem = typeof SavedQueryFiltersSchemaMediaFamiliesItem[keyof typeof SavedQueryFiltersSchemaMediaFamiliesItem];
-
-
-export const SavedQueryFiltersSchemaMediaFamiliesItem = {
-  email: 'email',
-  document: 'document',
-  spreadsheet: 'spreadsheet',
-  presentation: 'presentation',
-  image: 'image',
-  audio_video: 'audio_video',
-  text: 'text',
-  source_code: 'source_code',
-  web: 'web',
-  calendar: 'calendar',
-  archive: 'archive',
-  cad: 'cad',
-  unknown: 'unknown',
-} as const;
-
-export type SavedQueryFiltersSchemaTextCoverageItem = typeof SavedQueryFiltersSchemaTextCoverageItem[keyof typeof SavedQueryFiltersSchemaTextCoverageItem];
-
-
-export const SavedQueryFiltersSchemaTextCoverageItem = {
-  complete: 'complete',
-  partial: 'partial',
-  failed: 'failed',
-  unprocessed: 'unprocessed',
-  none: 'none',
-  unavailable: 'unavailable',
-} as const;
-
-export interface SavedQueryFiltersSchema {
-  /** @nullable */
-  collapse_duplicates?: boolean | null;
-  /** @maxItems 64 */
-  collection_ids?: string[];
-  /** @maxItems 64 */
-  exclude_collection_ids?: string[];
-  /** @maxItems 64 */
-  exclude_paths?: string[];
-  /** @maxItems 64 */
-  exclude_tag_ids?: string[];
-  /**
-     * @maxItems 32
-     * @items.pattern ^[a-z0-9](?:[a-z0-9_-]{0,31})$
-     */
-  extensions?: string[];
-  /** @nullable */
-  has_duplicates?: boolean | null;
-  /** @maxItems 13 */
-  media_families?: SavedQueryFiltersSchemaMediaFamiliesItem[];
-  /** @maxItems 64 */
-  mime_types?: string[];
-  /** @nullable */
-  modified_after?: string | null;
-  /** @nullable */
-  modified_before?: string | null;
-  /** @nullable */
-  no_tags?: boolean | null;
-  /** @maxItems 64 */
-  paths?: string[];
-  /**
-     * @minimum 0
-     * @maximum 9007199254740991
-     * @nullable
-     */
-  size_max?: number | null;
-  /**
-     * @minimum 0
-     * @maximum 9007199254740991
-     * @nullable
-     */
-  size_min?: number | null;
-  /** @maxItems 64 */
-  tag_ids?: string[];
-  /** @maxItems 6 */
-  text_coverage?: SavedQueryFiltersSchemaTextCoverageItem[];
-}
-
-export type SavedQueryV1SchemaMode = typeof SavedQueryV1SchemaMode[keyof typeof SavedQueryV1SchemaMode];
-
-
-export const SavedQueryV1SchemaMode = {
-  lexical: 'lexical',
-  semantic: 'semantic',
-  hybrid: 'hybrid',
-} as const;
-
-export type SavedQuerySortSchemaDirection = typeof SavedQuerySortSchemaDirection[keyof typeof SavedQuerySortSchemaDirection];
-
-
-export const SavedQuerySortSchemaDirection = {
-  asc: 'asc',
-  desc: 'desc',
-} as const;
-
-export type SavedQuerySortSchemaField = typeof SavedQuerySortSchemaField[keyof typeof SavedQuerySortSchemaField];
-
-
-export const SavedQuerySortSchemaField = {
-  name: 'name',
-  path: 'path',
-  modified_at: 'modified_at',
-  size: 'size',
-  media_type: 'media_type',
-  relevance: 'relevance',
-} as const;
-
-export interface SavedQuerySortSchema {
-  direction?: SavedQuerySortSchemaDirection;
-  field?: SavedQuerySortSchemaField;
-}
-
-export type SavedQueryV1SchemaSyntax = typeof SavedQueryV1SchemaSyntax[keyof typeof SavedQueryV1SchemaSyntax];
-
-
-export const SavedQueryV1SchemaSyntax = {
-  simple: 'simple',
-  advanced: 'advanced',
-} as const;
-
-export type SavedQueryV1SchemaV = typeof SavedQueryV1SchemaV[keyof typeof SavedQueryV1SchemaV];
-
-
-export const SavedQueryV1SchemaV = {
-  NUMBER_1: 1,
-} as const;
-
-export interface SavedQueryV1Schema {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  filters?: SavedQueryFiltersSchema;
-  mode?: SavedQueryV1SchemaMode;
-  sort?: SavedQuerySortSchema;
-  syntax?: SavedQueryV1SchemaSyntax;
-  /** @maxLength 8192 */
-  text?: string;
-  v?: SavedQueryV1SchemaV;
-}
-
 export interface QueryPreview {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5289,6 +5465,17 @@ export interface SavedQueryCreateRequest {
   payload: SavedQueryV1Schema | HighlightSetV1Schema;
 }
 
+export interface SavedQueryGPSBoundsSchema {
+  /** @maxLength 64 */
+  east: string;
+  /** @maxLength 64 */
+  north: string;
+  /** @maxLength 64 */
+  south: string;
+  /** @maxLength 64 */
+  west: string;
+}
+
 export interface SavedQueryPage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5371,21 +5558,6 @@ export interface SavedQueryRunRequest {
   page_size?: SavedQueryRunRequestPageSize;
   /** @maxLength 128 */
   profile?: string;
-}
-
-export type WorkspaceQueryCoverageConfiguration = typeof WorkspaceQueryCoverageConfiguration[keyof typeof WorkspaceQueryCoverageConfiguration];
-
-
-export const WorkspaceQueryCoverageConfiguration = {
-  configured: 'configured',
-  unconfigured: 'unconfigured',
-  profile_required: 'profile_required',
-} as const;
-
-export interface WorkspaceQueryCoverage {
-  configuration: WorkspaceQueryCoverageConfiguration;
-  /** @pattern ^[0-9a-f]{64}$ */
-  profile_fingerprint?: string;
 }
 
 export interface WorkspaceQueryDependency {
@@ -12989,6 +13161,44 @@ return sessionJSON<PhotoAsset>(getCreatePhotoAssetUrl(),
 
 
 
+export const getListPhotoAssetsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/assets/query`
+}
+
+/**
+ * @summary Browse matching photo assets with live keyset pagination
+ */
+export const listPhotoAssets = async (photoBrowseRequest: NonReadonly<PhotoBrowseRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoBrowsePage> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoBrowsePage>(getListPhotoAssetsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoBrowseRequest)
+  }
+);}
+
+
+
 export const getGetPhotoAssetUrl = (assetId: string,) => {
 
 
@@ -13177,6 +13387,46 @@ return sessionJSON<PhotoAsset>(getDetachPhotoFileUrl(assetId,fileId,params),
     ...options,
     method: 'DELETE',
     headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getReadPhotoPreviewUrl = (assetId: string,
+    generationId: string,) => {
+
+
+
+
+  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/previews/${encodeURIComponent(String(generationId))}`
+}
+
+/**
+ * @summary Read verified bytes of an eligible exact photo preview
+ */
+export const readPhotoPreview = (assetId: string,
+    generationId: string, options?: Parameters<typeof sessionResponse>[1]) => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<Blob>(getReadPhotoPreviewUrl(assetId,generationId),
+  {
+    ...options,
+    method: 'GET',
+    headers: { 'Accept': `image/jpeg`, ...getHeaders(options?.headers) }
 
   }
 );}

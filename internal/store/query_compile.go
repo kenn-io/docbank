@@ -236,7 +236,7 @@ func compileExpressionLeaf(expression *query.ResolvedExpression, field string) (
 			return compiledQueryFragment{}, errors.New("resolved saved operand lacks its query")
 		}
 		return compileSavedPredicate(expression)
-	case "mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max", "text_coverage", "has_duplicates":
+	case "mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max", "text_coverage", "has_duplicates", "kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset":
 		if syntax.Prefix {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "scalar operands cannot use prefix matching")
 		}
@@ -292,6 +292,12 @@ func compileSavedPredicate(expression *query.ResolvedExpression) (compiledQueryF
 
 func compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
 	switch field {
+	case "kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset":
+		part, err := compilePhotoScalarPredicate(field, value)
+		if err != nil {
+			return compiledQueryFragment{}, compileExpressionError(start, end, err.Error())
+		}
+		return part, nil
 	case "mime", "extension", "media_family":
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, compileExpressionError(start, end, err.Error())
@@ -332,7 +338,11 @@ func compileScalarPredicate(field, value string, start, end int) (compiledQueryF
 }
 
 func compileQueryFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
-	parts := []compiledQueryFragment{
+	photo, err := compilePhotoFilters(filters, start, end)
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	parts := []compiledQueryFragment{photo,
 		compileValuePredicates(filters.Paths, compilePathPredicate),
 		negateCompiledFragment(compileValuePredicates(filters.ExcludePaths, compilePathPredicate)),
 		compileValuePredicates(filters.CollectionIDs, compileCollectionPredicate),
