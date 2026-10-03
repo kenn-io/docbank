@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	json "encoding/json/v2"
 	"errors"
 	"fmt"
@@ -27,6 +28,9 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/providerhttp"
+	"go.kenn.io/kit/embedclient"
+	"go.kenn.io/kit/embedconfig"
+	"go.kenn.io/kit/vector"
 )
 
 const (
@@ -148,12 +152,7 @@ type Client struct {
 	descriptor document.EmbeddingDescriptor
 	secrets    SecretResolver
 	http       *http.Client
-}
-
-type wireRequest struct {
-	Input          []string `json:"input"`
-	Model          string   `json:"model"`
-	EncodingFormat string   `json:"encoding_format"`
+	text       *embedclient.Client
 }
 
 type wireResponse struct {
@@ -164,9 +163,9 @@ type wireResponse struct {
 }
 
 type wireEmbedding struct {
-	Object    string    `json:"object"`
-	Embedding []float32 `json:"embedding"`
-	Index     *int      `json:"index"`
+	Object    string         `json:"object"`
+	Embedding jsontext.Value `json:"embedding"`
+	Index     *int           `json:"index"`
 }
 
 type wireUsage struct {
@@ -244,7 +243,19 @@ func New(profile Profile, secrets SecretResolver, httpClient *http.Client) (*Cli
 	isolate.Jar = nil
 	isolate.Timeout = 0
 	normalized.Descriptor = cloneDescriptor(descriptor)
-	return &Client{profile: normalized, descriptor: cloneDescriptor(descriptor), secrets: secrets, http: &isolate}, nil
+	client := &Client{profile: normalized, descriptor: cloneDescriptor(descriptor), secrets: secrets, http: &isolate}
+	client.text, err = embedclient.New(embedclient.Options{
+		Model: embedconfig.Model{Name: client.descriptor.Model, Dimensions: client.descriptor.Dimension,
+			Metric: embedconfig.MetricCosine, Normalization: embedconfig.NormalizationNone, EncodingFormat: "float"},
+		Deployment: embedconfig.Deployment{BaseURL: client.profile.Origin + "/v1", TrustPrivateNetwork: true},
+		Batch:      embedconfig.Batch{Items: client.profile.MaxBatchItems},
+		Transport:  embedconfig.Transport{MaxResponseBytes: int(client.profile.MaxResponseBytes)},
+		HTTP:       &http.Client{Transport: responsePolicy{client: client}, CheckRedirect: providerhttp.RefuseRedirects},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("openaicompat: configure text transport: %w", err)
+	}
+	return client, nil
 }
 
 // Descriptor returns a defensive copy of the immutable provider contract.
@@ -292,84 +303,120 @@ func (client *Client) Embed(ctx context.Context, inputs []document.EmbeddingInpu
 		}
 		renderedBytes += int64(len(rendered[index]))
 	}
-	payload, err := json.Marshal(wireRequest{Input: rendered, Model: client.descriptor.Model, EncodingFormat: "float"})
-	if err != nil {
-		return document.EmbeddingResult{}, errors.New("openaicompat: could not encode embedding request")
-	}
-	if int64(len(payload)) > client.profile.MaxRequestBytes {
-		return document.EmbeddingResult{}, fmt.Errorf("%w: embedding request byte limit exceeded", ErrCapacityResponse)
-	}
-
 	requestCtx, cancel := context.WithTimeout(ctx, client.profile.RequestTimeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, client.profile.Origin+embeddingsPath, bytes.NewReader(payload))
+	// Formatting already applied the individual document/query role. This
+	// wire contract has no input_type, so send the original batch as one call.
+	// Kit performs no fitting, normalization, retry, or storage operation here.
+	vectors, err := client.text.EncodeFunc(embedconfig.RoleDocument)(requestCtx, rendered)
 	if err != nil {
-		return document.EmbeddingResult{}, errors.New("openaicompat: could not construct embedding request")
+		if errors.Is(err, vector.ErrEmptyEmbeddingInput) {
+			return document.EmbeddingResult{}, fmt.Errorf("openaicompat: empty prepared input: %w", ErrPermanentResponse)
+		}
+		if transport, ok := errors.AsType[*embedclient.TransportError](err); ok {
+			// The policy transport returns DocBank's existing classifications.
+			return document.EmbeddingResult{}, fmt.Errorf("openaicompat: embedding request: %w", transport.Err)
+		}
+		return document.EmbeddingResult{}, fmt.Errorf("openaicompat: invalid embedding response: %w", ErrMalformedResponse)
 	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Content-Type", "application/json")
-	if client.profile.SecretBinding != "" {
-		secret, resolveErr := client.secrets.ResolveSecret(requestCtx, client.profile.SecretBinding)
-		if resolveErr != nil {
-			if contextErr := requestCtx.Err(); contextErr != nil {
-				return document.EmbeddingResult{}, fmt.Errorf("openaicompat: credential resolution canceled: %w", contextErr)
+	result := document.EmbeddingResult{Vectors: make([]document.EmbeddingVector, len(inputs))}
+	for i, values := range vectors {
+		if client.descriptor.Normalization == document.VectorNormalizationUnitLength {
+			var squaredNorm float64
+			for _, value := range values {
+				squaredNorm += float64(value) * float64(value)
 			}
-			return document.EmbeddingResult{}, ErrUnauthorized
+			if math.Abs(squaredNorm-1) > unitLengthTolerance {
+				return document.EmbeddingResult{}, fmt.Errorf("openaicompat: provider vector normalization does not match profile: %w", ErrMalformedResponse)
+			}
 		}
-		if !validSecret(secret) {
-			return document.EmbeddingResult{}, ErrUnauthorized
-		}
-		request.Header.Set("Authorization", "Bearer "+secret)
-	}
-
-	response, err := client.http.Do(request)
-	if err != nil {
-		if contextErr := requestCtx.Err(); contextErr != nil {
-			return document.EmbeddingResult{}, fmt.Errorf("openaicompat: embedding request canceled: %w", contextErr)
-		}
-		return document.EmbeddingResult{}, &ProviderError{Kind: ErrTransientResponse}
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode >= 300 && response.StatusCode < 400 {
-		return document.EmbeddingResult{}, fmt.Errorf("openaicompat: provider redirect refused: %w",
-			&ProviderError{Kind: ErrPermanentResponse, StatusCode: response.StatusCode})
-	}
-	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		return document.EmbeddingResult{}, &ProviderError{Kind: ErrUnauthorized, StatusCode: response.StatusCode}
-	}
-	if response.StatusCode == http.StatusRequestEntityTooLarge {
-		return document.EmbeddingResult{}, &ProviderError{Kind: ErrCapacityResponse, StatusCode: response.StatusCode}
-	}
-	if response.StatusCode == http.StatusRequestTimeout || response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
-		delay, set := openAIRetryAfter(response.Header.Get("Retry-After"), time.Now().UTC())
-		return document.EmbeddingResult{}, &ProviderError{Kind: ErrTransientResponse, StatusCode: response.StatusCode,
-			RetryDelay: delay, RetrySet: set}
-	}
-	if response.StatusCode != http.StatusOK {
-		return document.EmbeddingResult{}, &ProviderError{Kind: ErrPermanentResponse, StatusCode: response.StatusCode}
-	}
-	if err := validateResponseContentType(response.Header.Get("Content-Type")); err != nil {
-		return document.EmbeddingResult{}, errors.Join(ErrMalformedResponse, err)
-	}
-	if err := client.validateRevisionEcho(response.Header); err != nil {
-		return document.EmbeddingResult{}, errors.Join(ErrMalformedResponse, err)
-	}
-	body, err := readBounded(requestCtx, response.Body, client.profile.MaxResponseBytes)
-	if err != nil {
-		return document.EmbeddingResult{}, err
-	}
-	var decoded wireResponse
-	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true)); err != nil {
-		return document.EmbeddingResult{}, fmt.Errorf("openaicompat: provider response does not match the bounded embedding schema: %w", ErrMalformedResponse)
-	}
-	result, err := client.validateAndOrder(decoded, inputs)
-	if err != nil {
-		return document.EmbeddingResult{}, errors.Join(ErrMalformedResponse, err)
+		result.Vectors[i] = document.EmbeddingVector{Key: inputs[i].Key, Values: values} //nolint:gosec // Kit returns exactly one ordered vector per input.
 	}
 	if err := document.ValidateEmbeddingProviderResult(client.descriptor, inputs, authorization, result); err != nil {
 		return document.EmbeddingResult{}, errors.Join(ErrMalformedResponse, err)
 	}
 	return result, nil
+}
+
+// responsePolicy retains the immutable provider contract around Kit's text
+// transport. Kit owns vector decoding, dimensions, finite values and indices;
+// DocBank owns the envelope, deployment revision and provider error policy.
+type responsePolicy struct{ client *Client }
+
+func (policy responsePolicy) RoundTrip(request *http.Request) (*http.Response, error) {
+	client := policy.client
+	request = request.Clone(request.Context())
+	if request.ContentLength > client.profile.MaxRequestBytes {
+		return nil, fmt.Errorf("%w: embedding request byte limit exceeded", ErrCapacityResponse)
+	}
+	if client.profile.SecretBinding != "" {
+		secret, err := client.secrets.ResolveSecret(request.Context(), client.profile.SecretBinding)
+		if err != nil {
+			if contextErr := request.Context().Err(); contextErr != nil {
+				return nil, fmt.Errorf("openaicompat: credential resolution canceled: %w", contextErr)
+			}
+			return nil, ErrUnauthorized
+		}
+		if !validSecret(secret) {
+			return nil, ErrUnauthorized
+		}
+		request.Header.Set("Authorization", "Bearer "+secret)
+	}
+	response, err := client.http.Do(request) //nolint:gosec // Kit pins this request to the immutable profile origin; New installs the sealed egress transport.
+	if err != nil {
+		if contextErr := request.Context().Err(); contextErr != nil {
+			return nil, fmt.Errorf("openaicompat: embedding request canceled: %w", contextErr)
+		}
+		return nil, &ProviderError{Kind: ErrTransientResponse}
+	}
+	originalBody := response.Body
+	defer func() { _ = originalBody.Close() }()
+	if response.StatusCode >= 300 && response.StatusCode < 400 {
+		return nil, fmt.Errorf("openaicompat: provider redirect refused: %w",
+			&ProviderError{Kind: ErrPermanentResponse, StatusCode: response.StatusCode})
+	}
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return nil, &ProviderError{Kind: ErrUnauthorized, StatusCode: response.StatusCode}
+	}
+	if response.StatusCode == http.StatusRequestEntityTooLarge {
+		return nil, &ProviderError{Kind: ErrCapacityResponse, StatusCode: response.StatusCode}
+	}
+	if response.StatusCode == http.StatusRequestTimeout || response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
+		delay, set := openAIRetryAfter(response.Header.Get("Retry-After"), time.Now().UTC())
+		return nil, &ProviderError{Kind: ErrTransientResponse, StatusCode: response.StatusCode,
+			RetryDelay: delay, RetrySet: set}
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, &ProviderError{Kind: ErrPermanentResponse, StatusCode: response.StatusCode}
+	}
+	if err := validateResponseContentType(response.Header.Get("Content-Type")); err != nil {
+		return nil, errors.Join(ErrMalformedResponse, err)
+	}
+	if err := client.validateRevisionEcho(response.Header); err != nil {
+		return nil, errors.Join(ErrMalformedResponse, err)
+	}
+	body, err := readBounded(request.Context(), response.Body, client.profile.MaxResponseBytes)
+	if err != nil {
+		return nil, err
+	}
+	var decoded wireResponse
+	if err := json.Unmarshal(body, &decoded, json.RejectUnknownMembers(true)); err != nil {
+		return nil, fmt.Errorf("openaicompat: provider response does not match the bounded embedding schema: %w", ErrMalformedResponse)
+	}
+	if decoded.Object != "list" || decoded.Model != client.descriptor.Model {
+		return nil, fmt.Errorf("openaicompat: provider model or response contract drifted: %w", ErrMalformedResponse)
+	}
+	if decoded.Usage != nil && (decoded.Usage.PromptTokens < 0 || decoded.Usage.TotalTokens < decoded.Usage.PromptTokens) {
+		return nil, fmt.Errorf("openaicompat: provider usage is invalid: %w", ErrMalformedResponse)
+	}
+	for _, item := range decoded.Data {
+		if item.Object != "embedding" || item.Index == nil || item.Embedding.Kind() != '[' {
+			return nil, fmt.Errorf("openaicompat: provider response item contract drifted: %w", ErrMalformedResponse)
+		}
+	}
+	// Close the network body before handing the bounded bytes to Kit.
+	response.Body = io.NopCloser(bytes.NewReader(body))
+	return response, nil
 }
 
 func (client *Client) validateRevisionEcho(header http.Header) error {
@@ -379,61 +426,6 @@ func (client *Client) validateRevisionEcho(header http.Header) error {
 	values := header.Values(client.profile.ProviderRevisionHeader)
 	if len(values) != 1 || strings.TrimSpace(values[0]) != client.descriptor.ModelRevision {
 		return errors.New("openaicompat: provider revision echo does not match profile")
-	}
-	return nil
-}
-
-func (client *Client) validateAndOrder(response wireResponse, inputs []document.EmbeddingInput) (document.EmbeddingResult, error) {
-	if response.Object != "list" || response.Model != client.descriptor.Model {
-		return document.EmbeddingResult{}, errors.New("openaicompat: provider model or response contract drifted")
-	}
-	if response.Usage != nil && (response.Usage.PromptTokens < 0 || response.Usage.TotalTokens < response.Usage.PromptTokens) {
-		return document.EmbeddingResult{}, errors.New("openaicompat: provider usage is invalid")
-	}
-	if len(response.Data) != len(inputs) {
-		return document.EmbeddingResult{}, errors.New("openaicompat: provider response has a missing vector")
-	}
-	vectors := make([]document.EmbeddingVector, len(inputs))
-	seen := make([]bool, len(inputs))
-	for _, item := range response.Data {
-		if item.Object != "embedding" || item.Index == nil {
-			return document.EmbeddingResult{}, errors.New("openaicompat: provider response item contract drifted")
-		}
-		index := *item.Index
-		if index < 0 || index >= len(inputs) {
-			return document.EmbeddingResult{}, errors.New("openaicompat: provider response index is outside request bounds")
-		}
-		if seen[index] {
-			return document.EmbeddingResult{}, errors.New("openaicompat: provider response has a duplicate vector index")
-		}
-		seen[index] = true
-		if err := client.validateVector(item.Embedding); err != nil {
-			return document.EmbeddingResult{}, err
-		}
-		vectors[index] = document.EmbeddingVector{Key: inputs[index].Key, Values: slices.Clone(item.Embedding)}
-	}
-	if slices.Contains(seen, false) {
-		return document.EmbeddingResult{}, errors.New("openaicompat: provider response has a missing vector index")
-	}
-	return document.EmbeddingResult{Vectors: vectors}, nil
-}
-
-func (client *Client) validateVector(vector []float32) error {
-	if len(vector) != client.descriptor.Dimension {
-		return errors.New("openaicompat: provider vector dimension does not match profile")
-	}
-	var squaredNorm float64
-	for _, value := range vector {
-		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
-			return errors.New("openaicompat: provider vector contains a non-finite value")
-		}
-		squaredNorm += float64(value) * float64(value)
-	}
-	if squaredNorm == 0 {
-		return errors.New("openaicompat: provider returned a zero vector")
-	}
-	if client.descriptor.Normalization == document.VectorNormalizationUnitLength && math.Abs(squaredNorm-1) > unitLengthTolerance {
-		return errors.New("openaicompat: provider vector normalization does not match profile")
 	}
 	return nil
 }

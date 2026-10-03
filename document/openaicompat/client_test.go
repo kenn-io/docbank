@@ -713,3 +713,94 @@ func TestEmbedClassifiesTruncatedHTTPResponseAsTransient(t *testing.T) {
 	require.ErrorIs(t, err, ErrTransientResponse)
 	require.NotErrorIs(t, err, ErrMalformedResponse)
 }
+
+func TestSharedTextTransportPreservesPreparedBytesAndDoesNotRetry(t *testing.T) {
+	for _, family := range []document.ModelInputProfile{document.ModelInputProfileNomic, document.ModelInputProfileE5,
+		document.ModelInputProfileBGEM3, document.ModelInputProfileGTE, document.ModelInputProfileQwen3} {
+		t.Run(string(family), func(t *testing.T) {
+			contract := modelInput(t, document.ModelInputContractConfig{Profile: family})
+			var calls atomic.Int64
+			var reject atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				assert.Equal(t, "/v1/embeddings", r.URL.Path)
+				var request capturedRequest
+				if !assert.NoError(t, json.UnmarshalRead(r.Body, &request, json.RejectUnknownMembers(true))) {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				assert.Equal(t, []string{contract.EncodeDocument(" café\n文 "), contract.EncodeQuery(" question\t")}, request.Input)
+				if reject.Load() {
+					w.Header().Set("Retry-After", "0")
+					w.WriteHeader(http.StatusTooManyRequests)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(successIndexedResponse)
+			}))
+			t.Cleanup(server.Close)
+			profile := testProfile(t, contract)
+			profile.Origin = server.URL
+			profile.Descriptor = descriptorFor(t, profile)
+			client, err := New(profile, nil, server.Client())
+			require.NoError(t, err)
+			inputs := testInputs()
+			inputs[0].Text, inputs[1].Text = " café\n文 ", " question\t"
+			result, err := client.Embed(t.Context(), inputs, testAuthorization(profile.Descriptor))
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), calls.Load())
+			assert.Equal(t, []float32{1, 0, 0}, result.Vectors[0].Values)
+			assert.Equal(t, []float32{0, 1, 0}, result.Vectors[1].Values)
+			reject.Store(true)
+			_, err = client.Embed(t.Context(), inputs, testAuthorization(profile.Descriptor))
+			require.ErrorIs(t, err, ErrTransientResponse)
+			delay, set := RetryAfter(err)
+			assert.True(t, set)
+			assert.Zero(t, delay)
+			assert.Equal(t, int64(2), calls.Load(), "retry remains owned by the worker")
+		})
+	}
+}
+
+func TestSharedTransportKeepsPreMigrationFingerprints(t *testing.T) {
+	for _, test := range []struct {
+		family             document.ModelInputProfile
+		descriptor, policy string
+	}{
+		{document.ModelInputProfileNomic, "a065b6e6b328e956e69ab52739820f6b3466d8e7eb4f20a5ea7dbf69f111ad5e", "8c5ca6d380549ccb86894384cd006d136481968ea3b84a5a762d3054c1d46848"},
+		{document.ModelInputProfileE5, "3a3903c8d5630c5ea7d7111722f4165b59f455e40c1c4818706494c56562935e", "e9787bf380645aebd2b93c9275b01fc8fd41643c542ee2631c3c4138733aec6e"},
+		{document.ModelInputProfileBGEM3, "9e2517205e926d6971d5af691ff7f0aa90da61a90e40cab1be56a0d62d9d474c", "d2e813bbedab28109cb3457a05cd3160fcc86581a38f8e6ecf930e264a6cae33"},
+		{document.ModelInputProfileGTE, "6171f1fe940bf6fae56b56a74e75528fac74dc1d3164aa0d9aed4ada97129b10", "b26614bac64226207295fdc69fb92f04f7f3a1888d0c749998aaedfc7cc2bdb0"},
+		{document.ModelInputProfileQwen3, "1af9dfe7d7e8af2840d88aa09978ea16a9e3452814552eab18300c16fcf357b9", "43cb3106eef26a9b86d0d7ba5d5c38782775894fab077671bfc89a35977dec73"},
+	} {
+		profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: test.family}))
+		assert.Equal(t, test.descriptor, profile.Descriptor.Fingerprint)
+		assert.Equal(t, test.policy, profile.Descriptor.PolicyFingerprint)
+	}
+}
+
+func TestSharedAdmissionRejectsBeforeTransport(t *testing.T) {
+	var calls atomic.Int64
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return jsonResponse(request, http.StatusOK, successIndexedResponse), nil
+	})
+	profile := testProfile(t, modelInput(t, document.ModelInputContractConfig{Profile: document.ModelInputProfileBGEM3}))
+	profile.Origin = "http://192.0.2.1:8080"
+	profile.Descriptor = descriptorFor(t, profile)
+	_, err := New(profile, nil, &http.Client{Transport: transport})
+	require.Error(t, err)
+	assert.Zero(t, calls.Load())
+
+	profile.Origin = "http://127.0.0.1:11434"
+	profile.Descriptor = descriptorFor(t, profile)
+	client := newTestClient(t, profile, nil, transport)
+	for _, text := range []string{" \t\n", "\u200b"} {
+		inputs := testInputs()
+		inputs[0].Text = text
+		_, err = client.Embed(t.Context(), inputs, testAuthorization(profile.Descriptor))
+		require.ErrorIs(t, err, ErrPermanentResponse)
+		require.NotErrorIs(t, err, ErrMalformedResponse)
+	}
+	assert.Zero(t, calls.Load())
+}
