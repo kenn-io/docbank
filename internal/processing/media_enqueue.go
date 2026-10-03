@@ -283,10 +283,13 @@ func (service *Service) ContinueMediaProcessing(ctx context.Context, continuatio
 	if err != nil {
 		return service.failMediaProcessing(ctx, continuation, err)
 	}
-	source := mediaSourceBinding{sourceID: continuation.SourceID, sourceVersionID: continuation.SourceVersionID}
-	if _, err := service.resolveMediaInputBinding(ctx, continuation.ProcessingProfile,
-		version.BlobHash, source, continuation.SuppliedInputID); err != nil {
-		return service.failMediaProcessing(ctx, continuation, err)
+	// Admission and embedding work need available input; the worker owns other rendition outcomes.
+	if continuation.JobID == "" || len(profile.portable.Embeddings) != 0 {
+		source := mediaSourceBinding{sourceID: continuation.SourceID, sourceVersionID: continuation.SourceVersionID}
+		if _, err := service.resolveMediaInputBinding(ctx, continuation.ProcessingProfile,
+			version.BlobHash, source, continuation.SuppliedInputID); err != nil {
+			return service.failMediaProcessing(ctx, continuation, err)
+		}
 	}
 	if continuation.JobID == "" {
 		_, err = service.completeMediaAdmission(ctx, continuation)
