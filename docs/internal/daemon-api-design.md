@@ -145,7 +145,7 @@ Display facts and ordering come from the persisted display file. Capture keys ca
 
 `GET /api/v1/photos/assets/{asset_id}/previews/{generation_id}` checks included live display membership and the exact retained generation in one read transaction, then verifies the complete bounded JPEG bytes. Headers include generation ETag, Content-Digest, exact length, `nosniff` and `private, no-store`. Recipe discovery reads recorded outcomes without generating derivatives. Missing is absence; ready, unsupported and failed remain separate states.
 
-Browser sessions allow only these exact method/path pairs with empty query strings. The Photos workspace in slice 6 owns browser preview caching and object URL lifetime.
+Browser sessions allow only these exact method/path pairs with empty query strings.
 
 ### Photo graph routes
 
