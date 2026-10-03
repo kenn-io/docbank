@@ -180,6 +180,52 @@ func TestEnsureVisualPreviewForRecipe(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
+func TestEnsureVisualPreviewFailureKeepsAuthorityFreeOutput(t *testing.T) {
+	t.Parallel()
+	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(t.TempDir(), "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	source := mediatest.JPEG(1024, 768, color.White)
+	written, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(source))
+	require.NoError(t, err)
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", written.Hash, written.Size, "image/jpeg", processingBlobPhysical(t, written))
+	require.NoError(t, err)
+	grid, err := VisualPreviewRecipeForSize("grid")
+	require.NoError(t, err)
+	writer := &visualPreviewUnpublishedWriter{Store: blobs}
+	_, err = ensureVisualPreview(t.Context(), catalog, writer, node.CurrentVersionID, grid)
+	require.ErrorContains(t, err, "identity changed")
+	require.NotEmpty(t, writer.written)
+	require.NotEqual(t, written.Hash, writer.written[0])
+	require.Empty(t, writer.removed, "an uncommitted upload of the same bytes may own the loose file")
+}
+
+// visualPreviewUnpublishedWriter stores real output, then fails publication
+// before any catalog authority exists for it.
+type visualPreviewUnpublishedWriter struct {
+	*blob.Store
+
+	written []string
+	removed []string
+}
+
+func (writer *visualPreviewUnpublishedWriter) WriteDetailedContext(ctx context.Context, reader io.Reader) (blob.WriteReceipt, error) {
+	receipt, err := writer.Store.WriteDetailedContext(ctx, reader)
+	if err == nil {
+		writer.written = append(writer.written, receipt.Hash)
+		receipt.Size++
+	}
+	return receipt, err
+}
+
+func (writer *visualPreviewUnpublishedWriter) Remove(hash string) error {
+	writer.removed = append(writer.removed, hash)
+	return writer.Store.Remove(hash)
+}
+
 type visualPreviewFailingWriter struct {
 	*blob.Store
 

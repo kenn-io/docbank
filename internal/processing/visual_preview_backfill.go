@@ -79,25 +79,15 @@ func ensureVisualPreview(ctx context.Context, catalog *store.Store, blobs visual
 			defer func() {
 				cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				recorded, authorityErr := catalog.HasBlob(cleanupCtx, written.Hash)
+				// Authority-free bytes may belong to a concurrent uncommitted upload; exclusive GC owns them.
+				authority, authorityErr := catalog.PhysicalContent(cleanupCtx, written.Hash)
 				if authorityErr != nil {
-					if retErr != nil {
+					if retErr != nil && !errors.Is(authorityErr, store.ErrNotFound) && !errors.Is(authorityErr, store.ErrPhysicalAuthorityMissing) {
 						retErr = errors.Join(retErr, authorityErr)
 					}
 					return
 				}
-				remove := !recorded
-				if recorded {
-					authority, err := catalog.PhysicalContent(cleanupCtx, written.Hash)
-					if err != nil {
-						if retErr != nil {
-							retErr = errors.Join(retErr, err)
-						}
-						return
-					}
-					remove = authority.Kind == "packed"
-				}
-				if remove {
+				if authority.Kind == "packed" {
 					cleanupErr := blobs.Remove(written.Hash)
 					if retErr != nil && !errors.Is(cleanupErr, fs.ErrNotExist) {
 						retErr = errors.Join(retErr, cleanupErr)
