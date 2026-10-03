@@ -4853,6 +4853,52 @@ func (c *Client) RevokeMediaOccurrence(ctx context.Context, options *RevokeMedia
 	return responseParser(ctx, resp)
 }
 
+// GetMediaOperationReceipt Read one remote-recording submission receipt
+func (c *Client) GetMediaOperationReceipt(ctx context.Context, options *GetMediaOperationReceiptRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMediaOperationReceiptResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/media/operations/{operation_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetMediaOperationReceiptResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetMediaOperationReceiptResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetMediaOperationReceiptResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetMediaOperationReceiptErrorResponse](resp, "GetMediaOperationReceiptErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/media/operations/{operation_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ListMediaOrigins List registered media origin capabilities
 func (c *Client) ListMediaOrigins(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListMediaOriginsResponse, error) {
 	var err error
@@ -15199,6 +15245,37 @@ func (o *RevokeMediaOccurrenceRequestOptions) GetHeader() (map[string]string, er
 	return nil, nil
 }
 
+// GetMediaOperationReceiptRequestOptions is the options needed to make a request to GetMediaOperationReceipt.
+type GetMediaOperationReceiptRequestOptions struct {
+	PathParams *GetMediaOperationReceiptPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetMediaOperationReceiptRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetMediaOperationReceiptRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetMediaOperationReceiptRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetMediaOperationReceiptRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ListMediaSourcesRequestOptions is the options needed to make a request to ListMediaSources.
 type ListMediaSourcesRequestOptions struct {
 	Query *ListMediaSourcesQuery
@@ -20391,6 +20468,10 @@ type RevokeMediaOccurrencePath struct {
 	OccurrenceID string `json:"occurrence_id"`
 }
 
+type GetMediaOperationReceiptPath struct {
+	OperationID uuid.UUID `json:"operation_id"`
+}
+
 type GetMediaSourcePath struct {
 	SourceID string `json:"source_id"`
 }
@@ -21679,6 +21760,10 @@ type DeclareMediaOccurrenceErrorResponse = Error
 type RevokeMediaOccurrenceResponse = api.MediaReceipt
 
 type RevokeMediaOccurrenceErrorResponse = Error
+
+type GetMediaOperationReceiptResponse = api.MediaReceipt
+
+type GetMediaOperationReceiptErrorResponse = Error
 
 type ListMediaOriginsResponse = api.MediaOriginPage
 

@@ -1172,6 +1172,25 @@ func (syntheticTranscriptSource) Transcript(context.Context, string) (document.S
 	return document.SuppliedTranscript{Provider: "synthetic", Text: "async media semantic needle\n"}, nil
 }
 
+func TestVaultRemoteRecordingReceiptReadsSavedSubmission(t *testing.T) {
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	operationID := "00000000-0000-4000-8000-000000000461"
+	submitted, err := vault.SubmitRemoteRecording(t.Context(), docbank.RemoteRecordingRequest{
+		OperationID:  operationID,
+		ReferenceURL: "https://recordings.invalid/private?token=SYNTHETIC-SECRET",
+		CanonicalURL: "https://recordings.invalid/receipt",
+		Occurrence:   docbank.MediaOccurrenceInput{Ref: "receipt-call", Revision: "1", Filename: "receipt.wav"},
+	})
+	require.NoError(t, err)
+	read, err := vault.RemoteRecordingReceipt(t.Context(), operationID)
+	require.NoError(t, err)
+	require.Equal(t, submitted, read)
+	_, err = vault.RemoteRecordingReceipt(t.Context(), "00000000-0000-4000-8000-000000000462")
+	require.ErrorIs(t, err, docbank.ErrNotFound)
+}
+
 func TestEmbeddedMediaEmbeddingContinuationSeparatesReplacementConsentAcrossRestart(t *testing.T) {
 	renderer, err := suppliedtranscript.New(suppliedtranscript.Profile{
 		Source: syntheticTranscriptSource{}, SourceBinding: embeddedHash("async-media-source"),

@@ -5,11 +5,13 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"os"
 	"path/filepath"
 	"strings"
+	"uuid"
 
 	"github.com/spf13/cobra"
 
@@ -91,6 +93,23 @@ var mediaStatusCmd = &cobra.Command{Use: "status <source-id>", Short: "Show curr
 			return err
 		}
 		receipt, err := c.MediaStatus(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		return writeCLIJSON(cmd.OutOrStdout(), receipt)
+	}}
+
+var mediaOperationCmd = &cobra.Command{Use: "operation <operation-id>", Short: "Show a saved recording-link receipt",
+	Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		operationID, err := uuid.Parse(args[0])
+		if err != nil {
+			return usageError(fmt.Errorf("operation ID must be a UUID: %w", err))
+		}
+		c, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		receipt, err := c.MediaOperationReceipt(cmd.Context(), operationID)
 		if err != nil {
 			return err
 		}
@@ -321,7 +340,7 @@ func init() {
 	mediaConsentRevokeCmd.Flags().StringVar(&mediaOrigin, "origin", "", "registered origin ID")
 	mediaOccurrencesCmd.AddCommand(mediaOccurrencesListCmd, mediaOccurrencesDeclareCmd, mediaOccurrencesRevokeCmd)
 	mediaConsentCmd.AddCommand(mediaConsentGrantCmd, mediaConsentRevokeCmd)
-	mediaCmd.AddCommand(mediaSubmitCmd, mediaListCmd, mediaStatusCmd, mediaTranscriptCmd, mediaRetryCmd, mediaImportCmd,
+	mediaCmd.AddCommand(mediaSubmitCmd, mediaListCmd, mediaStatusCmd, mediaOperationCmd, mediaTranscriptCmd, mediaRetryCmd, mediaImportCmd,
 		mediaOccurrencesCmd, mediaOriginsCmd, mediaAcquisitionPlanCmd, mediaConsentCmd)
 	rootCmd.AddCommand(mediaCmd)
 }

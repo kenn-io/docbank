@@ -61,6 +61,22 @@ func registerMediaRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 			return &receiptOutput{Body: fromMediaReceipt(receipt)}, nil
 		})
 
+	huma.Register(api, huma.Operation{OperationID: "getMediaOperationReceipt", Method: http.MethodGet,
+		Path: "/api/v1/media/operations/{operation_id}", Summary: "Read one remote-recording submission receipt",
+		Middlewares: huma.Middlewares{noStoreMediaReceipt}},
+		func(ctx context.Context, input *struct {
+			OperationID string `path:"operation_id" format:"uuid" pattern:"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"`
+		}) (*receiptOutput, error) {
+			if d.Processing == nil {
+				return nil, mediaUnavailable()
+			}
+			receipt, err := d.Processing.RemoteRecordingReceipt(ctx, input.OperationID)
+			if err != nil {
+				return nil, fromMediaError(err)
+			}
+			return &receiptOutput{Body: fromMediaReceipt(receipt)}, nil
+		})
+
 	type transcriptOutput struct{ Body MediaTranscript }
 	huma.Register(api, huma.Operation{OperationID: "getMediaTranscript", Method: http.MethodGet,
 		Path:    "/api/v1/media/sources/{source_id}/versions/{source_version_id}/transcript",
@@ -537,6 +553,12 @@ func fromMediaOccurrencePage(value processing.MediaOccurrencePage) MediaOccurren
 func fromMediaConsentReceipt(value store.MediaConsentReceipt) MediaConsentReceipt {
 	return MediaConsentReceipt{OperationID: value.OperationID, OriginID: value.OriginID,
 		GrantID: value.GrantID, Fence: value.Fence, RevokedAt: value.RevokedAt}
+}
+
+// noStoreMediaReceipt keeps a miss from being cached; a later read can see a commit.
+func noStoreMediaReceipt(ctx huma.Context, next func(huma.Context)) {
+	ctx.SetHeader("Cache-Control", "no-store")
+	next(ctx)
 }
 
 func mediaUnavailable() *Error {

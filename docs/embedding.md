@@ -280,6 +280,10 @@ if err != nil {
 }
 ```
 
+If that reply is lost, `Vault.RemoteRecordingReceipt` reads the saved receipt by
+operation ID. `ErrNotFound` describes only that read; a submission still in
+flight can commit afterward.
+
 Obtain the file through the caller's own approved path, then attach it with
 the exact SHA-256 and byte count. WAV and MP3 files use the existing media
 rules. Remote MP4 originals use `video/mp4`, a `.mp4` filename, and limits of

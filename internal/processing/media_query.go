@@ -102,6 +102,20 @@ func (service *Service) MediaStatus(ctx context.Context, sourceID string) (Media
 	return receipt, nil
 }
 
+// RemoteRecordingReceipt returns the saved receipt of one remote-recording
+// submission under this service's principal.
+func (service *Service) RemoteRecordingReceipt(ctx context.Context, operationID string) (MediaReceipt, error) {
+	if service == nil {
+		return MediaReceipt{}, ErrMediaCapabilityUnavailable
+	}
+	raw, err := service.catalog.RemoteRecordingReceipt(ctx, service.principal, operationID)
+	if err != nil {
+		return MediaReceipt{}, err
+	}
+	stored, err := canonical.Decode[store.MediaPublicationReceipt]([]byte(raw))
+	return mediaReceiptFromStore(stored), err
+}
+
 func (service *Service) mediaSourceReceipt(
 	ctx context.Context, item store.MediaSourceProjection,
 ) (MediaReceipt, error) {

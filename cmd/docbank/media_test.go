@@ -40,6 +40,18 @@ func TestOpenMediaUploadUsesFixedMediaTypes(t *testing.T) {
 	}
 }
 
+func TestMediaOperationCLIRequiresOneUUID(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
+	_, err := runCLI(t, "media", "operation")
+	require.ErrorContains(t, err, "accepts 1 arg(s)")
+	// Argument validation fails before RunE starts, so main maps it to a usage exit.
+	require.Equal(t, exitUsage, commandExitCode(err, false))
+
+	_, err = runCLI(t, "media", "operation", "not-a-uuid")
+	require.ErrorContains(t, err, "operation ID must be a UUID")
+	require.Equal(t, exitUsage, commandExitCode(err, true))
+}
+
 func TestMediaTranscriptCLIRequiresStableVersionFlags(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", t.TempDir())
 	for _, flags := range [][]string{
