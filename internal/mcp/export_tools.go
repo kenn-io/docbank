@@ -18,17 +18,26 @@ var errExportOutcomeUnknown = errors.New("export outcome unknown; inspect the su
 var exportWriteToolDefinitions = []toolDefinition{
 	{name: "download_export", title: "Download export", schemas: downloadExportSchemas,
 		write: true, destructive: true,
-		description: "Save a verified archive locally. Review the destination with the operator."},
+		description: "Save a verified archive locally. Review the destination with the operator. " +
+			"On export_expired for a missing archive, release the retained job. " +
+			"On export_timeout, export_canceled, or export_failed, inspect get_export_status and " +
+			"the destination before retrying; a file may already be saved."},
 	{name: "preview_export", title: "Preview export", schemas: previewExportSchemas, write: true,
 		description: "Retain exact originals and a plan. Review membership with the operator. " +
 			"Original contents are exported without redaction or sanitization."},
 	{name: "start_export", title: "Start export", schemas: startExportSchemas, write: true,
-		description: "Start a reviewed export plan using caller-owned operation and plan identities."},
+		description: "Start a reviewed export plan using caller-owned operation and plan identities. " +
+			"If export_limit means the two shared job slots are full, release unneeded terminal jobs. " +
+			"On export_expired, preview again with new IDs. On export_timeout, export_canceled, or " +
+			"export_failed, inspect get_export_status with the operation ID before retrying."},
 	{name: "cancel_export", title: "Cancel export", schemas: cancelExportSchemas,
 		write: true, destructive: true, description: "Cancel active export work by its job ID."},
 	{name: "release_export", title: "Release export", schemas: releaseExportSchemas,
 		write: true, destructive: true,
-		description: "Discard a terminal job and its retained archive. Local downloaded files remain."},
+		description: "Discard a terminal job and its retained archive. Local downloaded files remain. " +
+			"On export_retained, retry after download tickets or leases close. " +
+			"On export_timeout, export_canceled, or export_failed, inspect get_export_status before " +
+			"retrying release; not_found confirms it is gone. Never reuse a released job ID."},
 }
 
 type exportPreviewInput struct {

@@ -15,6 +15,8 @@ func exportRoleSchema() schema {
 }
 
 func exportSourceSchema() schema {
+	queryFingerprint := stringSchema(71)
+	queryFingerprint["pattern"] = "^sha256:[0-9a-f]{64}$"
 	return objectSchema(schema{
 		"id": uuidSchema(), "request_sha256": sha256Schema(),
 		"kind": enumSchema(
@@ -25,9 +27,9 @@ func exportSourceSchema() schema {
 		"source_bytes":   integerSchema(0, bundle.MaxRoleBytes),
 		"created_at":     dateTimeSchema(), "expires_at": dateTimeSchema(),
 		"saved_query_id": uuidSchema(), "saved_query_revision": integerSchema(1, math.MaxInt64),
-		"query_fingerprint": sha256Schema(), "collection_id": uuidSchema(),
-	}, "id", "request_sha256", "kind", schemaStateField, "member_hash", schemaTotalField, "source_bytes",
-		"created_at", "expires_at")
+		"query_fingerprint": queryFingerprint, "collection_id": uuidSchema(),
+	}, "id", "request_sha256", "kind", schemaStateField, "member_hash", schemaTotalField,
+		"source_bytes", "created_at", "expires_at")
 }
 
 func exportOutputCountsSchema() schema {
@@ -46,10 +48,9 @@ func retainedExportPlanSchema() schema {
 		"profile_fingerprint": sha256Schema(), "recipe_sha256": sha256Schema(),
 	}, "role"), 6)
 	roles["minItems"] = 1
-	return objectSchema(schema{
-		"format": enumSchema(bundle.Format), "id": uuidSchema(), "vault_id": uuidSchema(),
+	return exportPlanSchema(schema{
 		"toolchain": stringSchema(bundle.MaxMemberBytes), "source": exportSourceSchema(),
-		"roles": roles, "fingerprint": sha256Schema(), schemaTotalField: integerSchema(1, bundle.MaxMembers),
+		"roles": roles, schemaTotalField: integerSchema(1, bundle.MaxMembers),
 		"document_rows": integerSchema(1, bundle.MaxDocumentRows),
 		"volume_limits": objectSchema(schema{
 			"role_bytes": integerSchema(1, bundle.MaxVolumeRoleBytes),
@@ -57,12 +58,7 @@ func retainedExportPlanSchema() schema {
 		}, "role_bytes", "roles"),
 		"volumes":          integerSchema(1, bundle.MaxRoles),
 		"duplicate_policy": enumSchema("preserve", "collapse_exact_content"),
-		"counts":           exportOutputCountsSchema(), "role_entries": integerSchema(0, bundle.MaxRoles),
-		"role_bytes":     integerSchema(0, bundle.MaxRoleBytes),
-		"metadata_bytes": integerSchema(0, bundle.MaxMetadataBytes),
-		"created_at":     dateTimeSchema(), "expires_at": dateTimeSchema(),
-	}, "format", "id", "vault_id", "toolchain", "source", "roles", "fingerprint", schemaTotalField,
-		"role_entries", "role_bytes", "metadata_bytes", "created_at", "expires_at")
+	})
 }
 
 func getExportPlanSchemas() (schema, schema) {

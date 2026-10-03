@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"maps"
 	"math"
 
 	"go.kenn.io/docbank/document/bundle"
@@ -26,19 +27,27 @@ func previewExportSchemas() (schema, schema) {
 		"created_at":   dateTimeSchema(), "expires_at": dateTimeSchema(),
 	}, "id", "request_sha256", "kind", "state", "member_hash", "total", "source_bytes",
 		"created_at", "expires_at")
-	plan := objectSchema(schema{
+	plan := exportPlanSchema(schema{
+		"source": source, "total": integerSchema(1, bundle.ChunkMembers),
+		"roles": arraySchema(objectSchema(schema{"role": enumSchema("original")}, "role"), 1),
+	})
+	return input, rootObjectSchema(withPrivateCache(schema{"plan": plan}), cacheRequired("plan")...)
+}
+
+func exportPlanSchema(properties schema) schema {
+	common := schema{
 		"format": enumSchema(bundle.Format), "id": uuidSchema(), "vault_id": uuidSchema(),
-		"toolchain": stringSchema(256), "source": source,
-		"roles":       arraySchema(objectSchema(schema{"role": enumSchema("original")}, "role"), 1),
-		"fingerprint": sha256Schema(), "total": integerSchema(1, bundle.ChunkMembers),
+		"toolchain": stringSchema(256), "fingerprint": sha256Schema(),
 		"role_entries":   integerSchema(0, bundle.MaxRoles),
 		"role_bytes":     integerSchema(0, bundle.MaxRoleBytes),
 		"metadata_bytes": integerSchema(0, bundle.MaxMetadataBytes),
 		"counts":         exportOutputCountsSchema(),
 		"created_at":     dateTimeSchema(), "expires_at": dateTimeSchema(),
-	}, "format", "id", "vault_id", "toolchain", "source", "roles", "fingerprint", "total",
+	}
+	maps.Copy(common, properties)
+	return objectSchema(common,
+		"format", "id", "vault_id", "toolchain", "source", "roles", "fingerprint", "total",
 		"role_entries", "role_bytes", "metadata_bytes", "created_at", "expires_at")
-	return input, rootObjectSchema(withPrivateCache(schema{"plan": plan}), cacheRequired("plan")...)
 }
 
 func exportReceiptSchema() schema {

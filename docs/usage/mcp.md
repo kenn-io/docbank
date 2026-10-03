@@ -454,6 +454,11 @@ order and remains subject to its original ten-minute admission window. After a
 delayed start response, use job status instead of replaying preview. Never reuse
 a released job ID: its replay record has been deleted.
 
+For `export_timeout`, `export_canceled`, or `export_failed` during start,
+download, or release, read `get_export_status` before retrying. Use the start
+operation ID as the job ID. After a download error, inspect the destination too;
+the file may already be saved. After a release error, not found confirms removal.
+
 MCP shares the API-key owner with the CLI. Completed jobs still occupy the two
 shared job slots until released or expired. Release does not delete originals or
 local downloads. `export_retained` means a download ticket or lease still holds

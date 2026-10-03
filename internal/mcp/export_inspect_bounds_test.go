@@ -61,7 +61,8 @@ func TestExportInspectionRetainedHeaderFields(t *testing.T) {
 		Source: bundle.Source{ID: testVersionID, RequestSHA256: strings.Repeat("b", 64),
 			Kind: "saved_query", State: "sealed", MemberHash: strings.Repeat("c", 64), Total: 1,
 			CreatedAt: "2020-01-01T00:00:00Z", ExpiresAt: "2020-01-01T00:10:00Z",
-			SavedQueryID: testVersionID, SavedQueryRevision: 3, QueryFingerprint: strings.Repeat("d", 64)},
+			SavedQueryID: testVersionID, SavedQueryRevision: 3,
+			QueryFingerprint: "sha256:" + strings.Repeat("d", 64)},
 		Roles: []bundle.RolePolicy{
 			{Role: "original"},
 			{Role: "text", AllowUnavailable: true, ProfileFingerprint: strings.Repeat("e", 64)},

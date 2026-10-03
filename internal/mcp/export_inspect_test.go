@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/query"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestExportInspectionWorkflow(t *testing.T) {
@@ -129,4 +131,47 @@ func TestExportInspectionInputs(t *testing.T) {
 		}
 	}
 	require.Zero(t, calls.Load())
+}
+
+func TestExportInspectionQueryPlans(t *testing.T) {
+	f := newNativeExportFixture(t)
+	f.addFile(t, "synthetic.txt", "synthetic original")
+	q, err := query.Parse([]byte(`{}`))
+	require.NoError(t, err)
+	saved, err := f.catalog.CreateSavedQuery(t.Context(), "All synthetic", "",
+		store.SavedQueryKindQuery, []byte(`{}`))
+	require.NoError(t, err)
+	var snapshotRequest apiclient.CreateWorkspaceQueryBody
+	require.NoError(t, json.Unmarshal([]byte(`{"query":{},"page_size":50}`), &snapshotRequest))
+	snapshot, err := f.connection.API().CreateWorkspaceQuery(t.Context(),
+		&apiclient.CreateWorkspaceQueryRequestOptions{Body: &snapshotRequest})
+	require.NoError(t, err)
+	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, f.lease)
+	for _, request := range []bundle.SourceRequest{
+		{Kind: "query", Query: &q},
+		{Kind: "saved_query", SavedQueryID: saved.ID, SavedQueryRevision: saved.Revision},
+		{Kind: "snapshot", SnapshotID: snapshot.SnapshotID, MemberHash: snapshot.MemberHash},
+	} {
+		t.Run(request.Kind, func(t *testing.T) {
+			request.OperationID = uuid.New().String()
+			source, err := f.connection.API().CreateExportSource(t.Context(),
+				&apiclient.CreateExportSourceRequestOptions{Body: &request})
+			require.NoError(t, err)
+			if request.Kind != "snapshot" {
+				require.Regexp(t, `^sha256:[0-9a-f]{64}$`, source.QueryFingerprint)
+			}
+			plan, err := f.connection.API().CreateExportPlan(t.Context(),
+				&apiclient.CreateExportPlanRequestOptions{Body: &bundle.PlanRequest{
+					OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash,
+					Roles: []bundle.RolePolicy{{Role: "original"}},
+				}})
+			require.NoError(t, err)
+			output := exportCall(t, server, "get_export_plan", map[string]any{"plan_id": plan.ID})
+			raw, err := json.Marshal(output["plan"])
+			require.NoError(t, err)
+			var got bundle.Plan
+			require.NoError(t, json.Unmarshal(raw, &got))
+			require.Equal(t, *plan, got)
+		})
+	}
 }

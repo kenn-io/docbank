@@ -25,7 +25,7 @@ var exportProblemsTool = toolDefinition{
 	schemas: getExportProblemsSchemas,
 }
 
-type exportInspectionInput struct {
+type exportProblemsInput struct {
 	PlanID uuid.UUID `json:"plan_id"`
 	After  int64     `json:"after"`
 }
@@ -37,7 +37,9 @@ type exportProblemsOutput struct {
 }
 
 func getExportPlan(ctx context.Context, lease *daemonLease, raw []byte) (exportPlanOutput, error) {
-	var input exportInspectionInput
+	var input struct {
+		PlanID uuid.UUID `json:"plan_id"`
+	}
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return exportPlanOutput{}, err
 	}
@@ -57,7 +59,7 @@ func getExportPlan(ctx context.Context, lease *daemonLease, raw []byte) (exportP
 func getExportProblems(
 	ctx context.Context, lease *daemonLease, raw []byte,
 ) (exportProblemsOutput, error) {
-	var input exportInspectionInput
+	var input exportProblemsInput
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return exportProblemsOutput{}, err
 	}

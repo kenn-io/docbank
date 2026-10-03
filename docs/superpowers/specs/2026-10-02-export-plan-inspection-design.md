@@ -194,6 +194,8 @@ The read's closed schema follows the current wire types:
   and `collection_id`. Accepted kinds are `explicit`, `nodes`, `query`,
   `saved_query`, `snapshot`, `upload`, and `mailbox_collection`. A planned
   source is sealed. Its total can reach `bundle.MaxMembers` (100,000).
+  A present `query_fingerprint` uses `sha256:<64 lowercase hex characters>`;
+  it is not a bare SHA-256 digest.
 - Role policies accept the six existing roles: `original`, `text`, `pages`,
   `email_pdf`, `attachment_original`, and `attachment_pdf`. Each policy
   preserves optional `allow_unavailable`, `profile_fingerprint`, and
@@ -251,9 +253,13 @@ guide. For inspection, an expired or removed plan needs a new preview with new
 IDs if the operator wants a new export; that does not recreate the old snapshot.
 An existing job can instead be inspected through status. A size-limit failure
 does not imply that releasing jobs will make the same problem page smaller.
-Existing guidance for deliberately releasing terminal jobs and recovering
-writes remains in the relevant tool descriptions and guide. No shared message
-directs the agent to submit a write automatically.
+Write-tool descriptions retain the recovery actions: start checks job status
+before retrying a timeout, cancellation, or failure; expired admission needs a
+new preview with new IDs; two occupied job slots can be freed by releasing
+unneeded terminal jobs. Download checks status and the destination before a
+retry, and releases a retained job whose archive is missing. Release checks
+status before retrying; not found confirms removal. No shared message directs
+the agent to submit a write automatically.
 
 ## Required behavior evidence
 

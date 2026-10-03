@@ -155,7 +155,7 @@ findings with design lines and source evidence; do not implement. In particular:
 
 ## Implementation evidence
 
-Implemented design SHA-256: `61b8710b20f3090bd7de34aa40fb21af57503fcaaa983a201246cf312f2701db`.
+Implemented design SHA-256: `24cf04c90cbcf28c75bf1e6a829937ff6f017bec6883a642e4a8d4aa69abc6b6`.
 
 Implementation baseline: `5d4dc2f1b3b12d1b97f95f9517673f451a97351c`. The changes
 since the design baseline do not alter the export paths used by this feature.
@@ -171,10 +171,19 @@ The existing browser-owner fixture now checks both read routes against another
 browser session and the API-key owner. Existing fake-clock tests continue to
 cover admission versus retention; no production lifetime rule changed.
 
-Optional source and attachment fields use wire fixtures for schema coverage,
-alongside the production nodes/upload plans. They do not claim to qualify new
+Query, saved-query, and existing-snapshot sources now use real daemon plans,
+alongside the production nodes/upload plans. Optional attachment fields still
+use wire fixtures for schema coverage. They do not claim to qualify new
 attachment production. All data is synthetic; no developer vault or provider
 was used. Platform execution here is Linux only.
 
 The inspection, native-export, owner, and retention tests pass with `-tags fts5`
 in both SQLite modes. The strict documentation build and `prek run` pass.
+
+The review of PR #774 found a missed wire-format constraint: query fingerprints
+carry a `sha256:` prefix, while the original schema and synthetic fixture used
+bare hex. `TestExportInspectionQueryPlans` reproduced the MCP validation failure
+for real query and saved-query plans before the fix. Existing-snapshot sources
+currently omit this optional field and passed the same test. The read schema
+now preserves the prefixed value. Write-tool descriptions also restore recovery
+advice that the neutral shared errors no longer provide.

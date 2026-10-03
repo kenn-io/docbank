@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -42,13 +41,14 @@ func newExportProblemsCommand() *cobra.Command {
 		Args: cobra.ExactArgs(1),
 	}
 	var after int64
-	cmd.Flags().Int64Var(&after, "after", 0, "Number of problems to skip (0–2600000)")
+	cmd.Flags().Int64Var(&after, "after", 0,
+		fmt.Sprintf("Number of problems to skip (0–%d)", bundle.MaxOutputProblems))
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := validateExportID("plan ID", args[0]); err != nil {
 			return err
 		}
 		if after < 0 || after > bundle.MaxOutputProblems {
-			return usageError(errors.New("after must be 0–2600000"))
+			return usageError(fmt.Errorf("after must be 0–%d", bundle.MaxOutputProblems))
 		}
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -112,8 +112,13 @@ func writeExportPlanHeader(output io.Writer, plan bundle.Plan) error {
 
 func writeExportProblems(output io.Writer, page bundle.OutputProblems) error {
 	var text strings.Builder
-	fmt.Fprintf(&text, "plan %s\nfingerprint: %s\n%d returned · %d problems total\n",
-		page.PlanID, page.Fingerprint, len(page.Items), page.Total)
+	fmt.Fprintf(&text, "plan %s\nfingerprint: %s\n", page.PlanID, page.Fingerprint)
+	if len(page.Items) > 0 {
+		fmt.Fprintf(&text, "problems %d–%d of %d\n",
+			page.After+1, page.After+len(page.Items), page.Total)
+	} else {
+		fmt.Fprintf(&text, "0 returned · %d problems total\n", page.Total)
+	}
 	for _, problem := range page.Items {
 		fmt.Fprintf(&text, "node %d · version %s · %s", problem.NodeID, problem.VersionID, problem.Role)
 		if problem.PartPath != "" {
