@@ -632,8 +632,8 @@ Docbank sends three events:
   command, so most of these go out at a daemon start, and `daemon_started`
   counts starts rather than installs.
 - `app_opened` when the web app loads, and again on the first window focus of
-  a later UTC day. The browser remembers the day it sent one, so a browser
-  counts about once per UTC day.
+  a later UTC day. The browser remembers the day for the daemon's address, so
+  it sends about one per UTC day until the daemon restarts on a new address.
 
 Each event carries exactly these fields:
 

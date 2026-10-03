@@ -119,7 +119,7 @@ search, recoverable trash, maintenance, and restore.
 
 The daemon sends anonymous `daemon_started` and `daemon_active` events each
 time it starts, `daemon_active` once a day while it runs, and an `app_opened`
-event when the web app opens (about once per browser per UTC day). Events
+event when the web app opens (about once a day per browser and daemon run). Events
 carry a random per-vault install ID, the version and commit, and the operating system and
 architecture, and never document content, names, paths or queries.
 `DOCBANK_TELEMETRY_ENABLED=0` turns both off; see
