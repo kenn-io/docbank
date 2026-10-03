@@ -56,7 +56,7 @@ func TestTelemetryEventRoute(t *testing.T) {
 		{"unknown event", http.MethodPost, url, `{"event":"search_run"}`, nil, http.StatusBadRequest, ""},
 		{"blank event", http.MethodPost, url, `{"event":""}`, nil, http.StatusBadRequest, ""},
 		{"not json", http.MethodPost, url, `not json`, nil, http.StatusBadRequest, ""},
-		{"body over 4096 bytes", http.MethodPost, url, oversized, nil, http.StatusBadRequest, ""},
+		{"body over 4096 bytes", http.MethodPost, url, oversized, nil, http.StatusRequestEntityTooLarge, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			status, body := postTelemetryEvent(t, ts.Client(), tc.method, tc.url, tc.body, tc.headers)
