@@ -141,7 +141,7 @@ func TestInstallerVerifiesBeforeReplacingBinary(t *testing.T) {
 	}
 }
 
-func TestReleaseArchiveMetadataIsUnambiguousAndLocaleStable(t *testing.T) {
+func TestReleaseNoticesIdentifyDistributedDependencies(t *testing.T) {
 	notice, err := os.ReadFile("../NOTICE")
 	if err != nil {
 		t.Fatal(err)
@@ -161,14 +161,6 @@ func TestReleaseArchiveMetadataIsUnambiguousAndLocaleStable(t *testing.T) {
 			t.Fatalf("NOTICE does not identify distributed dependency with %q", fragment)
 		}
 		position += index + len(fragment)
-	}
-
-	workflow, err := os.ReadFile("../.github/workflows/release-publish.yml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(workflow, []byte(`LC_ALL=C sort)`)) {
-		t.Fatal("Windows release archive entry validation must use byte-wise collation")
 	}
 }
 

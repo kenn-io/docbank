@@ -21,7 +21,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build install clean test test-v openapi generate-api release-scripts-test check-timing-budgets frontend frontend-test frontend-dev docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
+.PHONY: build install clean test test-v openapi generate-api check-timing-budgets frontend frontend-test frontend-dev docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
 
 build: frontend
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o docbank ./cmd/docbank
@@ -35,14 +35,11 @@ clean:
 	find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
 	rm -rf frontend/dist
 
-test: release-scripts-test check-timing-budgets
+test: check-timing-budgets
 	go test -timeout 20m -tags "$(BUILD_TAGS)" ./...
 
 test-v:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...
-
-release-scripts-test:
-	bash scripts/release_scripts_test.sh
 
 check-timing-budgets:
 	go run -tags "$(BUILD_TAGS)" ./scripts/check-timing-budgets .
@@ -143,4 +140,4 @@ docs-deploy:
 	DOCS_SOURCE="$(DOCS_SOURCE)" ./scripts/deploy-docs.sh
 
 help:
-	@echo "Targets: build install clean test test-v openapi generate-api release-scripts-test frontend frontend-test frontend-dev docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"
+	@echo "Targets: build install clean test test-v openapi generate-api frontend frontend-test frontend-dev docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"

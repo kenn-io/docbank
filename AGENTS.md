@@ -119,15 +119,15 @@ Do not infer fork eligibility or network/cache isolation from this setting.
 
 ## Releases
 
-- Cut releases only from a clean local `main` that exactly matches
-  `origin/main`.
-- Preview notes with `scripts/changelog.sh <version>`; publish with
-  `scripts/release.sh <version> [extra_instructions] [start_tag]`. Supply the
-  optional start tag only when notes must span an intervening tag that did not
-  publish.
-- The release script creates and pushes an annotated `vX.Y.Z` tag. The release
-  workflow uses the tag body as GitHub release notes and falls back to generated
-  notes only for a lightweight or empty tag.
+- Release creation and publication belong to the central distribution pipeline.
+  Follow its operator instructions and review the release notes before
+  approving publication.
+- Before the first release through that pipeline, complete a private rehearsal
+  of the exact source pin. Verify all six native archives, the embedded web app,
+  `LICENSE` and `NOTICE`, version metadata, and installer compatibility. Merge
+  removal of the old publisher before creating a release tag.
+- Keep ordinary CI, local builds, installers, and documentation deployment in
+  this repository. The changelog and documentation follow-up remains post-tag.
 
 ## Design Invariants
 
