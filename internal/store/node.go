@@ -267,11 +267,15 @@ func (s *Store) DirectoryChildrenPage(
 	).Scan(&total); err != nil {
 		return DirectoryPageView{}, fmt.Errorf("counting children of %d: %w", dirID, err)
 	}
+	// Select the page before joining content metadata so a large directory
+	// only loads versions and checksums for the children being returned.
 	rows, err := tx.QueryContext(ctx,
 		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.parent_id = ? AND n.trashed_at IS NULL
-		 ORDER BY n.kind = 'file', n.name
-		 LIMIT ? OFFSET ?`, dirID, limit, offset)
+		 WHERE n.id IN (
+			 SELECT id FROM nodes WHERE parent_id = ? AND trashed_at IS NULL
+			 ORDER BY kind = 'file', name LIMIT ? OFFSET ?
+		 )
+		 ORDER BY n.kind = 'file', n.name`, dirID, limit, offset)
 	if err != nil {
 		return DirectoryPageView{}, fmt.Errorf("listing children of %d: %w", dirID, err)
 	}
