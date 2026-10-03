@@ -3,6 +3,7 @@ package embedding_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"testing"
 
@@ -99,4 +100,25 @@ func (source *slicePageSource) SearchPage(_ context.Context, request embedding.P
 	return embedding.CandidatePage{
 		Candidates: source.candidates[start:end], NextCursor: strconv.Itoa(end), Exhausted: end == len(source.candidates),
 	}, nil
+}
+
+func TestHybridFusionScoresExplicitRanksAndStableTies(t *testing.T) {
+	for _, ranks := range [][]int{{1, 2}, {2, 5}} {
+		input := embedding.FusionInput{
+			Lexical: embedding.ScopedCandidates{Candidates: []embedding.RankedCandidate{
+				{Key: "z", Rank: ranks[0], Score: 9}, {Key: "a", Rank: ranks[1], Score: 8},
+			}},
+			Semantic: embedding.ScopedCandidates{Candidates: []embedding.RankedCandidate{
+				{Key: "a", Rank: ranks[0], Score: .9}, {Key: "z", Rank: ranks[1], Score: .8},
+			}, Truncated: true},
+		}
+		got, err := embedding.FuseReciprocalRank(input, 1)
+		require.NoError(t, err)
+		require.Len(t, got.Candidates, 1)
+		assert.True(t, got.Truncated)
+		assert.Equal(t, "a", got.Candidates[0].Key)
+		assert.Equal(t, math.Float64bits(1/float64(60+ranks[0])+1/float64(60+ranks[1])), math.Float64bits(got.Candidates[0].Score))
+		assert.Equal(t, ranks[1], got.Candidates[0].Lexical.Rank)
+		assert.Equal(t, ranks[0], got.Candidates[0].Semantic.Rank)
+	}
 }

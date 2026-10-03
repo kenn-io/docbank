@@ -1,12 +1,14 @@
 package embedding
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"slices"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/kit/search/rrf"
 )
 
 const (
@@ -240,23 +242,39 @@ func FuseReciprocalRank(input FusionInput, candidateLimit int) (FusedCandidates,
 	if err := addFusionLane(byKey, input.Semantic.Candidates, false); err != nil {
 		return FusedCandidates{}, fmt.Errorf("semantic candidates: %w", err)
 	}
-	candidates := make([]FusedCandidate, 0, len(byKey))
-	for _, candidate := range byKey {
-		candidates = append(candidates, *candidate)
-	}
-	slices.SortFunc(candidates, func(left, right FusedCandidate) int {
-		switch {
-		case left.Score > right.Score:
-			return -1
-		case left.Score < right.Score:
-			return 1
-		case left.Key < right.Key:
-			return -1
-		case left.Key > right.Key:
-			return 1
-		default:
-			return 0
+	legs := make([]rrf.Leg[string], 2)
+	for i, lane := range []ScopedCandidates{input.Lexical, input.Semantic} {
+		legs[i] = rrf.Leg[string]{Name: []string{"lexical", "semantic"}[i], Weight: 1,
+			Keys: make([]string, len(lane.Candidates))}
+		for j, candidate := range lane.Candidates {
+			legs[i].Keys[j] = candidate.Key
 		}
+	}
+	hits, err := rrf.Fuse(DefaultReciprocalRankConstant, legs)
+	if err != nil {
+		return FusedCandidates{}, fmt.Errorf("fuse retrieval ranks: %w", err)
+	}
+	candidates := make([]FusedCandidate, len(hits))
+	for i, hit := range hits {
+		candidate := *byKey[hit.Key]
+		for _, contribution := range hit.Contributions {
+			signal := candidate.Lexical
+			if contribution.Leg == "semantic" {
+				signal = candidate.Semantic
+			}
+			term := contribution.Term
+			// Collection produces consecutive ranks. Public callers may supply
+			// gaps, which remain part of DocBank's explicit-rank contract.
+			if signal.Rank != contribution.Rank {
+				term = 1 / float64(DefaultReciprocalRankConstant+signal.Rank)
+			}
+			candidate.Score += term
+		}
+		candidates[i] = candidate
+	}
+	// Kit keeps discovery order for ties; DocBank orders by stable key.
+	slices.SortFunc(candidates, func(left, right FusedCandidate) int {
+		return cmp.Or(cmp.Compare(right.Score, left.Score), cmp.Compare(left.Key, right.Key))
 	})
 	for index := range candidates {
 		candidates[index].Rank = index + 1
@@ -285,7 +303,6 @@ func addFusionLane(byKey map[string]*FusedCandidate, candidates []RankedCandidat
 		signal := &CandidateSignal{
 			Rank: source.Rank, Score: source.Score, Provenance: slices.Clone(source.Provenance),
 		}
-		candidate.Score += 1 / float64(DefaultReciprocalRankConstant+source.Rank)
 		if lexical {
 			candidate.Lexical = signal
 		} else {
