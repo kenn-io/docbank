@@ -12,6 +12,38 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
+func TestVisualPreviewReadyPublicationRequiresPhysicalReceipt(t *testing.T) {
+	t.Parallel()
+	for _, publish := range []struct {
+		name       string
+		activeHead bool
+	}{{"head", true}, {"generation", false}} {
+		t.Run(publish.name, func(t *testing.T) {
+			s := newTestStore(t)
+			node, err := s.CreateFile(t.Context(), s.RootID(), "photo.raw", fakeHash("11"), 12, "image/x-raw")
+			require.NoError(t, err)
+			canonical := readyVisualPreview(t, node.BlobHash, fakeHash("22"), 9)
+			write := s.PublishVisualPreviewGeneration
+			if publish.activeHead {
+				write = s.PublishVisualPreview
+			}
+			_, err = write(t.Context(), node.CurrentVersionID, canonical, nil)
+			require.ErrorContains(t, err, "ready visual preview requires physical blob authority")
+			first, err := write(t.Context(), node.CurrentVersionID, canonical, &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
+			require.NoError(t, err)
+			before, beforeErr := s.ContentVersionVisualPreview(t.Context(), node.CurrentVersionID)
+			_, err = write(t.Context(), node.CurrentVersionID, canonical, nil)
+			require.ErrorContains(t, err, "ready visual preview requires physical blob authority")
+			after, afterErr := s.ContentVersionVisualPreview(t.Context(), node.CurrentVersionID)
+			require.Equal(t, beforeErr, afterErr)
+			require.Equal(t, before, after)
+			stored, err := s.VisualPreviewGenerationByRecipe(t.Context(), node.CurrentVersionID, first.RecipeFingerprint)
+			require.NoError(t, err)
+			require.Equal(t, first.GenerationID, stored.GenerationID)
+		})
+	}
+}
+
 func TestVisualPreviewPublicationIsExactVersionAndIdempotent(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -271,7 +303,7 @@ func readyVisualPreviewWithRecipe(
 		ContractVersion: document.VisualPreviewContractV1, SourceSHA256: source,
 		Recipe: recipe, State: document.VisualPreviewReady,
 		Output: &document.VisualPreviewOutputV1{BlobSHA256: output, Size: size,
-			MediaType: "image/jpeg", Width: 1600, Height: 900},
+			MediaType: "image/jpeg", Width: min(1600, recipe.MaxEdgePixels), Height: min(900, recipe.MaxEdgePixels)},
 	})
 	require.NoError(t, err)
 	return canonical

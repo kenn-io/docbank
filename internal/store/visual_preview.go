@@ -25,7 +25,7 @@ type VisualPreviewGeneration struct {
 	CreatedAt         string
 }
 
-// VisualPreviewView is the active preview result joined to its exact source
+// VisualPreviewView is a preview result joined to its exact source
 // version and publication time.
 type VisualPreviewView struct {
 	Version     ContentVersion
@@ -42,12 +42,21 @@ func visualPreviewGenerationID(versionID, recipeFingerprint, checksum string) st
 }
 
 // PublishVisualPreview validates and atomically publishes one exact-version
-// result. Ready results also commit the already-durable output blob receipt.
+// result. Ready results require a physical receipt.
 // The active head advances only when recording a new generation or retrying
 // the current head. Retrying the identical publication is idempotent.
 func (s *Store) PublishVisualPreview(
 	ctx context.Context, versionID string, canonical []byte, physical *BlobPhysical,
 ) (VisualPreviewGeneration, error) {
+	return s.publishVisualPreview(ctx, versionID, canonical, physical, true)
+}
+
+// PublishVisualPreviewGeneration records an immutable result without changing the active head.
+func (s *Store) PublishVisualPreviewGeneration(ctx context.Context, versionID string, canonical []byte, physical *BlobPhysical) (VisualPreviewGeneration, error) {
+	return s.publishVisualPreview(ctx, versionID, canonical, physical, false)
+}
+
+func (s *Store) publishVisualPreview(ctx context.Context, versionID string, canonical []byte, physical *BlobPhysical, activeHead bool) (VisualPreviewGeneration, error) {
 	if err := validateUUIDv4(versionID); err != nil {
 		return VisualPreviewGeneration{}, fmt.Errorf("content version %q: %w", versionID, ErrNotFound)
 	}
@@ -112,10 +121,14 @@ func (s *Store) PublishVisualPreview(
 			return errors.New("visual preview recipe already has a different result")
 		}
 		generation = stored
+		if !activeHead {
+			return nil
+		}
 		_, execErr = tx.ExecContext(ctx, `INSERT INTO visual_preview_heads(
 			content_version_id,generation_id,published_at
 		) VALUES(?,?,?) ON CONFLICT(content_version_id) DO UPDATE SET
-			generation_id=excluded.generation_id,published_at=excluded.published_at
+			generation_id=excluded.generation_id,
+			published_at=excluded.published_at
 			WHERE ? != 0 OR visual_preview_heads.generation_id=excluded.generation_id`,
 			versionID, generation.GenerationID, nowRFC3339(), inserted)
 		return execErr
@@ -296,4 +309,85 @@ func previewFailureDetail(value document.VisualPreviewV1) any {
 		return nil
 	}
 	return value.Failure.Detail
+}
+
+// ContentVersionVisualPreviewByRecipe reads the exact generation and source in one snapshot.
+func (s *Store) ContentVersionVisualPreviewByRecipe(ctx context.Context, versionID, recipeFingerprint string) (VisualPreviewView, error) {
+	if err := validateUUIDv4(versionID); err != nil {
+		return VisualPreviewView{}, ErrNotFound
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return VisualPreviewView{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	version, err := scanContentVersion(tx.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, versionID))
+	if err != nil {
+		return VisualPreviewView{}, err
+	}
+	generation, err := visualPreviewGenerationByRecipeTx(ctx, tx, versionID, recipeFingerprint)
+	if err != nil {
+		return VisualPreviewView{}, err
+	}
+	if generation.VaultID != s.vaultID || generation.Preview.SourceSHA256 != version.BlobHash {
+		return VisualPreviewView{}, errors.New("stored visual preview source binding is invalid")
+	}
+	if err := tx.Commit(); err != nil {
+		return VisualPreviewView{}, err
+	}
+	return VisualPreviewView{Version: version, Generation: generation, PublishedAt: generation.CreatedAt}, nil
+}
+
+// PhotoVisualPreviewTarget identifies a live, included photo display version.
+type PhotoVisualPreviewTarget struct {
+	VersionID    string
+	SourceSHA256 string
+	Size         int64
+	MediaType    string
+}
+
+const liveIncludedPhotoDisplayPredicate = `a.kind='photo' AND a.excluded_at IS NULL AND n.trashed_at IS NULL`
+
+// MissingPhotoVisualPreviewTargetsAfter lists display versions without a recorded recipe.
+func (s *Store) MissingPhotoVisualPreviewTargetsAfter(ctx context.Context, recipeFingerprint, afterVersionID string, limit int) ([]PhotoVisualPreviewTarget, error) {
+	if limit <= 0 {
+		return nil, errors.New("visual preview target limit must be positive")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT v.version_id,v.blob_hash,v.size,COALESCE(v.mime_type,'')
+ FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id
+ JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
+ WHERE `+liveIncludedPhotoDisplayPredicate+`
+ AND v.version_id>? AND NOT EXISTS (
+ SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=?)
+ ORDER BY v.version_id LIMIT ?`, afterVersionID, recipeFingerprint, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var targets []PhotoVisualPreviewTarget
+	for rows.Next() {
+		var target PhotoVisualPreviewTarget
+		if err := rows.Scan(&target.VersionID, &target.SourceSHA256, &target.Size, &target.MediaType); err != nil {
+			return nil, err
+		}
+		targets = append(targets, target)
+	}
+	return targets, rows.Err()
+}
+
+// PhotoVisualPreviewTargetEligible rechecks that a listed target is still the
+// current display version of a live, included photo without this recipe.
+func (s *Store) PhotoVisualPreviewTargetEligible(ctx context.Context, target PhotoVisualPreviewTarget, recipeFingerprint string) (bool, error) {
+	var eligible bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (
+ SELECT 1 FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id
+ JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
+ WHERE `+liveIncludedPhotoDisplayPredicate+` AND v.version_id=? AND v.blob_hash=?
+ AND v.size=? AND COALESCE(v.mime_type,'')=? AND NOT EXISTS (
+ SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=?))`,
+		target.VersionID, target.SourceSHA256, target.Size, target.MediaType, recipeFingerprint).Scan(&eligible)
+	if err != nil {
+		return false, fmt.Errorf("checking photo visual preview target eligibility: %w", err)
+	}
+	return eligible, nil
 }

@@ -12,8 +12,8 @@ unchanged.
 
 The preview catalog can describe image, camera RAW, and video sources. The
 [built-in producer](#backup-and-embedded-reads) supports the still-image formats
-listed below. Applications can resize a preview for grids, details, or search
-results.
+listed below. The built-in recipes provide grid, fit, and large results with maximum edges
+of 512, 2560, and 4096 pixels.
 
 Docbank keeps previews separate from **document renditions**, which retain
 normalized evidence, text, and provider artifacts.
@@ -56,11 +56,11 @@ removes its preview generations. Content-addressed storage still deduplicates
 identical preview bytes across versions, and garbage collection retains an
 output while any generation references it.
 
-Recording a new recipe advances the head. Replaying a recorded generation
-does not replace a different active generation. Recipes have no age ordering,
-so a recipe from an older binary still becomes active if it has never been
-recorded for that version. When a head is missing, the first publication,
-including a replay, recreates it.
+Grid and fit generations stay outside the active head. Recording a new large
+recipe advances the head. Receipt-backed publication of a recorded generation
+preserves a different active generation and populates a missing head. Cached
+ensure returns the exact generation without publishing it. Exact-size reads
+select the immutable generation by its recipe fingerprint.
 
 ## Backup and embedded reads
 
@@ -96,7 +96,7 @@ profiles, and composite transparency onto white because the canonical output
 is JPEG. GIF inputs use their primary frame, including for animated sources.
 WebP inputs apply bounded EXIF orientation and reject embedded ICC profiles;
 animated WebP remains unsupported by the built-in decoder.
-Accepted images scale without upscaling to a 4096-pixel maximum edge
+Accepted images scale without upscaling to the selected recipe's maximum edge
 and encode as a quality-90 JPEG. The decoded source image must have positive
 dimensions and no more than 100,000,000 pixels; a larger image records
 `failed` with `source_dimensions_exceed_limit`. For camera RAW files, this
@@ -107,8 +107,12 @@ Malformed source bytes become a durable
 become a durable `unsupported` result. Read, verification, storage, and
 cancellation failures are retryable.
 
-Preview production is application-driven: opening a vault does not start a
-worker. Reading source metadata from ORF, RW2, CR3, or MP4 does not mean the
+The daemon continuously produces grid previews for the current display file
+of each included photo. Missing catalog generations are its work queue. A
+restart rediscovers unfinished work; all terminal outcomes prevent repeat work
+for that exact recipe. Fit and large run on request and remain retained.
+Opening an embedded vault starts no worker; embedded applications call the
+synchronous producer themselves. Reading source metadata from ORF, RW2, CR3, or MP4 does not mean the
 built-in producer can preview those formats. Other still-image formats, RAW
 containers without a supported embedded JPEG, video frames, and managed color conversion require additional producers,
 but they use the same generation, retention, backup, and read contracts.

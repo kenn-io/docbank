@@ -38,6 +38,20 @@ processor descriptor names byte-producing choices without treating the ambient
 Go runtime version as identity; a descriptor revision is the deliberate
 re-render signal.
 
+The built-in visual-preview recipes are grid at 512 pixels, fit at 2560, and
+large at 4096. Recipe fingerprints select immutable generations directly.
+Grid and fit publication preserve the single legacy active head; new large
+publication advances it. Cached ensure returns the exact generation without
+publication. Receipt-backed publication populates a missing head without
+replacing a different active generation.
+
+The daemon uses `processing.Backfill` to produce missing grid generations for
+included assets' selected display versions. The absence query is the queue.
+Transient failures retry, and restart discovers unfinished work again. Ready,
+unsupported, and failed generations all complete that version/recipe key.
+Fit and large are produced on request. Every ready generation remains a blob
+root and travels through the existing metadata backup and restore contract.
+
 Stable node IDs are document identity. Paths are derived from parent/name rows
 and can change or be reused. Blob hashes are content identity. Two nodes may
 share a blob without sharing document identity.

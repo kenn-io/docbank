@@ -29,6 +29,19 @@ asset.
 Removing the selected member chooses another displayable member atomically,
 or stores a null display when none remains. Assets are limited to 256 files.
 
+## Previews
+
+The daemon produces a grid preview with a 512-pixel maximum edge for each
+included photo's selected display file. It discovers new imports continuously
+and resumes missing work after restart. Completed results stay retained.
+
+Embedded applications can request fit previews at 2560 pixels or large
+previews at 4096 pixels. All sizes preserve aspect ratio and never upscale.
+JPEG, PNG, GIF, still WebP, and supported embedded JPEGs in ARW, DNG, CR2,
+NEF, and RAF files have decoder paths. Format support does not guarantee that
+every individual file decodes. Unsupported and deterministic decode failures
+are retained terminal results; temporary storage or read failures retry.
+
 ## CLI
 
 Inspect the asset created for a node or use a stable asset UUID:
