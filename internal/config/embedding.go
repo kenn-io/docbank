@@ -76,6 +76,9 @@ func resolveEmbedder(profile *EmbeddingProfileConfig) error {
 		return errors.New("base_url must end in /v1 or /v1/embeddings for this adapter")
 	}
 	origin := endpoint.Scheme + "://" + endpoint.Host
+	if strings.TrimSuffix(runtime.Endpoint, "/") == origin {
+		origin = runtime.Endpoint
+	}
 	for _, err := range []error{
 		mergeEmbeddingSetting(&profile.Model, parts.Model.Name, "model"),
 		mergeEmbeddingSetting(&profile.Dimensions, parts.Model.Dimensions, "dims/dimensions"),

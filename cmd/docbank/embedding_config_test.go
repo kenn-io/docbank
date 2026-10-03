@@ -64,6 +64,9 @@ api_key = %s
 			p.Model, p.Dimensions, p.MaxBatchItems = "", 0, 0
 			p.Runtime.Endpoint, p.Runtime.ModelRevision, p.Runtime.DeploymentEpoch = "", "", ""
 			p.Runtime.RequestTimeout = 0
+			if source == "inline" {
+				p.Runtime.Endpoint = server.URL + "/"
+			}
 			cfg.EmbeddingProfiles["semantic"] = p
 			cfg.CredentialBindings = nil
 			require.NoError(t, cfg.Validate())
