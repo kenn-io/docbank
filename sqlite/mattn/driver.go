@@ -43,6 +43,8 @@ func (Driver) Open(path string, opts docsqlite.OpenOptions) (*sql.DB, error) {
 	query := url.Values{
 		"_foreign_keys": {"on"},
 		"_busy_timeout": {strconv.FormatInt(busy.Milliseconds(), 10)},
+		// Reuse recurring ingest and API statements within each connection.
+		"_stmt_cache_size": {"128"},
 	}
 	switch opts.Access {
 	case docsqlite.Create:
