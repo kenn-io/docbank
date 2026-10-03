@@ -276,15 +276,13 @@ func TestSnapshotRejectsPhotoSorts(t *testing.T) {
 		for _, field := range []string{"capture_time", "import_time"} {
 			value := snapshotTestQuery(t, sprintfPhotoSort(field, "asc"))
 			_, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value})
-			require.ErrorContains(t, err, field)
-			require.ErrorContains(t, err, "Photos")
+			require.ErrorContains(t, err, fmt.Sprintf("sort %q is only supported in Photos", field))
 			saved, err := s.CreateSavedQuery(t.Context(), fmt.Sprintf("%s-%t", field, populated), "", SavedQueryKindQuery, []byte(sprintfPhotoSort(field, "asc")))
 			require.NoError(t, err)
 			options := defaultSnapshotMaterializeOptions()
 			options.SavedQuery = &savedQuerySnapshotInput{ID: saved.ID, ExpectedRevision: saved.Revision}
 			_, err = s.materializeQuerySnapshot(t.Context(), SnapshotRequest{}, options)
-			require.ErrorContains(t, err, field)
-			require.ErrorContains(t, err, "Photos")
+			require.ErrorContains(t, err, fmt.Sprintf("sort %q is only supported in Photos", field))
 		}
 	}
 }
