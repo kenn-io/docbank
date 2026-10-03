@@ -513,8 +513,9 @@ released source database remains as a recovery copy.
 
 Package imports select the receipt by its unique package and record key.
 Mailbox transfers select the receipt whose target content version has the
-highest node revision. Older archives may contain `package_import_head` and
-`mailbox_transfer_head` records; import skips them and current exports omit them.
+highest node revision. Unreleased development backups may contain
+`package_import_head` and `mailbox_transfer_head` records. Import skips these
+two records because receipts supply the same selection; current exports omit them.
 
 Only schemas that actually shipped receive readers and exact fixtures.
 Unreleased development layouts are disposable; there is no speculative
