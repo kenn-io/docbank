@@ -283,7 +283,7 @@ func (service *Service) ContinueMediaProcessing(ctx context.Context, continuatio
 	if err != nil {
 		return service.failMediaProcessing(ctx, continuation, err)
 	}
-	// An admitted rendition owns its outcome; revalidate input only before starting more work.
+	// Admission and embedding work need available input; the worker owns other rendition outcomes.
 	if continuation.JobID == "" || len(profile.portable.Embeddings) != 0 {
 		source := mediaSourceBinding{sourceID: continuation.SourceID, sourceVersionID: continuation.SourceVersionID}
 		if _, err := service.resolveMediaInputBinding(ctx, continuation.ProcessingProfile,
@@ -300,7 +300,7 @@ func (service *Service) ContinueMediaProcessing(ctx context.Context, continuatio
 		return service.failMediaProcessing(ctx, continuation, err)
 	}
 	switch {
-	case status.State == statusCompleted || status.State == statusPartial || status.Phase == "embedding":
+	case status.State == statusCompleted || status.Phase == "embedding":
 		if len(profile.portable.Embeddings) != 0 {
 			if _, runErr := service.runEmbeddings(ctx, version, profile,
 				continuation.ProcessingPrincipal, continuation.ProcessingScope,
