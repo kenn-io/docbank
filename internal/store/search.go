@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"reflect"
 	"slices"
@@ -20,6 +21,9 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/vectorindex"
+	"go.kenn.io/kit/search/lexical"
+	"go.kenn.io/kit/search/sqlitefts"
+	"go.kenn.io/kit/search/sqlquery"
 )
 
 // MaxSearchSourceFenceIDs is the shared hard bound for exact search authority.
@@ -94,13 +98,18 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		return nil, false, nil
 	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
-	nameArgs := append([]any{fq}, filterArgs...)
+	names, err := nameSearchCandidates(fq)
+	if err != nil {
+		return nil, false, err
+	}
+	nameArgs := names.Args
+	nameArgs = append(nameArgs, filterArgs...)
 	nameArgs = append(nameArgs, limit+1)
-	rows, err := s.db.QueryContext(ctx, `SELECT `+nodeCols+` FROM `+nodeFrom+`
-		JOIN nodes_fts ON nodes_fts.rowid=n.id
-		WHERE nodes_fts MATCH ?
-		  AND n.kind='file' AND cv.version_id IS NOT NULL AND n.trashed_at IS NULL `+filterSQL+`
-		ORDER BY nodes_fts.rank,n.name,n.id
+	rows, err := s.db.QueryContext(ctx, `WITH name_matches AS (`+names.SQL+`)
+		SELECT `+nodeCols+` FROM `+nodeFrom+`
+		JOIN name_matches ON name_matches.doc_key=n.id
+		WHERE n.kind='file' AND cv.version_id IS NOT NULL AND n.trashed_at IS NULL `+filterSQL+`
+		ORDER BY name_matches.score DESC,n.name,n.id
 		LIMIT ?`, nameArgs...)
 	if err != nil {
 		return nil, false, err
@@ -1967,10 +1976,27 @@ func currentRenditionHeadBuildIDsTx(
 func ftsQuery(input string) string {
 	var terms []string
 	for t := range strings.FieldsSeq(input) {
-		t = strings.ReplaceAll(t, `"`, `""`)
-		terms = append(terms, `"`+t+`"*`)
+		// Fields are non-empty; the fixed literal analyzer has no other
+		// failure mode. Keep DocBank's prefix operator outside its quotes.
+		prepared, _ := lexical.Literal().PrepareLiteral(t)
+		terms = append(terms, prepared.Match+"*")
 	}
 	return strings.Join(terms, " ")
+}
+
+// nameSearchCandidates leaves filtering and name-based ties to the outer
+// query. A candidate cutoff here would discard eligible equal-score names.
+func nameSearchCandidates(match string) (sqlquery.Query, error) {
+	helper, err := sqlitefts.New(sqlitefts.WithIndexTable("nodes_fts"), sqlitefts.WithIndexKey("rowid"),
+		sqlitefts.WithSourceTable("nodes"), sqlitefts.WithSourceKey("id"))
+	if err != nil {
+		return sqlquery.Query{}, fmt.Errorf("configure name search: %w", err)
+	}
+	query, err := helper.Build(sqlitefts.Request{Match: match, CandidateLimit: math.MaxInt})
+	if err != nil {
+		return sqlquery.Query{}, fmt.Errorf("build name search: %w", err)
+	}
+	return query, nil
 }
 
 // SearchPage returns live name matches in their established order, followed
@@ -2003,19 +2029,19 @@ func (s *Store) SearchPageWithOptions(
 		return s.searchFilterPage(ctx, limit, opts)
 	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
-	nameArgs := []any{fq}
+	names, err := nameSearchCandidates(fq)
+	if err != nil {
+		return nil, false, err
+	}
+	nameArgs := names.Args
 	nameArgs = append(nameArgs, filterArgs...)
 	nameArgs = append(nameArgs, limit+1)
-	// Read rank from the matching FTS cursor. A per-node rank subquery
-	// repeats FTS ranking setup for every matching filename.
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.db.QueryContext(ctx, `WITH name_matches AS (`+names.SQL+`)
 		SELECT `+nodeCols+`
 		FROM `+nodeFrom+`
-		JOIN nodes_fts ON nodes_fts.rowid=n.id
-		WHERE nodes_fts MATCH ?
-		  AND n.trashed_at IS NULL
-		  `+filterSQL+`
-		ORDER BY nodes_fts.rank, n.name, n.id
+		JOIN name_matches ON name_matches.doc_key=n.id
+		WHERE n.trashed_at IS NULL `+filterSQL+`
+		ORDER BY name_matches.score DESC,n.name,n.id
 		LIMIT ?`, nameArgs...)
 	if err != nil {
 		return nil, false, fmt.Errorf("searching %q: %w", query, err)
