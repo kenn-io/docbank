@@ -19,7 +19,7 @@
     "generate:api": "orval --config orval.config.ts"
   },
   "dependencies": {
-    "@kenn-io/kit-ui": "git+https://github.com/kenn-io/kit-ui.git#b35e4ca7df66969f4650327d6e315986afef8716",
+    "@kenn-io/kit-ui": "git+https://github.com/kenn-io/kit-ui.git#49ea5cde2814f4e4ac577d1da1b735fd4255b3b3",
     "@lucide/svelte": "1.24.0",
     "@noble/hashes": "^2.2.0",
     "svelte": "5.56.4",

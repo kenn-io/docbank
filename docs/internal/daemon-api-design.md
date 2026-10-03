@@ -57,6 +57,11 @@ Auth-exempt health, ping, docs, and OpenAPI routes establish discovery and
 contract access only. Every data route and the hidden shutdown route requires
 the effective key; shutdown additionally requires its token.
 
+The daemon owns usage telemetry. The browser posts allowlisted events to its
+own daemon with its session; the daemon stamps identity and version and sends
+them. The browser holds no analytics key and loads no provider script. Only
+`cmd/docbank` constructs the reporter, so embedded vaults send nothing.
+
 ## Node identity, paths, and revisions
 
 Node IDs are stable. Paths are mutable names that can be reused. Single-node

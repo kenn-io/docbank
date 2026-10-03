@@ -1414,7 +1414,8 @@ Running tasks have no finish timestamp; terminal task records remain visible
 until the daemon restarts. `--json` emits `{"items": [...]}` for automation.
 Every daemon registers `extract:plain-text`, `extract:source-metadata`, and
 `maintenance:auxiliary-checksums`; `process:renditions` appears only when a
-rendition provider is bound, and configured watched inboxes add `watch:<name>`
+rendition provider is bound, `telemetry:heartbeat` appears while anonymous
+usage telemetry is on, and configured watched inboxes add `watch:<name>`
 tasks. See [Daemon](architecture/daemon.md) for what each job does.
 
 ## docbank media

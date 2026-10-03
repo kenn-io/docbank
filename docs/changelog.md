@@ -12,6 +12,15 @@ may still evolve, but vaults created by v0.9.0 and later are within the
 
 ## Unreleased
 
+### New features
+
+- The daemon now sends anonymous usage telemetry: `daemon_started` and
+  `daemon_active` at each daemon start and daily while it runs, and
+  `app_opened` when the web app opens. Each vault has its own random install
+  ID, and no document content, names, paths or queries leave the machine. Set
+  `DOCBANK_TELEMETRY_ENABLED=0` to turn it off; see
+  [anonymous usage telemetry](configuration.md#anonymous-usage-telemetry).
+
 ## [v0.13.0](https://github.com/kenn-io/docbank/tree/v0.13.0) — 2026-08-18
 
 ### New features

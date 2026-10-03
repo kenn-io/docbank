@@ -148,7 +148,7 @@
   input { width: 150px; padding: 0 var(--space-2); }
   select { max-width: 170px; }
   button { min-width: 30px; cursor: pointer; }
-  button:disabled { cursor: default; opacity: .5; }
+  button:disabled { cursor: default; opacity: var(--opacity-disabled); }
   .loading { display: flex; align-items: center; gap: var(--space-2); min-height: 96px; }
   pre { max-height: 420px; overflow: auto; margin: 0; padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-inset); color: var(--text-primary); font-family: var(--font-mono); font-size: var(--font-size-xs); line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
   mark { border-radius: 2px; background: color-mix(in srgb, var(--mark-color) 65%, transparent); color: inherit; }
