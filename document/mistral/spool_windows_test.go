@@ -38,7 +38,8 @@ func TestPrepareAndProcessRejectBroadWindowsDACLs(t *testing.T) {
 		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),
 		MaxSpoolBytes: 1024, MinFreeBytes: 1,
 	})
-	require.ErrorContains(t, err, "restricted DACL")
+	require.ErrorIs(t, err, ErrSpoolUnavailable)
+	require.ErrorContains(t, errors.Unwrap(err), "restricted DACL")
 
 	prepared := prepareTestDocument(t, policy, content)
 	require.NoError(t, setEveryoneDACL(prepared.path))
@@ -70,7 +71,8 @@ func TestPrepareRejectsBroadWindowsReservationLockDACL(t *testing.T) {
 		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),
 		MaxSpoolBytes: 1024, MinFreeBytes: 1,
 	})
-	require.ErrorContains(t, err, "reservation lock")
+	require.ErrorIs(t, err, ErrSpoolUnavailable)
+	require.ErrorContains(t, errors.Unwrap(err), "reservation lock")
 }
 
 func setEveryoneDACL(path string) error {

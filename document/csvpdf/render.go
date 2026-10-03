@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/go-pdf/fpdf"
+	"go.kenn.io/docbank/document/ocr"
 	"golang.org/x/image/font/gofont/gomono"
 	"golang.org/x/image/font/sfnt"
 )
@@ -27,13 +28,13 @@ type layoutLine struct {
 func layout(ctx context.Context, records [][]string, limits Limits) ([]layoutLine, error) {
 	font, err := sfnt.Parse(gomono.TTF)
 	if err != nil {
-		return nil, fmt.Errorf("parse CSV PDF font: %w", err)
+		return nil, ocr.NewPreparationError("CSV PDF font could not be loaded", err)
 	}
 	var buffer sfnt.Buffer
 	var lines []layoutLine
 	appendLine := func(text string, record, cell int) error {
 		if len(lines) == limits.MaxPages*linesPerPage {
-			return errors.New("CSV PDF exceeds page limit")
+			return ocr.NewPreparationError("CSV PDF exceeds page limit", nil)
 		}
 		lines = append(lines, layoutLine{text, record, cell})
 		return nil
@@ -49,11 +50,11 @@ func layout(ctx context.Context, records [][]string, limits Limits) ([]layoutLin
 				}
 				allowedScript := unicode.Is(unicode.Latin, char) || unicode.Is(unicode.Greek, char) || unicode.Is(unicode.Cyrillic, char) || unicode.Is(unicode.Common, char)
 				if char > 0xffff || unicode.IsControl(char) || unicode.Is(unicode.Cf, char) || unicode.IsMark(char) || !allowedScript {
-					return nil, errors.New("CSV cell contains unsupported text")
+					return nil, ocr.NewPreparationError("CSV cell contains unsupported text", nil)
 				}
 				glyph, err := font.GlyphIndex(&buffer, char)
 				if err != nil || glyph == 0 {
-					return nil, errors.New("CSV cell contains a character absent from the embedded font")
+					return nil, ocr.NewPreparationError("CSV cell contains a character absent from the embedded font", err)
 				}
 			}
 			if err := appendLine(fmt.Sprintf("Record %d, cell %d", recordIndex+1, cellIndex+1), recordIndex+1, cellIndex+1); err != nil {
@@ -109,7 +110,13 @@ func render(ctx context.Context, records [][]string, limits Limits) ([]byte, []S
 	}
 	output := boundedWriter{ctx: ctx, maximum: limits.MaxPDFBytes}
 	if err := pdf.Output(&output); err != nil {
-		return nil, nil, 0, fmt.Errorf("write CSV PDF: %w", err)
+		if err := ctx.Err(); err != nil {
+			return nil, nil, 0, err
+		}
+		if _, ok := errors.AsType[*ocr.PreparationError](err); ok {
+			return nil, nil, 0, fmt.Errorf("write CSV PDF: %w", err)
+		}
+		return nil, nil, 0, ocr.NewPreparationError("CSV PDF could not be written", err)
 	}
 	return output.Bytes(), spans, pages, nil
 }
@@ -126,11 +133,11 @@ func (w *boundedWriter) Write(p []byte) (int, error) {
 		return 0, err
 	}
 	if int64(len(p)) > w.maximum-int64(w.Len()) {
-		return 0, errors.New("CSV PDF exceeds byte limit")
+		return 0, ocr.NewPreparationError("CSV PDF exceeds byte limit", nil)
 	}
 	n, err := w.Buffer.Write(p)
 	if err != nil {
-		return n, fmt.Errorf("buffer CSV PDF: %w", err)
+		return n, ocr.NewPreparationError("CSV PDF could not be buffered", err)
 	}
 	return n, nil
 }
