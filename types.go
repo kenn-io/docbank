@@ -408,13 +408,14 @@ const (
 )
 
 type DocumentSearchRequest struct {
-	Query     string              `json:"query"`
-	Mode      DocumentSearchMode  `json:"mode"`
-	Limit     int                 `json:"limit,omitzero"`
-	Profile   string              `json:"profile"`
-	BindingID string              `json:"binding_id,omitzero"`
-	Fence     DocumentSourceFence `json:"fence"`
-	Explain   bool                `json:"explain,omitzero"`
+	ContentFirst bool                `json:"content_first,omitzero"`
+	Query        string              `json:"query"`
+	Mode         DocumentSearchMode  `json:"mode"`
+	Limit        int                 `json:"limit,omitzero"`
+	Profile      string              `json:"profile"`
+	BindingID    string              `json:"binding_id,omitzero"`
+	Fence        DocumentSourceFence `json:"fence"`
+	Explain      bool                `json:"explain,omitzero"`
 }
 
 // MediaTimeSpan identifies one exact half-open interval in retained media.

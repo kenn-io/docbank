@@ -333,6 +333,11 @@ func TestProcessingSearchValidationMatchesSearchQueryAndProfileErrors(t *testing
 	t.Parallel()
 	ts, catalog := newTestServer(t, configureProcessingTestService(t))
 	node := createFileWithContent(t, ts, catalog, "/search-validation.txt", "synthetic search evidence\n")
+	for _, mode := range []string{"auto", "lexical", "semantic", "hybrid"} {
+		response, body := do(t, ts, http.MethodPost, "/api/v1/search/validate", nil,
+			map[string]any{"query": "synthetic", "mode": mode, "profile": "private", "content_first": true})
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+	}
 
 	for _, test := range []struct {
 		name, query, profile string
@@ -342,9 +347,10 @@ func TestProcessingSearchValidationMatchesSearchQueryAndProfileErrors(t *testing
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			validationResponse, validationBody := do(t, ts, http.MethodPost, "/api/v1/search/validate", nil,
-				map[string]any{"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile})
+				map[string]any{"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile, "content_first": true})
 			searchResponse, searchBody := do(t, ts, http.MethodPost, "/api/v1/search", nil,
 				map[string]any{"query": test.query, "mode": "lexical", "limit": 1, "profile": test.profile,
+					"content_first": true,
 					"fence": map[string]any{"vault_uid": catalog.VaultID(),
 						"content_version_ids": []string{node.CurrentVersionID}}})
 			assert.Equal(t, searchResponse.StatusCode, validationResponse.StatusCode)

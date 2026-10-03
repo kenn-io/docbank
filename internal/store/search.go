@@ -33,7 +33,7 @@ type SearchHit struct {
 }
 
 // ExplainedLexicalCandidate adds stable evidence identity and a bounded
-// display excerpt for files, preserving name-before-content ordering.
+// display excerpt for files under the requested lexical ordering.
 type ExplainedLexicalCandidate struct {
 	Node         Node
 	Path         string
@@ -76,7 +76,7 @@ const currentRenditionChunkAuthoritySQL = `EXISTS (
 	 AND current_rb.evidence_checksum=eig.evidence_fingerprint
 )`
 
-// SearchExplainedLexicalCandidates preserves SearchPageWithOptions file ordering.
+// SearchExplainedLexicalCandidates prefers filenames unless ContentFirst is set.
 // Content selection and evidence resolution share one lexical-generation read.
 func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int,
 	opts SearchOptions,
@@ -108,7 +108,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	if err != nil {
 		return nil, false, err
 	}
-	if len(nameHits) > limit {
+	if !opts.ContentFirst && len(nameHits) > limit {
 		nameHits = nameHits[:limit]
 		if err := s.addSearchPaths(ctx, nameHits); err != nil {
 			return nil, false, err
@@ -119,6 +119,9 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		return nil, false, err
 	}
 	remaining := limit - len(nameHits)
+	if opts.ContentFirst {
+		remaining = limit
+	}
 	nameSeen := make(map[int64]struct{}, len(nameHits))
 	for _, hit := range nameHits {
 		nameSeen[hit.Node.ID] = struct{}{}
@@ -169,7 +172,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 				return err
 			}
 			candidate.Node, candidate.Match = node, SearchMatchContent
-			if _, duplicate := nameSeen[node.ID]; duplicate {
+			if _, duplicate := nameSeen[node.ID]; duplicate && !opts.ContentFirst {
 				continue
 			}
 			if _, duplicate := seenContent[node.ID]; duplicate {
@@ -202,6 +205,23 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	truncated := len(content) > remaining
 	if truncated {
 		content = content[:remaining]
+	}
+	if opts.ContentFirst {
+		selected := make(map[int64]struct{}, len(content))
+		for _, candidate := range content {
+			selected[candidate.Node.ID] = struct{}{}
+		}
+		for _, candidate := range explainedNameCandidates(nameHits) {
+			if _, duplicate := selected[candidate.Node.ID]; duplicate {
+				continue
+			}
+			if len(content) == limit {
+				truncated = true
+				break
+			}
+			content = append(content, candidate)
+		}
+		return content, truncated, nil
 	}
 	result := explainedNameCandidates(nameHits)
 	result = append(result, content...)
@@ -248,7 +268,7 @@ func boundedExplainedSearchExcerpt(value string) string {
 }
 
 // SearchOptions selects a filter-only page or narrows ranked search without
-// changing its name-before-content ordering. TagID identifies one required
+// changing ordinary node search ordering. TagID identifies one required
 // assignment; MIMEType selects the current file version's parameter-free base
 // media type; UnderNodeID selects
 // descendants of one live directory. ModifiedSince is inclusive and
@@ -260,6 +280,8 @@ type SearchOptions struct {
 	ModifiedSince     string
 	ModifiedBefore    string
 	ContentVersionIDs []string
+	// ContentFirst prefers content evidence in explained lexical search only.
+	ContentFirst bool
 }
 
 // SearchNeedsQuery reports whether the normalized options leave an empty FTS

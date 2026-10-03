@@ -253,6 +253,33 @@ for provider construction and [Document processing](usage/document-processing.md
 for planning, consent, retained results, and the private-deployment acceptance
 runner.
 
+### Prefer document content matches
+
+Set `ContentFirst` when a transcript or document excerpt should win over a
+matching filename. Filename-only matches fill the remaining slots.
+
+```go
+report, err := vault.SearchDocuments(ctx, docbank.DocumentSearchRequest{
+    Query: "mercury",
+    Mode: docbank.DocumentSearchLexical,
+    Profile: "private",
+    ContentFirst: true,
+    Fence: docbank.DocumentSourceFence{
+        VaultUID: vault.ID(),
+        ContentVersionIDs: []string{receipt.Version.ID},
+    },
+})
+if err != nil {
+    return err
+}
+```
+
+Omission and false keep filename priority. Auto and lexical use content priority;
+hybrid uses the resulting lexical ranks, and semantic accepts the preference
+without changing vector results. Optional reranking can reorder selected
+candidates. The same exact source fence applies before candidate cutoff.
+See the [HTTP search contract](architecture/http-api.md#coverage-and-source-fenced-search).
+
 ## Retain and process a remote recording
 
 Embedded callers can keep the recording identity separate from the protected
