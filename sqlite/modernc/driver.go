@@ -18,6 +18,20 @@ import (
 )
 
 func init() {
+	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_query_capture_time_v1", 4, func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		values := make([]string, 4)
+		for i, arg := range args {
+			if arg == nil {
+				continue
+			}
+			text, ok := arg.(string)
+			if !ok {
+				return nil, errors.New("capture time requires text")
+			}
+			values[i] = text
+		}
+		return query.CaptureTimeKey(values[0], values[1], values[2], values[3])
+	})
 	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_query_media_family_v1", 2,
 		func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 			mediaType, mimeOK := args[0].(string)

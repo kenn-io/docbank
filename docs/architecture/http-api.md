@@ -570,6 +570,10 @@ return `409 derivative_purge_plan_changed`; invalid selections return
 
 ### Query compilation preview
 
+`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` and `cursor`, returning one item per eligible matching asset, whole-query `total` and optional forward `next_cursor`. The supported sort fields are `capture_time`, `import_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Capture keys sort missing evidence last, then use ascending asset UUID for ties. Cursors expire after 15 minutes and bind resolved saved-query revisions, effective coverage and page size. Invalid options return `invalid_photo_query`; invalid or changed bindings return `invalid_photo_cursor`; expiry returns `cursor_expired`. Invalid expressions retain their operand positions.
+
+`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag, `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-store`. Browser sessions permit the exact list POST and preview GET with empty query strings. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
+
 `POST /queries/parse` accepts one QueryV1 object and returns its canonical
 `query`, `query_fingerprint`, and `dependencies` (`kind`, stable `id`, and
 observed `revision`). Definition reads share one read transaction. No result
@@ -717,7 +721,7 @@ QueryV1 stores these fields. Defaults apply when a field is omitted:
 | `syntax` | `simple` or `advanced` | `simple` |
 | `mode` | `lexical`, `semantic`, or `hybrid` | `lexical` |
 | `filters` | Object described below | `{}` |
-| `sort.field` | `name`, `path`, `modified_at`, `size`, `media_type`, or `relevance` | `name` |
+| `sort.field` | `name`, `path`, `modified_at`, `size`, `media_type`, `relevance`, `capture_time`, or `import_time` | `name` |
 | `sort.direction` | `asc` or `desc` | `asc` |
 
 The `filters` object accepts the following saved choices. These are storage
@@ -734,6 +738,12 @@ fields, not additional parameters for `GET /search`:
 | `modified_after`, `modified_before` | RFC3339 timestamps, normalized to UTC |
 | `size_min`, `size_max` | Byte counts from 0 through 9,007,199,254,740,991 |
 | `text_coverage` | Array of at most 6 entries: `complete`, `partial`, `failed`, `unprocessed`, `none`, or `unavailable` |
+| `kinds` | At most 64 entries, `photo` or `video` |
+| `cameras`, `lenses` | At most 64 exact make/model strings, each 1 through 256 Unicode characters |
+| `iso_min`, `iso_max` | Inclusive safe nonnegative integer bounds; zero is accepted |
+| `capture_after`, `capture_before` | Strict YYYY-MM-DD dates; inclusive lower and exclusive upper bounds |
+| `gps_bounds` | Decimal-string `south`, `west`, `north`, `east`; each at most 64 characters, latitude within -90 through 90, longitude within -180 through 180, south <= north; west > east crosses the antimeridian |
+| `asset_ids` | At most 64 canonical UUIDv4 values |
 
 Filter sets are sorted and deduplicated when saved. Query text is not trimmed
 or rewritten. Unknown fields and duplicate JSON object keys are rejected.

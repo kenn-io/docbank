@@ -6476,6 +6476,18 @@ components:
     Filters:
       additionalProperties: false
       properties:
+        asset_ids:
+          items:
+            type: string
+          type: array
+        cameras:
+          items:
+            type: string
+          type: array
+        capture_after:
+          type: string
+        capture_before:
+          type: string
         collapse_duplicates:
           type: boolean
         collection_ids:
@@ -6498,8 +6510,28 @@ components:
           items:
             type: string
           type: array
+        gps_bounds:
+          $ref: "#/components/schemas/GPSBounds"
         has_duplicates:
           type: boolean
+        iso_max:
+          format: int64
+          type:
+            - integer
+            - "null"
+        iso_min:
+          format: int64
+          type:
+            - integer
+            - "null"
+        kinds:
+          items:
+            type: string
+          type: array
+        lenses:
+          items:
+            type: string
+          type: array
         media_families:
           items:
             type: string
@@ -6693,6 +6725,27 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    GPSBounds:
+      additionalProperties: false
+      properties:
+        east:
+          type: string
+        north:
+          type: string
+        south:
+          type: string
+        west:
+          type: string
+      required:
+        - south
+        - west
+        - north
+        - east
+      type: object
+      x-go-type: query.GPSBounds
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/query
+        name: query
     GcRequest:
       additionalProperties: false
       properties:
@@ -10907,6 +10960,145 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoBrowsePage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoBrowsePage.json
+          format: uri
+          readOnly: true
+          type: string
+        items:
+          items:
+            $ref: "#/components/schemas/PhotoBrowseRow"
+          type: array
+        next_cursor:
+          type: string
+        total:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - items
+        - total
+      type: object
+      x-go-type: api.PhotoBrowsePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoBrowseRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoBrowseRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        coverage:
+          $ref: "#/components/schemas/WorkspaceQueryCoverage"
+        cursor:
+          maxLength: 32768
+          type: string
+        page_size:
+          default: 50
+          format: int64
+          maximum: 250
+          minimum: 1
+          type: integer
+        query:
+          $ref: "#/components/schemas/SavedQueryV1Schema"
+      required:
+        - query
+      type: object
+      x-go-type: api.PhotoBrowseRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoBrowseRow:
+      additionalProperties: false
+      properties:
+        asset_id:
+          format: uuid
+          type: string
+        capture_time:
+          type:
+            - string
+            - "null"
+        capture_time_offset:
+          type:
+            - string
+            - "null"
+        capture_time_precision:
+          type:
+            - string
+            - "null"
+        capture_time_timezone:
+          type:
+            - string
+            - "null"
+        content_version_id:
+          format: uuid
+          type: string
+        display_file_id:
+          format: uuid
+          type: string
+        height_px:
+          format: int64
+          type:
+            - integer
+            - "null"
+        import_time:
+          type: string
+        kind:
+          enum:
+            - photo
+            - video
+          type: string
+        media_type:
+          type: string
+        name:
+          type: string
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        previews:
+          $ref: "#/components/schemas/PhotoPreviewSlots"
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        width_px:
+          format: int64
+          type:
+            - integer
+            - "null"
+      required:
+        - asset_id
+        - kind
+        - revision
+        - display_file_id
+        - node_id
+        - content_version_id
+        - name
+        - media_type
+        - import_time
+        - capture_time
+        - capture_time_precision
+        - capture_time_timezone
+        - capture_time_offset
+        - width_px
+        - height_px
+        - previews
+      type: object
+      x-go-type: api.PhotoBrowseRow
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PhotoFile:
       additionalProperties: false
       properties:
@@ -10969,6 +11161,65 @@ components:
         - destination
       type: object
       x-go-type: api.PhotoImportStartRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoPreviewSlot:
+      additionalProperties: false
+      properties:
+        generation_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        height:
+          format: int64
+          minimum: 1
+          type: integer
+        media_type:
+          enum:
+            - image/jpeg
+          type: string
+        sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        size:
+          format: int64
+          minimum: 1
+          type: integer
+        state:
+          enum:
+            - missing
+            - ready
+            - unsupported
+            - failed
+          type: string
+        url:
+          type: string
+        width:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - state
+      type: object
+      x-go-type: api.PhotoPreviewSlot
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoPreviewSlots:
+      additionalProperties: false
+      properties:
+        fit:
+          $ref: "#/components/schemas/PhotoPreviewSlot"
+        grid:
+          $ref: "#/components/schemas/PhotoPreviewSlot"
+        large:
+          $ref: "#/components/schemas/PhotoPreviewSlot"
+      required:
+        - grid
+        - fit
+        - large
+      type: object
+      x-go-type: api.PhotoPreviewSlots
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -13276,6 +13527,27 @@ components:
     SavedQueryFiltersSchema:
       additionalProperties: false
       properties:
+        asset_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 64
+          type: array
+        cameras:
+          items:
+            type: string
+          maxItems: 64
+          type: array
+        capture_after:
+          format: date
+          type:
+            - string
+            - "null"
+        capture_before:
+          format: date
+          type:
+            - string
+            - "null"
         collapse_duplicates:
           type:
             - boolean
@@ -13309,10 +13581,58 @@ components:
             type: string
           maxItems: 32
           type: array
+        gps_bounds:
+          additionalProperties: false
+          properties:
+            east:
+              maxLength: 64
+              type: string
+            north:
+              maxLength: 64
+              type: string
+            south:
+              maxLength: 64
+              type: string
+            west:
+              maxLength: 64
+              type: string
+          required:
+            - south
+            - west
+            - north
+            - east
+          type: object
         has_duplicates:
           type:
             - boolean
             - "null"
+        iso_max:
+          format: int64
+          maximum: 9007199254740991
+          minimum: 0
+          type:
+            - integer
+            - "null"
+        iso_min:
+          format: int64
+          maximum: 9007199254740991
+          minimum: 0
+          type:
+            - integer
+            - "null"
+        kinds:
+          items:
+            enum:
+              - photo
+              - video
+            type: string
+          maxItems: 64
+          type: array
+        lenses:
+          items:
+            type: string
+          maxItems: 64
+          type: array
         media_families:
           items:
             enum:
@@ -13388,6 +13708,27 @@ components:
             type: string
           maxItems: 6
           type: array
+      type: object
+    SavedQueryGPSBoundsSchema:
+      additionalProperties: false
+      properties:
+        east:
+          maxLength: 64
+          type: string
+        north:
+          maxLength: 64
+          type: string
+        south:
+          maxLength: 64
+          type: string
+        west:
+          maxLength: 64
+          type: string
+      required:
+        - south
+        - west
+        - north
+        - east
       type: object
     SavedQueryPage:
       additionalProperties: false
@@ -13596,6 +13937,8 @@ components:
             - size
             - media_type
             - relevance
+            - capture_time
+            - import_time
           type: string
       type: object
     SavedQueryV1Schema:
@@ -21300,6 +21643,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Create a photo asset for one file
+  /api/v1/photos/assets/query:
+    post:
+      operationId: listPhotoAssets
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoBrowseRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoBrowsePage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Browse matching photo assets with live keyset pagination
   /api/v1/photos/assets/{asset_id}:
     get:
       operationId: getPhotoAsset
@@ -21483,6 +21849,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Detach one file from a photo asset
+  /api/v1/photos/assets/{asset_id}/previews/{generation_id}:
+    get:
+      operationId: readPhotoPreview
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: generation_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            image/jpeg:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: Verified JPEG preview
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read verified bytes of an eligible exact photo preview
   /api/v1/photos/imports:
     post:
       operationId: startPhotoImport

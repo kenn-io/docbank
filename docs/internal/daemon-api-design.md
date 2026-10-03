@@ -137,6 +137,16 @@ need it unless their contract requires a globally quiescent snapshot.
 
 ## API shape and errors
 
+### Photo browsing and preview reads
+
+`POST /api/v1/photos/assets/query` accepts raw strict QueryV1 JSON, coverage selection, a page size and an optional signed cursor. The shared query resolver and compiler evaluate the complete query against each current live member. Store projects those matches to included assets with a live display member, deduplicates assets and counts the entire population in the same lexical-generation read snapshot. Optional content duplicate collapse runs after photo scoping and before asset projection.
+
+Display facts and ordering come from the persisted display file. Capture keys call `document.EventAxisKey` through the shared query adapter registered in both SQLite drivers. Capture evidence retains its precision and explicit or omitted timezone. Missing or out-of-domain capture keys sort last. Asset UUID breaks equal keys in ascending order. Forward cursors bind canonical intent, dependency revisions, coverage and page size through the existing document cursor signing service. Each request reads current data; pages share a keyset boundary rather than a retained snapshot.
+
+`GET /api/v1/photos/assets/{asset_id}/previews/{generation_id}` checks included live display membership and the exact retained generation in one read transaction. It verifies the complete bounded JPEG bytes and rechecks eligibility before success. Headers include generation ETag, Content-Digest, exact length, `nosniff` and `private, no-store`. Recipe discovery reads recorded outcomes without generating derivatives. Missing is absence; ready, unsupported and failed remain separate states.
+
+Browser sessions allow only these exact method/path pairs with empty query strings. The session-bound photo preview cache uses header transport, four concurrent reads, shared fetches and individually released blob URL leases. It retains at most 128 idle URLs. Active leases survive idle eviction; disposal aborts reads and revokes owned URLs.
+
 ### Photo graph routes
 
 Photo endpoints are daemon-only typed routes over the store's graph authority.

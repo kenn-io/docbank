@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/docbank/document"
 )
@@ -200,16 +201,20 @@ func (s *Store) VisualPreviewGenerationByRecipe(
 func visualPreviewGenerationByRecipeTx(
 	ctx context.Context, q metadataQuerier, versionID, recipeFingerprint string,
 ) (VisualPreviewGeneration, error) {
+	return scanVisualPreviewGeneration(q.QueryRowContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE content_version_id=? AND recipe_fingerprint=?`, versionID, recipeFingerprint))
+}
+
+const visualPreviewGenerationColumns = `generation_id,vault_uid,content_version_id,
+		recipe_fingerprint,canonical_result,checksum,created_at,source_sha256,contract_version,
+		state,output_blob_hash,output_size,output_media_type,output_width,output_height,
+		failure_code,failure_detail`
+
+func scanVisualPreviewGeneration(row interface{ Scan(args ...any) error }) (VisualPreviewGeneration, error) {
 	var generation VisualPreviewGeneration
 	var sourceSHA256, contractVersion, state string
 	var outputHash, outputMediaType, failureCode, failureDetail sql.NullString
 	var outputSize, outputWidth, outputHeight sql.NullInt64
-	err := q.QueryRowContext(ctx, `SELECT generation_id,vault_uid,content_version_id,
-		recipe_fingerprint,canonical_result,checksum,created_at,source_sha256,contract_version,
-		state,output_blob_hash,output_size,output_media_type,output_width,output_height,
-		failure_code,failure_detail
-		FROM visual_preview_generations WHERE content_version_id=? AND recipe_fingerprint=?`,
-		versionID, recipeFingerprint).Scan(&generation.GenerationID, &generation.VaultID,
+	err := row.Scan(&generation.GenerationID, &generation.VaultID,
 		&generation.ContentVersionID, &generation.RecipeFingerprint, &generation.CanonicalResult,
 		&generation.Checksum, &generation.CreatedAt, &sourceSHA256, &contractVersion, &state,
 		&outputHash, &outputSize, &outputMediaType, &outputWidth, &outputHeight,
@@ -222,11 +227,11 @@ func visualPreviewGenerationByRecipeTx(
 	}
 	preview, checksum, err := document.DecodeVisualPreviewV1(generation.CanonicalResult)
 	if err != nil || checksum != generation.Checksum ||
-		visualPreviewGenerationID(versionID, recipeFingerprint, checksum) != generation.GenerationID {
+		visualPreviewGenerationID(generation.ContentVersionID, generation.RecipeFingerprint, checksum) != generation.GenerationID {
 		return VisualPreviewGeneration{}, errors.New("stored visual preview failed canonical identity validation")
 	}
 	_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(preview.Recipe)
-	if err != nil || fingerprint != recipeFingerprint {
+	if err != nil || fingerprint != generation.RecipeFingerprint {
 		return VisualPreviewGeneration{}, errors.New("stored visual preview recipe fingerprint is invalid")
 	}
 	if err := validateVisualPreviewStorage(preview, sourceSHA256, contractVersion, state,
@@ -353,13 +358,18 @@ type PhotoVisualPreviewTarget struct {
 	MediaType    string
 }
 
+const liveIncludedDisplayPredicate = `a.excluded_at IS NULL AND f.asset_id=a.asset_id AND f.role<>'sidecar' AND n.kind='file' AND n.trashed_at IS NULL AND v.node_id=n.id AND v.version_id=n.current_version_id AND NOT EXISTS (
+ WITH RECURSIVE display_ancestors(id,parent_id,trashed_at) AS (
+ SELECT id,parent_id,trashed_at FROM nodes WHERE id=n.parent_id
+ UNION ALL SELECT p.id,p.parent_id,p.trashed_at FROM nodes p JOIN display_ancestors c ON p.id=c.parent_id
+ ) SELECT 1 FROM display_ancestors WHERE trashed_at IS NOT NULL)`
+
 // Follow indexed ownership links from a version rather than scanning assets
 // for a matching display. The outer query can seek in version order.
 const liveIncludedPhotoDisplayPredicate = `EXISTS (
  SELECT 1 FROM nodes n JOIN photo_files f ON f.node_id=n.id
  JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
- WHERE n.id=v.node_id AND n.current_version_id=v.version_id
- AND a.kind='photo' AND a.excluded_at IS NULL AND n.trashed_at IS NULL)`
+ WHERE n.id=v.node_id AND a.kind='photo' AND ` + liveIncludedDisplayPredicate + `)`
 
 // MissingPhotoVisualPreviewTargetsAfter lists display versions without a recorded recipe.
 func (s *Store) MissingPhotoVisualPreviewTargetsAfter(
@@ -404,4 +414,70 @@ func (s *Store) PhotoVisualPreviewTargetEligible(
 		return false, fmt.Errorf("checking photo visual preview eligibility for version %q: %w", target.VersionID, err)
 	}
 	return eligible, nil
+}
+
+// PhotoVisualPreviewByGeneration binds a retained generation to an included current display.
+func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, generationID string) (VisualPreviewView, error) {
+	if validateUUIDv4(assetID) != nil || validateCatalogSHA256(generationID, "preview generation") != nil {
+		return VisualPreviewView{}, ErrNotFound
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return VisualPreviewView{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var versionID, recipe string
+	err = tx.QueryRowContext(ctx, `SELECT v.version_id,g.recipe_fingerprint FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id JOIN visual_preview_generations g ON g.content_version_id=v.version_id WHERE `+liveIncludedDisplayPredicate+` AND a.asset_id=? AND g.generation_id=?`, assetID, generationID).Scan(&versionID, &recipe)
+	if errors.Is(err, sql.ErrNoRows) {
+		return VisualPreviewView{}, ErrNotFound
+	}
+	if err != nil {
+		return VisualPreviewView{}, err
+	}
+	version, err := scanContentVersion(tx.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, versionID))
+	if err != nil {
+		return VisualPreviewView{}, err
+	}
+	generation, err := visualPreviewGenerationByRecipeTx(ctx, tx, versionID, recipe)
+	if err != nil {
+		return VisualPreviewView{}, err
+	}
+	if generation.GenerationID != generationID || generation.VaultID != s.vaultID || generation.Preview.SourceSHA256 != version.BlobHash {
+		return VisualPreviewView{}, errors.New("stored visual preview source binding is invalid")
+	}
+	if err := tx.Commit(); err != nil {
+		return VisualPreviewView{}, err
+	}
+	return VisualPreviewView{Version: version, Generation: generation, PublishedAt: generation.CreatedAt}, nil
+}
+
+func photoPreviewGenerations(ctx context.Context, q metadataQuerier, versions []string, recipes map[string]string) (map[string]map[string]VisualPreviewGeneration, error) {
+	result := make(map[string]map[string]VisualPreviewGeneration, len(versions))
+	if len(versions) == 0 || len(recipes) == 0 {
+		return result, nil
+	}
+	var predicates []string
+	var args []any
+	for _, version := range versions {
+		for _, recipe := range recipes {
+			predicates = append(predicates, `(content_version_id=? AND recipe_fingerprint=?)`)
+			args = append(args, version, recipe)
+		}
+	}
+	rows, err := q.QueryContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE `+strings.Join(predicates, ` OR `), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		generation, err := scanVisualPreviewGeneration(rows)
+		if err != nil {
+			return nil, err
+		}
+		if result[generation.ContentVersionID] == nil {
+			result[generation.ContentVersionID] = make(map[string]VisualPreviewGeneration)
+		}
+		result[generation.ContentVersionID][generation.RecipeFingerprint] = generation
+	}
+	return result, rows.Err()
 }

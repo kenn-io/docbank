@@ -224,6 +224,9 @@ func (s *Store) materializeQuerySnapshot(
 		if err != nil {
 			return err
 		}
+		if compiled.Query.Sort.Field == "capture_time" || compiled.Query.Sort.Field == "import_time" {
+			return compileExpressionError(0, len(compiled.Query.Text), "photo sorts are unsupported by document snapshots")
+		}
 		if coverage.Configuration == "configured" {
 			if err := validateSnapshotCoverageProfile(ctx, q, coverage); err != nil {
 				return err

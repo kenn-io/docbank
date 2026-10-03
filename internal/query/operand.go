@@ -12,6 +12,12 @@ import (
 func ValidateTextOperand(field, value string) error {
 	var valid bool
 	switch field {
+	case "kind":
+		valid = oneOf(value, "photo", "video")
+	case "camera", "lens":
+		valid = validPhotoLabel(value)
+	case "asset":
+		valid = validUUIDv4(value)
 	case "path":
 		valid = validVirtualPath(value)
 	case "mime":

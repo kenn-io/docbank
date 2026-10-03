@@ -200,10 +200,7 @@ func (service *documentQueryService) encodeCursors(
 		if err != nil {
 			return nil, fmt.Errorf("encoding document cursor: %w", err)
 		}
-		mac := hmac.New(sha256.New, service.key[:])
-		_, _ = mac.Write(payload)
-		cursor := base64.RawURLEncoding.EncodeToString(payload) + "." +
-			base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+		cursor := service.signCursorEnvelope(payload)
 		if len(cursor) > MaxDocumentCursorBytes {
 			return nil, fmt.Errorf("%w: cursor exceeds encoded size bound", store.ErrInvalidDocumentQuery)
 		}
@@ -218,27 +215,9 @@ func (service *documentQueryService) decodeCursor(
 	invalid := func(detail string) (store.DocumentCatalogPosition, store.DocumentCatalogTraversal, error) {
 		return store.DocumentCatalogPosition{}, "", fmt.Errorf("%w: %s", store.ErrInvalidDocumentCursor, detail)
 	}
-	if len(raw) > MaxDocumentCursorBytes {
-		return invalid("encoded length exceeds bound")
-	}
-	parts := strings.Split(raw, ".")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return invalid("malformed envelope")
-	}
-	strictBase64 := base64.RawURLEncoding.Strict()
-	payload, err := strictBase64.DecodeString(parts[0])
-	if err != nil || base64.RawURLEncoding.EncodeToString(payload) != parts[0] {
-		return invalid("malformed payload")
-	}
-	signature, err := strictBase64.DecodeString(parts[1])
-	if err != nil || len(signature) != sha256.Size ||
-		base64.RawURLEncoding.EncodeToString(signature) != parts[1] {
-		return invalid("malformed signature")
-	}
-	mac := hmac.New(sha256.New, service.key[:])
-	_, _ = mac.Write(payload)
-	if !hmac.Equal(signature, mac.Sum(nil)) {
-		return invalid("authentication failed")
+	payload, err := service.verifyCursorEnvelope(raw)
+	if err != nil {
+		return invalid(err.Error())
 	}
 	var cursor documentCursorPayload
 	if err := json.Unmarshal(payload, &cursor, json.RejectUnknownMembers(true)); err != nil {
@@ -292,4 +271,36 @@ func validDocumentCursorPosition(
 	default:
 		return false
 	}
+}
+
+func (service *documentQueryService) signCursorEnvelope(payload []byte) string {
+	mac := hmac.New(sha256.New, service.key[:])
+	_, _ = mac.Write(payload)
+	return base64.RawURLEncoding.EncodeToString(payload) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (service *documentQueryService) verifyCursorEnvelope(raw string) ([]byte, error) {
+	if len(raw) > MaxDocumentCursorBytes {
+		return nil, fmt.Errorf("%w: %s", store.ErrInvalidDocumentCursor, "encoded length exceeds bound")
+	}
+	parts := strings.Split(raw, ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil, fmt.Errorf("%w: %s", store.ErrInvalidDocumentCursor, "malformed envelope")
+	}
+	strictBase64 := base64.RawURLEncoding.Strict()
+	payload, err := strictBase64.DecodeString(parts[0])
+	if err != nil || base64.RawURLEncoding.EncodeToString(payload) != parts[0] {
+		return nil, fmt.Errorf("%w: %s", store.ErrInvalidDocumentCursor, "malformed payload")
+	}
+	signature, err := strictBase64.DecodeString(parts[1])
+	if err != nil || len(signature) != sha256.Size ||
+		base64.RawURLEncoding.EncodeToString(signature) != parts[1] {
+		return nil, fmt.Errorf("%w: %s", store.ErrInvalidDocumentCursor, "malformed signature")
+	}
+	mac := hmac.New(sha256.New, service.key[:])
+	_, _ = mac.Write(payload)
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		return nil, fmt.Errorf("%w: %s", store.ErrInvalidDocumentCursor, "authentication failed")
+	}
+	return payload, nil
 }
