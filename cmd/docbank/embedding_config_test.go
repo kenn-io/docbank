@@ -16,7 +16,9 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/openaicompat"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/kit/embedconfig"
 	"go.kenn.io/kit/safefileio"
+	"go.kenn.io/kit/secretref"
 )
 
 func TestKitEmbeddingConfigCredentialsPreserveDescriptorAndRequests(t *testing.T) {
@@ -116,4 +118,27 @@ api_key = %s
 			}
 		})
 	}
+}
+
+func TestKitEmbeddingConfigRequiresCredentialSource(t *testing.T) {
+	const variable = "DOCBANK_TEST_UNAVAILABLE_KIT_KEY"
+	t.Setenv(variable, "")
+	cfg, descriptor := syntheticLoopbackOpenAIConfig(t, "http://127.0.0.1:11434", variable)
+	p := cfg.EmbeddingProfiles["semantic"]
+	p.Embedder = &embedconfig.Embedder{
+		BaseURL: p.Runtime.Endpoint + "/v1", Model: p.Model, Dims: p.Dimensions,
+		FingerprintSalt: p.Runtime.ModelRevision, BatchSize: p.MaxBatchItems, TimeoutSeconds: 1,
+	}
+	cfg.EmbeddingProfiles["semantic"] = p
+	cfg.CredentialBindings = nil
+	_, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	require.EqualError(t, err, "configuring embedding runtime \"semantic\": credential source is not configured")
+	assert.Equal(t, "credential:semantic", cfg.EmbeddingProfiles["semantic"].CredentialBinding)
+
+	// Declaring the source restores the existing descriptor without reading
+	// the unavailable secret during startup.
+	p.Embedder.APIKey = secretref.Ref{Env: variable}
+	bundle, err := configureEmbeddingRuntimeBundle(cfg, unavailableEmbeddingBlobs{}, t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, descriptor, bundle.providers["semantic"].Descriptor())
 }

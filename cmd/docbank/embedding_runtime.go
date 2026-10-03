@@ -117,7 +117,7 @@ func configureEmbeddingRuntimeBundle(cfg config.Config, blobs embeddingRuntimeBl
 				if !configured.Embedder.APIKey.IsZero() {
 					resolver = embeddingCredentialSecret{binding: binding, ref: configured.Embedder.APIKey}
 				} else if _, exists := secrets.variables[binding]; !exists {
-					binding, resolver = "", nil
+					return embeddingRuntimeBundle{}, fmt.Errorf("configuring embedding runtime %q: credential source is not configured", name)
 				}
 			}
 			profile := openaicompat.Profile{Origin: configured.Runtime.Endpoint, Descriptor: descriptor,

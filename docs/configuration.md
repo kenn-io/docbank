@@ -453,7 +453,8 @@ the next request. Environment changes require restarting the daemon.
 Keep `credential_binding` as the stable portable name. It is the name, not
 the secret or its source, that enters the immutable profile. If `api_key` is
 unset, an existing `credential_bindings` entry still supplies the secret.
-Without either source, the text endpoint receives no Authorization header.
+Without either source, startup reports that the credential source is not
+configured.
 Never put secret values in processing profiles, fingerprints, receipts,
 backups, or source-controlled configuration.
 
