@@ -75,6 +75,26 @@ func TestPhotoBrowseISOAndAssetPredicates(t *testing.T) {
 	}
 }
 
+func TestPhotoBrowseMissingDisplayMediaType(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	jpeg := browsePhotoNode(t, s, "untagged.jpg", browseHash("untagged-jpeg"), "")
+	_, err := s.PhotoAssetForNode(t.Context(), jpeg.ID)
+	require.NoError(t, err)
+	raw := browsePhotoNode(t, s, "untagged.raw", browseHash("untagged-raw"), "")
+	promoted, err := s.PromotePhotoNode(t.Context(), raw.ID, nil, PhotoRoleRAW, PhotoKindPhoto)
+	require.NoError(t, err)
+	for _, field := range []string{"name", "media_type"} {
+		page := browsePhotoPage(t, s, fmt.Sprintf(`{"sort":{"field":%q,"direction":"asc"}}`, field))
+		require.Equal(t, int64(2), page.Total)
+		require.Len(t, page.Items, 2)
+		for _, row := range page.Items {
+			require.Empty(t, row.MediaType)
+		}
+		require.Contains(t, []string{page.Items[0].AssetID, page.Items[1].AssetID}, promoted.ID)
+	}
+}
+
 func TestPhotoBrowseMemberSemantics(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
