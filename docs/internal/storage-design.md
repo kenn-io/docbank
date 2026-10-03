@@ -41,8 +41,9 @@ re-render signal.
 The built-in visual-preview recipes are grid at 512 pixels, fit at 2560, and
 large at 4096. Recipe fingerprints select immutable generations directly.
 Grid and fit publication preserve the single legacy active head; new large
-publication advances it. Replaying a cached generation repairs a missing
-head without replacing a different active generation.
+publication advances it. Cached ensure returns the exact generation without
+publication. Receipt-backed publication populates a missing head without
+replacing a different active generation.
 
 The daemon uses `processing.Backfill` to produce missing grid generations for
 included assets' selected display versions. The absence query is the queue.

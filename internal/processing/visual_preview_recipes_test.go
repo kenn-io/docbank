@@ -9,10 +9,12 @@ import (
 	"image/color"
 	"image/jpeg"
 	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/image/webp"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
@@ -61,9 +63,54 @@ func TestProduceVisualPreviewForRecipe(t *testing.T) {
 			require.Equal(t, 3, small.Preview.Output.Width)
 		})
 	}
+	webpSource, err := os.ReadFile("testdata/visual-preview-sized.webp")
+	require.NoError(t, err)
+	webpImage, err := webp.Decode(bytes.NewReader(webpSource))
+	require.NoError(t, err)
+	require.Equal(t, 3000, webpImage.Bounds().Dx())
+	require.Equal(t, 30, webpImage.Bounds().Dy())
+	for _, test := range []struct {
+		name      string
+		mediaType string
+		source    []byte
+		width     int
+		height    int
+	}{
+		{"png", "image/png", mediatest.PNG(3000, 30, color.White), 3000, 30},
+		{"gif", "image/gif", mediatest.GIF(3000, 30, 2), 3000, 30},
+		{"webp", "image/webp", webpSource, 3000, 30},
+		{"raw", "image/x-adobe-dng", syntheticRAWPreviewTIFF(6, mediatest.JPEG(3000, 30, color.White)), 30, 3000},
+		{"raf", "image/x-fuji-raf", syntheticRAF(), 30, 40},
+		{"small-png", "image/png", mediatest.PNG(3, 2, color.White), 3, 2},
+	} {
+		for size, edge := range map[string]int{"grid": 512, "fit": 2560} {
+			t.Run(test.name+"/"+size, func(t *testing.T) {
+				t.Parallel()
+				recipe, err := VisualPreviewRecipeForSize(size)
+				require.NoError(t, err)
+				digest := sha256.Sum256(test.source)
+				result, err := ProduceVisualPreviewForRecipe(t.Context(), bytes.NewReader(test.source), VisualPreviewTarget{SourceSHA256: hex.EncodeToString(digest[:]), Size: int64(len(test.source)), MediaType: test.mediaType}, recipe)
+				require.NoError(t, err)
+				width, height := test.width, test.height
+				if width > edge {
+					height = max(1, (height*edge+width/2)/width)
+					width = edge
+				} else if height > edge {
+					width = max(1, (width*edge+height/2)/height)
+					height = edge
+				}
+				decoded, err := jpeg.Decode(bytes.NewReader(result.Output))
+				require.NoError(t, err)
+				require.Equal(t, width, decoded.Bounds().Dx())
+				require.Equal(t, height, decoded.Bounds().Dy())
+				require.Equal(t, width, result.Preview.Output.Width)
+				require.Equal(t, height, result.Preview.Output.Height)
+			})
+		}
+	}
 	recipe := CurrentVisualPreviewRecipe()
 	recipe.MaxEdgePixels = 123
-	_, err := ProduceVisualPreviewForRecipe(t.Context(), bytes.NewReader(source), VisualPreviewTarget{}, recipe)
+	_, err = ProduceVisualPreviewForRecipe(t.Context(), bytes.NewReader(source), VisualPreviewTarget{}, recipe)
 	require.Error(t, err)
 }
 

@@ -29,25 +29,12 @@ func ensureVisualPreview(ctx context.Context, catalog *store.Store, blobs visual
 	if err := ctx.Err(); err != nil {
 		return store.VisualPreviewView{}, err
 	}
-	if err := validateBuiltInVisualPreviewRecipe(recipe); err != nil {
-		return store.VisualPreviewView{}, err
-	}
 	_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(recipe)
 	if err != nil {
 		return store.VisualPreviewView{}, err
 	}
 	view, err := catalog.ContentVersionVisualPreviewByRecipe(ctx, versionID, fingerprint)
 	if err == nil {
-		if recipe == CurrentVisualPreviewRecipe() {
-			_, headErr := catalog.ContentVersionVisualPreview(ctx, versionID)
-			if errors.Is(headErr, store.ErrNotFound) {
-				if _, err := catalog.PublishVisualPreview(ctx, versionID, view.Generation.CanonicalResult, nil); err != nil {
-					return store.VisualPreviewView{}, err
-				}
-			} else if headErr != nil {
-				return store.VisualPreviewView{}, headErr
-			}
-		}
 		return view, nil
 	}
 	if !errors.Is(err, store.ErrNotFound) {
@@ -65,13 +52,7 @@ func ensureVisualPreview(ctx context.Context, catalog *store.Store, blobs visual
 		return store.VisualPreviewView{}, sourceContentUnavailable(errors.Join(errors.New("visual preview source size differs from version"), reader.Close()))
 	}
 	target := VisualPreviewTarget{SourceSHA256: version.BlobHash, Size: version.Size, MediaType: version.MimeType}
-	var product VisualPreviewProduct
-	var produceErr error
-	if recipe == CurrentVisualPreviewRecipe() {
-		product, produceErr = ProduceVisualPreview(ctx, reader, target)
-	} else {
-		product, produceErr = ProduceVisualPreviewForRecipe(ctx, reader, target, recipe)
-	}
+	product, produceErr := ProduceVisualPreviewForRecipe(ctx, reader, target, recipe)
 	closeErr := reader.Close()
 	if closeErr != nil {
 		closeErr = sourceContentUnavailable(closeErr)

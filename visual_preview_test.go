@@ -10,10 +10,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	internalblob "go.kenn.io/docbank/internal/blob"
-	internalprocessing "go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/packstore"
 )
@@ -31,8 +29,6 @@ func TestVaultVisualPreviewSizes(t *testing.T) {
 	source := mediatest.JPEG(4200, 8, color.White)
 	created, err := vault.Create(t.Context(), "/photo.jpg", bytes.NewReader(source), CreateOptions{MediaType: "image/jpeg", Expected: contentIdentity(source)})
 	require.NoError(t, err)
-	legacyCreated, err := vault.Create(t.Context(), "/legacy-photo.jpg", bytes.NewReader(source), CreateOptions{MediaType: "image/jpeg", Expected: contentIdentity(source)})
-	require.NoError(t, err)
 	versionID := created.Version.ID
 	_, err = vault.VisualPreviewForSize(t.Context(), versionID, VisualPreviewGrid)
 	require.ErrorIs(t, err, ErrNotFound)
@@ -43,42 +39,6 @@ func TestVaultVisualPreviewSizes(t *testing.T) {
 		_, err = vault.VisualPreview(t.Context(), versionID)
 		require.ErrorIs(t, err, ErrNotFound)
 	}
-	largeRecipe := internalprocessing.CurrentVisualPreviewRecipe()
-	product, err := internalprocessing.ProduceVisualPreviewForRecipe(t.Context(), bytes.NewReader(source), internalprocessing.VisualPreviewTarget{
-		SourceSHA256: created.Version.BlobHash, Size: created.Version.Size, MediaType: "image/jpeg",
-	}, largeRecipe)
-	require.NoError(t, err)
-	canonical, _, err := document.MarshalVisualPreviewV1(product.Preview)
-	require.NoError(t, err)
-	written, err := vault.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(product.Output))
-	require.NoError(t, err)
-	encoding, err := written.EncodingName()
-	require.NoError(t, err)
-	physical := store.BlobPhysical{
-		Encoding: encoding, StoredBytes: written.StoredSize, PackEligible: written.PackEligible,
-		MD5: written.MD5, Created: written.Created,
-	}
-	_, err = vault.metadata.PublishVisualPreviewGeneration(t.Context(), versionID, canonical, &physical)
-	require.NoError(t, err)
-	_, err = vault.metadata.PublishVisualPreviewGeneration(t.Context(), legacyCreated.Version.ID, canonical, &physical)
-	require.NoError(t, err)
-	_, err = vault.VisualPreview(t.Context(), versionID)
-	require.ErrorIs(t, err, ErrNotFound)
-	_, err = vault.VisualPreview(t.Context(), legacyCreated.Version.ID)
-	require.ErrorIs(t, err, ErrNotFound)
-	require.NoError(t, vault.blobs.Remove(created.Version.BlobHash))
-	exactLarge, err := vault.EnsureVisualPreviewForSize(t.Context(), versionID, VisualPreviewLarge)
-	require.NoError(t, err)
-	require.Equal(t, 4096, exactLarge.Output.Width)
-	legacyHead, err := vault.VisualPreview(t.Context(), versionID)
-	require.NoError(t, err)
-	require.Equal(t, exactLarge.GenerationID, legacyHead.GenerationID)
-	legacy, err := vault.EnsureVisualPreview(t.Context(), legacyCreated.Version.ID)
-	require.NoError(t, err)
-	require.Equal(t, 4096, legacy.Output.Width)
-	legacyHead, err = vault.VisualPreview(t.Context(), legacyCreated.Version.ID)
-	require.NoError(t, err)
-	require.Equal(t, legacy.GenerationID, legacyHead.GenerationID)
 	large, err := vault.EnsureVisualPreview(t.Context(), versionID)
 	require.NoError(t, err)
 	require.Equal(t, 4096, large.Output.Width)

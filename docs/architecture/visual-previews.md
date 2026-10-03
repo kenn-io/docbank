@@ -57,8 +57,9 @@ identical preview bytes across versions, and garbage collection retains an
 output while any generation references it.
 
 Grid and fit generations stay outside the active head. Recording a new large
-recipe advances the head. Replaying a recorded generation preserves a
-different active generation and repairs a missing head. Exact-size reads
+recipe advances the head. Receipt-backed publication of a recorded generation
+preserves a different active generation and populates a missing head. Cached
+ensure returns the exact generation without publishing it. Exact-size reads
 select the immutable generation by its recipe fingerprint.
 
 ## Backup and embedded reads
