@@ -95,11 +95,12 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
 	nameArgs := append([]any{fq}, filterArgs...)
-	nameArgs = append(nameArgs, fq, limit+1)
+	nameArgs = append(nameArgs, limit+1)
 	rows, err := s.db.QueryContext(ctx, `SELECT `+nodeCols+` FROM `+nodeFrom+`
-		WHERE n.id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)
+		JOIN nodes_fts ON nodes_fts.rowid=n.id
+		WHERE nodes_fts MATCH ?
 		  AND n.kind='file' AND cv.version_id IS NOT NULL AND n.trashed_at IS NULL `+filterSQL+`
-		ORDER BY (SELECT rank FROM nodes_fts WHERE rowid=n.id AND nodes_fts MATCH ?),n.name,n.id
+		ORDER BY nodes_fts.rank,n.name,n.id
 		LIMIT ?`, nameArgs...)
 	if err != nil {
 		return nil, false, err
@@ -2004,15 +2005,17 @@ func (s *Store) SearchPageWithOptions(
 	filterSQL, filterArgs := searchFilterSQL(opts)
 	nameArgs := []any{fq}
 	nameArgs = append(nameArgs, filterArgs...)
-	nameArgs = append(nameArgs, fq, limit+1)
+	nameArgs = append(nameArgs, limit+1)
+	// Read rank from the matching FTS cursor. A per-node rank subquery
+	// repeats FTS ranking setup for every matching filename.
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+nodeCols+`
 		FROM `+nodeFrom+`
-		WHERE n.id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)
+		JOIN nodes_fts ON nodes_fts.rowid=n.id
+		WHERE nodes_fts MATCH ?
 		  AND n.trashed_at IS NULL
 		  `+filterSQL+`
-		ORDER BY (SELECT rank FROM nodes_fts WHERE rowid = n.id AND nodes_fts MATCH ?),
-		         n.name, n.id
+		ORDER BY nodes_fts.rank, n.name, n.id
 		LIMIT ?`, nameArgs...)
 	if err != nil {
 		return nil, false, fmt.Errorf("searching %q: %w", query, err)
