@@ -732,3 +732,15 @@ func TestOpenAPIProvenanceMTimeUsesDateTimeFormat(t *testing.T) {
 		assert.Equal(t, "date-time", mtime.Format)
 	}
 }
+
+func TestDocumentSearchContentFirstSchema(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	for _, name := range []string{"DocumentSearchRequest", "DocumentSearchValidationRequest"} {
+		schema := doc.Components.Schemas.Map()[name]
+		require.NotNil(t, schema)
+		require.NotNil(t, schema.Properties["content_first"])
+		assert.Equal(t, "boolean", schema.Properties["content_first"].Type)
+		assert.NotContains(t, schema.Required, "content_first")
+	}
+}

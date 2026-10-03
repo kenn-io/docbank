@@ -425,7 +425,8 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			return nil, processingUnavailable()
 		}
 		err := d.Processing.ValidateSearch(ctx, processing.SearchRequest{Query: input.Body.Query,
-			Mode: input.Body.Mode, Limit: input.Body.Limit, Profile: input.Body.Profile,
+			ContentFirst: input.Body.ContentFirst,
+			Mode:         input.Body.Mode, Limit: input.Body.Limit, Profile: input.Body.Profile,
 			BindingID: input.Body.BindingID, Explain: input.Body.Explain, Rerank: input.Body.Rerank})
 		if err != nil {
 			return nil, fromProcessingError(err)
@@ -440,7 +441,8 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			return nil, processingUnavailable()
 		}
 		report, err := d.Processing.Search(ctx, processing.SearchRequest{Query: input.Body.Query,
-			Mode: input.Body.Mode, Limit: input.Body.Limit, Profile: input.Body.Profile,
+			ContentFirst: input.Body.ContentFirst,
+			Mode:         input.Body.Mode, Limit: input.Body.Limit, Profile: input.Body.Profile,
 			BindingID: input.Body.BindingID, Explain: input.Body.Explain,
 			Rerank: input.Body.Rerank,
 			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID,

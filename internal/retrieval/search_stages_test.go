@@ -632,15 +632,15 @@ func (backend *nonRevalidatingStageBackend) NormalizeSearchOptions(ctx context.C
 func (backend *nonRevalidatingStageBackend) VaultID() string { return backend.inner.VaultID() }
 
 func (backend *nonRevalidatingStageBackend) SearchExplainedLexicalCandidates(ctx context.Context,
-	query string, limit int, scope store.SearchOptions,
+	query string, limit int, scope store.SearchOptions, contentFirst bool,
 ) ([]store.ExplainedLexicalCandidate, bool, error) {
-	return backend.inner.SearchExplainedLexicalCandidates(ctx, query, limit, scope)
+	return backend.inner.SearchExplainedLexicalCandidates(ctx, query, limit, scope, contentFirst)
 }
 
 func (backend *stageBackend) VaultID() string { return "vault" }
 
 func (backend *stageBackend) SearchExplainedLexicalCandidates(_ context.Context, query string, _ int,
-	scope store.SearchOptions,
+	scope store.SearchOptions, _ bool,
 ) ([]store.ExplainedLexicalCandidate, bool, error) {
 	if query == backend.cancelForQuery {
 		backend.cancel()

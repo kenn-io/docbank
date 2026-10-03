@@ -88,6 +88,9 @@ for receipt fields and degradation causes.
 - **`hybrid`** combines lexical and semantic candidates.
 - **`auto`** uses lexical retrieval and reports `lexical` as the actual mode.
 
+HTTP and embedded callers can [prefer content matches over filenames](../architecture/http-api.md#coverage-and-source-fenced-search)
+with `content_first: true` or `ContentFirst: true`.
+
 Each search response reports the actual mode, degradation, and the number of
 complete documents in the supplied source set. The coverage API separately
 reports rendition and embedding state, including complete, unavailable, stale,

@@ -31,7 +31,7 @@ import (
 
 func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureMediaTestService(t))
+	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
 	unauthorized, body := get(t, ts, "/api/v1/media/sources?limit=10",
 		map[string]string{"X-Api-Key": ""})
 	require.Equal(t, 401, unauthorized.StatusCode, body)
@@ -212,6 +212,84 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	require.NotContains(t, body, catalog.BlobsDir)
 }
 
+func TestDocumentSearchContentFirstTranscript(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, configureMediaTestService(t, 1))
+	c := daemonconn.New(ts.URL, testAPIKey)
+	wav := mediatest.WAV()
+	receipt, err := c.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
+		OperationID: "00000000-0000-4000-8000-000000000801", Filename: "mercury.wav",
+		MediaType: "audio/wav", SHA256: processingTestHash(string(wav)), ByteLength: int64(len(wav)),
+		Occurrence: api.MediaOccurrenceBody{Ref: "synthetic-mercury", Revision: "1", Filename: "mercury.wav"},
+	}, bytes.NewReader(wav))
+	require.NoError(t, err)
+	transcript := "mercury retained transcript evidence\n"
+	artifact, err := c.ImportMediaArtifact(t.Context(), receipt.SourceID, api.MediaArtifactMetadata{
+		OperationID: "00000000-0000-4000-8000-000000000802", OccurrenceID: receipt.OccurrenceID,
+		Kind: "transcript", Filename: "captions.txt", MediaType: "text/plain",
+		SHA256: processingTestHash(transcript), ByteLength: int64(len(transcript)),
+	}, strings.NewReader(transcript))
+	require.NoError(t, err)
+	version, err := catalog.ContentVersionByID(t.Context(), receipt.ContentVersionID)
+	require.NoError(t, err)
+	recording, err := catalog.NodeByID(t.Context(), version.NodeID)
+	require.NoError(t, err)
+	_, _, err = catalog.Move(t.Context(), recording.ID, *recording.ParentID, "mercury-recording.wav", recording.Revision)
+	require.NoError(t, err)
+	selector := api.ProcessingSelector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: processing.SuppliedMediaProfileName}
+	plan, err := c.API().PlanDocumentProcessing(t.Context(), &apiclient.PlanDocumentProcessingRequestOptions{Body: &api.ProcessingPlanRequest{Selector: selector}})
+	require.NoError(t, err)
+	_, err = c.API().GrantDocumentProcessingConsent(t.Context(), &apiclient.GrantDocumentProcessingConsentRequestOptions{Body: &api.ProcessingConsentGrantRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}})
+	require.NoError(t, err)
+	queued, err := c.RetryMedia(t.Context(), receipt.SourceID, api.MediaRetryBody{
+		OperationID: "00000000-0000-4000-8000-000000000803",
+		Processing:  &api.MediaProcessingBody{Profile: processing.SuppliedMediaProfileName, SuppliedInputID: artifact.SuppliedInputID},
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		status, statusErr := c.MediaStatus(t.Context(), receipt.SourceID)
+		return statusErr == nil && status.OperationID == queued.OperationID && status.OperationState == "succeeded"
+	}, 30*time.Second, 20*time.Millisecond)
+	fence := []string{version.ID}
+	for _, name := range []string{"mercury-a.txt", "mercury-b.txt"} {
+		node := createFileWithContent(t, ts, catalog, "/"+name, "unrelated synthetic text "+name)
+		fence = append(fence, node.CurrentVersionID)
+	}
+	request := api.DocumentSearchRequest{
+		Query: "mercury", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Limit: 1,
+		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: fence},
+	}
+	control, controlBody := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
+	require.Equal(t, http.StatusOK, control.StatusCode, controlBody)
+	var controlReport api.DocumentSearchReport
+	require.NoError(t, json.Unmarshal([]byte(controlBody), &controlReport))
+	require.Len(t, controlReport.Results, 1)
+	require.Equal(t, "node_name", controlReport.Results[0].Evidence[0].Kind)
+	require.True(t, controlReport.Truncated)
+	falseResponse, falseBody := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
+		"query": request.Query, "mode": request.Mode, "profile": request.Profile,
+		"limit": request.Limit, "fence": request.Fence, "content_first": false,
+	})
+	request.ContentFirst = true
+	response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.Equal(t, http.StatusOK, falseResponse.StatusCode, falseBody)
+	var falseReport api.DocumentSearchReport
+	require.NoError(t, json.Unmarshal([]byte(falseBody), &falseReport))
+	require.Equal(t, controlReport.Results, falseReport.Results)
+	require.Equal(t, controlReport.Truncated, falseReport.Truncated)
+	var report api.DocumentSearchReport
+	require.NoError(t, json.Unmarshal([]byte(body), &report))
+	require.Len(t, report.Results, 1)
+	require.Equal(t, version.ID, report.Results[0].ContentVersionID)
+	require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
+	require.NotEmpty(t, report.Results[0].Evidence[0].BuildID)
+	require.Contains(t, report.Results[0].Excerpt, "mercury retained transcript evidence")
+	typedReport, err := c.SearchDocuments(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, report.Results, typedReport.Results)
+}
+
 func TestMediaTranscriptHTTPReturnsUnavailableWithoutProcessing(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
@@ -226,7 +304,7 @@ func TestMediaUploadsOutliveRequestTimeout(t *testing.T) {
 	t.Parallel()
 	for _, artifact := range []bool{false, true} {
 		t.Run(fmt.Sprintf("artifact=%t", artifact), func(t *testing.T) {
-			ts, catalog := newTestServer(t, configureMediaTestService(t))
+			ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
 			wav := mediatest.WAV()
 			supplied := api.MediaSuppliedMetadata{
 				OperationID: "00000000-0000-4000-8000-000000000601", Filename: "slow.wav",
@@ -291,7 +369,7 @@ func TestMediaMultipartRejectsIncompleteEnvelopeBeforeRetention(t *testing.T) {
 		{name: "oversized metadata", oversized: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			ts, catalog := newTestServer(t, configureMediaTestService(t))
+			ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
 			wav := mediatest.WAV()
 			metadata := api.MediaSuppliedMetadata{OperationID: "00000000-0000-4000-8000-000000000391",
 				Filename: "bounded.wav", MediaType: "audio/wav", SHA256: processingTestHash(string(wav)),
@@ -342,7 +420,7 @@ func TestMediaMultipartRejectsIncompleteEnvelopeBeforeRetention(t *testing.T) {
 }
 
 func TestMediaRetryClassifiesProcessingErrors(t *testing.T) { //nolint:paralleltest // the two-second consent expiry is measured on the real clock
-	ts, catalog := newTestServer(t, configureMediaTestService(t))
+	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	wav := mediatest.WAV()
 	receipt, err := c.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
@@ -408,7 +486,7 @@ func TestMediaRetryClassifiesProcessingErrors(t *testing.T) { //nolint:parallelt
 
 func TestMediaReferenceRejectsUnsupportedProcessing(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, configureMediaTestService(t))
+	ts, _ := newTestServer(t, configureMediaTestService(t, 0))
 	response, body := do(t, ts, http.MethodPost, "/api/v1/media/sources", nil, api.MediaReferenceBody{
 		OperationID: "00000000-0000-4000-8000-000000000404", ReferenceURL: "https://recordings.invalid/call",
 		Occurrence: api.MediaOccurrenceBody{Ref: "call", Revision: "1"},
@@ -422,7 +500,7 @@ func TestMediaReferenceRejectsUnsupportedProcessing(t *testing.T) {
 
 func TestMediaHTTPMP3OrdinaryProcessingFreezesRevokedInput(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureMediaTestService(t))
+	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	mp3 := mediatest.MP3()
 	receipt, err := c.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
@@ -471,7 +549,7 @@ func TestMediaHTTPMP3OrdinaryProcessingFreezesRevokedInput(t *testing.T) {
 
 func TestMediaRouteRejectsCursorOwnedByAnotherPrincipal(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureMediaTestService(t))
+	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	for index, operationID := range []string{
 		"00000000-0000-4000-8000-000000000361",
@@ -500,7 +578,7 @@ func TestMediaRouteRejectsCursorOwnedByAnotherPrincipal(t *testing.T) {
 
 func TestMediaOperationReceiptRecoversLostRemoteSubmission(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureMediaTestService(t))
+	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	operationID := "00000000-0000-4000-8000-000000000371"
 	path := "/api/v1/media/operations/" + operationID
@@ -575,13 +653,16 @@ func newOtherPrincipalMediaServer(t *testing.T, catalog *testStore) *httptest.Se
 	return otherHTTP
 }
 
-func configureMediaTestService(t *testing.T) func(*api.Deps) {
+func configureMediaTestService(t *testing.T, lexicalLimit int) func(*api.Deps) {
 	t.Helper()
 	return func(deps *api.Deps) {
 		gate := api.NewOperationGate()
 		deps.Gate = gate
 		name, profile, err := processing.NewSuppliedMediaProfile(deps.Store, deps.Blobs, "daemon:operator")
 		require.NoError(t, err)
+		if lexicalLimit != 0 {
+			profile.Profile.Retrieval.LexicalLimit = lexicalLimit
+		}
 		var key [32]byte
 		key[0] = 7
 		service, err := processing.NewService(processing.ServiceConfig{Catalog: deps.Store,

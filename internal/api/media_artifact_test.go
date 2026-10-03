@@ -27,7 +27,7 @@ func TestMediaArtifactImportReusesImmutableInputBeforeCreatingNodes(t *testing.T
 		{name: "changed MIME", filename: "call.srt", mediaType: "text/vtt", newOperation: true, conflict: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			ts, catalog := newTestServer(t, configureMediaTestService(t))
+			ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
 			c := daemonconn.New(ts.URL, testAPIKey)
 			wav := mediatest.WAV()
 			source, err := c.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{
@@ -77,7 +77,7 @@ func TestMediaArtifactImportReusesImmutableInputBeforeCreatingNodes(t *testing.T
 
 func TestMediaArtifactConcurrentConflictsDoNotCreateExtraNodes(t *testing.T) {
 	t.Parallel()
-	ts, catalog := newTestServer(t, configureMediaTestService(t))
+	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
 	c := daemonconn.New(ts.URL, testAPIKey)
 	wav := mediatest.WAV()
 	source, err := c.SubmitSuppliedMedia(t.Context(), api.MediaSuppliedMetadata{

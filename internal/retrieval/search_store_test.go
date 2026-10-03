@@ -70,9 +70,9 @@ type changingSearchBackend struct {
 }
 
 func (backend *changingSearchBackend) SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int,
-	options store.SearchOptions,
+	options store.SearchOptions, contentFirst bool,
 ) ([]store.ExplainedLexicalCandidate, bool, error) {
-	candidates, truncated, err := backend.Store.SearchExplainedLexicalCandidates(ctx, query, limit, options)
+	candidates, truncated, err := backend.Store.SearchExplainedLexicalCandidates(ctx, query, limit, options, contentFirst)
 	if err == nil {
 		backend.afterSearch()
 	}
@@ -152,4 +152,67 @@ func TestExpansionValidatesScopeBeforeAuthorizationAndProvider(t *testing.T) {
 	require.Len(t, authorizer.operations, 1)
 	assert.Equal(t, store.SearchOptions{MIMEType: "text/plain", UnderNodeID: catalog.RootID(),
 		ModifiedSince: "2026-01-01T00:00:00.000000000Z"}, authorizer.operations[0].Scope)
+}
+
+func TestSearchContentFirstModes(t *testing.T) {
+	catalog, err := store.Open(filepath.Join(t.TempDir(), "search.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	name, err := catalog.CreateFile(t.Context(), catalog.RootID(), "mercury-name.txt", strings.Repeat("a", 64), 1, "text/plain")
+	require.NoError(t, err)
+	content, err := catalog.CreateFile(t.Context(), catalog.RootID(), "notes.txt", strings.Repeat("b", 64), 1, "text/plain")
+	require.NoError(t, err)
+	require.NoError(t, catalog.RecordExtraction(t.Context(), store.ExtractionResult{BlobHash: content.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: store.ExtractionOK, Text: "mercury retained evidence"}))
+	for _, mode := range []Mode{ModeAuto, ModeLexical, ModeHybrid, ModeSemantic} {
+		t.Run(string(mode), func(t *testing.T) {
+			_, stub, provider, descriptor := retrievalSearcherFixture(t, true, 2)
+			stub.vaultID = catalog.VaultID()
+			stub.semantic[0].VaultID = catalog.VaultID()
+			stub.semantic[0].NodeID = content.ID
+			stub.semantic[0].ContentVersionID = content.CurrentVersionID
+			stub.semantic[0].Path = "/notes.txt"
+			backend := &contentFirstSearchBackend{retrievalBackendStub: stub, catalog: catalog}
+			searcher, err := NewSearcher(SearcherConfig{Backend: backend, Encoders: &retrievalResolver{provider: provider}, Owner: "content-first-test", LeaseDuration: time.Minute})
+			require.NoError(t, err)
+			query := Query{Text: "mercury", Mode: mode, Limit: 2, Scope: store.SearchOptions{ContentVersionIDs: []string{name.CurrentVersionID, content.CurrentVersionID}}, ProcessingProfileFingerprint: strings.Repeat("a", 64), BindingID: "required", Authorization: retrievalAuthorization(descriptor)}
+			control, err := searcher.Search(t.Context(), query)
+			require.NoError(t, err)
+			calls := provider.calls
+			query.ContentFirst = true
+			report, err := searcher.Search(t.Context(), query)
+			require.NoError(t, err)
+			if mode == ModeSemantic {
+				require.Equal(t, control.Results, report.Results)
+				require.Equal(t, calls+1, provider.calls)
+			} else {
+				require.Len(t, report.Results, 2)
+				require.Equal(t, content.ID, report.Results[0].Document.NodeID)
+				require.Equal(t, "content_blob", report.Results[0].Evidence[0].Kind)
+				require.Equal(t, 1, report.Results[0].LexicalRank)
+				if mode == ModeHybrid {
+					require.Equal(t, 2, control.Results[0].LexicalRank)
+					require.Equal(t, 1, report.Results[0].SemanticRank)
+					require.InDelta(t, 2.0/61.0, report.Results[0].Score, 1e-12)
+					require.Equal(t, calls+1, provider.calls)
+				} else {
+					require.Equal(t, name.ID, control.Results[0].Document.NodeID)
+					require.Zero(t, provider.calls)
+				}
+			}
+		})
+	}
+}
+
+type contentFirstSearchBackend struct {
+	*retrievalBackendStub
+
+	catalog *store.Store
+}
+
+func (backend *contentFirstSearchBackend) SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int, options store.SearchOptions, contentFirst bool) ([]store.ExplainedLexicalCandidate, bool, error) {
+	return backend.catalog.SearchExplainedLexicalCandidates(ctx, query, limit, options, contentFirst)
+}
+
+func (backend *contentFirstSearchBackend) NormalizeSearchOptions(ctx context.Context, options store.SearchOptions) (store.SearchOptions, error) {
+	return backend.catalog.NormalizeSearchOptions(ctx, options)
 }
