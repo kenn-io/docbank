@@ -123,7 +123,7 @@ func (s *Store) ListPhotoAssets(ctx context.Context, request PhotoBrowseRequest,
 		cte := `WITH matched AS (` + populationSQL + `), assets AS (
    SELECT DISTINCT pf.asset_id FROM matched m JOIN photo_files pf ON pf.node_id=m.node_id
   ), displayed AS (
-   SELECT a.asset_id,a.kind,a.revision,f.file_id,n.id node_id,v.version_id,n.name,v.mime_type,n.created_at,
+   SELECT a.asset_id,a.kind,a.revision,f.file_id,n.id node_id,v.version_id,n.name,COALESCE(v.mime_type,'') mime_type,n.created_at,
     v.blob_hash,` + photoTechnicalSelect + `,` + sortKey + ` sort_key
    FROM assets matched_asset JOIN photo_assets a ON a.asset_id=matched_asset.asset_id
    JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id
