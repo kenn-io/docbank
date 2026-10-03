@@ -529,7 +529,7 @@ Use `VisualPreviewForSize`, `EnsureVisualPreviewForSize`, and
 `VisualPreviewLarge` to read, produce, or stream an exact retained recipe.
 Their maximum edges are 512, 2560, and 4096 pixels. Grid and fit leave the
 legacy active head alone. A newly produced large result becomes active;
-reusing a cached result preserves a different head and repairs a missing one.
+reusing a cached result preserves a different head.
 
 `docbank.VisualPreviewSupportsMediaType(mediaType)` checks normalized media
 types without reading or decoding a source. It reports whether a decoder path
