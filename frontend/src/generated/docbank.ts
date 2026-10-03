@@ -4459,6 +4459,9 @@ export const SavedQueryFiltersSchemaTextCoverageItem = {
   unavailable: 'unavailable',
 } as const;
 
+/**
+ * @nullable
+ */
 export type SavedQueryFiltersSchemaGpsBounds = {
   /** @maxLength 64 */
   east: string;
@@ -4468,7 +4471,7 @@ export type SavedQueryFiltersSchemaGpsBounds = {
   south: string;
   /** @maxLength 64 */
   west: string;
-};
+} | null;
 
 export interface SavedQueryFiltersSchema {
   /** @maxItems 64 */
@@ -4494,6 +4497,7 @@ export interface SavedQueryFiltersSchema {
      * @items.pattern ^[a-z0-9](?:[a-z0-9_-]{0,31})$
      */
   extensions?: string[];
+  /** @nullable */
   gps_bounds?: SavedQueryFiltersSchemaGpsBounds;
   /** @nullable */
   has_duplicates?: boolean | null;

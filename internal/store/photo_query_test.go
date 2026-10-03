@@ -49,6 +49,32 @@ func TestCompilePhotoPredicates(t *testing.T) {
 	}
 }
 
+func TestPhotoBrowseISOAndAssetPredicates(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for _, item := range []struct {
+		name string
+		iso  int64
+	}{{"low.jpg", 200}, {"boundary.jpg", 400}, {"high.jpg", 800}} {
+		node := browsePhotoNode(t, s, item.name, browseHash(item.name), "image/jpeg")
+		browsePhotoMetadata(t, s, node, item.name, photoMetadataField("image.exif.iso", "image.exif", "ISO", photoInteger(item.iso)))
+	}
+	boundary := browsePhotoPage(t, s, `{"filters":{"iso_min":400,"iso_max":400}}`)
+	require.Equal(t, int64(1), boundary.Total)
+	require.Equal(t, "boundary.jpg", boundary.Items[0].Name)
+	for _, raw := range []string{`{"filters":{"iso_max":400}}`, `{"syntax":"advanced","text":"iso_max:400"}`} {
+		page := browsePhotoPage(t, s, raw)
+		require.Equal(t, int64(2), page.Total, raw)
+		require.ElementsMatch(t, []string{"low.jpg", "boundary.jpg"}, []string{page.Items[0].Name, page.Items[1].Name}, raw)
+	}
+	id := boundary.Items[0].AssetID
+	for _, raw := range []string{`{"filters":{"asset_ids":["` + id + `"]}}`, `{"syntax":"advanced","text":"asset:` + id + `"}`} {
+		page := browsePhotoPage(t, s, raw)
+		require.Equal(t, int64(1), page.Total, raw)
+		require.Equal(t, id, page.Items[0].AssetID, raw)
+	}
+}
+
 func TestPhotoBrowseMemberSemantics(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
