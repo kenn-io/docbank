@@ -533,8 +533,8 @@ func (c *PackCatalog) DeleteIndexEntry(ctx context.Context, hash packstore.Hash)
 }
 
 func (c *PackCatalog) ListPackUsage(ctx context.Context) ([]packstore.PackUsage, error) {
-	// The catalog maintains these summaries when mappings or blob membership
-	// change. Reporting usage should visit packs, not every packed blob.
+	// The blob_pack_summary_* triggers in schema.sql maintain these summaries
+	// when mappings or blob membership change. Reporting usage visits packs.
 	rows, err := c.store.db.QueryContext(ctx, `
 		SELECT pack_id, entry_count, stored_bytes, created_at,
 		       live_entries, live_stored_bytes, live_raw_bytes,

@@ -21,8 +21,11 @@ func BenchmarkListPackUsage(b *testing.B) {
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, s.Close()) })
 			catalog := NewPackCatalog(s)
-			record := packstore.PackRecord{PackID: pack.NewPackID(), EntryCount: int64(entries),
-				StoredBytes: int64(entries * 128), CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+			record := packstore.PackRecord{
+				PackID: pack.NewPackID(), EntryCount: int64(entries),
+				StoredBytes: int64(entries * 128),
+				CreatedAt:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			}
 			adoptions := make([]packstore.Adoption, entries)
 			require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
 				for i := range entries {
