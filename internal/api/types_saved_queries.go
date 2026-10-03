@@ -75,7 +75,7 @@ type savedQueryFiltersSchema struct {
 	ISOMax               *int64                             `json:"iso_max,omitempty" nullable:"true" minimum:"0" maximum:"9007199254740991"`
 	CaptureAfter         *string                            `json:"capture_after,omitempty" nullable:"true" format:"date"`
 	CaptureBefore        *string                            `json:"capture_before,omitempty" nullable:"true" format:"date"`
-	GPSBounds            *savedQueryNullableGPSBoundsSchema `json:"gps_bounds,omitempty"`
+	GPSBounds            *savedQueryNullableGPSBoundsSchema `json:"gps_bounds,omitempty" nullable:"true"`
 	Paths                []string                           `json:"paths,omitempty" maxItems:"64"`
 	ExcludePaths         []string                           `json:"exclude_paths,omitempty" maxItems:"64"`
 	CollectionIDs        []string                           `json:"collection_ids,omitempty" maxItems:"64" format:"uuid"`

@@ -13513,7 +13513,9 @@ components:
             - west
             - north
             - east
-          type: object
+          type:
+            - object
+            - "null"
         has_duplicates:
           type:
             - boolean

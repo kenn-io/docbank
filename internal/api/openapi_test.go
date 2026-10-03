@@ -731,5 +731,6 @@ func TestOpenAPIPhotoBrowseContract(t *testing.T) {
 	for _, field := range []string{"kinds", "cameras", "lenses", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds", "asset_ids"} {
 		require.Contains(t, schemas["SavedQueryFiltersSchema"].Properties, field)
 	}
+	require.True(t, schemas["SavedQueryFiltersSchema"].Properties["gps_bounds"].Nullable)
 	require.ElementsMatch(t, []any{"name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time"}, schemas["SavedQuerySortSchema"].Properties["field"].Enum)
 }
