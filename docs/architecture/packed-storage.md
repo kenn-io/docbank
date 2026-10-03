@@ -1,6 +1,7 @@
 ---
 title: Loose & Packed Content
 description: The shared Kit packed-CAS layer and docbank's application-owned authority boundary.
+last_edited: 2026-09-30
 ---
 
 # Loose and packed content

@@ -1,6 +1,7 @@
 ---
 title: Capabilities
 description: What Docbank does for people, agents, applications, recovery, and physical storage.
+last_edited: 2026-09-20
 ---
 
 # Capabilities

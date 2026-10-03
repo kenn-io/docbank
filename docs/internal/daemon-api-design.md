@@ -1,3 +1,8 @@
+---
+title: "Daemon and API design"
+description: "Contributor guidance for daemon ownership, discovery, authentication, HTTP contracts, and maintenance boundaries."
+last_edited: 2026-10-02
+---
 # Daemon and API design
 
 The daemon owns a standalone vault. Every CLI data command and standalone

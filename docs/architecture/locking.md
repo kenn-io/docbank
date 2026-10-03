@@ -1,6 +1,7 @@
 ---
 title: Ownership & Concurrency
 description: How daemon and embedded owners coordinate concurrent access with SQLite, hierarchy locks, and owner-local operation gates.
+last_edited: 2026-09-18
 ---
 
 # Ownership and concurrency

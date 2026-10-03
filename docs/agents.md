@@ -1,6 +1,7 @@
 ---
 title: Docbank for Agents
 description: Why agents use docbank, which interface to choose, and the safety model for document automation.
+last_edited: 2026-09-17
 ---
 
 # Docbank for agents

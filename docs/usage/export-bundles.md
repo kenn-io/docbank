@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-30
 title: Verified export bundles
 description: Download exact document versions, verified email PDFs and attachment sets in reconciled ZIP bundles.
+last_edited: 2026-09-30
 ---
 
 # Verified export bundles

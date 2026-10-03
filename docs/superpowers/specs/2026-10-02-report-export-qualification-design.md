@@ -1,3 +1,8 @@
+---
+title: "Qualify retained PDF reports, native exports, and restore"
+description: "Qualification design for retained PDF reports, exact original exports, and recovery after physical backup restore."
+last_edited: 2026-10-02
+---
 # Qualify retained PDF reports, native exports, and restore
 
 Status: implemented; qualification runs in the CLI integration suite.

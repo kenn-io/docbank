@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-12
 title: Agent Integration Guide
 description: Connect an agent to docbank safely using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
+last_edited: 2026-09-12
 ---
 
 # Agent integration guide

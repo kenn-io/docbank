@@ -1,3 +1,8 @@
+---
+title: "CLI report recovery: author review"
+description: "Author review of the CLI report inspection and recovery design and its unavailable-handle guidance."
+last_edited: 2026-10-02
+---
 # CLI report recovery: author review
 
 Reviewed design: [Inspect and recover search reports from the CLI](2026-10-01-cli-report-recovery-design.md).

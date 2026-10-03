@@ -1,3 +1,8 @@
+---
+title: "CLI exports of selected original files"
+description: "Approved CLI contract for exporting exact retained original files with inline execution and explicit release."
+last_edited: 2026-09-30
+---
 # CLI exports of selected original files
 
 Status: implemented in this branch. The maintainer selected

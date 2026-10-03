@@ -1,6 +1,7 @@
 ---
 title: Docbank documentation
 description: Install Docbank, organize documents, automate a vault, and verify backups.
+last_edited: 2026-09-22
 ---
 
 # Docbank documentation

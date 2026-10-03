@@ -1,3 +1,8 @@
+---
+title: "Native MCP exports: adversarial self-review"
+description: "Historical author review of the native MCP export design, including accepted refinements and deferred scope."
+last_edited: 2026-10-01
+---
 # Native MCP exports: adversarial self-review
 
 Historical design review of [the implemented design](2026-09-30-mcp-native-exports-design.md) against

@@ -1,6 +1,7 @@
 ---
 title: Source Metadata
 description: How Docbank records bounded facts found inside original files.
+last_edited: 2026-09-30
 ---
 
 # Source metadata

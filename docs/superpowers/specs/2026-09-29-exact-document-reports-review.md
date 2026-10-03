@@ -1,3 +1,8 @@
+---
+title: "Exact-document reports: review follow-up"
+description: "Historical source checks and revisions from reviews of the selected-document report design."
+last_edited: 2026-09-29
+---
 # Exact-document reports: review follow-up
 
 Selected-document scope is implemented in [PR #726](https://github.com/kenn-io/docbank/pull/726).

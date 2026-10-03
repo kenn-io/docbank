@@ -1,4 +1,6 @@
 ---
+title: "Scan evidence assessment"
+description: "Reproduce synthetic scan measurements and understand what the existing PDF inspection APIs establish."
 last_edited: 2026-09-13
 ---
 

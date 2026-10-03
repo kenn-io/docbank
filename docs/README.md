@@ -1,3 +1,8 @@
+---
+title: "docbank documentation"
+description: "Place, maintain, build, and publish Docbank documentation within the software release boundary."
+last_edited: 2026-09-11
+---
 # docbank documentation
 
 This directory holds the [zensical](https://zensical.org) documentation site

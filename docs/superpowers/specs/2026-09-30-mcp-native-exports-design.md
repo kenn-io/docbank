@@ -1,3 +1,8 @@
+---
+title: "Native exports through local MCP"
+description: "Approved local MCP contract for creating, retrieving, and releasing exports of retained original files."
+last_edited: 2026-10-01
+---
 # Native exports through local MCP
 
 Status: implemented. Adversarial

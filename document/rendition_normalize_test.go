@@ -54,6 +54,11 @@ func TestBuildRenditionV1(t *testing.T) {
 
 	want, err := os.ReadFile("testdata/rendition-v1.golden.md")
 	require.NoError(t, err)
+	// The fixture's repository metadata is separate from the expected rendition.
+	frontmatter, ok := bytes.CutPrefix(want, []byte("---\n"))
+	require.True(t, ok)
+	_, want, ok = bytes.Cut(frontmatter, []byte("\n---\n"))
+	require.True(t, ok)
 	assert.Equal(t, string(want), string(rendered.Markdown))
 	assert.Equal(t, RenditionContractV1, rendered.ContractVersion)
 	assert.Equal(t, evidence.Checksum, rendered.EvidenceChecksum)

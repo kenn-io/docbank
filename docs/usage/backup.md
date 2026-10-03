@@ -1,6 +1,7 @@
 ---
 title: Backup & Restore
 description: Create incremental, verifiable snapshots in an immutable repository.
+last_edited: 2026-10-02
 ---
 
 # Backup & Restore

@@ -54,6 +54,11 @@ Do not infer fork eligibility or network/cache isolation from this setting.
 
 ## Documentation
 
+Every new Markdown file, except root `README.md` and `AGENTS.md`, must have YAML
+frontmatter with `title`, `description`, and `last_edited`, in that order.
+Update `last_edited` to the body-edit date whenever you change the body of any
+nonexempt Markdown file; preserve it for metadata-only edits.
+
 - Write for the person trying to use or maintain Docbank. Lead with the
   outcome, name who does what, use short sentences, and explain unfamiliar terms.
 - Organize around reader questions. Put purpose and current capabilities first;

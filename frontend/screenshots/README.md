@@ -1,4 +1,6 @@
 ---
+title: "Web screenshots"
+description: "Capture and review the real Docbank interface with Playwright, a real daemon, and a temporary synthetic vault."
 last_edited: 2026-09-11
 ---
 

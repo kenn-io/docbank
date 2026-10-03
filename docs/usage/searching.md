@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-13
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
+last_edited: 2026-09-13
 ---
 
 # Searching

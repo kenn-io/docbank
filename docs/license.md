@@ -1,6 +1,7 @@
 ---
 title: License
 description: Docbank is open-source software licensed under the Apache License, Version 2.0.
+last_edited: 2026-07-19
 ---
 
 # License

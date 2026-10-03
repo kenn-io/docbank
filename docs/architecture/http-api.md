@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-16
 title: HTTP API
 description: The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
+last_edited: 2026-09-16
 ---
 
 # HTTP API

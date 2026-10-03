@@ -1,6 +1,7 @@
 ---
 title: Integrity & Trust
 description: What docbank defends against, which layer owns each integrity guarantee, and the trade-offs that were considered and deliberately not taken.
+last_edited: 2026-09-10
 ---
 
 # Integrity and trust

@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-10-02
 title: Search exports
 description: Export dated search counts as CSV, review date evidence, and verify a frozen evidence ZIP.
+last_edited: 2026-10-02
 ---
 
 # Search exports

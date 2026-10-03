@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-11
 title: Organizing & Tagging
 description: Browsing, moving, renaming, and tagging in the virtual tree.
+last_edited: 2026-09-11
 ---
 
 # Organizing & Tagging

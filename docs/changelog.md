@@ -1,6 +1,7 @@
 ---
 title: Changelog
 description: Release history.
+last_edited: 2026-08-18
 ---
 
 # Changelog

@@ -1,6 +1,7 @@
 ---
 title: Trash, GC, Repack & Verify
 description: The explicit deletion and physical-reclamation lifecycle.
+last_edited: 2026-09-20
 ---
 
 # Trash, GC, Repack & Verify

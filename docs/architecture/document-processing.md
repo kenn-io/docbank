@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-14
 title: Document Processing
 description: How Docbank derives readable evidence and search data while preserving original versions and explicit processing consent.
+last_edited: 2026-09-14
 ---
 
 # Document Processing

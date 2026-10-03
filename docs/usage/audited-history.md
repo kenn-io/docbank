@@ -1,6 +1,7 @@
 ---
 title: Permanent Audited History
 description: Permanently retain every version and recorded change beneath a reviewed directory scope.
+last_edited: 2026-09-10
 ---
 
 # Permanent audited history

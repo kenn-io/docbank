@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-20
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
+last_edited: 2026-09-20
 ---
 
 # Configuration

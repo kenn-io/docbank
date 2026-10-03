@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-14
 title: Document processing
 description: Preview, consent to, and run configured document derivatives without losing source authority.
+last_edited: 2026-09-14
 ---
 
 # Document processing

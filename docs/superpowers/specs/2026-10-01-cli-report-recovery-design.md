@@ -1,3 +1,8 @@
+---
+title: "Inspect and recover search reports from the CLI"
+description: "Implemented CLI contract for inspecting retained search reports and recovering their evidence ZIP files."
+last_edited: 2026-10-02
+---
 # Inspect and recover search reports from the CLI
 
 Status: implemented. This document records the command contract.

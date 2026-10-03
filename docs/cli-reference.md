@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-16
 title: CLI Reference
 description: Every docbank command, flag, output format, and error behavior.
+last_edited: 2026-09-16
 ---
 
 # CLI Reference

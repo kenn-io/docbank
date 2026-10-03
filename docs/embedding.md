@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-16
 title: Embed in Go
 description: Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
+last_edited: 2026-09-16
 ---
 
 # Embed in Go

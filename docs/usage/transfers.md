@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-14
 title: Verify Transfer Packages
 description: Check a Msgvault transfer package locally before importing it.
+last_edited: 2026-09-14
 ---
 
 # Verify Transfer Packages

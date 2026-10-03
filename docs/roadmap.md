@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-13
 title: Roadmap
 description: Current capabilities, current limits, and planned product direction.
+last_edited: 2026-09-13
 ---
 
 # Roadmap

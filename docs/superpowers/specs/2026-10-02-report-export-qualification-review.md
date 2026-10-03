@@ -1,3 +1,8 @@
+---
+title: "Retained PDF workflow qualification: author review"
+description: "Historical design review and implementation evidence for retained PDF report, export, and restore qualification."
+last_edited: 2026-10-02
+---
 # Retained PDF workflow qualification: author review
 
 Reviewed design: [Qualify retained PDF reports, native exports, and restore](2026-10-02-report-export-qualification-design.md).

@@ -1,6 +1,7 @@
 ---
 title: Storage
 description: The SQLite schema, blob store layout, durability discipline, and enforced invariants.
+last_edited: 2026-09-10
 ---
 
 # Storage

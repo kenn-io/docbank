@@ -1,6 +1,7 @@
 ---
 title: Vault Lifecycle
 description: Operate a docbank vault safely from first import through maintenance, upgrades, snapshots, and recovery.
+last_edited: 2026-09-10
 ---
 
 # Vault lifecycle

@@ -1,6 +1,7 @@
 ---
 title: Editing & Versions
 description: Stable content-version identity, retrieval, replacement, reversion, and retention over immutable content.
+last_edited: 2026-09-10
 ---
 
 # Editing and versions

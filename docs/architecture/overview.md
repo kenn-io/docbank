@@ -1,6 +1,7 @@
 ---
 title: How Docbank Works
 description: A guided model of vaults, document identity, immutable content, storage authority, deletion, and recovery.
+last_edited: 2026-09-10
 ---
 
 # How Docbank works

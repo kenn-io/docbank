@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-13
 title: Document processing configuration
 description: Configure executable processing profiles while keeping credentials outside portable policy.
+last_edited: 2026-09-13
 ---
 
 # Document processing configuration

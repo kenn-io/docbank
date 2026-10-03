@@ -1,3 +1,8 @@
+---
+title: "Internal design documentation"
+description: "Find the internal design guides that own package responsibilities, contracts, and contributor constraints."
+last_edited: 2026-09-17
+---
 # Internal design documentation
 
 Use these guides to decide where a code change belongs and which contracts it

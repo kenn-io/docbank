@@ -1,3 +1,8 @@
+---
+title: "MCP search reports: author review"
+description: "Author review of the frozen MCP search report design and its exact selection and date paging boundaries."
+last_edited: 2026-10-01
+---
 # MCP search reports: author review
 
 Reviewed design: [Frozen search reports through local MCP](2026-10-01-mcp-search-reports-design.md).

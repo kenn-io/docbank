@@ -1,3 +1,8 @@
+---
+title: "Reports for selected document versions"
+description: "Approved contract for reports over selected document versions and preservation after source changes."
+last_edited: 2026-09-29
+---
 # Reports for selected document versions
 
 > **Implemented in [PR #726](https://github.com/kenn-io/docbank/pull/726).**

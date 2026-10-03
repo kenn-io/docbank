@@ -1,3 +1,8 @@
+---
+title: "Your documents. Ready for you and your agents."
+description: "Keep, find, and recover documents in a vault you control through Docbank interfaces for people and agents."
+last_edited: 2026-09-28
+---
 # Your documents. Ready for you and your agents.
 
 Keep, find, and recover documents in a vault you control. Docbank preserves saved

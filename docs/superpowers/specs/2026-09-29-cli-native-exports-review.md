@@ -1,3 +1,8 @@
+---
+title: "CLI native exports: review follow-up"
+description: "Historical source checks and review responses for the CLI native export and explicit release design."
+last_edited: 2026-09-30
+---
 # CLI native exports: review follow-up
 
 Historical design review: the CLI and explicit release are now implemented.

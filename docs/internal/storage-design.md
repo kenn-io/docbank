@@ -1,3 +1,8 @@
+---
+title: "Storage design"
+description: "Contributor guidance for virtual-tree authority, physical storage, ingest ordering, and schema compatibility."
+last_edited: 2026-10-01
+---
 # Storage design
 
 Keep document policy in Docbank and physical storage mechanics in Kit.

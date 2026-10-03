@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-29
 title: People
 description: List and edit canonical people through the daemon API and CLI, and read them through MCP.
+last_edited: 2026-09-29
 ---
 
 # People

@@ -1,3 +1,8 @@
+---
+title: "CSV to PDF conversion"
+description: "Convert verified CSV sources into bounded PDFs with deterministic layout and separate conversion receipts."
+last_edited: 2026-09-10
+---
 # CSV to PDF conversion
 
 `document/csvpdf.Convert` turns a verified `text/csv` source into independently

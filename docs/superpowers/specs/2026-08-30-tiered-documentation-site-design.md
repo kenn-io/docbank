@@ -1,3 +1,8 @@
+---
+title: "Tiered Documentation Site Design"
+description: "Historical proposal for the tiered Docbank website, including its retained dependency and publication gates."
+last_edited: 2026-09-10
+---
 # Tiered Documentation Site Design
 
 > **Historical design context.** This document preserves the original site

@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-13
 title: Document derivatives
 description: Authority, retention, retrieval, and rendition format for processed document derivatives.
+last_edited: 2026-09-13
 ---
 
 # Document derivatives

@@ -1,6 +1,7 @@
 ---
 title: Troubleshooting
 description: Diagnose docbank startup, daemon, import, integrity, update, and HTTP API failures without risking the vault.
+last_edited: 2026-09-10
 ---
 
 # Troubleshooting

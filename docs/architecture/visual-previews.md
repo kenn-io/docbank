@@ -1,6 +1,7 @@
 ---
 title: Visual Previews
 description: How Docbank identifies and retains canonical visual derivatives.
+last_edited: 2026-09-10
 ---
 
 # Visual previews

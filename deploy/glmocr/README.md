@@ -1,3 +1,8 @@
+---
+title: "Local GLM-OCR deployment"
+description: "Deploy, verify, and upgrade the pinned local GLM-OCR document pipeline on an NVIDIA GB10 host."
+last_edited: 2026-09-02
+---
 # Local GLM-OCR deployment
 
 This deployment runs the complete GLM-OCR document pipeline on one NVIDIA

@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-18
 title: Verified Page Images
 description: Exact-version page geometry and bounded local page rendering.
+last_edited: 2026-09-18
 ---
 
 # Verified page images

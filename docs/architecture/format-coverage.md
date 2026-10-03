@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-13
 title: Format Coverage
 description: How Docbank reports detection, retention, metadata, expansion, text, page, and transcript support from the running binary.
+last_edited: 2026-09-13
 ---
 
 # Format Coverage

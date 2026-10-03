@@ -1,3 +1,8 @@
+---
+title: "Frozen search reports through local MCP"
+description: "Implemented local MCP contract for frozen search reports, dated results, evidence retrieval, and release."
+last_edited: 2026-10-01
+---
 # Frozen search reports through local MCP
 
 Status: implemented. The corrected date pager applies to every caller.

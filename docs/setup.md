@@ -1,6 +1,7 @@
 ---
 title: Setup
 description: Install docbank on Linux, macOS, or Windows and create the vault.
+last_edited: 2026-09-10
 ---
 
 # Setup

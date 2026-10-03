@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-12
 title: Web application
 description: Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
+last_edited: 2026-09-12
 ---
 
 # Web application

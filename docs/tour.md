@@ -1,6 +1,7 @@
 ---
 title: Visual Tour
 description: See Docbank's real web and terminal interfaces running against synthetic document vaults.
+last_edited: 2026-09-10
 ---
 
 # Visual tour

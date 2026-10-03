@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-27
 title: Photo Assets
 description: Group ordinary file nodes into revisioned photo assets.
+last_edited: 2026-09-27
 ---
 
 # Photo Assets

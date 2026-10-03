@@ -1,3 +1,8 @@
+---
+title: "Keep a document from import to recovery"
+description: "Follow a document through import, stable identity, processing, retrieval, and verified recovery in Docbank."
+last_edited: 2026-09-28
+---
 # Keep a document from import to recovery
 
 Import a document, save changes, and recover it later. These steps explain what

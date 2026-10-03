@@ -1,3 +1,8 @@
+---
+title: "DOCX fixtures"
+description: "Provenance, page-count behavior, and checksums of synthetic DOCX fixtures for Mistral adapter tests."
+last_edited: 2026-09-18
+---
 # DOCX fixtures
 
 These files contain synthetic text only. They exist for the Mistral adapter

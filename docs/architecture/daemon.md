@@ -1,6 +1,7 @@
 ---
 title: Daemon & Process Model
 description: docbank daemon run — the single process that owns the vault, and how the CLI discovers, auto-starts, and stops it.
+last_edited: 2026-09-17
 ---
 
 # Daemon and process model

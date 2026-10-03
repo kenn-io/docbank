@@ -1,3 +1,8 @@
+---
+title: "Development guide"
+description: "Map code changes to their owning packages and preserve contracts across affected clients and documentation."
+last_edited: 2026-09-26
+---
 # Development guide
 
 Start with the component that owns the behavior, then update each client and

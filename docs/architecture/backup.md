@@ -1,6 +1,7 @@
 ---
 title: Backup & Recovery
 description: Docbank's JSONL-native Kit snapshot and restore architecture.
+last_edited: 2026-09-21
 ---
 
 # Backup and recovery

@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-09-23
 title: Document Understanding in Go
 description: Choose Go packages for document extraction, canonical evidence, renditions, and embeddings without opening a Docbank vault.
+last_edited: 2026-09-23
 ---
 
 # Document Understanding in Go

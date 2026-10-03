@@ -1,3 +1,8 @@
+---
+title: "Render documents to PDF"
+description: "Convert verified office documents into bounded PDFs using pinned LibreOffice and isolated conversion stages."
+last_edited: 2026-09-19
+---
 # Render documents to PDF
 
 `document/renderpdf` converts byte-verified office sources to bounded PDFs
