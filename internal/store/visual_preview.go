@@ -351,11 +351,7 @@ type PhotoVisualPreviewTarget struct {
 	MediaType    string
 }
 
-const liveIncludedDisplayPredicate = `a.excluded_at IS NULL AND f.asset_id=a.asset_id AND f.role<>'sidecar' AND n.kind='file' AND n.trashed_at IS NULL AND v.node_id=n.id AND v.version_id=n.current_version_id AND NOT EXISTS (
- WITH RECURSIVE display_ancestors(id,parent_id,trashed_at) AS (
- SELECT id,parent_id,trashed_at FROM nodes WHERE id=n.parent_id
- UNION ALL SELECT p.id,p.parent_id,p.trashed_at FROM nodes p JOIN display_ancestors c ON p.id=c.parent_id
- ) SELECT 1 FROM display_ancestors WHERE trashed_at IS NOT NULL)`
+const liveIncludedDisplayPredicate = `a.excluded_at IS NULL AND n.trashed_at IS NULL`
 const liveIncludedPhotoDisplayPredicate = `a.kind='photo' AND ` + liveIncludedDisplayPredicate
 
 // MissingPhotoVisualPreviewTargetsAfter lists display versions without a recorded recipe.
@@ -442,15 +438,16 @@ func photoPreviewGenerations(ctx context.Context, q metadataQuerier, versions []
 	if len(versions) == 0 || len(recipes) == 0 {
 		return result, nil
 	}
-	var predicates []string
-	var args []any
+	args := make([]any, 0, len(versions)+len(recipes))
 	for _, version := range versions {
-		for _, recipe := range recipes {
-			predicates = append(predicates, `(content_version_id=? AND recipe_fingerprint=?)`)
-			args = append(args, version, recipe)
-		}
+		args = append(args, version)
 	}
-	rows, err := q.QueryContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE `+strings.Join(predicates, ` OR `), args...)
+	for _, recipe := range recipes {
+		args = append(args, recipe)
+	}
+	versionSlots := strings.TrimSuffix(strings.Repeat("?,", len(versions)), ",")
+	recipeSlots := strings.TrimSuffix(strings.Repeat("?,", len(recipes)), ",")
+	rows, err := q.QueryContext(ctx, `SELECT `+visualPreviewGenerationColumns+` FROM visual_preview_generations WHERE content_version_id IN (`+versionSlots+`) AND recipe_fingerprint IN (`+recipeSlots+`)`, args...)
 	if err != nil {
 		return nil, err
 	}

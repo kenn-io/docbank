@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"go.kenn.io/docbank/internal/query"
 	"strconv"
 	"strings"
@@ -35,7 +36,7 @@ func compilePhotoScalarPredicate(field, value string) (compiledQueryFragment, er
 	case "iso", "iso_min", "iso_max":
 		n, err := query.ParseSizeOperand(value)
 		if err != nil {
-			return compiledQueryFragment{}, err
+			return compiledQueryFragment{}, fmt.Errorf("ISO %s: %w", field, err)
 		}
 		operator := "="
 		if field == "iso_min" {

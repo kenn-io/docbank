@@ -62,8 +62,9 @@ func exercisePhotoCaptureFunction(t *testing.T, db *sql.DB) {
 		require.Equal(t, tc.key, key)
 	}
 	var key string
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT docbank_query_capture_time_v1(COALESCE(NULL,''),'','','')`).Scan(&key))
-	require.Empty(t, key)
+	require.Error(t, db.QueryRowContext(t.Context(), `SELECT docbank_query_capture_time_v1(NULL,'','','')`).Scan(&key))
+	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT docbank_query_capture_time_v1(CAST('2024-01-02' AS BLOB),'date','omitted','')`).Scan(&key))
+	require.Equal(t, "2024-01-02T00:00:00.000000000", key)
 	require.Error(t, db.QueryRowContext(t.Context(), `SELECT docbank_query_capture_time_v1('bad','date','omitted','')`).Scan(&key))
 }
 

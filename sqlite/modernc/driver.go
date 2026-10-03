@@ -21,14 +21,14 @@ func init() {
 	modernsqlite.MustRegisterDeterministicScalarFunction("docbank_query_capture_time_v1", 4, func(_ *modernsqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 		values := make([]string, 4)
 		for i, arg := range args {
-			if arg == nil {
-				continue
-			}
-			text, ok := arg.(string)
-			if !ok {
+			switch value := arg.(type) {
+			case string:
+				values[i] = value
+			case []byte:
+				values[i] = string(value)
+			default:
 				return nil, errors.New("capture time requires text")
 			}
-			values[i] = text
 		}
 		return query.CaptureTimeKey(values[0], values[1], values[2], values[3])
 	})

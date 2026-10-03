@@ -161,6 +161,8 @@ func TestDocumentCatalogRouteRejectsInvalidAndExpiredCursors(t *testing.T) {
 		assertDocumentCursorProblem(t, ts, "/api/v1/documents?page_size=1&cursor="+
 			url.QueryEscape(malformed), "invalid_document_cursor")
 	}
+	_, malformedBody := get(t, ts, "/api/v1/documents?page_size=1&cursor=not-a-cursor", nil)
+	assert.Equal(t, "invalid document cursor: malformed envelope", decodeProblem(t, malformedBody).Detail)
 	nonCanonical := nonCanonicalDocumentCursor(t, page.NextCursor)
 	assertDocumentCursorProblem(t, ts, "/api/v1/documents?page_size=1&cursor="+
 		url.QueryEscape(nonCanonical), "invalid_document_cursor")

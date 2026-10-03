@@ -107,12 +107,8 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		if hex.EncodeToString(digest[:]) != output.BlobSHA256 {
 			return nil, NewError(http.StatusInternalServerError, "photo_preview_corrupt", "The photo preview digest disagrees with its generation.")
 		}
-		final, err := d.Store.PhotoVisualPreviewByGeneration(ctx, in.AssetID, in.GenerationID)
-		if err != nil {
+		if _, err := d.Store.PhotoVisualPreviewByGeneration(ctx, in.AssetID, in.GenerationID); err != nil {
 			return nil, FromStoreError(err)
-		}
-		if final.Generation.Checksum != view.Generation.Checksum {
-			return nil, NewError(http.StatusConflict, "photo_preview_changed", "The photo preview generation changed.")
 		}
 		return &huma.StreamResponse{Body: func(hctx huma.Context) {
 			hctx.SetHeader("Content-Type", output.MediaType)
