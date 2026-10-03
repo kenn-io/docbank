@@ -147,7 +147,7 @@ func (service *documentQueryService) decodePhotoCursor(raw string) (store.PhotoB
 		return store.PhotoBrowsePosition{}, store.ErrInvalidPhotoCursor
 	}
 	position := cursor.Position
-	if cursor.Type != "photo-v1" || query.ValidateTextOperand("asset", position.AssetID) != nil || len(position.Key) > store.MaxWalkPathBytes || len(position.QueryIdentity) != 64 || position.Missing && position.Key != "" {
+	if cursor.Type != "photo-v1" || query.ValidateTextOperand("asset", position.AssetID) != nil || len(position.Key) > store.MaxPhotoSortKeyBytes || len(position.QueryIdentity) != 64 || position.Missing && position.Key != "" {
 		return store.PhotoBrowsePosition{}, store.ErrInvalidPhotoCursor
 	}
 	if _, err := hex.DecodeString(position.QueryIdentity); err != nil {

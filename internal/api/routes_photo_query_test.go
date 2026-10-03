@@ -60,6 +60,29 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 	require.NotNil(t, decodeProblem(t, body).Position)
 }
 
+func TestPhotoBrowseCursorAfterLongName(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	for _, name := range []string{strings.Repeat("a", 17000) + ".jpg", "b.jpg"} {
+		_, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 10, "image/jpeg")
+		require.NoError(t, err)
+	}
+	request := api.PhotoBrowseRequest{Query: api.QueryPayload(`{"sort":{"field":"name","direction":"asc"}}`), PageSize: 1}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var first api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &first))
+	require.NotEmpty(t, first.NextCursor)
+	request.Cursor = first.NextCursor
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var second api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &second))
+	require.Len(t, second.Items, 1)
+	require.NotEqual(t, first.Items[0].AssetID, second.Items[0].AssetID)
+	require.Empty(t, second.NextCursor)
+}
+
 func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
