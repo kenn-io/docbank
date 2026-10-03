@@ -97,3 +97,9 @@ var (
 // the check, so an accidentally propagated bad revision fails stale
 // instead of silently mutating.
 const UnconditionalRev int64 = -1
+
+// ErrInvalidPhotoQuery identifies invalid browse requests.
+var ErrInvalidPhotoQuery = errors.New("invalid photo query")
+
+// ErrInvalidPhotoCursor identifies invalid authenticated positions.
+var ErrInvalidPhotoCursor = errors.New("invalid photo cursor")

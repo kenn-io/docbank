@@ -141,3 +141,18 @@ it.each(["end", "cancel"])("reads export progress incrementally before stream %s
     await events.return(undefined);
   }
 });
+
+it("sends photo query intent through the generated read-only POST and preserves preview bytes", async () => {
+  const query = { filters: { kinds: ["photo"], iso_min: 0, gps_bounds: { south: "-10", west: "170", north: "10", east: "-170" } }, sort: { field: "capture_time", direction: "desc" } };
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ items: [], total: 0 })).mockResolvedValueOnce(new Response("synthetic JPEG", { headers: { "Content-Type": "image/jpeg" } }));
+  await api.listPhotoAssets({ query } as api.PhotoBrowseRequest, { session: "synthetic-session" });
+  const [url, request] = fetch.mock.calls[0];
+  expect(url).toBe("/api/v1/photos/assets/query");
+  expect(request?.method).toBe("POST");
+  expect(JSON.parse(String(request?.body))).toEqual({ query });
+  expect(new Headers(request?.headers).get("X-Docbank-Web-Session")).toBe("synthetic-session");
+  const response = await api.readPhotoPreview("00000000-0000-4000-8000-000000000001", "a".repeat(64), { session: "synthetic-session" });
+  expect(response).toBeInstanceOf(Response);
+  expect(await response.text()).toBe("synthetic JPEG");
+  expect(String(fetch.mock.calls[1][0])).not.toContain("synthetic-session");
+});

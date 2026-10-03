@@ -137,6 +137,16 @@ need it unless their contract requires a globally quiescent snapshot.
 
 ## API shape and errors
 
+### Photo browsing and preview reads
+
+`POST /api/v1/photos/assets/query` accepts raw strict QueryV1 JSON, coverage selection, a page size and an optional signed cursor. The shared query resolver and compiler evaluate the complete query against each current live member. Store projects those matches to included assets with a live display member, deduplicates assets and counts the entire population in the same lexical-generation read snapshot. Optional content duplicate collapse runs after photo scoping and before asset projection.
+
+Display facts and ordering come from the persisted display file. Capture keys call `document.EventAxisKey` through the shared query adapter registered in both SQLite drivers. Capture evidence retains its precision and explicit or omitted timezone. Missing, unreadable or out-of-domain capture keys sort last. Asset UUID breaks equal keys in ascending order. Forward cursors bind canonical intent, dependency revisions, coverage and page size through the existing document cursor signing service. Each request reads current data; pages share a keyset boundary rather than a retained snapshot.
+
+`GET /api/v1/photos/assets/{asset_id}/previews/{generation_id}` checks included live display membership and the exact retained generation in one read transaction, then verifies the complete bounded JPEG bytes. Headers include generation ETag, Content-Digest, exact length, `nosniff` and `private, no-store`. Recipe discovery reads recorded outcomes without generating derivatives. Missing is absence; ready, unsupported and failed remain separate states.
+
+Browser sessions allow only these exact method/path pairs with empty query strings.
+
 ### Photo graph routes
 
 Photo endpoints are daemon-only typed routes over the store's graph authority.

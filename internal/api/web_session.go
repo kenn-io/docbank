@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"go.kenn.io/docbank/internal/query"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -228,6 +229,15 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
+	if r.URL.Path == "/api/v1/photos/assets/query" {
+		return r.Method == http.MethodPost && r.URL.RawQuery == ""
+	}
+	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/assets/"); ok {
+		parts := strings.Split(after, "/")
+		if len(parts) == 3 && parts[1] == "previews" {
+			return r.Method == http.MethodGet && r.URL.RawQuery == "" && validPhotoPreviewPath(parts[0], parts[2])
+		}
+	}
 	if emailNavigationBrowserReadAllowed(r) || emailViewerBrowserReadAllowed(r) {
 		return true
 	}
@@ -566,4 +576,12 @@ func registerWebSession(
 		sessions.revoke(r.Header.Get(WebSessionHeader))
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+func validPhotoPreviewPath(assetID, generationID string) bool {
+	if query.ValidateTextOperand("asset", assetID) != nil || len(generationID) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(generationID)
+	return err == nil && strings.ToLower(generationID) == generationID
 }

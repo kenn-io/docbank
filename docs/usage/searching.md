@@ -133,6 +133,10 @@ Use [Search exports](search-exports.md) to compare date-scoped search terms in
 an eight-column CSV and retain a frozen evidence ZIP. Recent export history
 keeps reusable requests; named saved queries remain a separate workflow.
 
+## Photo query predicates
+
+Saved QueryV1 definitions can retain photo kind, exact camera/lens make or model, safe integer ISO bounds, capture dates, decimal-string GPS boxes and asset UUID sets. See [Browse photo assets over HTTP](photos.md#browse-photo-assets-over-http) for the complete field and sort contract. Existing tags, text and collection predicates combine through the same compiler. A RAW/JPEG pair appears once when a member satisfies the whole query; facts from different members do not jointly satisfy an AND. `NOT camera:A` may match through a member lacking camera A. Document snapshots support these predicates, but `capture_time` and `import_time` sorting is available only in Photos; a snapshot request naming either field gets an explicit error.
+
 ## Save complete query intent over HTTP
 
 Save a named search definition when several clients need to reuse it. The

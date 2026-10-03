@@ -78,6 +78,8 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `GET /nodes/{id}/provenance` | inspect immutable ingest-origin facts newest-first, paginated (`limit`/`offset`) | Implemented |
 | `POST /nodes/{id}/provenance` | append an immutable origin fact under the node revision | Implemented |
 | `GET /photos/assets/{asset_id}` · `GET /photos/nodes/{node_id}/asset` | inspect one bounded photo graph by asset or member node | Implemented |
+| `POST /photos/assets/query` | list matching assets once each with a whole-query total and keyset cursor | Implemented |
+| `GET /photos/assets/{asset_id}/previews/{generation_id}` | read verified bytes for an eligible display preview | Implemented |
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |
 | `POST /photos/assets/{asset_id}/exclude` · `POST /photos/nodes/{node_id}/promote` | change exclusion or explicitly promote a live file | Implemented |
 | `PUT /photos/assets/{asset_id}/display` · `GET\|PUT /photos/settings` | set an asset display override or vault preference | Implemented |
@@ -708,7 +710,7 @@ QueryV1 stores these fields. Defaults apply when a field is omitted:
 | `syntax` | `simple` or `advanced` | `simple` |
 | `mode` | `lexical`, `semantic`, or `hybrid` | `lexical` |
 | `filters` | Object described below | `{}` |
-| `sort.field` | `name`, `path`, `modified_at`, `size`, `media_type`, or `relevance` | `name` |
+| `sort.field` | `name`, `path`, `modified_at`, `size`, `media_type`, `relevance`, `capture_time`, or `import_time` | `name` |
 | `sort.direction` | `asc` or `desc` | `asc` |
 
 The `filters` object accepts the following saved choices. These are storage
@@ -725,6 +727,12 @@ fields, not additional parameters for `GET /search`:
 | `modified_after`, `modified_before` | RFC3339 timestamps, normalized to UTC |
 | `size_min`, `size_max` | Byte counts from 0 through 9,007,199,254,740,991 |
 | `text_coverage` | Array of at most 6 entries: `complete`, `partial`, `failed`, `unprocessed`, `none`, or `unavailable` |
+| `kinds` | At most 64 entries, `photo` or `video` |
+| `cameras`, `lenses` | At most 64 exact make/model strings, each 1 through 256 Unicode characters |
+| `iso_min`, `iso_max` | Inclusive safe nonnegative integer bounds; zero is accepted |
+| `capture_after`, `capture_before` | Strict YYYY-MM-DD dates; inclusive lower and exclusive upper bounds |
+| `gps_bounds` | Decimal-string `south`, `west`, `north`, `east`; each at most 64 characters, latitude within -90 through 90, longitude within -180 through 180, south <= north; west > east crosses the antimeridian |
+| `asset_ids` | At most 64 canonical UUIDv4 values |
 
 Filter sets are sorted and deduplicated when saved. Query text is not trimmed
 or rewritten. Unknown fields and duplicate JSON object keys are rejected.
@@ -1006,6 +1014,10 @@ an existing folder. The import is a durable job of kind `photo_import`.
 skipped, changed, failed, ambiguous and unsupported counts, plus the groups
 left unpaired. `POST /jobs/{operation_id}/cancel` stops it before the next
 group. Starting an import requires the API key on a loopback connection.
+
+`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` and `cursor`, returning one item per eligible matching asset, whole-query `total` and optional forward `next_cursor`. The supported sort fields are `capture_time`, `import_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Capture keys sort missing or unreadable evidence last, then use ascending asset UUID for ties. Text keys compare their first 1,024 characters, so names or media types that share that prefix fall back to the UUID order. Document snapshots reject `capture_time` and `import_time` with a field-specific error that directs callers to Photos. Cursors expire after 15 minutes and bind resolved saved-query revisions, effective coverage and page size. Invalid options return `invalid_photo_query`; invalid or changed bindings return `invalid_photo_cursor`; expiry returns `cursor_expired`. Invalid expressions retain their operand positions.
+
+`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag, `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-store`. Browser sessions permit the exact list POST and preview GET with empty query strings. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
 
 Person reads return the canonical row and, for `GET /people/by-id/{person_id}`,
 the identities and external UIDs used by split. Rename, retire, merge, and

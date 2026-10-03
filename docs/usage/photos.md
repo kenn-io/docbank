@@ -156,5 +156,14 @@ an empty asset identity.
 Automatic enrollment and explicit graph writes are skipped or refused when
 audit authority is active, according to the existing audit boundary. The
 preexisting graph is preserved and becomes read-only when audit is enabled.
-Browsing and query predicates, technical photo metadata, owners, and browser
-UI belong to later slices.
+## Browse photo assets over HTTP
+
+`POST /api/v1/photos/assets/query` accepts a `query` object using [QueryV1](../architecture/http-api.md#saved-query-and-highlight-definitions), optional `coverage`, `page_size` from 1 through 250 and `cursor`. It returns `items`, the complete matching asset `total` and an optional `next_cursor`. The default page size is 50. Send the same intent and page options with each continuation. An edited saved query invalidates its earlier cursor; cursors expire after 15 minutes. Ordinary file changes follow live ordering and can move across the previous page boundary.
+
+Use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`, `iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`, `capture_before:2025-01-01`, `gps:"-10,170,10,-170"` or `asset:` followed by a canonical UUIDv4. Existing `collection:`, tags and text predicates combine with these fields. Camera and lens match either their exact make or exact model. Typed filter arrays OR their values; separate filters AND together. Dates use YYYY-MM-DD with an inclusive lower bound and exclusive upper bound. GPS uses inclusive decimal-string latitude/longitude bounds and permits boxes crossing the antimeridian.
+
+One member must satisfy the whole query. If a RAW has camera A and its paired JPEG has lens B, `camera:A AND lens:B` requires one member with both facts. `camera:A OR lens:B` matches the pair once. `NOT camera:A` can match through the JPEG without A. Saved expressions follow the same rule. Sidecars can match ordinary predicates, while the display always comes from the chosen image, RAW or video file. Excluded, trashed and displayless assets stay out.
+
+Sort by `capture_time`, `import_time`, `name`, `modified_at`, `size` or `media_type`, with `asc` or `desc`. Capture sorting retains explicit offsets and omitted-zone evidence; omitted zones use civil calendar coordinates. Missing or unreadable capture times sort last in both directions and do not match capture-date filters. Asset UUID orders equal keys. Names and media types compare only their first 1,024 characters, so longer values that share that prefix also fall back to UUID order. `path` and `relevance` are unsupported by this route. Document snapshots reject `capture_time` and `import_time` with an error naming Photos as the supported view.
+
+Each row has grid, fit and large preview slots. `missing` means no retained result exists for that recipe. Stored `ready`, `unsupported` and `failed` outcomes retain their generation identity. Only ready slots include a generation URL and JPEG output metadata. Read that URL with the browser session header; credentials stay out of URLs. The read verifies complete bytes and current display eligibility, and returns `private, no-store`. A later display replacement or exclusion can make an earlier URL unavailable. Listing never creates previews.

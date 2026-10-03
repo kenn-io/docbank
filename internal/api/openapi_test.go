@@ -732,3 +732,20 @@ func TestOpenAPIProvenanceMTimeUsesDateTimeFormat(t *testing.T) {
 		assert.Equal(t, "date-time", mtime.Format)
 	}
 }
+
+func TestOpenAPIPhotoBrowseContract(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	list := doc.Paths["/api/v1/photos/assets/query"].Post
+	require.NotNil(t, list)
+	require.Equal(t, "listPhotoAssets", list.OperationID)
+	require.Equal(t, "readPhotoPreview", doc.Paths["/api/v1/photos/assets/{asset_id}/previews/{generation_id}"].Get.OperationID)
+	schemas := doc.Components.Schemas.Map()
+	require.True(t, schemas["PhotoBrowseRow"].Properties["capture_time"].Nullable)
+	require.ElementsMatch(t, []any{"missing", "ready", "unsupported", "failed"}, schemas["PhotoPreviewSlot"].Properties["state"].Enum)
+	for _, field := range []string{"kinds", "cameras", "lenses", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds", "asset_ids"} {
+		require.Contains(t, schemas["SavedQueryFiltersSchema"].Properties, field)
+	}
+	require.True(t, schemas["SavedQueryFiltersSchema"].Properties["gps_bounds"].Nullable)
+	require.ElementsMatch(t, []any{"name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time"}, schemas["SavedQuerySortSchema"].Properties["field"].Enum)
+}
