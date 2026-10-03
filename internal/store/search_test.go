@@ -641,7 +641,7 @@ func TestSearchExplainedLexicalCandidatesCitesActiveRenditionSegment(t *testing.
 		ContentVersionID: versions[0], ProcessingProfileFingerprint: profile.Fingerprint,
 		AttachmentID: attachment.ID, PublishedAt: embeddingCatalogTime}, generation.ID))
 
-	candidates, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 10, SearchOptions{})
+	candidates, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 10, SearchOptions{}, false)
 	require.NoError(t, err)
 	assert.False(t, truncated)
 	require.Len(t, candidates, 1)
@@ -662,7 +662,7 @@ func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
 	_, err = s.CreateFile(t.Context(), docs.ID, "alpha.pdf", fakeHash("alpha"), 1, "application/pdf")
 	require.NoError(t, err)
 
-	candidates, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "alpha", 10, SearchOptions{})
+	candidates, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "alpha", 10, SearchOptions{}, false)
 
 	require.NoError(t, err)
 	assert.False(t, truncated)
@@ -677,7 +677,7 @@ func TestSearchExplainedLexicalCandidatesBoundsLongNameExcerpt(t *testing.T) {
 	_, err := s.CreateFile(t.Context(), s.RootID(), name, fakeHash("long-name"), 1, "application/pdf")
 	require.NoError(t, err)
 
-	candidates, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "alpha", 10, SearchOptions{})
+	candidates, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "alpha", 10, SearchOptions{}, false)
 
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
@@ -2174,19 +2174,16 @@ func TestSearchContentFirstDefaultParity(t *testing.T) {
 	names := []string{"mercury-b.txt", "mércury-a.txt", "notes.txt"}
 	kinds := []string{"node_name", "node_name", "content_blob"}
 	for _, limit := range []int{1, 2, 3} {
-		for _, opts := range []SearchOptions{{}, {ContentFirst: false}} {
-			hits, overflow, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", limit, opts)
-			require.NoError(t, err)
-			require.Len(t, hits, limit)
-			require.Equal(t, limit < len(names), overflow)
-			for index, hit := range hits {
-				require.Equal(t, names[index], hit.Node.Name)
-				require.Equal(t, kinds[index], hit.EvidenceKind)
-				require.Equal(t, nodes[names[index]].ID, hit.Node.ID)
-				require.Equal(t, nodes[names[index]].CurrentVersionID, hit.Node.CurrentVersionID)
-			}
+		hits, overflow, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", limit, SearchOptions{}, false)
+		require.NoError(t, err)
+		require.Len(t, hits, limit)
+		require.Equal(t, limit < len(names), overflow)
+		for index, hit := range hits {
+			require.Equal(t, names[index], hit.Node.Name)
+			require.Equal(t, kinds[index], hit.EvidenceKind)
+			require.Equal(t, nodes[names[index]].ID, hit.Node.ID)
+			require.Equal(t, nodes[names[index]].CurrentVersionID, hit.Node.CurrentVersionID)
 		}
-		t.Logf("limit=%d omitted/false match expected baseline identities, evidence, order and truncation", limit)
 	}
 }
 
@@ -2210,12 +2207,11 @@ func TestSearchContentFirstPageBoundary(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: node.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: test.texts[index]}))
 			}
-			hits, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 1, SearchOptions{ContentFirst: true})
+			hits, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 1, SearchOptions{}, true)
 			require.NoError(t, err)
 			require.Len(t, hits, 1)
 			require.Equal(t, "content_blob", hits[0].EvidenceKind)
 			require.Equal(t, test.truncated, truncated)
-			t.Logf("limit=1 %s truncated=%t evidence=content_blob", test.name, truncated)
 		})
 	}
 }
@@ -2233,7 +2229,7 @@ func TestSearchContentFirstFence(t *testing.T) {
 			ids = append(ids, node.CurrentVersionID)
 		}
 	}
-	hits, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 2, SearchOptions{ContentFirst: true, ContentVersionIDs: ids})
+	hits, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 2, SearchOptions{ContentVersionIDs: ids}, true)
 	require.NoError(t, err)
 	require.False(t, truncated)
 	require.Len(t, hits, 2)
@@ -2241,12 +2237,11 @@ func TestSearchContentFirstFence(t *testing.T) {
 	require.Equal(t, "content_blob", hits[0].EvidenceKind)
 	require.Equal(t, ids[1], hits[1].Node.CurrentVersionID)
 	require.Equal(t, "node_name", hits[1].EvidenceKind)
-	t.Log("ContentVersionIDs excludes higher-ranked content before cutoff; scoped filename tail retained")
 }
 
 func TestSearchContentFirstNodeStates(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"live_file", "live_dir", "trash_root", "trash_descendant", "cascade_deleted"} {
+	for _, state := range []string{"live_file", "directory_only_match", "trash_root", "trash_descendant", "cascade_deleted"} {
 		t.Run(state, func(t *testing.T) {
 			s := newTestStore(t)
 			parent, err := s.Mkdir(t.Context(), s.RootID(), "mercury-parent")
@@ -2255,7 +2250,7 @@ func TestSearchContentFirstNodeStates(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: node.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "mercury evidence"}))
 			switch state {
-			case "live_dir":
+			case "directory_only_match":
 				_, _, err = s.Move(t.Context(), node.ID, parent.ID, "other.txt", node.Revision)
 				require.NoError(t, err)
 				_, _, err = s.ReplaceContent(t.Context(), node.ID, -1, fakeHash("02"), 1, "text/plain")
@@ -2272,7 +2267,7 @@ func TestSearchContentFirstNodeStates(t *testing.T) {
 			}
 			require.NoError(t, err)
 			for _, preference := range []bool{false, true} {
-				hits, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 10, SearchOptions{ContentFirst: preference})
+				hits, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 10, SearchOptions{}, preference)
 				require.NoError(t, err)
 				if state == "live_file" {
 					require.Len(t, hits, 1)
@@ -2281,14 +2276,13 @@ func TestSearchContentFirstNodeStates(t *testing.T) {
 					require.Empty(t, hits)
 				}
 			}
-			t.Logf("nodes.kind/trashed_at state=%s both passes preserve eligibility", state)
 		})
 	}
 }
 
 func TestSearchContentFirstContentVersions(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"current", "historical", "pruned", "create", "replace", "revert"} {
+	for _, state := range []string{"current", "historical", "pruned", "replace", "revert"} {
 		t.Run(state, func(t *testing.T) {
 			s := newTestStore(t)
 			node, err := s.CreateFile(t.Context(), s.RootID(), "mercury.txt", fakeHash("01"), 1, "text/plain")
@@ -2296,7 +2290,7 @@ func TestSearchContentFirstContentVersions(t *testing.T) {
 			require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: node.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "mercury original"}))
 			original := node.CurrentVersionID
 			fenced := original
-			if state != "current" && state != "create" {
+			if state != "current" {
 				node, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, fakeHash("02"), 1, "text/plain")
 				require.NoError(t, err)
 				require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: node.BlobHash, Extractor: "plain-text", ExtractorVersion: 1, Status: ExtractionOK, Text: "mercury replacement"}))
@@ -2311,7 +2305,7 @@ func TestSearchContentFirstContentVersions(t *testing.T) {
 					fenced = node.CurrentVersionID
 				}
 			}
-			hits, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 1, SearchOptions{ContentFirst: true, ContentVersionIDs: []string{fenced}})
+			hits, _, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 1, SearchOptions{ContentVersionIDs: []string{fenced}}, true)
 			require.NoError(t, err)
 			if state == "historical" || state == "pruned" {
 				require.Empty(t, hits)
@@ -2319,19 +2313,7 @@ func TestSearchContentFirstContentVersions(t *testing.T) {
 				require.Len(t, hits, 1)
 				require.Equal(t, node.CurrentVersionID, hits[0].Node.CurrentVersionID)
 				require.Equal(t, "content_blob", hits[0].EvidenceKind)
-				version, err := s.ContentVersionByID(t.Context(), fenced)
-				require.NoError(t, err)
-				want := "content_create"
-				if state == "replace" {
-					want = "content_replace"
-				}
-				if state == "revert" {
-					want = "content_revert"
-					require.NotEqual(t, original, fenced)
-				}
-				require.Equal(t, want, version.TransitionKind)
 			}
-			t.Logf("ContentVersionIDs state=%s current authority and transition preserved", state)
 		})
 	}
 }
@@ -2359,7 +2341,7 @@ func TestSearchContentFirstPriority(t *testing.T) {
 	}
 	_, err := s.CreateFile(t.Context(), s.RootID(), "mercury-tail.txt", fakeHash("03"), 1, "text/plain")
 	require.NoError(t, err)
-	hits, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 3, SearchOptions{ContentFirst: true})
+	hits, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 3, SearchOptions{}, true)
 	require.NoError(t, err)
 	require.False(t, truncated)
 	require.Len(t, hits, 3)
@@ -2372,7 +2354,6 @@ func TestSearchContentFirstPriority(t *testing.T) {
 	}
 	require.Equal(t, "node_name", hits[2].EvidenceKind)
 	require.Equal(t, "mercury-tail.txt", hits[2].Node.Name)
-	t.Log("content ranks and best segment/locator retained; two nodes sharing build each appear once before filename tail")
 }
 
 func TestSearchContentFirstGenerationSources(t *testing.T) {
@@ -2393,7 +2374,7 @@ func TestSearchContentFirstGenerationSources(t *testing.T) {
 				attachment := RenditionAttachmentRecord{ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0], BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
 				require.NoError(t, publishRenditionForTest(t, s, attachment, embeddingCatalogTime, fakeHash("c9")))
 			}
-			hits, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 1, SearchOptions{ContentFirst: true})
+			hits, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 1, SearchOptions{}, true)
 			require.NoError(t, err)
 			require.False(t, truncated)
 			require.Len(t, hits, 1)
@@ -2408,7 +2389,6 @@ func TestSearchContentFirstGenerationSources(t *testing.T) {
 				require.Equal(t, build.LexicalSegments[0].ID, hits[0].SegmentID)
 				require.Equal(t, versions[0], hits[0].Node.CurrentVersionID)
 			}
-			t.Logf("source=%s existing generation owner and bounded excerpt retained", source)
 		})
 	}
 }

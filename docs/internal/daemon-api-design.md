@@ -196,16 +196,8 @@ branch on the code, not human detail. Adding a store error normally requires:
 4. documenting the public code; and
 5. testing the non-2xx response envelope.
 
-Document search and its validation route accept optional `content_first`.
-The processing service forwards the preference through `SearchOptions` to
-`Store.SearchExplainedLexicalCandidates`. That owner selects content before
-filename cutoff and per-node evidence deduplication, then fills unused slots
-with filename-only matches. Both passes apply the same live, current-version
-source fence. Content selection and its evidence share one lexical-generation
-read. Omission and false keep
-filename priority. Auto and lexical use the preferred order; hybrid uses its
-lexical ranks. Semantic accepts the preference with no vector-order effect.
-Optional provider reranking can reorder the selected candidates.
+Document search forwards `content_first` through `retrieval.Query` to the store's
+lexical search, following the [HTTP search ordering contract](../architecture/http-api.md#coverage-and-source-fenced-search).
 
 Document search accepts `rerank: true` as an explicit opt-in. The daemon checks
 the separate provider grant for `query_text_and_excerpt` before it sends the

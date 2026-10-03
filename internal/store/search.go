@@ -76,10 +76,10 @@ const currentRenditionChunkAuthoritySQL = `EXISTS (
 	 AND current_rb.evidence_checksum=eig.evidence_fingerprint
 )`
 
-// SearchExplainedLexicalCandidates prefers filenames unless ContentFirst is set.
+// SearchExplainedLexicalCandidates prefers filenames unless contentFirst is set.
 // Content selection and evidence resolution share one lexical-generation read.
 func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int,
-	opts SearchOptions,
+	opts SearchOptions, contentFirst bool,
 ) ([]ExplainedLexicalCandidate, bool, error) {
 	if limit <= 0 {
 		limit = 50
@@ -108,7 +108,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	if err != nil {
 		return nil, false, err
 	}
-	if !opts.ContentFirst && len(nameHits) > limit {
+	if !contentFirst && len(nameHits) > limit {
 		nameHits = nameHits[:limit]
 		if err := s.addSearchPaths(ctx, nameHits); err != nil {
 			return nil, false, err
@@ -119,7 +119,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		return nil, false, err
 	}
 	remaining := limit - len(nameHits)
-	if opts.ContentFirst {
+	if contentFirst {
 		remaining = limit
 	}
 	nameSeen := make(map[int64]struct{}, len(nameHits))
@@ -172,7 +172,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 				return err
 			}
 			candidate.Node, candidate.Match = node, SearchMatchContent
-			if _, duplicate := nameSeen[node.ID]; duplicate && !opts.ContentFirst {
+			if _, duplicate := nameSeen[node.ID]; duplicate && !contentFirst {
 				continue
 			}
 			if _, duplicate := seenContent[node.ID]; duplicate {
@@ -206,26 +206,30 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	if truncated {
 		content = content[:remaining]
 	}
-	if opts.ContentFirst {
-		selected := make(map[int64]struct{}, len(content))
-		for _, candidate := range content {
-			selected[candidate.Node.ID] = struct{}{}
-		}
-		for _, candidate := range explainedNameCandidates(nameHits) {
-			if _, duplicate := selected[candidate.Node.ID]; duplicate {
-				continue
-			}
-			if len(content) == limit {
-				truncated = true
-				break
-			}
-			content = append(content, candidate)
-		}
-		return content, truncated, nil
+	if contentFirst {
+		result, namesTruncated := appendNameTail(content, nameHits, limit)
+		return result, truncated || namesTruncated, nil
 	}
 	result := explainedNameCandidates(nameHits)
 	result = append(result, content...)
 	return result, truncated, nil
+}
+
+func appendNameTail(content []ExplainedLexicalCandidate, nameHits []SearchHit, limit int) ([]ExplainedLexicalCandidate, bool) {
+	selected := make(map[int64]struct{}, len(content))
+	for _, candidate := range content {
+		selected[candidate.Node.ID] = struct{}{}
+	}
+	for _, candidate := range explainedNameCandidates(nameHits) {
+		if _, duplicate := selected[candidate.Node.ID]; duplicate {
+			continue
+		}
+		if len(content) == limit {
+			return content, true
+		}
+		content = append(content, candidate)
+	}
+	return content, false
 }
 
 func explainedNameCandidates(hits []SearchHit) []ExplainedLexicalCandidate {
@@ -280,8 +284,6 @@ type SearchOptions struct {
 	ModifiedSince     string
 	ModifiedBefore    string
 	ContentVersionIDs []string
-	// ContentFirst prefers content evidence in explained lexical search only.
-	ContentFirst bool
 }
 
 // SearchNeedsQuery reports whether the normalized options leave an empty FTS

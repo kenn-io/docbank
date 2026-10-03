@@ -742,6 +742,5 @@ func TestDocumentSearchContentFirstSchema(t *testing.T) {
 		require.NotNil(t, schema.Properties["content_first"])
 		assert.Equal(t, "boolean", schema.Properties["content_first"].Type)
 		assert.NotContains(t, schema.Required, "content_first")
-		t.Logf("%s content_first optional boolean", name)
 	}
 }

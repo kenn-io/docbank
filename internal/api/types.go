@@ -230,15 +230,16 @@ type CoverageReport struct {
 }
 
 type DocumentSearchRequest struct {
-	ContentFirst bool                `json:"content_first,omitzero"`
-	Query        string              `json:"query" minLength:"1" maxLength:"8192"`
-	Mode         string              `json:"mode" enum:"auto,lexical,semantic,hybrid"`
-	Limit        int                 `json:"limit,omitzero" minimum:"1" maximum:"100"`
-	Profile      string              `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
-	BindingID    string              `json:"binding_id,omitzero" maxLength:"128"`
-	Fence        DocumentSourceFence `json:"fence"`
-	Explain      bool                `json:"explain,omitzero"`
-	Rerank       bool                `json:"rerank,omitzero"`
+	Query     string              `json:"query" minLength:"1" maxLength:"8192"`
+	Mode      string              `json:"mode" enum:"auto,lexical,semantic,hybrid"`
+	Limit     int                 `json:"limit,omitzero" minimum:"1" maximum:"100"`
+	Profile   string              `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
+	BindingID string              `json:"binding_id,omitzero" maxLength:"128"`
+	Fence     DocumentSourceFence `json:"fence"`
+
+	Explain      bool `json:"explain,omitzero"`
+	Rerank       bool `json:"rerank,omitzero"`
+	ContentFirst bool `json:"content_first,omitzero"`
 }
 
 type DocumentSimilarRequest struct {
@@ -291,14 +292,15 @@ type MediaTimeSpan struct {
 // DocumentSearchValidationRequest validates search semantics when an exact
 // resolved source fence is empty and therefore must not be searched.
 type DocumentSearchValidationRequest struct {
-	ContentFirst bool   `json:"content_first,omitzero"`
-	Query        string `json:"query" minLength:"1" maxLength:"8192"`
-	Mode         string `json:"mode" enum:"auto,lexical,semantic,hybrid"`
-	Limit        int    `json:"limit,omitzero" minimum:"1" maximum:"100"`
-	Profile      string `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
-	BindingID    string `json:"binding_id,omitzero" maxLength:"128"`
-	Explain      bool   `json:"explain,omitzero"`
-	Rerank       bool   `json:"rerank,omitzero"`
+	Query     string `json:"query" minLength:"1" maxLength:"8192"`
+	Mode      string `json:"mode" enum:"auto,lexical,semantic,hybrid"`
+	Limit     int    `json:"limit,omitzero" minimum:"1" maximum:"100"`
+	Profile   string `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
+	BindingID string `json:"binding_id,omitzero" maxLength:"128"`
+
+	Explain      bool `json:"explain,omitzero"`
+	Rerank       bool `json:"rerank,omitzero"`
+	ContentFirst bool `json:"content_first,omitzero"`
 }
 
 type DocumentSearchValidation struct {

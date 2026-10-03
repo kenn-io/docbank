@@ -88,12 +88,8 @@ for receipt fields and degradation causes.
 - **`hybrid`** combines lexical and semantic candidates.
 - **`auto`** uses lexical retrieval and reports `lexical` as the actual mode.
 
-HTTP and embedded callers can prefer retained content matches over matching
-filenames with `content_first: true` or `ContentFirst: true`. Filename-only
-matches follow. Omission and false keep filename priority. The preference
-changes lexical ranks in auto, lexical, and hybrid search; semantic accepts it
-without changing vector results. Optional reranking can reorder the selected
-candidates. See the [HTTP search contract](../architecture/http-api.md#coverage-and-source-fenced-search).
+HTTP and embedded callers can [prefer content matches over filenames](../architecture/http-api.md#coverage-and-source-fenced-search)
+with `content_first: true` or `ContentFirst: true`.
 
 Each search response reports the actual mode, degradation, and the number of
 complete documents in the supplied source set. The coverage API separately

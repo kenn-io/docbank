@@ -2830,5 +2830,4 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 	require.Equal(t, receipt.Version.ID, report.Results[0].ContentVersionID)
 	require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
 	require.Contains(t, report.Results[0].Excerpt, "mercury retained embedded evidence")
-	t.Log("ContentFirst reaches store through embedded lifecycle lease; limit=1 filename control and rendition evidence verified")
 }

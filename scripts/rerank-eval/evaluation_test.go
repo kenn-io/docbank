@@ -300,7 +300,7 @@ func (runner *comparisonRunner) Search(ctx context.Context, system embeddingeval
 	switch mode {
 	case "lexical":
 		runner.fixture.lexicalCalls++
-		hits, _, err := runner.fixture.store.SearchExplainedLexicalCandidates(ctx, query.Text, 4, store.SearchOptions{})
+		hits, _, err := runner.fixture.store.SearchExplainedLexicalCandidates(ctx, query.Text, 4, store.SearchOptions{}, false)
 		if err != nil {
 			return embeddingeval.SearchResult{}, err
 		}
@@ -350,7 +350,7 @@ func (runner *comparisonRunner) Search(ctx context.Context, system embeddingeval
 }
 
 func (runner *comparisonRunner) lexicalCandidates(ctx context.Context, query embeddingeval.Query) (embedding.ScopedCandidates, error) {
-	hits, _, err := runner.fixture.store.SearchExplainedLexicalCandidates(ctx, query.Text, 4, store.SearchOptions{})
+	hits, _, err := runner.fixture.store.SearchExplainedLexicalCandidates(ctx, query.Text, 4, store.SearchOptions{}, false)
 	if err != nil {
 		return embedding.ScopedCandidates{}, err
 	}

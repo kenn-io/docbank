@@ -70,9 +70,9 @@ type changingSearchBackend struct {
 }
 
 func (backend *changingSearchBackend) SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int,
-	options store.SearchOptions,
+	options store.SearchOptions, contentFirst bool,
 ) ([]store.ExplainedLexicalCandidate, bool, error) {
-	candidates, truncated, err := backend.Store.SearchExplainedLexicalCandidates(ctx, query, limit, options)
+	candidates, truncated, err := backend.Store.SearchExplainedLexicalCandidates(ctx, query, limit, options, contentFirst)
 	if err == nil {
 		backend.afterSearch()
 	}
@@ -178,7 +178,7 @@ func TestSearchContentFirstModes(t *testing.T) {
 			control, err := searcher.Search(t.Context(), query)
 			require.NoError(t, err)
 			calls := provider.calls
-			query.Scope.ContentFirst = true
+			query.ContentFirst = true
 			report, err := searcher.Search(t.Context(), query)
 			require.NoError(t, err)
 			if mode == ModeSemantic {
@@ -199,7 +199,6 @@ func TestSearchContentFirstModes(t *testing.T) {
 					require.Zero(t, provider.calls)
 				}
 			}
-			t.Logf("mode=%s real store lexical priority; provider calls=%d semantic contract preserved", mode, provider.calls)
 		})
 	}
 }
@@ -210,8 +209,8 @@ type contentFirstSearchBackend struct {
 	catalog *store.Store
 }
 
-func (backend *contentFirstSearchBackend) SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int, options store.SearchOptions) ([]store.ExplainedLexicalCandidate, bool, error) {
-	return backend.catalog.SearchExplainedLexicalCandidates(ctx, query, limit, options)
+func (backend *contentFirstSearchBackend) SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int, options store.SearchOptions, contentFirst bool) ([]store.ExplainedLexicalCandidate, bool, error) {
+	return backend.catalog.SearchExplainedLexicalCandidates(ctx, query, limit, options, contentFirst)
 }
 
 func (backend *contentFirstSearchBackend) NormalizeSearchOptions(ctx context.Context, options store.SearchOptions) (store.SearchOptions, error) {

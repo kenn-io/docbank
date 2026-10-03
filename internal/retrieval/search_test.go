@@ -535,7 +535,7 @@ func retrievalVectorFixture(t *testing.T) (document.EmbeddingDescriptor, *vector
 func (backend *retrievalBackendStub) VaultID() string { return backend.vaultID }
 
 func (backend *retrievalBackendStub) SearchExplainedLexicalCandidates(_ context.Context, _ string, limit int,
-	_ store.SearchOptions,
+	_ store.SearchOptions, _ bool,
 ) ([]store.ExplainedLexicalCandidate, bool, error) {
 	backend.lexicalCalls++
 	backend.lexicalLimit = limit
