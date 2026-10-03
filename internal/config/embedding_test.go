@@ -92,6 +92,11 @@ api_key = { env = "DOCBANK_TEST_KIT_KEY" }
 			mutate(&p)
 			c := cfg
 			c.EmbeddingProfiles = map[string]EmbeddingProfileConfig{"semantic": p}
+			if name == "native provider" {
+				_, err := c.EmbeddingProfile("semantic")
+				require.ErrorContains(t, err, "embedder is only supported for OpenAI-compatible text runtimes")
+				return
+			}
 			require.Error(t, c.Validate())
 		})
 	}
