@@ -1877,6 +1877,7 @@ export interface DocumentSearchRequest {
   readonly $schema?: string;
   /** @maxLength 128 */
   binding_id?: string;
+  content_first?: boolean;
   explain?: boolean;
   fence: DocumentSourceFence;
   /**
@@ -1920,6 +1921,7 @@ export interface DocumentSearchValidationRequest {
   readonly $schema?: string;
   /** @maxLength 128 */
   binding_id?: string;
+  content_first?: boolean;
   explain?: boolean;
   /**
      * @minimum 1

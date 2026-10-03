@@ -146,7 +146,7 @@ func (source *consumerSource) revoke(versionID string) { source.live[versionID] 
 func (source *consumerSource) VaultID() string { return source.consumer.document.VaultID }
 
 func (source *consumerSource) SearchExplainedLexicalCandidates(_ context.Context, _ string, _ int,
-	scope store.SearchOptions,
+	scope store.SearchOptions, _ bool,
 ) ([]store.ExplainedLexicalCandidate, bool, error) {
 	source.stages = append(source.stages, "lexical")
 	documents, err := source.fencedCorpus(scope)

@@ -156,7 +156,8 @@ func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchReque
 	}
 	defer v.lifecycle.RUnlock()
 	report, err := v.processing.Search(ctx, internalprocessing.SearchRequest{Query: request.Query,
-		Mode: string(request.Mode), Limit: request.Limit, Profile: request.Profile,
+		ContentFirst: request.ContentFirst,
+		Mode:         string(request.Mode), Limit: request.Limit, Profile: request.Profile,
 		BindingID: request.BindingID, Explain: request.Explain,
 		Fence: internalprocessing.SourceFence{VaultUID: request.Fence.VaultUID,
 			ContentVersionIDs: request.Fence.ContentVersionIDs}})

@@ -236,8 +236,10 @@ type DocumentSearchRequest struct {
 	Profile   string              `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
 	BindingID string              `json:"binding_id,omitzero" maxLength:"128"`
 	Fence     DocumentSourceFence `json:"fence"`
-	Explain   bool                `json:"explain,omitzero"`
-	Rerank    bool                `json:"rerank,omitzero"`
+
+	Explain      bool `json:"explain,omitzero"`
+	Rerank       bool `json:"rerank,omitzero"`
+	ContentFirst bool `json:"content_first,omitzero"`
 }
 
 type DocumentSimilarRequest struct {
@@ -295,8 +297,10 @@ type DocumentSearchValidationRequest struct {
 	Limit     int    `json:"limit,omitzero" minimum:"1" maximum:"100"`
 	Profile   string `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
 	BindingID string `json:"binding_id,omitzero" maxLength:"128"`
-	Explain   bool   `json:"explain,omitzero"`
-	Rerank    bool   `json:"rerank,omitzero"`
+
+	Explain      bool `json:"explain,omitzero"`
+	Rerank       bool `json:"rerank,omitzero"`
+	ContentFirst bool `json:"content_first,omitzero"`
 }
 
 type DocumentSearchValidation struct {

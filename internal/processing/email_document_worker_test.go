@@ -232,7 +232,7 @@ func TestEmailDocumentsRealCSVProviderSearchAndConsent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
 	require.Equal(t, job.Child.VersionID, hits[0].Node.CurrentVersionID)
-	explained, _, err := f.catalog.SearchExplainedLexicalCandidates(t.Context(), "attachmentquasar", 10, store.SearchOptions{})
+	explained, _, err := f.catalog.SearchExplainedLexicalCandidates(t.Context(), "attachmentquasar", 10, store.SearchOptions{}, false)
 	require.NoError(t, err)
 	require.Len(t, explained, 1)
 	require.Equal(t, job.JobID, explained[0].BuildID)

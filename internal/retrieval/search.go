@@ -21,7 +21,7 @@ type Backend interface {
 	VaultID() string
 	NormalizeSearchOptions(ctx context.Context, options store.SearchOptions) (store.SearchOptions, error)
 	SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int,
-		options store.SearchOptions) ([]store.ExplainedLexicalCandidate, bool, error)
+		options store.SearchOptions, contentFirst bool) ([]store.ExplainedLexicalCandidate, bool, error)
 }
 
 type CandidateRevalidationBackend interface {
@@ -521,7 +521,7 @@ func normalizeQuery(query Query) (Query, error) {
 }
 
 func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Candidate, bool, error) {
-	hits, truncated, err := searcher.backend.SearchExplainedLexicalCandidates(ctx, query.Text, query.LexicalLimit, query.Scope)
+	hits, truncated, err := searcher.backend.SearchExplainedLexicalCandidates(ctx, query.Text, query.LexicalLimit, query.Scope, query.ContentFirst)
 	if err != nil {
 		return nil, false, err
 	}

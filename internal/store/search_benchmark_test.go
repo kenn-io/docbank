@@ -33,7 +33,7 @@ func BenchmarkNameSearch(b *testing.B) {
 			b.Run("explained", func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					hits, truncated, err := s.SearchExplainedLexicalCandidates(b.Context(), "report", 50, SearchOptions{})
+					hits, truncated, err := s.SearchExplainedLexicalCandidates(b.Context(), "report", 50, SearchOptions{}, false)
 					require.NoError(b, err)
 					require.Len(b, hits, 50)
 					require.True(b, truncated)

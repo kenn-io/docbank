@@ -200,7 +200,7 @@ func TestRemoteRecordingManualHTTPRejectsExtraArtifactPart(t *testing.T) {
 
 func TestMediaAcquisitionPlanRejectsOversizedCanonicalURLWithoutEcho(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, configureMediaTestService(t))
+	ts, _ := newTestServer(t, configureMediaTestService(t, 0))
 	secret := strings.Repeat("c", 8193)
 	body := `{"operation_id":"00000000-0000-0000-0000-000000000460","reference_url":"https://recordings.invalid/call","canonical_url":"` + secret + `"}`
 	response, responseBody := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/media/acquisition-plan",
@@ -212,7 +212,7 @@ func TestMediaAcquisitionPlanRejectsOversizedCanonicalURLWithoutEcho(t *testing.
 
 func TestMediaAcquisitionPlanRejectsOversizedReferenceURLWithoutEcho(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, configureMediaTestService(t))
+	ts, _ := newTestServer(t, configureMediaTestService(t, 0))
 	secret := strings.Repeat("r", 8193)
 	body := `{"operation_id":"00000000-0000-0000-0000-000000000461","reference_url":"` + secret + `","canonical_url":"https://recordings.invalid/call"}`
 	response, responseBody := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/media/acquisition-plan",

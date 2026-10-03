@@ -343,6 +343,7 @@ type SearchRequest struct {
 	Fence                           SourceFence
 	Explain                         bool
 	Rerank                          bool
+	ContentFirst                    bool
 }
 
 type SearchReport = retrieval.Report
@@ -1435,7 +1436,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	}
 	return prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query, Mode: prepared.mode,
 		LexicalLimit: profile.portable.Retrieval.LexicalLimit, VectorLimit: profile.portable.Retrieval.VectorLimit,
-		Limit: prepared.limit, Scope: store.SearchOptions{ContentVersionIDs: ids},
+		Limit: prepared.limit, Scope: store.SearchOptions{ContentVersionIDs: ids}, ContentFirst: request.ContentFirst,
 		ProcessingProfileFingerprint: profile.record.Fingerprint, BindingID: prepared.bindingID,
 		Authorization: prepared.authorization})
 }

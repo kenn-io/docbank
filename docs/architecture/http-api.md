@@ -493,6 +493,7 @@ does not grant consent or start provider work.
   "mode": "lexical",
   "profile": "private",
   "limit": 50,
+  "content_first": true,
   "fence": {
     "vault_uid": "22222222-2222-4222-8222-222222222222",
     "content_version_ids": ["11111111-1111-4111-8111-111111111111"]
@@ -511,6 +512,14 @@ the profile's first binding. Set it explicitly for semantic/hybrid search when
 several are configured. The CLI requires that choice. `auto` uses lexical
 retrieval. See [processing consent](#processing-consent) before choosing a mode
 that embeds query text.
+
+Set optional `content_first: true` to prefer retained content matches, including
+transcripts, before filename-only matches. Selection applies the exact source
+fence before cutoff and keeps content evidence when a filename also matches.
+Omission and false keep filename priority. Auto and lexical use this order;
+hybrid uses these lexical ranks alongside semantic ranks. Pure semantic accepts
+the option without changing vector results. Optional reranking can reorder
+the selected candidates. `POST /search/validate` accepts the same preference.
 
 The response includes `requested_mode`, `actual_mode`, `coverage`,
 `degradations`, `results`, `truncated`, and `trace` (`explain: true` populates
