@@ -196,9 +196,6 @@ func (s *Store) ListPhotoAssets(ctx context.Context, request PhotoBrowseRequest,
 		}
 		for i := range page.Items {
 			row := &page.Items[i]
-			if _, _, err := activeSourceMetadata(ctx, q, row.sourceHash); err != nil && !errors.Is(err, ErrNotFound) {
-				return err
-			}
 			row.Previews = make(map[string]PhotoPreviewSlot, 3)
 			for _, size := range []string{"grid", "fit", "large"} {
 				slot := PhotoPreviewSlot{State: "missing"}

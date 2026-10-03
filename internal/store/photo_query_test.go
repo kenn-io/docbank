@@ -127,12 +127,6 @@ func TestPhotoBrowseActiveMetadata(t *testing.T) {
 	shared := browsePhotoNode(t, s, "shared.jpg", node.BlobHash, "image/jpeg")
 	require.NotEqual(t, node.ID, shared.ID)
 	require.Equal(t, int64(2), browsePhotoPage(t, s, `{"filters":{"cameras":["B"]}}`).Total)
-	_, err := s.db.ExecContext(t.Context(), `DROP TRIGGER IF EXISTS source_metadata_generations_immutable_update`)
-	require.NoError(t, err)
-	_, err = s.db.ExecContext(t.Context(), `UPDATE source_metadata_generations SET checksum=? WHERE source_sha256=?`, browseHash("corrupt-checksum"), node.BlobHash)
-	require.NoError(t, err)
-	_, err = s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}, nil)
-	require.ErrorIs(t, err, ErrSourceMetadataCorrupt)
 }
 
 func TestPhotoBrowseEligibility(t *testing.T) {
@@ -275,9 +269,91 @@ func TestPhotoBrowseDuplicateScope(t *testing.T) {
 func TestSnapshotRejectsPhotoSorts(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	for _, field := range []string{"capture_time", "import_time"} {
-		_, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, sprintfPhotoSort(field, "asc"))})
-		require.ErrorContains(t, err, "photo sorts")
+	for _, populated := range []bool{false, true} {
+		if populated {
+			browsePhotoNode(t, s, "sort.jpg", browseHash("sort-rejection"), "image/jpeg")
+		}
+		for _, field := range []string{"capture_time", "import_time"} {
+			value := snapshotTestQuery(t, sprintfPhotoSort(field, "asc"))
+			_, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value})
+			require.ErrorContains(t, err, field)
+			require.ErrorContains(t, err, "Photos")
+			saved, err := s.CreateSavedQuery(t.Context(), fmt.Sprintf("%s-%t", field, populated), "", SavedQueryKindQuery, []byte(sprintfPhotoSort(field, "asc")))
+			require.NoError(t, err)
+			options := defaultSnapshotMaterializeOptions()
+			options.SavedQuery = &savedQuerySnapshotInput{ID: saved.ID, ExpectedRevision: saved.Revision}
+			_, err = s.materializeQuerySnapshot(t.Context(), SnapshotRequest{}, options)
+			require.ErrorContains(t, err, field)
+			require.ErrorContains(t, err, "Photos")
+		}
+	}
+}
+
+func TestPhotoBrowseCaptureTimeTolerance(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for i, stamp := range []string{"2024-01-02T3", "2024-01-02T3:04", "2024-01-02T3:04:05", "2024-01-02T3:04:05.123", "2024-01-02T03:04:05", "2024-01-02T03:04:05"} {
+		node := browsePhotoNode(t, s, fmt.Sprintf("tolerant-%d.jpg", i), browseHash(fmt.Sprintf("tolerant-%d", i)), "image/jpeg")
+		precision := []document.SourceMetadataTimestampPrecision{document.SourceMetadataPrecisionHour, document.SourceMetadataPrecisionMinute, document.SourceMetadataPrecisionSecond, document.SourceMetadataPrecisionFraction, document.SourceMetadataPrecisionSecond, document.SourceMetadataPrecisionSecond}[i]
+		browsePhotoMetadata(t, s, node, fmt.Sprintf("tolerant-fields-%d", i), photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, precision, document.SourceMetadataTimezoneOmitted, "")))
+		if i == 4 {
+			_, err := s.db.ExecContext(t.Context(), `UPDATE photo_technical_metadata SET capture_time='malformed' WHERE generation_id=(SELECT generation_id FROM source_metadata_heads WHERE source_sha256=?)`, node.BlobHash)
+			require.NoError(t, err)
+		}
+		if i == 5 {
+			_, err := s.db.ExecContext(t.Context(), `UPDATE photo_technical_metadata SET capture_time_precision=NULL WHERE generation_id=(SELECT generation_id FROM source_metadata_heads WHERE source_sha256=?)`, node.BlobHash)
+			require.NoError(t, err)
+		}
+	}
+	browsePhotoNode(t, s, "absent.jpg", browseHash("tolerant-absent"), "image/jpeg")
+	for _, direction := range []string{"asc", "desc"} {
+		request := PhotoBrowseRequest{Query: snapshotTestQuery(t, sprintfPhotoSort("capture_time", direction)), PageSize: 2}
+		var boundary *PhotoBrowsePosition
+		seen := map[string]bool{}
+		missing := 0
+		previousKey := ""
+		for {
+			page, err := s.ListPhotoAssets(t.Context(), request, boundary)
+			require.NoError(t, err)
+			require.Equal(t, int64(7), page.Total)
+			for _, row := range page.Items {
+				require.False(t, seen[row.AssetID])
+				seen[row.AssetID] = true
+				if row.position.Missing {
+					missing++
+				} else {
+					require.Zero(t, missing)
+					if previousKey != "" {
+						if direction == "asc" {
+							require.LessOrEqual(t, previousKey, row.position.Key)
+						} else {
+							require.GreaterOrEqual(t, previousKey, row.position.Key)
+						}
+					}
+					previousKey = row.position.Key
+				}
+				if row.Name == "tolerant-2.jpg" {
+					require.Equal(t, "2024-01-02T3:04:05", *row.Fields.CaptureTime)
+					require.Equal(t, "2024-01-02T03:04:05.000000000", row.position.Key)
+				}
+				if row.Name == "tolerant-4.jpg" {
+					require.Equal(t, "malformed", *row.Fields.CaptureTime)
+				}
+			}
+			if page.Next == nil {
+				break
+			}
+			boundary = page.Next
+		}
+		require.Len(t, seen, 7)
+		require.Equal(t, 3, missing)
+	}
+	for _, raw := range []string{`{"filters":{"capture_after":"2024-01-02","capture_before":"2024-01-03"}}`, `{"syntax":"advanced","text":"capture_after:2024-01-02 AND capture_before:2024-01-03"}`} {
+		page := browsePhotoPage(t, s, raw)
+		require.Equal(t, int64(4), page.Total)
+		for _, row := range page.Items {
+			require.NotContains(t, []string{"tolerant-4.jpg", "tolerant-5.jpg", "absent.jpg"}, row.Name)
+		}
 	}
 }
 

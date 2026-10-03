@@ -1,0 +1,98 @@
+package store
+
+import (
+	"fmt"
+	"path/filepath"
+	"runtime"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/query"
+)
+
+func BenchmarkPhotoBrowse10K(b *testing.B) {
+	b.StopTimer()
+	s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+	require.NoError(b, err)
+	b.Cleanup(func() { require.NoError(b, s.Close()) })
+	ctx := b.Context()
+	for i := range 10000 {
+		node, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("capture-%05d.jpg", i), browseHash(fmt.Sprintf("benchmark-source-%d", i)), 20, "image/jpeg")
+		require.NoError(b, err)
+		fields := []document.SourceMetadataFieldV1{photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Synthetic Camera"))}
+		if i < 9000 {
+			stamp := time.Date(2024, 1, 1, 3, 4, 5, 0, time.UTC).Add(time.Duration(i/2) * time.Hour).Format("2006-01-02T15:04:05")
+			precision, zone, offset := document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOmitted, ""
+			switch (i / 2) % 4 {
+			case 1:
+				stamp += "Z"
+				zone = document.SourceMetadataTimezoneUTC
+			case 2:
+				stamp += "+02:00"
+				zone, offset = document.SourceMetadataTimezoneOffset, "+02:00"
+			case 3:
+				stamp += ".123456789"
+				precision = document.SourceMetadataPrecisionFraction
+			}
+			fields = append(fields, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, precision, zone, offset)))
+		}
+		canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: fields})
+		require.NoError(b, err)
+		_, err = s.PublishSourceMetadata(ctx, node.BlobHash, browseHash("benchmark-metadata"), canonical)
+		require.NoError(b, err)
+	}
+	var assets, heads, projected, captured int
+	require.NoError(b, s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM photo_assets), (SELECT count(*) FROM source_metadata_heads), (SELECT count(*) FROM photo_technical_metadata), (SELECT count(*) FROM photo_technical_metadata WHERE capture_time IS NOT NULL)`).Scan(&assets, &heads, &projected, &captured))
+	require.Equal(b, 10000, assets)
+	require.Equal(b, 10000, heads)
+	require.Equal(b, 10000, projected)
+	require.Equal(b, 9000, captured)
+	b.Logf("go=%s driver=%s assets=%d active_heads=%d projected=%d captured=%d missing=1000 page_size=50 capture_mix=2250_each_omitted_UTC_offset_fraction repeated_keys=pairs later_boundary=after_first_50", runtime.Version(), DefaultSQLiteDriver().Name(), assets, heads, projected, captured)
+	recipes := map[string]string{}
+	for size, edge := range map[string]int{"grid": 512, "fit": 2048, "large": 2560} {
+		recipe := visualPreviewRecipe()
+		recipe.MaxEdgePixels = edge
+		_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(recipe)
+		require.NoError(b, err)
+		recipes[size] = fingerprint
+	}
+	for _, tc := range []struct{ name, raw string }{
+		{"capture_asc", `{"sort":{"field":"capture_time","direction":"asc"}}`},
+		{"capture_desc", `{"sort":{"field":"capture_time","direction":"desc"}}`},
+		{"import", `{"sort":{"field":"import_time","direction":"desc"}}`},
+		{"capture_range", `{"sort":{"field":"capture_time","direction":"asc"},"filters":{"capture_after":"2024-03-01","capture_before":"2024-04-01"}}`},
+	} {
+		value, err := query.Parse([]byte(tc.raw))
+		require.NoError(b, err)
+		request := PhotoBrowseRequest{Query: value, PageSize: 50, Recipes: recipes}
+		first, err := s.ListPhotoAssets(ctx, request, nil)
+		require.NoError(b, err)
+		require.Len(b, first.Items, 50)
+		require.NotNil(b, first.Next)
+		if tc.name != "capture_range" {
+			require.Equal(b, int64(10000), first.Total)
+		} else {
+			require.Equal(b, int64(1488), first.Total)
+		}
+		for _, page := range []struct {
+			name     string
+			boundary *PhotoBrowsePosition
+		}{{"first", nil}, {"later", first.Next}} {
+			check, err := s.ListPhotoAssets(ctx, request, page.boundary)
+			require.NoError(b, err)
+			require.Len(b, check.Items, 50)
+			require.Len(b, check.Items[0].Previews, 3)
+			b.Run(tc.name+"/"+page.name, func(b *testing.B) {
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					if _, err := s.ListPhotoAssets(ctx, request, page.boundary); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
