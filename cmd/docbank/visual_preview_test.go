@@ -97,3 +97,46 @@ func TestVisualPreviewBackfillProcessesGridAndLeavesLegacyHeadEmpty(t *testing.T
 	require.NoError(t, err)
 	require.Empty(t, remaining)
 }
+
+func TestVisualPreviewBackfillMovesPastPhotoWithoutMediaType(t *testing.T) {
+	layout := home.Layout{Root: t.TempDir()}
+	require.NoError(t, layout.Ensure())
+	catalog, err := store.Open(layout.DBPath())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	blobs, err := blob.New(store.NewPackCatalog(catalog), layout.BlobsDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	var versions []string
+	for index, entry := range []struct{ name, mediaType string }{{"untagged.jpg", ""}, {"one.jpg", "image/jpeg"}, {"two.jpg", "image/jpeg"}} {
+		source := mediatest.JPEG(64+index, 48, color.White)
+		receipt, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(source))
+		require.NoError(t, err)
+		encoding, err := receipt.EncodingName()
+		require.NoError(t, err)
+		node, err := catalog.CreateFile(t.Context(), catalog.RootID(), entry.name, receipt.Hash, receipt.Size, entry.mediaType, store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize, PackEligible: receipt.PackEligible, Created: receipt.Created})
+		require.NoError(t, err)
+		_, err = catalog.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		versions = append(versions, node.CurrentVersionID)
+	}
+	recipe, err := processing.VisualPreviewRecipeForSize("grid")
+	require.NoError(t, err)
+	_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(recipe)
+	require.NoError(t, err)
+	backfill, err := newVisualPreviewBackfill(catalog, blobs, api.NewOperationGate(), slog.Default())
+	require.NoError(t, err)
+	backfill.DrainOnce = true
+	require.NoError(t, backfill.Run(t.Context()))
+	untagged, err := catalog.ContentVersionVisualPreviewByRecipe(t.Context(), versions[0], fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, document.VisualPreviewUnsupported, untagged.Generation.Preview.State)
+	for _, version := range versions[1:] {
+		view, err := catalog.ContentVersionVisualPreviewByRecipe(t.Context(), version, fingerprint)
+		require.NoError(t, err)
+		require.Equal(t, document.VisualPreviewReady, view.Generation.Preview.State)
+	}
+	remaining, err := catalog.MissingPhotoVisualPreviewTargetsAfter(t.Context(), fingerprint, "", 100)
+	require.NoError(t, err)
+	require.Empty(t, remaining)
+}

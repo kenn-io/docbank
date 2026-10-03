@@ -353,7 +353,7 @@ func (s *Store) MissingPhotoVisualPreviewTargetsAfter(ctx context.Context, recip
 	if limit <= 0 {
 		return nil, errors.New("visual preview target limit must be positive")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT v.version_id,v.blob_hash,v.size,v.mime_type
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT v.version_id,v.blob_hash,v.size,COALESCE(v.mime_type,'')
  FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id
  JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
  WHERE `+liveIncludedPhotoDisplayPredicate+`
@@ -383,7 +383,7 @@ func (s *Store) PhotoVisualPreviewTargetEligible(ctx context.Context, target Pho
  SELECT 1 FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id
  JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
  WHERE `+liveIncludedPhotoDisplayPredicate+` AND v.version_id=? AND v.blob_hash=?
- AND v.size=? AND v.mime_type=? AND NOT EXISTS (
+ AND v.size=? AND COALESCE(v.mime_type,'')=? AND NOT EXISTS (
  SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=?))`,
 		target.VersionID, target.SourceSHA256, target.Size, target.MediaType, recipeFingerprint).Scan(&eligible)
 	if err != nil {

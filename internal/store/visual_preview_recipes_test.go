@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"database/sql"
 	"fmt"
 	"testing"
 
@@ -180,6 +181,40 @@ func TestPhotoVisualPreviewTargetEligibilityRechecksListedTargets(t *testing.T) 
 			require.NoError(t, err)
 			require.False(t, eligible)
 		})
+	}
+}
+
+func TestPhotoVisualPreviewTargetWithoutMediaType(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	untagged, err := s.CreateFile(t.Context(), s.RootID(), "untagged.jpg", fakeHash("8a"), 12, "")
+	require.NoError(t, err)
+	_, err = s.PhotoAssetForNode(t.Context(), untagged.ID)
+	require.NoError(t, err)
+	tagged, err := s.CreateFile(t.Context(), s.RootID(), "tagged.jpg", fakeHash("8b"), 12, "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.PhotoAssetForNode(t.Context(), tagged.ID)
+	require.NoError(t, err)
+	var stored sql.NullString
+	require.NoError(t, s.db.QueryRow(`SELECT mime_type FROM content_versions WHERE version_id=?`, untagged.CurrentVersionID).Scan(&stored))
+	require.False(t, stored.Valid)
+	recipe := visualPreviewRecipe()
+	recipe.MaxEdgePixels = 512
+	_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(recipe)
+	require.NoError(t, err)
+	targets, err := s.MissingPhotoVisualPreviewTargetsAfter(t.Context(), fingerprint, "", 10)
+	require.NoError(t, err)
+	require.Len(t, targets, 2)
+	byVersion := map[string]PhotoVisualPreviewTarget{}
+	for _, target := range targets {
+		byVersion[target.VersionID] = target
+	}
+	require.Empty(t, byVersion[untagged.CurrentVersionID].MediaType)
+	require.Equal(t, "image/jpeg", byVersion[tagged.CurrentVersionID].MediaType)
+	for _, target := range targets {
+		eligible, err := s.PhotoVisualPreviewTargetEligible(t.Context(), target, fingerprint)
+		require.NoError(t, err)
+		require.True(t, eligible)
 	}
 }
 
