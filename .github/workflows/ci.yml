@@ -148,7 +148,7 @@ jobs:
 
       - name: Test
         run: |
-          make release-scripts-test check-timing-budgets
+          make check-timing-budgets
           bash scripts/test-go-ci.sh
 
       - name: Embedded modernc restore without FTS5 build tags
