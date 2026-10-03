@@ -247,30 +247,41 @@ func TestChildrenPageBoundsResultsAndPreservesTotal(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 
-	_, err := s.Mkdir(ctx, s.RootID(), "zdir")
+	dir, err := s.Mkdir(ctx, s.RootID(), "inbox")
 	require.NoError(t, err)
-	_, err = s.Mkdir(ctx, s.RootID(), "adir")
+	_, err = s.Mkdir(ctx, dir.ID, "zdir")
+	require.NoError(t, err)
+	_, err = s.Mkdir(ctx, dir.ID, "adir")
 	require.NoError(t, err)
 	for _, name := range []string{"bravo.txt", "alpha.txt"} {
-		_, err = s.CreateFile(ctx, s.RootID(), name, strings.Repeat("a", 64), 1, "text/plain")
+		_, err = s.CreateFile(ctx, dir.ID, name, strings.Repeat("a", 64), 1, "text/plain")
 		require.NoError(t, err)
 	}
+	_, err = s.Mkdir(ctx, s.RootID(), "outside")
+	require.NoError(t, err)
+	deleted, err := s.Mkdir(ctx, dir.ID, "deleted")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, deleted.ID, UnconditionalRev)
+	require.NoError(t, err)
 
-	first, total, err := s.ChildrenPage(ctx, s.RootID(), 3, 0)
+	first, total, err := s.ChildrenPage(ctx, dir.ID, 3, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 4, total)
 	require.Len(t, first, 3)
 	assert.Equal(t, []string{"adir", "zdir", "alpha.txt"}, []string{
 		first[0].Name, first[1].Name, first[2].Name,
 	})
+	assert.Equal(t, strings.Repeat("a", 64), first[2].BlobHash)
+	assert.Equal(t, int64(1), first[2].Size)
+	assert.Equal(t, "text/plain", first[2].MimeType)
 
-	last, total, err := s.ChildrenPage(ctx, s.RootID(), 3, 3)
+	last, total, err := s.ChildrenPage(ctx, dir.ID, 3, 3)
 	require.NoError(t, err)
 	assert.Equal(t, 4, total)
 	require.Len(t, last, 1)
 	assert.Equal(t, "bravo.txt", last[0].Name)
 
-	empty, total, err := s.ChildrenPage(ctx, s.RootID(), 3, 4)
+	empty, total, err := s.ChildrenPage(ctx, dir.ID, 3, 4)
 	require.NoError(t, err)
 	assert.Equal(t, 4, total)
 	assert.Empty(t, empty)
