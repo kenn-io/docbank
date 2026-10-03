@@ -177,6 +177,24 @@ func TestAssignPackageLabelsIsIdempotentAndSeparateFromReceivedAuthority(t *test
 		node.CurrentVersionID, []PackageLabelRow{changed}), ErrPackageConflict)
 }
 
+func TestPackageImportReceiptIsUniquePerRecordKey(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	pkg, node := seedReceivedPackage(t, s, "unique-receipt")
+	commitReceivedLabel(t, s, pkg, node.CurrentVersionID, "EXT000001")
+	key, err := PackageRecordKey("VOL001.dat", 1, "DOC-A")
+	require.NoError(t, err)
+	original, err := s.PackageImportHead(t.Context(), pkg.PackageID, key)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(), `INSERT INTO package_import_receipts
+		SELECT ?,package_id,record_key,occurrence_id,content_version_id,state,receipt_json,recorded_at
+		FROM package_import_receipts WHERE receipt_id=?`, uuid.New().String(), original.ReceiptID)
+	require.ErrorContains(t, err, "UNIQUE constraint failed: package_import_receipts.package_id, package_import_receipts.record_key")
+	selected, err := s.PackageImportHead(t.Context(), pkg.PackageID, key)
+	require.NoError(t, err)
+	require.Equal(t, original, selected)
+}
+
 func commitReceivedLabel(t *testing.T, s *Store, pkg Package, versionID, label string) {
 	t.Helper()
 	job, err := s.ClaimPackageImportJob(t.Context(), "record-worker", time.Minute)

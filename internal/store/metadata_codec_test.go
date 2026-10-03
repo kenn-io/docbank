@@ -260,12 +260,10 @@ var metadataCodecBaseRequiredFields = map[string]string{
 	"mailbox_container":                  "type container",
 	"mailbox_job":                        "type job",
 	"mailbox_occurrence":                 "type occurrence",
-	"mailbox_transfer_head":              "type archive_id reference receipt_id",
 	"mailbox_transfer_receipt":           "type receipt",
 	"node":                               "type id parent_id name kind current_version_id revision created_at modified_at trashed_at trash_parent trash_name",
 	"node_tag":                           "type node_id tag_id",
 	"package":                            "type package_id canonical_json checksum",
-	"package_import_head":                "type canonical_json checksum",
 	"package_import_job":                 "type canonical_json checksum",
 	"package_import_receipt":             "type canonical_json checksum",
 	"package_label":                      "type canonical_json checksum",
@@ -355,9 +353,9 @@ email_heads email_part_artifacts embedding_failures embedding_generation_inputs 
 embedding_input_generations embedding_sets embedding_vector_rows embedding_vector_sets
 embedding_vector_spaces export_jobs export_plans export_sources extracted_text ingests
 mailbox_archives mailbox_chunks mailbox_containers mailbox_jobs mailbox_occurrences
-mailbox_transfer_heads mailbox_transfer_receipts media_input_artifacts
+mailbox_transfer_receipts media_input_artifacts
 media_occurrences media_operations media_source_versions
-media_sources node_tags package_import_heads package_import_jobs
+media_sources node_tags package_import_jobs
 package_import_receipts package_labels package_preflights package_records package_volumes packages
 page_documents page_frames page_images page_recipes page_render_jobs person_aliases
 person_document_assertions person_external_identities person_external_uid_aliases person_identities

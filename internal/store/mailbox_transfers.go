@@ -131,8 +131,13 @@ func loadMailboxTransferReceipt(ctx context.Context, q metadataQuerier, id strin
 	return r, validateMetadataTime("mailbox receipt created_at", r.CreatedAt)
 }
 func mailboxTransferHead(ctx context.Context, q metadataQuerier, owner, archive, reference string) (MailboxTransferReceipt, error) {
+	// Each reference targets one node, so its newest receipt has the highest node revision.
 	var id string
-	err := q.QueryRowContext(ctx, `SELECT h.receipt_id FROM mailbox_transfer_heads h JOIN mailbox_archives a ON a.id=h.archive_id WHERE h.archive_id=? AND h.source_ref=? AND a.owner=?`, archive, reference, owner).Scan(&id)
+	err := q.QueryRowContext(ctx, `SELECT r.id FROM mailbox_transfer_receipts r
+		JOIN mailbox_archives a ON a.id=r.archive_id
+		JOIN content_versions v ON v.version_id=r.target_version_id
+		WHERE r.archive_id=? AND r.source_ref=? AND a.owner=?
+		ORDER BY v.node_revision DESC LIMIT 1`, archive, reference, owner).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MailboxTransferReceipt{}, ErrNotFound
 	}
@@ -267,8 +272,7 @@ func (s *Store) publishMailboxTransferTx(ctx context.Context, tx *sql.Tx, p Mail
 	if err = insertMailboxTransferReceipt(ctx, tx, receipt); err != nil {
 		return MailboxTransferReceipt{}, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO mailbox_transfer_heads(archive_id,source_ref,receipt_id) VALUES(?,?,?) ON CONFLICT(archive_id,source_ref) DO UPDATE SET receipt_id=excluded.receipt_id`, p.Request.ArchiveID, p.Request.Reference, id)
-	return receipt, err
+	return receipt, nil
 }
 func insertMailboxTransferReceipt(ctx context.Context, tx *sql.Tx, r MailboxTransferReceipt) error {
 	b, err := json.Marshal(r)
