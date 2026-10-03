@@ -973,6 +973,8 @@ Export exact original document versions as verified ZIP bundles through the daem
 | --- | --- |
 | `preview --request selection.json` | Freeze and review up to 1,000 exact document versions. |
 | `start <plan-id> --fingerprint <sha256> --operation-id <job-id>` | Admit a job without waiting for completion. |
+| `show-plan <plan-id>` | Read the retained header, fingerprint, role policies, and admission deadline. |
+| `problems <plan-id> [--after N]` | Read one page of up to 50 frozen unavailable outputs. |
 | `status <job-id>` | Read the current job state once. |
 | `cancel <job-id>` | Request cancellation of active work. |
 | `download <job-id> <local-file> [--overwrite]` | Verify a completed ZIP before saving it locally. |

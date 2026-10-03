@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-30
+last_edited: 2026-10-02
 title: Verified export bundles
 description: Download exact document versions, verified email PDFs and attachment sets in reconciled ZIP bundles.
 ---
@@ -57,7 +57,7 @@ values to `start` with a new job UUIDv4. Start returns immediately; use `status`
 to observe progress. Download requires `completed`. Use `cancel <job-id>` to
 request cancellation of active work; exiting the CLI does not cancel it.
 
-All six commands accept `--json`. Preview returns the plan, start/status return
+All export commands accept `--json`. Preview returns the plan, start/status return
 the job, and download returns the verified archive receipt after saving the file.
 Cancel returns `{"job_id":"…","accepted":true}`; release returns
 `{"job_id":"…","released":true}`. A failed job is still a successful status
@@ -86,6 +86,44 @@ existing destination is preserved unless you pass `--overwrite`; replacement
 happens only after verification. Pre-publication failures leave it untouched.
 An error after publication explicitly reports that the verified file is already
 saved. Download does not release the retained job automatically.
+
+## Inspect a retained plan
+
+Keep the plan ID returned by preview. Read its saved header and any unavailable
+outputs without creating another preview:
+
+```sh
+docbank export show-plan <plan-id> --json
+docbank export problems <plan-id> --json
+docbank export problems <plan-id> --after 50 --json
+```
+
+`show-plan --json` returns the complete saved plan. Human output labels
+`expires_at` as the **admission deadline**: a retained job can keep the header
+readable after that deadline, but a new start is refused. Reads extend neither
+admission nor retention. CLI, MCP, and other API-key clients share the same owner;
+they cannot inspect a plan owned by a browser session. An unknown or removed
+plan returns not found. An expired retained record returns `export_expired`.
+For a new export, create a fresh preview with new operation IDs; it captures a
+new selection, not the old snapshot. Use status to inspect an existing job.
+
+`problems --json` returns `plan_id`, `fingerprint`, `after`, `next`, `total`, and
+`items`. Each item identifies the node, version, role, reason, and optional
+attachment `part_path`. Pass the returned nonzero `next` as `--after`; zero means
+the last page. Each call returns one page. Human output includes the next command.
+Offsets range from zero to 2,600,000. An offset equal to the total returns an
+empty final page; an offset beyond the total conflicts.
+
+The details describe the frozen plan, even after source documents change.
+Totals count problems, including a separate problem for each requested
+attachment role whose inventory is unavailable; they are not document counts.
+Originals-only CLI and MCP previews normally have no unavailable outputs, while
+richer plans created through the same API-key owner can have them.
+
+Pages contain at most 50 items and must fit within 64 KiB of encoded JSON.
+A larger page fails with `export_limit` instead of returning partial data.
+The HTTP problems route has the same cap and no option for a smaller page,
+so switching clients or releasing jobs cannot make that page readable.
 
 ## Free a finished job slot
 

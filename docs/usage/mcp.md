@@ -138,6 +138,8 @@ links, is capped at 1 MiB.
 | --- | --- |
 | `get_report_summary` | Reads an owned frozen report by its 48-character lowercase hexadecimal ID. If the full summary exceeds the result cap, returns `report_limit`; the handle remains usable. |
 | `get_report_dates` | Reads frozen date evidence with an optional opaque cursor and 1–100 members, default 50. Requests a 256 KiB page; candidates can continue on the next page. |
+| `get_export_plan` | Reads the complete frozen plan header by `plan_id`, including its admission deadline. |
+| `get_export_problems` | Reads up to 50 frozen unavailable outputs by `plan_id` and optional numeric `after`. |
 | `get_export_status` | Reads one retained native export job, including progress, failure code, and any completed receipt. It never downloads or releases the job. |
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
@@ -400,6 +402,31 @@ HTTP pinned to a dead client.
 
 ## Native export jobs
 
+`get_export_plan`, `get_export_problems`, and `get_export_status` are available
+with all write flags disabled, over stdio or HTTP. Plan inspection requires a
+retained plan ID. `get_export_plan` returns the complete `plan`, including richer
+source, role, count, and volume fields when present. Its `expires_at` is the
+admission deadline; read availability can last longer while a job retains it.
+Reading does not extend either deadline.
+
+`get_export_problems` returns a `problems` object with `plan_id`, `fingerprint`,
+`after`, `next`, `total`, and `items`. Omit `after` for the first page, then pass a
+nonzero `next` as `after`; zero marks the last page. The tools return private
+results with `ttlMs: 0`. MCP may retry a read once when transport fails before
+any response starts. Domain errors and partial responses are never retried.
+
+Plan reads use the shared API-key owner and cannot inspect browser-owned plans.
+An expired or removed plan needs a fresh preview with new IDs for a new export;
+inspect an existing job through status. Problem details remain frozen after
+source edits. Totals count unavailable outputs and inventory problems, not
+selected documents. Originals-only previews normally have none.
+
+The fixed 50-item page must fit within 64 KiB. An `export_limit` response returns
+no partial page; HTTP has the same limit and cannot request fewer items.
+Releasing jobs cannot shrink that page. See
+[retained-plan inspection](export-bundles.md#inspect-a-retained-plan) for offsets,
+identity fields, and retention behavior.
+
 Start with `docbank mcp --allow-export-writes` to let a client retain exact
 originals and manage their export. Review the selection with the operator.
 
@@ -426,6 +453,11 @@ not reconnect and repeat writes automatically. Preview replay must keep member
 order and remains subject to its original ten-minute admission window. After a
 delayed start response, use job status instead of replaying preview. Never reuse
 a released job ID: its replay record has been deleted.
+
+For `export_timeout`, `export_canceled`, or `export_failed` during start,
+download, or release, read `get_export_status` before retrying. Use the start
+operation ID as the job ID. After a download error, inspect the destination too;
+the file may already be saved. After a release error, not found confirms removal.
 
 MCP shares the API-key owner with the CLI. Completed jobs still occupy the two
 shared job slots until released or expired. Release does not delete originals or

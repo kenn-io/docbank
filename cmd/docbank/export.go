@@ -236,6 +236,7 @@ func init() {
 		&exportOverwrite, "overwrite", false, "Replace an existing destination after verification",
 	)
 	exportCmd.AddCommand(exportPreviewCmd, exportStartCmd, exportStatusCmd,
-		exportCancelCmd, exportDownloadCmd, exportReleaseCmd)
+		exportCancelCmd, exportDownloadCmd, exportReleaseCmd,
+		newExportShowPlanCommand(), newExportProblemsCommand())
 	rootCmd.AddCommand(exportCmd)
 }

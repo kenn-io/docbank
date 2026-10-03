@@ -58,6 +58,7 @@ type toolDefinition struct {
 }
 
 var readToolDefinitions = []toolDefinition{
+	exportPlanTool, exportProblemsTool,
 	reportSummaryTool, reportDatesTool,
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
 	{name: "get_vault_info", title: "Get vault info", description: "Summarize the selected vault without exposing its host path.", schemas: getVaultInfoSchemas},
@@ -208,7 +209,8 @@ func registerToolCatalog(
 		case reportSummaryTool.name, reportDatesTool.name, reportCreateTool.name, reportReviseTool.name,
 			reportDownloadTool.name:
 			handler = reports.handler(tool.Name, output)
-		case "preview_export", "start_export", "get_export_status", "cancel_export", "release_export",
+		case exportPlanTool.name, exportProblemsTool.name,
+			"preview_export", "start_export", "get_export_status", "cancel_export", "release_export",
 			"download_export":
 			handler = exportToolHandler(lease, tool.Name, output, logger)
 		case processingToolDefinition.name:
@@ -530,25 +532,24 @@ func domainErrorMessage(code string) string {
 	case "export_outcome_unknown":
 		return "The export outcome is unknown; inspect the supplied IDs before replaying the same request."
 	case "export_conflict":
-		return "The export request conflicts with retained authority or current job state."
+		return "The export request conflicts with current data, cursor position, or operation state."
 	case "export_expired":
-		return "The export admission or archive expired. Preview again with new IDs for expired " +
-			"admission; release a retained job whose archive is missing."
+		return "The export admission or retention period has ended, or the archive is unavailable."
 	case "export_unavailable":
 		return "The export worker is unavailable; this request made no change. " +
 			"Check the daemon and retry."
 	case "export_limit":
-		return "An export limit was reached; release unneeded terminal jobs or narrow the selection."
+		return "An export size or capacity limit was reached."
 	case "export_retained":
 		return "A download ticket or lease still retains this export; retry release after it closes."
 	case "export_role_unavailable":
 		return "A required export role is unavailable."
 	case "export_timeout":
-		return "The export request timed out; inspect the job before retrying."
+		return "The export request timed out."
 	case "export_canceled":
-		return "The export request was canceled; inspect the job before retrying."
+		return "The export request was canceled."
 	case "export_failed":
-		return "The export request failed; inspect the job before retrying."
+		return "The export request failed."
 	case "package_incomplete":
 		return "The snapshot is missing a required representation for this export profile."
 	case "not_found":
