@@ -1,9 +1,11 @@
 package ocr
 
 // PreparationError describes a local source or conversion failure without
-// exposing source content, paths, or parser output. Use errors.As to find it
-// inside a ProviderError or another wrapper. Its description is for display;
-// use ProviderError.Kind and errors.Is for scheduling decisions.
+// exposing source content, paths, or parser output. Use
+// errors.AsType[*PreparationError] to find it inside a ProviderError or another
+// wrapper, then display its Error() value, not the outer error or cause.
+// Joined cleanup errors may contain private data. Check context errors first;
+// use ErrorKindOf and errors.Is on the original error for scheduling decisions.
 type PreparationError struct {
 	description string
 	cause       error

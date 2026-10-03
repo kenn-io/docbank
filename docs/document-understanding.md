@@ -297,6 +297,10 @@ HTTP, and uploads that PDF on every retry. The returned document keeps the
 original family and page unit kind. Its result carries the original and
 generated PDF hashes. Call `Release` on every success or failure path.
 
+To display a local preparation failure, follow
+[Show preparation failures](#show-preparation-failures). Keep the original
+error for retry and cancellation decisions.
+
 The rendition adapter verifies source identity before submission. For PDFs it
 compares the returned page count with that inspected count. For PPTX it counts
 the listed PresentationML slides, rejects invalid slide references or
@@ -590,6 +594,9 @@ if err != nil {
 // Keep the receipt with pdfSource before a later caller authorizes upload.
 ```
 
+If conversion fails, follow [Show preparation failures](#show-preparation-failures)
+to choose a display message.
+
 The defaults are also hard ceilings. `NewPolicy` accepts positive, tighter
 limits.
 
@@ -625,6 +632,44 @@ The receipt does not authorize upload. Your application must:
 3. Retain the conversion policy with that consent.
 
 This Go API does not add CSV OCR to the daemon or CLI.
+
+## Show preparation failures
+
+`mistral.Prepare` and `csvpdf.Convert` attach `ocr.PreparationError` to local
+source and conversion failures. Extract it with
+`errors.AsType[*ocr.PreparationError]` and display its `Error()` value. The
+description contains fixed text; the original cause remains available through
+`Unwrap()` for private diagnostics.
+
+Never display the original `err.Error()` or an unwrapped cause. The full error
+may include joined cleanup errors with filesystem paths or parser details,
+even when it contains a `PreparationError`. If none is present, use a fixed
+fallback message.
+
+Check cancellation and deadlines first. A canceled operation may also contain
+a description for a source-close failure:
+
+```go
+func preparationMessage(err error) string {
+    switch {
+    case errors.Is(err, context.Canceled):
+        return "Document preparation canceled"
+    case errors.Is(err, context.DeadlineExceeded):
+        return "Document preparation timed out"
+    }
+    if description, ok := errors.AsType[*ocr.PreparationError](err); ok {
+        return description.Error()
+    }
+    return "Document preparation failed"
+}
+```
+
+Use the original error for scheduling. For `ocr.Processor` failures, use
+`ocr.ErrorKindOf(err)`. For direct `mistral.Prepare` calls, use `errors.Is` with
+`mistral.ErrSpoolCapacity`, `mistral.ErrSpoolUnavailable`, and
+`mistral.ErrInvalidSource`. Use `errors.Is` for context errors in either path
+and for `csvpdf.Convert`. Display descriptions are not retry classifications;
+do not match their text to decide whether to retry.
 
 ## Convert office files locally to PDF
 

@@ -293,14 +293,18 @@ func TestPrepareClassifiesCapacityRefusals(t *testing.T) {
 	options.MinFreeBytes = math.MaxInt64
 	_, err = Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, options)
 	require.ErrorIs(t, err, ErrSpoolCapacity)
-	require.EqualError(t, err, "temporary document storage capacity is unavailable")
-	require.ErrorContains(t, errors.Unwrap(err), "free-space reserve")
+	diagnostic, ok = errors.AsType[*ocr.PreparationError](err)
+	require.True(t, ok)
+	require.EqualError(t, diagnostic, "temporary document storage capacity is unavailable")
+	require.ErrorContains(t, diagnostic.Unwrap(), "free-space reserve")
 
 	options.MinFreeBytes = 1
 	require.NoError(t, os.Mkdir(filepath.Join(directory, "unsafe"), 0o700))
 	_, err = Prepare(t.Context(), io.NopCloser(bytes.NewReader(content)), policy, options)
 	require.ErrorIs(t, err, ErrSpoolUnavailable)
-	require.ErrorContains(t, errors.Unwrap(err), "unsafe entry")
+	diagnostic, ok = errors.AsType[*ocr.PreparationError](err)
+	require.True(t, ok)
+	require.ErrorContains(t, diagnostic.Unwrap(), "unsafe entry")
 	require.NotErrorIs(t, err, ErrSpoolCapacity)
 }
 
@@ -323,7 +327,9 @@ func TestPrepareRejectsPublicReservationLock(t *testing.T) {
 		MaxSpoolBytes: 1024, MinFreeBytes: 1,
 	})
 	require.ErrorIs(t, err, ErrSpoolUnavailable)
-	assert.ErrorContains(t, errors.Unwrap(err), "reservation lock")
+	diagnostic, ok := errors.AsType[*ocr.PreparationError](err)
+	require.True(t, ok)
+	assert.ErrorContains(t, diagnostic.Unwrap(), "reservation lock")
 }
 
 func TestScavengeSpoolDirectoryRemovesOnlyStalePackageFilesAndFailsClosed(t *testing.T) {

@@ -302,7 +302,7 @@ func Prepare(
 		}
 		description := "document format is invalid or does not match its declared media type"
 		if errors.Is(err, formatdetect.ErrPDFStructure) {
-			description = "PDF structure is malformed"
+			description = "PDF structure could not be validated"
 		}
 		return nil, ocr.NewPreparationError(description, errors.Join(ErrInvalidSource, err))
 	}

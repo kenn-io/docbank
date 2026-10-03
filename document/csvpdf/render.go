@@ -113,8 +113,8 @@ func render(ctx context.Context, records [][]string, limits Limits) ([]byte, []S
 		if err := ctx.Err(); err != nil {
 			return nil, nil, 0, err
 		}
-		if _, ok := errors.AsType[*ocr.PreparationError](err); ok {
-			return nil, nil, 0, fmt.Errorf("write CSV PDF: %w", err)
+		if description, ok := errors.AsType[*ocr.PreparationError](err); ok {
+			return nil, nil, 0, description
 		}
 		return nil, nil, 0, ocr.NewPreparationError("CSV PDF could not be written", err)
 	}

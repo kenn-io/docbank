@@ -181,7 +181,7 @@ func validatePDFStructure(reader io.ReaderAt, size int64, prefix []byte) error {
 
 var (
 	// ErrPDFStructure identifies a failure of the PDF structure detector.
-	ErrPDFStructure         = errors.New("PDF structure is malformed")
+	ErrPDFStructure         = errors.New("PDF structure could not be validated")
 	ErrPDFEncrypted         = errors.New("PDF is encrypted")
 	ErrPDFExpandedBytes     = errors.New("PDF expanded bytes exceed the bound")
 	ErrPDFEntryBytes        = errors.New("PDF stream bytes exceed the entry bound")

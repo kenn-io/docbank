@@ -29,10 +29,11 @@ func TestPrepareDescribesSourceFailures(t *testing.T) {
 		{name: "size mismatch", content: pdf, mediaType: mediaTypePDF, change: func(o *PrepareOptions) { o.ExpectedSize++ }, description: "source size mismatch"},
 		{name: "hash mismatch", content: pdf, mediaType: mediaTypePDF, change: func(o *PrepareOptions) { o.ExpectedSHA256 = zeroSHA256() }, description: "source hash mismatch"},
 		{name: "declared type", content: pdf, mediaType: "application/x-private-synthetic-value", description: "document format is invalid or does not match its declared media type"},
-		{name: "malformed PDF", content: []byte("%PDF-1.4\nprivate-synthetic-value\n"), mediaType: mediaTypePDF, description: "PDF structure is malformed"},
+		{name: "malformed PDF", content: []byte("%PDF-1.4\nprivate-synthetic-value\n"), mediaType: mediaTypePDF, description: "PDF structure could not be validated"},
 		{name: "unit count", content: pptx, mediaType: "application/vnd.openxmlformats-officedocument.presentationml.presentation", description: "document page or unit count could not be determined"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			directory := filepath.Join(t.TempDir(), "spool")
 			makePrivateDirectory(t, directory)
 			digest := sha256.Sum256(test.content)
