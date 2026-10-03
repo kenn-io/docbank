@@ -685,6 +685,35 @@ func TestSearchExplainedLexicalCandidatesBoundsLongNameExcerpt(t *testing.T) {
 	assert.Equal(t, string([]rune(name)[:maxExplainedSearchExcerptRunes]), candidates[0].Excerpt)
 }
 
+func TestSearchExplainedLexicalCandidatesRanksFilteredNamesBeforeLimit(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	docs, err := s.Mkdir(ctx, s.RootID(), "docs")
+	require.NoError(t, err)
+	for _, name := range []string{"tax c.pdf", "tax b.pdf", "tax tax tax.pdf"} {
+		_, err := s.CreateFile(ctx, docs.ID, name, fakeHash(name), 1, "application/pdf")
+		require.NoError(t, err)
+	}
+	// Higher-ranked matches outside the scope must not consume the page.
+	_, err = s.CreateFile(ctx, s.RootID(), "tax tax tax tax.pdf", fakeHash("outside"), 1, "application/pdf")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, docs.ID, "tax tax tax tax.txt", fakeHash("text"), 1, "text/plain")
+	require.NoError(t, err)
+	trashed, err := s.CreateFile(ctx, docs.ID, "tax tax tax tax tax.pdf", fakeHash("trashed"), 1, "application/pdf")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, trashed.ID, UnconditionalRev)
+	require.NoError(t, err)
+
+	candidates, truncated, err := s.SearchExplainedLexicalCandidates(ctx, "tax", 2,
+		SearchOptions{UnderNodeID: docs.ID, MIMEType: "application/pdf"})
+	require.NoError(t, err)
+	require.Len(t, candidates, 2)
+	assert.True(t, truncated)
+	assert.Equal(t, "/docs/tax tax tax.pdf", candidates[0].Path)
+	assert.Equal(t, "/docs/tax b.pdf", candidates[1].Path)
+}
+
 func TestSearchFindsLiveNodesOnly(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
