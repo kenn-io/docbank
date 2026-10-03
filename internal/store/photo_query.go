@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
+	"strconv"
 	"strings"
 )
 
@@ -57,6 +58,15 @@ type PhotoBrowsePage struct {
 	Next  *PhotoBrowsePosition
 }
 
+const (
+	// MaxPhotoSortKeyCharacters bounds the sort key compared across pages so
+	// every emitted cursor fits the cursor envelope; longer keys tie on this
+	// prefix and fall back to asset order.
+	MaxPhotoSortKeyCharacters = 1024
+	// MaxPhotoSortKeyBytes is the UTF-8 size of the longest bounded sort key.
+	MaxPhotoSortKeyBytes = 4 * MaxPhotoSortKeyCharacters
+)
+
 // ListPhotoAssets projects complete matching members into one row per included asset.
 func (s *Store) ListPhotoAssets(ctx context.Context, request PhotoBrowseRequest, boundary *PhotoBrowsePosition) (PhotoBrowsePage, error) {
 	if request.PageSize == 0 {
@@ -102,7 +112,7 @@ func (s *Store) ListPhotoAssets(ctx context.Context, request PhotoBrowseRequest,
 		digest := sha256.Sum256(binding)
 		identity := hex.EncodeToString(digest[:])
 		if boundary != nil {
-			if boundary.QueryIdentity != identity || validateUUIDv4(boundary.AssetID) != nil || len(boundary.Key) > MaxWalkPathBytes {
+			if boundary.QueryIdentity != identity || validateUUIDv4(boundary.AssetID) != nil || len(boundary.Key) > MaxPhotoSortKeyBytes {
 				return ErrInvalidPhotoCursor
 			}
 		}
@@ -124,7 +134,7 @@ func (s *Store) ListPhotoAssets(ctx context.Context, request PhotoBrowseRequest,
    SELECT DISTINCT pf.asset_id FROM matched m JOIN photo_files pf ON pf.node_id=m.node_id
   ), displayed AS (
    SELECT a.asset_id,a.kind,a.revision,f.file_id,n.id node_id,v.version_id,n.name,COALESCE(v.mime_type,'') mime_type,n.created_at,
-    v.blob_hash,` + photoTechnicalSelect + `,` + sortKey + ` sort_key
+    v.blob_hash,` + photoTechnicalSelect + `,substr(` + sortKey + `,1,` + strconv.Itoa(MaxPhotoSortKeyCharacters) + `) sort_key
    FROM assets matched_asset JOIN photo_assets a ON a.asset_id=matched_asset.asset_id
    JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id
    JOIN content_versions v ON v.version_id=n.current_version_id

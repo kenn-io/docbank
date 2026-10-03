@@ -8,6 +8,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -93,6 +94,34 @@ func TestPhotoBrowseMissingDisplayMediaType(t *testing.T) {
 		}
 		require.Contains(t, []string{page.Items[0].AssetID, page.Items[1].AssetID}, promoted.ID)
 	}
+}
+
+func TestPhotoBrowsePagesPastLongSortKeys(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	shared := strings.Repeat("a", MaxPhotoSortKeyCharacters+100)
+	want := map[string]bool{}
+	for _, name := range []string{shared + "y.jpg", shared + "x.jpg", strings.Repeat("0", 17000) + ".jpg", "b.jpg"} {
+		node := browsePhotoNode(t, s, name, browseHash(name), "image/jpeg")
+		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		want[asset.ID] = true
+	}
+	request := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"sort":{"field":"name","direction":"asc"}}`), PageSize: 1}
+	seen := map[string]bool{}
+	var boundary *PhotoBrowsePosition
+	for range want {
+		page, err := s.ListPhotoAssets(t.Context(), request, boundary)
+		require.NoError(t, err)
+		require.Len(t, page.Items, 1)
+		seen[page.Items[0].AssetID] = true
+		boundary = page.Next
+		if boundary != nil {
+			require.LessOrEqual(t, len(boundary.Key), MaxPhotoSortKeyBytes)
+		}
+	}
+	require.Nil(t, boundary)
+	require.Equal(t, want, seen)
 }
 
 func TestPhotoBrowseMemberSemantics(t *testing.T) {
