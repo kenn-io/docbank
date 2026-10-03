@@ -138,7 +138,7 @@ func normalizeCandidateDate(candidate DateCandidate, request Request, reportZone
 		return "", ErrUnusableDate
 	}
 	if candidate.Rejection == "ambiguous_numeric_date" && request.NumericDateOrder != "" {
-		return parseNumericDate(candidate.Raw, request.NumericDateOrder)
+		return parseNumericDate(candidate, request.NumericDateOrder)
 	}
 	if candidate.Rejection != "" && candidate.Rejection != "timezone_omitted" {
 		return "", ErrUnusableDate
@@ -223,14 +223,18 @@ func reviewedDateMatchesTokens(candidate DateCandidate, choice DateChoice, reque
 		return err == nil && date == choice.ReviewedDate
 	}
 	for _, order := range []string{"MDY", "DMY"} {
-		if date, err := parseNumericDate(candidate.Raw, order); err == nil && date == choice.ReviewedDate {
+		if date, err := parseNumericDate(candidate, order); err == nil && date == choice.ReviewedDate {
 			return true
 		}
 	}
 	return false
 }
 
-func parseNumericDate(raw, order string) (string, error) {
+func parseNumericDate(candidate DateCandidate, order string) (string, error) {
+	raw := candidate.Raw
+	if candidate.SourceClass == "content" && candidate.Locator.RenditionID != "" {
+		raw = strings.ReplaceAll(raw, `\/`, "/")
+	}
 	match := numericDatePattern.FindStringSubmatch(raw)
 	if match == nil || (order != "MDY" && order != "DMY") {
 		return "", ErrUnusableDate

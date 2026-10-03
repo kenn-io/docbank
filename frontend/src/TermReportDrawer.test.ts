@@ -56,12 +56,14 @@ it("merges continued date evidence into one document card and retains its choice
   expect(screen.queryByRole("button", { name: "More evidence" })).toBeNull();
 });
 
-it("requires interpretation fields and submits only fields for the selected date action", async () => {
+it.each([false, true])("preserves date interpretation evidence (rendition=%s)", async rendition => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const document = { node_id: 1, version_id: "v1", sha256: "a".repeat(64) };
-  const candidate = { id: "date-1", document, role: "document_date", raw: "01/02/2026",
+  const candidate = { id: "date-1", document, role: "document_date",
+    raw: rendition ? String.raw`01\/02\/2026` : "01/02/2026",
     source_class: "content", rejection: "ambiguous_numeric_date",
-    locator: { evidence_sha256: "b".repeat(64), start_byte: 0, end_byte: 10 } };
+    locator: { rendition_id: rendition ? "retained-markdown" : undefined,
+      evidence_sha256: "b".repeat(64), start_byte: 0, end_byte: rendition ? 12 : 10 } };
   const revisions: { choices: unknown[] }[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
     const path = String(url);
@@ -69,7 +71,8 @@ it("requires interpretation fields and submits only fields for the selected date
     if (init?.method === "GET") return json({ items: [], total: 0 });
     if (path.endsWith("/dates")) return json({ members: [{ document, selection: {}, candidates_complete: true,
       candidates: [candidate, { ...candidate, id: "date-2", raw: "2026-02-31", rejection: "invalid_date" },
-        { ...candidate, id: "date-3", raw: "2026-01-15", rejection: "" }] }] });
+        { ...candidate, id: "date-3", raw: rendition ? String.raw`2026\-01\-15` : "2026-01-15",
+          rejection: "" }] }] });
     if (path.endsWith("/revisions")) {
       revisions.push(JSON.parse(String(init?.body)));
       return json(oldSummary);
@@ -91,7 +94,8 @@ it("requires interpretation fields and submits only fields for the selected date
   await fireEvent.input(screen.getByRole("textbox", { name: "Source timezone" }), { target: { value: "UTC" } });
   await fireEvent.click(screen.getByRole("button", { name: "Create reviewed revision" }));
   await waitFor(() => expect(revisions).toHaveLength(1));
-  expect(revisions[0].choices[0]).toMatchObject({ action: "interpret", reviewed_date: "2026-01-02", reviewed_timezone: "UTC" });
+  expect(revisions[0].choices[0]).toMatchObject({ action: "interpret", reviewed_date: "2026-01-02",
+    reviewed_timezone: "UTC", candidate_id: "date-1", evidence_sha256: "b".repeat(64) });
   await waitFor(() => expect(screen.getByRole("button", { name: "Review dates" }).hasAttribute("disabled")).toBe(false));
   await fireEvent.click(screen.getByRole("button", { name: "Review dates" }));
   await fireEvent.click(await screen.findByRole("radio", { name: /2026-01-15/ }));

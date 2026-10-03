@@ -42,6 +42,57 @@ func TestContentDatesKeepSemanticRoleAndExactByteSpan(t *testing.T) {
 	}
 }
 
+func TestContentDatesReadEscapedRenditionDatesWithoutChangingEvidence(t *testing.T) {
+	text := []byte(`Résumé. Document dated\: 2024\-05\-06. Document dated 2024\-06\-07.
+Signed on June 3\, 2024. Document dated 03\/04\/2020. Mentioned 2024\-08\-09.`)
+	identity := Identity{NodeID: 1, VersionID: "v1", SHA256: strings.Repeat("a", 64)}
+	digest := sha256.Sum256(text)
+	binding := TextBinding{Kind: "rendition", Document: identity, Size: int64(len(text)),
+		RenditionID: "retained-markdown", ArtifactSHA256: hex.EncodeToString(digest[:])}
+	budget := NewBudget(1 << 20)
+	defer func() { _ = budget.Close() }()
+	got, err := ExtractContentDates(t.Context(), budget, identity, binding, text, "")
+	if err != nil || len(got) != 5 {
+		t.Fatalf("candidates=%+v err=%v", got, err)
+	}
+	for i, want := range []struct{ raw, value, role, rejection string }{
+		{`2024\-05\-06`, "2024-05-06", "document_date", ""},
+		{`2024\-06\-07`, "2024-06-07", "document_date", ""},
+		{`June 3\, 2024`, "2024-06-03", "signed", ""},
+		{`03\/04\/2020`, "", "document_date", "ambiguous_numeric_date"},
+		{`2024\-08\-09`, "2024-08-09", "unclassified", ""},
+	} {
+		candidate := got[i]
+		if candidate.Raw != want.raw || candidate.Value != want.value ||
+			candidate.Role != want.role || candidate.Rejection != want.rejection {
+			t.Fatalf("candidate %d: %+v; want %+v", i, candidate, want)
+		}
+		quote := string(text[candidate.Locator.StartByte:candidate.Locator.EndByte])
+		if candidate.Locator.Quote != quote ||
+			candidate.Locator.TextSHA256 != binding.ArtifactSHA256 ||
+			!strings.Contains(candidate.Locator.Quote, want.raw) {
+			t.Fatalf("retained Markdown evidence changed: %+v", candidate.Locator)
+		}
+	}
+	_, err = SelectDate("document", got[:2], nil, Request{Timezone: "UTC"})
+	if !errors.Is(err, ErrAmbiguousDate) {
+		t.Fatalf("two equally preferred document dates must require review: %v", err)
+	}
+	selection, err := SelectDate("document", got[3:4], nil,
+		Request{Timezone: "UTC", NumericDateOrder: "MDY"})
+	if err != nil || selection.Date != "2020-03-04" {
+		t.Fatalf("escaped numeric date lost its explicit order: %+v %v", selection, err)
+	}
+	choice := DateChoice{Document: identity, CandidateID: got[3].ID,
+		EvidenceSHA256: got[3].Locator.EvidenceSHA256, Action: "interpret",
+		Reason: "Reviewed day/month/year", ReviewedDate: "2020-04-03",
+		ReviewedTimezone: "UTC", ReviewedRole: "document_date"}
+	selection, err = SelectDate("document", got[3:4], &choice, Request{Timezone: "UTC"})
+	if err != nil || selection.Date != "2020-04-03" {
+		t.Fatalf("escaped numeric date could not be reviewed: %+v %v", selection, err)
+	}
+}
+
 func TestContentDatesLocateOCRAcrossMultilineAndUnicode(t *testing.T) {
 	budget := NewBudget(1 << 20)
 	defer func() { _ = budget.Close() }()
