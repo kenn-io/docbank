@@ -77,6 +77,10 @@ func exportToolHandler(
 		var output any
 		var err error
 		switch name {
+		case exportPlanTool.name:
+			output, err = getExportPlan(ctx, lease, request.Params.Arguments)
+		case exportProblemsTool.name:
+			output, err = getExportProblems(ctx, lease, request.Params.Arguments)
 		case "preview_export":
 			output, err = previewExport(ctx, lease, request.Params.Arguments)
 		case "start_export":

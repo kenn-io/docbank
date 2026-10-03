@@ -34,14 +34,8 @@ func previewExportSchemas() (schema, schema) {
 		"role_entries":   integerSchema(0, bundle.MaxRoles),
 		"role_bytes":     integerSchema(0, bundle.MaxRoleBytes),
 		"metadata_bytes": integerSchema(0, bundle.MaxMetadataBytes),
-		"counts": objectSchema(schema{
-			"messages": integerSchema(0, 0), "attachments": integerSchema(0, 0),
-			"email_pdfs": integerSchema(0, 0), "attachment_pdfs": integerSchema(0, 0),
-			"pages": integerSchema(0, 0), "collapsed": integerSchema(0, 0),
-			"unavailable": integerSchema(0, 0), "unavailable_inventories": integerSchema(0, 0),
-		}, "messages", "attachments", "email_pdfs", "attachment_pdfs", "pages", "collapsed",
-			"unavailable", "unavailable_inventories"),
-		"created_at": dateTimeSchema(), "expires_at": dateTimeSchema(),
+		"counts":         exportOutputCountsSchema(),
+		"created_at":     dateTimeSchema(), "expires_at": dateTimeSchema(),
 	}, "format", "id", "vault_id", "toolchain", "source", "roles", "fingerprint", "total",
 		"role_entries", "role_bytes", "metadata_bytes", "created_at", "expires_at")
 	return input, rootObjectSchema(withPrivateCache(schema{"plan": plan}), cacheRequired("plan")...)
