@@ -55,8 +55,8 @@ var (
 	// ErrVisualPreviewUnavailable means the exact version has a cataloged
 	// unsupported or failed preview result rather than readable preview bytes.
 	ErrVisualPreviewUnavailable = errors.New("docbank visual preview is unavailable")
-	// ErrInvalidArgument means a caller-supplied page limit or cursor is
-	// malformed. The daemon API reports the same condition as a validation error.
+	// ErrInvalidArgument means a caller-supplied argument, such as a page
+	// limit, cursor, or preview size, is invalid.
 	ErrInvalidArgument = errors.New("docbank invalid argument")
 
 	ErrNotFound                 = store.ErrNotFound

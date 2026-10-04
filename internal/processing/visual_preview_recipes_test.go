@@ -24,18 +24,21 @@ import (
 
 func TestVisualPreviewRecipes(t *testing.T) {
 	t.Parallel()
-	fingerprints := map[string]bool{}
-	for size, edge := range map[string]int{"grid": 512, "fit": 2560, "large": 4096} {
-		recipe, err := VisualPreviewRecipeForSize(size)
+	for _, test := range []struct {
+		size        string
+		edge        int
+		fingerprint string
+	}{
+		{"grid", 512, "3a78199bbf772e0e11efa917fd45f52c543ebe19901ec6a9f24c36461c026b65"},
+		{"fit", 2560, "dd3d22ee2f4432b42c803620bce809e477188ad6894c934800f36fc83ef5094d"},
+		{"large", 4096, "03f89b744cc013004c89b1babe6d779ee043652519c586453bcde761bd7a4b04"},
+	} {
+		recipe, err := VisualPreviewRecipeForSize(test.size)
 		require.NoError(t, err)
-		require.Equal(t, edge, recipe.MaxEdgePixels)
+		require.Equal(t, test.edge, recipe.MaxEdgePixels)
 		_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(recipe)
 		require.NoError(t, err)
-		require.False(t, fingerprints[fingerprint])
-		fingerprints[fingerprint] = true
-		if size == "large" {
-			require.Equal(t, "03f89b744cc013004c89b1babe6d779ee043652519c586453bcde761bd7a4b04", fingerprint)
-		}
+		require.Equal(t, test.fingerprint, fingerprint, test.size)
 	}
 	_, err := VisualPreviewRecipeForSize("unknown")
 	require.Error(t, err)
@@ -174,6 +177,7 @@ func TestEnsureVisualPreviewForRecipe(t *testing.T) {
 	require.NoError(t, err)
 	_, err = EnsureVisualPreview(t.Context(), catalog, blobs, missing.CurrentVersionID, recipe)
 	require.True(t, IsSourceContentUnavailable(err))
+	require.ErrorContains(t, err, missing.CurrentVersionID)
 	_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(recipe)
 	require.NoError(t, err)
 	_, err = catalog.VisualPreviewGenerationByRecipe(t.Context(), missing.CurrentVersionID, fingerprint)

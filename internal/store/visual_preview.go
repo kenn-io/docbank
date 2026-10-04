@@ -52,11 +52,15 @@ func (s *Store) PublishVisualPreview(
 }
 
 // PublishVisualPreviewGeneration records an immutable result without changing the active head.
-func (s *Store) PublishVisualPreviewGeneration(ctx context.Context, versionID string, canonical []byte, physical *BlobPhysical) (VisualPreviewGeneration, error) {
+func (s *Store) PublishVisualPreviewGeneration(
+	ctx context.Context, versionID string, canonical []byte, physical *BlobPhysical,
+) (VisualPreviewGeneration, error) {
 	return s.publishVisualPreview(ctx, versionID, canonical, physical, false)
 }
 
-func (s *Store) publishVisualPreview(ctx context.Context, versionID string, canonical []byte, physical *BlobPhysical, activeHead bool) (VisualPreviewGeneration, error) {
+func (s *Store) publishVisualPreview(
+	ctx context.Context, versionID string, canonical []byte, physical *BlobPhysical, activeHead bool,
+) (VisualPreviewGeneration, error) {
 	if err := validateUUIDv4(versionID); err != nil {
 		return VisualPreviewGeneration{}, fmt.Errorf("content version %q: %w", versionID, ErrNotFound)
 	}
@@ -312,7 +316,9 @@ func previewFailureDetail(value document.VisualPreviewV1) any {
 }
 
 // ContentVersionVisualPreviewByRecipe reads the exact generation and source in one snapshot.
-func (s *Store) ContentVersionVisualPreviewByRecipe(ctx context.Context, versionID, recipeFingerprint string) (VisualPreviewView, error) {
+func (s *Store) ContentVersionVisualPreviewByRecipe(
+	ctx context.Context, versionID, recipeFingerprint string,
+) (VisualPreviewView, error) {
 	if err := validateUUIDv4(versionID); err != nil {
 		return VisualPreviewView{}, ErrNotFound
 	}
@@ -321,7 +327,8 @@ func (s *Store) ContentVersionVisualPreviewByRecipe(ctx context.Context, version
 		return VisualPreviewView{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	version, err := scanContentVersion(tx.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, versionID))
+	version, err := scanContentVersion(tx.QueryRowContext(ctx,
+		`SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, versionID))
 	if err != nil {
 		return VisualPreviewView{}, err
 	}
@@ -346,19 +353,25 @@ type PhotoVisualPreviewTarget struct {
 	MediaType    string
 }
 
-const liveIncludedPhotoDisplayPredicate = `a.kind='photo' AND a.excluded_at IS NULL AND n.trashed_at IS NULL`
+// Follow indexed ownership links from a version rather than scanning assets
+// for a matching display. The outer query can seek in version order.
+const liveIncludedPhotoDisplayPredicate = `EXISTS (
+ SELECT 1 FROM nodes n JOIN photo_files f ON f.node_id=n.id
+ JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
+ WHERE n.id=v.node_id AND n.current_version_id=v.version_id
+ AND a.kind='photo' AND a.excluded_at IS NULL AND n.trashed_at IS NULL)`
 
 // MissingPhotoVisualPreviewTargetsAfter lists display versions without a recorded recipe.
-func (s *Store) MissingPhotoVisualPreviewTargetsAfter(ctx context.Context, recipeFingerprint, afterVersionID string, limit int) ([]PhotoVisualPreviewTarget, error) {
+func (s *Store) MissingPhotoVisualPreviewTargetsAfter(
+	ctx context.Context, recipeFingerprint, afterVersionID string, limit int,
+) ([]PhotoVisualPreviewTarget, error) {
 	if limit <= 0 {
 		return nil, errors.New("visual preview target limit must be positive")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT v.version_id,v.blob_hash,v.size,COALESCE(v.mime_type,'')
- FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id
- JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
- WHERE `+liveIncludedPhotoDisplayPredicate+`
- AND v.version_id>? AND NOT EXISTS (
+	rows, err := s.db.QueryContext(ctx, `SELECT v.version_id,v.blob_hash,v.size,COALESCE(v.mime_type,'')
+ FROM content_versions v WHERE v.version_id>? AND NOT EXISTS (
  SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=?)
+ AND `+liveIncludedPhotoDisplayPredicate+`
  ORDER BY v.version_id LIMIT ?`, afterVersionID, recipeFingerprint, limit)
 	if err != nil {
 		return nil, err
@@ -377,17 +390,18 @@ func (s *Store) MissingPhotoVisualPreviewTargetsAfter(ctx context.Context, recip
 
 // PhotoVisualPreviewTargetEligible rechecks that a listed target is still the
 // current display version of a live, included photo without this recipe.
-func (s *Store) PhotoVisualPreviewTargetEligible(ctx context.Context, target PhotoVisualPreviewTarget, recipeFingerprint string) (bool, error) {
+func (s *Store) PhotoVisualPreviewTargetEligible(
+	ctx context.Context, target PhotoVisualPreviewTarget, recipeFingerprint string,
+) (bool, error) {
 	var eligible bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS (
- SELECT 1 FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id
- JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
- WHERE `+liveIncludedPhotoDisplayPredicate+` AND v.version_id=? AND v.blob_hash=?
+ SELECT 1 FROM content_versions v WHERE v.version_id=? AND v.blob_hash=?
  AND v.size=? AND COALESCE(v.mime_type,'')=? AND NOT EXISTS (
- SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=?))`,
+ SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=?)
+ AND `+liveIncludedPhotoDisplayPredicate+`)`,
 		target.VersionID, target.SourceSHA256, target.Size, target.MediaType, recipeFingerprint).Scan(&eligible)
 	if err != nil {
-		return false, fmt.Errorf("checking photo visual preview target eligibility: %w", err)
+		return false, fmt.Errorf("checking photo visual preview eligibility for version %q: %w", target.VersionID, err)
 	}
 	return eligible, nil
 }

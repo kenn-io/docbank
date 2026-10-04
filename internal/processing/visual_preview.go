@@ -18,7 +18,6 @@ import (
 	"image/png"
 	"io"
 	"mime"
-	"strings"
 
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/webp"
@@ -38,17 +37,19 @@ const (
 	visualPreviewWebPEXIF        = 1 << 3
 	visualPreviewWebPICCProfile  = 1 << 5
 	// Bump the descriptor revision when any byte-producing choice changes.
-	visualPreviewProcessorDescriptor = "docbank-visual-preview:jpeg+png+gif-stdlib+webp+embedded-camera-raw+x-image-draw-v0.44.0:max-edge=4096:quality=90:alpha=white:v7"
+	visualPreviewProcessorDescriptor = "docbank-visual-preview:jpeg+png+gif-stdlib+webp+embedded-camera-raw+" +
+		"x-image-draw-v0.44.0:max-edge=%d:quality=%d:alpha=white:v7"
 )
 
 var visualPreviewRecipe = document.VisualPreviewRecipeV1{
-	ContractVersion:      document.VisualPreviewContractV1,
-	MaxEdgePixels:        visualPreviewMaxEdgePixels,
-	OutputMediaType:      "image/jpeg",
-	OrientationPolicy:    "apply",
-	ColorPolicy:          "srgb",
-	FramePolicy:          "primary",
-	ProcessorFingerprint: fingerprintVisualPreviewProcessor(visualPreviewProcessorDescriptor),
+	ContractVersion:   document.VisualPreviewContractV1,
+	MaxEdgePixels:     visualPreviewMaxEdgePixels,
+	OutputMediaType:   "image/jpeg",
+	OrientationPolicy: "apply",
+	ColorPolicy:       "srgb",
+	FramePolicy:       "primary",
+	ProcessorFingerprint: fingerprintVisualPreviewProcessor(fmt.Sprintf(
+		visualPreviewProcessorDescriptor, visualPreviewMaxEdgePixels, visualPreviewJPEGQuality)),
 }
 
 // VisualPreviewRecipeForSize returns a canonical built-in size recipe.
@@ -64,7 +65,7 @@ func VisualPreviewRecipeForSize(size string) (document.VisualPreviewRecipeV1, er
 	default:
 		return document.VisualPreviewRecipeV1{}, fmt.Errorf("unknown visual preview size %q", size)
 	}
-	descriptor := strings.Replace(visualPreviewProcessorDescriptor, "max-edge=4096", fmt.Sprintf("max-edge=%d", recipe.MaxEdgePixels), 1)
+	descriptor := fmt.Sprintf(visualPreviewProcessorDescriptor, recipe.MaxEdgePixels, visualPreviewJPEGQuality)
 	recipe.ProcessorFingerprint = fingerprintVisualPreviewProcessor(descriptor)
 	return recipe, nil
 }
@@ -129,7 +130,9 @@ func ProduceVisualPreview(
 }
 
 // ProduceVisualPreviewForRecipe verifies the source and produces the selected built-in recipe.
-func ProduceVisualPreviewForRecipe(ctx context.Context, source io.ReadSeeker, target VisualPreviewTarget, recipe document.VisualPreviewRecipeV1) (VisualPreviewProduct, error) {
+func ProduceVisualPreviewForRecipe(
+	ctx context.Context, source io.ReadSeeker, target VisualPreviewTarget, recipe document.VisualPreviewRecipeV1,
+) (VisualPreviewProduct, error) {
 	if err := validateBuiltInVisualPreviewRecipe(recipe); err != nil {
 		return VisualPreviewProduct{}, err
 	}

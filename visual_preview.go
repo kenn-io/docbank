@@ -23,7 +23,7 @@ func visualPreviewProcessingError(err error) error {
 func visualPreviewRecipe(size VisualPreviewSize) (document.VisualPreviewRecipeV1, string, error) {
 	recipe, err := internalprocessing.VisualPreviewRecipeForSize(string(size))
 	if err != nil {
-		return recipe, "", err
+		return recipe, "", fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
 	_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(recipe)
 	return recipe, fingerprint, err

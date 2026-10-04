@@ -107,6 +107,12 @@ Malformed source bytes become a durable
 become a durable `unsupported` result. Read, verification, storage, and
 cancellation failures are retryable.
 
+Every uncached attempt reads and verifies the full source before checking
+decoder support, including unsupported formats such as HEIC. A failed
+publication can leave an unrecorded preview file on disk in both daemon and
+embedded use. Pack reclaims these files during reconciliation; immediate
+deletion could remove bytes needed by a concurrent upload.
+
 The daemon continuously produces grid previews for the current display file
 of each included photo. Missing catalog generations are its work queue. A
 restart rediscovers unfinished work; all terminal outcomes prevent repeat work

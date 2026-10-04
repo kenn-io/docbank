@@ -156,7 +156,7 @@ func TestMissingPhotoVisualPreviewTargetsAfter(t *testing.T) {
 
 func TestPhotoVisualPreviewTargetEligibilityRechecksListedTargets(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"trash", "exclude"} {
+	for _, change := range []string{"trash", "exclude", "replace", "publish"} {
 		t.Run(change, func(t *testing.T) {
 			t.Parallel()
 			s := newTestStore(t)
@@ -171,10 +171,17 @@ func TestPhotoVisualPreviewTargetEligibilityRechecksListedTargets(t *testing.T) 
 			targets, err := s.MissingPhotoVisualPreviewTargetsAfter(t.Context(), fingerprint, "", 10)
 			require.NoError(t, err)
 			require.Len(t, targets, 1)
-			if change == "trash" {
+			switch change {
+			case "trash":
 				_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
-			} else {
+			case "exclude":
 				_, err = s.SetPhotoAssetExcluded(t.Context(), asset.ID, asset.Revision, true)
+			case "replace":
+				_, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, fakeHash("8c"), 12, "image/jpeg")
+			case "publish":
+				canonical := terminalVisualPreviewWithRecipe(t, node.BlobHash, recipe,
+					document.VisualPreviewUnsupported, "unsupported_media_type")
+				_, err = s.PublishVisualPreviewGeneration(t.Context(), node.CurrentVersionID, canonical, nil)
 			}
 			require.NoError(t, err)
 			eligible, err := s.PhotoVisualPreviewTargetEligible(t.Context(), targets[0], fingerprint)
@@ -216,6 +223,47 @@ func TestPhotoVisualPreviewTargetWithoutMediaType(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, eligible)
 	}
+}
+
+func TestPhotoVisualPreviewTargetsFollowDisplaySelection(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	raw, err := s.CreateFile(ctx, s.RootID(), "photo.cr2", fakeHash("8d"), 12, "application/octet-stream")
+	require.NoError(t, err)
+	jpeg, err := s.CreateFile(ctx, s.RootID(), "photo.jpg", fakeHash("8e"), 12, "image/jpeg")
+	require.NoError(t, err)
+	jpegAsset, err := s.PhotoAssetForNode(ctx, jpeg.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, jpegAsset.ID, jpegAsset.Revision, jpegAsset.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	asset, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpeg.ID, PhotoRoleImage, nil)
+	require.NoError(t, err)
+	jpegFile := fileByRole(asset.Files, PhotoRoleImage)
+	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &jpegFile.ID)
+	require.NoError(t, err)
+	_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(visualPreviewRecipe())
+	require.NoError(t, err)
+	targets, err := s.MissingPhotoVisualPreviewTargetsAfter(ctx, fingerprint, "", 10)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	require.Equal(t, jpeg.CurrentVersionID, targets[0].VersionID)
+
+	rawFile := fileByRole(asset.Files, PhotoRoleRAW)
+	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &rawFile.ID)
+	require.NoError(t, err)
+	eligible, err := s.PhotoVisualPreviewTargetEligible(ctx, targets[0], fingerprint)
+	require.NoError(t, err)
+	require.False(t, eligible)
+	targets, err = s.MissingPhotoVisualPreviewTargetsAfter(ctx, fingerprint, "", 10)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	require.Equal(t, raw.CurrentVersionID, targets[0].VersionID)
+	eligible, err = s.PhotoVisualPreviewTargetEligible(ctx, targets[0], fingerprint)
+	require.NoError(t, err)
+	require.True(t, eligible)
 }
 
 func TestRestoreRetainsVisualPreviewRecipes(t *testing.T) {

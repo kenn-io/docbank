@@ -21,11 +21,21 @@ type visualPreviewBlobs interface {
 }
 
 // EnsureVisualPreview retains one built-in recipe result; callers own the mutation gate.
-func EnsureVisualPreview(ctx context.Context, catalog *store.Store, blobs *blob.Store, versionID string, recipe document.VisualPreviewRecipeV1) (store.VisualPreviewView, error) {
-	return ensureVisualPreview(ctx, catalog, blobs, versionID, recipe)
+func EnsureVisualPreview(
+	ctx context.Context, catalog *store.Store, blobs *blob.Store,
+	versionID string, recipe document.VisualPreviewRecipeV1,
+) (store.VisualPreviewView, error) {
+	view, err := ensureVisualPreview(ctx, catalog, blobs, versionID, recipe)
+	if err != nil {
+		return store.VisualPreviewView{}, fmt.Errorf("ensuring visual preview for version %q: %w", versionID, err)
+	}
+	return view, nil
 }
 
-func ensureVisualPreview(ctx context.Context, catalog *store.Store, blobs visualPreviewBlobs, versionID string, recipe document.VisualPreviewRecipeV1) (store.VisualPreviewView, error) {
+func ensureVisualPreview(
+	ctx context.Context, catalog *store.Store, blobs visualPreviewBlobs,
+	versionID string, recipe document.VisualPreviewRecipeV1,
+) (store.VisualPreviewView, error) {
 	if err := ctx.Err(); err != nil {
 		return store.VisualPreviewView{}, err
 	}
@@ -79,10 +89,12 @@ func ensureVisualPreview(ctx context.Context, catalog *store.Store, blobs visual
 			defer func() {
 				cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				// Authority-free bytes may belong to a concurrent uncommitted upload; exclusive GC owns them.
+				// Authority-free bytes may belong to a concurrent uncommitted upload.
+				// Both daemon and embedded callers leave these files for Pack to reconcile.
 				authority, authorityErr := catalog.PhysicalContent(cleanupCtx, written.Hash)
 				if authorityErr != nil {
-					if retErr != nil && !errors.Is(authorityErr, store.ErrNotFound) && !errors.Is(authorityErr, store.ErrPhysicalAuthorityMissing) {
+					if retErr != nil && !errors.Is(authorityErr, store.ErrNotFound) &&
+						!errors.Is(authorityErr, store.ErrPhysicalAuthorityMissing) {
 						retErr = errors.Join(retErr, authorityErr)
 					}
 					return
@@ -101,7 +113,10 @@ func ensureVisualPreview(ctx context.Context, catalog *store.Store, blobs visual
 			if err != nil {
 				return err
 			}
-			physical := store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize, PackEligible: written.PackEligible, MD5: written.MD5, Created: written.Created}
+			physical := store.BlobPhysical{
+				Encoding: encoding, StoredBytes: written.StoredSize,
+				PackEligible: written.PackEligible, MD5: written.MD5, Created: written.Created,
+			}
 			_, err = publish(ctx, versionID, canonical, &physical)
 			return err
 		})

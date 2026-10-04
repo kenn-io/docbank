@@ -61,7 +61,11 @@ func TestVaultVisualPreviewSizes(t *testing.T) {
 		require.Equal(t, large.GenerationID, legacy.GenerationID)
 	}
 	_, err = vault.EnsureVisualPreviewForSize(t.Context(), versionID, "invalid")
-	require.Error(t, err)
+	require.ErrorIs(t, err, ErrInvalidArgument)
+	_, err = vault.VisualPreviewForSize(t.Context(), versionID, "invalid")
+	require.ErrorIs(t, err, ErrInvalidArgument)
+	_, err = vault.OpenVisualPreviewForSize(t.Context(), versionID, "invalid")
+	require.ErrorIs(t, err, ErrInvalidArgument)
 }
 
 func TestVaultEnsureVisualPreviewReusesOutputAfterPrimaryPlacement(t *testing.T) {
