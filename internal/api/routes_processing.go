@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ import (
 )
 
 func registerProcessingRoutes(api huma.API, d Deps) {
+	registerEvidenceWindowRoute(api, d)
 	type sourceFenceInput struct {
 		Body DocumentSourceFenceResolveRequest
 	}
@@ -475,6 +477,55 @@ func processingTerminalEvent(job processing.Job, runErr error, status processing
 
 func processingUnavailable() error {
 	return NewError(http.StatusServiceUnavailable, "processing_unavailable", "document processing is not configured")
+}
+
+func registerEvidenceWindowRoute(api huma.API, d Deps) {
+	type evidenceWindowOutput struct {
+		CacheControl string `header:"Cache-Control"`
+		Body         EvidenceWindow
+	}
+	huma.Register(api, huma.Operation{
+		OperationID: "readEvidenceWindow", Method: http.MethodPost, Path: "/api/v1/evidence/windows",
+		Summary: "Read one exact current/live evidence window", MaxBodyBytes: 16 << 10,
+		Errors: []int{400, 401, 404, 413, 416, 422, 500, 503},
+	}, func(ctx context.Context, input *struct {
+		Body    EvidenceWindowRequest
+		RawBody []byte
+	}) (*evidenceWindowOutput, error) {
+		var request EvidenceWindowRequest
+		if err := json.Unmarshal(input.RawBody, &request, json.RejectUnknownMembers(true)); err != nil {
+			return nil, NewError(http.StatusBadRequest, "invalid_evidence_request", "evidence window request is invalid")
+		}
+		if d.Processing == nil {
+			return nil, processingUnavailable()
+		}
+		window, err := d.Processing.ReadEvidenceWindow(ctx, processing.EvidenceWindowRequest{
+			VaultUID: request.VaultUID, NodeID: request.NodeID, ContentVersionID: request.ContentVersionID, ContentSHA256: request.ContentSHA256,
+			RenditionAttachmentID: request.RenditionAttachmentID, BuildID: request.BuildID, RenditionSHA256: request.RenditionSHA256,
+			Offset: request.Offset, MaxChars: request.MaxChars,
+		})
+		if err != nil {
+			return nil, fromEvidenceWindowError(err)
+		}
+		return &evidenceWindowOutput{CacheControl: "no-store", Body: EvidenceWindow{
+			VaultUID: window.VaultUID, NodeID: window.NodeID, ContentVersionID: window.ContentVersionID, ContentSHA256: window.ContentSHA256,
+			RenditionAttachmentID: window.AttachmentID, BuildID: window.BuildID, RenditionSHA256: window.Checksum, Text: window.Text,
+			ActualStart: window.ActualStart, ActualEnd: window.ActualEnd, NextOffset: window.NextOffset, EOF: window.EOF, ResponseBytes: window.ResponseBytes, MediaType: window.MediaType,
+		}}, nil
+	})
+}
+
+func fromEvidenceWindowError(err error) error {
+	switch {
+	case errors.Is(err, processing.ErrInvalidEvidenceRequest):
+		return NewError(http.StatusBadRequest, "invalid_evidence_request", "evidence window request is invalid")
+	case errors.Is(err, processing.ErrEvidenceUnavailable):
+		return NewError(http.StatusNotFound, "evidence_unavailable", "evidence is unavailable")
+	case errors.Is(err, processing.ErrInvalidRenditionWindow), errors.Is(err, processing.ErrInvalidRenditionEncoding):
+		return fromProcessingError(err)
+	default:
+		return FromStoreError(err)
+	}
 }
 
 func renditionStream(rendition processing.Rendition) *huma.StreamResponse {

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-16
+last_edited: 2026-10-04
 title: HTTP API
 description: The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -109,6 +109,7 @@ Endpoints are filesystem-shaped, under `/api/v1`:
 | `POST /processing/jobs` · `GET /processing/jobs/{id}` | run a reviewed plan with streamed job identity / read aggregate status | Implemented |
 | `POST /processing/consent/grants` · `POST /processing/consent/revocations` | grant reviewed profile consent / revoke this operator's processing consent | Implemented |
 | `GET /renditions/{attachment_id}` · `POST /renditions/select` | stream retained sanitized Markdown by attachment or exact source selector | Implemented |
+| `POST /evidence/windows` | read bounded text from an exact current/live file and active rendition | Implemented |
 | `GET /coverage?profile=&vault_uid=&content_version_id=` · `POST /search` | inspect separate rendition/embedding coverage / search an authorized source-version set | Implemented |
 | `POST /search/similar` | stored-vector neighbors | Implemented |
 | `POST /derivatives/purge-plans` · `POST /derivatives/purge-jobs` | preview / run a live derivative purge without changing immutable backups | Implemented |
@@ -448,6 +449,48 @@ rendition; the digest trailer covers only the returned range. Invalid or
 unsatisfiable ranges return `416 invalid_rendition_range`.
 See the [Markdown contract](document-derivatives.md#sanitized-markdown-contract)
 for the envelope and body-relative navigation.
+
+#### Exact evidence windows
+
+`POST /api/v1/evidence/windows` (`readEvidenceWindow`) reads an exact cited
+sanitized-Markdown rendition. It requires the ordinary API key and a JSON
+request of at most 16 KiB. The character and identity limits keep its JSON
+response below 128 KiB.
+
+Supply `vault_uid`, positive `node_id`, `content_version_id`, `content_sha256`,
+`rendition_attachment_id`, `build_id`, and `rendition_sha256`. All identities
+are required. Hashes and build/attachment IDs are lowercase 64-character hex.
+Obtain these identities from file-version and rendition metadata, then retain
+them together. An existing stored build alone does not authorize a read.
+
+`offset` is a nonnegative Unicode scalar offset. Omitted or zero `max_chars`
+selects 8,000; explicit limits are 1 through 16,000. The response repeats every
+identity and supplies `text`, `actual_start`, exclusive `actual_end`,
+`next_offset`, `eof`, UTF-8 `response_bytes`, and `media_type: "text/markdown"`.
+An offset at EOF returns empty text and `eof: true`.
+
+The daemon checks request syntax, vault identity, current/live node and version,
+content hash, active attachment, build, Markdown artifact hash, then range.
+A well-formed reference that no longer matches visible authority returns
+`404 evidence_unavailable` without text or details about hidden components.
+Invalid JSON or references rejected by the shared reader return 400. Schema
+violations, including unknown fields, return 422. Offsets beyond EOF return 416.
+Unavailable physical storage returns 503 with the standard `content_missing`,
+`store_fenced`, or `store_unavailable` code. Cancellation and actual integrity
+or cleanup failures are preserved. Reads do not run processing or choose a
+newer version or rendition.
+
+A rename preserves the citation; content or rendition replacement, trash,
+pruning, and retirement invalidate it. Digests identify catalog authority;
+a partial window does not claim fresh whole-artifact hash verification.
+Search segment offsets are not Markdown offsets. Begin an overview at zero,
+or continue using offsets returned by an earlier evidence window.
+
+`POST /api/v1/renditions/windows` retains its existing request fields, defaults,
+and current/live visibility checks. Both routes also require a nonempty source
+blob hash and check active rendition authority in the same catalog snapshot.
+The stricter evidence route adds mandatory identity preconditions to the same
+bounded reader.
 
 #### Similar documents
 

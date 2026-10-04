@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-16
+last_edited: 2026-10-04
 title: Embed in Go
 description: Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
 ---
@@ -255,6 +255,48 @@ runner.
 
 Set `DocumentSearchRequest.ContentFirst` to prefer content matches, following the
 [HTTP search ordering contract](architecture/http-api.md#coverage-and-source-fenced-search).
+
+## Read exact evidence windows
+
+Use `ReadEvidenceWindow` to read a bounded excerpt from a rendition you already
+identified. Retain the file's vault, node, content-version and content SHA-256
+alongside the attachment, build and sanitized-Markdown SHA-256 returned by
+`Rendition` or document detail metadata. Pass all seven identities in an
+`EvidenceWindowRequest`:
+
+```go
+window, err := vault.ReadEvidenceWindow(ctx, docbank.EvidenceWindowRequest{
+    VaultUID: vault.ID(), NodeID: receipt.Node.ID,
+    ContentVersionID: receipt.Version.ID, ContentSHA256: receipt.Computed.SHA256,
+    RenditionAttachmentID: rendition.AttachmentID,
+    BuildID: rendition.BuildID, RenditionSHA256: rendition.SHA256,
+    Offset: 0, MaxChars: 8_000,
+})
+if err != nil {
+    return err
+}
+// Keep window.NextOffset to continue from the exclusive end of this window.
+```
+
+Offsets count Unicode scalars. Zero `MaxChars` selects 8,000; explicit limits
+are 1 through 16,000. `ActualStart`, `ActualEnd`, and `NextOffset` describe the
+returned range; `ResponseBytes` counts its UTF-8 bytes. A read starting at EOF returns
+empty text with `EOF: true`. An offset beyond EOF matches
+`ErrInvalidRenditionWindow`; malformed references match `ErrInvalidEvidenceRequest`.
+
+Only the current, live content version and its active rendition are readable.
+A rename preserves the reference. A content or rendition replacement, trash,
+pruning, or retirement makes the old reference match `ErrEvidenceUnavailable`.
+The read never runs processing, selects a newer rendition, or pins retention.
+The vault lifecycle lease covers the internal blob read and cleanup and is
+released before the function returns. Callers receive text, not an open stream.
+
+The returned digest identifies catalog authority. A bounded read can end before
+whole-artifact checksum verification reaches EOF. Search chunk and embedding
+segment offsets use their own coordinates; do not use them as Markdown offsets.
+Start a document overview at zero, or retain offsets from an earlier window.
+See the [HTTP evidence contract](architecture/http-api.md#exact-evidence-windows)
+for the equivalent authenticated route.
 
 ## Retain and process a remote recording
 

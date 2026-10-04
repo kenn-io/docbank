@@ -9,6 +9,10 @@ import (
 )
 
 var (
+	ErrEvidenceUnavailable          = internalprocessing.ErrEvidenceUnavailable
+	ErrInvalidEvidenceRequest       = internalprocessing.ErrInvalidEvidenceRequest
+	ErrInvalidRenditionWindow       = internalprocessing.ErrInvalidRenditionWindow
+	ErrInvalidRenditionEncoding     = internalprocessing.ErrInvalidRenditionEncoding
 	ErrForeignVault                 = internalprocessing.ErrForeignVault
 	ErrProcessingProfileUnavailable = internalprocessing.ErrProfileNotConfigured
 	ErrProcessingPlanChanged        = internalprocessing.ErrPlanChanged
@@ -109,6 +113,29 @@ func (v *Vault) Rendition(ctx context.Context, request RenditionRequest) (*Rendi
 		SHA256: rendition.SHA256, Size: rendition.Size, Completeness: rendition.Completeness,
 		Warnings: rendition.Warnings,
 		Reader:   &leasedReader{VerifiedReadCloser: rendition.Reader, release: v.lifecycle.RUnlock}}, nil
+}
+
+// ReadEvidenceWindow reads the exact cited rendition without processing work or
+// fallback. Stale or hidden identities match ErrEvidenceUnavailable; malformed
+// references match ErrInvalidEvidenceRequest, and offsets beyond EOF match
+// ErrInvalidRenditionWindow. The vault lease covers the internal blob read and
+// cleanup, and is released before returning the text window.
+func (v *Vault) ReadEvidenceWindow(ctx context.Context, request EvidenceWindowRequest) (EvidenceWindow, error) {
+	if err := v.begin(); err != nil {
+		return EvidenceWindow{}, err
+	}
+	defer v.lifecycle.RUnlock()
+	window, err := v.processing.ReadEvidenceWindow(ctx, internalprocessing.EvidenceWindowRequest{
+		VaultUID: request.VaultUID, NodeID: request.NodeID, ContentVersionID: request.ContentVersionID, ContentSHA256: request.ContentSHA256,
+		RenditionAttachmentID: request.RenditionAttachmentID, BuildID: request.BuildID, RenditionSHA256: request.RenditionSHA256,
+		Offset: request.Offset, MaxChars: request.MaxChars,
+	})
+	if err != nil {
+		return EvidenceWindow{}, err
+	}
+	return EvidenceWindow{VaultUID: window.VaultUID, NodeID: window.NodeID, ContentVersionID: window.ContentVersionID, ContentSHA256: window.ContentSHA256,
+		RenditionAttachmentID: window.AttachmentID, BuildID: window.BuildID, RenditionSHA256: window.Checksum, Text: window.Text,
+		ActualStart: window.ActualStart, ActualEnd: window.ActualEnd, NextOffset: window.NextOffset, EOF: window.EOF, ResponseBytes: window.ResponseBytes, MediaType: window.MediaType}, nil
 }
 
 func (v *Vault) DocumentCoverage(ctx context.Context, request CoverageRequest) (CoverageReport, error) {

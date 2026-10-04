@@ -443,10 +443,21 @@ func (s *Store) ActiveRendition(
 		return RenditionView{}, fmt.Errorf("starting active rendition snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	view, err := activeRendition(ctx, tx, contentVersionID, processingProfileFingerprint)
+	if err != nil {
+		return RenditionView{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return RenditionView{}, fmt.Errorf("closing active rendition snapshot: %w", err)
+	}
+	return view, nil
+}
+
+func activeRendition(ctx context.Context, tx metadataQuerier, contentVersionID, processingProfileFingerprint string) (RenditionView, error) {
 	view := RenditionView{Head: RenditionHeadRecord{
 		ContentVersionID: contentVersionID, ProcessingProfileFingerprint: processingProfileFingerprint,
 	}}
-	err = tx.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(ctx, `
 		SELECT attachment_id,published_at FROM rendition_heads
 		WHERE content_version_id=? AND profile_fingerprint=?`,
 		contentVersionID, processingProfileFingerprint,
@@ -467,9 +478,6 @@ func (s *Store) ActiveRendition(
 	}
 	if err := validateRenditionArtifactRolesForProfile(view.Attachment.Profile, view.Build); err != nil {
 		return RenditionView{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return RenditionView{}, fmt.Errorf("closing active rendition snapshot: %w", err)
 	}
 	return view, nil
 }
@@ -498,6 +506,44 @@ func (s *Store) ActiveRenditionByAttachment(ctx context.Context, attachmentID st
 		return RenditionView{}, ErrNotFound
 	}
 	return view, nil
+}
+
+// CurrentRenditionByAttachment resolves current/live file and active rendition
+// authority in one read snapshot. An optional content hash fences exact reads.
+func (s *Store) CurrentRenditionByAttachment(ctx context.Context, nodeID int64, versionID, contentHash, attachmentID string) (Node, RenditionView, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Node{}, RenditionView{}, fmt.Errorf("starting rendition window snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	node, err := nodeByIDQuery(ctx, tx, nodeID)
+	if err != nil {
+		return Node{}, RenditionView{}, err
+	}
+	if node.TrashedAt != nil || node.CurrentVersionID != versionID || node.BlobHash == "" || (contentHash != "" && node.BlobHash != contentHash) {
+		return Node{}, RenditionView{}, ErrNotFound
+	}
+	var profileFingerprint string
+	err = tx.QueryRowContext(ctx, `
+		SELECT profile_fingerprint FROM rendition_attachments
+		WHERE attachment_id=? AND content_version_id=?`, attachmentID, versionID).Scan(&profileFingerprint)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Node{}, RenditionView{}, ErrNotFound
+	}
+	if err != nil {
+		return Node{}, RenditionView{}, fmt.Errorf("reading active rendition attachment key: %w", err)
+	}
+	view, err := activeRendition(ctx, tx, versionID, profileFingerprint)
+	if err != nil {
+		return Node{}, RenditionView{}, err
+	}
+	if view.Attachment.ID != attachmentID {
+		return Node{}, RenditionView{}, ErrNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return Node{}, RenditionView{}, fmt.Errorf("closing rendition window snapshot: %w", err)
+	}
+	return node, view, nil
 }
 
 func normalizeProcessingProfileRecord(record ProcessingProfileRecord) (ProcessingProfileRecord, error) {

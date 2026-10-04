@@ -2753,6 +2753,69 @@ export interface Entry {
   size: number;
 }
 
+export type EvidenceWindowMediaType = typeof EvidenceWindowMediaType[keyof typeof EvidenceWindowMediaType];
+
+
+export const EvidenceWindowMediaType = {
+  'text/markdown': 'text/markdown',
+} as const;
+
+export interface EvidenceWindow {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @minimum 0 */
+  actual_end: number;
+  /** @minimum 0 */
+  actual_start: number;
+  /** @pattern ^[0-9a-f]{64}$ */
+  build_id: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  content_sha256: string;
+  content_version_id: string;
+  eof: boolean;
+  media_type: EvidenceWindowMediaType;
+  /** @minimum 0 */
+  next_offset: number;
+  /** @minimum 1 */
+  node_id: number;
+  /** @pattern ^[0-9a-f]{64}$ */
+  rendition_attachment_id: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  rendition_sha256: string;
+  /**
+     * @minimum 0
+     * @maximum 64000
+     */
+  response_bytes: number;
+  /** @maxLength 16000 */
+  text: string;
+  vault_uid: string;
+}
+
+export interface EvidenceWindowRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  build_id: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  content_sha256: string;
+  content_version_id: string;
+  /**
+     * @minimum 0
+     * @maximum 16000
+     */
+  max_chars?: number;
+  /** @minimum 1 */
+  node_id: number;
+  /** @minimum 0 */
+  offset?: number;
+  /** @pattern ^[0-9a-f]{64}$ */
+  rendition_attachment_id: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  rendition_sha256: string;
+  vault_uid: string;
+}
+
 export interface Receipt {
   entries: number;
   format: string;
@@ -9032,6 +9095,82 @@ export const downloadEmailPDF = (versionId: string,
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getReadEvidenceWindowWithJsonUrl = () => {
+
+
+
+
+  return `/api/v1/evidence/windows`
+}
+
+/**
+ * @summary Read one exact current/live evidence window
+ */
+export const readEvidenceWindowWithJson = async (evidenceWindowRequest: NonReadonly<EvidenceWindowRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<EvidenceWindow> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<EvidenceWindow>(getReadEvidenceWindowWithJsonUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(evidenceWindowRequest)
+  }
+);}
+
+
+
+export const getReadEvidenceWindowWithBlobUrl = () => {
+
+
+
+
+  return `/api/v1/evidence/windows`
+}
+
+/**
+ * @summary Read one exact current/live evidence window
+ */
+export const readEvidenceWindowWithBlob = async (readEvidenceWindowBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<EvidenceWindow> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<EvidenceWindow>(getReadEvidenceWindowWithBlobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
+    body: readEvidenceWindowBody
   }
 );}
 

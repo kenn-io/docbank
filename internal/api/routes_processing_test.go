@@ -1544,3 +1544,102 @@ func TestDerivativePurgePreviewTracksOnlySelectedDerivatives(t *testing.T) {
 		}
 	}
 }
+
+func TestEvidenceWindowHTTPContract(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, configureProcessingTestService(t))
+	node := createFileWithContent(t, ts, catalog, "/evidence.txt", "aé界🙂z\n")
+	selector := map[string]any{"node_id": node.ID, "content_version_id": node.CurrentVersionID, "profile": "private"}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/processing/plans", nil, map[string]any{"selector": selector})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var plan api.ProcessingPlan
+	require.NoError(t, json.Unmarshal([]byte(body), &plan))
+	response, body = do(t, ts, http.MethodPost, "/api/v1/processing/jobs", nil, map[string]any{"selector": selector, "plan_fingerprint": plan.Fingerprint, "consent": true})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	job := processingJobFromStream(t, body)
+	response, full := get(t, ts, "/api/v1/renditions/"+job.AttachmentID, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, full)
+	request := map[string]any{"vault_uid": catalog.VaultID(), "node_id": node.ID, "content_version_id": node.CurrentVersionID, "content_sha256": node.BlobHash,
+		"rendition_attachment_id": job.AttachmentID, "build_id": response.Header.Get("X-Docbank-Rendition-Build"), "rendition_sha256": response.Header.Get(api.BlobHashHeader)}
+	response, body = do(t, ts, http.MethodPost, "/api/v1/evidence/windows", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	assert.Equal(t, "no-store", response.Header.Get("Cache-Control"))
+	var window struct {
+		Text          string `json:"text"`
+		ResponseBytes int    `json:"response_bytes"`
+		ContentSHA256 string `json:"content_sha256"`
+		NextOffset    int    `json:"next_offset"`
+		EOF           bool   `json:"eof"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &window))
+	assert.Equal(t, full, window.Text)
+	assert.Equal(t, len(full), window.ResponseBytes)
+	assert.Equal(t, node.BlobHash, window.ContentSHA256)
+	assert.True(t, window.EOF)
+	assert.LessOrEqual(t, len(body), 128<<10)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/evidence/windows", map[string]string{"X-Api-Key": ""}, request)
+	assert.Equal(t, http.StatusUnauthorized, response.StatusCode, body)
+	for _, field := range []string{"content_sha256", "build_id", "rendition_sha256", "rendition_attachment_id"} {
+		t.Run(field, func(t *testing.T) {
+			wrong := maps.Clone(request)
+			wrong[field] = strings.Repeat("a", 64)
+			response, body := do(t, ts, http.MethodPost, "/api/v1/evidence/windows", nil, wrong)
+			assert.Equal(t, http.StatusNotFound, response.StatusCode, body)
+			assert.Contains(t, body, `"code":"evidence_unavailable"`)
+			assert.NotContains(t, body, "aé界🙂z")
+		})
+	}
+	for _, value := range []any{nil, "bad", strings.Repeat("A", 64)} {
+		invalid := maps.Clone(request)
+		invalid["content_sha256"] = value
+		response, body = do(t, ts, http.MethodPost, "/api/v1/evidence/windows", nil, invalid)
+		assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	}
+	unknown := maps.Clone(request)
+	unknown["unsupported"] = true
+	response, body = do(t, ts, http.MethodPost, "/api/v1/evidence/windows", nil, unknown)
+	assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	encoded, err := json.Marshal(request)
+	require.NoError(t, err)
+	duplicate := append([]byte(`{"offset":0,"offset":1,`), encoded[1:]...)
+	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/evidence/windows",
+		map[string]string{"X-Api-Key": testAPIKey}, string(duplicate))
+	assert.Equal(t, http.StatusBadRequest, response.StatusCode, body)
+	huge := maps.Clone(request)
+	huge["unsupported"] = strings.Repeat("x", 16<<10)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/evidence/windows", nil, huge)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, response.StatusCode, body)
+	prefix, _, found := strings.Cut(full, "aé界🙂z")
+	require.True(t, found)
+	offset := len([]rune(prefix))
+	bounded := maps.Clone(request)
+	bounded["offset"] = offset + 1
+	bounded["max_chars"] = 3
+	response, body = do(t, ts, http.MethodPost, "/api/v1/evidence/windows", nil, bounded)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &window))
+	assert.Equal(t, "é界🙂", window.Text)
+	assert.Equal(t, len("é界🙂"), window.ResponseBytes)
+	bounded["offset"] = len([]rune(full))
+	response, body = do(t, ts, http.MethodPost, "/api/v1/evidence/windows", nil, bounded)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &window))
+	assert.Empty(t, window.Text)
+	assert.True(t, window.EOF)
+	bounded["offset"] = len([]rune(full)) + 1
+	response, body = do(t, ts, http.MethodPost, "/api/v1/evidence/windows", nil, bounded)
+	assert.Equal(t, http.StatusRequestedRangeNotSatisfiable, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/renditions/windows", nil, map[string]any{"vault_id": catalog.VaultID(), "node_id": node.ID, "content_version_id": node.CurrentVersionID, "attachment_id": job.AttachmentID, "max_chars": 16000})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &window))
+	assert.Equal(t, full, window.Text)
+	hash, ok := request["rendition_sha256"].(string)
+	require.True(t, ok)
+	artifactPath := filepath.Join(catalog.BlobsDir, hash[:2], hash)
+	require.NoError(t, os.Rename(artifactPath, artifactPath+".offline"))
+	t.Cleanup(func() { require.NoError(t, os.Rename(artifactPath+".offline", artifactPath)) })
+	response, body = do(t, ts, http.MethodPost, "/api/v1/evidence/windows", nil, request)
+	assert.Equal(t, http.StatusServiceUnavailable, response.StatusCode, body)
+	assert.Contains(t, body, `"code":"content_missing"`)
+	assert.NotContains(t, body, "aé界🙂z")
+}

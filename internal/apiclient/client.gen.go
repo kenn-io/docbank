@@ -2833,6 +2833,53 @@ func (c *Client) DownloadEmailPDF(ctx context.Context, options *DownloadEmailPDF
 	return responseParser(ctx, resp)
 }
 
+// ReadEvidenceWindow Read one exact current/live evidence window
+func (c *Client) ReadEvidenceWindow(ctx context.Context, options *ReadEvidenceWindowRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadEvidenceWindowResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/evidence/windows",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadEvidenceWindowResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadEvidenceWindowResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadEvidenceWindowResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadEvidenceWindowErrorResponse](resp, "ReadEvidenceWindowErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/evidence/windows")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreateExportJob Admit a durable verified export job
 func (c *Client) CreateExportJob(ctx context.Context, options *CreateExportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateExportJobResponse, error) {
 	var err error
@@ -13958,6 +14005,34 @@ func (o *DownloadEmailPDFRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// ReadEvidenceWindowRequestOptions is the options needed to make a request to ReadEvidenceWindow.
+type ReadEvidenceWindowRequestOptions struct {
+	Body *ReadEvidenceWindowBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadEvidenceWindowRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadEvidenceWindowRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadEvidenceWindowRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadEvidenceWindowRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateExportJobRequestOptions is the options needed to make a request to CreateExportJob.
 type CreateExportJobRequestOptions struct {
 	Body *CreateExportJobBody
@@ -20950,6 +21025,8 @@ type RemoveEmailDocumentPublicationBody = RemoveRequest
 
 type RenderEmailPDFBody = EmailPDFRequest
 
+type ReadEvidenceWindowBody = EvidenceWindowRequest
+
 type CreateExportJobBody = JobRequest
 
 type CancelExportJobBody = CancelExportJobRequest
@@ -21675,6 +21752,24 @@ type RenderEmailPDFResponse = document.EmailPDFJob
 type ListEmailPDFsResponse []EmailPDFReceiptV1
 
 type GetEmailPDFResponse = document.EmailPDFReceiptV1
+
+type ReadEvidenceWindowResponse = api.EvidenceWindow
+
+type ReadEvidenceWindowErrorResponse api.Error
+
+type ReadEvidenceWindowErrorResponseApplicationProblemPlusJSON api.Error
+
+type ReadEvidenceWindowErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type ReadEvidenceWindowErrorResponseApplicationProblemPlusJSON413 api.Error
+
+type ReadEvidenceWindowErrorResponseApplicationProblemPlusJSON416 api.Error
+
+type ReadEvidenceWindowErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type ReadEvidenceWindowErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ReadEvidenceWindowErrorResponseApplicationProblemPlusJSON503 api.Error
 
 type CreateExportJobResponse = bundle.ExportJob
 
@@ -22997,6 +23092,10 @@ type ErrorPosition = api.ErrorPosition
 type EvidenceLexicalPolicyV1 = document.EvidenceLexicalPolicyV1
 
 type EvidencePolicyIdentity = document.EvidencePolicyIdentity
+
+type EvidenceWindow = api.EvidenceWindow
+
+type EvidenceWindowRequest = api.EvidenceWindowRequest
 
 type ExportJob = bundle.ExportJob
 
