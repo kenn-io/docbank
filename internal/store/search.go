@@ -2403,12 +2403,49 @@ func scanSearchRows(rows *sql.Rows, match, query string) ([]SearchHit, error) {
 }
 
 func (s *Store) addSearchPaths(ctx context.Context, hits []SearchHit) error {
+	if len(hits) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(hits))
 	for i := range hits {
-		p, err := s.Path(ctx, hits[i].Node.ID)
-		if err != nil {
-			return err
+		ids[i] = hits[i].Node.ID
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return fmt.Errorf("encoding search path nodes: %w", err)
+	}
+	// Resolve only the selected nodes and their ancestors in one snapshot.
+	// Positions preserve ranking even when results share nodes or ancestors.
+	rows, err := s.db.QueryContext(ctx, `
+		WITH RECURSIVE ancestry(position, id, parent_id, name, depth) AS (
+			SELECT selected.key, n.id, n.parent_id, n.name, 0
+			FROM json_each(?) selected JOIN nodes n ON n.id = selected.value
+			UNION ALL
+			SELECT a.position, n.id, n.parent_id, n.name, a.depth + 1
+			FROM nodes n JOIN ancestry a ON n.id = a.parent_id
+		)
+		SELECT position, COALESCE('/' || GROUP_CONCAT(name, '/' ORDER BY depth DESC)
+			FILTER (WHERE parent_id IS NOT NULL), '/')
+		FROM ancestry GROUP BY position`, string(encoded))
+	if err != nil {
+		return fmt.Errorf("querying search paths: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	count := 0
+	for rows.Next() {
+		var position int
+		var path string
+		if err := rows.Scan(&position, &path); err != nil {
+			return fmt.Errorf("scanning search path: %w", err)
 		}
-		hits[i].Path = p
+		hits[position].Path = path
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reading search paths: %w", err)
+	}
+	if count != len(hits) {
+		return fmt.Errorf("computing search paths: %w", ErrNotFound)
 	}
 	return nil
 }
