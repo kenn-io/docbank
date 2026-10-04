@@ -118,7 +118,8 @@ func (v *Vault) Rendition(ctx context.Context, request RenditionRequest) (*Rendi
 // ReadEvidenceWindow reads the exact cited rendition without processing work or
 // fallback. Stale or hidden identities match ErrEvidenceUnavailable; malformed
 // references match ErrInvalidEvidenceRequest, and offsets beyond EOF match
-// ErrInvalidRenditionWindow. The vault lease lasts through stream cleanup.
+// ErrInvalidRenditionWindow. The vault lease covers the internal blob read and
+// cleanup, and is released before returning the text window.
 func (v *Vault) ReadEvidenceWindow(ctx context.Context, request EvidenceWindowRequest) (EvidenceWindow, error) {
 	if err := v.begin(); err != nil {
 		return EvidenceWindow{}, err

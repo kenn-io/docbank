@@ -2793,6 +2793,8 @@ export interface EvidenceWindow {
 }
 
 export interface EvidenceWindowRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
   /** @pattern ^[0-9a-f]{64}$ */
   build_id: string;
   /** @pattern ^[0-9a-f]{64}$ */
@@ -9036,7 +9038,7 @@ export const downloadEmailPDF = (versionId: string,
 
 
 
-export const getReadEvidenceWindowUrl = () => {
+export const getReadEvidenceWindowWithJsonUrl = () => {
 
 
 
@@ -9047,7 +9049,7 @@ export const getReadEvidenceWindowUrl = () => {
 /**
  * @summary Read one exact current/live evidence window
  */
-export const readEvidenceWindow = async (evidenceWindowRequest: EvidenceWindowRequest, options?: Parameters<typeof sessionJSON>[1]): Promise<EvidenceWindow> => {
+export const readEvidenceWindowWithJson = async (evidenceWindowRequest: NonReadonly<EvidenceWindowRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<EvidenceWindow> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -9063,12 +9065,50 @@ export const readEvidenceWindow = async (evidenceWindowRequest: EvidenceWindowRe
     }
     return headers;
   };
-return sessionJSON<EvidenceWindow>(getReadEvidenceWindowUrl(),
+return sessionJSON<EvidenceWindow>(getReadEvidenceWindowWithJsonUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(evidenceWindowRequest)
+  }
+);}
+
+
+
+export const getReadEvidenceWindowWithBlobUrl = () => {
+
+
+
+
+  return `/api/v1/evidence/windows`
+}
+
+/**
+ * @summary Read one exact current/live evidence window
+ */
+export const readEvidenceWindowWithBlob = async (readEvidenceWindowBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<EvidenceWindow> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<EvidenceWindow>(getReadEvidenceWindowWithBlobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
+    body: readEvidenceWindowBody
   }
 );}
 

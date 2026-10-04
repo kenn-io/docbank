@@ -20,7 +20,6 @@ import (
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/docbank/internal/vectorindex"
-	"go.kenn.io/kit/packstore"
 )
 
 func registerProcessingRoutes(api huma.API, d Deps) {
@@ -480,21 +479,19 @@ func processingUnavailable() error {
 	return NewError(http.StatusServiceUnavailable, "processing_unavailable", "document processing is not configured")
 }
 
-// registerEvidenceWindowRoute decodes the bounded body explicitly so malformed
-// fields consistently return 400, including unknown members and type errors.
 func registerEvidenceWindowRoute(api huma.API, d Deps) {
-	const path = "/api/v1/evidence/windows"
-	registry := api.OpenAPI().Components.Schemas
+	type evidenceWindowOutput struct {
+		CacheControl string `header:"Cache-Control"`
+		Body         EvidenceWindow
+	}
 	huma.Register(api, huma.Operation{
-		OperationID: "readEvidenceWindow", Method: http.MethodPost, Path: path,
+		OperationID: "readEvidenceWindow", Method: http.MethodPost, Path: "/api/v1/evidence/windows",
 		Summary: "Read one exact current/live evidence window", MaxBodyBytes: 16 << 10,
-		SkipValidateBody: true,
-		Errors:           []int{400, 401, 404, 413, 416, 422, 500, 503},
-		Responses: map[string]*huma.Response{"200": {Description: "Exact catalog identities and bounded sanitized-Markdown text",
-			Content: map[string]*huma.MediaType{jsonMediaType: {Schema: registry.Schema(reflect.TypeFor[EvidenceWindow](), true, "")}}}},
+		Errors: []int{400, 401, 404, 413, 416, 422, 500, 503},
 	}, func(ctx context.Context, input *struct {
-		RawBody []byte `contentType:"application/json"`
-	}) (*huma.StreamResponse, error) {
+		Body    EvidenceWindowRequest
+		RawBody []byte
+	}) (*evidenceWindowOutput, error) {
 		var request EvidenceWindowRequest
 		if err := json.Unmarshal(input.RawBody, &request, json.RejectUnknownMembers(true)); err != nil {
 			return nil, NewError(http.StatusBadRequest, "invalid_evidence_request", "evidence window request is invalid")
@@ -510,21 +507,12 @@ func registerEvidenceWindowRoute(api huma.API, d Deps) {
 		if err != nil {
 			return nil, fromEvidenceWindowError(err)
 		}
-		body, err := json.Marshal(EvidenceWindow{VaultUID: window.VaultUID, NodeID: window.NodeID, ContentVersionID: window.ContentVersionID, ContentSHA256: window.ContentSHA256,
+		return &evidenceWindowOutput{CacheControl: "no-store", Body: EvidenceWindow{
+			VaultUID: window.VaultUID, NodeID: window.NodeID, ContentVersionID: window.ContentVersionID, ContentSHA256: window.ContentSHA256,
 			RenditionAttachmentID: window.AttachmentID, BuildID: window.BuildID, RenditionSHA256: window.Checksum, Text: window.Text,
-			ActualStart: window.ActualStart, ActualEnd: window.ActualEnd, NextOffset: window.NextOffset, EOF: window.EOF, ResponseBytes: window.ResponseBytes, MediaType: window.MediaType})
-		if err != nil || len(body) > 128<<10 {
-			return nil, NewError(http.StatusInternalServerError, "evidence_response_invalid", "evidence window response is invalid")
-		}
-		return &huma.StreamResponse{Body: func(hctx huma.Context) {
-			hctx.SetHeader("Content-Type", jsonMediaType)
-			hctx.SetHeader("Cache-Control", "no-store")
-			_, _ = hctx.BodyWriter().Write(body)
+			ActualStart: window.ActualStart, ActualEnd: window.ActualEnd, NextOffset: window.NextOffset, EOF: window.EOF, ResponseBytes: window.ResponseBytes, MediaType: window.MediaType,
 		}}, nil
 	})
-	// RawBody supplies the transport; publish the concrete JSON contract instead
-	// of Huma's raw-binary schema. Runtime validation remains in the shared reader.
-	api.OpenAPI().Paths[path].Post.RequestBody.Content[jsonMediaType].Schema = registry.Schema(reflect.TypeFor[EvidenceWindowRequest](), true, "")
 }
 
 func fromEvidenceWindowError(err error) error {
@@ -533,12 +521,10 @@ func fromEvidenceWindowError(err error) error {
 		return NewError(http.StatusBadRequest, "invalid_evidence_request", "evidence window request is invalid")
 	case errors.Is(err, processing.ErrEvidenceUnavailable):
 		return NewError(http.StatusNotFound, "evidence_unavailable", "evidence is unavailable")
-	case errors.Is(err, packstore.ErrPhysicalCorrupt):
-		return NewError(http.StatusInternalServerError, "content_corrupt", "evidence storage is corrupt")
-	case errors.Is(err, packstore.ErrStoreUnavailable), errors.Is(err, packstore.ErrPhysicalMissing), errors.Is(err, packstore.ErrStoreFenced):
-		return NewError(http.StatusServiceUnavailable, "evidence_storage_unavailable", "evidence storage is unavailable")
-	default:
+	case errors.Is(err, processing.ErrInvalidRenditionWindow), errors.Is(err, processing.ErrInvalidRenditionEncoding):
 		return fromProcessingError(err)
+	default:
+		return FromStoreError(err)
 	}
 }
 

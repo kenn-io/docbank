@@ -288,7 +288,8 @@ Only the current, live content version and its active rendition are readable.
 A rename preserves the reference. A content or rendition replacement, trash,
 pruning, or retirement makes the old reference match `ErrEvidenceUnavailable`.
 The read never runs processing, selects a newer rendition, or pins retention.
-It retains the vault lifecycle lease through blob-stream cleanup.
+The vault lifecycle lease covers the internal blob read and cleanup and is
+released before the function returns. Callers receive text, not an open stream.
 
 The returned digest identifies catalog authority. A bounded read can end before
 whole-artifact checksum verification reaches EOF. Search chunk and embedding

@@ -443,10 +443,21 @@ func (s *Store) ActiveRendition(
 		return RenditionView{}, fmt.Errorf("starting active rendition snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	view, err := activeRendition(ctx, tx, contentVersionID, processingProfileFingerprint)
+	if err != nil {
+		return RenditionView{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return RenditionView{}, fmt.Errorf("closing active rendition snapshot: %w", err)
+	}
+	return view, nil
+}
+
+func activeRendition(ctx context.Context, tx metadataQuerier, contentVersionID, processingProfileFingerprint string) (RenditionView, error) {
 	view := RenditionView{Head: RenditionHeadRecord{
 		ContentVersionID: contentVersionID, ProcessingProfileFingerprint: processingProfileFingerprint,
 	}}
-	err = tx.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(ctx, `
 		SELECT attachment_id,published_at FROM rendition_heads
 		WHERE content_version_id=? AND profile_fingerprint=?`,
 		contentVersionID, processingProfileFingerprint,
@@ -467,9 +478,6 @@ func (s *Store) ActiveRendition(
 	}
 	if err := validateRenditionArtifactRolesForProfile(view.Attachment.Profile, view.Build); err != nil {
 		return RenditionView{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return RenditionView{}, fmt.Errorf("closing active rendition snapshot: %w", err)
 	}
 	return view, nil
 }
@@ -515,30 +523,22 @@ func (s *Store) CurrentRenditionByAttachment(ctx context.Context, nodeID int64, 
 	if node.TrashedAt != nil || node.CurrentVersionID != versionID || node.BlobHash == "" || (contentHash != "" && node.BlobHash != contentHash) {
 		return Node{}, RenditionView{}, ErrNotFound
 	}
-	attachment, err := loadRenditionAttachment(ctx, tx, attachmentID)
-	if err != nil {
-		return Node{}, RenditionView{}, err
-	}
-	if attachment.ContentVersionID != versionID {
-		return Node{}, RenditionView{}, ErrNotFound
-	}
-	view := RenditionView{Attachment: attachment, Head: RenditionHeadRecord{ContentVersionID: versionID, ProcessingProfileFingerprint: attachment.Profile.Fingerprint}}
-	err = tx.QueryRowContext(ctx, `SELECT attachment_id,published_at FROM rendition_heads WHERE content_version_id=? AND profile_fingerprint=?`, versionID, attachment.Profile.Fingerprint).Scan(&view.Head.AttachmentID, &view.Head.PublishedAt)
+	var profileFingerprint string
+	err = tx.QueryRowContext(ctx, `
+		SELECT profile_fingerprint FROM rendition_attachments
+		WHERE attachment_id=? AND content_version_id=?`, attachmentID, versionID).Scan(&profileFingerprint)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Node{}, RenditionView{}, ErrNotFound
 	}
 	if err != nil {
-		return Node{}, RenditionView{}, fmt.Errorf("reading rendition window head: %w", err)
+		return Node{}, RenditionView{}, fmt.Errorf("reading active rendition attachment key: %w", err)
 	}
-	if view.Head.AttachmentID != attachmentID {
-		return Node{}, RenditionView{}, ErrNotFound
-	}
-	view.Build, err = loadRenditionBuild(ctx, tx, attachment.BuildID)
+	view, err := activeRendition(ctx, tx, versionID, profileFingerprint)
 	if err != nil {
 		return Node{}, RenditionView{}, err
 	}
-	if err := validateRenditionArtifactRolesForProfile(attachment.Profile, view.Build); err != nil {
-		return Node{}, RenditionView{}, err
+	if view.Attachment.ID != attachmentID {
+		return Node{}, RenditionView{}, ErrNotFound
 	}
 	if err := tx.Commit(); err != nil {
 		return Node{}, RenditionView{}, fmt.Errorf("closing rendition window snapshot: %w", err)

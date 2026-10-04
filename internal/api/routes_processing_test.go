@@ -1563,6 +1563,7 @@ func TestEvidenceWindowHTTPContract(t *testing.T) {
 		"rendition_attachment_id": job.AttachmentID, "build_id": response.Header.Get("X-Docbank-Rendition-Build"), "rendition_sha256": response.Header.Get(api.BlobHashHeader)}
 	response, body = do(t, ts, http.MethodPost, "/api/v1/evidence/windows", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	assert.Equal(t, "no-store", response.Header.Get("Cache-Control"))
 	var window struct {
 		Text          string `json:"text"`
 		ResponseBytes int    `json:"response_bytes"`
@@ -1592,11 +1593,17 @@ func TestEvidenceWindowHTTPContract(t *testing.T) {
 		invalid := maps.Clone(request)
 		invalid["content_sha256"] = value
 		response, body = do(t, ts, http.MethodPost, "/api/v1/evidence/windows", nil, invalid)
-		assert.Equal(t, http.StatusBadRequest, response.StatusCode, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	}
 	unknown := maps.Clone(request)
 	unknown["unsupported"] = true
 	response, body = do(t, ts, http.MethodPost, "/api/v1/evidence/windows", nil, unknown)
+	assert.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	encoded, err := json.Marshal(request)
+	require.NoError(t, err)
+	duplicate := append([]byte(`{"offset":0,"offset":1,`), encoded[1:]...)
+	response, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/evidence/windows",
+		map[string]string{"X-Api-Key": testAPIKey}, string(duplicate))
 	assert.Equal(t, http.StatusBadRequest, response.StatusCode, body)
 	huge := maps.Clone(request)
 	huge["unsupported"] = strings.Repeat("x", 16<<10)
@@ -1633,5 +1640,6 @@ func TestEvidenceWindowHTTPContract(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, os.Rename(artifactPath+".offline", artifactPath)) })
 	response, body = do(t, ts, http.MethodPost, "/api/v1/evidence/windows", nil, request)
 	assert.Equal(t, http.StatusServiceUnavailable, response.StatusCode, body)
+	assert.Contains(t, body, `"code":"content_missing"`)
 	assert.NotContains(t, body, "aé界🙂z")
 }

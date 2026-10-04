@@ -454,7 +454,8 @@ for the envelope and body-relative navigation.
 
 `POST /api/v1/evidence/windows` (`readEvidenceWindow`) reads an exact cited
 sanitized-Markdown rendition. It requires the ordinary API key and a JSON
-request of at most 16 KiB. Its JSON response is bounded to 128 KiB.
+request of at most 16 KiB. The character and identity limits keep its JSON
+response below 128 KiB.
 
 Supply `vault_uid`, positive `node_id`, `content_version_id`, `content_sha256`,
 `rendition_attachment_id`, `build_id`, and `rendition_sha256`. All identities
@@ -472,8 +473,10 @@ The daemon checks request syntax, vault identity, current/live node and version,
 content hash, active attachment, build, Markdown artifact hash, then range.
 A well-formed reference that no longer matches visible authority returns
 `404 evidence_unavailable` without text or details about hidden components.
-Malformed or unsupported fields return 400, offsets beyond EOF return 416,
-and unavailable physical storage returns 503. Cancellation and actual integrity
+Invalid JSON or references rejected by the shared reader return 400. Schema
+violations, including unknown fields, return 422. Offsets beyond EOF return 416.
+Unavailable physical storage returns 503 with the standard `content_missing`,
+`store_fenced`, or `store_unavailable` code. Cancellation and actual integrity
 or cleanup failures are preserved. Reads do not run processing or choose a
 newer version or rendition.
 
@@ -484,8 +487,10 @@ Search segment offsets are not Markdown offsets. Begin an overview at zero,
 or continue using offsets returned by an earlier evidence window.
 
 `POST /api/v1/renditions/windows` retains its existing request fields, defaults,
-and current/live visibility checks. The stricter evidence route adds mandatory
-identity preconditions to the same bounded reader.
+and current/live visibility checks. Both routes also require a nonempty source
+blob hash and check active rendition authority in the same catalog snapshot.
+The stricter evidence route adds mandatory identity preconditions to the same
+bounded reader.
 
 #### Similar documents
 
