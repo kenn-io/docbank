@@ -309,8 +309,17 @@ func TestExportBrowserOwnersReleaseAndRevocationFenceJobs(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var plan bundle.Plan
 	require.NoError(t, json.Unmarshal([]byte(body), &plan))
-	response, body = do(t, ts, http.MethodGet, "/api/v1/exports/plans/"+plan.ID, map[string]string{"X-Api-Key": "", api.WebSessionHeader: second}, nil)
-	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	for _, suffix := range []string{"", "/problems"} {
+		path := "/api/v1/exports/plans/" + plan.ID + suffix
+		response, body = do(t, ts, http.MethodGet, path, headers, nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		response, body = do(t, ts, http.MethodGet, path,
+			map[string]string{"X-Api-Key": "", api.WebSessionHeader: second}, nil)
+		require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+		// API-key clients share master ownership, not this browser's ownership.
+		response, body = do(t, ts, http.MethodGet, path, nil, nil)
+		require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	}
 	response, body = do(t, ts, http.MethodPost, "/api/v1/exports/jobs", headers, bundle.JobRequest{OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var job bundle.Job
