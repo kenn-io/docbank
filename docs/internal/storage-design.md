@@ -525,6 +525,10 @@ fresh current-schema database, restores the physical pack catalog separately,
 checkpoints and syncs the replacement, then publishes it atomically. The
 released source database remains as a recovery copy.
 
+Package imports select the receipt by its unique package and record key.
+Mailbox transfers select the receipt whose target content version has the
+highest node revision.
+
 Only schemas that actually shipped receive readers and exact fixtures.
 Unreleased development layouts are disposable; there is no speculative
 `ALTER TABLE` ledger, downgrade matrix, or compatibility decoder for them.

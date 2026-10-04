@@ -80,8 +80,6 @@ var mailboxMetadataTables = []metadataRecordCodec{
 		insert: func(ctx context.Context, tx *sql.Tx, r metadataMailboxTransfer) error {
 			return insertMailboxTransferReceipt(ctx, tx, r.Receipt)
 		}}),
-	newMetadataTable(metadataTable[metadataMailboxTransferHead]{
-		record: metadataMailboxTransferHead{Type: "mailbox_transfer_head"}, table: "mailbox_transfer_heads"}),
 	newMetadataTable(metadataTable[metadataMailboxContainer]{record: metadataMailboxContainer{Type: "mailbox_container"},
 		table: "mailbox_containers", insert: importMailboxContainer}),
 }
@@ -119,12 +117,6 @@ type metadataMailboxTransfer struct {
 	Type    string                 `json:"type"`
 	Receipt MailboxTransferReceipt `json:"receipt"`
 }
-type metadataMailboxTransferHead struct {
-	Type      string `json:"type"`
-	ArchiveID string `json:"archive_id" db:"archive_id"`
-	Reference string `json:"reference" db:"source_ref"`
-	ReceiptID string `json:"receipt_id" db:"receipt_id"`
-}
 
 func exportMailboxTransfers(ctx context.Context, q metadataQuerier, write metadataWrite) error {
 	after := ""
@@ -150,7 +142,7 @@ func exportMailboxTransfers(ctx context.Context, q metadataQuerier, write metada
 		var id string
 		err := q.QueryRowContext(ctx, `SELECT id FROM mailbox_transfer_receipts WHERE id>? ORDER BY id LIMIT 1`, after).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
-			break
+			return exportMailboxJobs(ctx, q, write)
 		}
 		if err != nil {
 			return err
@@ -177,28 +169,5 @@ func exportMailboxTransfers(ctx context.Context, q metadataQuerier, write metada
 			return err
 		}
 		after = id
-	}
-	archive, reference := "", ""
-	for {
-		r := metadataMailboxTransferHead{Type: "mailbox_transfer_head"}
-		err := q.QueryRowContext(ctx, `SELECT archive_id,source_ref,receipt_id FROM mailbox_transfer_heads WHERE (archive_id,source_ref)>(?,?) ORDER BY archive_id,source_ref LIMIT 1`, archive, reference).Scan(&r.ArchiveID, &r.Reference, &r.ReceiptID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return exportMailboxJobs(ctx, q, write)
-		}
-		if err != nil {
-			return err
-		}
-		receipt, err := loadMailboxTransferReceipt(ctx, q, r.ReceiptID)
-		if err != nil {
-			return err
-		}
-		if receipt.Request.ArchiveID != r.ArchiveID || receipt.Request.Reference != r.Reference {
-			return ErrMailboxInvalid
-		}
-		if err = write(r); err != nil {
-			return err
-		}
-		archive = r.ArchiveID
-		reference = r.Reference
 	}
 }

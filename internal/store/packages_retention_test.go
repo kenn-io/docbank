@@ -101,8 +101,6 @@ func TestPackageLabelAndReceiptRetainHistoricalVersionsDuringPrune(t *testing.T)
 				) VALUES(?,?,?,?,?,?,?,?)`, receiptID, pkg.PackageID, key, occurrence, node.CurrentVersionID,
 					"committed", []byte(`{}`), nowRFC3339())
 				require.NoError(t, err)
-				_, err = s.db.ExecContext(t.Context(), `INSERT INTO package_import_heads(package_id,record_key,receipt_id)
-					VALUES(?,?,?)`, pkg.PackageID, key, receiptID)
 			}
 			require.NoError(t, err)
 			updated, _, err := s.ReplaceContent(t.Context(), node.ID, node.Revision,
