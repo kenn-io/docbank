@@ -63,6 +63,14 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	}
 }
 
+func TestOpenAPITelemetryResponses(t *testing.T) {
+	t.Parallel()
+	op := api.NewOfflineServer().API().OpenAPI().Paths["/api/daemon/telemetry/events"].Post
+	for _, status := range []string{"202", "400", "401", "403", "413", "415", "500"} {
+		assert.Contains(t, op.Responses, status)
+	}
+}
+
 func TestOpenAPIMediaTranscriptRouteUsesTheStableTuple(t *testing.T) {
 	t.Parallel()
 	doc := api.NewOfflineServer().API().OpenAPI()

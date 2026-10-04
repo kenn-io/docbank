@@ -15998,6 +15998,16 @@ paths:
           description: Event queued, or dropped because telemetry is off
         "400":
           description: Malformed body or an event the daemon does not allow
+        "401":
+          description: Missing or invalid API key or browser session
+        "403":
+          description: Browser session does not permit this request
+        "413":
+          description: Request body exceeds 64 KiB
+        "415":
+          description: Content type must be application/json
+        "500":
+          description: Telemetry capture failed
       summary: Report an anonymous web application usage event
   /api/daemon/web-download:
     delete:

@@ -61,6 +61,11 @@ func registerDaemonOpenAPI(api huma.API) {
 		Responses: map[string]*huma.Response{
 			"202": jsonResponse("Event queued, or dropped because telemetry is off", reflect.TypeFor[TelemetryEventReceipt]()),
 			"400": {Description: "Malformed body or an event the daemon does not allow"},
+			"401": {Description: "Missing or invalid API key or browser session"},
+			"403": {Description: "Browser session does not permit this request"},
+			"413": {Description: "Request body exceeds 64 KiB"},
+			"415": {Description: "Content type must be application/json"},
+			"500": {Description: "Telemetry capture failed"},
 		},
 	})
 }

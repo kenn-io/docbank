@@ -38,6 +38,7 @@
     CopyButton,
     EmptyState,
     IconButton,
+    Modal,
     SearchInput,
     SelectDropdown,
     Spinner,
@@ -156,7 +157,7 @@
   };
 
   type Panel =
-    | { kind: "history" | "versions" | "provenance" | "jobs" | "auditEvidence" | "storage" | "backups" | "bates" | "export" | "savedQueries" | "collections" | "trash" | "tagCatalog" }
+    | { kind: "history" | "versions" | "provenance" | "jobs" | "auditEvidence" | "storage" | "backups" | "bates" | "export" | "savedQueries" | "collections" | "trash" | "tagCatalog" | "telemetry" }
     | { kind: "termReports"; documents?: generated.Identity[] }
     | { kind: "processing"; target: Row; intent: "similar" | null; scope: string[] }
     | { kind: "rendition"; target: { attachmentID: string; path: string } }
@@ -1934,6 +1935,9 @@
         <button type="button" class="nav-item" aria-label="Verify permanent audit evidence" onclick={() => openPanel({ kind: "auditEvidence" })}>
           <ShieldCheckIcon size="16" aria-hidden="true" />Audit evidence
         </button>
+        <button type="button" class="nav-item" onclick={() => openPanel({ kind: "telemetry" })}>
+          <ActivityIcon size="16" aria-hidden="true" />Anonymous usage
+        </button>
       </div>
     </nav>
     {#if navOpen}
@@ -2857,6 +2861,18 @@
           onauthfailure={handleFailure}
         />
       {/if}
+      {#if panel.kind === "telemetry"}
+        <Modal title="Anonymous usage" ariaLabel="Anonymous usage" tone="info" onclose={closePanel(panel)}>
+          <div class="telemetry-note">
+            <p>Docbank reports when the daemon runs and the web app opens so the team can count vaults in use. Reporting is on by default.</p>
+            <p>Reports go to PostHog with a random ID for this vault, the app version, operating system, and install age. They never include document content, filenames, paths, tags, or searches.</p>
+            <p>To turn reporting off, set <code>DOCBANK_TELEMETRY_ENABLED=0</code> in the environment that starts the daemon, then run <code>docbank daemon restart</code>.</p>
+          </div>
+          {#snippet footer()}
+            <Button surface="soft" onclick={closePanel(panel)}>Done</Button>
+          {/snippet}
+        </Modal>
+      {/if}
       {#if panel.kind === "trash"}
         <TrashDrawer
           session={webSession}
@@ -2992,6 +3008,9 @@
 {/if}
 
 <style>
+  .telemetry-note { display: grid; gap: var(--space-4); line-height: 1.5; }
+  .telemetry-note p { margin: 0; }
+  .telemetry-note code { overflow-wrap: anywhere; }
   :global(body .app-shell .browser th.selection-column),
   :global(body .app-shell .browser td.selection-column) {
     width: 44px;
