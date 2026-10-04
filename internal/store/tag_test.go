@@ -201,6 +201,63 @@ func TestTaggedNodesReturnsRootPath(t *testing.T) {
 	assert.Equal(t, "/", nodes[0].Path)
 }
 
+func TestTaggedNodePagesKeepCurrentMetadataAndTrashCounts(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	tag, err := s.CreateTag(ctx, "records")
+	require.NoError(t, err)
+	empty, err := s.CreateTag(ctx, "empty")
+	require.NoError(t, err)
+	dir, err := s.Mkdir(ctx, s.RootID(), "docs")
+	require.NoError(t, err)
+	trashed, err := s.CreateFile(ctx, dir.ID, "z.txt", fakeHash("a1"), 3, "text/plain")
+	require.NoError(t, err)
+	live, err := s.CreateFile(ctx, dir.ID, "a.txt", fakeHash("b2"), 5, "text/plain")
+	require.NoError(t, err)
+	for _, id := range []int64{dir.ID, trashed.ID, live.ID} {
+		_, err = s.AssignTag(ctx, tag.ID, id, UnconditionalRev)
+		require.NoError(t, err)
+	}
+	trashed, _, err = s.Trash(ctx, trashed.ID, UnconditionalRev)
+	require.NoError(t, err)
+	live, _, err = s.ReplaceContent(ctx, live.ID, UnconditionalRev,
+		fakeHash("d4"), 4, "application/pdf",
+		BlobPhysical{Encoding: "raw", StoredBytes: 4, Created: true,
+			MD5: "098f6bcd4621d373cade4e832627b4f6"})
+	require.NoError(t, err)
+
+	// IDs, not names, define page order. Trashed assignments retain metadata
+	// but have no path; the live page applies its filter before the offset.
+	nodes, total, err := s.TaggedNodes(ctx, tag.ID, 1, 1)
+	require.NoError(t, err)
+	require.Equal(t, 3, total)
+	require.Equal(t, []TaggedNode{{Node: trashed}}, nodes)
+	nodes, total, err = s.TaggedNodes(ctx, tag.ID, 1, 2)
+	require.NoError(t, err)
+	require.Equal(t, 3, total)
+	require.Equal(t, []TaggedNode{{Node: live, Path: "/docs/a.txt"}}, nodes)
+	nodes, total, omitted, err := s.LiveTaggedNodes(ctx, tag.ID, 1, 1)
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	require.Equal(t, 1, omitted)
+	require.Equal(t, []TaggedNode{{Node: live, Path: "/docs/a.txt"}}, nodes)
+
+	nodes, total, omitted, err = s.LiveTaggedNodes(ctx, tag.ID, 1, 2)
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+	require.Equal(t, 2, total)
+	require.Equal(t, 1, omitted)
+	nodes, total, err = s.TaggedNodes(ctx, tag.ID, 1, 3)
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+	require.Equal(t, 3, total)
+	nodes, total, err = s.TaggedNodes(ctx, empty.ID, 1, 0)
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+	require.Zero(t, total)
+}
+
 func TestTagAssignmentPathUsesCurrentTopology(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

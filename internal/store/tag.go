@@ -537,9 +537,16 @@ func (s *Store) taggedNodes(
 	if liveOnly {
 		pageFilter = " WHERE trashed_at IS NULL"
 	}
+	// Counts need only membership and trash state. Load content metadata after
+	// selecting the page so versions and checksums scale with page size.
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RECURSIVE target AS (SELECT id FROM tags WHERE id = ?),
 		matching AS (
+		  SELECT n.id, n.trashed_at
+		  FROM nodes n JOIN node_tags nt ON nt.node_id = n.id
+		  WHERE nt.tag_id = ?
+		),
+		page AS (
 		  SELECT n.id AS id, n.parent_id AS parent_id, n.name AS name, n.kind AS kind,
 		         COALESCE(n.current_version_id, '') AS current_version_id,
 		         COALESCE(cv.blob_hash, '') AS blob_hash,
@@ -547,11 +554,10 @@ func (s *Store) taggedNodes(
 		         COALESCE(cv.size, 0) AS size, COALESCE(cv.mime_type, '') AS mime_type,
 		         n.revision AS revision, n.created_at AS created_at,
 		         n.modified_at AS modified_at, n.trashed_at AS trashed_at
-		  FROM `+nodeFrom+` JOIN node_tags nt ON nt.node_id = n.id
-		  WHERE nt.tag_id = ?
-		),
-		page AS (
-		  SELECT * FROM matching`+pageFilter+` ORDER BY id LIMIT ? OFFSET ?
+		  FROM `+nodeFrom+`
+		  WHERE n.id IN (
+		    SELECT id FROM matching`+pageFilter+` ORDER BY id LIMIT ? OFFSET ?
+		  )
 		), totals AS (
 		  SELECT COUNT(*) AS total,
 		         COALESCE(SUM(CASE WHEN trashed_at IS NULL THEN 1 ELSE 0 END), 0) AS live_total
