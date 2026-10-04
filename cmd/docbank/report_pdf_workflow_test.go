@@ -27,8 +27,8 @@ func TestReportPDFWorkflow(t *testing.T) {
 	f := newPDFReportFixture(t)
 	f.start(t, f.root)
 	_, packet := f.capture(t, f.request)
-	archive, receipt := exportReportPDFs(t, f.originals[:3])
-	assertPDFArchive(t, archive, receipt, f.originals[:3])
+	archive, receipt := exportReportOriginals(t, f.originals[:3])
+	assertOriginalArchive(t, archive, receipt, f.originals[:3])
 
 	before, err := runCLI(t, "search-export", "history", "--json")
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func (f *pdfReportFixture) capture(t *testing.T, request report.Request) (report
 	idPattern := regexp.MustCompile(`\b[0-9a-f]{48}\b`)
 	parentID := idPattern.FindString(out)
 	require.NotEmpty(t, parentID, out)
-	parent := showPDFReport(t, parentID)
+	parent := showReport(t, parentID)
 	require.Equal(t, "needs_review", parent.State, "%+v", parent)
 	require.EqualValues(t, 1, parent.UnresolvedDates)
 	require.Empty(t, parent.Counts)
@@ -103,15 +103,15 @@ func (f *pdfReportFixture) capture(t *testing.T, request report.Request) (report
 	out, err = runCLI(t, "search-export", "revise", parentID, "--choices",
 		writeSourceFile(t, "choices.json", string(encoded)), "--output", packet)
 	require.NoError(t, err)
-	child := showPDFReport(t, idPattern.FindString(out))
+	child := showReport(t, idPattern.FindString(out))
 	require.Equal(t, parentID, child.ParentID)
 	require.Equal(t, parent.ExpiresAt, child.ExpiresAt)
-	require.Equal(t, parent, showPDFReport(t, parentID), "review must leave the parent unchanged")
+	require.Equal(t, parent, showReport(t, parentID), "review must leave the parent unchanged")
 	f.assertReport(t, child, packet)
 	return child, packet
 }
 
-func showPDFReport(t *testing.T, id string) report.Summary {
+func showReport(t *testing.T, id string) report.Summary {
 	t.Helper()
 	out, err := runCLI(t, "search-export", "show", id, "--json")
 	require.NoError(t, err)
@@ -179,7 +179,7 @@ func (f *pdfReportFixture) assertReport(t *testing.T, summary report.Summary, pa
 	}, rows)
 }
 
-func exportReportPDFs(t *testing.T, originals []pdfReportOriginal) (string, bundle.Receipt) {
+func exportReportOriginals(t *testing.T, originals []reportOriginal) (string, bundle.Receipt) {
 	t.Helper()
 	request := exportPreviewRequest{
 		SourceOperationID: uuid.New().String(), PlanOperationID: uuid.New().String(),
@@ -229,8 +229,8 @@ func exportReportPDFs(t *testing.T, originals []pdfReportOriginal) (string, bund
 	return path, receipt
 }
 
-func assertPDFArchive(
-	t *testing.T, path string, receipt bundle.Receipt, originals []pdfReportOriginal,
+func assertOriginalArchive(
+	t *testing.T, path string, receipt bundle.Receipt, originals []reportOriginal,
 ) {
 	t.Helper()
 	content, err := os.ReadFile(path)
@@ -273,7 +273,7 @@ func assertPDFArchive(
 	require.ElementsMatch(t, wantNames, names)
 }
 
-func pdfReportHistory(t *testing.T) store.TermReportHistoryPage {
+func reportHistory(t *testing.T) store.TermReportHistoryPage {
 	t.Helper()
 	out, err := runCLI(t, "search-export", "history", "--json")
 	require.NoError(t, err)

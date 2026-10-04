@@ -24,8 +24,8 @@ func TestReportPDFRestore(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, configuration.Bytes(), 0o600))
 	stop := f.start(t, f.root)
 	summary, packet := f.capture(t, f.request)
-	archive, receipt := exportReportPDFs(t, f.originals[:3])
-	history := pdfReportHistory(t)
+	archive, receipt := exportReportOriginals(t, f.originals[:3])
+	history := reportHistory(t)
 	require.Len(t, history.Items, 2)
 	for _, item := range history.Items {
 		require.Equal(t, f.request, item.Request, "history must retain the request without date choices")
@@ -40,7 +40,7 @@ func TestReportPDFRestore(t *testing.T) {
 	require.NoError(t, err)
 	_, err = runCLI(t, "rm", "/missing.pdf")
 	require.NoError(t, err)
-	require.Equal(t, summary, showPDFReport(t, summary.ID))
+	require.Equal(t, summary, showReport(t, summary.ID))
 	frozen := filepath.Join(t.TempDir(), "frozen.zip")
 	_, err = runCLI(t, "search-export", "download", summary.ID, "--output", frozen)
 	require.NoError(t, err)
@@ -61,7 +61,7 @@ func TestReportPDFRestore(t *testing.T) {
 		t.Run(target.name, func(t *testing.T) {
 			stopRestored := f.start(t, target.root)
 			defer stopRestored()
-			restoredHistory := pdfReportHistory(t)
+			restoredHistory := reportHistory(t)
 			require.Equal(t, history, restoredHistory)
 			var request report.Request
 			for _, item := range restoredHistory.Items {
@@ -88,15 +88,15 @@ func TestReportPDFRestore(t *testing.T) {
 				// The original member deliberately has revision zero.
 				originals = f.originals[:1]
 			}
-			path, proof := exportReportPDFs(t, originals)
-			assertPDFArchive(t, path, proof, originals)
+			path, proof := exportReportOriginals(t, originals)
+			assertOriginalArchive(t, path, proof, originals)
 		})
 	}
 	// These checks use only the previously saved files, after all daemons stop.
 	out, err := runCLI(t, "search-export", "verify", packet)
 	require.NoError(t, err)
 	require.Contains(t, out, "internally consistent: true; source verified: false")
-	assertPDFArchive(t, archive, receipt, f.originals[:3])
+	assertOriginalArchive(t, archive, receipt, f.originals[:3])
 }
 
 func assertPDFSelectionChanged(t *testing.T, request report.Request) {
