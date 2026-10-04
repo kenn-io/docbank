@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -216,6 +217,44 @@ func TestNodeSourceMetadataViewKeepsAttachmentCoordinatesTogether(t *testing.T) 
 	require.NotNil(t, viewByPath.SourceMetadata)
 	assert.Equal(t, viewByPath.Node.Name, viewByPath.SourceMetadata.Attachment.Filename)
 	assert.Equal(t, viewByPath.Path, viewByPath.SourceMetadata.Attachment.Path)
+}
+
+func TestNodeSourceMetadataViewPinsPathAndEvidenceAcrossWrites(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "before.pdf", fakeHash("a1"), 12, "application/pdf")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+	})
+	require.NoError(t, err)
+	before, err := s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("f1"), canonical)
+	require.NoError(t, err)
+
+	// Commit both changes after resolving the node, before the detail read
+	// loads its path and metadata. All three must retain the original snapshot.
+	view, err := s.nodeSourceMetadataView(ctx, func(tx *sql.Tx) (Node, error) {
+		resolved, err := nodeByIDTx(tx, node.ID)
+		require.NoError(t, err)
+		_, _, err = s.Move(ctx, node.ID, s.RootID(), "after.pdf", node.Revision)
+		require.NoError(t, err)
+		_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("f2"), canonical)
+		require.NoError(t, err)
+		return resolved, nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "before.pdf", view.Node.Name)
+	assert.Equal(t, "/before.pdf", view.Path)
+	require.NotNil(t, view.SourceMetadata)
+	assert.Equal(t, "/before.pdf", view.SourceMetadata.Attachment.Path)
+	assert.Equal(t, before.GenerationID, view.SourceMetadata.Generation.GenerationID)
+
+	after, err := s.NodeSourceMetadataViewByID(ctx, node.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "/after.pdf", after.Path)
+	require.NotNil(t, after.SourceMetadata)
+	assert.NotEqual(t, before.GenerationID, after.SourceMetadata.Generation.GenerationID)
 }
 
 func TestNodeSourceMetadataViewReadsCommittedStateDuringWrite(t *testing.T) {

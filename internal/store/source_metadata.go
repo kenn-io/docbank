@@ -318,13 +318,12 @@ func (s *Store) NodeSourceMetadataViewByPath(ctx context.Context, path string) (
 
 func (s *Store) nodeSourceMetadataView(
 	ctx context.Context, resolve func(*sql.Tx) (Node, error),
-) (_ NodeSourceMetadataView, retErr error) {
-	snapshot, err := s.BeginMetadataSnapshot(ctx)
+) (NodeSourceMetadataView, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return NodeSourceMetadataView{}, fmt.Errorf("starting node source-metadata snapshot: %w", err)
 	}
-	defer func() { retErr = errors.Join(retErr, snapshot.Close()) }()
-	tx := snapshot.tx
+	defer func() { _ = tx.Rollback() }()
 
 	node, err := resolve(tx)
 	if err != nil {
