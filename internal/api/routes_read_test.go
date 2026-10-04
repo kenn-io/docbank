@@ -186,6 +186,35 @@ func TestContentStreamsBlob(t *testing.T) {
 		resp.Trailer.Get("Content-Digest"))
 }
 
+func TestContentDigestRequiresVerifiedBytes(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	n := createFileWithContent(t, ts, s, "/content.txt", "original bytes")
+	paths := []string{
+		fmt.Sprintf("/api/v1/nodes/%d/content", n.ID),
+		"/api/v1/versions/" + n.CurrentVersionID + "/content",
+	}
+	for _, path := range paths {
+		resp, body := get(t, ts, path, nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, "original bytes", body)
+		require.NotEmpty(t, resp.Trailer.Get("Content-Digest"))
+	}
+
+	// A same-length edit reaches the streaming verifier rather than failing
+	// the size check when the blob is opened.
+	corrupt := []byte("modified bytes")
+	require.Len(t, corrupt, int(n.Size))
+	require.NoError(t, os.WriteFile(filepath.Join(s.BlobsDir,
+		n.BlobHash[:2], n.BlobHash), corrupt, 0o600))
+	for _, path := range paths {
+		resp, body := get(t, ts, path, nil)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Equal(t, string(corrupt), body)
+		require.Empty(t, resp.Trailer.Get("Content-Digest"))
+	}
+}
+
 func TestFileNodeExposesBlobIdentity(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
