@@ -140,15 +140,14 @@ func (s *Store) Tags(ctx context.Context, limit, offset int) ([]Tag, int, error)
 	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
+	// Count assignments only for the selected page, using the tag index.
 	rows, err := s.db.QueryContext(ctx, `
 		WITH page AS (
-		  SELECT t.id, t.name, t.revision, COUNT(nt.node_id) AS assignments
-		  FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
-		  GROUP BY t.id, t.name, t.revision ORDER BY t.name, t.id LIMIT ? OFFSET ?
+		  SELECT id, name, revision FROM tags ORDER BY name, id LIMIT ? OFFSET ?
 		), totals AS (SELECT COUNT(*) AS total FROM tags)
 		SELECT totals.total, COALESCE(page.id, ''), COALESCE(page.name, ''),
 		       COALESCE(page.revision, 0),
-		       COALESCE(page.assignments, 0)
+		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = page.id)
 		FROM totals LEFT JOIN page ON true ORDER BY page.name, page.id`, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing tags: %w", err)
