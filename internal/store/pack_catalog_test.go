@@ -21,6 +21,83 @@ func TestPackCatalogContract(t *testing.T) {
 	})
 }
 
+func TestListPackUsageTracksMembershipAndRepack(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	h := &docbankPackHarness{t: t, store: s}
+	catalog := h.Catalog()
+	ctx := t.Context()
+	first, second := pack.NewPackID(), pack.NewPackID()
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	a, err := packstore.ParseHash(fakeHash("aa"))
+	require.NoError(t, err)
+	b, err := packstore.ParseHash(fakeHash("bb"))
+	require.NoError(t, err)
+	dead, err := packstore.ParseHash(fakeHash("dd"))
+	require.NoError(t, err)
+	h.SetMember(a, true)
+	h.SetMember(b, true)
+	h.SetMember(dead, true)
+	entryA := packstore.IndexEntry{
+		Hash: a, PackID: first, Offset: pack.MinEntryOffset, StoredLen: 5, RawLen: 13,
+	}
+	entryB := packstore.IndexEntry{
+		Hash: b, PackID: first, Offset: pack.MinEntryOffset + 32, StoredLen: 9, RawLen: 27,
+	}
+	h.PutPack(packstore.PackRecord{
+		PackID: first, EntryCount: 3, StoredBytes: 30, CreatedAt: created,
+	},
+		[]packstore.IndexEntry{entryA, entryB, {
+			Hash: dead, PackID: first, Offset: pack.MinEntryOffset + 64, StoredLen: 16, RawLen: 31,
+		}})
+	h.SetMember(dead, false)
+	want := []packstore.PackUsage{{
+		PackID: first, EntryCount: 3, StoredBytes: 30, CreatedAt: created,
+		LiveEntries: 2, LiveStoredBytes: 14, LiveRawBytes: 40,
+		MaxLiveStoredLen: 9, MaxLiveRawLen: 27,
+	}}
+	usage, err := catalog.ListPackUsage(ctx)
+	require.NoError(t, err)
+	require.Equal(t, want, usage, "dangling mappings do not count as live content")
+
+	// Restore membership directly to exercise the blob-insert trigger. SetMember
+	// also publishes loose authority, which removes the old primary mapping.
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO blobs(hash, size, created_at) VALUES (?, 31, ?)`,
+		dead.String(), created.Format(timestampLayout))
+	require.NoError(t, err)
+	revived := []packstore.PackUsage{{
+		PackID: first, EntryCount: 3, StoredBytes: 30, CreatedAt: created,
+		LiveEntries: 3, LiveStoredBytes: 30, LiveRawBytes: 71,
+		MaxLiveStoredLen: 16, MaxLiveRawLen: 31,
+	}}
+	usage, err = catalog.ListPackUsage(ctx)
+	require.NoError(t, err)
+	require.Equal(t, revived, usage, "restored membership restores totals and maxima")
+	h.SetMember(dead, false)
+
+	require.NoError(t, catalog.DeleteIndexEntry(ctx, b))
+	want[0].LiveEntries, want[0].LiveStoredBytes, want[0].LiveRawBytes = 1, 5, 13
+	want[0].MaxLiveStoredLen, want[0].MaxLiveRawLen = 5, 13
+	usage, err = catalog.ListPackUsage(ctx)
+	require.NoError(t, err)
+	require.Equal(t, want, usage, "removing the largest live mapping reduces totals and maxima")
+
+	entryA.PackID, entryA.Offset = second, pack.MinEntryOffset
+	require.NoError(t, catalog.CommitRepack(ctx, []string{first}, []packstore.PackRecord{{
+		PackID: second, EntryCount: 1, StoredBytes: 5, CreatedAt: created.Add(time.Second),
+	}}, []packstore.RepackMove{{OldPackID: first, NewEntry: entryA}}))
+	want = []packstore.PackUsage{
+		{PackID: first, EntryCount: 3, StoredBytes: 30, CreatedAt: created},
+		{PackID: second, EntryCount: 1, StoredBytes: 5, CreatedAt: created.Add(time.Second),
+			LiveEntries: 1, LiveStoredBytes: 5, LiveRawBytes: 13,
+			MaxLiveStoredLen: 5, MaxLiveRawLen: 13},
+	}
+	usage, err = catalog.ListPackUsage(ctx)
+	require.NoError(t, err)
+	require.Equal(t, want, usage, "repacking retains the empty source until retirement")
+}
+
 func TestPackAdoptionClearsLooseAuthority(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
