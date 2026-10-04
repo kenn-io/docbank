@@ -255,6 +255,8 @@ func assertOriginalArchive(
 		require.Equal(t, original.member, doc.Member)
 		require.Len(t, doc.Roles, 1)
 		require.Equal(t, "original", doc.Roles[0].Role)
+		require.Equal(t, "available", doc.Roles[0].Status)
+		require.Nil(t, doc.Attachment, "explicit selections are ordinary document rows")
 		name := fmt.Sprintf("documents/%d/%s/original", doc.NodeID, doc.VersionID)
 		wantNames = append(wantNames, name)
 		stream, err := z.Open(name)

@@ -7,11 +7,17 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
+
+type reportOriginal struct {
+	member bundle.Member
+	bytes  []byte
+}
 
 type reportRenditionFixture struct {
 	config  config.Config

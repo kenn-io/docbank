@@ -27,7 +27,6 @@ type familyReportFixture struct {
 	root      string
 	request   report.Request
 	originals map[string]reportOriginal
-	nodes     map[string]store.Node
 }
 
 type familyFixtureWriter struct {
@@ -50,7 +49,7 @@ func newFamilyReportFixture(t *testing.T, scenario string) *familyReportFixture 
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	f := &familyReportFixture{root: root, reportRenditionFixture: newReportRenditionFixture(t),
-		originals: make(map[string]reportOriginal), nodes: make(map[string]store.Node)}
+		originals: make(map[string]reportOriginal)}
 	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, catalog.Close()) }()
@@ -186,7 +185,6 @@ func (w familyFixtureWriter) retain(
 	require.EqualValues(t, len(content), size)
 	w.fixture.originals[key] = reportOriginal{bytes: content, member: bundle.Member{
 		NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash, Size: size}}
-	w.fixture.nodes[key] = node
 	family, unit, locator := "text", document.EvidenceUnitSection, document.EvidenceLocatorSection
 	if strings.HasSuffix(node.Name, ".eml") {
 		family, unit, locator = "mail", document.EvidenceUnitMessage, document.EvidenceLocatorMessage

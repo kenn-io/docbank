@@ -20,11 +20,6 @@ import (
 	"go.kenn.io/docbank/report"
 )
 
-type reportOriginal struct {
-	member bundle.Member
-	bytes  []byte
-}
-
 type pdfReportFixture struct {
 	reportRenditionFixture
 
