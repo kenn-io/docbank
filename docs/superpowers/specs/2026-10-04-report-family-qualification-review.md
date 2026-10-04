@@ -2,8 +2,9 @@
 
 Reviewed design: [Qualify selected email families in reports and original exports](2026-10-04-report-family-qualification-design.md).
 
-Status: proposed. This is the author's source check, not an independent
-adversarial review or execution of the proposed qualification.
+Status: specification review completed; qualification not implemented.
+The initial author check below is preserved against its original hash. The
+adversarial review and subsequent fixture clarifications are recorded at the end.
 
 ## Reproducible baseline
 
@@ -133,3 +134,34 @@ not implement. In particular:
 Ready for adversarial specification review. Source inspection and existing
 component tests support the proposed cases; they do not establish that the
 combined workflow already passes.
+
+## Adversarial review and fixture clarifications
+
+The maintainer supplied an independent review of `2df83981`, with no High or
+Medium findings and a verdict of ready for implementation planning. It checked
+the four count tables, MIME publication, family traversal, and client boundaries
+against the same source baseline. Three Low findings were verified against
+source and incorporated without changing the scenarios or expected counts:
+
+1. **Pin date provenance.** `report/dates.go:automaticDateTier` gives native
+   sent evidence priority over content dates for email. The revised fixture
+   omits every email `Date` header and asserts selection reason `content`,
+   candidate source class `content`, role `document_date`, and date
+   `2024-05-06`. This resolves the earlier ledger's permissive same-day header
+   wording without relying on timezone conversion.
+2. **Read the configured profile.** `EnsureEmailTarget` calls
+   `publishEmailBody`; its built-in profile's builds remain present.
+   `internal/store/query_compile.go:compileLexicalPredicate` filters rendition
+   matches by profile, and `term_report_frame.go:readTermReportRendition` does
+   the same for captured text. The fixture now explicitly reads back the
+   `archive` fingerprint's version/build/text binding instead of accepting any
+   active email rendition.
+3. **Name all attachment parts.** `emailDocumentFilename` uses the MIME safe
+   filename and appends an operation/order suffix. The revised fixture requires
+   explicit filenames and query-term-free publication IDs. This prevents an
+   incidental name hit from satisfying a body-text count assertion.
+
+Only design and review prose changed. The product/dependency baseline remains
+`392dbe25905214bbd58d094134206654f730f739`. Existing execution evidence above
+is historical; no new family qualification is claimed. Revised design SHA-256:
+`f15af8f171762f96acdb3f5f703cfd736668081f75f9856940d49cefa616f6e5`.

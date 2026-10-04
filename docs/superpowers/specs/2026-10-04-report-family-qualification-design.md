@@ -1,6 +1,6 @@
 # Qualify selected email families in reports and original exports
 
-Status: proposed qualification; not implemented. Awaiting adversarial review.
+Status: reviewed qualification; not implemented. Ready for implementation planning.
 
 Source baseline: `392dbe25905214bbd58d094134206654f730f739`, after PR #774.
 Parent scope: [the local report/export workflow, #719](https://github.com/kenn-io/docbank/issues/719).
@@ -77,7 +77,11 @@ agreement with the producer is not the independent count oracle.
 
 Use small, literal MIME messages and plain-text attachment payloads. Filenames,
 subjects, and other incidental metadata must not contain the query terms
-`alpha` or `beta`. Use only synthetic addresses under `example.test`.
+`alpha` or `beta`. Give every attachment part an explicit `Content-Disposition`
+filename: `chosen.txt`, `omitted.txt`, or `shared.txt` as appropriate. Do not
+rely on publication-generated fallback names. Use only synthetic addresses
+under `example.test`. Publication IDs must also avoid the query terms because
+the publisher appends an operation/order suffix to attachment node names.
 
 Prepare retained sources before daemon ownership, following the existing
 `internal/processing/email_test.go` fixture:
@@ -97,14 +101,20 @@ Prepare retained sources before daemon ownership, following the existing
    outer body, not its attachment payloads. Text remains independently available
    even for the deliberately incomplete inventory in scenario 3.
 
+`EnsureEmailTarget` also publishes searchable email-body renditions under the
+built-in email profile. Leave those builds intact. The reports in this fixture
+use the configured `archive` profile for both term matching and text capture,
+so the built-in email-body builds are not their text source.
+
 For step 4, adapt the existing profile and rendition publication setup; do not
 copy PDF-specific evidence into email fixtures. Use `mail`/message evidence for
 email and `text`/section evidence for text attachments, with non-indexed
 locators. Every publication needs a fresh build ID, attachment ID, and
-`LexicalGenerationID`. Read back the resulting searchable text bindings before
-starting the workflow so a missing fixture publication cannot masquerade as a
-family failure. Do not use `RecordExtraction` to bypass the retained rendition
-path.
+`LexicalGenerationID`. Read back the resulting searchable text bindings for
+the configured `archive` profile's fingerprint specifically, before starting
+the workflow. Check the exact version, profile, build, and retained text, so a
+built-in email rendition cannot hide a missing fixture publication. Do not use
+`RecordExtraction` to bypass the retained rendition path.
 
 Derive the configured processing profile once and use the same fingerprint for
 all fixture publications and the daemon's `archive` profile. The portable
@@ -119,11 +129,15 @@ faithfulness of a provider conversion. Real MIME decoding/publication is used
 to obtain reachable attachment relationships, rather than a fake family graph.
 
 Every retained text contains exactly one `Document dated 2024-05-06.` label.
-If an email Date header is present, use that same date. Both report terms use
+Omit the email `Date` header from every fixture message. A usable sent date
+would outrank the body label, and its timezone could change the selected UTC
+day. Both report terms use
 `simple` syntax, timezone `UTC`, and `2024-01-01` through `2024-12-31`.
-All selected dates must resolve automatically to `2024-05-06`; fallback dates
-and unresolved review counts must be zero. This keeps date uncertainty from
-masking a family-coverage refusal.
+All selected dates must resolve automatically to `2024-05-06`, with selection
+reason `content`. Resolve each selected candidate ID in the packet's date
+evidence and assert source class `content` and role `document_date`. Fallback
+dates and unresolved review counts must be zero. This keeps date uncertainty
+from masking a family-coverage refusal.
 
 Close all setup store/blob handles before starting the daemon. Set
 `DOCBANK_HOME` to the temporary vault, use `startServe` and `waitForDaemon`,
