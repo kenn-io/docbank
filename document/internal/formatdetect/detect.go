@@ -97,6 +97,8 @@ func DetectFormatContext(ctx context.Context, reader io.ReaderAt, size int64, de
 	case bytes.HasPrefix(prefix, []byte("%PDF-")):
 		if err = validatePDFStructure(reader, size, prefix); err == nil {
 			detected, _ = CandidateFormatByID(formatIDPDF)
+		} else {
+			err = fmt.Errorf("%w: %w", ErrPDFStructure, err)
 		}
 	case bytes.HasPrefix(prefix, []byte(`{\rtf`)):
 		detected, _ = CandidateFormatByID("rtf")
@@ -178,6 +180,8 @@ func validatePDFStructure(reader io.ReaderAt, size int64, prefix []byte) error {
 }
 
 var (
+	// ErrPDFStructure identifies a failure of the PDF structure detector.
+	ErrPDFStructure         = errors.New("PDF structure could not be validated")
 	ErrPDFEncrypted         = errors.New("PDF is encrypted")
 	ErrPDFExpandedBytes     = errors.New("PDF expanded bytes exceed the bound")
 	ErrPDFEntryBytes        = errors.New("PDF stream bytes exceed the entry bound")

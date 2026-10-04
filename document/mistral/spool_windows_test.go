@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/ocr"
 	"go.kenn.io/docbank/internal/winsecurity"
 	"golang.org/x/sys/windows"
 )
@@ -38,7 +39,10 @@ func TestPrepareAndProcessRejectBroadWindowsDACLs(t *testing.T) {
 		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),
 		MaxSpoolBytes: 1024, MinFreeBytes: 1,
 	})
-	require.ErrorContains(t, err, "restricted DACL")
+	require.ErrorIs(t, err, ErrSpoolUnavailable)
+	diagnostic, ok := errors.AsType[*ocr.PreparationError](err)
+	require.True(t, ok)
+	require.ErrorContains(t, diagnostic.Unwrap(), "restricted DACL")
 
 	prepared := prepareTestDocument(t, policy, content)
 	require.NoError(t, setEveryoneDACL(prepared.path))
@@ -70,7 +74,10 @@ func TestPrepareRejectsBroadWindowsReservationLockDACL(t *testing.T) {
 		ExpectedSize: int64(len(content)), ExpectedSHA256: hex.EncodeToString(digest[:]),
 		MaxSpoolBytes: 1024, MinFreeBytes: 1,
 	})
-	require.ErrorContains(t, err, "reservation lock")
+	require.ErrorIs(t, err, ErrSpoolUnavailable)
+	diagnostic, ok := errors.AsType[*ocr.PreparationError](err)
+	require.True(t, ok)
+	require.ErrorContains(t, diagnostic.Unwrap(), "reservation lock")
 }
 
 func setEveryoneDACL(path string) error {
