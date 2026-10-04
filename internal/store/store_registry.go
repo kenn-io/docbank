@@ -140,9 +140,28 @@ func (s *Store) BlobStores(ctx context.Context) ([]BlobStore, error) {
 func (s *Store) BlobStoreInventory(
 	ctx context.Context,
 ) (map[string]BlobStoreStats, error) {
+	// Reuse the sole-owner set for both object and document counts. Count
+	// documents from current nodes once, rather than walking version history
+	// separately for each store. CROSS JOIN keeps that traversal node-first.
 	rows, err := s.db.QueryContext(ctx, `
+		WITH sole_blobs AS MATERIALIZED (
+		    SELECT blob_hash, MIN(store_id) AS store_id
+		    FROM blob_locations
+		    GROUP BY blob_hash HAVING COUNT(*) = 1
+		), sole_counts AS (
+		    SELECT store_id, COUNT(*) AS objects
+		    FROM sole_blobs GROUP BY store_id
+		), affected AS (
+		    SELECT sole.store_id, COUNT(*) AS documents
+		    FROM nodes n
+		    CROSS JOIN content_versions v
+		      ON v.node_id = n.id AND v.version_id = n.current_version_id
+		    CROSS JOIN sole_blobs sole ON sole.blob_hash = v.blob_hash
+		    WHERE n.trashed_at IS NULL
+		    GROUP BY sole.store_id
+		)
 		SELECT s.store_id,
-		       COUNT(DISTINCT l.blob_hash),
+		       COUNT(l.blob_hash),
 		       COALESCE(SUM(CASE WHEN l.blob_hash IS NOT NULL THEN b.size ELSE 0 END), 0),
 		       COALESCE(SUM(CASE
 		           WHEN l.kind = 'loose' THEN l.stored_size
@@ -151,20 +170,11 @@ func (s *Store) BlobStoreInventory(
 		       (SELECT COUNT(*) FROM blob_packs p WHERE p.store_id = s.store_id),
 		       COALESCE((SELECT SUM(MAX(p.stored_bytes - p.live_stored_bytes, 0))
 		                 FROM blob_packs p WHERE p.store_id = s.store_id), 0),
-		       (SELECT COUNT(*) FROM blob_locations sole
-		        WHERE sole.store_id = s.store_id
-		          AND (SELECT COUNT(*) FROM blob_locations peers
-		               WHERE peers.blob_hash = sole.blob_hash) = 1),
-		       (SELECT COUNT(DISTINCT n.id)
-		        FROM nodes n
-		        JOIN content_versions v
-		          ON v.node_id = n.id AND v.version_id = n.current_version_id
-		        JOIN blob_locations sole ON sole.blob_hash = v.blob_hash
-		        WHERE n.trashed_at IS NULL
-		          AND sole.store_id = s.store_id
-		          AND (SELECT COUNT(*) FROM blob_locations peers
-		               WHERE peers.blob_hash = sole.blob_hash) = 1)
+		       COALESCE(c.objects, 0),
+		       COALESCE(a.documents, 0)
 		FROM blob_stores s
+		LEFT JOIN sole_counts c ON c.store_id = s.store_id
+		LEFT JOIN affected a ON a.store_id = s.store_id
 		LEFT JOIN blob_locations l ON l.store_id = s.store_id
 		LEFT JOIN blobs b ON b.hash = l.blob_hash
 		LEFT JOIN blob_pack_entries e

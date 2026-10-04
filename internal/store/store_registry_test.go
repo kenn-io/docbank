@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 )
 
@@ -179,6 +180,9 @@ func TestBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T
 	)
 	require.NoError(t, err)
 	require.NoError(t, s.RegisterBlobStore(ctx, secondary))
+	empty, err := s.PrepareSecondaryBlobStore("empty", "filesystem", "empty")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, empty))
 
 	sharedHash := fakeHash("31")
 	soleHash := fakeHash("32")
@@ -200,6 +204,62 @@ func TestBlobStoreInventoryReportsSoleAuthorityAndAffectedDocuments(t *testing.T
 	assert.Equal(t, int64(1), inventory[primary.ID].AffectedDocuments)
 	assert.Zero(t, inventory[secondary.ID].SoleAuthorityObjects)
 	assert.Zero(t, inventory[secondary.ID].AffectedDocuments)
+	assert.Contains(t, inventory, empty.ID)
+	assert.Equal(t, BlobStoreStats{}, inventory[empty.ID])
+
+	// Shared content counts once in storage totals but once per live current
+	// document in the impact count. Historical and trashed references do not.
+	_, err = s.CreateFile(ctx, s.RootID(), "duplicate.txt", soleHash, 9, "text/plain")
+	require.NoError(t, err)
+	historical, err := s.CreateFile(ctx, s.RootID(), "historical.txt", soleHash, 9, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, historical.ID, historical.Revision, sharedHash, 7, "text/plain")
+	require.NoError(t, err)
+	trashed, err := s.CreateFile(ctx, s.RootID(), "trashed.txt", soleHash, 9, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+
+	remoteHash := fakeHash("33")
+	_, err = s.CreateFile(ctx, s.RootID(), "remote.txt", remoteHash, 11, "text/plain")
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `
+		UPDATE blob_locations SET store_id=? WHERE blob_hash=?`, secondary.ID, remoteHash)
+	require.NoError(t, err)
+
+	hash, err := packstore.ParseHash(soleHash)
+	require.NoError(t, err)
+	packID := pack.NewPackID()
+	require.NoError(t, NewPackCatalog(s).RecordPack(ctx, packstore.PackRecord{
+		PackID: packID, EntryCount: 1, StoredBytes: 10,
+		CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}, []packstore.Adoption{{Entry: packstore.IndexEntry{
+		Hash: hash, PackID: packID, Offset: pack.MinEntryOffset,
+		StoredLen: 4, RawLen: 9,
+	}}}))
+
+	inventory, err = s.BlobStoreInventory(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]BlobStoreStats{
+		primary.ID: {
+			AuthoritativeObjects: 2, LogicalBytes: 16, StoredBytes: 11,
+			PackCount: 1, DeadPackedBytes: 6, SoleAuthorityObjects: 1, AffectedDocuments: 2,
+		},
+		secondary.ID: {
+			AuthoritativeObjects: 2, LogicalBytes: 18, StoredBytes: 18,
+			SoleAuthorityObjects: 1, AffectedDocuments: 1,
+		},
+		empty.ID: {},
+	}, inventory)
+
+	// Revoking a replica makes both current documents using it depend on primary.
+	_, err = s.db.ExecContext(ctx,
+		`DELETE FROM blob_locations WHERE blob_hash=? AND store_id=?`, sharedHash, secondary.ID)
+	require.NoError(t, err)
+	inventory, err = s.BlobStoreInventory(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), inventory[primary.ID].SoleAuthorityObjects)
+	assert.Equal(t, int64(4), inventory[primary.ID].AffectedDocuments)
 }
 
 func TestBlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet(t *testing.T) {
