@@ -3996,6 +3996,8 @@ components:
         binding_id:
           maxLength: 128
           type: string
+        content_first:
+          type: boolean
         explain:
           type: boolean
         fence:
@@ -4153,6 +4155,8 @@ components:
         binding_id:
           maxLength: 128
           type: string
+        content_first:
+          type: boolean
         explain:
           type: boolean
         limit:

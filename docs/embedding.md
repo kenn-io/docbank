@@ -253,6 +253,9 @@ for provider construction and [Document processing](usage/document-processing.md
 for planning, consent, retained results, and the private-deployment acceptance
 runner.
 
+Set `DocumentSearchRequest.ContentFirst` to prefer content matches, following the
+[HTTP search ordering contract](architecture/http-api.md#coverage-and-source-fenced-search).
+
 ## Retain and process a remote recording
 
 Embedded callers can keep the recording identity separate from the protected

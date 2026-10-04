@@ -414,7 +414,9 @@ type DocumentSearchRequest struct {
 	Profile   string              `json:"profile"`
 	BindingID string              `json:"binding_id,omitzero"`
 	Fence     DocumentSourceFence `json:"fence"`
-	Explain   bool                `json:"explain,omitzero"`
+
+	Explain      bool `json:"explain,omitzero"`
+	ContentFirst bool `json:"content_first,omitzero"`
 }
 
 // MediaTimeSpan identifies one exact half-open interval in retained media.

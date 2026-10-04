@@ -2793,3 +2793,41 @@ func TestEmbeddedCoverageTracksCurrentSourceVersions(t *testing.T) {
 		}
 	}
 }
+
+func TestEmbeddedSearchContentFirst(t *testing.T) {
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	profile := embeddedProcessingProfile(t, provider.Descriptor())
+	profile.Retrieval.LexicalLimit = 1
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(), Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+		"private": {Profile: profile, RenditionProvider: provider},
+	}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	var ids []string
+	for _, name := range []string{"mercury-a.txt", "mercury-b.txt"} {
+		receipt, err := vault.Put(t.Context(), "/"+name, strings.NewReader("unrelated synthetic text "+name), docbank.PutOptions{MediaType: "text/plain"})
+		require.NoError(t, err)
+		ids = append(ids, receipt.Version.ID)
+	}
+	receipt, err := vault.Put(t.Context(), "/mercury-recording.txt", strings.NewReader("mercury retained embedded evidence"), docbank.PutOptions{MediaType: "text/plain"})
+	require.NoError(t, err)
+	ids = append(ids, receipt.Version.ID)
+	selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID, ContentVersionID: receipt.Version.ID, Profile: "private"}
+	plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	_, err = vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{PlanRequest: docbank.ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint, Consent: true})
+	require.NoError(t, err)
+	request := docbank.DocumentSearchRequest{Query: "mercury", Mode: docbank.DocumentSearchLexical, Limit: 1, Profile: "private", Fence: docbank.DocumentSourceFence{VaultUID: vault.ID(), ContentVersionIDs: ids}}
+	control, err := vault.SearchDocuments(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, control.Results, 1)
+	require.Equal(t, "node_name", control.Results[0].Evidence[0].Kind)
+	request.ContentFirst = true
+	report, err := vault.SearchDocuments(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, report.Results, 1)
+	require.Equal(t, receipt.Version.ID, report.Results[0].ContentVersionID)
+	require.Equal(t, "rendition_segment", report.Results[0].Evidence[0].Kind)
+	require.Contains(t, report.Results[0].Excerpt, "mercury retained embedded evidence")
+}
