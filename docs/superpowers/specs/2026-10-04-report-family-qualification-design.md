@@ -1,6 +1,8 @@
 # Qualify selected email families in reports and original exports
 
-Status: reviewed qualification; not implemented. Ready for implementation planning.
+Status: implemented. CLI and MCP qualification covers all four scenarios below.
+See the [execution evidence](2026-10-04-report-family-qualification-review.md#implementation-evidence)
+for checks and platform boundaries.
 
 Source baseline: `392dbe25905214bbd58d094134206654f730f739`, after PR #774.
 Parent scope: [the local report/export workflow, #719](https://github.com/kenn-io/docbank/issues/719).

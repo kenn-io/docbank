@@ -2,7 +2,7 @@
 
 Reviewed design: [Qualify selected email families in reports and original exports](2026-10-04-report-family-qualification-design.md).
 
-Status: specification review completed; qualification not implemented.
+Status: implemented; execution evidence is recorded below.
 The initial author check below is preserved against its original hash. The
 adversarial review and subsequent fixture clarifications are recorded at the end.
 
@@ -165,3 +165,50 @@ Only design and review prose changed. The product/dependency baseline remains
 `392dbe25905214bbd58d094134206654f730f739`. Existing execution evidence above
 is historical; no new family qualification is claimed. Revised design SHA-256:
 `f15af8f171762f96acdb3f5f703cfd736668081f75f9856940d49cefa616f6e5`.
+
+## Implementation evidence
+
+Implementation: `86acea54`, on source baseline
+`392dbe25905214bbd58d094134206654f730f739`. The qualification adds tests and
+shares the existing PDF rendition publisher; no product code, dependencies,
+schema, or packet format changed. No product defect was reproduced.
+Implemented design SHA-256:
+`55a7d5c77c4ef10a4b1ce09ea1403d570bc5a09efa909c9bc988d037a95a3446`.
+
+The real temporary daemon was exercised through the CLI and MCP stdio:
+
+- `TestReportFamilySelectedDocuments`: selected parent and child, with the
+  unselected child's beta text excluded from counts and uniqueness.
+- `TestReportFamilySharedChild`: two selected parents connected through an
+  unselected reused child. Trashing the child preserves captured summaries and
+  ZIP bytes; fresh available-only reports expose two incomplete families, and
+  strict refusals leave history unchanged.
+- `TestReportFamilyIncompleteInventory`: real truncated MIME publication,
+  complete retained text, incomplete-family coverage, and strict refusal.
+- `TestReportFamilyExplicitOriginalExports`: both clients export two and three
+  explicitly selected originals, release each job, and verify the exact bytes
+  again after shutdown. Parent EML bytes retain the omitted MIME part.
+
+Every successful report is checked against literal count and coverage values.
+Packet identities, relations, date provenance, text bindings, and parsed CSV
+rows are checked independently of the report calculator. A sensitivity check
+changed the expected alpha Hits Plus Family from 2 to 3: the test failed at
+the count assertion, then passed after restoring the approved value.
+
+The focused family/PDF workflow and restore tests passed with `fts5` in both
+SQLite modes on Linux amd64, Go 1.27.0. The family suite also passed with the
+race detector. The full Go suites passed across 101 test packages in each
+SQLite mode. `prek run` (including lint and Huma checks) and the strict
+documentation build passed.
+
+The fixture retains built-in email-body builds, reads the configured archive
+profile specifically, omits Date headers, and uses neutral MIME filenames and
+publication IDs. Disconnected members have empty family IDs; the packet checks
+treat each as a singleton, while connected cases require one common nonempty
+ID. Fixture setup closes its store/blob handles before daemon startup. MCP and
+daemon shutdown are joined before the final offline checks.
+
+Native Windows and macOS execution was not performed locally. This evidence
+does not qualify automatic provider extraction, browser workflows, recursive
+attachment export, or family recovery through restore or maintenance. Those
+remain outside this slice of #719.
