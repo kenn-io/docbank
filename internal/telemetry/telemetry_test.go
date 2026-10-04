@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"io"
@@ -137,6 +138,23 @@ func TestNewFallsBackWhenInstallUnusable(t *testing.T) {
 	require.NotPanics(t, func() { reporter = New(Options{Dir: blocker, Logger: discardLogger()}) })
 	assert.False(t, reporter.Enabled())
 	assert.False(t, reporter.EventAllowed(EventAppOpened))
+}
+
+func TestReporterUsesDaemonLogger(t *testing.T) {
+	enableTelemetryEnv(t)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil)).With("daemon", "synthetic")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "synthetic ingest rejection", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	reporter := New(Options{Dir: t.TempDir(), Logger: logger, endpoint: server.URL})
+	require.True(t, reporter.Enabled())
+	require.NoError(t, reporter.Capture(EventDaemonActive, nil))
+	require.NoError(t, reporter.Close())
+	assert.Contains(t, logs.String(), "synthetic ingest rejection")
+	assert.Contains(t, logs.String(), `"daemon":"synthetic"`)
+	assert.Contains(t, logs.String(), `"component":"posthog"`)
 }
 
 type recordingClient struct {

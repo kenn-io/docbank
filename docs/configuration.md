@@ -627,7 +627,8 @@ sends it.
 Docbank sends three events:
 
 - `daemon_started` and `daemon_active` at each daemon start, then
-  `daemon_active` every 24 hours while it runs. A background daemon exits
+  `daemon_active` on the first hourly check of each later UTC day. Days when
+  the machine sleeps are not backfilled. A background daemon exits
   after `idle_timeout` (30 minutes by default) and starts again on the next
   command, so most of these go out at a daemon start, and `daemon_started`
   counts starts rather than installs.

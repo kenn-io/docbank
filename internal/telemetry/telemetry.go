@@ -53,6 +53,7 @@ func New(opts Options) *Reporter {
 		}
 	}
 	reporter, err := posthog.NewReporter(posthog.Options{
+		Logger:      logger,
 		APIKey:      postHogAPIKey,
 		Endpoint:    opts.endpoint,
 		Application: application,
