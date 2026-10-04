@@ -210,6 +210,23 @@ func (s *Store) BlobStoreInventory(
 func (s *Store) BlobStoreUnreadableObjects(
 	ctx context.Context, online map[string]bool,
 ) (map[string]int64, error) {
+	// Every location references a registered store. If all stores are online,
+	// all retained objects are readable without inspecting their locations.
+	registered, err := s.BlobStores(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("checking blob stores for health: %w", err)
+	}
+	allOnline := true
+	for _, store := range registered {
+		if !online[store.ID] {
+			allOnline = false
+			break
+		}
+	}
+	if allOnline {
+		return map[string]int64{}, nil
+	}
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT blob_hash,store_id
 		FROM blob_locations

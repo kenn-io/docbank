@@ -2,6 +2,7 @@ package store
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -56,6 +57,57 @@ func BenchmarkBlobStoreInventory(b *testing.B) {
 							StoredBytes: int64(files * 128), SoleAuthorityObjects: affected,
 							AffectedDocuments: affected,
 						}, inventory[s.primaryStoreID])
+					}
+				})
+			}
+		})
+	}
+}
+
+// BenchmarkBlobStoreUnreadableObjects measures health reporting as the number
+// of retained objects grows. Half the primary objects also have a replica.
+func BenchmarkBlobStoreUnreadableObjects(b *testing.B) {
+	for _, objects := range []int{100, 10000, 100000} {
+		b.Run(fmt.Sprintf("objects=%d", objects), func(b *testing.B) {
+			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			require.NoError(b, err)
+			b.Cleanup(func() { require.NoError(b, s.Close()) })
+			secondary, err := s.PrepareSecondaryBlobStore("archive", "filesystem", "archive")
+			require.NoError(b, err)
+			require.NoError(b, s.RegisterBlobStore(b.Context(), secondary))
+			require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
+				for i := range objects {
+					if err := s.EnsureBlobTx(tx, fmt.Sprintf("%064x", i+1), 128); err != nil {
+						return err
+					}
+				}
+				_, err := tx.ExecContext(b.Context(), `
+					INSERT INTO blob_locations
+					SELECT blob_hash, ?, generation, kind, encoding, stored_size, pack_eligible
+					FROM blob_locations WHERE store_id=? LIMIT ?`,
+					secondary.ID, s.primaryStoreID, objects/2)
+				return err
+			}))
+			for _, tc := range []struct {
+				name   string
+				online map[string]bool
+				want   map[string]int64
+			}{
+				{"all-online", map[string]bool{s.primaryStoreID: true, secondary.ID: true},
+					map[string]int64{}},
+				{"secondary-offline", map[string]bool{s.primaryStoreID: true},
+					map[string]int64{}},
+				{"primary-offline", map[string]bool{secondary.ID: true},
+					map[string]int64{s.primaryStoreID: int64(objects / 2)}},
+				{"all-offline", nil,
+					map[string]int64{s.primaryStoreID: int64(objects), secondary.ID: int64(objects / 2)}},
+			} {
+				b.Run(tc.name, func(b *testing.B) {
+					b.ReportAllocs()
+					for b.Loop() {
+						unreadable, err := s.BlobStoreUnreadableObjects(b.Context(), tc.online)
+						require.NoError(b, err)
+						require.Equal(b, tc.want, unreadable)
 					}
 				})
 			}

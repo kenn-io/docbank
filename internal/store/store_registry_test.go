@@ -274,6 +274,9 @@ func TestBlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet(t *testing.T
 	second, err := s.PrepareSecondaryBlobStore("second", "filesystem", "second")
 	require.NoError(t, err)
 	require.NoError(t, s.RegisterBlobStore(ctx, second))
+	empty, err := s.PrepareSecondaryBlobStore("empty", "filesystem", "empty")
+	require.NoError(t, err)
+	require.NoError(t, s.RegisterBlobStore(ctx, empty))
 
 	hash := fakeHash("41")
 	_, err = s.CreateFile(ctx, s.RootID(), "remote.txt", hash, 7, "text/plain")
@@ -291,14 +294,50 @@ func TestBlobStoreUnreadableObjectsAccountsForUnavailableReplicaSet(t *testing.T
 		`DELETE FROM blob_locations WHERE blob_hash=? AND store_id=?`, hash, primary.ID)
 	require.NoError(t, err)
 
-	unreadable, err := s.BlobStoreUnreadableObjects(ctx, nil)
+	_, err = s.CreateFile(ctx, s.RootID(), "local.txt", fakeHash("42"), 11, "text/plain")
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), unreadable[first.ID])
-	assert.Equal(t, int64(1), unreadable[second.ID])
+	_, err = s.CreateFile(ctx, s.RootID(), "duplicate.txt", fakeHash("42"), 11, "text/plain")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "shared.txt", fakeHash("43"), 13, "text/plain")
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO blob_locations
+		SELECT blob_hash, ?, generation, kind, encoding, stored_size, pack_eligible
+		FROM blob_locations WHERE blob_hash=? AND store_id=?`,
+		first.ID, fakeHash("43"), primary.ID)
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "secondary.txt", fakeHash("44"), 17, "text/plain")
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE blob_locations SET store_id=? WHERE blob_hash=?`, second.ID, fakeHash("44"))
+	require.NoError(t, err)
 
-	unreadable, err = s.BlobStoreUnreadableObjects(ctx, map[string]bool{first.ID: true})
-	require.NoError(t, err)
-	assert.Empty(t, unreadable)
+	for _, tc := range []struct {
+		name   string
+		online map[string]bool
+		want   map[string]int64
+	}{
+		{"all-unobserved", nil, map[string]int64{primary.ID: 2, first.ID: 2, second.ID: 2}},
+		{"only-primary-online", map[string]bool{primary.ID: true},
+			map[string]int64{first.ID: 1, second.ID: 2}},
+		{"only-first-online", map[string]bool{first.ID: true},
+			map[string]int64{primary.ID: 1, second.ID: 1}},
+		{"only-second-online", map[string]bool{second.ID: true},
+			map[string]int64{primary.ID: 2, first.ID: 1}},
+		{"explicitly-offline", map[string]bool{primary.ID: false, first.ID: false, second.ID: false},
+			map[string]int64{primary.ID: 2, first.ID: 2, second.ID: 2}},
+		{"unknown-online-store", map[string]bool{"unknown": true},
+			map[string]int64{primary.ID: 2, first.ID: 2, second.ID: 2}},
+		{"all-online", map[string]bool{
+			primary.ID: true, first.ID: true, second.ID: true, empty.ID: true,
+		}, map[string]int64{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			unreadable, err := s.BlobStoreUnreadableObjects(ctx, tc.online)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, unreadable)
+		})
+	}
 }
 
 func TestBlobStoreRegistrationRejectsConflicts(t *testing.T) {
