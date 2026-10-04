@@ -670,6 +670,45 @@ func TestSearchExplainedLexicalCandidatesIncludesNamePath(t *testing.T) {
 	assert.Equal(t, "/docs/alpha.pdf", candidates[0].Path)
 }
 
+func TestSearchPathsPreserveResultOrder(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	directory, err := s.MkdirAll(ctx, "/資料/reports")
+	require.NoError(t, err)
+	file, err := s.CreateFile(ctx, directory.ID, "summary.txt", fakeHash("summary"), 1, "text/plain")
+	require.NoError(t, err)
+	rootFile, err := s.CreateFile(ctx, s.RootID(), "summary.txt", fakeHash("root-summary"), 1, "text/plain")
+	require.NoError(t, err)
+	hits := []SearchHit{
+		{Node: rootFile}, {Node: file}, {Node: directory},
+		{Node: Node{ID: s.RootID()}}, {Node: file},
+	}
+	require.NoError(t, s.addSearchPaths(ctx, hits))
+	paths := make([]string, len(hits))
+	for i, hit := range hits {
+		paths[i] = hit.Path
+	}
+	require.Equal(t, []string{
+		"/summary.txt", "/資料/reports/summary.txt", "/資料/reports",
+		"/", "/資料/reports/summary.txt",
+	}, paths)
+
+	_, _, err = s.Move(ctx, directory.ID, s.RootID(), "renamed", UnconditionalRev)
+	require.NoError(t, err)
+	page, truncated, err := s.SearchPage(ctx, "summary", 10)
+	require.NoError(t, err)
+	require.False(t, truncated)
+	require.Len(t, page, 2)
+	require.Equal(t, "/renamed/summary.txt", page[0].Path)
+	require.Equal(t, "/summary.txt", page[1].Path)
+
+	require.ErrorIs(t, s.addSearchPaths(ctx, []SearchHit{
+		{Node: file}, {Node: Node{ID: -1}}, {Node: rootFile},
+	}), ErrNotFound)
+	require.NoError(t, s.addSearchPaths(ctx, nil))
+}
+
 func TestSearchExplainedLexicalCandidatesBoundsLongNameExcerpt(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
