@@ -900,3 +900,12 @@ func fromPackStats(stats packstore.PackStats) PackReport {
 		BudgetExhausted:            stats.BudgetExhausted,
 	}
 }
+
+// VisualPreviewSize selects a retained built-in preview recipe.
+type VisualPreviewSize string
+
+const (
+	VisualPreviewGrid  VisualPreviewSize = "grid"
+	VisualPreviewFit   VisualPreviewSize = "fit"
+	VisualPreviewLarge VisualPreviewSize = "large"
+)

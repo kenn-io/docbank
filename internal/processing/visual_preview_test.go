@@ -102,7 +102,7 @@ func TestVisualPreviewPreservesHighDensityDetail(t *testing.T) {
 	t.Parallel()
 	recipe := CurrentVisualPreviewRecipe()
 	assert.Equal(t, 4096, recipe.MaxEdgePixels)
-	width, height := boundedVisualPreviewDimensions(6000, 4000)
+	width, height := boundedVisualPreviewDimensionsForEdge(6000, 4000, visualPreviewMaxEdgePixels)
 	assert.Equal(t, 4096, width)
 	assert.Equal(t, 2731, height)
 }
