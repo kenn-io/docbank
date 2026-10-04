@@ -160,7 +160,7 @@ func (w familyFixtureWriter) mail(
 		if retained, ok := w.fixture.originals[part.key]; ok {
 			require.Equal(t, retained.member.NodeID, child.ID)
 			require.Equal(t, retained.member.VersionID, child.CurrentVersionID)
-			require.Equal(t, retained.bytes, []byte(part.text))
+			require.Equal(t, retained.member.SHA256, child.BlobHash)
 			continue
 		}
 		w.retain(t, part.key, child, []byte(part.text), part.text)

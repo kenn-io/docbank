@@ -5,13 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/internal/apiclient"
-	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/report"
 )
 
@@ -65,16 +62,7 @@ func TestReportFamilySharedChild(t *testing.T) {
 		require.Contains(t, warnings, "shared attachment child")
 		require.Contains(t, warnings, "2 parents")
 	}
-	connection, err := daemonconn.Ensure(t.Context())
-	require.NoError(t, err)
-	child, err := connection.API().GetNode(t.Context(), &apiclient.GetNodeRequestOptions{
-		PathParams: &apiclient.GetNodePath{ID: f.identity("X").NodeID}})
-	require.NoError(t, err)
-	_, err = connection.API().TrashNode(t.Context(), &apiclient.TrashNodeRequestOptions{
-		PathParams: &apiclient.TrashNodePath{ID: child.ID},
-		Header: &apiclient.TrashNodeHeaders{
-			IfMatch: strconv.Quote(strconv.FormatInt(child.Revision, 10))},
-	})
+	_, err := runCLI(t, "rm", formatNodeSelector(f.identity("X").NodeID))
 	require.NoError(t, err)
 	require.Equal(t, cli.summary, showReport(t, cli.summary.ID))
 	require.Equal(t, mcp.summary, client.reportSummary(t, mcp.summary.ID))
