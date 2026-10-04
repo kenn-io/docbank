@@ -30,7 +30,7 @@ func TestPhotoCursor(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	service := newDocumentCursorTestService(&now)
-	position := store.PhotoBrowsePosition{Key: "capture.jpg", AssetID: "00000000-0000-4000-8000-000000000001", QueryIdentity: strings.Repeat("a", 64)}
+	position := store.PhotoBrowsePosition{Total: 7, Key: "capture.jpg", AssetID: "00000000-0000-4000-8000-000000000001", QueryIdentity: strings.Repeat("a", 64)}
 	cursor, err := service.encodePhotoCursor(position)
 	require.NoError(t, err)
 	decoded, err := service.decodePhotoCursor(cursor)

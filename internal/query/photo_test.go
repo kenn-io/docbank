@@ -40,16 +40,14 @@ func TestPhotoCaptureTimeKey(t *testing.T) {
 		{"2024-01-02T03:04:05.0000000000", "fraction", "omitted", "", "2024-01-02T03:04:05.000000000"},
 		{"0000-01-02", "date", "omitted", "", ""}, {"0001-01-01T00:00:00+14:00", "second", "offset", "+14:00", ""},
 	} {
-		key, err := CaptureTimeKey(tc.value, tc.precision, tc.zone, tc.offset)
-		require.NoError(t, err, tc.value)
+		key := CaptureTimeKey(tc.value, tc.precision, tc.zone, tc.offset)
 		require.Equal(t, tc.key, key)
 	}
 	for _, tc := range []struct{ value, precision, zone, offset string }{
 		{"2024-02-30", "date", "omitted", ""}, {"2024-01-02T03:04:05Z", "fraction", "utc", ""}, {"2024-01-02T03:04:05Z", "second", "omitted", ""}, {"2024-01-02T03:04:05+01:00", "second", "offset", "+02:00"}, {"", "date", "omitted", ""},
 		{"malformed", "second", "omitted", ""}, {"2024-01-02", "unknown", "omitted", ""}, {"2024-01-02", "date", "unknown", ""}, {"2024-01-02T03:04:05+02:30", "second", "offset", "bad"},
 	} {
-		key, err := CaptureTimeKey(tc.value, tc.precision, tc.zone, tc.offset)
-		require.NoError(t, err, tc.value)
+		key := CaptureTimeKey(tc.value, tc.precision, tc.zone, tc.offset)
 		require.Empty(t, key, tc.value)
 	}
 }

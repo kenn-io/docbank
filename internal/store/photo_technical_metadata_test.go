@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -169,6 +170,67 @@ func TestPhotoTechnicalMetadataTimestampIdentity(t *testing.T) {
 	assert.Equal(t, "-07:00", *containerFields.CaptureTimeOffset)
 }
 
+func TestPhotoTechnicalMetadataCaptureKeys(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "capture.jpg", fakeHash("a4"), 1, "image/jpeg")
+	require.NoError(t, err)
+	for i, test := range []struct {
+		name, normalized, precision, zone, offset, sortKey, date string
+	}{
+		{"east crosses midnight", "2024-06-02T00:30:00+02:00", "second", "offset", "+02:00", "2024-06-01T22:30:00.000000000", "2024-06-02"},
+		{"west crosses midnight", "2024-06-01T23:30:00-02:00", "second", "offset", "-02:00", "2024-06-02T01:30:00.000000000", "2024-06-01"},
+		{"omitted zone", "2024-06-03", "date", "omitted", "", "2024-06-03T00:00:00.000000000", "2024-06-03"},
+		{"outside axis", "0000-01-01", "date", "omitted", "", "", ""},
+		{"missing timestamp", "", "", "", "", "", ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fields := []document.SourceMetadataFieldV1{
+				photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Capture Camera")),
+			}
+			if test.normalized != "" {
+				fields = append(fields, photoMetadataField("created", "image.exif", "DateTimeOriginal",
+					photoTimestamp(test.normalized, test.normalized, document.SourceMetadataTimestampPrecision(test.precision),
+						document.SourceMetadataTimezoneKind(test.zone), test.offset)))
+			}
+			_, err := s.PublishSourceMetadata(ctx, node.BlobHash, fmt.Sprintf("%064x", i+1), photoCanonical(t, fields...))
+			require.NoError(t, err)
+			var sortKey, date string
+			require.NoError(t, s.db.QueryRowContext(ctx, `SELECT p.capture_sort_key, p.capture_date
+				FROM photo_technical_metadata p JOIN source_metadata_heads h USING(generation_id)
+				WHERE h.source_sha256=?`, node.BlobHash).Scan(&sortKey, &date))
+			assert.Equal(t, test.sortKey, sortKey)
+			assert.Equal(t, test.date, date)
+		})
+	}
+}
+
+func TestPhotoTechnicalMetadataFoldedLabels(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "labels.jpg", fakeHash("b4"), 1, "image/jpeg")
+	require.NoError(t, err)
+	generation, err := s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("e4"), photoCanonical(t,
+		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Straße")),
+		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("MODEL")),
+		photoMetadataField("image.exif.lens_make", "image.exif", "LensMake", photoString("Éclair")),
+		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens Σ"))))
+	require.NoError(t, err)
+	var cameraMake, cameraModel, lensMake, lensModel string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT camera_make_folded, camera_model_folded,
+		lens_make_folded, lens_model_folded FROM photo_technical_metadata WHERE generation_id=?`,
+		generation.GenerationID).Scan(&cameraMake, &cameraModel, &lensMake, &lensModel))
+	assert.Equal(t, "strasse", cameraMake)
+	assert.Equal(t, "model", cameraModel)
+	assert.Equal(t, "éclair", lensMake)
+	assert.Equal(t, "lens σ", lensModel)
+	projection, err := s.ContentVersionPhotoMetadata(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	assert.Equal(t, "Straße", *projection.Fields.CameraMake)
+}
+
 func TestPhotoTechnicalMetadataGPSStrings(t *testing.T) {
 	t.Parallel()
 	valid := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{
@@ -323,6 +385,9 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 	stale, err := s.CreateFile(ctx, s.RootID(), "stale.jpg", fakeHash("b2"), 1, "image/jpeg")
 	require.NoError(t, err)
 	_, err = s.PublishSourceMetadata(ctx, stale.BlobHash, fakeHash("e2"), photoCanonical(t,
+		photoMetadataField("created", "image.exif", "DateTimeOriginal",
+			photoTimestamp("2024-06-02T00:30:00+02:00", "2024-06-02T00:30:00+02:00",
+				document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOffset, "+02:00")),
 		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Current"))))
 	require.NoError(t, err)
 	gained, err := s.CreateFile(ctx, s.RootID(), "gained.jpg", fakeHash("b3"), 1, "image/jpeg")
@@ -331,7 +396,8 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Gained"))))
 	require.NoError(t, err)
 	// Simulate rows from an older recipe: one stale row and one generation it left without a row.
-	_, err = s.db.ExecContext(ctx, `UPDATE photo_technical_metadata SET camera_model='Stale'
+	_, err = s.db.ExecContext(ctx, `UPDATE photo_technical_metadata SET camera_model='Stale',
+		capture_sort_key='', capture_date='', camera_model_folded=''
 		WHERE generation_id<>?`, gainedGeneration.GenerationID)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `DELETE FROM photo_technical_metadata WHERE generation_id=?`, gainedGeneration.GenerationID)
@@ -351,6 +417,13 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 	current, err := photoTechnicalRecipeCurrent(ctx, reopened.db)
 	require.NoError(t, err)
 	assert.True(t, current)
+	var sortKey, date, camera string
+	require.NoError(t, reopened.db.QueryRowContext(ctx, `SELECT p.capture_sort_key, p.capture_date, p.camera_model_folded
+		FROM photo_technical_metadata p JOIN source_metadata_heads h USING(generation_id)
+		WHERE h.source_sha256=?`, stale.BlobHash).Scan(&sortKey, &date, &camera))
+	assert.Equal(t, "2024-06-01T22:30:00.000000000", sortKey)
+	assert.Equal(t, "2024-06-02", date)
+	assert.Equal(t, "current", camera)
 }
 
 func TestPhotoTechnicalMetadataBackupScope(t *testing.T) {
@@ -567,7 +640,7 @@ func TestPhotoTechnicalProjectionRecipeIsPinnedToMapData(t *testing.T) {
 		sum := sha256.Sum256(data)
 		sums[name] = hex.EncodeToString(sum[:])
 	}
-	assert.Equal(t, "photo-technical/v1", PhotoTechnicalProjectionRecipe)
+	assert.Equal(t, "photo-technical/v2", PhotoTechnicalProjectionRecipe)
 	assert.Equal(t, map[string]string{
 		"ne_10m_admin_0_countries.geojson":        "27db73de0818a97f9c7beda9590d39a0c39e9ff45e8f2f32fe6c9f284945d572",
 		"ne_10m_admin_1_states_provinces.geojson": "ae0d6d65975daead72e054f3715273eda770e89386df5fc299b4cc198f9f4f20",
@@ -583,6 +656,9 @@ func TestPhotoTechnicalMetadataRestoreRebuildsFromSourceMetadata(t *testing.T) {
 	require.NoError(t, err)
 	canonical := photoCanonical(t,
 		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Roundtrip")),
+		photoMetadataField("created", "image.exif", "DateTimeOriginal",
+			photoTimestamp("2024:06:02 00:30:00+02:00", "2024-06-02T00:30:00+02:00",
+				document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOffset, "+02:00")),
 		photoMetadataField("image.exif.gps_latitude", "image.exif", "GPSLatitude", photoString("48.8566000")),
 		photoMetadataField("image.exif.gps_longitude", "image.exif", "GPSLongitude", photoString("2.3522000")),
 	)
@@ -600,6 +676,12 @@ func TestPhotoTechnicalMetadataRestoreRebuildsFromSourceMetadata(t *testing.T) {
 	assert.Equal(t, "Roundtrip", *projection.Fields.CameraModel)
 	require.NotNil(t, projection.Fields.LocationLabel)
 	assert.Contains(t, *projection.Fields.LocationLabel, "France")
+	var sortKey, date string
+	require.NoError(t, target.db.QueryRowContext(ctx,
+		`SELECT capture_sort_key, capture_date FROM photo_technical_metadata WHERE generation_id=?`,
+		projection.GenerationID).Scan(&sortKey, &date))
+	assert.Equal(t, "2024-06-01T22:30:00.000000000", sortKey)
+	assert.Equal(t, "2024-06-02", date)
 	var restored bytes.Buffer
 	require.NoError(t, target.ExportMetadata(ctx, &restored))
 	assert.Equal(t, exported.String(), restored.String())

@@ -141,21 +141,28 @@ func normalizePhotoFilters(value Filters) (Filters, error) {
 	return value, nil
 }
 
+var capturePrecisionLayouts = map[string]string{
+	"date": time.DateOnly, "hour": "2006-01-02T15", "minute": "2006-01-02T15:04",
+	"second": "2006-01-02T15:04:05", "fraction": "2006-01-02T15:04:05.999999999",
+}
+
 // CaptureTimeKey derives ordering from readable source evidence; unreadable evidence has no key.
-func CaptureTimeKey(normalized, precision, timezone, offset string) (string, error) {
+func CaptureTimeKey(normalized, precision, timezone, offset string) string {
 	if normalized == "" {
-		return "", nil
+		return ""
 	}
-	stamp := document.SourceMetadataTimestampV1{Raw: normalized, Normalized: normalized, Precision: document.SourceMetadataTimestampPrecision(precision), Timezone: document.SourceMetadataTimezoneKind(timezone), Offset: offset}
-	_, _, marshalErr := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "image.exif.capture_time", Namespace: "image.exif", SourceField: "capture_time", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &stamp}}}, Warnings: []document.SourceMetadataWarningV1{}})
-	if marshalErr != nil {
-		//nolint:nilerr // Unreadable source evidence has no capture key.
-		return "", nil
+	stamp := document.SourceMetadataTimestampV1{
+		Raw: normalized, Normalized: normalized,
+		Precision: document.SourceMetadataTimestampPrecision(precision),
+		Timezone:  document.SourceMetadataTimezoneKind(timezone), Offset: offset,
+	}
+	if err := document.ValidateSourceMetadataTimestamp(stamp); err != nil {
+		return ""
 	}
 	civil := normalized
 	zone := document.EventTimezoneKind(timezone)
 	var seconds *int
-	layout := map[string]string{"date": time.DateOnly, "hour": "2006-01-02T15", "minute": "2006-01-02T15:04", "second": "2006-01-02T15:04:05", "fraction": "2006-01-02T15:04:05.999999999"}[precision]
+	layout := capturePrecisionLayouts[precision]
 	if timezone == "utc" {
 		civil = strings.TrimSuffix(civil, "Z")
 	}
@@ -171,16 +178,15 @@ func CaptureTimeKey(normalized, precision, timezone, offset string) (string, err
 	}
 	parsed, parseErr := time.Parse(layout, civil)
 	if parseErr != nil {
-		//nolint:nilerr // Unreadable source evidence has no capture key.
-		return "", nil
+		return ""
 	}
 	if parsed.Year() < 1 || parsed.Year() > 9999 {
-		return "", nil
+		return ""
 	}
 	if seconds != nil {
 		utc := parsed.Add(-time.Duration(*seconds) * time.Second)
 		if utc.Year() < 1 || utc.Year() > 9999 {
-			return "", nil
+			return ""
 		}
 	}
 	if precision == "fraction" {
@@ -188,8 +194,7 @@ func CaptureTimeKey(normalized, precision, timezone, offset string) (string, err
 	}
 	key, keyErr := document.EventAxisKey(parsed.Format(layout), document.EventPrecision(precision), zone, seconds)
 	if keyErr != nil {
-		//nolint:nilerr // Unreadable source evidence has no capture key.
-		return "", nil
+		return ""
 	}
-	return key, nil
+	return key
 }

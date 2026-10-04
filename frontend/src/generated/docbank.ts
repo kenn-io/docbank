@@ -6983,6 +6983,10 @@ export type DetachPhotoFileHeaders = {
 'If-Match': string;
 };
 
+export type ReadPhotoPreviewHeaders = {
+'If-None-Match'?: string;
+};
+
 export type PromotePhotoNodeHeaders = {
 'If-Match'?: string;
 };
@@ -13504,10 +13508,12 @@ export const getReadPhotoPreviewUrl = (assetId: string,
 }
 
 /**
+ * Returns 304 Not Modified without a body when If-None-Match matches an eligible generation. Private caches must revalidate before reuse.
  * @summary Read verified bytes of an eligible exact photo preview
  */
 export const readPhotoPreview = (assetId: string,
-    generationId: string, options?: Parameters<typeof sessionResponse>[1]) => {
+    generationId: string,
+    headers?: ReadPhotoPreviewHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -13527,7 +13533,7 @@ return sessionResponse<Blob>(getReadPhotoPreviewUrl(assetId,generationId),
   {
     ...options,
     method: 'GET',
-    headers: { 'Accept': `image/jpeg`, ...getHeaders(options?.headers) }
+    headers: { 'Accept': `image/jpeg`,...headers, ...getHeaders(options?.headers) }
 
   }
 );}

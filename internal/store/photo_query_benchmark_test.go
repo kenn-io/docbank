@@ -12,17 +12,22 @@ import (
 	"go.kenn.io/docbank/internal/query"
 )
 
-func BenchmarkPhotoBrowse10K(b *testing.B) {
+func BenchmarkPhotoBrowse10K(b *testing.B) { benchmarkPhotoBrowse(b, 10000) }
+
+func BenchmarkPhotoBrowse100K(b *testing.B) { benchmarkPhotoBrowse(b, 100000) }
+
+func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
+	b.Helper()
 	b.StopTimer()
 	s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, s.Close()) })
 	ctx := b.Context()
-	for i := range 10000 {
+	for i := range assetCount {
 		node, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("capture-%05d.jpg", i), browseHash(fmt.Sprintf("benchmark-source-%d", i)), 20, "image/jpeg")
 		require.NoError(b, err)
 		fields := []document.SourceMetadataFieldV1{photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Synthetic Camera"))}
-		if i < 9000 {
+		if i < assetCount*9/10 {
 			stamp := time.Date(2024, 1, 1, 3, 4, 5, 0, time.UTC).Add(time.Duration(i/2) * time.Hour).Format("2006-01-02T15:04:05")
 			precision, zone, offset := document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOmitted, ""
 			switch (i / 2) % 4 {
@@ -45,13 +50,13 @@ func BenchmarkPhotoBrowse10K(b *testing.B) {
 	}
 	var assets, heads, projected, captured int
 	require.NoError(b, s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM photo_assets), (SELECT count(*) FROM source_metadata_heads), (SELECT count(*) FROM photo_technical_metadata), (SELECT count(*) FROM photo_technical_metadata WHERE capture_time IS NOT NULL)`).Scan(&assets, &heads, &projected, &captured))
-	require.Equal(b, 10000, assets)
-	require.Equal(b, 10000, heads)
-	require.Equal(b, 10000, projected)
-	require.Equal(b, 9000, captured)
-	b.Logf("go=%s driver=%s assets=%d active_heads=%d projected=%d captured=%d missing=1000 page_size=50 capture_mix=2250_each_omitted_UTC_offset_fraction repeated_keys=pairs later_boundary=after_first_50", runtime.Version(), DefaultSQLiteDriver().Name(), assets, heads, projected, captured)
+	require.Equal(b, assetCount, assets)
+	require.Equal(b, assetCount, heads)
+	require.Equal(b, assetCount, projected)
+	require.Equal(b, assetCount*9/10, captured)
+	b.Logf("go=%s driver=%s assets=%d active_heads=%d projected=%d captured=%d missing=%d page_size=50 capture_mix=omitted_UTC_offset_fraction repeated_keys=pairs later_boundary=after_first_50", runtime.Version(), DefaultSQLiteDriver().Name(), assets, heads, projected, captured, assetCount-captured)
 	recipes := map[string]string{}
-	for size, edge := range map[string]int{"grid": 512, "fit": 2048, "large": 2560} {
+	for size, edge := range map[string]int{"grid": 512, "fit": 2560, "large": 4096} {
 		recipe := visualPreviewRecipe()
 		recipe.MaxEdgePixels = edge
 		_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(recipe)
@@ -62,6 +67,7 @@ func BenchmarkPhotoBrowse10K(b *testing.B) {
 		{"capture_asc", `{"sort":{"field":"capture_time","direction":"asc"}}`},
 		{"capture_desc", `{"sort":{"field":"capture_time","direction":"desc"}}`},
 		{"import", `{"sort":{"field":"import_time","direction":"desc"}}`},
+		{"duplicates", `{"sort":{"field":"import_time","direction":"desc"},"filters":{"collapse_duplicates":true}}`},
 		{"capture_range", `{"sort":{"field":"capture_time","direction":"asc"},"filters":{"capture_after":"2024-03-01","capture_before":"2024-04-01"}}`},
 	} {
 		value, err := query.Parse([]byte(tc.raw))
@@ -72,7 +78,7 @@ func BenchmarkPhotoBrowse10K(b *testing.B) {
 		require.Len(b, first.Items, 50)
 		require.NotNil(b, first.Next)
 		if tc.name != "capture_range" {
-			require.Equal(b, int64(10000), first.Total)
+			require.Equal(b, int64(assetCount), first.Total)
 		} else {
 			require.Equal(b, int64(1488), first.Total)
 		}

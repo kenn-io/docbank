@@ -2,22 +2,33 @@ package store
 
 import (
 	"fmt"
-	"go.kenn.io/docbank/internal/query"
 	"strconv"
 	"strings"
-)
 
-const photoCaptureKeySQL = `docbank_query_capture_time_v1(COALESCE(p.capture_time,''),COALESCE(p.capture_time_precision,''),COALESCE(p.capture_time_timezone,''),COALESCE(p.capture_time_offset,''))`
+	"golang.org/x/text/cases"
+
+	"go.kenn.io/docbank/internal/query"
+)
 
 func compilePhotoAssetPredicate(predicate string, args ...any) compiledQueryFragment {
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files pf JOIN photo_assets pa ON pa.asset_id=pf.asset_id WHERE pf.node_id=n.id AND ` + predicate + `)`, args: args}
 }
 
-func compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
+func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
+	if c.photoDisplayMetadata {
+		return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member
+ JOIN photo_assets asset ON asset.asset_id=member.asset_id
+ JOIN photo_files display ON display.file_id=asset.display_file_id
+ JOIN nodes display_node ON display_node.id=display.node_id
+ JOIN content_versions display_version ON display_version.version_id=display_node.current_version_id
+ JOIN source_metadata_heads h ON h.source_sha256=display_version.blob_hash
+ JOIN photo_technical_metadata p ON p.generation_id=h.generation_id
+ WHERE member.node_id=n.id AND ` + predicate + `)`, args: args}
+	}
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=cv.blob_hash AND ` + predicate + `)`, args: args}
 }
 
-func compilePhotoScalarPredicate(field, value string) (compiledQueryFragment, error) {
+func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compiledQueryFragment, error) {
 	switch field {
 	case "kind", "asset":
 		if err := query.ValidateTextOperand(field, value); err != nil {
@@ -32,7 +43,8 @@ func compilePhotoScalarPredicate(field, value string) (compiledQueryFragment, er
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
 		}
-		return compilePhotoMetadataPredicate(`(p.`+field+`_make=? OR p.`+field+`_model=?)`, value, value), nil
+		folded := cases.Fold().String(value)
+		return c.compilePhotoMetadataPredicate(`(p.`+field+`_make_folded=? OR p.`+field+`_model_folded=?)`, folded, folded), nil
 	case "iso", "iso_min", "iso_max":
 		n, err := query.ParseSizeOperand(value)
 		if err != nil {
@@ -45,9 +57,9 @@ func compilePhotoScalarPredicate(field, value string) (compiledQueryFragment, er
 		if field == "iso_max" {
 			operator = "<="
 		}
-		return compilePhotoMetadataPredicate(`p.iso `+operator+` ?`, n), nil
+		return c.compilePhotoMetadataPredicate(`p.iso `+operator+` ?`, n), nil
 	case "capture_after", "capture_before":
-		key, err := query.CaptureDateKey(value)
+		_, err := query.CaptureDateKey(value)
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
@@ -55,19 +67,19 @@ func compilePhotoScalarPredicate(field, value string) (compiledQueryFragment, er
 		if field == "capture_before" {
 			operator = "<"
 		}
-		return compilePhotoMetadataPredicate(photoCaptureKeySQL+`<>'' AND `+photoCaptureKeySQL+operator+` ?`, key), nil
+		return c.compilePhotoMetadataPredicate(`p.capture_date<>'' AND p.capture_date`+operator+` ?`, value), nil
 	case "gps":
 		bounds, err := query.ParseGPSOperand(value)
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
-		return compilePhotoGPSPredicate(bounds), nil
+		return c.compilePhotoGPSPredicate(bounds), nil
 	default:
 		return compiledQueryFragment{}, compileExpressionError(0, len(value), "unsupported photo operand")
 	}
 }
 
-func compilePhotoGPSPredicate(bounds query.GPSBounds) compiledQueryFragment {
+func (c queryCompiler) compilePhotoGPSPredicate(bounds query.GPSBounds) compiledQueryFragment {
 	south, _ := strconv.ParseFloat(bounds.South, 64)
 	west, _ := strconv.ParseFloat(bounds.West, 64)
 	north, _ := strconv.ParseFloat(bounds.North, 64)
@@ -76,10 +88,10 @@ func compilePhotoGPSPredicate(bounds query.GPSBounds) compiledQueryFragment {
 	if west > east {
 		operator = ` OR `
 	}
-	return compilePhotoMetadataPredicate(`p.latitude>=? AND p.latitude<=? AND (p.longitude>=?`+operator+`p.longitude<=?)`, south, north, west, east)
+	return c.compilePhotoMetadataPredicate(`p.latitude>=? AND p.latitude<=? AND (p.longitude>=?`+operator+`p.longitude<=?)`, south, north, west, east)
 }
 
-func compilePhotoFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
+func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
 	parts := []compiledQueryFragment{}
 	for _, set := range []struct {
 		field  string
@@ -87,7 +99,7 @@ func compilePhotoFilters(filters query.Filters, start, end int) (compiledQueryFr
 	}{{"kind", filters.Kinds}, {"camera", filters.Cameras}, {"lens", filters.Lenses}, {"asset", filters.AssetIDs}} {
 		matches := []compiledQueryFragment{}
 		for _, v := range set.values {
-			part, err := compileScalarPredicate(set.field, v, start, end)
+			part, err := c.compileScalarPredicate(set.field, v, start, end)
 			if err != nil {
 				return compiledQueryFragment{}, err
 			}
@@ -100,7 +112,7 @@ func compilePhotoFilters(filters query.Filters, start, end int) (compiledQueryFr
 		value *int64
 	}{{"iso_min", filters.ISOMin}, {"iso_max", filters.ISOMax}} {
 		if bound.value != nil {
-			part, err := compileScalarPredicate(bound.field, strconv.FormatInt(*bound.value, 10), start, end)
+			part, err := c.compileScalarPredicate(bound.field, strconv.FormatInt(*bound.value, 10), start, end)
 			if err != nil {
 				return compiledQueryFragment{}, err
 			}
@@ -109,7 +121,7 @@ func compilePhotoFilters(filters query.Filters, start, end int) (compiledQueryFr
 	}
 	for _, bound := range []struct{ field, value string }{{"capture_after", filters.CaptureAfter}, {"capture_before", filters.CaptureBefore}} {
 		if bound.value != "" {
-			part, err := compileScalarPredicate(bound.field, bound.value, start, end)
+			part, err := c.compileScalarPredicate(bound.field, bound.value, start, end)
 			if err != nil {
 				return compiledQueryFragment{}, err
 			}
@@ -118,7 +130,7 @@ func compilePhotoFilters(filters query.Filters, start, end int) (compiledQueryFr
 	}
 	if filters.GPSBounds != nil {
 		b := filters.GPSBounds
-		part, err := compileScalarPredicate("gps", strings.Join([]string{b.South, b.West, b.North, b.East}, ","), start, end)
+		part, err := c.compileScalarPredicate("gps", strings.Join([]string{b.South, b.West, b.North, b.East}, ","), start, end)
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}

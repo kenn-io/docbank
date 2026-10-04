@@ -110,11 +110,39 @@ func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.Equal(t, data, []byte(body))
 	require.Equal(t, "image/jpeg", response.Header.Get("Content-Type"))
-	require.Equal(t, "private, no-store", response.Header.Get("Cache-Control"))
+	require.Equal(t, "private, no-cache", response.Header.Get("Cache-Control"))
 	require.Equal(t, "nosniff", response.Header.Get("X-Content-Type-Options"))
-	require.Equal(t, `"`+generation.GenerationID+`"`, response.Header.Get("ETag"))
+	etag := `"` + generation.GenerationID + `"`
+	require.Equal(t, etag, response.Header.Get("ETag"))
+	require.Equal(t, "X-Api-Key, Authorization, "+api.WebSessionHeader, response.Header.Get("Vary"))
 	digest := sha256.Sum256(data)
 	require.Equal(t, "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":", response.Header.Get("Content-Digest"))
+	for _, condition := range []string{etag, `"another-generation", W/` + etag, "*"} {
+		response, body = get(t, ts, path, map[string]string{"If-None-Match": condition})
+		require.Equal(t, http.StatusNotModified, response.StatusCode, body)
+		require.Empty(t, body)
+		require.Equal(t, etag, response.Header.Get("ETag"))
+		require.Equal(t, "private, no-cache", response.Header.Get("Cache-Control"))
+		require.Equal(t, "X-Api-Key, Authorization, "+api.WebSessionHeader, response.Header.Get("Vary"))
+	}
+	response, body = get(t, ts, path, map[string]string{"If-None-Match": `"another-generation"`})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.Equal(t, data, []byte(body))
+
+	response, body = do(t, ts, http.MethodPost, "/api/daemon/web-session", nil, nil)
+	require.Equal(t, http.StatusCreated, response.StatusCode, body)
+	var issued struct {
+		Token string `json:"token"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &issued))
+	webHeaders := map[string]string{"X-Api-Key": "", api.WebSessionHeader: issued.Token, "If-None-Match": etag}
+	response, body = get(t, ts, path, webHeaders)
+	require.Equal(t, http.StatusNotModified, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodDelete, "/api/daemon/web-session", webHeaders, nil)
+	require.Equal(t, http.StatusNoContent, response.StatusCode, body)
+	response, body = get(t, ts, path, webHeaders)
+	require.Equal(t, http.StatusUnauthorized, response.StatusCode, body)
+
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{}`)})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var page api.PhotoBrowsePage
@@ -130,6 +158,11 @@ func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
 		require.NotEqual(t, "image/jpeg", response.Header.Get("Content-Type"))
 	}
 	require.NoError(t, os.Remove(blobPath))
+	// A valid cached generation revalidates without reopening its blob.
+	conditionalHeaders := map[string]string{"If-None-Match": etag}
+	response, body = get(t, ts, path, conditionalHeaders)
+	require.Equal(t, http.StatusNotModified, response.StatusCode, body)
+	require.Empty(t, body)
 	response, body = get(t, ts, path, nil)
 	require.GreaterOrEqual(t, response.StatusCode, 500, body)
 	require.NoError(t, os.WriteFile(blobPath, data, 0o600))
@@ -147,10 +180,20 @@ func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
 	}
 	response, body = get(t, ts, path, nil)
 	require.GreaterOrEqual(t, response.StatusCode, 500, body)
-	_, err = s.SetPhotoAssetExcluded(t.Context(), asset.ID, asset.Revision, true)
+	asset, err = s.SetPhotoAssetExcluded(t.Context(), asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	response, body = get(t, ts, path, nil)
+	response, body = get(t, ts, path, conditionalHeaders)
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	require.Empty(t, response.Header.Get("ETag"))
+	_, err = s.SetPhotoAssetExcluded(t.Context(), asset.ID, asset.Revision, false)
+	require.NoError(t, err)
+	response, body = get(t, ts, path, conditionalHeaders)
+	require.Equal(t, http.StatusNotModified, response.StatusCode, body)
+	_, _, err = s.ReplaceContent(t.Context(), node.ID, node.Revision, testHash("replacement-photo-source"), 20, "image/jpeg")
+	require.NoError(t, err)
+	response, body = get(t, ts, path, conditionalHeaders)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	require.Empty(t, response.Header.Get("ETag"))
 }
 
 func TestPhotoBrowserSessionRevocation(t *testing.T) {

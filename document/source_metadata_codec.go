@@ -268,6 +268,12 @@ func canonicalSourceMetadataValue(value *SourceMetadataValueV1) error {
 func canonicalSourceMetadataTimestamp(value *SourceMetadataTimestampV1) error {
 	value.Raw = norm.NFC.String(value.Raw)
 	value.Normalized = norm.NFC.String(value.Normalized)
+	return ValidateSourceMetadataTimestamp(*value)
+}
+
+// ValidateSourceMetadataTimestamp checks timestamp precision and timezone
+// evidence without encoding the surrounding source-metadata document.
+func ValidateSourceMetadataTimestamp(value SourceMetadataTimestampV1) error {
 	if err := validateSourceMetadataString(value.Raw); err != nil || value.Raw == "" {
 		if err == nil {
 			err = errors.New("value is empty")

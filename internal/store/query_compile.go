@@ -47,11 +47,22 @@ type CompiledQuery struct {
 func compileQuery(
 	ctx context.Context, value query.Query, resolver query.Resolver,
 ) (CompiledQuery, error) {
+	return queryCompiler{}.compile(ctx, value, resolver)
+}
+
+// Photos use display metadata for every member; document queries use each file's metadata.
+type queryCompiler struct {
+	photoDisplayMetadata bool
+}
+
+func (c queryCompiler) compile(
+	ctx context.Context, value query.Query, resolver query.Resolver,
+) (CompiledQuery, error) {
 	resolved, err := query.ResolveQuery(ctx, value, resolver)
 	if err != nil {
 		return CompiledQuery{}, err
 	}
-	predicate, err := compileResolvedQuery(resolved)
+	predicate, err := c.compileResolvedQuery(resolved)
 	if err != nil {
 		return CompiledQuery{}, err
 	}
@@ -72,7 +83,7 @@ func (compiled CompiledQuery) PositiveTextTerms() []string {
 	return slices.Clone(compiled.positiveTextTerms)
 }
 
-func compileResolvedQuery(resolved query.ResolvedQuery) (compiledQueryFragment, error) {
+func (c queryCompiler) compileResolvedQuery(resolved query.ResolvedQuery) (compiledQueryFragment, error) {
 	if resolved.Query.Sort.Field == "relevance" {
 		return compiledQueryFragment{},
 			compileExpressionError(0, len(resolved.Query.Text), "relevance sort is not supported by bound queries")
@@ -87,12 +98,12 @@ func compileResolvedQuery(resolved query.ResolvedQuery) (compiledQueryFragment, 
 			expression = compileLexicalPredicate(fts, true)
 		}
 	} else {
-		expression, err = compileResolvedExpression(resolved.Expression, "")
+		expression, err = c.compileResolvedExpression(resolved.Expression, "")
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
 	}
-	filters, err := compileQueryFilters(resolved.Query.Filters, 0, len(resolved.Query.Text))
+	filters, err := c.compileQueryFilters(resolved.Query.Filters, 0, len(resolved.Query.Text))
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
@@ -137,7 +148,7 @@ func (compiled CompiledQuery) bind(generationID string, profileFingerprint *stri
 	return predicate, nil
 }
 
-func compileResolvedExpression(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
+func (c queryCompiler) compileResolvedExpression(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
 	if expression == nil || expression.Syntax == nil {
 		return compiledQueryFragment{}, errors.New("resolved query contains an empty expression")
 	}
@@ -152,9 +163,9 @@ func compileResolvedExpression(expression *query.ResolvedExpression, field strin
 		if len(expression.Children) != 1 {
 			return compiledQueryFragment{}, errors.New("resolved field expression has invalid children")
 		}
-		return compileResolvedExpression(expression.Children[0], syntax.Field)
+		return c.compileResolvedExpression(expression.Children[0], syntax.Field)
 	case query.ExpressionAnd, query.ExpressionOr:
-		parts, err := compileAssociativeChildren(expression, field, syntax.Kind)
+		parts, err := c.compileAssociativeChildren(expression, field, syntax.Kind)
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
@@ -167,7 +178,7 @@ func compileResolvedExpression(expression *query.ResolvedExpression, field strin
 		if len(expression.Children) != 1 {
 			return compiledQueryFragment{}, errors.New("resolved NOT expression has invalid children")
 		}
-		child, err := compileResolvedExpression(expression.Children[0], field)
+		child, err := c.compileResolvedExpression(expression.Children[0], field)
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
@@ -175,26 +186,26 @@ func compileResolvedExpression(expression *query.ResolvedExpression, field strin
 	case query.ExpressionNear:
 		return compileNearExpression(expression, field)
 	case query.ExpressionTerm, query.ExpressionPhrase:
-		return compileExpressionLeaf(expression, field)
+		return c.compileExpressionLeaf(expression, field)
 	default:
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "unsupported expression operand")
 	}
 }
 
-func compileAssociativeChildren(
+func (c queryCompiler) compileAssociativeChildren(
 	expression *query.ResolvedExpression, field string, kind query.ExpressionKind,
 ) ([]compiledQueryFragment, error) {
 	var parts []compiledQueryFragment
 	for _, child := range expression.Children {
 		if child.Syntax.Kind == kind {
-			nested, err := compileAssociativeChildren(child, field, kind)
+			nested, err := c.compileAssociativeChildren(child, field, kind)
 			if err != nil {
 				return nil, err
 			}
 			parts = append(parts, nested...)
 			continue
 		}
-		part, err := compileResolvedExpression(child, field)
+		part, err := c.compileResolvedExpression(child, field)
 		if err != nil {
 			return nil, err
 		}
@@ -203,7 +214,7 @@ func compileAssociativeChildren(
 	return parts, nil
 }
 
-func compileExpressionLeaf(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
+func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
 	syntax := expression.Syntax
 	if syntax.Value == "" {
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "field operand cannot be empty")
@@ -235,12 +246,12 @@ func compileExpressionLeaf(expression *query.ResolvedExpression, field string) (
 		if expression.Saved == nil {
 			return compiledQueryFragment{}, errors.New("resolved saved operand lacks its query")
 		}
-		return compileSavedPredicate(expression)
+		return c.compileSavedPredicate(expression)
 	case "mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max", "text_coverage", "has_duplicates", "kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset":
 		if syntax.Prefix {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "scalar operands cannot use prefix matching")
 		}
-		return compileScalarPredicate(field, syntax.Value, syntax.Start, syntax.End)
+		return c.compileScalarPredicate(field, syntax.Value, syntax.Start, syntax.End)
 	default:
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "unsupported expression field")
 	}
@@ -268,8 +279,8 @@ func compileNearExpression(expression *query.ResolvedExpression, field string) (
 	return compileLexicalPredicate(fts, field == ""), nil
 }
 
-func compileSavedPredicate(expression *query.ResolvedExpression) (compiledQueryFragment, error) {
-	nested, err := compileResolvedQuery(*expression.Saved)
+func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpression) (compiledQueryFragment, error) {
+	nested, err := c.compileResolvedQuery(*expression.Saved)
 	if err != nil {
 		if expressionErr, ok := errors.AsType[*query.ExpressionError](err); ok {
 			return compiledQueryFragment{}, compileExpressionError(
@@ -290,10 +301,10 @@ func compileSavedPredicate(expression *query.ResolvedExpression) (compiledQueryF
 	}, nil
 }
 
-func compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
+func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
 	switch field {
 	case "kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset":
-		part, err := compilePhotoScalarPredicate(field, value)
+		part, err := c.compilePhotoScalarPredicate(field, value)
 		if err != nil {
 			return compiledQueryFragment{}, compileExpressionError(start, end, err.Error())
 		}
@@ -337,8 +348,8 @@ func compileScalarPredicate(field, value string, start, end int) (compiledQueryF
 	}
 }
 
-func compileQueryFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
-	photo, err := compilePhotoFilters(filters, start, end)
+func (c queryCompiler) compileQueryFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
+	photo, err := c.compilePhotoFilters(filters, start, end)
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
@@ -365,7 +376,7 @@ func compileQueryFilters(filters query.Filters, start, end int) (compiledQueryFr
 		if bound.value == "" {
 			continue
 		}
-		part, err := compileScalarPredicate(bound.field, bound.value, start, end)
+		part, err := c.compileScalarPredicate(bound.field, bound.value, start, end)
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}

@@ -151,8 +151,12 @@ it("sends photo query intent through the generated read-only POST and preserves 
   expect(request?.method).toBe("POST");
   expect(JSON.parse(String(request?.body))).toEqual({ query });
   expect(new Headers(request?.headers).get("X-Docbank-Web-Session")).toBe("synthetic-session");
-  const response = await api.readPhotoPreview("00000000-0000-4000-8000-000000000001", "a".repeat(64), { session: "synthetic-session" });
+  const response = await api.readPhotoPreview("00000000-0000-4000-8000-000000000001", "a".repeat(64),
+    { "If-None-Match": '"older-generation"' }, { session: "synthetic-session" });
   expect(response).toBeInstanceOf(Response);
   expect(await response.text()).toBe("synthetic JPEG");
   expect(String(fetch.mock.calls[1][0])).not.toContain("synthetic-session");
+  const previewHeaders = new Headers(fetch.mock.calls[1][1]?.headers);
+  expect(previewHeaders.get("If-None-Match")).toBe('"older-generation"');
+  expect(previewHeaders.get("X-Docbank-Web-Session")).toBe("synthetic-session");
 });

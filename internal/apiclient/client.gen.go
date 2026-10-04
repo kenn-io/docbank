@@ -17840,6 +17840,7 @@ func (o *DetachPhotoFileRequestOptions) GetHeader() (map[string]string, error) {
 // ReadPhotoPreviewRequestOptions is the options needed to make a request to ReadPhotoPreview.
 type ReadPhotoPreviewRequestOptions struct {
 	PathParams *ReadPhotoPreviewPath
+	Header     *ReadPhotoPreviewHeaders
 }
 
 // GetPathParams returns the path params as a map.
@@ -17865,7 +17866,13 @@ func (o *ReadPhotoPreviewRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ReadPhotoPreviewRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
 }
 
 // StartPhotoImportRequestOptions is the options needed to make a request to StartPhotoImport.
@@ -20413,6 +20420,10 @@ type AttachPhotoFileHeaders struct {
 
 type DetachPhotoFileHeaders struct {
 	IfMatch string `json:"If-Match"`
+}
+
+type ReadPhotoPreviewHeaders struct {
+	IfNoneMatch *string `json:"If-None-Match,omitempty"`
 }
 
 type PromotePhotoNodeHeaders struct {

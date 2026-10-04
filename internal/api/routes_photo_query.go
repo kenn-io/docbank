@@ -6,15 +6,19 @@ import (
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/conditional"
+
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
-	"io"
-	"net/http"
-	"strconv"
-	"time"
 )
 
 func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryService) {
@@ -30,7 +34,11 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		}
 		recipes[size] = fingerprint
 	}
-	huma.Register(api, huma.Operation{OperationID: "listPhotoAssets", Method: http.MethodPost, Path: "/api/v1/photos/assets/query", Summary: "Browse matching photo assets with live keyset pagination", MaxBodyBytes: query.MaxInputBytes + (64 << 10)}, func(ctx context.Context, in *struct{ Body PhotoBrowseRequest }) (*struct{ Body PhotoBrowsePage }, error) {
+	huma.Register(api, huma.Operation{
+		OperationID: "listPhotoAssets", Method: http.MethodPost, Path: "/api/v1/photos/assets/query",
+		Summary:      "Browse matching photo assets with live keyset pagination",
+		MaxBodyBytes: query.MaxInputBytes + (64 << 10),
+	}, func(ctx context.Context, in *struct{ Body PhotoBrowseRequest }) (*struct{ Body PhotoBrowsePage }, error) {
 		value, err := query.Parse(in.Body.Query)
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
@@ -43,7 +51,14 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			}
 			boundary = &position
 		}
-		page, err := d.Store.ListPhotoAssets(ctx, store.PhotoBrowseRequest{Query: value, Coverage: store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint}, PageSize: in.Body.PageSize, Recipes: recipes}, boundary)
+		page, err := d.Store.ListPhotoAssets(ctx, store.PhotoBrowseRequest{
+			Query: value,
+			Coverage: store.CoverageSelection{
+				Configuration:      in.Body.Coverage.Configuration,
+				ProfileFingerprint: in.Body.Coverage.ProfileFingerprint,
+			},
+			PageSize: in.Body.PageSize, Recipes: recipes,
+		}, boundary)
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}
@@ -66,7 +81,17 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 				}
 				slots[size] = out
 			}
-			wire.Items[i] = PhotoBrowseRow{AssetID: row.AssetID, Kind: row.Kind, Revision: row.Revision, DisplayFileID: row.DisplayFileID, NodeID: row.NodeID, ContentVersionID: row.ContentVersionID, Name: row.Name, MediaType: row.MediaType, ImportTime: row.ImportTime, CaptureTime: row.Fields.CaptureTime, CaptureTimePrecision: row.Fields.CaptureTimePrecision, CaptureTimeTimezone: row.Fields.CaptureTimeTimezone, CaptureTimeOffset: row.Fields.CaptureTimeOffset, WidthPX: row.Fields.WidthPX, HeightPX: row.Fields.HeightPX, Previews: PhotoPreviewSlots{Grid: slots["grid"], Fit: slots["fit"], Large: slots["large"]}}
+			wire.Items[i] = PhotoBrowseRow{
+				AssetID: row.AssetID, Kind: row.Kind, Revision: row.Revision,
+				DisplayFileID: row.DisplayFileID, NodeID: row.NodeID,
+				ContentVersionID: row.ContentVersionID, Name: row.Name, MediaType: row.MediaType,
+				ImportTime: row.ImportTime, CaptureTime: row.Fields.CaptureTime,
+				CaptureTimePrecision: row.Fields.CaptureTimePrecision,
+				CaptureTimeTimezone:  row.Fields.CaptureTimeTimezone,
+				CaptureTimeOffset:    row.Fields.CaptureTimeOffset,
+				WidthPX:              row.Fields.WidthPX, HeightPX: row.Fields.HeightPX,
+				Previews: PhotoPreviewSlots{Grid: slots["grid"], Fit: slots["fit"], Large: slots["large"]},
+			}
 		}
 		if page.Next != nil {
 			wire.NextCursor, err = service.encodePhotoCursor(*page.Next)
@@ -76,9 +101,23 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		}
 		return &struct{ Body PhotoBrowsePage }{Body: wire}, nil
 	})
-	huma.Register(api, huma.Operation{OperationID: "readPhotoPreview", Method: http.MethodGet, Path: "/api/v1/photos/assets/{asset_id}/previews/{generation_id}", Summary: "Read verified bytes of an eligible exact photo preview", Responses: map[string]*huma.Response{"200": {Description: "Verified JPEG preview", Content: map[string]*huma.MediaType{"image/jpeg": {Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIBinaryFormat}}}}}}, func(ctx context.Context, in *struct {
+	huma.Register(api, huma.Operation{
+		OperationID: "readPhotoPreview", Method: http.MethodGet,
+		Path:        "/api/v1/photos/assets/{asset_id}/previews/{generation_id}",
+		Summary:     "Read verified bytes of an eligible exact photo preview",
+		Description: "Returns 304 Not Modified without a body when If-None-Match matches an eligible generation. Private caches must revalidate before reuse.",
+		Responses: map[string]*huma.Response{
+			"200": {
+				Description: "Verified JPEG preview",
+				Content: map[string]*huma.MediaType{"image/jpeg": {
+					Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIBinaryFormat},
+				}},
+			},
+		},
+	}, func(ctx context.Context, in *struct {
 		AssetID      string `path:"asset_id"`
 		GenerationID string `path:"generation_id"`
+		IfNoneMatch  string `header:"If-None-Match"`
 	}) (*huma.StreamResponse, error) {
 		view, err := d.Store.PhotoVisualPreviewByGeneration(ctx, in.AssetID, in.GenerationID)
 		if err != nil {
@@ -90,6 +129,21 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		}
 		if output.Size <= 0 || output.Size > webPreviewImageMaxBytes || output.MediaType != "image/jpeg" {
 			return nil, NewError(http.StatusInternalServerError, "photo_preview_corrupt", "The photo preview has invalid output metadata.")
+		}
+		setCacheHeaders := func(hctx huma.Context) {
+			hctx.SetHeader("ETag", strconv.Quote(in.GenerationID))
+			hctx.SetHeader("Cache-Control", "private, no-cache")
+			hctx.SetHeader("Vary", "X-Api-Key, Authorization, "+WebSessionHeader)
+		}
+		condition := conditional.Params{IfNoneMatch: strings.Split(in.IfNoneMatch, ",")}
+		for i, value := range condition.IfNoneMatch {
+			condition.IfNoneMatch[i] = strings.TrimSpace(value)
+		}
+		if condition.PreconditionFailed(in.GenerationID, time.Time{}) != nil {
+			return &huma.StreamResponse{Body: func(hctx huma.Context) {
+				setCacheHeaders(hctx)
+				hctx.SetStatus(http.StatusNotModified)
+			}}, nil
 		}
 		stream, size, err := d.Blobs.OpenStreamContext(ctx, output.BlobSHA256)
 		if err != nil {
@@ -108,11 +162,10 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			return nil, NewError(http.StatusInternalServerError, "photo_preview_corrupt", "The photo preview digest disagrees with its generation.")
 		}
 		return &huma.StreamResponse{Body: func(hctx huma.Context) {
+			setCacheHeaders(hctx)
 			hctx.SetHeader("Content-Type", output.MediaType)
 			hctx.SetHeader("Content-Length", strconv.FormatInt(size, 10))
 			hctx.SetHeader("Content-Digest", contentDigest(digest[:]))
-			hctx.SetHeader("ETag", `"`+in.GenerationID+`"`)
-			hctx.SetHeader("Cache-Control", "private, no-store")
 			hctx.SetHeader("X-Content-Type-Options", "nosniff")
 			_, _ = hctx.BodyWriter().Write(body)
 		}}, nil
@@ -147,7 +200,9 @@ func (service *documentQueryService) decodePhotoCursor(raw string) (store.PhotoB
 		return store.PhotoBrowsePosition{}, store.ErrInvalidPhotoCursor
 	}
 	position := cursor.Position
-	if cursor.Type != "photo-v1" || query.ValidateTextOperand("asset", position.AssetID) != nil || len(position.Key) > store.MaxPhotoSortKeyBytes || len(position.QueryIdentity) != 64 || position.Missing && position.Key != "" {
+	if cursor.Type != "photo-v1" || query.ValidateTextOperand("asset", position.AssetID) != nil ||
+		len(position.Key) > store.MaxPhotoSortKeyBytes || len(position.QueryIdentity) != 64 ||
+		position.Missing && position.Key != "" || position.Total < 0 {
 		return store.PhotoBrowsePosition{}, store.ErrInvalidPhotoCursor
 	}
 	if _, err := hex.DecodeString(position.QueryIdentity); err != nil {

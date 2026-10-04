@@ -26,9 +26,6 @@ func init() {
 		if err := conn.RegisterFunc("docbank_query_media_family_v1", query.ClassifyMedia, true); err != nil {
 			return fmt.Errorf("register query media function: %w", err)
 		}
-		if err := conn.RegisterFunc("docbank_query_capture_time_v1", query.CaptureTimeKey, true); err != nil {
-			return fmt.Errorf("register capture time function: %w", err)
-		}
 		return nil
 	}})
 }

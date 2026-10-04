@@ -1,7 +1,6 @@
 package sqlite_test
 
 import (
-	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -36,8 +35,6 @@ func exerciseQueryFunctions(t *testing.T, driver docsqlite.Driver) {
 		require.Equal(t, test.family, family, "%q / %q", test.mime, test.name)
 	}
 
-	exercisePhotoCaptureFunction(t, db)
-
 	// Force a second physical connection: the predicate must not depend on the
 	// first connection's local registration or pool reuse.
 	first, err := db.Conn(t.Context())
@@ -50,45 +47,4 @@ func exerciseQueryFunctions(t *testing.T, driver docsqlite.Driver) {
 	require.NoError(t, second.QueryRowContext(t.Context(),
 		`SELECT docbank_query_media_family_v1('application/pdf', 'report.txt')`).Scan(&family))
 	require.Equal(t, "document", family)
-}
-
-func exercisePhotoCaptureFunction(t *testing.T, db *sql.DB) {
-	t.Helper()
-	for _, tc := range []struct{ value, precision, zone, offset, key string }{
-		{"", "", "", "", ""}, {"2024-01-02T03:04:05+02:30", "second", "offset", "+02:30", "2024-01-02T00:34:05.000000000"}, {"2024-01-02T03:04:05.1234567891Z", "fraction", "utc", "", "2024-01-02T03:04:05.123456789"}, {"0000-01-01", "date", "omitted", "", ""},
-		{"2024-01-02T3", "hour", "omitted", "", "2024-01-02T03:00:00.000000000"},
-		{"2024-01-02T3:04", "minute", "omitted", "", "2024-01-02T03:04:00.000000000"},
-		{"2024-01-02T3:04Z", "minute", "utc", "", "2024-01-02T03:04:00.000000000"},
-		{"2024-01-02T3:04:05", "second", "omitted", "", "2024-01-02T03:04:05.000000000"},
-		{"2024-01-02T3:04:05+02:30", "second", "offset", "+02:30", "2024-01-02T00:34:05.000000000"},
-		{"2024-01-02T3:04:05.123Z", "fraction", "utc", "", "2024-01-02T03:04:05.123000000"},
-		{"0001-01-01T00:00:00+14:00", "second", "offset", "+14:00", ""},
-		{"bad", "date", "omitted", "", ""}, {"2024-02-30", "date", "omitted", "", ""},
-		{"", "date", "omitted", "", ""}, {"2024-01-02", "unknown", "omitted", "", ""},
-		{"2024-01-02", "date", "unknown", "", ""}, {"2024-01-02T03:04:05Z", "second", "omitted", "", ""},
-		{"2024-01-02T03:04:05+01:00", "second", "offset", "+02:00", ""},
-		{"2024-01-02T03:04:05+02:30", "second", "offset", "bad", ""},
-	} {
-		var key string
-		require.NoError(t, db.QueryRowContext(t.Context(), `SELECT docbank_query_capture_time_v1(?,?,?,?)`, tc.value, tc.precision, tc.zone, tc.offset).Scan(&key))
-		require.Equal(t, tc.key, key)
-	}
-	var key string
-	require.Error(t, db.QueryRowContext(t.Context(), `SELECT docbank_query_capture_time_v1(NULL,'','','')`).Scan(&key))
-	require.NoError(t, db.QueryRowContext(t.Context(), `SELECT docbank_query_capture_time_v1(CAST('2024-01-02' AS BLOB),'date','omitted','')`).Scan(&key))
-	require.Equal(t, "2024-01-02T00:00:00.000000000", key)
-}
-
-func TestPhotoCaptureTimeFunction(t *testing.T) {
-	for _, name := range sql.Drivers() {
-		if name != "sqlite" && name != "docbank-sqlite3-query-v1" {
-			continue
-		}
-		t.Run(name, func(t *testing.T) {
-			db, err := sql.Open(name, filepath.Join(t.TempDir(), "capture.db"))
-			require.NoError(t, err)
-			defer func() { require.NoError(t, db.Close()) }()
-			exercisePhotoCaptureFunction(t, db)
-		})
-	}
 }

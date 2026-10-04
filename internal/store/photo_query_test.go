@@ -124,7 +124,7 @@ func TestPhotoBrowsePagesPastLongSortKeys(t *testing.T) {
 	require.Equal(t, want, seen)
 }
 
-func TestPhotoBrowseMemberSemantics(t *testing.T) {
+func TestPhotoBrowseDisplayMetadata(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -146,7 +146,10 @@ func TestPhotoBrowseMemberSemantics(t *testing.T) {
 		text  string
 		count int64
 	}{
-		{`camera:"Camera A"`, 1}, {`lens:"Lens B"`, 1}, {`camera:"Camera A" AND lens:"Lens B"`, 0}, {`camera:"Camera A" OR lens:"Lens B"`, 1}, {`NOT camera:"Camera A"`, 1}, {`saved:"Camera match" AND lens:"Lens B"`, 0}, {`saved:"Camera match" OR lens:"Lens B"`, 1},
+		{`camera:"Camera A"`, 1}, {`lens:"Lens B"`, 0},
+		{`camera:"Camera A" AND lens:"Lens B"`, 0}, {`camera:"Camera A" OR lens:"Lens B"`, 1},
+		{`NOT camera:"Camera A"`, 0}, {`saved:"Camera match" AND lens:"Lens B"`, 0},
+		{`saved:"Camera match" OR lens:"Lens B"`, 1},
 	} {
 		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Text: tc.text, Sort: query.Sort{Field: "name", Direction: "asc"}}}, nil)
 		require.NoError(t, err, tc.text)
@@ -158,11 +161,19 @@ func TestPhotoBrowseMemberSemantics(t *testing.T) {
 	}
 	sidecar := browsePhotoNode(t, s, "paired-sidecar.xmp", browseHash("paired-sidecar"), "application/octet-stream")
 	rawID := fileByRole(pair.Files, PhotoRoleRAW).ID
-	_, err = s.AttachPhotoFile(ctx, pair.ID, pair.Revision, sidecar.ID, PhotoRoleSidecar, &rawID)
+	pair, err = s.AttachPhotoFile(ctx, pair.ID, pair.Revision, sidecar.ID, PhotoRoleSidecar, &rawID)
 	require.NoError(t, err)
 	page := browsePhotoPage(t, s, `{"filters":{"extensions":["xmp"]}}`)
 	require.Equal(t, int64(1), page.Total)
 	require.NotEqual(t, sidecar.ID, page.Items[0].NodeID)
+	page = browsePhotoPage(t, s, `{"syntax":"advanced","text":"NOT camera:\"Camera A\""}`)
+	require.Empty(t, page.Items, "a sidecar cannot bypass display metadata negation")
+	page = browsePhotoPage(t, s, `{"syntax":"advanced","text":"extension:xmp AND camera:\"Camera A\""}`)
+	require.Len(t, page.Items, 1, "ordinary member predicates combine with display metadata")
+	_, err = s.SetPhotoDisplay(ctx, pair.ID, pair.Revision, new(fileByRole(pair.Files, PhotoRoleImage).ID))
+	require.NoError(t, err)
+	page = browsePhotoPage(t, s, `{"filters":{"lenses":["Lens B"]}}`)
+	require.Len(t, page.Items, 1, "changing the display changes its metadata matches")
 }
 
 func TestPhotoBrowseActiveMetadata(t *testing.T) {
@@ -342,15 +353,13 @@ func TestPhotoBrowseCaptureTimeTolerance(t *testing.T) {
 	for i, stamp := range []string{"2024-01-02T3", "2024-01-02T3:04", "2024-01-02T3:04:05", "2024-01-02T3:04:05.123", "2024-01-02T03:04:05", "2024-01-02T03:04:05"} {
 		node := browsePhotoNode(t, s, fmt.Sprintf("tolerant-%d.jpg", i), browseHash(fmt.Sprintf("tolerant-%d", i)), "image/jpeg")
 		precision := []document.SourceMetadataTimestampPrecision{document.SourceMetadataPrecisionHour, document.SourceMetadataPrecisionMinute, document.SourceMetadataPrecisionSecond, document.SourceMetadataPrecisionFraction, document.SourceMetadataPrecisionSecond, document.SourceMetadataPrecisionSecond}[i]
-		browsePhotoMetadata(t, s, node, fmt.Sprintf("tolerant-fields-%d", i), photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, precision, document.SourceMetadataTimezoneOmitted, "")))
-		if i == 4 {
-			_, err := s.db.ExecContext(t.Context(), `UPDATE photo_technical_metadata SET capture_time='malformed' WHERE generation_id=(SELECT generation_id FROM source_metadata_heads WHERE source_sha256=?)`, node.BlobHash)
-			require.NoError(t, err)
+		value := photoTimestamp(stamp, stamp, precision, document.SourceMetadataTimezoneOmitted, "")
+		if i >= 4 {
+			// Source metadata can retain unreadable text without claiming a normalized timestamp.
+			value = photoString("unreadable date")
 		}
-		if i == 5 {
-			_, err := s.db.ExecContext(t.Context(), `UPDATE photo_technical_metadata SET capture_time_precision=NULL WHERE generation_id=(SELECT generation_id FROM source_metadata_heads WHERE source_sha256=?)`, node.BlobHash)
-			require.NoError(t, err)
-		}
+		browsePhotoMetadata(t, s, node, fmt.Sprintf("tolerant-fields-%d", i),
+			photoMetadataField("created", "image.exif", "DateTimeOriginal", value))
 	}
 	browsePhotoNode(t, s, "absent.jpg", browseHash("tolerant-absent"), "image/jpeg")
 	for _, direction := range []string{"asc", "desc"} {
@@ -384,7 +393,7 @@ func TestPhotoBrowseCaptureTimeTolerance(t *testing.T) {
 					require.Equal(t, "2024-01-02T03:04:05.000000000", row.position.Key)
 				}
 				if row.Name == "tolerant-4.jpg" {
-					require.Equal(t, "malformed", *row.Fields.CaptureTime)
+					require.Nil(t, row.Fields.CaptureTime)
 				}
 			}
 			if page.Next == nil {
@@ -602,4 +611,65 @@ func TestPhotoBrowseReadSnapshot(t *testing.T) {
 		}
 	}
 	require.NoError(t, <-done)
+}
+
+func TestPhotoBrowseLocalCaptureDate(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for _, tc := range []struct{ name, stamp, offset string }{
+		{"january-1.jpg", "2024-01-01T23:30-08:00", "-08:00"},
+		{"january-2.jpg", "2024-01-02T00:30+14:00", "+14:00"},
+	} {
+		node := browsePhotoNode(t, s, tc.name, browseHash(tc.name), "image/jpeg")
+		browsePhotoMetadata(t, s, node, tc.name, photoMetadataField("created", "image.exif", "DateTimeOriginal",
+			photoTimestamp(tc.stamp, tc.stamp, document.SourceMetadataPrecisionMinute,
+				document.SourceMetadataTimezoneOffset, tc.offset)))
+	}
+	for _, raw := range []string{
+		`{"filters":{"capture_after":"2024-01-01","capture_before":"2024-01-02"}}`,
+		`{"syntax":"advanced","text":"capture_after:2024-01-01 AND capture_before:2024-01-02"}`,
+	} {
+		page := browsePhotoPage(t, s, raw)
+		require.Len(t, page.Items, 1)
+		require.Equal(t, "january-1.jpg", page.Items[0].Name)
+	}
+	page := browsePhotoPage(t, s, `{"sort":{"field":"capture_time","direction":"asc"}}`)
+	require.Equal(t, "january-2.jpg", page.Items[0].Name, "sorting still uses the recorded offset")
+}
+
+func TestPhotoBrowseCameraAndLensIgnoreCase(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node := browsePhotoNode(t, s, "camera.jpg", browseHash("camera-case"), "image/jpeg")
+	browsePhotoMetadata(t, s, node, "camera-case",
+		photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("SONY")),
+		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Straße")))
+	for _, raw := range []string{
+		`{"filters":{"cameras":["sony"],"lenses":["STRASSE"]}}`,
+		`{"syntax":"advanced","text":"camera:sony AND lens:STRASSE"}`,
+	} {
+		page := browsePhotoPage(t, s, raw)
+		require.Len(t, page.Items, 1)
+		require.Equal(t, node.ID, page.Items[0].NodeID)
+	}
+}
+
+func TestPhotoBrowseContinuationRetainsFirstTotal(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for _, name := range []string{"a.jpg", "b.jpg"} {
+		browsePhotoNode(t, s, name, browseHash(name), "image/jpeg")
+	}
+	request := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 1}
+	first, err := s.ListPhotoAssets(t.Context(), request, nil)
+	require.NoError(t, err)
+	require.NotNil(t, first.Next)
+	browsePhotoNode(t, s, "c.jpg", browseHash("c.jpg"), "image/jpeg")
+	next, err := s.ListPhotoAssets(t.Context(), request, first.Next)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), next.Total)
+	require.Equal(t, "b.jpg", next.Items[0].Name)
+	fresh, err := s.ListPhotoAssets(t.Context(), request, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), fresh.Total)
 }

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -432,43 +433,51 @@ func TestClientPreservesAccountingWhenRetriesExhaustOrWaitIsCanceled(t *testing.
 	authorization, err := policy.Authorize(syntheticManifest(t, policy, true), "pdf")
 	require.NoError(t, err)
 
-	requests := 0
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		requests++
-		_, copyErr := io.Copy(io.Discard, request.Body)
-		assert.NoError(t, copyErr)
-		w.Header().Set("Retry-After", "0")
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer server.Close()
-	client := newServerClient(t, server, policy, ClientConfig{MaxRetries: 1, MaxRetryDelay: time.Millisecond})
-	_, err = client.Process(t.Context(), prepared, authorization)
-	require.ErrorIs(t, err, ErrTransientResponse)
-	assert.Equal(t, 2, requests)
-	metrics := MetricsFromError(err)
-	assert.Equal(t, 2, metrics.Requests)
-	assert.Equal(t, 1, metrics.Retries)
-	assert.Positive(t, metrics.Latency)
+	// Give each request a known latency independent of the host clock resolution.
+	synctest.Test(t, func(t *testing.T) {
+		requests := 0
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			requests++
+			_, copyErr := io.Copy(io.Discard, request.Body)
+			assert.NoError(t, copyErr)
+			time.Sleep(10 * time.Millisecond)
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		client, err := NewClient(policy, ClientConfig{
+			APIKey: "synthetic-key", HTTPClient: server.Client(), MaxRetries: 1, MaxRetryDelay: time.Millisecond,
+		})
+		require.NoError(t, err)
+		_, err = client.Process(t.Context(), prepared, authorization)
+		require.ErrorIs(t, err, ErrTransientResponse)
+		assert.Equal(t, 2, requests)
+		metrics := MetricsFromError(err)
+		assert.Equal(t, 2, metrics.Requests)
+		assert.Equal(t, 1, metrics.Retries)
+		assert.Equal(t, 20*time.Millisecond, metrics.Latency)
 
-	ctx, cancel := context.WithCancel(t.Context())
-	requests = 0
-	canceling := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		requests++
-		_, copyErr := io.Copy(io.Discard, request.Body)
-		assert.NoError(t, copyErr)
-		w.Header().Set("Retry-After", "60")
-		w.WriteHeader(http.StatusTooManyRequests)
-		cancel()
-	}))
-	defer canceling.Close()
-	client = newServerClient(t, canceling, policy, ClientConfig{})
-	_, err = client.Process(ctx, prepared, authorization)
-	require.ErrorIs(t, err, context.Canceled)
-	assert.Equal(t, 1, requests)
-	metrics = MetricsFromError(err)
-	assert.Equal(t, 1, metrics.Requests)
-	assert.Equal(t, 0, metrics.Retries)
-	assert.Positive(t, metrics.Latency)
+		// The response takes 10 ms; cancellation occurs during the retry wait.
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+		defer cancel()
+		requests = 0
+		canceling := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			requests++
+			_, copyErr := io.Copy(io.Discard, request.Body)
+			assert.NoError(t, copyErr)
+			time.Sleep(10 * time.Millisecond)
+			w.Header().Set("Retry-After", "60")
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		client, err = NewClient(policy, ClientConfig{APIKey: "synthetic-key", HTTPClient: canceling.Client()})
+		require.NoError(t, err)
+		_, err = client.Process(ctx, prepared, authorization)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Equal(t, 1, requests)
+		metrics = MetricsFromError(err)
+		assert.Equal(t, 1, metrics.Requests)
+		assert.Equal(t, 0, metrics.Retries)
+		assert.Equal(t, 10*time.Millisecond, metrics.Latency)
+	})
 }
 
 func TestClientRejectsProviderUnitContractDrift(t *testing.T) {
