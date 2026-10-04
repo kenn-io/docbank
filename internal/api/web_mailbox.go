@@ -17,7 +17,6 @@ func handleWebMailboxChunk(ctx context.Context, conn *websocket.Conn, d Deps, g 
 		return writeWebUploadProblem(ctx, conn, begin.RequestID, NewError(http.StatusUnprocessableEntity, "validation", "invalid mailbox chunk declaration")) == nil
 	}
 	reader := &webUploadReader{ctx: ctx, conn: conn, requestID: begin.RequestID, inactivity: webUploadInactivity}
-	defer reader.close()
 	ready := false
 	err := g.mutate(func() error {
 		if _, err := d.Store.MailboxContainer(ctx, mailboxOwner(d), begin.ContainerID); err != nil {
