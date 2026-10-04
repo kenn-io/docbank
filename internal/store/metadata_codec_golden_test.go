@@ -243,43 +243,17 @@ func TestMetadataCodecGolden(t *testing.T) {
 	})
 }
 
-func TestMetadataImportSkipsRetiredImportHeads(t *testing.T) {
+func TestMetadataImportRejectsRetiredImportHeads(t *testing.T) {
 	t.Parallel()
-	const packageHead = `{"type":"package_import_head","canonical_json":{"package_id":"a6129936-2b9d-4481-b1e4-bdd26ebdd6e3","receipt_id":"8bf36b52-6b43-4981-9326-1f0351b7d907","record_key":"f05aa7c938488650168f684ab57f7e77fe09e09f47bac6b667e50debb73a3c15"},"checksum":"567f241f450cb07c5a114fc5aa10b6736f2054e5f8c024dc616876eecd1ec587"}`
-	const mailboxHead = `{"type":"mailbox_transfer_head","archive_id":"external-synthetic","reference":"message-1","receipt_id":"ccbe7622-0d64-4dd2-8d35-77fd9c47c0af"}`
 	golden, err := os.ReadFile(metadataCodecGoldenPath)
 	require.NoError(t, err)
-	lines := bytes.Split(bytes.TrimSpace(golden), []byte{'\n'})
-	var legacy bytes.Buffer
-	for index, line := range lines {
-		legacy.Write(line)
-		legacy.WriteByte('\n')
-		kind := metadataCodecGoldenLineType(t, line)
-		if index+1 < len(lines) && metadataCodecGoldenLineType(t, lines[index+1]) == kind {
-			continue
-		}
-		switch kind {
-		case "package_import_receipt":
-			legacy.WriteString(packageHead + "\n")
-		case "mailbox_transfer_receipt":
-			legacy.WriteString(mailboxHead + "\n")
-		}
-	}
-	plain, restored := newTestStore(t), newTestStore(t)
-	require.NoError(t, plain.ImportMetadata(t.Context(), bytes.NewReader(golden)))
-	require.NoError(t, restored.ImportMetadata(t.Context(), &legacy))
-	for _, table := range metadataCodecGoldenTables {
-		require.Equal(t, metadataCodecGoldenTableRows(t, plain, table), metadataCodecGoldenTableRows(t, restored, table), table)
-	}
-	for _, source := range []*Store{plain, restored} {
-		selected, err := loadPackageImportHeadTx(t.Context(), source.db, "a6129936-2b9d-4481-b1e4-bdd26ebdd6e3", "f05aa7c938488650168f684ab57f7e77fe09e09f47bac6b667e50debb73a3c15")
-		require.NoError(t, err)
-		require.Equal(t, "8bf36b52-6b43-4981-9326-1f0351b7d907", selected.ReceiptID)
-		var owner string
-		require.NoError(t, source.db.QueryRowContext(t.Context(), `SELECT owner FROM mailbox_archives WHERE id=?`, "external-synthetic").Scan(&owner))
-		mailbox, err := mailboxTransferHead(t.Context(), source.db, owner, "external-synthetic", "message-1")
-		require.NoError(t, err)
-		require.Equal(t, "ccbe7622-0d64-4dd2-8d35-77fd9c47c0af", mailbox.ID)
+	for _, kind := range []string{"package_import_head", "mailbox_transfer_head"} {
+		t.Run(kind, func(t *testing.T) {
+			target := newTestStore(t)
+			input := string(golden) + "\n" + `{"type":"` + kind + `"}` + "\n"
+			err := target.ImportMetadata(t.Context(), strings.NewReader(input))
+			require.ErrorContains(t, err, `unknown record type "`+kind+`"`)
+		})
 	}
 }
 
