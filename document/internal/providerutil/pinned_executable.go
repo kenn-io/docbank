@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // PinnedExecutable retains verified executable bytes for isolated local-process launches.
@@ -49,7 +50,11 @@ func (executable *PinnedExecutable) Materialize() (string, func() error, error) 
 	}
 	cleanup := func() error { return os.RemoveAll(directory) }
 	target := filepath.Join(directory, filepath.Base(executable.sourcePath))
-	if err := os.WriteFile(target, executable.content, 0o400); err != nil {
+	// Keep concurrent forks from inheriting a writer that makes exec fail with ETXTBSY.
+	syscall.ForkLock.RLock()
+	err = os.WriteFile(target, executable.content, 0o400)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
 		return "", nil, errors.Join(fmt.Errorf("write pinned executable: %w", err), cleanup())
 	}
 	if err := os.Chmod(target, 0o500); err != nil { //nolint:gosec // the private pinned copy must be owner-executable
