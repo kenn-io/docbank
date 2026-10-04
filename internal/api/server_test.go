@@ -54,18 +54,18 @@ const testWebURL = "http://docbank-0123456789abcdef0123456789abcdef.localhost:43
 // explicit X-Api-Key header, so the ~30 non-auth-focused tests using get/
 // do/try need no per-call header plumbing; tests exercising the missing-
 // or wrong-key path set X-Api-Key explicitly (even to "") to opt out.
-func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *testStore) {
-	t.Helper()
-	dir := t.TempDir()
+func newTestServer(tb testing.TB, mutate func(*api.Deps)) (*httptest.Server, *testStore) {
+	tb.Helper()
+	dir := tb.TempDir()
 	dbPath := filepath.Join(dir, "docbank.db")
 	s, err := store.Open(dbPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
+	require.NoError(tb, err)
+	tb.Cleanup(func() { _ = s.Close() })
 	blobsDir := filepath.Join(dir, "blobs")
-	require.NoError(t, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
+	require.NoError(tb, os.MkdirAll(filepath.Join(blobsDir, "tmp"), 0o700))
 	blobs, err := blob.New(store.NewPackCatalog(s), blobsDir)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = blobs.Close() })
+	require.NoError(tb, err)
+	tb.Cleanup(func() { _ = blobs.Close() })
 	d := api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: dir, Cfg: config.Default(),
 		WebURL: testWebURL, EnsureEmail: processing.EnsureEmailTarget, PublishEmailDocuments: processing.PublishEmailDocuments,
@@ -75,9 +75,9 @@ func newTestServer(t *testing.T, mutate func(*api.Deps)) (*httptest.Server, *tes
 		mutate(&d)
 	}
 	apiServer := api.NewServer(d)
-	t.Cleanup(apiServer.Close)
+	tb.Cleanup(apiServer.Close)
 	ts := httptest.NewServer(apiServer.Handler())
-	t.Cleanup(ts.Close)
+	tb.Cleanup(ts.Close)
 	ts.Client().Transport = &apiKeyTransport{key: d.Cfg.Server.APIKey, next: ts.Client().Transport}
 	return ts, &testStore{
 		Store: s, Blobs: blobs, BlobsDir: blobsDir, DBPath: dbPath, Server: apiServer,

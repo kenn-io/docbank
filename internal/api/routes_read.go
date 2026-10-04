@@ -109,9 +109,10 @@ func streamContentVersion(
 		hctx.SetHeader(BlobHashHeader, version.BlobHash)
 		hctx.SetHeader(BlobSizeHeader, strconv.FormatInt(version.Size, 10))
 		hctx.SetHeader("Trailer", "Content-Digest")
-		hash := sha256.New()
-		if _, err := io.Copy(hctx.BodyWriter(), io.TeeReader(f, hash)); err == nil {
-			hctx.SetHeader("Content-Digest", contentDigest(hash.Sum(nil)))
+		// The blob reader hashes the streamed bytes and verifies this identity
+		// at EOF. Reuse that result only after a complete, verified transfer.
+		if _, err := io.Copy(hctx.BodyWriter(), f); err == nil && f.Verified() {
+			hctx.SetHeader("Content-Digest", contentDigest(mustDecodeHash(version.BlobHash)))
 		}
 	}}, nil
 }
