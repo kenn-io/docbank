@@ -3,11 +3,13 @@ package processing
 import (
 	"bufio"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"unicode/utf8"
+	"uuid"
 
 	"go.kenn.io/docbank/internal/store"
 	"go.kenn.io/kit/pack"
@@ -16,6 +18,8 @@ import (
 const sanitizedMarkdownRole = "sanitized_markdown"
 
 var (
+	ErrEvidenceUnavailable      = errors.New("evidence is unavailable")
+	ErrInvalidEvidenceRequest   = errors.New("evidence window request is invalid")
 	ErrInvalidRenditionWindow   = errors.New("rendition text window is invalid")
 	ErrInvalidRenditionEncoding = errors.New("rendition text is not valid UTF-8")
 )
@@ -29,10 +33,60 @@ type RenditionWindowRequest struct {
 	MaxChars         int
 }
 
+// EvidenceWindowRequest pins every immutable identity of a current rendition.
+type EvidenceWindowRequest struct {
+	VaultUID              string
+	NodeID                int64
+	ContentVersionID      string
+	ContentSHA256         string
+	RenditionAttachmentID string
+	BuildID               string
+	RenditionSHA256       string
+	Offset                int
+	MaxChars              int
+}
+
+func validateEvidenceWindowRequest(request EvidenceWindowRequest) error {
+	if request.NodeID < 1 || request.Offset < 0 || request.MaxChars < 0 || request.MaxChars > 16_000 {
+		return ErrInvalidEvidenceRequest
+	}
+	for _, value := range []string{request.VaultUID, request.ContentVersionID} {
+		if len(value) != 36 {
+			return ErrInvalidEvidenceRequest
+		}
+		id, err := uuid.Parse(value)
+		if err != nil || id[6]>>4 != 4 || id[8]>>6 != 2 || id.String() != value {
+			return ErrInvalidEvidenceRequest
+		}
+	}
+	for _, value := range []string{request.ContentSHA256, request.RenditionAttachmentID, request.BuildID, request.RenditionSHA256} {
+		if len(value) != 64 || strings.ToLower(value) != value {
+			return ErrInvalidEvidenceRequest
+		}
+		if _, err := hex.DecodeString(value); err != nil {
+			return ErrInvalidEvidenceRequest
+		}
+	}
+	return nil
+}
+
+// ReadEvidenceWindow checks exact catalog identities; a bounded read does not
+// claim fresh whole-artifact checksum verification.
+func (service *Service) ReadEvidenceWindow(ctx context.Context, request EvidenceWindowRequest) (RenditionTextWindow, error) {
+	if err := validateEvidenceWindowRequest(request); err != nil {
+		return RenditionTextWindow{}, err
+	}
+	return service.readRenditionTextWindow(ctx, RenditionWindowRequest{
+		VaultUID: request.VaultUID, NodeID: request.NodeID, ContentVersionID: request.ContentVersionID,
+		AttachmentID: request.RenditionAttachmentID, Offset: request.Offset, MaxChars: request.MaxChars,
+	}, &request)
+}
+
 type RenditionTextWindow struct {
 	VaultUID           string
 	NodeID             int64
 	ContentVersionID   string
+	ContentSHA256      string
 	AttachmentID       string
 	BuildID            string
 	ProfileFingerprint string
@@ -52,10 +106,18 @@ type RenditionTextWindow struct {
 func (service *Service) RenditionTextWindow(
 	ctx context.Context, request RenditionWindowRequest,
 ) (RenditionTextWindow, error) {
+	return service.readRenditionTextWindow(ctx, request, nil)
+}
+
+func (service *Service) readRenditionTextWindow(ctx context.Context, request RenditionWindowRequest, expected *EvidenceWindowRequest) (RenditionTextWindow, error) {
+	unavailable := store.ErrNotFound
+	if expected != nil {
+		unavailable = ErrEvidenceUnavailable
+	}
 	if service == nil || service.catalog == nil || service.blobs == nil ||
 		request.VaultUID != service.catalog.VaultID() || request.NodeID < 1 ||
 		request.ContentVersionID == "" || request.AttachmentID == "" || request.Offset < 0 {
-		return RenditionTextWindow{}, store.ErrNotFound
+		return RenditionTextWindow{}, unavailable
 	}
 	if request.MaxChars == 0 {
 		request.MaxChars = 8_000
@@ -63,21 +125,19 @@ func (service *Service) RenditionTextWindow(
 	if request.MaxChars < 1 || request.MaxChars > 16_000 {
 		return RenditionTextWindow{}, ErrInvalidRenditionWindow
 	}
-	view, err := service.catalog.ActiveRenditionByAttachment(ctx, request.AttachmentID)
+	contentHash := ""
+	if expected != nil {
+		contentHash = expected.ContentSHA256
+	}
+	node, view, err := service.catalog.CurrentRenditionByAttachment(ctx, request.NodeID, request.ContentVersionID, contentHash, request.AttachmentID)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return RenditionTextWindow{}, unavailable
+		}
 		return RenditionTextWindow{}, err
 	}
-	version, err := service.catalog.ContentVersionByID(ctx, view.Attachment.ContentVersionID)
-	if err != nil {
-		return RenditionTextWindow{}, err
-	}
-	node, err := service.catalog.NodeByID(ctx, version.NodeID)
-	if err != nil {
-		return RenditionTextWindow{}, err
-	}
-	if node.ID != request.NodeID || version.ID != request.ContentVersionID ||
-		view.Attachment.ID != request.AttachmentID || node.CurrentVersionID != version.ID || node.TrashedAt != nil {
-		return RenditionTextWindow{}, store.ErrNotFound
+	if expected != nil && view.Build.ID != expected.BuildID {
+		return RenditionTextWindow{}, unavailable
 	}
 	var artifact store.RenditionArtifactRecord
 	for _, candidate := range view.Build.Artifacts {
@@ -87,7 +147,10 @@ func (service *Service) RenditionTextWindow(
 		}
 	}
 	if artifact.ID == "" || artifact.Size < 0 {
-		return RenditionTextWindow{}, store.ErrNotFound
+		return RenditionTextWindow{}, unavailable
+	}
+	if expected != nil && artifact.BlobHash != expected.RenditionSHA256 {
+		return RenditionTextWindow{}, unavailable
 	}
 	text, actualEnd, eof, err := readRenditionBlobWindow(
 		ctx, service.blobs, artifact.BlobHash, artifact.Size, request.Offset, request.MaxChars,
@@ -96,7 +159,7 @@ func (service *Service) RenditionTextWindow(
 		return RenditionTextWindow{}, err
 	}
 	return RenditionTextWindow{
-		VaultUID: service.catalog.VaultID(), NodeID: node.ID, ContentVersionID: version.ID,
+		VaultUID: service.catalog.VaultID(), NodeID: node.ID, ContentVersionID: request.ContentVersionID, ContentSHA256: node.BlobHash,
 		AttachmentID: view.Attachment.ID, BuildID: view.Build.ID,
 		ProfileFingerprint: view.Attachment.Profile.Fingerprint,
 		Text:               text, MediaType: "text/markdown", Checksum: artifact.BlobHash,

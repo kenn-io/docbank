@@ -6416,6 +6416,132 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    EvidenceWindow:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/EvidenceWindow.json
+          format: uri
+          readOnly: true
+          type: string
+        actual_end:
+          format: int64
+          minimum: 0
+          type: integer
+        actual_start:
+          format: int64
+          minimum: 0
+          type: integer
+        build_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        content_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        content_version_id:
+          format: uuid
+          type: string
+        eof:
+          type: boolean
+        media_type:
+          enum:
+            - text/markdown
+          type: string
+        next_offset:
+          format: int64
+          minimum: 0
+          type: integer
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        rendition_attachment_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        rendition_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        response_bytes:
+          format: int64
+          maximum: 64000
+          minimum: 0
+          type: integer
+        text:
+          maxLength: 16000
+          type: string
+        vault_uid:
+          format: uuid
+          type: string
+      required:
+        - vault_uid
+        - node_id
+        - content_version_id
+        - content_sha256
+        - rendition_attachment_id
+        - build_id
+        - rendition_sha256
+        - text
+        - actual_start
+        - actual_end
+        - next_offset
+        - eof
+        - response_bytes
+        - media_type
+      type: object
+      x-go-type: api.EvidenceWindow
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    EvidenceWindowRequest:
+      additionalProperties: false
+      properties:
+        build_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        content_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        content_version_id:
+          format: uuid
+          type: string
+        max_chars:
+          default: 8000
+          format: int64
+          maximum: 16000
+          minimum: 0
+          type: integer
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        offset:
+          format: int64
+          minimum: 0
+          type: integer
+        rendition_attachment_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        rendition_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        vault_uid:
+          format: uuid
+          type: string
+      required:
+        - vault_uid
+        - node_id
+        - content_version_id
+        - content_sha256
+        - rendition_attachment_id
+        - build_id
+        - rendition_sha256
+      type: object
+      x-go-type: api.EvidenceWindowRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     ExportJob:
       additionalProperties: false
       properties:
@@ -17525,6 +17651,71 @@ paths:
             application/pdf: {}
           description: Exact retained PDF
       summary: Download independently verified retained PDF bytes
+  /api/v1/evidence/windows:
+    post:
+      operationId: readEvidenceWindow
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidenceWindowRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidenceWindow"
+          description: Exact catalog identities and bounded sanitized-Markdown text
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "416":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Requested Range Not Satisfiable
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+      summary: Read one exact current/live evidence window
   /api/v1/exports/jobs:
     post:
       operationId: createExportJob

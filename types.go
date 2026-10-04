@@ -367,6 +367,41 @@ type RenditionContent struct {
 	Reader             VerifiedReadCloser
 }
 
+// EvidenceWindowRequest pins a bounded Unicode read to exact current/live
+// content and its active sanitized-Markdown rendition. Zero MaxChars selects
+// 8,000 characters; explicit limits may not exceed 16,000.
+type EvidenceWindowRequest struct {
+	VaultUID              string `json:"vault_uid"`
+	NodeID                int64  `json:"node_id"`
+	ContentVersionID      string `json:"content_version_id"`
+	ContentSHA256         string `json:"content_sha256"`
+	RenditionAttachmentID string `json:"rendition_attachment_id"`
+	BuildID               string `json:"build_id"`
+	RenditionSHA256       string `json:"rendition_sha256"`
+	Offset                int    `json:"offset,omitzero"`
+	MaxChars              int    `json:"max_chars,omitzero"`
+}
+
+// EvidenceWindow carries catalog identities and exclusive Unicode offsets.
+// RenditionSHA256 is the catalog digest, not a fresh whole-artifact verification.
+// ResponseBytes counts UTF-8 bytes in Text, before JSON encoding.
+type EvidenceWindow struct {
+	VaultUID              string `json:"vault_uid"`
+	NodeID                int64  `json:"node_id"`
+	ContentVersionID      string `json:"content_version_id"`
+	ContentSHA256         string `json:"content_sha256"`
+	RenditionAttachmentID string `json:"rendition_attachment_id"`
+	BuildID               string `json:"build_id"`
+	RenditionSHA256       string `json:"rendition_sha256"`
+	Text                  string `json:"text"`
+	ActualStart           int    `json:"actual_start"`
+	ActualEnd             int    `json:"actual_end"`
+	NextOffset            int    `json:"next_offset"`
+	EOF                   bool   `json:"eof"`
+	ResponseBytes         int    `json:"response_bytes"`
+	MediaType             string `json:"media_type"`
+}
+
 type DocumentSourceFence struct {
 	VaultUID          string   `json:"vault_uid"`
 	ContentVersionIDs []string `json:"content_version_ids"`

@@ -54,3 +54,34 @@ type RenditionTextWindow struct {
 	EOF                bool   `json:"eof"`
 	ResponseBytes      int    `json:"response_bytes" minimum:"0" maximum:"1048576"`
 }
+
+// EvidenceWindowRequest requires exact current/live file and rendition identity.
+type EvidenceWindowRequest struct {
+	VaultUID              string `json:"vault_uid" format:"uuid"`
+	NodeID                int64  `json:"node_id" minimum:"1"`
+	ContentVersionID      string `json:"content_version_id" format:"uuid"`
+	ContentSHA256         string `json:"content_sha256" pattern:"^[0-9a-f]{64}$"`
+	RenditionAttachmentID string `json:"rendition_attachment_id" pattern:"^[0-9a-f]{64}$"`
+	BuildID               string `json:"build_id" pattern:"^[0-9a-f]{64}$"`
+	RenditionSHA256       string `json:"rendition_sha256" pattern:"^[0-9a-f]{64}$"`
+	Offset                int    `json:"offset,omitzero" minimum:"0"`
+	MaxChars              int    `json:"max_chars,omitzero" minimum:"0" maximum:"16000" default:"8000"`
+}
+
+// EvidenceWindow reports catalog identities and a bounded Unicode excerpt.
+type EvidenceWindow struct {
+	VaultUID              string `json:"vault_uid" format:"uuid"`
+	NodeID                int64  `json:"node_id" minimum:"1"`
+	ContentVersionID      string `json:"content_version_id" format:"uuid"`
+	ContentSHA256         string `json:"content_sha256" pattern:"^[0-9a-f]{64}$"`
+	RenditionAttachmentID string `json:"rendition_attachment_id" pattern:"^[0-9a-f]{64}$"`
+	BuildID               string `json:"build_id" pattern:"^[0-9a-f]{64}$"`
+	RenditionSHA256       string `json:"rendition_sha256" pattern:"^[0-9a-f]{64}$"`
+	Text                  string `json:"text" maxLength:"16000"`
+	ActualStart           int    `json:"actual_start" minimum:"0"`
+	ActualEnd             int    `json:"actual_end" minimum:"0"`
+	NextOffset            int    `json:"next_offset" minimum:"0"`
+	EOF                   bool   `json:"eof"`
+	ResponseBytes         int    `json:"response_bytes" minimum:"0" maximum:"64000"`
+	MediaType             string `json:"media_type" enum:"text/markdown"`
+}

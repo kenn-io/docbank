@@ -500,6 +500,52 @@ func (s *Store) ActiveRenditionByAttachment(ctx context.Context, attachmentID st
 	return view, nil
 }
 
+// CurrentRenditionByAttachment resolves current/live file and active rendition
+// authority in one read snapshot. An optional content hash fences exact reads.
+func (s *Store) CurrentRenditionByAttachment(ctx context.Context, nodeID int64, versionID, contentHash, attachmentID string) (Node, RenditionView, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Node{}, RenditionView{}, fmt.Errorf("starting rendition window snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	node, err := nodeByIDQuery(ctx, tx, nodeID)
+	if err != nil {
+		return Node{}, RenditionView{}, err
+	}
+	if node.TrashedAt != nil || node.CurrentVersionID != versionID || node.BlobHash == "" || (contentHash != "" && node.BlobHash != contentHash) {
+		return Node{}, RenditionView{}, ErrNotFound
+	}
+	attachment, err := loadRenditionAttachment(ctx, tx, attachmentID)
+	if err != nil {
+		return Node{}, RenditionView{}, err
+	}
+	if attachment.ContentVersionID != versionID {
+		return Node{}, RenditionView{}, ErrNotFound
+	}
+	view := RenditionView{Attachment: attachment, Head: RenditionHeadRecord{ContentVersionID: versionID, ProcessingProfileFingerprint: attachment.Profile.Fingerprint}}
+	err = tx.QueryRowContext(ctx, `SELECT attachment_id,published_at FROM rendition_heads WHERE content_version_id=? AND profile_fingerprint=?`, versionID, attachment.Profile.Fingerprint).Scan(&view.Head.AttachmentID, &view.Head.PublishedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Node{}, RenditionView{}, ErrNotFound
+	}
+	if err != nil {
+		return Node{}, RenditionView{}, fmt.Errorf("reading rendition window head: %w", err)
+	}
+	if view.Head.AttachmentID != attachmentID {
+		return Node{}, RenditionView{}, ErrNotFound
+	}
+	view.Build, err = loadRenditionBuild(ctx, tx, attachment.BuildID)
+	if err != nil {
+		return Node{}, RenditionView{}, err
+	}
+	if err := validateRenditionArtifactRolesForProfile(attachment.Profile, view.Build); err != nil {
+		return Node{}, RenditionView{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Node{}, RenditionView{}, fmt.Errorf("closing rendition window snapshot: %w", err)
+	}
+	return node, view, nil
+}
+
 func normalizeProcessingProfileRecord(record ProcessingProfileRecord) (ProcessingProfileRecord, error) {
 	canonical, err := canonicalCatalogJSON(record.CanonicalProfile, "processing profile")
 	if err != nil {
