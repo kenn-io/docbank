@@ -61,10 +61,14 @@ func (f *familyReportFixture) assertReport(
 	members := familyPacketRows[report.Member](t, z, "members.jsonl")
 	var identities []report.Identity
 	groups := make(map[string]int)
+	var sizes []int
 	for _, member := range members {
 		identities = append(identities, member.Identity)
-		require.NotEmpty(t, member.FamilyID)
-		groups[member.FamilyID]++
+		if member.FamilyID == "" {
+			sizes = append(sizes, 1) // Unconnected documents are separate singleton families.
+		} else {
+			groups[member.FamilyID]++
+		}
 		require.Equal(t, "complete", member.Coverage.SearchState)
 		state := "complete"
 		if want.incomplete != 0 {
@@ -73,7 +77,6 @@ func (f *familyReportFixture) assertReport(
 		require.Equal(t, state, member.Coverage.FamilyState)
 	}
 	require.ElementsMatch(t, want.members, identities)
-	var sizes []int
 	for _, count := range groups {
 		sizes = append(sizes, count)
 	}

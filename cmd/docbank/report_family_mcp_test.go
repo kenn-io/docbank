@@ -93,14 +93,21 @@ func (c *familyMCP) captureReport(t *testing.T, request report.Request) familyRe
 	}
 	require.NoError(t, json.Unmarshal(raw, &receipt))
 	require.Equal(t, "complete", receipt.State, string(raw))
+	summary := c.reportSummary(t, receipt.ID)
+	packet := filepath.Join(t.TempDir(), "report.zip")
+	c.downloadReport(t, receipt.ID, packet)
+	return familyReportObservation{summary: summary, packet: packet}
+}
+
+func (c *familyMCP) reportSummary(t *testing.T, id string) report.Summary {
+	t.Helper()
 	var output struct {
 		Summary report.Summary `json:"summary"`
 	}
-	raw = c.call(t, "get_report_summary", map[string]any{"report_id": receipt.ID})
+	raw := c.call(t, "get_report_summary", map[string]any{"report_id": id})
 	require.NoError(t, json.Unmarshal(raw, &output))
-	packet := filepath.Join(t.TempDir(), "report.zip")
-	c.downloadReport(t, receipt.ID, packet)
-	return familyReportObservation{summary: output.Summary, packet: packet}
+	require.Equal(t, id, output.Summary.ID, string(raw))
+	return output.Summary
 }
 
 func (c *familyMCP) downloadReport(t *testing.T, id, path string) {

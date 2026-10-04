@@ -41,6 +41,8 @@ type familyPart struct{ key, filename, text string }
 type familyMail struct {
 	key, filename, text string
 	parts               []familyPart
+	reuse               []document.EmailDocumentReuse
+	partial             bool
 }
 
 func newFamilyReportFixture(t *testing.T, scenario string) *familyReportFixture {
@@ -66,6 +68,23 @@ func newFamilyReportFixture(t *testing.T, scenario string) *familyReportFixture 
 				{"U", "omitted.txt", "beta. " + familyDateLabel},
 			}})
 		selected = []string{"P", "C"}
+	case "shared":
+		parts := []familyPart{{"X", "shared.txt", "alpha beta. " + familyDateLabel}}
+		first := w.mail(t, familyMail{key: "Q", filename: "first.eml",
+			text: "alpha. " + familyDateLabel, parts: parts})
+		require.Len(t, first.Relations, 1)
+		relation := first.Relations[0]
+		child, err := catalog.NodeByID(t.Context(), relation.Child.NodeID)
+		require.NoError(t, err)
+		w.mail(t, familyMail{key: "R", filename: "second.eml",
+			text: "beta. " + familyDateLabel, parts: parts,
+			reuse: []document.EmailDocumentReuse{{PartPath: relation.PartPath,
+				Child: *relation.Child, Revision: child.Revision}}})
+		selected = []string{"Q", "R"}
+	case "partial":
+		w.mail(t, familyMail{key: "I", filename: "incomplete.eml",
+			text: "alpha. " + familyDateLabel, partial: true})
+		selected = []string{"I"}
 	default:
 		t.Fatalf("unknown family fixture %q", scenario)
 	}
@@ -83,7 +102,9 @@ func newFamilyReportFixture(t *testing.T, scenario string) *familyReportFixture 
 	return f
 }
 
-func (w familyFixtureWriter) mail(t *testing.T, source familyMail) {
+func (w familyFixtureWriter) mail(
+	t *testing.T, source familyMail,
+) document.EmailDocumentPublicationReceipt {
 	t.Helper()
 	content := "From: sender@example.test\r\nTo: reader@example.test\r\n" +
 		"Subject: Synthetic message\r\nMIME-Version: 1.0\r\n" +
@@ -96,7 +117,11 @@ func (w familyFixtureWriter) mail(t *testing.T, source familyMail) {
 			part.text + "\r\n")
 	}
 	content += attachments.String()
-	content += "--m--\r\n"
+	wantState := "partial"
+	if !source.partial {
+		content += "--m--\r\n"
+		wantState = "complete"
+	}
 	receipt, err := w.blobs.WriteDetailedContext(t.Context(), strings.NewReader(content))
 	require.NoError(t, err)
 	encoding, err := receipt.EncodingName()
@@ -120,9 +145,9 @@ func (w familyFixtureWriter) mail(t *testing.T, source familyMail) {
 			Parent: document.EmailDocumentIdentity{NodeID: parent.ID, VersionID: version.ID,
 				SHA256: receipt.Hash, Size: receipt.Size},
 			GenerationID: view.Generation.ID, AttachmentID: view.Attachment.ID,
-			DestinationID: dir.ID, DestinationRevision: dir.Revision})
+			DestinationID: dir.ID, DestinationRevision: dir.Revision, Reuse: source.reuse})
 	require.NoError(t, err)
-	require.Equal(t, "complete", published.InventoryState)
+	require.Equal(t, wantState, published.InventoryState)
 	require.Len(t, published.Relations, len(source.parts))
 	w.retain(t, source.key, parent, []byte(content), source.text)
 	for i, part := range source.parts {
@@ -133,8 +158,15 @@ func (w familyFixtureWriter) mail(t *testing.T, source familyMail) {
 		child, err := w.catalog.NodeByID(t.Context(), relation.Child.NodeID)
 		require.NoError(t, err)
 		require.Equal(t, relation.Child.VersionID, child.CurrentVersionID)
+		if retained, ok := w.fixture.originals[part.key]; ok {
+			require.Equal(t, retained.member.NodeID, child.ID)
+			require.Equal(t, retained.member.VersionID, child.CurrentVersionID)
+			require.Equal(t, retained.bytes, []byte(part.text))
+			continue
+		}
 		w.retain(t, part.key, child, []byte(part.text), part.text)
 	}
+	return published
 }
 
 func (w familyFixtureWriter) retain(
