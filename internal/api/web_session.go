@@ -382,6 +382,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 			}
 		}
 	}
+	if method == http.MethodPost && path == telemetryEventsPath && r.URL.RawQuery == "" {
+		return true
+	}
 	if method == http.MethodDelete && path == webSessionPath {
 		return true
 	}

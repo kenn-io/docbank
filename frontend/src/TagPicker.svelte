@@ -89,7 +89,7 @@
         dismiss: close,
         escapeFocus: () => buttonEl,
       }),
-      autoReposition(() => listEl, positionList),
+      autoReposition(() => [listEl], positionList),
     ];
     return () => cleanups.forEach((cleanup) => cleanup());
   });

@@ -38,7 +38,8 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		"createPhotoAsset", "getPhotoAsset", "getPhotoAssetByNode", "attachPhotoFile", "detachPhotoFile",
 		"excludePhotoAsset", "promotePhotoNode", "setPhotoDisplay", "getPhotoSettings", "setPhotoSettings",
 		"createPerson", "getPerson", "renamePerson", "retirePerson", "mergePerson", "splitPerson",
-		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs"} {
+		"initBackupRepository", "createBackupSnapshot", "listBackupSnapshots", "listJobs",
+		"reportTelemetryEvent"} {
 		assert.Contains(t, doc, op, "operation missing from OpenAPI doc")
 	}
 	assert.Contains(t, doc, "/api/daemon/shutdown", "offline clients need lifecycle operations")
@@ -59,6 +60,14 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 		} else {
 			assert.NotContains(t, block, "        dest:")
 		}
+	}
+}
+
+func TestOpenAPITelemetryResponses(t *testing.T) {
+	t.Parallel()
+	op := api.NewOfflineServer().API().OpenAPI().Paths["/api/daemon/telemetry/events"].Post
+	for _, status := range []string{"202", "400", "401", "403", "413", "415", "500"} {
+		assert.Contains(t, op.Responses, status)
 	}
 }
 

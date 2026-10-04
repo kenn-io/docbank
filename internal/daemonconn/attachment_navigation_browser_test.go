@@ -29,7 +29,7 @@ func TestAttachmentNavigationRealDaemonBrowser(t *testing.T) {
 	run := func(args ...string) []byte {
 		t.Helper()
 		cmd := exec.CommandContext(t.Context(), filepath.Join(repository, "docbank"), args...)
-		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+vault)
+		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+vault, "DOCBANK_TELEMETRY_ENABLED=0")
 		out, runErr := cmd.CombinedOutput()
 		require.NoError(t, runErr, string(out))
 		return out
@@ -37,7 +37,7 @@ func TestAttachmentNavigationRealDaemonBrowser(t *testing.T) {
 	run("daemon", "start")
 	t.Cleanup(func() {
 		cmd := exec.Command(filepath.Join(repository, "docbank"), "daemon", "stop")
-		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+vault)
+		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+vault, "DOCBANK_TELEMETRY_ENABLED=0")
 		out, stopErr := cmd.CombinedOutput()
 		require.NoError(t, stopErr, string(out))
 	})

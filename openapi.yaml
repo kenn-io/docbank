@@ -15966,6 +15966,53 @@ paths:
       responses:
         "202":
           description: Shutdown accepted
+  /api/daemon/telemetry/events:
+    post:
+      operationId: reportTelemetryEvent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                event:
+                  description: An event the daemon's telemetry allowlist names. Other events return 400.
+                  minLength: 1
+                  type: string
+              required:
+                - event
+              type: object
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  status:
+                    description: queued when the event will be sent; disabled when telemetry is off and nothing is sent.
+                    enum:
+                      - queued
+                      - disabled
+                    type: string
+                required:
+                  - status
+                type: object
+          description: Event queued, or dropped because telemetry is off
+        "400":
+          description: Malformed body or an event the daemon does not allow
+        "401":
+          description: Missing or invalid API key or browser session
+        "403":
+          description: Browser session does not permit this request
+        "413":
+          description: Request body exceeds 64 KiB
+        "415":
+          description: Content type must be application/json
+        "500":
+          description: Telemetry capture failed
+      summary: Report an anonymous web application usage event
   /api/daemon/web-download:
     delete:
       operationId: cancelWebDownload

@@ -147,6 +147,53 @@ func (c *Client) ShutdownDaemon(ctx context.Context, options *ShutdownDaemonRequ
 	return responseParser(ctx, resp)
 }
 
+// ReportTelemetryEvent Report an anonymous web application usage event
+func (c *Client) ReportTelemetryEvent(ctx context.Context, options *ReportTelemetryEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReportTelemetryEventResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/daemon/telemetry/events",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReportTelemetryEventResponse, error) {
+		switch resp.StatusCode {
+
+		case 202:
+
+			target := new(ReportTelemetryEventResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReportTelemetryEventResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/telemetry/events")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 202)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CancelWebDownload Discard a prepared browser download
 func (c *Client) CancelWebDownload(ctx context.Context, options *CancelWebDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
@@ -12241,6 +12288,34 @@ func (o *ShutdownDaemonRequestOptions) GetHeader() (map[string]string, error) {
 	return headers, err
 }
 
+// ReportTelemetryEventRequestOptions is the options needed to make a request to ReportTelemetryEvent.
+type ReportTelemetryEventRequestOptions struct {
+	Body *ReportTelemetryEventBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReportTelemetryEventRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReportTelemetryEventRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReportTelemetryEventRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReportTelemetryEventRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CancelWebDownloadRequestOptions is the options needed to make a request to CancelWebDownload.
 type CancelWebDownloadRequestOptions struct {
 	Query *CancelWebDownloadQuery
@@ -20112,6 +20187,14 @@ const (
 	SavedQueryV1SchemaVN1 SavedQueryV1SchemaV = 1
 )
 
+// ReportTelemetryEventResponseStatus queued when the event will be sent; disabled when telemetry is off and nothing is sent.
+type ReportTelemetryEventResponseStatus string
+
+const (
+	Disabled ReportTelemetryEventResponseStatus = "disabled"
+	Queued   ReportTelemetryEventResponseStatus = "queued"
+)
+
 type ListDocumentsQuerySort string
 
 const (
@@ -20799,6 +20882,11 @@ type ReadWorkspaceQueryPagePath struct {
 	ID string `json:"id"`
 }
 
+type ReportTelemetryEventBody struct {
+	// Event An event the daemon's telemetry allowlist names. Other events return 400.
+	Event string `json:"event"`
+}
+
 type PrepareWebDownloadBody struct {
 	BlobHash           string  `json:"blob_hash"`
 	EmailPdfAttachment *string `json:"email_pdf_attachment,omitempty"`
@@ -21383,6 +21471,11 @@ type UploadFileQuery struct {
 
 type ChallengeDaemonResponse struct {
 	Proof string `json:"proof"`
+}
+
+type ReportTelemetryEventResponse struct {
+	// Status queued when the event will be sent; disabled when telemetry is off and nothing is sent.
+	Status ReportTelemetryEventResponseStatus `json:"status"`
 }
 
 type PrepareWebDownloadResponse = []byte

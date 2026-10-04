@@ -16,6 +16,7 @@ lists the checks contributors must preserve.
 | `internal/daemonconn` | daemon convergence and receipt validation for the generated client | opening SQLite or blobs |
 | `internal/home` | vault layout, privacy, and portable vault/tree locking | data operations |
 | `internal/config` | strict config parsing and security validation | runtime discovery |
+| `internal/telemetry` | the daemon's PostHog reporter options, event allowlist and its wiring of kit's install ID and heartbeat | vault data, HTTP auth, embedded vault paths |
 | `document/mistral` | Mistral OCR, capability evidence, unit limits, and the optional office render-to-PDF route | generic format detection, office conversion, or storage authority |
 | `cmd/docbank` | Cobra ergonomics and human output | store business logic |
 | root package `docbank` | lifecycle and bounded public operations for one exclusively owned embedded vault | standalone CLI paths or a second storage implementation |

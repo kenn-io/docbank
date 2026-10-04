@@ -42,7 +42,9 @@ import (
 	"go.kenn.io/docbank/internal/pdfstamp"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 	"go.kenn.io/docbank/internal/vectorworker"
+	"go.kenn.io/docbank/internal/version"
 	docweb "go.kenn.io/docbank/internal/web"
 )
 
@@ -217,6 +219,13 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := blobs.CleanTmp(); err != nil {
 		return err
 	}
+	telemetryReporter := telemetry.New(telemetry.Options{Dir: layout.Root, Version: version.Version, Commit: version.Commit, Logger: logger})
+	// Registered before the supervisor's drain defer so it runs after the heartbeat has finished.
+	defer func() {
+		if err := telemetryReporter.Close(); err != nil {
+			logger.Warn("telemetry close failed", "error", err)
+		}
+	}()
 	jobSupervisor := jobs.New(sigCtx, logger)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(
@@ -483,6 +492,14 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := photoImports.Resume(sigCtx, jobSupervisor); err != nil {
 		return err
 	}
+	if telemetryReporter.Enabled() {
+		if err := jobSupervisor.Start(telemetry.HeartbeatJobName, func(ctx context.Context) error {
+			telemetry.RunHeartbeat(ctx, telemetryReporter, logger)
+			return nil
+		}); err != nil {
+			logger.Warn("telemetry heartbeat not started", "error", err)
+		}
+	}
 	srv := api.NewServer(api.Deps{
 		Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Logger: logger,
 		RequestEmailPDF:           requestEmailPDF,
@@ -493,6 +510,7 @@ func runServe(ctx context.Context) (retErr error) {
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
 		Exports:               exportWorker,
+		TelemetryCapture:      telemetry.CaptureHandler(telemetryReporter),
 	})
 	defer srv.Close()
 	newHTTPServer := func() *http.Server {
