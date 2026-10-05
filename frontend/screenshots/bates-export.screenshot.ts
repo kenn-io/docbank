@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const run = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const binary = path.join(repository, "docbank");
+const binary = path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const output = process.env.DOCBANK_BATES_SCREENSHOT_DIR;
 test.skip(!output, "DOCBANK_BATES_SCREENSHOT_DIR enables the synthetic Bates proof");
 

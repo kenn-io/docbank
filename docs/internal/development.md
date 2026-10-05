@@ -4,6 +4,47 @@ Start with the component that owns the behavior, then update each client and
 contract affected by the change. This page maps package responsibilities and
 lists the checks contributors must preserve.
 
+## Repository layout
+
+| Location | Contents |
+| --- | --- |
+| Root Go files | Public `go.kenn.io/docbank` embedded API and its tests |
+| `cmd/docbank/` | Standalone command and daemon composition |
+| `document/`, `report/`, `sqlite/` | Public processing, reporting, and SQLite packages |
+| `internal/` | Vault implementation, HTTP API, generated Go client, and embedded web assets |
+| `frontend/` | Web application, generated TypeScript client, and browser harnesses |
+| `docs/` | Public guides and the private contributor guides in `internal/` |
+| `website/` | Static product page, document guide, fonts, and site assets |
+| `scripts/` | Build, test, generation, installation, and publishing tools |
+| `deploy/` | Processing-service deployment and benchmark tooling |
+| `.github/` | Hosted workflows and their configuration |
+| `LICENSES/` | Third-party license texts |
+
+The root also holds project entry points, legal notices, module metadata, and
+configuration discovered there by development tools. The root Go files form a
+single public package; moving them into a directory would change its import
+path. Keep tests beside the package they exercise.
+
+`make build` writes the local executable to ignored `bin/` (`bin/docbank.exe`
+on Windows). `make clean` removes those binaries and built frontend assets.
+Documentation builds write to ignored `site/`; scratch documents and captures
+belong in ignored `.superpowers/`.
+
+### Generated API files
+
+Run `make generate-api` from the repository root after changing HTTP contracts.
+It regenerates `internal/api/openapi.yaml` from the routes, then generates both
+`internal/apiclient/client.gen.go` and `frontend/src/generated/docbank.ts`.
+Install the locked frontend dependencies with `npm ci --prefix frontend` first.
+Review and commit the schema and clients together; do not edit generated files.
+
+The Go generator config and templates live in `scripts/oapi-codegen/`; frontend
+generation uses `frontend/orval.config.ts`. Paths in the Go generator config
+are relative to the repository root. `make openapi` regenerates only the schema
+and needs no running vault. The rendition and embedding bridge schemas remain
+with their independent contracts in `document/bridge/` and
+`document/embeddingbridge/`.
+
 ## Package ownership
 
 | Area | Owns | Must not own |
@@ -134,11 +175,16 @@ provider construction and calls.
 
 For every material design change:
 
-1. Update the relevant internal living design page with current mechanics and
-   rationale.
+1. Distill local Superpowers specs, plans, and reviews into the relevant
+   internal living design page with current mechanics and rationale before
+   opening or updating the pull request.
 2. Update public architecture when the user-visible model or boundary changes.
 3. Update CLI/API references and examples when a contract changes.
 4. Keep planned public behavior inside explicit planned callouts.
+
+Keep the working documents in ignored `.superpowers/`; they are not PR
+deliverables. The [documentation workflow](../README.md#what-happens-to-specs-and-plans)
+describes how to preserve useful decisions and retire the working material.
 
 Do not add a historical decision ledger. Git records prior versions; the
 working tree should let a new contributor understand the current system without

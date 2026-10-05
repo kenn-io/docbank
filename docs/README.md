@@ -1,7 +1,7 @@
 # docbank documentation
 
 This directory holds the [zensical](https://zensical.org) documentation site
-plus internal design material.
+and maintained contributor guides.
 
 ## Where does each page belong?
 
@@ -11,7 +11,6 @@ plus internal design material.
 | `website/guide/index.html` and `website/guide.md` | How does a document move through the system? | `/guide/` and `/guide.md` |
 | `docs/*.md`, `usage/`, `agents/`, and `architecture/` | How do I use, integrate, or maintain it? | `/docs/` and its child routes |
 | `docs/internal/` | How is the implementation organized, and why? | Never published |
-| `superpowers/specs/` (beneath this directory) | What did an earlier design propose or approve? | Never published or included in normal navigation |
 
 Give each fact one owning guide or reference. Link to that section elsewhere.
 The product page introduces the value; the guide explains the document model;
@@ -29,6 +28,25 @@ Checks under `scripts/` validate sources and generated links, metadata, and
 assets. Those scripts and configuration files are never published. Python tools
 use the locked `uv` environment.
 
+## How is the site assembled?
+
+`scripts/docs/build.mjs` builds the three tiers into one `site/` directory.
+It copies the explicit website inputs and installers, materializes the pinned
+screenshot set, and invokes `zensical-docs.sh` to render the documentation under
+`/docs/`. The website uses static HTML, CSS, and small JavaScript modules;
+building it does not require the product frontend or its npm dependencies.
+
+The build stages its output before replacing the previous site. Verification
+checks local links and anchors, canonical URLs, metadata, assets, and the
+publishing boundary. Each substantive HTML page must have a Markdown peer;
+documentation Markdown is copied byte-for-byte, and `llms.txt` indexes every
+published Markdown page. A failed build leaves the previous output in place.
+
+Fonts are vendored in `website/fonts/`: Inter for body text and JetBrains Mono
+for headings, labels, and code. Zensical's remote font loading is disabled, and
+the site verifier rejects Google Fonts references. Font licenses live in
+`LICENSES/` at the repository root.
+
 ## How should I write or revise a page?
 
 Follow the [Documentation rules in AGENTS.md](../AGENTS.md#documentation).
@@ -41,6 +59,24 @@ paragraphs for the reason behind a rule. Keep limitations apart from available
 capabilities. Preserve design rationale, approvals, and active exceptions,
 including the conditions for removing an exception. Mark superseded designs
 as historical and keep them outside normal navigation.
+
+## What happens to specs and plans?
+
+Use Superpowers specs, plans, and review notes as local working documents in
+ignored `.superpowers/specs/` and `.superpowers/plans/` at the repository root.
+Before opening or updating a pull request:
+
+1. Check the result against the implementation and the existing guides.
+2. Fold lasting contracts, rationale, and active exceptions into the owning
+   architecture or functional guide. Update an existing page where possible.
+3. Put unfinished work in kata and remove the working documents from the
+   proposed changes. Do not preserve execution checklists, review transcripts,
+   or historical pass claims as documentation.
+
+The commit hook rejects both the local working directory and the former
+Superpowers directory beneath `docs/`. Git history preserves prior designs;
+contributors should be able to understand the current system from its
+maintained guides.
 
 ## How do I check a change locally?
 

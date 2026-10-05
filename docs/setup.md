@@ -86,7 +86,7 @@ another platform. Never install an archive for a different OS or architecture.
 ```bash
 git clone https://github.com/kenn-io/docbank.git
 cd docbank
-make build      # builds ./docbank
+make build      # builds ./bin/docbank
 make install    # installs to ~/.local/bin
 ```
 
@@ -101,7 +101,7 @@ Get-ChildItem internal/web/dist -Force |
   Where-Object Name -ne '.keep' |
   Remove-Item -Recurse -Force
 Copy-Item -Recurse -Force frontend/dist/* internal/web/dist/
-go build -tags fts5 -o docbank.exe ./cmd/docbank
+go build -tags fts5 -o bin/docbank.exe ./cmd/docbank
 go test -tags fts5 ./...
 ```
 
@@ -113,7 +113,7 @@ directly on Unix, prepare the embedded frontend and pass the tag yourself:
 (cd frontend && npm ci && npm run build)
 find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
 cp -R frontend/dist/. internal/web/dist/
-go build -tags fts5 ./cmd/docbank
+go build -tags fts5 -o bin/ ./cmd/docbank
 go test -tags fts5 ./...
 ```
 

@@ -12,7 +12,7 @@ const repository = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",
 );
-const binary = path.join(repository, "docbank");
+const binary = path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const screenshots = process.env.DOCBANK_VERIFIED_INSPECTOR_SCREENSHOT_DIR;
 const db17BrowserURL = process.env.DOCBANK_DB17_BROWSER_URL;
 test.skip(

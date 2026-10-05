@@ -10,7 +10,7 @@ import { crc32 } from "node:zlib";
 
 const run = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const binary = path.join(repository, "docbank");
+const binary = path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const output = process.env.DOCBANK_SCREENSHOT_DIR;
 if (!output) throw new Error("DOCBANK_SCREENSHOT_DIR is required");
 

@@ -2,7 +2,7 @@ import { defineConfig } from "orval";
 
 export default defineConfig({
   docbank: {
-    input: "../openapi.yaml",
+    input: "../internal/api/openapi.yaml",
     output: {
       target: "src/generated/docbank.ts",
       client: "fetch",

@@ -14,7 +14,7 @@ if (!screenshots) throw new Error("DOCBANK_SCREENSHOT_DIR is required");
 test("import collections, label conflicts and stable document navigation", async ({ page }) => {
   const workspace = await mkdtemp(path.join(tmpdir(), "docbank-collections-"));
   const vault = path.join(workspace, "vault");
-  const run = async (...args: string[]) => (await exec(path.join(repository, "docbank"), args, {
+  const run = async (...args: string[]) => (await exec(path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank"), args, {
     cwd: repository, env: { ...process.env, DOCBANK_HOME: vault }, timeout: 60_000,
   })).stdout.trim();
   try {

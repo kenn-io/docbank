@@ -12,7 +12,7 @@ const screenshots = process.env.DOCBANK_QUERY_BAR_SCREENSHOT_DIR;
 test.skip(!screenshots, "DOCBANK_QUERY_BAR_SCREENSHOT_DIR is required for PR-only query-bar captures");
 test("complete query validation uses the real compiler without executing", async ({page}) => {
   const workspace = await mkdtemp(path.join(tmpdir(),"docbank-query-bar-"));
-  const run = async (...args:string[]) => (await exec(path.join(repository,"docbank"),args,{
+  const run = async (...args:string[]) => (await exec(path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank"),args,{
     cwd:repository,env:{...process.env,DOCBANK_HOME:path.join(workspace,"vault")},timeout:60_000,
   })).stdout.trim();
   try {

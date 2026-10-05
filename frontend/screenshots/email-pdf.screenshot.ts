@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const run = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const binary = path.join(repository, "docbank");
+const binary = path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const backup = process.env.DOCBANK_EMAILPDF_SCREENSHOT_BACKUP;
 const output = process.env.DOCBANK_SCREENSHOT_DIR;
 

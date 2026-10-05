@@ -12,7 +12,7 @@ import * as generated from "../src/generated/docbank.js";
 
 const exec = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(root, process.platform === "win32" ? "docbank.exe" : "docbank");
+const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(root, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const output = process.env.DOCBANK_NATURAL_SEARCH_SCREENSHOT_DIR;
 
 test("natural-language search renders processing controls and live rows", async ({page}) => {

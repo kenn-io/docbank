@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 const run = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, process.platform === "win32" ? "docbank.exe" : "docbank");
+const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const output = process.env.DOCBANK_SCREENSHOT_DIR;
 if (!output) throw new Error("DOCBANK_SCREENSHOT_DIR is required");
 

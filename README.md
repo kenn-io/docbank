@@ -167,6 +167,13 @@ Thanks to everyone whose work went into v0.15.0:
 See the [release contribution history](https://github.com/kenn-io/docbank/compare/v0.14.0...v0.15.0)
 and [all contributors](https://github.com/kenn-io/docbank/graphs/contributors).
 
+## Contributing
+
+Start with the [development guide](docs/internal/development.md) for the
+repository layout, package ownership, generated clients, and checks. Follow
+[AGENTS.md](AGENTS.md) and the [documentation guide](docs/README.md) when
+updating code or documentation.
+
 ## License
 
 Copyright 2026 Kenn Software LLC.

@@ -13,7 +13,7 @@ const screenshots = process.env.DOCBANK_SCREENSHOT_DIR!;
 test("saved queries and literal highlight management", async ({ page }) => {
   const workspace = await mkdtemp(path.join(tmpdir(), "docbank-saved-query-"));
   const vault = path.join(workspace, "vault");
-  const run = async (...args: string[]) => (await exec(path.join(repository, "docbank"), args, {
+  const run = async (...args: string[]) => (await exec(path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank"), args, {
     cwd: repository, env: { ...process.env, DOCBANK_HOME: vault }, timeout: 60_000,
   })).stdout.trim();
   try {
