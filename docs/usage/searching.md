@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-13
+last_edited: 2026-10-05
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -45,11 +45,11 @@ The `MATCH` column tells you which group produced the result.
 ## Which documents can match?
 
 Search includes live files and directories, excluding the vault root. Trashed
-nodes do not appear. Restoring them returns them to search; renames update the
+nodes do not appear. Restoring them returns them to search. Renames update the
 name index immediately.
 
-Text search uses only the current version of each live file. Read retained
-older versions with `docbank versions`; ordinary search does not search them.
+Text search uses only the current version of each live file. Ordinary search
+does not cover older versions. Read those with `docbank versions`.
 
 ## How do I narrow the results?
 
@@ -74,7 +74,7 @@ node ID, which JSON echoes as `under_node_id`. Moving or renaming that
 directory does not change which directory the request selects. The directory
 itself is excluded from results.
 
-Time filters require absolute RFC3339 timestamps. Docbank normalizes explicit
+Time filters require absolute RFC3339 timestamps. Docbank normalizes
 offsets to UTC and echoes the bounds in JSON. The start is inclusive and the
 end is exclusive, so adjacent ranges do not duplicate a boundary result.
 These filters use the live node's current `modified_at`, not the source file's
@@ -92,7 +92,7 @@ rejected. Add text, a tag, or a time bound before using those filters.
 ## How do I handle incomplete results?
 
 `--limit` accepts 1–1000. Docbank always reports when the result was truncated.
-For scripts, `--json` returns `hits`, `limit`, and `truncated`; `hits` is always
+For scripts, `--json` returns `hits`, `limit`, and `truncated`. `hits` is always
 an array, including when nothing matches. The limit caps response size, not
 work inside the database.
 
@@ -110,13 +110,13 @@ are interchangeable: each keeps its own node, version, path, and import
 memberships. This read does not delete or merge anything.
 
 The response reports exact group and current-reference totals. Groups sort by
-SHA-256; `limit` accepts 1–100 groups and defaults to 50. Increase `offset` to
+SHA-256. `limit` accepts 1–100 groups and defaults to 50. Increase `offset` to
 read the next page. Each page reflects one read snapshot, not a frozen result
 set across requests, so concurrent changes can affect later pages.
 
 Each group previews at most 16 references and reports `references_truncated`
 when more exist. References sort by earliest current modification time, then
-node ID; `representative_node_id` identifies the first. This choice does not
+node ID, and `representative_node_id` identifies the first. This choice does not
 assert which document was originally authored first. Each preview also shows
 up to 16 eligible collection identities and their labels, with an exact
 `collection_count` and `collections_truncated` flag.
@@ -124,33 +124,45 @@ up to 16 eligible collection identities and their labels, with an exact
 Historical versions and trash do not inflate live duplicate groups. To inspect
 all retained references for one hash, use `GET /api/v1/content-references` with
 `sha256`, `limit`, and `offset`. That lookup distinguishes current versions,
-live history, and trash. Duplicate discovery is a separate HTTP read; it does
+live history, and trash. Duplicate discovery is a separate HTTP read. It does
 not change text-search results or automatically collapse them.
 
 ## Export search counts
 
 Use [Search exports](search-exports.md) to compare date-scoped search terms in
-an eight-column CSV and retain a frozen evidence ZIP. Recent export history
-keeps reusable requests; named saved queries remain a separate workflow.
+an eight-column CSV and keep a frozen evidence ZIP. Recent export history
+keeps reusable requests. Named saved queries are a separate workflow.
 
 ## Photo query predicates
 
-Saved QueryV1 definitions can retain photo kind, case-insensitive complete camera/lens make or model, safe integer ISO bounds, capture dates, decimal-string GPS boxes and asset UUID sets. See [Browse photo assets over HTTP](photos.md#browse-photo-assets-over-http) for the complete field and sort contract. Existing tags, text and collection predicates combine through the same compiler. Photos evaluates photo metadata predicates against the selected display file. Ordinary file predicates can still match individual members. Document snapshots use each document's own metadata. Document snapshots support these predicates, but `capture_time` and `import_time` sorting is available only in Photos; a snapshot request naming either field gets an explicit error.
+Saved QueryV1 definitions can include photo kind, case-insensitive complete
+camera/lens make or model, safe integer ISO bounds, capture dates,
+decimal-string GPS boxes, and asset UUID sets. See
+[Browse photo assets over HTTP](photos.md#browse-photo-assets-over-http) for the
+complete field and sort contract. Existing tag, text, and collection predicates
+combine through the same compiler.
+
+Photos evaluates photo metadata predicates against the selected display file.
+Ordinary file predicates can still match individual members. Document snapshots
+use each document's own metadata. They support these predicates, but
+`capture_time` and `import_time` sorting is available only in Photos. A snapshot
+request naming either field returns an error.
 
 ## Save complete query intent over HTTP
 
 Save a named search definition when several clients need to reuse it. The
 saved-definition HTTP API stores the intent with the vault's metadata. A
 separate run endpoint executes a saved query. Saved definitions and run
-receipts survive backup and restore; snapshot rows do not.
+receipts survive backup and restore, but snapshot rows do not.
 
 The [web management screen](web.md#saved-queries-and-highlights) also manages
 saved definitions.
 
 A query payload uses `QueryV1`: a JSON object with version `v: 1`, search text,
 filters, and optional syntax, mode, and sort choices. A saved mode such as
-`hybrid` describes intent. Query snapshots reject it; [processing search](search.md)
-requires an explicit processing profile and source-version fence.
+`hybrid` describes intent. Query snapshots reject it.
+[Processing search](search.md) requires a named processing profile and a
+source-version fence.
 See the [payload reference](../architecture/http-api.md#saved-query-and-highlight-definitions)
 for accepted fields and limits.
 
@@ -188,8 +200,8 @@ curl --fail-with-body -X PATCH \
 ```
 
 Only `name`, `description`, and `payload` can change. A supplied `payload`
-replaces the complete payload. A stale revision returns `412 stale_revision`;
-read again and reconsider the edit. To delete a definition, send `DELETE` to
+replaces the complete payload. A stale revision returns `412 stale_revision`.
+Read again and reconsider the edit. To delete a definition, send `DELETE` to
 the same URL with its current `If-Match`.
 
 List definitions with `GET /api/v1/saved-queries?kind=query&limit=100&offset=0`.
@@ -218,9 +230,9 @@ revision rules as a query.
 ### What are the saved-definition limits?
 
 The web application manages saved definitions. The CLI and TUI have no matching
-management command or screen. Definition CRUD does not execute saved queries,
-render highlights, or return result counts; use the saved-query run endpoint
-for execution.
+management command or screen. Creating, reading, updating, or deleting a
+definition does not execute saved queries, render highlights, or return result
+counts. Use the saved-query run endpoint for execution.
 
 Once permanent audit history is enabled anywhere in the vault, create, update,
 and delete return `409 audit_mutation_unsupported`. Listing and reading still
@@ -258,8 +270,8 @@ ordering, totals, and original node/content versions remain fixed even if the
 vault changes after creation.
 
 To execute a saved query, first read its current definition and keep its ETag.
-Then run exactly that inspected revision; the request body can change execution
-options but cannot replace the saved QueryV1 payload:
+Then run that revision. The request body can change execution options but
+cannot replace the saved QueryV1 payload:
 
 ```bash
 curl --fail-with-body --silent --show-error \
@@ -272,9 +284,9 @@ curl --fail-with-body --silent --show-error \
 
 The `{run,snapshot}` response includes a durable receipt comparing this run
 with the previous one and the first ephemeral snapshot page. A receipt proves
-what ran and its exact totals; it cannot restore the rows. If paging returns
-`410 snapshot_gone`, explicitly create a new workspace snapshot or run the
-saved query again, then use only the new snapshot's cursors.
+what ran and its exact totals. It cannot restore the rows. If paging returns
+`410 snapshot_gone`, create a new workspace snapshot or run the saved query
+again, then use only the new snapshot's cursors.
 
 Snapshot execution supports duplicate and text-coverage constraints. Supply a
 configured `profile` when the query uses text coverage. Semantic and hybrid
@@ -287,13 +299,13 @@ facets, frozen authority, and forward/backward pages. See
 
 In the web application, choose **Edit query** for expression editing, structured
 facet summaries, syntax help, and positioned server errors. A saved query can
-open in the same editor; an import collection can start a new collection-scoped
-draft. Text, facets, mode, and sort remain together when saved or kept in the
+open in the same editor, and an import collection can start a new
+collection-scoped draft. Text, facets, mode, and sort remain together when saved or kept in the
 URL. Closing the editor does not discard the draft.
 
 Collection quality can also open a scoped draft from selected distribution
 values. For example, selecting `pdf` and `txt` extensions creates
-`(extension:"pdf" OR extension:"txt")` with the collection identity retained
+`(extension:"pdf" OR extension:"txt")` with the collection identity kept
 as a structured filter. Suggestions require an explicit action and leave live
 search unchanged.
 
@@ -301,12 +313,12 @@ The editor never sends an unsupported query through ordinary live search with
 constraints removed. After validation, **Run query** creates a new frozen
 snapshot from the complete draft. Draft edits do not alter the accepted
 snapshot until another run succeeds. Closing the editor keeps the draft in
-the current session; save a named definition before reloading or leaving it.
+the current session. Save a named definition before reloading or leaving it.
 
 `POST /api/v1/queries/parse` validates a QueryV1 expression and resolves its
 references. It returns `query`, `query_fingerprint`, and `dependencies`, each
 with a `kind`, stable `id`, and observed `revision`. It does not return search
-results, change saved definitions, or expose SQL. The CLI and `/search` retain
+results, change saved definitions, or expose SQL. The CLI and `/search` keep
 the simple search behavior described above.
 
 For example, submit this JSON to preview a name expression with a separate
@@ -320,7 +332,7 @@ size filter:
 }
 ```
 
-The response retains the complete entered text. Expression fields are not
+The response keeps the complete entered text. Expression fields are not
 removed from it or copied into hidden filters.
 
 Advanced syntax supports exact terms, quoted phrases, a trailing `*` for
@@ -331,7 +343,7 @@ text, and `\AND` is not an operator. Simple syntax treats these operators as
 literal prefix terms, as the CLI does.
 
 `alpha NEAR/5 beta` requires the two terms or phrases to occur within five
-tokens in the same indexed source. Bare `NEAR` uses ten; distances range from
+tokens in the same indexed source. Bare `NEAR` uses ten. Distances range from
 zero to 1,000. Chained NEAR expressions and Boolean operands inside NEAR are
 rejected. `name:(alpha NEAR/0 beta)` restricts the match to the filename.
 
@@ -352,12 +364,14 @@ the name branch. Nested field overrides such as `name:(tag:urgent)` are not
 supported.
 
 Structured filter dimensions combine with `AND`. Values within one include
-list combine with `OR`; an exclude list removes that union. Paths are subtree
-constraints, not wildcard patterns. Collection unions do not duplicate files.
-Time comparisons retain nanosecond precision. Preview and snapshot execution
-support duplicate and text-coverage constraints; snapshot execution requires a
-configured processing profile for coverage predicates. Semantic/hybrid mode
-and relevance ordering return explicit errors instead of being ignored.
+list combine with `OR`, and an exclude list removes that union. Paths are
+subtree constraints, not wildcard patterns. Collection unions do not duplicate
+files. Time comparisons keep nanosecond precision.
+
+Preview and snapshot execution support duplicate and text-coverage constraints.
+Snapshot execution requires a configured processing profile for coverage
+predicates. Semantic/hybrid mode and relevance ordering return errors instead
+of being ignored.
 
 Expression errors return `422 invalid_query` with `position.offset` and
 `position.end`: a half-open UTF-8 byte span in the submitted text. Database
@@ -375,40 +389,41 @@ The worker reads the stored content and checks its hash, whether Docbank stores
 it as an individual file or inside a pack. Text becomes searchable only after
 that complete read passes verification.
 
-The independent `extract:email` job handles files imported as
+A separate `extract:email` job handles files imported as
 `message/rfc822`. It preserves the raw message and canonical MIME inventory,
 then indexes only the selected outer body. Alternate bodies, nested forwarded
 messages, headers, and attachments do not leak into ordinary search. HTML is
-converted to bounded visible text before publication; an empty, unsupported,
-encrypted, or over-limit body remains explicit metadata but contributes no
+converted to bounded visible text before publication. An empty, unsupported,
+encrypted, or over-limit body is recorded in metadata but contributes no
 search hit.
 
 `.eml`, `.EML`, and mixed-case variants are declared as `message/rfc822` at
-new import, independent of the host MIME registry. Existing content with
+new import, regardless of the host MIME registry. Existing content with
 another stored media type is never reclassified from its filename. An embedded
 or master-API caller may explicitly ensure its email metadata without changing
 the original media type, hash, or bytes.
 
-Applications can explicitly [publish email attachments as ordinary documents](../embedding.md#publish-email-attachment-documents).
-Each attachment keeps a relation to its exact parent version and MIME part.
-Published CSV and other supported text files enter normal text extraction;
-other formats require an explicitly configured processing provider and consent.
-Attachment text matches the child document. It never becomes a parent-body hit.
+Applications can [publish email attachments as ordinary documents](../embedding.md#publish-email-attachment-documents).
+Each attachment keeps a relation to its parent version and MIME part.
+Published CSV and other supported text files enter normal text extraction.
+Other formats require a configured processing provider and consent.
+Attachment text matches the child document, not the parent email's body.
 
 Extraction is bounded to 16 MiB per blob. Larger documents, invalid UTF-8, and
 text containing NUL bytes remain stored and readable but are not body-indexed.
 Newly ingested or replaced content may take a few seconds to appear while the
 daemon job reaches it. A transient open, read, or verification error leaves the
-item queued and is retried on a bounded delay; it does not become a permanent
+item queued and is retried on a bounded delay. It does not become a permanent
 extraction failure. `docbank jobs` shows whether that worker is running.
 
 ## Which text is not searched?
 
 The daemon does not automatically extract PDF text layers, office-document
-text, unpublished email attachments, or text from images through optical character recognition (OCR). You
-can still find these files by name and read their stored bytes. The
+text, unpublished email attachments, or text from images through optical
+character recognition (OCR). You can still find these files by name and read
+their stored bytes. The
 [document processing libraries](../document-understanding.md) provide additional
-processing options for applications; adding a file does not start them.
+processing options for applications. Adding a file does not start them.
 
 Ordinary search in the CLI, HTTP API, web app, and TUI matches words in
 names and indexed text. Processing search uses the separate workflow below.
@@ -416,11 +431,12 @@ Saving search choices in QueryV1 does not execute either workflow.
 
 ## Processing search
 
-Configured document processing adds a separate source-fenced retrieval surface
-for retained renditions and embeddings. It requires an explicit mode, profile,
-and authorized immutable source-version set; it does not change ordinary name
-and plain-text search. See [Document processing search](search.md) for modes,
-coverage, and the consumer authority contract.
+Configured document processing adds a separate search over renditions and
+embeddings, limited to the source versions the caller names. It requires a
+mode, a profile, and an authorized set of source versions. It does not change
+ordinary name and plain-text search. See
+[Document processing search](search.md) for modes, coverage, and the consumer
+contract.
 
 Next: organize documents beyond paths with
 [Organizing & Tagging](organizing.md), or see every search flag in the

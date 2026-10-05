@@ -16,7 +16,7 @@ docbank web
 
 Docbank starts or reconnects to the vault's daemon and opens the browser. The
 daemon is the background process that owns the vault. The browser uses its
-authenticated HTTP API; it does not open the database or stored files directly.
+authenticated HTTP API. It does not open the database or stored files directly.
 The daemon accepts connections only from the local machine.
 
 Choose a task:
@@ -35,10 +35,10 @@ Choose a task:
 - Inspect [background jobs](#inspect-background-work), [storage](#inspect-physical-storage), or [backup snapshots](#inspect-backup-snapshots).
 
 The browser has limited permissions. See [Browser authentication](#browser-authentication)
-for their exact scope and [Current limits](#current-limits) for workflows that
+for their scope and [Current limits](#current-limits) for workflows that
 require the CLI or another API client.
 
-![The Docbank web application showing a synthetic vault tree and the selected document's authority.](https://docbank.ai/assets/generated/web-vault-browser.png)
+![The Docbank web application showing a synthetic vault tree and the selected document's authority card.](https://docbank.ai/assets/generated/web-vault-browser.png)
 
 *Select a document to see its stable identity and content hash beside the table.*
 
@@ -61,7 +61,7 @@ names distinguish documents without requiring you to recognize a media type.
 - Click **Document**, **Size**, or **Modified** to sort. Click the active
   heading again to reverse its direction. Directories remain grouped ahead of
   files in folder views.
-- Use refresh to reload the current stable directory ID. If another client
+- Use refresh to reload the current directory by its ID. If another client
   renamed or moved that directory, the browser adopts its current canonical
   path.
 
@@ -70,13 +70,12 @@ node ID identifies that entry even after a move or rename. Its revision is a
 change counter that Docbank uses to reject changes based on an outdated view.
 
 The browser selects the first row after loading a folder. A selected directory
-shows its path, revision, and modification time. A selected file additionally
-shows its exact logical size, media type, immutable current-version UUID, and
-SHA-256 content identity. The copy buttons copy the complete UUID or digest
-even when the card wraps it across lines. Every selected node also shows its
-assigned tag names. Hovering a tag shows its stable UUID and vault-wide
-assignment count; the bounded tag stack expands in place when a node carries
-more than six.
+shows its path, revision, and modification time. A selected file also shows
+its exact logical size, media type, current-version UUID, and SHA-256 content
+identity. The copy buttons copy the complete UUID or digest even when the card
+wraps it across lines. Every selected node also shows its assigned tag names.
+Hovering a tag shows its UUID and vault-wide assignment count. The tag stack
+expands in place when a node carries more than six tags.
 
 ![The slide-out navigation menu on a narrow screen](https://docbank.ai/assets/generated/web-navigation-mobile.png)
 
@@ -91,11 +90,11 @@ page boundary and never fetches another page.
 
 The same help dialog can assign digits <kbd>1</kbd> through <kbd>9</kbd> to tag
 definitions. Bindings are separate for each vault and stay in this browser for
-the current daemon run. Reopening the page keeps them; restarting the daemon or
+the current daemon run. Reopening the page keeps them. Restarting the daemon or
 clearing browser data requires setting them again.
 
-Pressing a configured digit toggles that tag on the one inspected
-file, independent of checked documents. Docbank waits for the file's complete
+Pressing a configured digit toggles that tag on the inspected file only,
+regardless of checked documents. Docbank waits for the file's complete
 assigned-tag list and sends its displayed revision with the change. A stale
 revision remains visible as an error and is never retried against newer state.
 
@@ -138,17 +137,17 @@ imports, and international filenames are preserved.
 Choose **Edit query** to write a complete expression, select simple or advanced
 syntax, and edit its mode, sort, and structured facets. Facets stay separate
 from field operands in the expression. Their summaries show the constraints
-you entered; validation does not move operands into hidden filters.
+you entered. Validation does not move operands into hidden filters.
 
 The daemon validates each edited draft after a short pause. It resolves saved,
 tag, and collection references and reports their observed revisions. Errors
-remain visible; **Focus query error** selects the reported part of the
-expression. A newer edit cancels and supersedes an older validation request.
+remain visible. **Focus query error** selects the reported part of the
+expression. A newer edit cancels an older validation request.
 
 **Save query draft** opens the saved-definition editor with the entire draft.
 **Open query** beside a saved query opens it here. From an import collection,
 **New query for this collection** starts a new draft scoped to that collection's
-stable identity. Closing the query editor keeps the draft in the tab and URL;
+identity. Closing the query editor keeps the draft in the tab and URL.
 **Discard query draft** removes it.
 
 If the draft has malformed input, such as incomplete facets JSON, correct it
@@ -169,18 +168,18 @@ remain separate until you choose **Run query** again. Choose 50, 100, or 250
 documents per page before the run. The workspace shows exact document and byte
 totals, previous and next page controls, and the node, content version, hash,
 size, revision, and tags observed when the snapshot was created. Later vault
-changes do not replace those rows.
-Live-folder keyboard shortcuts stay inactive while the snapshot is open.
+changes do not replace those rows. Live-folder keyboard shortcuts stay inactive
+while the snapshot is open.
 
-Select a frozen row to inspect those original facts and the exact selected
-version. The same card loads current path, revision, tags, provenance, and audit
-status separately as live observations. A later rename, retag, or content
-replacement therefore does not rewrite the snapshot facts or substitute the
-new head for preview and download.
+Select a frozen row to inspect those original facts and the selected version.
+The same card loads current path, revision, tags, provenance, and audit status
+separately as live observations. A later rename, retag, or content replacement
+therefore does not rewrite the snapshot facts or substitute the new head for
+preview and download.
 
 Use **Refine snapshot** to inspect collection, tag, media-family, extension,
 modified-time, size, text-coverage, and duplicate facets. Choosing a supported
-facet or changing the query creates a new snapshot; it never splices live
+facet or changing the query creates a new snapshot. It never splices live
 results into the accepted one. An unavailable facet says why instead of
 presenting a zero count.
 
@@ -193,15 +192,15 @@ use only the new snapshot and its cursors.
 
 ## Read archived email
 
-Choose **Email** in the content inspector for an EML document whose exact
-selected version has retained decoded metadata. Read decoded headers, inspect
-the original ordered headers, and switch between HTML and plain-text body
-alternatives. Missing or invalid sender dates remain explicit. Pending decoding
-and incomplete MIME inventories do not appear as complete messages.
+Choose **Email** in the content inspector for an EML document whose selected
+version has decoded metadata. Read decoded headers, inspect the original
+ordered headers, and switch between HTML and plain-text body alternatives.
+Missing or invalid sender dates are labeled as such. Pending decoding and
+incomplete MIME inventories do not appear as complete messages.
 
-HTML opens in an isolated frame. Sender scripts, forms, links, styles and remote
-resources are disabled before display; blocked or ambiguous images have visible
-placeholders. Only verified PNG and JPEG MIME parts in the body's nearest
+HTML opens in an isolated frame. Sender scripts, forms, links, styles, and
+remote resources are disabled before display. Blocked or ambiguous images have
+visible placeholders. Only verified PNG and JPEG MIME parts in the body's nearest
 related group can display inline. Press **Escape** inside the frame to return
 to its entry button. Long messages scroll, and **Show quoted text** expands
 quoted content without changing the original or the full-body PDF source.
@@ -210,17 +209,20 @@ The viewer accepts HTML bodies up to 16 MiB. Its additional display limits are
 100,000 markup candidates before parsing, 100,000 HTML nodes, 128 nesting
 levels, and 32 MiB of serialized output. Literal `<` characters also count
 toward the conservative markup limit.
+
 Inline images are limited to 128 occurrences, 5 MiB and 8 million pixels per
 image, 8,192 pixels per side, and 16 MiB and 32 million pixels in aggregate.
-PNG/JPEG limits and unsupported image formats produce explicit placeholders;
-body limits report an unavailable operation, never a silently truncated body.
+PNG/JPEG limits and unsupported image formats produce visible placeholders.
+Body limits report an unavailable operation instead of silently truncating the
+body.
 
 **Inspect attachment documents** opens the attachment navigation described
 below. Inline display and attachment document publication remain separate.
-**Download verified original** preserves the exact EML version. The existing
-PDF action downloads retained PDFs or uses the configured renderer, including
-the complete chosen body and quoted text. New rendering requires the pinned
-local Chromium/font configuration; an unavailable renderer reports its reason.
+**Download verified original** downloads that EML version unchanged. The
+existing PDF action downloads retained PDFs or uses the configured renderer,
+including the complete chosen body and quoted text. New rendering requires the
+pinned local Chromium/font configuration. An unavailable renderer reports its
+reason.
 
 ![Archived email with decoded headers and its HTML body](https://docbank.ai/assets/generated/web-email-reader.png)
 
@@ -229,10 +231,10 @@ local Chromium/font configuration; an unavailable renderer reports its reason.
 ## Follow email attachments
 
 Choose **Attachments** in the content inspector to see published attachment
-occurrences and incoming parent messages for the exact selected version.
+occurrences and incoming parent messages for the selected version.
 Repeated filenames or identical bytes remain separate occurrences, identified
-by their MIME part and publication order. **Load more** requests another page;
-the view stops at 1,000 occurrences per direction rather than expanding an
+by their MIME part and publication order. **Load more** requests another page.
+The view stops at 1,000 occurrences per direction rather than expanding an
 entire message family automatically.
 
 Each occurrence separates its MIME decoding outcome from current processing
@@ -242,10 +244,10 @@ list, an unavailable read, or an unchecked receipt does not prove that a
 message has no attachments. Occurrences without a published child stay visible.
 The tab does not publish documents, start processing, or grant provider consent.
 
-**Open attachment** and **Open parent** enter a separate exact-version context.
-Later content replacement does not substitute the live head or its media type
-for that related version. Preview, text, and download retain the usual byte
-verification and current-access checks. Missing or denied targets report an
+**Open attachment** and **Open parent** open that related version in its own
+context. Later content replacement does not substitute the live head or its
+media type for that related version. Preview, text, and download keep the usual
+byte verification and current-access checks. Missing or denied targets report an
 error without removing the occurrence.
 
 Follow nested messages with **Back to previous document**, or choose **Return
@@ -260,33 +262,34 @@ Ordinary live selections offer the same return path to the selected document.
 Choose **Export selection** in the selection dock for the checked documents.
 The toolbar's **Export** opens the whole frozen query when one is active, or
 the documents on the current page otherwise. Folders are not export members.
-Exports support up to 100,000 exact documents and 50 GiB of role payloads.
+Exports support up to 100,000 documents and 50 GiB of role payloads.
 
 Choose whether original files, retained text, and page images are required,
 optional, or excluded. A missing required role stops planning. An optional
 role records its unavailable status in the bundle. **Preview export** copies
-and checks every frozen page, then stores the exact versions and available
+and checks every frozen page, then stores the selected versions and available
 role files. Later edits to the live query, tags, or current content do not
 substitute new members or bytes.
 
 Review the document count, member hash, role availability, plan fingerprint,
 and expiry before choosing **Start reviewed export**. Role bytes estimate
-payload only; the final ZIP also contains metadata and archive overhead.
+payload only. The final ZIP also contains metadata and archive overhead.
 Changing the source or role choices requires another preview. You can change
 the download filename at any time without repeating the preview. The filename
-applies only to the browser download; bundle paths stay deterministic. Originals are not redacted or sanitized by annotation overlays.
+applies only to the browser download, and bundle paths stay deterministic.
+Originals are not redacted or sanitized by annotation overlays.
 
-The drawer offers **Download verified ZIP** only after it receives the exact
-job's verified archive receipt. It displays the final size and SHA-256 so you
-can check the downloaded file independently. The browser saves the archive
-directly; Docbank does not load the entire ZIP into browser memory. Check your
+The drawer offers **Download verified ZIP** only after it receives that job's
+verified archive receipt. It displays the final size and SHA-256 so you can
+check the downloaded file independently. The browser saves the archive
+directly. Docbank does not load the entire ZIP into browser memory. Check your
 browser's download list for local completion.
 
 Closing the drawer stops its progress reader, not the server job. Reopen
 **Export** in the same browser session to reconnect to that job, or choose
-**Cancel export** to cancel it explicitly. A disconnected stream is not a
-completed export. Expired authority requires a fresh preview; reloading or
-ending the browser session does not preserve the drawer's job handle.
+**Cancel export** to cancel it. A disconnected stream is not a completed
+export. Expired authority requires a fresh preview. Reloading or ending the
+browser session does not preserve the drawer's job handle.
 
 ![A verified bundle ready to download from the reviewed frozen selection](https://docbank.ai/assets/generated/web-export-ready.png)
 
@@ -318,7 +321,7 @@ first 1,000 definitions in name order, then displays related names in groups.
 The picker uses the same color for a tag wherever it appears. Use the arrow
 keys to navigate its options, Enter to select, and Escape to close it.
 
-Every change is bound to the stable node ID and revision shown in the dialog.
+Every change is bound to the node ID and revision shown in the dialog.
 After success, the browser updates the node revision and the tag's vault-wide
 assignment count. It also refreshes the tag catalog and permanent-audit
 status. If another person, agent, or CLI command changed the node first, the
@@ -330,13 +333,13 @@ applying it to newer state.
 Use the document checkboxes to select files on the displayed page, then choose
 **Edit tags** in the selection dock. The picker shows whether all, some, or none
 of the selected documents have the chosen tag. **Add to all** and **Remove from
-all** apply one atomic, revision-fenced operation to at most 1,000 documents.
+all** apply one atomic, revision-checked operation to at most 1,000 documents.
 Folders and undisplayed query results are not included in page selection.
 
 Keep the dialog open if the result is uncertain: **Retry same operation**
-reuses its original identity and revisions. A stale selection requires an
-explicit refresh rather than an automatic retry against newer documents.
-After confirmation, the browser reloads current observations; the retained
+reuses its original identity and revisions. A stale selection requires you to
+refresh. The browser does not retry automatically against newer documents.
+After confirmation, the browser reloads current observations. The retained
 receipt may describe an earlier successful operation. See
 [selected-set tagging](organizing.md#tag-a-selected-set-atomically) for retention
 and backup behavior.
@@ -346,11 +349,12 @@ and backup behavior.
 ### Tag a frozen query
 
 In a frozen snapshot, checkboxes select only documents on the visible page.
-**Tag whole query** instead captures every exact member across all pages, up to
-250,000 documents, and prepares revision-fenced batches of at most 1,000. The
+**Tag whole query** instead captures every member across all pages, up to
+250,000 documents, and prepares revision-checked batches of at most 1,000. The
 captured population does not expand when an untagged query starts receiving
-the tag: completed changes appear as overlays while the frozen rows and facet
+the tag. Completed changes appear as overlays while the frozen rows and facet
 membership remain unchanged.
+
 New actions use confirmed tag revisions only when the receipts connect back
 to the frozen document revision. Other document changes still make it stale.
 Once prepared, an action keeps its original requests and expected revisions.
@@ -365,58 +369,59 @@ retried. If a response is lost after the daemon commits, **Retry same
 operation** recovers the retained receipt without applying the change twice.
 
 A daemon restart creates a fresh browser origin and session, so import the
-saved checkpoint to continue. Import validates and stages the action; it does
+saved checkpoint to continue. Import validates and stages the action but does
 not run it. The vault must match, and the new session still requires checkpoint
-readback and explicit confirmation. A stale document revision fences the
-action without silently refreshing its target or partially applying that
-batch.
+readback and confirmation. A stale document revision blocks the action. Docbank
+does not silently refresh its target or partially apply that batch.
 
 Recovery files contain instructions supplied by their creator. Checksums detect
-inconsistent files; they do not authenticate the creator. Review the exact
+inconsistent files, but they do not authenticate the creator. Review the exact
 targets before confirming an imported action. Receipts inside a file do not
-update the snapshot's observed revisions; only receipts returned by the daemon
+update the snapshot's observed revisions. Only receipts returned by the daemon
 during this session do that.
 
-Recovery files contain private stable document identities, content-version
+Recovery files contain private document identities, content-version
 identities, hashes, sizes, and revisions. They omit paths, names, query text,
 and browser credentials, but still need the same protection as vault metadata.
+
 Abandoning removes the browser journal and does not roll back changes that
-already committed.
-If a tag was deleted, recovery still lets you save the checkpoint or abandon
+already committed. If a tag was deleted, recovery still lets you save the
+checkpoint or abandon
 the action. **Abandon retained action** also clears an unreadable journal for
 the current vault, so corrupt browser data cannot block later actions.
 
 ## Manage tag definitions
 
 Choose the tag-catalog button beside the toolbar selector to create, rename,
-or delete the vault's shared tag definitions. Creating allocates a new stable
-UUID. Renaming keeps that identity while advancing the definition revision and
+or delete the vault's shared tag definitions. Creating a tag allocates a new
+UUID. Renaming keeps that UUID while advancing the definition revision and
 every assigned node's metadata authority. A stale rename remains visible
 instead of overwriting a definition changed by another person or agent.
 
-Deleting requires a separate confirmation that names the exact stable ID,
-revision, and current assignment count. It removes the definition and all of
-its assignments, but never deletes a document or its stored content. Reusing
-the same name later creates a different stable identity. After a rename or
-deletion, the browser reloads the active folder, search, or tag view so node
-revisions and assignment counts remain authoritative.
+Deleting requires a separate confirmation that names the tag's ID, revision,
+and current assignment count. It removes the definition and all of its
+assignments, but never deletes a document or its stored content. Reusing the
+same name later creates a different identity. After a rename or deletion, the
+browser reloads the active folder, search, or tag view so node revisions and
+assignment counts stay current.
 
-Tags use a color derived from their stable ID. A rename keeps that color.
+Tags use a color derived from their ID. A rename keeps that color.
 Slash-separated names create display groups automatically: `matter/acme/reviewed`
 appears as `reviewed` under `matter/acme`. The full name remains available in
 the tooltip and to assistive technology. Groups do not create parent tags or
 change assignment rules.
 
 The catalog shows the first 1,000 name-sorted definitions and discloses the
-complete count. Use `docbank tag`, the paginated HTTP API, or an embedded client
-for exhaustive definition management and assignments outside the displayed selection.
+complete count. Use `docbank tag`, the paginated HTTP API, or an embedded
+client for exhaustive definition management and assignments outside the
+displayed selection.
 
 ## Export dated search counts
 
 Open **Search exports** in the sidebar to create a CSV of search counts for
 selected sources and date ranges. Review unresolved dates before downloading
 the CSV or evidence ZIP. **Recent exports** keeps the latest 100 requests and
-outcomes; **Use as draft** runs a request against current data without its old
+outcomes. **Use as draft** runs a request against current data without its old
 date choices. See [Search exports](search-exports.md) for the full workflow,
 count definitions, and expiry limits.
 
@@ -425,25 +430,25 @@ count definitions, and expiry limits.
 ## Saved queries and highlights
 
 Open **Saved queries** in the sidebar to manage saved queries and highlight
-sets. A new query starts with the current search text, selected tag and display
-sort. The complete query editor preserves the expression, filters, mode and sort
+sets. A new query starts with the current search text, selected tag, and display
+sort. The complete query editor preserves the expression, filters, mode, and sort
 together. Choose **Save as new** to name a definition, or **Edit** and **Save
 changes** to update one. The catalog is paginated in groups of 100.
 
-**Keep query draft** retains the complete query in the tab and URL fragment.
+**Keep query draft** keeps the complete query in the tab and URL fragment.
 The fragment contains query text and filters, so treat copied URLs as private.
 It does not contain browser-session credentials. Saving a definition does not
 replace the kept draft or change the URL. **Discard query draft**, locking the
 tab, or an expired or rejected session clears the draft and its URL fragment.
-Drafts do not carry over when you open a new session with `docbank web`; save a
+Drafts do not carry over when you open a new session with `docbank web`. Save a
 named definition before reloading or leaving the session if you need it later.
 
 Saved queries are definitions, not frozen result sets. Opening a definition in
 the complete query editor and choosing **Run query** creates a new workspace
-snapshot from that draft; keeping or saving the draft alone does not run it or
-change the current live results. This browser run is not the durable saved-run
-receipt exposed by the authenticated HTTP API. Unknown fields are rejected,
-not silently dropped.
+snapshot from that draft. Keeping or saving the draft alone does not run it or
+change the current live results. This browser run does not produce the durable
+saved-run receipt that the authenticated HTTP API exposes. Unknown fields are
+rejected, not silently dropped.
 
 Highlight sets hold 1–64 unique literal terms, each up to 256 Unicode characters,
 with lowercase `#rrggbb` colors. They cannot run as queries. Choose one in a
@@ -454,7 +459,7 @@ preferences.
 Edits and deletions use the definition's inspected revision. A stale response
 remains visible without automatically retrying against newer state. Reload the
 definitions and reopen the item before deciding again. Deletion requires a
-separate confirmation naming the definition, ID and revision; it never deletes
+separate confirmation naming the definition, ID, and revision. It never deletes
 documents or discards the kept query draft.
 
 ![A named query retaining its complete expression, filters, and sort](https://docbank.ai/assets/generated/web-saved-queries.png)
@@ -464,31 +469,31 @@ documents or discards the kept query draft.
 ## Move a node to recoverable trash
 
 Choose **Move to trash** on the selected live file or folder. Docbank opens a
-confirmation that names the complete virtual path, stable node ID, and revision
+confirmation that names the complete virtual path, node ID, and revision
 being acted upon. A folder and its live descendants move to trash together.
 
-The daemon applies the mutation only if that exact node revision is still
+The daemon applies the mutation only if that node revision is still
 current. If another person, agent, or CLI command changed the node first, the
 browser keeps the confirmation open and asks you to refresh instead of
-silently acting on stale authority. A successful receipt removes the selection
+silently acting on an outdated view. A successful receipt removes the selection
 and refreshes the current folder, search, or tag view.
 
-This action is deliberately recoverable. It does not empty trash, garbage
+This action is recoverable. It does not empty trash, garbage
 collect content, reclaim packed space, or erase permanent audited history.
 
 ## Restore from recoverable trash
 
 Choose **Trash** in the sidebar to inspect the newest 1,000 independently
-restorable roots. Each entry shows its name, kind, stable node ID, revision,
+restorable roots. Each entry shows its name, kind, node ID, revision,
 trash time, and logical size for files. A folder entry represents the complete
 subtree that left the live tree in that trash operation.
 
 Choose **Restore** and confirm the inspected revision. Docbank returns the same
-stable node and retained content to its original live parent when that
-directory still exists. If the parent is unavailable, restore falls back to
-the vault root; if the chosen name is already occupied, Docbank adds its normal
-collision suffix. The completed receipt shows the actual canonical path rather
-than predicting where the item should have landed.
+node and its content to its original live parent when that directory still
+exists. If the parent is unavailable, restore falls back to the vault root. If
+the chosen name is already occupied, Docbank adds its normal collision suffix.
+The completed receipt shows the actual canonical path rather than predicting
+where the item should have landed.
 
 If the revision changed, the confirmation stays open so you can refresh and
 review the change. After a successful restore, the browser removes the item
@@ -496,7 +501,7 @@ from the trash drawer and reloads the tree from its root. This discards cached
 paths that may no longer match the restored tree.
 
 The browser cannot empty trash. Permanent tree-metadata deletion, subsequent
-garbage collection, and packed-space reclamation remain explicit CLI or
+garbage collection, and packed-space reclamation remain CLI or
 master-authenticated API operations.
 
 ## Upload verified documents
@@ -507,7 +512,7 @@ master-authenticated API operations.
 4. Check each file's result in the upload drawer.
 
 Upload is available only in a live folder, not in search or tag results. The
-drawer names the destination's stable directory ID and current path.
+drawer names the destination's directory ID and current path.
 
 Docbank makes two bounded-memory passes over each selected file. The first pass
 computes the browser's declared SHA-256 while showing hashing progress. The
@@ -518,18 +523,18 @@ bytes never use an ordinary reconnectable browser HTTP request.
 
 The channel is bound to one browser session and one daemon lifetime. If it
 breaks, the page permanently disables upload rather than reconnecting to
-whatever process now owns the loopback port; run `docbank web` again to obtain
+whatever process now owns the loopback port. Run `docbank web` again to obtain
 a newly proved channel. The daemon independently computes the hash and size
 and grants node/blob authority only when both match. The browser compares that
 receipt again before reporting **Added** or **Already present**, then refreshes
-the destination by stable ID.
+the destination by ID.
 
 Files are independent queue entries: one rejection does not make another
 success ambiguous, and failed entries can be retried. Cancellation can race
 with a daemon commit whose receipt did not reach the browser, so the drawer
 labels that item **Unconfirmed**, refreshes the destination, and directs the
-operator to retry; the idempotent upload contract then converges on the stored
-result. Name/content collisions retain the ordinary ingest suffix behavior
+operator to retry. Uploads are idempotent, so the retry converges on the stored
+result. Name/content collisions keep the ordinary ingest suffix behavior
 rather than overwriting a document. Selecting a local file never changes or
 removes the source.
 
@@ -562,11 +567,11 @@ interrupted import resumes after its last saved message. See
 5. Resolve blocking diagnostics, name the package and sending party, then
    choose **Import package**.
 
-The ZIP uses the authenticated upload channel and is retained as a sealed
+The ZIP uses the authenticated upload channel and is stored as a sealed
 container before preflight reads it. The drawer shows imported, gap, and total
 counts, plus the operation ID, as the job runs.
 
-**Keep supported records and report gaps** allows an import to retain records
+**Keep supported records and report gaps** allows an import to keep records
 when referenced files become unavailable after preflight. Blocking preflight
 diagnostics must still be resolved. Without this option, the worker verifies
 every declared file before creating document entries. **Index package-supplied
@@ -576,7 +581,7 @@ Browser row responses omit fields marked sensitive by the retained mapping.
 Member lists and raw timeline inputs require the daemon API key.
 
 Closing the drawer stops its progress updates. **Lock web session** revokes
-the session and cancels unfinished imports it owns. Cancellation retains
+the session and cancels unfinished imports it owns. Cancellation keeps
 committed records and removes unfinished document entries as described in the
 [package command reference](../cli-reference.md#docbank-package).
 
@@ -620,40 +625,42 @@ run. See [Find similar documents](document-processing.md#find-similar-documents)
 
 The selected document card previews PDF and PNG pages, eligible UTF-8 text,
 and bounded static PNG and JPEG images. Text is rendered as inert text, never as
-document HTML. Docbank
-verifies the selected version UUID, size, media type, and SHA-256 after receiving
-the complete body and before publishing text or an image URL. Unsupported files
+document HTML. Docbank verifies the selected version UUID, size, media type, and
+SHA-256 after receiving the complete body and before publishing text or an
+image URL. Unsupported files
 and text larger than 16 MiB remain available through **Download verified
 original** without being decoded in the page.
 
 For PDF files and PNGs with retained page geometry, **Preview** reads retained
 pages and images. Other PNGs use the verified original-image preview, including
 when the optional page runtime is unavailable.
-Choose **Render page** when an image is missing. This requests only that page;
-opening the inspector or moving between pages never starts bulk rendering.
+
+Choose **Render page** when an image is missing. This requests only that page.
+Opening the inspector or moving between pages never starts bulk rendering.
 Rendering needs the [optional local page runtime](../architecture/page-images.md).
-PDF pages render at 144 DPI. The viewer prefers retained images at that density;
-otherwise it displays the highest retained DPI and offers **Render page at 144
-DPI** when the runtime is available. PNGs retain their native physical density.
-Unsupported geometry, unavailable runtime, partial images,
-render failure, and a changed source are shown separately. Retained images
-remain readable when the runtime is unavailable.
+PDF pages render at 144 DPI. The viewer prefers retained images at that density.
+Otherwise it displays the highest retained DPI and offers **Render page at 144
+DPI** when the runtime is available. PNGs keep their native physical density.
+Unsupported geometry, unavailable runtime, partial images, render failure, and
+a changed source are shown separately. Retained images remain readable when the
+runtime is unavailable.
 
 **Previous page**, **Next page**, and the page selector navigate within the
 document. Navigation rechecks the inventory to include newly retained images.
-**Fit width** and numeric zoom change only its display size. Each
-page uses its own rotated crop dimensions. The browser checks the actual frame,
-recipe, image digest, byte length, and decoded dimensions before displaying it.
-Changing the source, page, session, or tab clears the old image and releases its
-resources. **Cancel render** is available for the active request created here;
-a matching request created elsewhere offers a refresh without taking ownership.
+**Fit width** and numeric zoom change only its display size. Each page uses its
+own rotated crop dimensions. The browser checks the actual frame, recipe, image
+digest, byte length, and decoded dimensions before displaying it. Changing the
+source, page, session, or tab clears the old image and releases its resources.
+**Cancel render** is available for the active request created here. A matching
+request created elsewhere offers a refresh without taking ownership.
 
-Choose **Text** to read the verified text rendition for the exact selected
-version and processing profile. The browser binds the source, profile,
-generation, attachment, build, artifact, length, and digest before decoding the
-text. It reports failed, unprocessed, unconfigured, verified-empty, and
-unavailable historical results separately. An eligible original UTF-8 text file is used only
-as an exact-version fallback when no readable rendition is available.
+Choose **Text** to read the verified text rendition for the selected version
+and processing profile. The browser binds the source, profile, generation,
+attachment, build, artifact, length, and digest before decoding the text. It
+reports failed, unprocessed, unconfigured, verified-empty, and unavailable
+historical results separately. An eligible original UTF-8 text file is used
+only as a fallback for that same version when no readable rendition is
+available.
 
 Query text operands are highlighted from the resolved query, not by splitting
 the expression in the browser. Negated and structured operands are excluded.
@@ -665,15 +672,15 @@ Previous and next document controls move through the accepted frozen snapshot,
 including across its existing page cursors. They stop at the snapshot boundary
 and do not replace an expired snapshot with live results. **Duplicates** lists
 at most 16 live documents with the selected content hash. Opening one creates a
-separately labeled live context; **Return** restores the exact frozen selection.
+separately labeled live context. **Return** restores the frozen selection.
 
 Choose **Download verified original** on a file to retrieve its selected
-version. A live row selects its current head; a frozen query row keeps the
+version. A live row selects its current head. A frozen query row keeps the
 version captured by that snapshot even when the live head has since changed.
-Docbank first
-copies the object from loose or packed storage into owner-private daemon
-staging while the browser shows verified byte progress. The selected node
-revision, version UUID, SHA-256 identity, and exact size must still agree before
+
+Docbank first copies the object from loose or packed storage into owner-private
+daemon staging while the browser shows verified byte progress. The selected
+node revision, version UUID, SHA-256 identity, and size must still agree before
 that work starts. The current node revision authorizes access to a retained
 historical version but never changes which bytes were selected. A concurrent
 replacement, move, or trash operation therefore asks you to refresh instead of
@@ -697,24 +704,24 @@ atomic publication, and parent-directory sync.
 
 ## Inspect immutable versions
 
-Choose **Version history** on any file to inspect every retained immutable
-version without losing the current folder, search results, or selected
-document. The newest version appears first. Each entry identifies whether the
-content was created, replaced, or restored from a prior version, along with its
-recorded time, node revision, logical size, and stable version UUID.
+Choose **Version history** on any file to inspect every retained version
+without losing the current folder, search results, or selected document. The
+newest version appears first. Each entry identifies whether the content was
+created, replaced, or restored from a prior version, along with its recorded
+time, node revision, logical size, and version UUID.
 
-Selecting an entry exposes its complete authority: full version UUID, SHA-256
+Selecting an entry shows its complete record: full version UUID, SHA-256
 content identity, exact byte count, media type, canonical timestamp,
 introducing operation UUID, and the source version for a revert. The current
-head is marked explicitly; a revert remains a new immutable version rather
-than erasing or relabeling the earlier one.
+head is marked. A revert is a new immutable version and does not erase or
+relabel the earlier one.
 
-Choose **Download** in the complete-version panel to retrieve that exact
-retained version through the same private staging, progress, terminal
-verification, and one-use handoff as the current-content action. The stable
-version UUID, owning node, SHA-256 identity, size, and current node revision
-must all agree before preparation begins. Historical versions do not retain a
-filename timeline, so the browser uses the live document's current name.
+Choose **Download** in the complete-version panel to retrieve that version
+through the same private staging, progress, terminal verification, and one-use
+handoff as the current-content action. The version UUID, owning node, SHA-256
+identity, size, and current node revision must all agree before preparation
+begins. Historical versions do not keep a filename timeline, so the browser
+uses the live document's current name.
 Version comparison remains a CLI or authenticated API workflow.
 
 The drawer reads at most the newest 1,000 versions and says when older history
@@ -724,21 +731,22 @@ or prune history.
 
 ## Understand where a document came from
 
-Choose **Provenance** on any file to inspect the origin facts Docbank retained
+Choose **Provenance** on any file to inspect the origin facts Docbank recorded
 when it ingested that document. The newest ingest appears first. Each entry
 shows its source kind and description, original reference, ingest time, and
 whether it is the active origin or has been superseded by a corrected fact.
 
-Selecting an entry exposes its complete stable provenance identity, ingest
-UUID, node ID, canonical ingest timestamp, original modification time when one
-was supplied, and supersession link. The drawer adopts the node state returned
-with the provenance page, so a concurrent move displays the current canonical
-path and a trashed document is labeled explicitly rather than retaining an
-obsolete path from the table.
+Selecting an entry shows its complete provenance identity, ingest UUID, node
+ID, canonical ingest timestamp, original modification time when one was
+supplied, and supersession link. The drawer adopts the node state returned with
+the provenance page, so a concurrent move displays the current canonical path
+and a trashed document is labeled as trashed instead of keeping an obsolete
+path from the table.
 
 An original reference records the source at import time. It does not guarantee
-that the source still exists. It may be a portable relative path from a watched inbox, a local path recorded by an
-ordinary ingest, or an opaque reference supplied by an embedded application.
+that the source still exists. It may be a portable relative path from a watched
+inbox, a local path recorded by an ordinary ingest, or an opaque reference
+supplied by an embedded application.
 The browser does not open, validate, change, or retain that external source.
 
 The drawer reads at most the newest 1,000 facts and says when older provenance
@@ -750,36 +758,36 @@ pinning are not browser workflows.
 
 Enter a word or phrase in the search box and press Enter. Results can match a
 live document name or verified extracted text. The **Match** column identifies
-which one. Name matches retain their API relevance ranking and appear before
-content-only matches until you choose an explicit column sort.
+which one. Name matches keep their API relevance ranking and appear before
+content-only matches until you choose a column sort.
 
 Use the tag selector in the browser toolbar without a text query to browse
-up to 1,000 live items carrying one exact assignment. The bounded result is
-read in one metadata snapshot, so its node state and complete virtual paths
-cannot mix concurrent moves, trash operations, or content updates across
-pages. Trashed assignments are omitted from this live view and disclosed in
-its count; `docbank tag nodes` remains the exhaustive paginated
-live-and-trashed workflow.
+up to 1,000 live items carrying that tag. The result is read in one metadata
+snapshot, so its node state and complete virtual paths cannot mix concurrent
+moves, trash operations, or content updates across pages. Trashed assignments
+are omitted from this live view and disclosed in its count. Use
+`docbank tag nodes` for the exhaustive paginated list of live and trashed
+assignments.
 
 With text in the search box, the same selector requires that tag in addition
-to the name or content match. Tag names are displayed for people, while both
-workflows are bound to the tag's stable UUID so a later rename does not
-silently change which definition was selected. Changing the selector reruns
-the current browse or search.
+to the name or content match. The selector displays tag names, but both
+workflows are bound to the tag's UUID, so a later rename does not change which
+definition was selected. Changing the selector reruns the current browse or
+search.
 
 The search mode selector offers **Names and text**, **Auto**, **Lexical**,
 **Semantic**, and **Hybrid** when processing profiles are available. **Auto**
-uses Hybrid with an available embedding binding; without one, the API keeps
+uses Hybrid with an available embedding binding. Without one, the API keeps
 the request lexical. Semantic and Hybrid require a binding. A profile that
 can rerank still permits Lexical search without a binding, and **Rerank
-results** is an explicit opt-in. Base rows appear before reranking settles;
-degraded reranking keeps those rows and shows its cause. Other processing
-failures return to Names and text with a visible explanation.
+results** is opt-in. Base rows appear before reranking settles. Degraded
+reranking keeps those rows and shows its cause. Other processing failures
+return to Names and text with a visible explanation.
 
 ![The Docbank web application showing extracted-text search results in a synthetic vault.](https://docbank.ai/assets/generated/web-search-results.png)
 
-*Search results display complete virtual paths and keep the same authority
-inspection available from ordinary folder browsing.*
+*Search results display complete virtual paths and offer the same authority
+card as ordinary folder browsing.*
 
 Clear the search box to return to the selected tag's assignment view, or to
 the current directory when **All tags** is selected. The selector loads at most
@@ -790,9 +798,9 @@ limit. See [Searching](searching.md) for limits and truncation.
 
 ## Read permanent audited history
 
-The authority card checks the selected node's stable audit membership. A green
+The authority card checks the selected node's audit membership. A green
 **Protected** badge means ordinary deletion, version pruning, garbage
-collection, and repacking cannot erase that node's retained history.
+collection, and repacking cannot erase that node's history.
 **Not audited** means audit authority exists in the vault but the selected node
 is outside every permanent scope. **Dormant** means no scope has been enabled.
 
@@ -800,7 +808,7 @@ Choose **Audit history** on a protected node to open a wide timeline without
 losing the current folder, search results, or selection. The timeline is newest
 first and explains the primary change for each event: live and retained-trash
 paths, content-version transitions, tag definitions and assignments, or
-provenance. Select an event to inspect its complete immutable event, operation,
+provenance. Select an event to inspect its complete event, operation,
 scope, and node identities; canonical timestamp and origin; before/after
 revision, path, and version state; and typed tag or provenance payload.
 
@@ -813,7 +821,7 @@ from an empty or non-empty timeline.
 ## Verify permanent audit evidence
 
 Choose **Audit evidence** in the sidebar to run the vault-wide permanent
-audit verifier. This is more than reading stored status: Docbank independently
+audit verifier. The verifier does more than read stored status. Docbank
 replays canonical audit history against the current node, version, membership,
 topology, tag, and provenance projections, then reads and recomputes SHA-256 for
 every unique blob retained by protected history.
@@ -822,7 +830,7 @@ A successful result reports the protected and verified blob totals, unique raw
 bytes, vault and allocation-lineage identities, operation high-water mark,
 allocation entry count and head, and each scope's terminal entry count and chain
 head. Copy buttons preserve the complete identities even when they wrap. A
-dormant vault is reported separately from a failed verification; metadata,
+dormant vault is reported separately from a failed verification. Metadata,
 missing-content, corruption, and unreadable-content problems remain visible
 with the affected hash.
 
@@ -830,20 +838,20 @@ This drawer runs only a fresh proof of current authority. It does not accept a
 previous evidence bundle, enroll a scope, or change protected state. Record
 `docbank audit verify --json` outside the vault and later use
 `docbank audit verify --expected` when that external copy must act as a rollback
-trust anchor. Closing the drawer cancels its active request; maintenance
-contention or interruption remains visible and can be retried deliberately.
+trust anchor. Closing the drawer cancels its active request. Maintenance
+contention or interruption remains visible, and you can retry.
 
 ## Inspect background work
 
 Choose **Background jobs** in the sidebar to inspect the jobs owned by the
-current daemon. Each entry identifies the stable job name, whether it is
+current daemon. Each entry identifies the job name, whether it is
 running, completed, failed, or cancelled, and its start and finish time.
-Terminal failures include the daemon's bounded error text so an operator can
+Terminal failures include the daemon's error text so an operator can
 distinguish an idle system from a watcher, extractor, or automatic packer that
 stopped.
 
 Use refresh to request a new snapshot. The drawer does not start, stop, retry,
-or reconfigure work; use the relevant configuration, CLI, or authenticated API
+or reconfigure work. Use the relevant configuration, CLI, or authenticated API
 workflow after understanding the failure. Job records belong to one daemon
 lifetime and disappear when that daemon restarts.
 
@@ -860,7 +868,7 @@ managed blob storage. The summary separates four related quantities:
 - **Pack files** is the complete stored payload of every pack, including live
   and logically dead entries.
 - **Pending repack** is logically dead payload that still occupies those
-  immutable pack files.
+  pack files.
 
 Below the aggregate cards, **Content stores** lists each fixed primary or
 configured secondary with its filesystem/S3 kind, observed online,
@@ -876,20 +884,19 @@ has not fallen by the same amount. The percentage beside the pending total
 shows how much of the current pack payload is dead, not a compression ratio or
 a promise that every pack is immediately eligible for compaction.
 
-This drawer is read-only and refreshes from the daemon's current catalog
-authority. It cannot pack, garbage-collect, or repack content. Use
-`docbank storage status` for structured or scripted inspection, see
-[Multi-store Storage](storage.md) for repair and placement, and run
-`docbank storage repack` explicitly when you intend to rewrite eligible sparse
-packs and retire their old files.
+This drawer is read-only and refreshes from the daemon's current catalog. It
+cannot pack, garbage-collect, or repack content. Use `docbank storage status`
+for structured or scripted inspection, see [Multi-store Storage](storage.md)
+for repair and placement, and run `docbank storage repack` when you intend to
+rewrite eligible sparse packs and retire their old files.
 
 ## Inspect backup snapshots
 
-Choose **Backup snapshots** in the sidebar to inspect the immutable recovery
-points in the repository selected by `[backup] repo` in `config.toml`. The
-repository path and stable repository ID make the authority being inspected
-explicit. Snapshots appear newest first with their tag, immutable ID, creation
-time, full or incremental relationship, logical node/file/blob counts, logical
+Choose **Backup snapshots** in the sidebar to inspect the recovery points in
+the repository selected by `[backup] repo` in `config.toml`. The drawer shows
+the repository path and repository ID so you can tell which repository you are
+inspecting. Snapshots appear newest first with their tag, ID, creation time,
+full or incremental relationship, logical node/file/blob counts, logical
 content bytes, and the pack bytes newly added by that capture.
 
 An initialized repository with no snapshots is different from an unconfigured
@@ -898,41 +905,42 @@ not accept an arbitrary server path, initialize a repository, create a
 snapshot, verify content, restore a vault, or delete retention history.
 
 Seeing a manifest in this list is not proof that its referenced bytes are
-still readable. Run `docbank backup verify` to independently prove repository
-integrity, and periodically restore into a separate vault to rehearse the
-complete recovery path.
+still readable. Run `docbank backup verify` to check repository integrity, and
+periodically restore into a separate vault to rehearse the complete recovery
+path.
 
 ## Browse import collections
 
 Choose **Collections** in the sidebar to browse the vault's import groups.
 Each card shows its label or source description, ingest time, current live
 file count, and logical bytes. Select a collection to browse its current
-live members and inspect a document by its stable node identity. Counts are
+live members and inspect a document by its node identity. Counts are
 current membership, not a historical import total. The browser refresh time
 is separate from the ingest time.
 
 Labels belong to the import group, not its documents. Rename or clear a label
-under its inspected revision; if another client changes it first, the drawer
+under its inspected revision. If another client changes it first, the drawer
 keeps your draft and reports the conflict. Reload the label before deciding
 whether to save again. Label changes are unavailable once permanent audit
 authority has been enabled.
 
 Collection and member lists show at most 100 entries each. Empty groups,
-failed reads, and truncated lists are reported separately; use the paginated
+failed reads, and truncated lists are reported separately. Use the paginated
 HTTP API to browse beyond that limit. This is direct member browsing, not
 a collection-filtered text search.
 
 Choose **Inspect collection quality** for document distributions, duplicate
 content counts, zero-byte files, media/extension mismatches, and text coverage.
 With multiple processing profiles, choose one before reading coverage. Without
-a configured profile, coverage is unavailable, not zero failures or complete
-processing. A configured policy does not mean an extraction adapter is running.
+a configured profile, coverage is unavailable. That does not mean zero failures
+or complete processing. A configured policy does not mean an extraction adapter
+is running.
 
 Coverage distinguishes complete, partial, failed, unprocessed, and activated
 output with no text. Retained searchable output takes precedence over a failed
 retry. The existing worker rejects blank provider output as a failed attempt.
-Quality reads are bounded to 250,000 members, a 64 MiB census, and five seconds;
-an exceeded limit returns an error, never a partial successful summary.
+Quality reads are bounded to 250,000 members, a 64 MiB census, and five seconds.
+An exceeded limit returns an error instead of a partial summary.
 
 Select extensions, media types, or media families and choose **New query** to
 open a collection-scoped draft. Multiple selected values use OR. This does not
@@ -960,7 +968,7 @@ service worker or cached script waiting for a future browser session.
 
 The launch page carries the scoped session and its random upload-proof secret
 in a URL fragment. Browsers do not include fragments in the initial HTTP
-request; the application removes them from the address bar and holds them only
+request. The application removes them from the address bar and holds them only
 in page memory. Ordinary requests send `X-Docbank-Web-Session`. The daemon
 accepts that credential for the following operations:
 
@@ -974,29 +982,29 @@ accepts that credential for the following operations:
 | List trash | Returns a bounded list of restorable roots. |
 | Prepare, preview, or cancel an exact-version download | Writes only a private temporary file, enforces preview MIME and size limits, and issues one expiring ticket for that file. |
 | Plan, preview, run, cancel, and download exports | Owns exact sources, frozen plans, jobs, and verified tickets within this browser session. Download naming cannot select a server destination. |
-| Read verified text and exact-content duplicate context | Revalidates the selected source and rendition identities; duplicate context is bounded to 16 live-current references. |
-| Read retained email metadata and MIME parts | Exact source version, decoder generation, part, role, byte size and SHA-256 are checked before display. Browser reads cannot start decoding. |
-| Read page geometry and images, request or cancel page rendering | Binds the exact source revision, version, page, frame, and renderer recipe; the inspector requests one page at a time. |
-| Move to trash or restore | Requires the selected stable node ID and its current revision. |
-| Add or remove a tag assignment | Requires the selected stable node ID and its current revision. |
-| Create, rename, or delete a tag definition | Rename and delete require the inspected tag revision; deletion reports the removed assignment count. |
+| Read verified text and exact-content duplicate context | Revalidates the selected source and rendition identities. Duplicate context is bounded to 16 live-current references. |
+| Read retained email metadata and MIME parts | Source version, decoder generation, part, role, byte size, and SHA-256 are checked before display. Browser reads cannot start decoding. |
+| Read page geometry and images, request or cancel page rendering | Binds the source revision, version, page, frame, and renderer recipe. The inspector requests one page at a time. |
+| Move to trash or restore | Requires the selected node ID and its current revision. |
+| Add or remove a tag assignment | Requires the selected node ID and its current revision. |
+| Create, rename, or delete a tag definition | Rename and delete require the inspected tag revision. Deletion reports the removed assignment count. |
 | Read and manage saved query or highlight definitions | Edit and delete require the saved definition's revision. Permanent audit history blocks these writes. |
 | Read collections and their members | Returns bounded lists of live import membership. |
 | Set or clear a collection label | Requires the inspected collection-label revision. |
-| Create and page a frozen query snapshot | Uses complete validated query intent; handles remain bound to this session and daemon lifetime. |
-| Apply a tag to an exact frozen population | Requires captured node revisions, checkpoint readback, and explicit confirmation; retries preserve the original operation identities. |
+| Create and page a frozen query snapshot | Uses complete validated query intent. Handles remain bound to this session and daemon lifetime. |
+| Apply a tag to an exact frozen population | Requires captured node revisions, checkpoint readback, and confirmation. Retries preserve the original operation identities. |
 
 Use the bookmark button to [manage saved queries and highlights](#saved-queries-and-highlights)
 or **Edit query** to [validate and run a complete query](#edit-a-complete-query).
 
 Upload uses a separate WebSocket: a connection that never reconnects during the
 session. The browser must prove it holds the upload secret before sending any
-file bytes. Upload can create only file nodes beneath the stable live
+file bytes. Upload can create only file nodes beneath the live
 directory selected in the browser. The daemon independently checks the
 caller-declared hash and size, as it does for other remote writers.
 
 These permissions do not allow emptying trash, document mutations other than
-the revision-fenced tag workflows above, audit enrollment, backup creation,
+the revision-checked tag workflows above, audit enrollment, backup creation,
 restore, maintenance, configuration changes, or access to general API
 endpoints. A browser session never receives the master API key. See the
 [HTTP API](../architecture/http-api.md) for the route and credential contracts.
@@ -1023,13 +1031,14 @@ history, logs, screenshots, issue trackers, or chat.
 
 Folder, tag, search, and recoverable-trash views show at most 1,000 rows and
 say when more exist. Use CLI or HTTP pagination to list complete folders, tags,
-and trash. Search has no continuation cursor; narrow incomplete results as
+and trash. Search has no continuation cursor. Narrow incomplete results as
 described in [Searching](searching.md#how-do-i-handle-incomplete-results).
 It uses the same name and verified-text matching rules as `docbank search`.
 Results initially preserve the API's relevance ranking. Choosing Document,
-Size, or Modified changes to that explicit column order; Document compares the
-complete paths shown in search results rather than only their basenames.
-Refreshing a folder resolves its stable node ID, current canonical path, and
+Size, or Modified changes to that column order. Document compares the complete
+paths shown in search results rather than only their basenames.
+
+Refreshing a folder resolves its node ID, current canonical path, and
 children in one metadata snapshot, so a concurrent CLI or agent move cannot
 leave the browser constructing child paths beneath an obsolete name.
 
@@ -1037,13 +1046,14 @@ The current web application does not compare versions, recursively import
 folders, edit, revert, prune, move live nodes between folders, empty trash,
 enroll audit scopes, or run maintenance, backup creation, backup verification,
 general metadata/content verification, or restore operations. Frozen-query tag
-actions are capped at 250,000 exact documents; use an authenticated API client
+actions are capped at 250,000 documents. Use an authenticated API client
 for larger or different bulk workflows.
-Original-file previews support UTF-8 or ASCII text up to 16 MiB and bounded
-static PNG and JPEG images up to 32 MiB. PDF and PNG page rendering accepts sources up
-to 64 MiB within the [page runtime limits](../architecture/page-images.md). Empty
-or larger sources offer verified download without a page preview.
-Other document, image, audio, video, and archive formats use verified download.
+
+Original-file previews support UTF-8 or ASCII text up to 16 MiB and static PNG
+and JPEG images up to 32 MiB. PDF and PNG page rendering accepts sources up to
+64 MiB within the [page runtime limits](../architecture/page-images.md). Empty
+or larger sources offer verified download without a page preview. Other
+document, image, audio, video, and archive formats use verified download.
 
 If a page reports that its browser session or upload channel expired, ended,
 or was rejected, run `docbank web` again. Neither credential nor the upload
