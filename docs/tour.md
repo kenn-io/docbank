@@ -1,78 +1,86 @@
 ---
-title: Visual Tour
-description: See Docbank's real web and terminal interfaces running against synthetic document vaults.
+title: Visual tour
+description: Screenshots of the Docbank web app and terminal browser, taken against synthetic vaults.
 ---
 
 # Visual tour
 
-These are the actual Docbank interfaces backed by temporary synthetic vaults,
-not mockups. The names, contents, hashes, identifiers, storage history, and
-audit history were generated for the captures.
+Every screenshot on this page shows the real Docbank interface running against
+a temporary vault. All the data in them is synthetic: the names, contents,
+hashes, identifiers, storage history, and audit history were generated for the
+captures.
 
 ## Browse and identify documents
 
-Browse a sortable table and inspect a document without opening it. The details
-include its current path, stable ID, revision, version ID, SHA-256 content hash,
-tags, origin records, and permanent-audit status. The browser receives limited
-credentials that last for one daemon run. See [Web application](usage/web.md)
-for controls and authentication.
+The web app lists a folder as a sortable table. Select a document to see its
+details without opening it: current path, stable ID, revision, version ID,
+SHA-256 content hash, tags, origin records, and permanent-audit status. The
+browser gets limited credentials that last for one daemon run. See
+[Web application](usage/web.md) for controls and authentication.
 
-![The Docbank web application browsing a synthetic vault and showing the selected document's stable authority.](https://docbank.ai/assets/generated/web-vault-browser.png)
+![The Docbank web application showing a folder of a synthetic vault, with the selected document's details in a side panel.](https://docbank.ai/assets/generated/web-vault-browser.png)
 
-## Organize independently of folders
+## Organize with tags
 
-Group documents across folders with tags. Each tag keeps its UUID when its
-name changes. The browser keeps its color and groups slash-separated names.
-You can manage tags in the browser; people and agents use the
-same daemon API, which rejects changes based on an outdated revision. See
-[Organizing & Tagging](usage/organizing.md).
+Tags group documents across folders. A tag keeps its UUID and its color when
+you rename it, and the browser groups tags whose names share a slash-separated
+prefix. You can manage tags in the browser. People and agents use the same
+daemon API, which rejects a change made against an outdated revision. See
+[Organizing and tagging](usage/organizing.md).
 
-![The Docbank web application managing a synthetic vault's stable tag catalog.](https://docbank.ai/assets/generated/web-tag-catalog.png)
+![The Docbank web application listing the tags defined in a synthetic vault.](https://docbank.ai/assets/generated/web-tag-catalog.png)
 
 ## Review a selection
 
-Check document ranges, apply tags atomically, and download the checked rows as
-CSV. The sidebar groups browsing, review, export, and vault maintenance. On
-narrow screens, open the navigation menu to reach the same tools. See
+Check a range of documents, then tag them all in one atomic step or download
+the checked rows as CSV. The sidebar groups the tools for browsing, review,
+export, and vault maintenance. On a narrow screen, the same tools are in the
+navigation menu. See
 [selection and shortcuts](usage/web.md#select-documents-on-this-page).
 
 ![A selected document range and its available actions](https://docbank.ai/assets/generated/web-page-selection.png)
 
 ## Keep a search and its results
 
-Use the query editor for field and Boolean expressions. Save the complete
-query, reuse highlight terms, and run a lexical query to freeze its rows,
-counts, and facets. A frozen row keeps the version selected when the query ran.
-See [frozen queries](usage/web.md#work-with-a-frozen-query).
+The query editor accepts field and Boolean expressions. You can save a
+complete query and reuse sets of highlight terms. Running a lexical query
+freezes its rows, counts, and facets, and each frozen row keeps the version
+that matched when the query ran. See
+[frozen queries](usage/web.md#work-with-a-frozen-query).
 
 ![A frozen query workspace with fixed facets and document versions](https://docbank.ai/assets/generated/web-snapshot-workspace.png)
 
-## Read retained text and search by meaning
+## Read extracted text and search by meaning
 
-Review what configured providers receive before granting processing consent.
-Follow the job and read its verified rendition: the extracted Markdown retained
-for that source version. Configured embeddings add Semantic and Hybrid search.
-**Find similar** compares stored embeddings without calling a provider. See
+Before you consent to processing, the plan shows what each configured provider
+will receive. Once the job finishes, read its rendition: the extracted Markdown
+that Docbank verified and stored for that version. With embeddings configured,
+search gains Semantic and Hybrid modes. **Find similar** compares stored
+embeddings and calls no provider. See
 [processing](usage/document-processing.md) and [search](usage/search.md).
 
-![A reviewed processing plan disclosing provider destinations and retained outputs](https://docbank.ai/assets/generated/web-document-processing-plan.png)
+![A processing plan listing each provider, its destination, and the outputs Docbank will keep](https://docbank.ai/assets/generated/web-document-processing-plan.png)
 
 ![Search results with text excerpts and semantic matches](https://docbank.ai/assets/generated/web-natural-1440.png)
 
 ## Read email with its attachments
 
-Import MBOX or Google Takeout archives, read HTML or plain-text bodies, and
-inspect decoded or raw headers. Follow attachment documents and parent messages
-at their exact versions. See [archived email](usage/web.md#read-archived-email).
+Import an MBOX file or a Google Takeout archive. Read each message as HTML or
+plain text, with decoded or raw headers. From a message you can open its
+attachments, and from an attachment its parent message, each at the version
+that was imported together. See
+[archived email](usage/web.md#read-archived-email).
 
 ![An archived email with decoded headers and an HTML body](https://docbank.ai/assets/generated/web-email-reader.png)
 
 ## Download the versions you reviewed
 
-Preview original files and retained outputs from a page, checked rows, or a
-frozen query. Download the verified ZIP when it is ready. Dated search reports
-have separate CSV and frozen evidence downloads. See
-[document bundles](usage/export-bundles.md) and [search reports](usage/search-exports.md).
+Start an export from a page, from checked rows, or from a frozen query. The
+preview lists the original files and stored outputs the bundle will contain.
+Download the verified ZIP when it is ready. A search report for a date range
+has two downloads: the CSV of counts and a frozen evidence ZIP. See
+[document bundles](usage/export-bundles.md) and
+[search reports](usage/search-exports.md).
 
 ![A verified export with its download receipt](https://docbank.ai/assets/generated/web-export-ready.png)
 
@@ -80,10 +88,11 @@ have separate CSV and frozen evidence downloads. See
 
 ## Exchange packages and label pages
 
-Import load-file packages with their files, supplied text, metadata, and page
-maps. For a sealed package, preview and reserve sequential Bates labels before
-exporting the selected PDF pages. See [load-file import](usage/web.md#import-load-files)
-and [Bates export](usage/web.md#stamp-selected-pages-with-bates-labels).
+Import a load-file package with its files, supplied text, metadata, and page
+maps. Once a package is sealed, you can preview and reserve sequential Bates
+labels, then export the selected PDF pages with the labels stamped on them. See
+[load-file import](usage/web.md#import-load-files) and
+[Bates export](usage/web.md#stamp-selected-pages-with-bates-labels).
 
 ![A load-file package preview](https://docbank.ai/assets/generated/web-load-file-import.png)
 
@@ -91,33 +100,34 @@ and [Bates export](usage/web.md#stamp-selected-pages-with-bates-labels).
 
 ## Verify permanent history
 
-Permanently retain a directory's versions and recorded changes by enabling an
-audit scope. Verification replays that history and checks the protected
-content hashes. Save its evidence report outside the vault to compare against
-a later check. [Permanent Audited History](usage/audited-history.md) explains
-the irreversible retention rules.
+Enabling an audit scope on a directory keeps its versions and recorded changes
+permanently. Verification replays that history and checks the hashes of the
+protected content. Save the evidence report outside the vault so you can
+compare it with a later check. Enabling a scope cannot be undone.
+[Permanent audited history](usage/audited-history.md) explains the retention
+rules.
 
-![The Docbank web application showing independently verified permanent audit evidence for a synthetic vault.](https://docbank.ai/assets/generated/web-audit-evidence.png)
+![The Docbank web application showing the result of verifying permanent audit evidence in a synthetic vault.](https://docbank.ai/assets/generated/web-audit-evidence.png)
 
 ## See where document bytes are stored
 
-Inspect the built-in local store and configured filesystem or S3-compatible
-stores. The read-only browser view distinguishes database records from bytes
-on disk. It also reports store health, content with only one copy, and affected
-live documents. See [Multi-store Storage](usage/storage.md) for placement and
-recovery commands.
+The storage view lists the built-in local store and any filesystem or
+S3-compatible stores you have configured. It is read-only. It separates what
+the database records from the bytes actually on disk, and reports store health,
+content that has only one copy, and the live documents a problem affects. See
+[Multi-store storage](usage/storage.md) for placement and recovery commands.
 
 ![The Docbank web application showing the primary and a secondary physical store for a synthetic vault.](https://docbank.ai/assets/generated/web-multi-store-storage.png)
 
-## Operate from a terminal
+## Work from a terminal
 
-Use the terminal user interface (TUI) to browse, search, inspect document IDs
-and history, and move documents to or from recoverable trash. Its operations
-screen loads storage and backup results independently, so an unavailable backup
-repository does not hide vault status. See the
+The terminal user interface (TUI) browses and searches the vault, shows
+document IDs and history, and moves documents to and from the trash. Its
+operations screen loads storage and backup results independently, so vault
+status still appears when a backup repository is unavailable. See the
 [terminal browser guide](usage/tui.md) for keys and limits.
 
 ![The Docbank TUI showing physical storage inventory, two content stores, and two synthetic backup recovery points.](https://docbank.ai/assets/generated/tui-multi-store-storage.png)
 
-Continue with the [Quickstart](quickstart.md), or choose a task from
-[Capabilities](capabilities.md).
+Next, try the [quickstart](quickstart.md) or pick a task from the
+[capability guide](capabilities.md).
