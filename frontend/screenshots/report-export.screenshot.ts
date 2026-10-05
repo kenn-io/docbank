@@ -43,7 +43,6 @@ test("qualifies selected reports and original exports", async ({ page }) => {
     } catch {
       throw new Error(`Synthetic daemon ${pid ?? "unknown"} did not stop; retained ${scratch}`);
     }
-    started = false;
   };
   try {
     await mkdir(captures!, { recursive: true, mode: 0o700 });
@@ -296,6 +295,7 @@ with zipfile.ZipFile(sys.argv[2]) as z:
     assert all(m['coverage']['family_state'] == 'complete' for m in members)
     assert z.read('families.jsonl') == b''
     assert manifest['counts'] == [counts, counts]
+    assert len(manifest['row_coverage']) == 2
     for actual in [manifest['coverage'], *manifest['row_coverage']]:
         assert {key: actual[key] for key in coverage} == coverage
     assert [m['coverage']['search_state'] for m in members] == ['complete', 'complete', 'missing']
@@ -341,7 +341,9 @@ with zipfile.ZipFile(sys.argv[5]) as z:
         assert hashlib.sha256(z.read(name)).hexdigest() == digest
     metadata = list(csv.DictReader(io.StringIO(z.read('metadata.csv').decode())))
     assert len(metadata) == 3
-    assert [int(row['node_id']) for row in metadata] == [i['node_id'] for i in identities]
+    assert [dict(node_id=int(row['node_id']), version_id=row['version_id'],
+                 sha256=row['source_sha256']) for row in metadata] == identities
+    assert all(row['role'] == 'original' and row['status'] == 'available' for row in metadata)
     member_hash = hashlib.sha256(''.join(
         str(i['node_id'])+':'+i['version_id']+'\n' for i in identities).encode()).hexdigest()
     assert plan['source']['member_hash'] == member_hash
@@ -395,6 +397,7 @@ print('Verified report evidence, CSV and all three original byte streams')
     await stop();
     expect(await run("search-export", "verify", packet)).toContain("internally consistent: true");
     await verifyArtifacts();
+    expect(JSON.parse(await run("daemon", "status", "--json")).running).toBe(false);
     await exec("python3", ["-c", String.raw`
 import sqlite3, sys
 from pathlib import Path

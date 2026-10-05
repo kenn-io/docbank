@@ -1,7 +1,7 @@
 # Qualify selected reports and original exports in the browser
 
-Status: proposed; not implemented. This is a bounded acceptance specification
-for maintainer and adversarial review.
+Status: implemented and locally qualified with CGO and pure-Go SQLite.
+The dedicated CI job takes effect after merge, as described below.
 
 Source baseline: `eec4756eeedf751e0f48af9e3d56c9ac7ea98ba8`, after #791.
 Parent scope: [local document review and export, #719](https://github.com/kenn-io/docbank/issues/719).
@@ -285,8 +285,9 @@ change the documentation asset pin or publish the docs site.
 The implementation evidence must distinguish the new browser result from the
 older CLI/MCP/PDF/family qualifications. Re-run relevant frontend checks and
 both SQLite Go suites for any product correction; report observed results,
-including a browser failure rather than calling a skipped case a pass. Keep
-this specification proposed until its implementation has been verified.
+including a browser failure rather than calling a skipped case a pass. The
+local qualification has passed in both SQLite modes; CI activation remains
+conditional on merge.
 
 Family recovery through maintenance, browser attachment-family selection,
 portable-profile inspection, larger report capacity, and minimal PDF redaction

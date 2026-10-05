@@ -1,14 +1,14 @@
 # Author source review: browser report and export qualification
 
-Status: proposed qualification, revised after external review of `f5ba5c8a`.
-The CI clarification and three implementation details are resolved in the
-design. No implementation or browser run is claimed.
+Status: implemented and locally qualified after external approval of `3337924c`.
+Both SQLite modes executed one passing Chromium case with no skips. The new
+CI job has not run; the main-pinned dispatcher activates it after merge.
 
 Design: `2026-10-04-browser-report-export-qualification-design.md`.
 Design SHA-256:
-`88419a3eeb915df528213b1901ba7594f4c1c654af3cacb771d162ae44503f07`.
+`d75c959207af19b9c2b1da1ca749cc781e3f90f797e40f1f7c3ea832a14155d7`.
 Source baseline: `eec4756eeedf751e0f48af9e3d56c9ac7ea98ba8`, merged #791.
-Source, dependencies, and generated clients are unchanged from that baseline.
+Product code, dependencies, and generated clients are unchanged from that baseline.
 The initial author pass reviewed the two then-untracked specification documents.
 The 2026-10-05 recheck compared against `f5ba5c8a`; only these two documents
 changed, and the source baseline remains unchanged.
@@ -49,7 +49,8 @@ The three Low clarifications are also resolved:
   using a read-only, immutable URI, without a Go helper or dependency.
 
 No unresolved High or Medium source-contract findings remain in this recheck.
-The proposed browser case has not run, so this is not a behavioral verdict.
+The source-review findings were resolved before implementation. Local
+browser evidence is recorded below.
 
 Two ambiguities were removed during drafting:
 
@@ -95,13 +96,34 @@ matches both terms during fixture readiness but does not enter either output.
 The two text dates and the missing file's import date must fall inside both
 term ranges for the stated coverage numbers to hold.
 
-## Review limits
+## Implementation evidence and limits
 
-This pass inspected source contracts and the existing harness. It did not run
-the proposed fixture, inspect rendered UI, or measure added CI duration. The
-implementation must demonstrate those outcomes, including both SQLite modes.
-Browser selectors and fixture MIME/search readiness remain executable checks,
-not assumptions to bypass if they fail.
+`make report-export-browser-test` completed locally with the implementation
+based on `b74a0d51` and the uncommitted runner/CI changes. CGO and pure-Go each
+executed one case, passed it, and skipped none. The final committed source and
+its repeated two-mode results are recorded in the PR handoff.
+
+The browser case exercised the exact selection, strict refusal, ambiguous-date
+revision, unchanged parent, coverage/counts, original download, frozen report,
+and stale rerun. Python's independent readers checked all three original byte
+streams and the report evidence/CSV before and after daemon shutdown. The
+stopped database contained no rendition or embedding jobs. No product change
+was needed. Empty family IDs designate the three unrelated singletons; they
+are not three shared-family identifiers.
+
+The parent read uses the generated URL builder and a same-origin browser fetch
+with the original session header. The database URI appends
+`?mode=ro&immutable=1` to `Path.resolve().as_uri()`. Missing or relative binary
+overrides fail before vault creation. Review captures show the real export,
+date-review, and completed-report states with synthetic data only.
+
+This is local Linux Chromium evidence. It does not establish CI execution,
+native macOS/Windows browser coverage, family recovery, or processing-provider
+behavior. The maintainer should inspect the first main run after merge; no CI
+monitoring was performed. The broader frontend suite also exposed two
+unchanged `app-opened.test.ts` setup failures under the host's Node 26.10.0
+(`localStorage` is undefined); both pass under CI's Node 24 line. This
+qualification does not change that unit-test environment.
 
 The Python URI form was exercised on a disposable synthetic database whose
 path contains a space. It returned the expected row after the writer closed.

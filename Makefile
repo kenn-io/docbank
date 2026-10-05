@@ -21,7 +21,7 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build install clean test test-v openapi generate-api check-timing-budgets frontend frontend-test frontend-dev docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
+.PHONY: build install clean test test-v openapi generate-api check-timing-budgets frontend frontend-test frontend-dev report-export-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
 
 build: frontend
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o docbank ./cmd/docbank
@@ -66,6 +66,9 @@ frontend-test:
 
 frontend-dev:
 	cd frontend && npm run dev
+
+report-export-browser-test: frontend
+	node frontend/screenshots/report-export.run.mjs
 
 docs-screenshots:
 	cd frontend && npm run screenshots
@@ -140,4 +143,4 @@ docs-deploy:
 	DOCS_SOURCE="$(DOCS_SOURCE)" ./scripts/deploy-docs.sh
 
 help:
-	@echo "Targets: build install clean test test-v openapi generate-api frontend frontend-test frontend-dev docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"
+	@echo "Targets: build install clean test test-v openapi generate-api frontend frontend-test frontend-dev report-export-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"

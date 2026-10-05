@@ -93,3 +93,36 @@ DOCBANK_SIMILAR_SCREENSHOT_DIR="$PWD/.superpowers/similar-screenshots" \
   similar-documents.screenshot.ts \
   --config frontend/screenshots/playwright.config.ts --project chromium
 ```
+
+## Report and original-export qualification
+
+Run the combined browser workflow from the repository root:
+
+```sh
+make report-export-browser-test
+```
+
+It builds the frontend once, builds separate CGO and pure-Go Docbank binaries
+with `fts5`, and executes one Chromium case per binary. It requires the usual
+Go and Node build tools, a C compiler for CGO, Python 3, and the pinned Chromium
+installation described above. A skipped case fails the command.
+
+The case selects three synthetic documents and leaves a matching fourth file
+out. It checks strict missing-text refusal, reviews an ambiguous date, compares
+report counts and coverage with literal expectations, and independently checks
+the report packet, CSV, and original ZIP. Replacement preserves the old packet
+but prevents an unchanged selected request from running again.
+
+`DOCBANK_SCREENSHOT_BINARY` must name an absolute branch binary when
+`DOCBANK_REPORT_EXPORT_SCREENSHOT_DIR` enables this case. The runner sets both;
+it never uses an installed binary. Each mode owns a temporary vault. After
+shutdown, it verifies the saved files offline and checks that no rendition or
+embedding jobs were created. Scratch data is removed; failed shutdown retains
+the vault and reports its path and process.
+
+Review captures remain under `.superpowers/report-export-browser/cgo/` and
+`purego/`. They are separate from the published documentation image set. The
+command prints the source commit, tree state, and executed-case result for each
+mode. These results qualify Linux Chromium, not native macOS or Windows browsers.
+The dedicated CI job takes effect after merge because PRs use `ci.yml` on main;
+local runs provide the evidence for the PR introducing that job.
