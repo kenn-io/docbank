@@ -1,14 +1,17 @@
 # Author source review: browser report and export qualification
 
-Status: author review of a proposed qualification; no implementation or browser
-run is claimed. The design is ready for independent adversarial review.
+Status: proposed qualification, revised after external review of `f5ba5c8a`.
+The CI clarification and three implementation details are resolved in the
+design. No implementation or browser run is claimed.
 
 Design: `2026-10-04-browser-report-export-qualification-design.md`.
 Design SHA-256:
-`109cae7792b4421fb7ad1f0c26b3ca07b2d7ab2888d738ed5ee04d287d80179b`.
+`88419a3eeb915df528213b1901ba7594f4c1c654af3cacb771d162ae44503f07`.
 Source baseline: `eec4756eeedf751e0f48af9e3d56c9ac7ea98ba8`, merged #791.
 Source, dependencies, and generated clients are unchanged from that baseline.
-The two new specification documents were untracked during this author review.
+The initial author pass reviewed the two then-untracked specification documents.
+The 2026-10-05 recheck compared against `f5ba5c8a`; only these two documents
+changed, and the source baseline remains unchanged.
 The repository has no gitlinks. Playwright is pinned to 1.61.1 in
 `frontend/package.json`; no package change is proposed.
 
@@ -27,7 +30,25 @@ remain a separate decision, as does minimal PDF redaction.
 
 ## Findings
 
-No unresolved High or Medium source-contract findings in this author pass.
+The external review found one Medium that the original author pass missed:
+the new CI job cannot run on the implementing PR because the dispatcher uses
+the workflow on main. Direct inspection of `.github/workflows/ci-pr.yml:13`
+confirms the pinned reference; `.github/workflows/ci.yml:5` supplies the main
+push trigger. The design now requires local runs in both SQLite modes before
+merge and separates that evidence from CI activation after merge. Watching the
+first main run still requires an explicit maintainer request.
+
+The three Low clarifications are also resolved:
+
+- Live parent reads use a same-origin browser fetch with the existing session
+  header. History comparisons use the CLI because history is vault-wide.
+- `DOCBANK_SCREENSHOT_BINARY` names the absolute branch binary, and
+  `DOCBANK_REPORT_EXPORT_SCREENSHOT_DIR` enables the new case and names its
+  capture directory. An enabled case cannot silently use another binary.
+- The stopped database is read through Python's standard-library `sqlite3`
+  using a read-only, immutable URI, without a Go helper or dependency.
+
+No unresolved High or Medium source-contract findings remain in this recheck.
 The proposed browser case has not run, so this is not a behavioral verdict.
 
 Two ambiguities were removed during drafting:
@@ -46,8 +67,11 @@ Two ambiguities were removed during drafting:
 | Selected-report browser proof is opt-in and already verifies a frozen download and stale rerun. | `frontend/screenshots/search-export.screenshot.ts:13`, `:77`, `:88`, `:99` |
 | Native-export browser proof is opt-in, uses 1,001 members, and checks downloaded ZIP contents independently. | `frontend/screenshots/export-drawer.screenshot.ts:13`, `:17`, `:111` |
 | The frontend check type-checks screenshot code without running these application workflows. | `Makefile:59`; `frontend/package.json` scripts; `.github/workflows/ci.yml:67` |
+| PRs call the main-pinned workflow; the new job first takes effect after merge. | `.github/workflows/ci-pr.yml:13`; `.github/workflows/ci.yml:5` |
 | The existing screenshot runner builds and launches branch code, and the Playwright configuration has one worker and disables telemetry. | `frontend/screenshots/run.mjs`; `frontend/screenshots/playwright.config.ts` |
+| An existing case accepts `DOCBANK_SCREENSHOT_BINARY`; the new gate is a proposed addition. | `frontend/screenshots/similar-documents.screenshot.ts:15`; `frontend/screenshots/search-export.screenshot.ts:12` |
 | `make build` hard-codes CGO on. | `Makefile:26` |
+| Live summaries require the owning browser token; history is not filtered by owner. | `frontend/src/api-transport.ts:32`; `internal/api/routes_term_reports.go:121`, `:149`; `internal/store/term_report_history.go` |
 | The selection dock exposes both report and export actions. | `frontend/src/SelectionDock.svelte`; `frontend/src/App.svelte:1468`, `:1481` |
 | The report draft copies selected identities and defaults to UTC and dates from 2000 through today. | `frontend/src/TermReportDrawer.svelte:20`, `:23`, `:26` |
 | Review choices are made against candidate IDs, document identities, and evidence hashes; a reason is required. | `frontend/src/TermReportDrawer.svelte:211`, `:225` |
@@ -78,3 +102,8 @@ the proposed fixture, inspect rendered UI, or measure added CI duration. The
 implementation must demonstrate those outcomes, including both SQLite modes.
 Browser selectors and fixture MIME/search readiness remain executable checks,
 not assumptions to bypass if they fail.
+
+The Python URI form was exercised on a disposable synthetic database whose
+path contains a space. It returned the expected row after the writer closed.
+That probe confirms the proposed standard-library invocation, not the new
+browser case or the CI job.

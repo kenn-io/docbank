@@ -94,8 +94,9 @@ Select only `missing.bin`, open **Report selected documents**, and enter the
 term `alpha` with strict coverage. Create the report through the visible
 control. Assert `incomplete_coverage` from the actual response and a visible
 error. There is no counts table, evidence-download control, successful report
-handle, or added history row. Compare history before and after using a read
-authenticated as the same browser owner.
+handle, or added history row. Compare the complete parsed responses from
+`search-export history --json` before and after. History is vault-wide, so the
+CLI's API-key read can observe these browser-created receipts.
 
 This refusal has no ambiguous date: the missing file uses its vault-addition
 date. Do not expect the three-member ambiguous request to fail strict coverage
@@ -140,9 +141,13 @@ click **Create reviewed revision**. Check that the submitted choice contains
 the observed candidate ID, document identity, and evidence hash, with action
 `select`. Do not choose a candidate by its array position.
 
-The completed child report has a different handle. A read using the same
-browser session must still show the parent as `needs_review`. The expected
-counts, in the existing column order, are:
+The completed child report has a different handle. Check the parent's live
+summary with a same-origin `fetch` inside `page.evaluate`, requesting
+`GET /api/v1/search-exports/{parent-id}` and sending `X-Docbank-Web-Session`.
+Take that token from the issued URL's `web_session` fragment before navigation
+and keep it in memory. Require HTTP 200 and state `needs_review`. The CLI's
+API-key summary read has a different owner and cannot perform this check.
+The expected counts, in the existing column order, are:
 
 | Term | Hits | Hits Plus Family | Unique Hits | Documents in unique families | Unique Hits Plus Family |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -173,7 +178,8 @@ browser and require byte equality with the original ZIP.
 Use the completed report's history request as a draft, then create it again
 without refreshing its fixed document identities. Assert HTTP 409
 `report_selection_changed` and the visible refresh-and-reselect advice. No
-success handle or history row is added. Do not silently choose the new head.
+success handle or history row is added; compare CLI history as for the strict
+refusal. Do not silently choose the new head.
 
 This assertion is specific to report admission. Native exports may select
 retained historical versions; the test must not impose current-version-only
@@ -212,20 +218,42 @@ not claim independent source authenticity or restored live-handle persistence.
 Add a focused command, proposed as `make report-export-browser-test`, that
 builds the frontend once and exercises this one Chromium case with both
 `CGO_ENABLED=1` and `CGO_ENABLED=0` branch binaries, always with `-tags fts5`.
-Use explicit binary paths; do not reuse an installed binary. `make build`
-currently forces CGO on, so setting an environment variable around that target
-does not establish the pure-Go run. Each mode gets its own temporary vault.
+The runner passes each absolute branch-binary path through
+`DOCBANK_SCREENSHOT_BINARY`, the override already used by
+`similar-documents.screenshot.ts`. The new case requires this variable when
+enabled and invokes that binary for every CLI operation, including daemon
+startup and shutdown. There is no fallback to the repository's `docbank` file
+or an installed binary. `make build` currently forces CGO on, so setting an
+environment variable around that target does not establish the pure-Go run.
+Each mode gets its own temporary vault.
 
 Reuse `frontend/screenshots/playwright.config.ts` and a new focused
-`.screenshot.ts` case. Give the runner an explicit opt-in for this case so
-normal documentation screenshot generation does not run it or change the
-published image set. The dedicated invocation must execute the case, with no
-skipped qualification. Keep one worker and bounded readiness/polling deadlines.
+`.screenshot.ts` case. Use `DOCBANK_REPORT_EXPORT_SCREENSHOT_DIR` as its opt-in
+gate and capture directory, following the existing report screenshot pattern.
+The runner sets it to a separate directory under `.superpowers/` for each
+SQLite mode. Without the gate, normal documentation screenshot generation
+skips this case and does not change the published image set. The dedicated
+invocation must execute the case, with no skipped qualification. Keep one
+worker and bounded readiness/polling deadlines.
 
-Run that command in one Linux/Chromium PR CI job using the repository's existing
-Go/Node setup and pinned Playwright installation. No new cross-browser or
+Add one Linux/Chromium job to `.github/workflows/ci.yml` using the repository's
+existing Go/Node setup and pinned Playwright installation. The docs job already
+installs Chromium through the pinned Playwright CLI. No new cross-browser or
 operating-system matrix is proposed. Linux browser results do not establish
 native macOS or Windows browser coverage; existing native Go checks continue.
+
+The PR dispatcher in `.github/workflows/ci-pr.yml` always calls
+`kenn-io/docbank/.github/workflows/ci.yml@main`. Therefore this new job will not
+run on the implementing PR; it first takes effect when the workflow merges to
+main, whose push event runs it. Later PRs use the updated main-pinned workflow.
+Do not change that dispatch policy to obtain pre-merge evidence.
+
+Before merge, run `make report-export-browser-test` locally and record the
+tested commit, both SQLite modes, executed-case counts, and outcomes in the
+handoff. An existing green PR check does not demonstrate the new browser job.
+Distinguish the locally verified command from its not-yet-executed CI wiring.
+Recommend that the maintainer inspect the first main run after merge; do not
+watch or poll it without an explicit request, as required by `AGENTS.md`.
 
 The harness may use CLI/API operations to seed files, wait for readiness, read
 evidence, replace the source, and stop the daemon. Selection, report creation,
@@ -237,8 +265,13 @@ Disable telemetry as the existing Playwright configuration does. Confine all
 application data, config, runtime records, and downloaded artifacts to the
 synthetic workspace. Keep browser tokens out of screenshots and logs. After
 the workflow, stop the daemon and confirm it is stopped before reading the
-temporary database in read-only mode. Assert zero rendition and embedding jobs,
-following the stopped-vault check in `document_inspect_fixture_test.go`.
+temporary database. From the TypeScript harness, invoke `python3` with Python's
+standard-library `sqlite3`, using `sqlite3.connect(uri, uri=True)` and a file
+URI with `mode=ro&immutable=1`. Build the URI with `Path.resolve().as_uri()`;
+the database path is a separate process argument, not interpolated Python or
+shell code. Query `rendition_jobs` and `embedding_jobs`, require zero rows in
+both, and close the connection. This matches the stopped-vault check in
+`document_inspect_fixture_test.go` without a helper binary or new dependency.
 Automatic plain-text extraction during setup is expected and is not a provider
 job. This is not an external-network isolation qualification.
 
