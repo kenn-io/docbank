@@ -7,7 +7,7 @@
 > **Alpha software.** Keep your own copies of anything irreplaceable, and
 > verify a backup before you rely on it.
 
-**Find the right document. Keep the whole record.**
+**Find any document, and every version of it.**
 
 Docbank is an open-source document vault for people, applications, and agents.
 It runs on your own machine. It imports files, email, photos, and recordings,
