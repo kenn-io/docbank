@@ -21879,6 +21879,8 @@ paths:
                 format: binary
                 type: string
           description: Verified JPEG preview
+        "304":
+          description: The cached preview is still eligible and unchanged
         default:
           content:
             application/problem+json:

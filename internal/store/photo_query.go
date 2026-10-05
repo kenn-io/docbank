@@ -265,6 +265,11 @@ const photoBrowseDisplayFrom = `photo_assets a
 
 const photoBrowseLiveDisplay = liveIncludedDisplayPredicate + ` AND n.kind='file'`
 
+const photoBrowseEligibleMemberPredicate = `EXISTS (
+ SELECT 1 FROM photo_files member JOIN photo_assets a ON a.asset_id=member.asset_id
+ JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id
+ WHERE member.node_id=cv.node_id AND ` + photoBrowseLiveDisplay + `)`
+
 const photoBrowseNodeJoins = `
  CROSS JOIN photo_files f ON f.node_id=n.id
  CROSS JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
@@ -334,11 +339,9 @@ func photoBrowseMatch(
 	}
 	// Duplicate representatives are selected from the complete matching photo
 	// population, as for document queries, before projecting assets.
-	compiled.predicate = joinCompiledFragments([]compiledQueryFragment{compiled.predicate, {
-		sql: `EXISTS (SELECT 1 FROM photo_files member JOIN photo_assets a ON a.asset_id=member.asset_id
- JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id
- WHERE member.node_id=cv.node_id AND ` + photoBrowseLiveDisplay + `)`,
-	}}, ` AND `)
+	compiled.predicate = joinCompiledFragments([]compiledQueryFragment{
+		compiled.predicate, {sql: photoBrowseEligibleMemberPredicate},
+	}, ` AND `)
 	population, err := matchedPopulation(compiled, generation, profile)
 	if err != nil {
 		return compiledQueryFragment{}, err

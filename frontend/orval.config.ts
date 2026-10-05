@@ -26,7 +26,7 @@ export default defineConfig({
         operations: {
           shutdownDaemon: { mutator: { path: "src/api-transport.ts", name: "sessionEmpty" } },
           readPhotoPreview: {
-            mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },
+            mutator: { path: "src/api-transport.ts", name: "sessionPhotoPreview", inferred: true },
             requestOptions: { headers: { Accept: "image/jpeg" } },
           },
           readPageImage: {

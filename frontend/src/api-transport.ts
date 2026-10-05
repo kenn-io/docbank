@@ -23,7 +23,7 @@ export interface SessionOptions extends RequestInit {
 }
 
 // Orval's transport hook adds the scoped credential and preserves problem details.
-export async function sessionResponse<_T>(url: string, { session = "", ...init }: SessionOptions): Promise<Response> {
+export async function sessionResponse<_T>(url: string, { session = "", ...init }: SessionOptions, allowNotModified = false): Promise<Response> {
   const headers = new Headers(init.headers);
   if (init.body instanceof Blob && init.body.type.startsWith("multipart/form-data;")) {
     headers.set("Content-Type", init.body.type);
@@ -31,13 +31,17 @@ export async function sessionResponse<_T>(url: string, { session = "", ...init }
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
   headers.set("X-Docbank-Web-Session", session);
   const response = await fetch(url, { ...init, headers, credentials: "same-origin" });
-  if (!response.ok) {
+  if (!response.ok && !(allowNotModified && response.status === 304)) {
     let problem: Problem = {};
     try { problem = await response.json() as Problem; } catch { /* An empty error still carries its HTTP status. */ }
     throw new APIError(problem.detail || problem.title || `HTTP ${response.status}`,
       response.status, problem.code ?? "", problem.position);
   }
   return response;
+}
+
+export async function sessionPhotoPreview<_T>(url: string, options: SessionOptions): Promise<Response> {
+  return sessionResponse<Response>(url, options, true);
 }
 
 export async function sessionJSON<T>(url: string, options: SessionOptions): Promise<T> {

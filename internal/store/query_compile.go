@@ -292,6 +292,11 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 	if !expression.Saved.Query.Filters.CollapseDuplicates {
 		return nested, nil
 	}
+	if c.photoDisplayMetadata {
+		nested = joinCompiledFragments([]compiledQueryFragment{
+			nested, {sql: photoBrowseEligibleMemberPredicate},
+		}, ` AND `)
+	}
 	population := selectCompiledPopulation(nested, true)
 	return compiledQueryFragment{
 		sql: `EXISTS (SELECT 1 FROM (` + population.sql + `) saved_population

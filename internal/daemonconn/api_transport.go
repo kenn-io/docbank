@@ -78,7 +78,7 @@ func (t apiTransport) CreateRequest(ctx context.Context, params runtime.RequestO
 	return req, nil
 }
 
-func (t apiTransport) ExecuteRequest(ctx context.Context, req *http.Request, _ string) (*runtime.Response, error) {
+func (t apiTransport) ExecuteRequest(ctx context.Context, req *http.Request, operationPath string) (*runtime.Response, error) {
 	resp, err := t.connection.hc.Do(req) // #nosec G704 -- Generated paths use the caller-selected daemon connection.
 	if err != nil {
 		return nil, classifyRequestFailure(resp, err)
@@ -86,7 +86,9 @@ func (t apiTransport) ExecuteRequest(ctx context.Context, req *http.Request, _ s
 	if t.response != nil {
 		*t.response = resp
 	}
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+	notModified := resp.StatusCode == http.StatusNotModified && req.Method == http.MethodGet &&
+		operationPath == "/api/v1/photos/assets/{asset_id}/previews/{generation_id}"
+	if (resp.StatusCode < 200 || resp.StatusCode > 299) && !notModified {
 		defer func() { _ = resp.Body.Close() }()
 		return nil, decodeError(resp)
 	}
@@ -96,6 +98,9 @@ func (t apiTransport) ExecuteRequest(ctx context.Context, req *http.Request, _ s
 		return result, nil
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if notModified {
+		return result, nil
+	}
 	result.Content, err = io.ReadAll(resp.Body)
 	if err == nil && len(result.Content) == 0 && resp.StatusCode != http.StatusNoContent && (resp.StatusCode != http.StatusAccepted || req.Method != http.MethodPost || req.URL.Path != "/api/daemon/shutdown") {
 		err = io.EOF

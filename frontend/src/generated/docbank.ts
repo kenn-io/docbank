@@ -7,6 +7,7 @@
 import { sessionJSON } from '../api-transport';
 import { sessionEmpty } from '../api-transport';
 import { sessionResponse } from '../api-transport';
+import { sessionPhotoPreview } from '../api-transport';
 import { mediaFormData } from '../media-form-data';
 
 // https://stackoverflow.com/questions/49579094/typescript-conditional-types-filter-out-readonly-properties-pick-only-requir/49579497#49579497
@@ -13513,7 +13514,7 @@ export const getReadPhotoPreviewUrl = (assetId: string,
  */
 export const readPhotoPreview = (assetId: string,
     generationId: string,
-    headers?: ReadPhotoPreviewHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
+    headers?: ReadPhotoPreviewHeaders, options?: Parameters<typeof sessionPhotoPreview>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -13529,7 +13530,7 @@ export const readPhotoPreview = (assetId: string,
     }
     return headers;
   };
-return sessionResponse<Blob>(getReadPhotoPreviewUrl(assetId,generationId),
+return sessionPhotoPreview<Blob>(getReadPhotoPreviewUrl(assetId,generationId),
   {
     ...options,
     method: 'GET',

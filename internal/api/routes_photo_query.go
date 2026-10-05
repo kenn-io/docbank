@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -113,6 +114,12 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 					Schema: &huma.Schema{Type: openAPIStringType, Format: openAPIBinaryFormat},
 				}},
 			},
+			"304": {Description: "The cached preview is still eligible and unchanged"},
+			"default": {Description: "Error", Content: map[string]*huma.MediaType{
+				new(Error).ContentType("application/json"): {
+					Schema: api.OpenAPI().Components.Schemas.Schema(reflect.TypeFor[Error](), true, ""),
+				},
+			}},
 		},
 	}, func(ctx context.Context, in *struct {
 		AssetID      string `path:"asset_id"`

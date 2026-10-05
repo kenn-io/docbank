@@ -326,6 +326,32 @@ func TestPhotoBrowseDuplicateScope(t *testing.T) {
 	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"filters":{"collapse_duplicates":true}}`).Total)
 }
 
+func TestPhotoBrowseSavedDuplicateScope(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := browseHash("saved-duplicate-scope")
+	older := browsePhotoNode(t, s, "older.jpg", hash, "image/jpeg")
+	included := browsePhotoNode(t, s, "included.jpg", hash, "image/jpeg")
+	_, err := s.db.ExecContext(ctx, `UPDATE nodes SET modified_at='2020-01-01T00:00:00.000000000Z' WHERE id=?`, older.ID)
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, older.ID)
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	definition := `{"filters":{"collapse_duplicates":true}}`
+	_, err = s.CreateSavedQuery(ctx, "Photo duplicates", "", SavedQueryKindQuery, []byte(definition))
+	require.NoError(t, err)
+	for _, raw := range []string{definition, `{"syntax":"advanced","text":"saved:\"Photo duplicates\""}`} {
+		page := browsePhotoPage(t, s, raw)
+		require.Len(t, page.Items, 1, raw)
+		require.Equal(t, included.ID, page.Items[0].NodeID, raw)
+	}
+	compiled := compileFixtureQuery(t, s, `saved:"Photo duplicates"`, query.Filters{})
+	require.Equal(t, []int64{older.ID}, compiledFixtureIDs(t, s.db, compiled, ""),
+		"document queries retain the excluded photo as their duplicate representative")
+}
+
 func TestSnapshotRejectsPhotoSorts(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

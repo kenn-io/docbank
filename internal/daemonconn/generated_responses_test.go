@@ -77,6 +77,7 @@ func TestGeneratedStreamOwnershipAndStatus(t *testing.T) {
 	}{
 		{"owned", true, 200, false},
 		{"unexpected status", true, 202, true},
+		{"not modified on another route", true, 304, true},
 		{"unowned", false, 200, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -116,4 +117,69 @@ func TestEmptyAcceptedResponseRequiresBodyExceptShutdown(t *testing.T) {
 	require.True(t, IsResponseDecodeError(err))
 	_, err = c.API().ShutdownDaemon(t.Context(), &apiclient.ShutdownDaemonRequestOptions{})
 	require.NoError(t, err)
+}
+
+func TestPhotoPreviewConditionalResponses(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusNotModified, http.StatusNotFound} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-Api-Key") != "synthetic-key" ||
+					r.Header.Get("If-None-Match") != `"synthetic-generation"` {
+					t.Error("preview credentials or validator missing")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				w.Header().Set("ETag", `"synthetic-generation"`)
+				w.WriteHeader(status)
+				if status == http.StatusOK {
+					_, _ = io.WriteString(w, "synthetic JPEG")
+				}
+				if status == http.StatusNotFound {
+					_, _ = io.WriteString(w, `{"status":404,"code":"not_found","detail":"Photo is no longer included."}`)
+				}
+			}))
+			t.Cleanup(server.Close)
+			for _, mode := range []string{"buffered", "streamed"} {
+				t.Run(mode, func(t *testing.T) {
+					connection := New(server.URL, "synthetic-key")
+					client := connection.API()
+					ctx := t.Context()
+					var response *http.Response
+					if mode == "streamed" {
+						client = connection.apiWithResponse(&response)
+						ctx = runtime.WithStreamingResponse(ctx)
+					}
+					result, err := client.ReadPhotoPreview(ctx, &apiclient.ReadPhotoPreviewRequestOptions{
+						PathParams: &apiclient.ReadPhotoPreviewPath{AssetID: "00000000-0000-4000-8000-000000000001", GenerationID: "synthetic-generation"},
+						Header:     &apiclient.ReadPhotoPreviewHeaders{IfNoneMatch: new(`"synthetic-generation"`)},
+					})
+					if status == http.StatusNotFound {
+						require.ErrorContains(t, err, "Photo is no longer included.")
+						require.Nil(t, result)
+						return
+					}
+					require.NoError(t, err)
+					if mode == "streamed" {
+						require.Equal(t, status, response.StatusCode)
+						require.Equal(t, `"synthetic-generation"`, response.Header.Get("ETag"))
+						body, readErr := io.ReadAll(response.Body)
+						require.NoError(t, readErr)
+						require.NoError(t, response.Body.Close())
+						if status == http.StatusOK {
+							require.Equal(t, "synthetic JPEG", string(body))
+						} else {
+							require.Empty(t, body)
+						}
+					} else if status == http.StatusNotModified {
+						require.NotNil(t, result.Status304)
+						require.Nil(t, result.Status200)
+					} else {
+						require.Nil(t, result.Status304)
+						require.NotNil(t, result.Status200)
+						require.Equal(t, "synthetic JPEG", string(*result.Status200))
+					}
+				})
+			}
+		})
+	}
 }

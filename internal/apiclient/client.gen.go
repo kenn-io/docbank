@@ -8468,7 +8468,7 @@ func (c *Client) DetachPhotoFile(ctx context.Context, options *DetachPhotoFileRe
 }
 
 // ReadPhotoPreview Read verified bytes of an eligible exact photo preview
-func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadPhotoPreviewResponse, error) {
+func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadPhotoPreviewResult, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/previews/{generation_id}",
@@ -8481,18 +8481,21 @@ func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreview
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadPhotoPreviewResponse, error) {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadPhotoPreviewResult, error) {
 		switch resp.StatusCode {
+
+		case 304:
+			return &ReadPhotoPreviewResult{Status304: new(struct{})}, nil
 
 		case 200:
 
 			target := new(ReadPhotoPreviewResponse(resp.Content))
 
-			return target, nil
+			return &ReadPhotoPreviewResult{Status200: target}, nil
 
 		default:
 
-			return nil, decodeAPIError[ReadPhotoPreviewErrorResponse](resp, "ReadPhotoPreviewErrorResponse")
+			return nil, decodeAPIError[Error](resp, "Error")
 
 		}
 	}
@@ -8502,7 +8505,7 @@ func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreview
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
 	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
+		return nil, c.acceptStream(resp, 200, 304)
 	}
 	return responseParser(ctx, resp)
 }
@@ -12246,6 +12249,13 @@ func (c *Client) Health(ctx context.Context, reqEditors ...runtime.RequestEditor
 		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
+}
+
+// ReadPhotoPreviewResult contains the decoded body for the returned success status.
+type ReadPhotoPreviewResult struct {
+	Status200 *ReadPhotoPreviewResponse
+
+	Status304 *struct{}
 }
 
 // GetDocumentRenditionResult contains the decoded body for the returned success status.
@@ -22317,8 +22327,6 @@ type DetachPhotoFileResponse = api.PhotoAsset
 type DetachPhotoFileErrorResponse = Error
 
 type ReadPhotoPreviewResponse = []byte
-
-type ReadPhotoPreviewErrorResponse = Error
 
 type StartPhotoImportResponse = api.StorageOperation
 
