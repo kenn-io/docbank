@@ -1,6 +1,6 @@
 ---
-title: Loose & Packed Content
-description: The shared Kit packed-CAS layer and docbank's application-owned authority boundary.
+title: Loose and packed content
+description: The shared Kit packed content layer, and what Docbank itself remains responsible for.
 ---
 
 # Loose and packed content
@@ -151,5 +151,5 @@ repair, reversion, and maintenance use the catalog and content-hash boundary
 rather than private pack internals.
 
 Next: [Storage](storage.md) documents the schema and blob-store invariants
-beneath this layer. [Trash, GC, Repack & Verify](../usage/trash-and-gc.md) is
+beneath this layer. [Trash, garbage collection, repack, and verify](../usage/trash-and-gc.md) is
 the operator workflow above it.

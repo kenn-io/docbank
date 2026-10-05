@@ -1,6 +1,6 @@
 ---
 title: Interactive terminal browser
-description: Browse documents, inspect authority, storage, backups, and permanent history, and safely move or restore recoverable trash from the TUI.
+description: Browse documents, inspect their details, storage, backups, and permanent history, and move documents to or from trash in the terminal.
 ---
 
 # Interactive terminal browser

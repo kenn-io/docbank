@@ -1,6 +1,6 @@
 ---
-title: Vault Lifecycle
-description: Operate a docbank vault safely from first import through maintenance, upgrades, snapshots, and recovery.
+title: Vault lifecycle
+description: Operate a Docbank vault safely from first import through maintenance, upgrades, snapshots, and recovery.
 ---
 
 # Vault lifecycle
@@ -115,7 +115,7 @@ allow replacing an unversioned development build.
 
 Use `backup init`, `backup create`, `backup list`, `backup verify`, and
 `backup restore` to capture and test recovery snapshots. Unchanged content is
-reused across captures. See [Backup & Restore](backup.md) for the procedure.
+reused across captures. See [Backup and restore](backup.md) for the procedure.
 Backup repositories are compressed but **not encrypted**.
 
 ### When is a directory copy enough?
@@ -197,7 +197,7 @@ The portable path is a verified backup restore:
 Default restore puts all recovered content in a fresh local primary store, so
 the destination does not inherit source paths, endpoints, credentials, or
 ownership epochs. Use an owner-private store mapping only to reconstruct
-selected placement. See [Multi-store Storage](storage.md#backup-and-restore).
+selected placement. See [Multi-store storage](storage.md#backup-and-restore).
 
 If the primary holds every blob, you can also copy the stopped vault directory.
 Stop the source daemon, copy the complete directory, and run the same two

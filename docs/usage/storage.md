@@ -1,6 +1,6 @@
 ---
-title: Multi-store Storage
-description: Keep document bytes local-first, add filesystem or S3-compatible stores, and move verified authority deliberately.
+title: Multi-store storage
+description: Keep document bytes local first, add filesystem or S3-compatible stores, and move verified content between them.
 ---
 
 # Multi-store storage

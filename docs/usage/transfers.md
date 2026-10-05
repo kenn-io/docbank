@@ -1,10 +1,10 @@
 ---
 last_edited: 2026-10-05
-title: Verify Transfer Packages
+title: Verify transfer packages
 description: Check a Msgvault transfer package locally before importing it.
 ---
 
-# Verify Transfer Packages
+# Verify transfer packages
 
 Docbank can verify a portable Msgvault transfer package without opening a
 vault or starting either application's daemon:

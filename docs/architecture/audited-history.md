@@ -1,5 +1,5 @@
 ---
-title: Audited History
+title: Audited history
 description: The permanent, tamper-evident history model for protected directory scopes, content versions, backup, agents, and future interactive clients.
 ---
 

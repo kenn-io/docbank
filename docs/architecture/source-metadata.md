@@ -1,6 +1,6 @@
 ---
-title: Source Metadata
-description: How Docbank records bounded facts found inside original files.
+title: Source metadata
+description: How Docbank records a limited set of facts found inside original files.
 ---
 
 # Source metadata

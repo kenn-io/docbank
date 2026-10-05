@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-10-05
-title: Verified Page Images
-description: Exact-version page geometry and bounded local page rendering.
+title: Verified page images
+description: Page geometry and local page rendering for one document version, within fixed limits.
 ---
 
 # Verified page images

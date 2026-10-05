@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-10-05
 title: HTTP API
-description: The agent-first HTTP API — filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
+description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
 
 # HTTP API
@@ -11,7 +11,7 @@ The HTTP API lets clients browse, retrieve, file, and reorganize documents.
 cannot open the vault directly.
 
 This page owns the wire contract: routes, authentication, preconditions, content
-verification, and errors. Use [Agent Guide](../agents.md) for a task-oriented
+verification, and errors. Use [Docbank for agents](../agents.md) for a task-oriented
 starting point.
 
 | Reader question | Contract |
@@ -147,7 +147,7 @@ source catalog.
 Use either `format` or `extension`. Supplying both returns
 `422 invalid_format_query`. Pending and unknown queries return status 200 with
 `lookup.match` set to `pending` or `unknown_format`. See
-[Format Coverage](format-coverage.md) for the capability and state contract.
+[Format coverage](format-coverage.md) for the capability and state contract.
 
 Search accepts an optional `q` query. An omitted, empty, or whitespace-only
 query requires `tag_id`, `modified_since`, or `modified_before`. This is a
@@ -1656,7 +1656,7 @@ supplied path or looks up a node by content hash.
 
 `gc --run`, `trash empty`, and `verify` need the vault quiescent while
 they run because of the reachability-then-delete race described in
-[Ownership & Concurrency](locking.md). The daemon's exclusive vault lock is
+[Ownership and concurrency](locking.md). The daemon's exclusive vault lock is
 held for the daemon's whole lifetime, not per request, so an in-process
 `sync.RWMutex`-shaped gate serializes them against regular mutations.
 Ordinary mutating handlers (`PATCH`, trash, restore, create, ingest) take the

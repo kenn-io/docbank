@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-10-05
 title: Email PDFs
-description: Render one exact email version and keep a verified PDF alongside its original EML.
+description: Render one email version as a verified PDF kept alongside its original EML.
 ---
 
 # Email PDFs

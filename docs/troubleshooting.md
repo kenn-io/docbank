@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Diagnose docbank startup, daemon, import, integrity, update, and HTTP API failures without risking the vault.
+description: Diagnose Docbank startup, daemon, import, integrity, update, and HTTP API failures without risking the vault.
 ---
 
 # Troubleshooting
@@ -54,7 +54,7 @@ when the daemon restarts. The docbank CLI discovers them automatically, but an
 independent client does not.
 
 For a stable integration, configure a fixed loopback port and API key as shown
-in the [Agent Integration Guide](agents/integration.md).
+in the [Agent integration guide](agents/integration.md).
 
 ## Import completed with failures
 
@@ -75,7 +75,7 @@ the command continues with any remaining arguments. Docbank does not import
 non-regular files or file symlinks. Name the regular target file itself if it
 belongs in the vault. A source argument may be a symlink to a directory. Links
 inside that directory are still skipped and reported. See
-[Importing Documents](usage/importing.md).
+[Importing documents](usage/importing.md).
 
 ## Search cannot find document text
 
@@ -140,7 +140,7 @@ the content still needed and retires the old files.
 
 Check `pending_packed_bytes` in the GC report. This counts packed bytes waiting
 for repack, separately from individual files that GC can remove immediately.
-See [Trash, GC, Repack & Verify](usage/trash-and-gc.md).
+See [Trash, garbage collection, repack, and verify](usage/trash-and-gc.md).
 
 ## Update fails
 

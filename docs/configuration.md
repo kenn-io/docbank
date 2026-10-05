@@ -83,7 +83,7 @@ A stopped copy of `docbank.db` and `blobs/` is complete only when the primary
 is an authorized location for every retained blob. Copying `config.toml` saves
 secondary-store coordinates, but does not copy their content. Stop the daemon
 before taking a filesystem snapshot. See
-[Vault Lifecycle](usage/lifecycle.md#take-a-coherent-backup).
+[Vault lifecycle](usage/lifecycle.md#take-a-coherent-backup).
 
 Docbank also keeps persistent per-user coordination files under
 `~/.local/state/docbank/target-locks`, using the home directory from the
@@ -631,7 +631,7 @@ and an absolute `path`. S3 profiles use `kind = "s3"`, `endpoint`, `region`,
 `bucket`, optional `prefix`, `credential_profile`, and `force_path_style`.
 `priority` controls read preference after current health. Lower values are
 preferred. The complete workflow and examples are in
-[Multi-store Storage](usage/storage.md).
+[Multi-store storage](usage/storage.md).
 
 Bindings are loaded once when the daemon starts. Logical metadata, audit
 evidence, and backups do not include them. Restart after editing a profile.

@@ -1,10 +1,10 @@
 ---
 last_edited: 2026-10-05
-title: Document Processing
-description: How Docbank derives readable evidence and search data while preserving original versions and explicit processing consent.
+title: Document processing
+description: How Docbank derives readable text and search data while keeping original versions and requiring consent for processing.
 ---
 
-# Document Processing
+# Document processing
 
 Docbank keeps original document versions and the results derived from them
 separately. A new extractor or embedding model can produce a new result without
@@ -13,7 +13,7 @@ for the relevant document version.
 
 This page describes the implemented Go contracts and internal processing
 architecture. For an application choosing extractors or embedding providers,
-start with [Document Understanding in Go](../document-understanding.md).
+start with [Document understanding in Go](../document-understanding.md).
 
 ## Which interfaces expose this work?
 

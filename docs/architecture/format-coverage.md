@@ -1,10 +1,10 @@
 ---
 last_edited: 2026-10-05
-title: Format Coverage
+title: Format coverage
 description: How Docbank reports detection, retention, metadata, expansion, text, page, and transcript support from the running binary.
 ---
 
-# Format Coverage
+# Format coverage
 
 Docbank reports format support from the running binary. The
 `format-coverage/v1` record combines the classified format catalog with

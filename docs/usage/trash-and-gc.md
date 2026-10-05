@@ -1,9 +1,9 @@
 ---
-title: Trash, GC, Repack & Verify
-description: The explicit deletion and physical-reclamation lifecycle.
+title: Trash, garbage collection, repack, and verify
+description: How deletion and space reclamation work, from trash through garbage collection and repack.
 ---
 
-# Trash, GC, Repack & Verify
+# Trash, garbage collection, repack, and verify
 
 `docbank rm` moves documents to recoverable trash. To delete them permanently
 and reclaim space, you must empty trash, run garbage collection (GC), and
@@ -126,7 +126,7 @@ container. GC reports those bytes separately as pending repack.
 
 `gc --run` runs behind the daemon's maintenance gate, so a concurrent import
 cannot deduplicate against a blob that is being deleted (see
-[Ownership & Concurrency](../architecture/locking.md)). Files are removed
+[Ownership and concurrency](../architecture/locking.md)). Files are removed
 before their rows. A crash in between leaves rows without files, which the next
 `gc --run` reconciles and `verify` flags in the meantime. Orphan blobs from
 interrupted ingests are reclaimed the same way.
@@ -168,7 +168,7 @@ whole-catalog verification.
 
 Tree, trash, and version-retention rules decide which references remain. GC
 reclaims content only after those references are gone. Repack then reclaims
-pack space that GC made unused. The [CLI Reference](../cli-reference.md)
+pack space that GC made unused. The [CLI reference](../cli-reference.md)
 describes the full daemon maintenance commands.
 
 ## Verify
@@ -183,6 +183,6 @@ and checks its SHA-256 hash. It reports `metadata` failures or `missing`,
 Run verification after moving the vault between disks, before deleting source
 files, and periodically from a scheduler such as cron.
 
-Next: protect what remains with [Backup & Restore](backup.md), and see
-[Integrity & Trust](../architecture/integrity.md) for what `verify` defends
+Next: protect what remains with [Backup and restore](backup.md), and see
+[Integrity and trust](../architecture/integrity.md) for what `verify` defends
 against.

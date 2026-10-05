@@ -1,9 +1,9 @@
 ---
-title: Backup & Restore
-description: Create incremental, verifiable snapshots in an immutable repository.
+title: Backup and restore
+description: Create incremental snapshots in a backup repository, verify them, and restore a vault from them.
 ---
 
-# Backup & Restore
+# Backup and restore
 
 Create a backup snapshot to recover the vault independently of its live
 storage. A snapshot includes the folder tree, retained document versions, and
@@ -216,7 +216,7 @@ database but leaves its physical staging files for garbage collection after
 that database is published, so a failed overwrite cannot damage the existing
 vault. Audited bytes also retain primary authority unless the mapping selects
 both `remote_only` and `allow_audited_remote_only`. See
-[Multi-store Storage](storage.md#backup-and-restore) for the file format and
+[Multi-store storage](storage.md#backup-and-restore) for the file format and
 trust boundary.
 
 Backups exclude `config.toml`. Reconfigure processing profiles and other local

@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-10-05
-title: Document Timeline
-description: How Docbank derives date claims from retained document evidence.
+title: Document timeline
+description: How Docbank derives date claims from stored document evidence.
 ---
 
 # Document timeline

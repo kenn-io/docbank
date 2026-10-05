@@ -1,10 +1,10 @@
 ---
 last_edited: 2026-10-05
-title: Photo Assets
-description: Group ordinary file nodes into revisioned photo assets.
+title: Photo assets
+description: Group ordinary files into photo assets that carry their own revision.
 ---
 
-# Photo Assets
+# Photo assets
 
 Docbank groups ordinary file nodes into photo assets. Each file node and its
 content versions still hold the bytes. An asset stores only membership, roles,

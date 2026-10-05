@@ -1,6 +1,6 @@
 ---
-title: Integrity & Trust
-description: What docbank defends against, which layer owns each integrity guarantee, and the trade-offs that were considered and deliberately not taken.
+title: Integrity and trust
+description: What Docbank defends against, which layer owns each integrity guarantee, and the trade-offs that were considered and not taken.
 ---
 
 # Integrity and trust
@@ -143,8 +143,8 @@ owner of the same root, any ancestor, or any descendant is refused immediately,
 never queued. Unrelated roots may remain open concurrently. Ordinary commands
 do not touch the lock: they are HTTP clients of the daemon. Maintenance is
 serialized against ordinary mutations by the owner's in-process mutation gate.
-See [Ownership & Concurrency](locking.md).
+See [Ownership and concurrency](locking.md).
 
-Next: [Backup & Recovery](backup.md) covers the snapshot architecture these
+Next: [Backup and recovery](backup.md) covers the snapshot architecture these
 guarantees extend to. [Troubleshooting](../troubleshooting.md) applies them
 when something looks wrong.

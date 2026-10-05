@@ -439,5 +439,5 @@ ordinary name and plain-text search. See
 contract.
 
 Next: organize documents beyond paths with
-[Organizing & Tagging](organizing.md), or see every search flag in the
-[CLI Reference](../cli-reference.md).
+[Organizing and tagging](organizing.md), or see every search flag in the
+[CLI reference](../cli-reference.md).

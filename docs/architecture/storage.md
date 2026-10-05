@@ -13,11 +13,11 @@ copies in secondary stores.
 Use `docbank backup create` to capture content across all stores. Copying the
 database and primary directory is a complete manual archive only when the
 primary holds every retained blob. Stop the daemon before making that copy.
-Run `docbank verify` before relying on the result. [Backup & Recovery](backup.md)
+Run `docbank verify` before relying on the result. [Backup and recovery](backup.md)
 owns the complete capture and restore contract.
 
 This page owns the on-disk layout, schema relationships, and upgrade rules.
-Start with [How Docbank Works](overview.md) for the document model.
+Start with [How Docbank works](overview.md) for the document model.
 
 ## Blob store
 
@@ -53,7 +53,7 @@ it, and `gc` can reclaim it.
 
 Startup removes stale `tmp/` files from interrupted writes, but only when no
 other Docbank process holds the vault (see
-[Ownership & Concurrency](locking.md)).
+[Ownership and concurrency](locking.md)).
 
 ## Database schema
 
@@ -118,7 +118,7 @@ store-scoped, so the same immutable pack may exist in more than one store.
 
 Store bindings are machine-local `config.toml` profiles rather than portable
 authority. The catalog keeps only the profile name and a fenced ownership
-epoch. See [Multi-store Storage](../usage/storage.md) for the operator model and
+epoch. See [Multi-store storage](../usage/storage.md) for the operator model and
 the sections below for the complete authority boundary.
 
 The API key protects daemon access, not direct physical-store access. Loose
@@ -163,7 +163,7 @@ current version belonging to that node, while directories cannot carry one.
 Version UUIDs and their introducing operation UUIDs are random, canonical
 UUIDv4 values. `(node_id, node_revision)` and
 `(node_id, introduced_operation_id)` are unique. See
-[Editing & Versions](editing-and-versions.md) for the read and retention
+[Editing and versions](editing-and-versions.md) for the read and retention
 contract.
 
 Each provenance fact has a SHA-256 identity derived from its immutable node,
@@ -193,7 +193,7 @@ creation, assignment, and rename. Each commits in the same metadata transaction
 as the change it records. Every authority change advances the allocation
 lineage. Content operations add immutable versions. Changes with scoped effects
 also record events and scope-chain entries. Pack layout and backup reads remain
-maintainable. [Audited History](audited-history.md) owns the mutation and
+maintainable. [Audited history](audited-history.md) owns the mutation and
 maintenance contract.
 
 ## Structural invariants enforced in the schema

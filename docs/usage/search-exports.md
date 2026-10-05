@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-10-05
 title: Search exports
-description: Export dated search counts as CSV, review date evidence, and verify a frozen evidence ZIP.
+description: Export search counts for a date range as CSV, review date evidence, and verify the frozen evidence ZIP.
 ---
 
 # Search exports

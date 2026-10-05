@@ -1,10 +1,10 @@
 ---
 last_edited: 2026-10-05
-title: Document Understanding in Go
+title: Document understanding in Go
 description: Choose Go packages for document extraction, canonical evidence, renditions, and embeddings without opening a Docbank vault.
 ---
 
-# Document Understanding in Go
+# Document understanding in Go
 
 Use Docbank's Go packages to prepare documents for text search, OCR, or
 embeddings in your own application. OCR extracts text from document images.

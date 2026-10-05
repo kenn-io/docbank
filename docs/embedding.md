@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-10-05
 title: Embed in Go
-description: Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
+description: Run one or more Docbank vaults inside a Go application, each with its own root, using CGO or pure-Go SQLite.
 ---
 
 # Embed in Go
@@ -33,7 +33,7 @@ if err != nil {
 
 Returned maps and slices are defensive copies. Changing them does not alter
 later calls. Both methods follow the normal vault lifecycle and return
-`ErrClosed` after `Vault.Close`. See [Format Coverage](architecture/format-coverage.md)
+`ErrClosed` after `Vault.Close`. See [Format coverage](architecture/format-coverage.md)
 for the seven capabilities and five states.
 
 ## Transfer explicitly exported email
@@ -248,7 +248,7 @@ defer vault.Close()
 
 Use the same endpoints when constructing the providers. A disclosure names a
 destination but does not configure its transport. Import `document` from
-`go.kenn.io/docbank/document`. See [Document Understanding in Go](document-understanding.md)
+`go.kenn.io/docbank/document`. See [Document understanding in Go](document-understanding.md)
 for provider construction and [Document processing](usage/document-processing.md)
 for planning, consent, retained results, and the private-deployment acceptance
 runner.

@@ -1,10 +1,10 @@
 ---
 last_edited: 2026-10-05
-title: CLI Reference
-description: Every docbank command, flag, output format, and error behavior.
+title: CLI reference
+description: Every docbank command, with its flags, output formats, and error behavior.
 ---
 
-# CLI Reference
+# CLI reference
 
 Use this page to look up command syntax, flags, output, and failure behavior.
 For a first import, follow [Quickstart](quickstart.md).
@@ -147,7 +147,7 @@ matching classified row. They cannot be used together.
 `formats`, `pending`, `generated_by`, and an optional `lookup`. A recognized
 pending extension and an unknown extension both succeed, but their lookup
 matches are `pending` and `unknown_format` respectively. See
-[Format Coverage](architecture/format-coverage.md) for the capability and
+[Format coverage](architecture/format-coverage.md) for the capability and
 state definitions.
 
 ## Node selectors
@@ -298,7 +298,7 @@ never modified or deleted.
   not add a suffix. Without `--replace`, ordinary suffixing still applies.
 - Without `--replace`, a rerun skips content that already exists under a
   candidate name in the destination. An interrupted bulk import can be
-  rerun. See [Importing Documents](usage/importing.md).
+  rerun. See [Importing documents](usage/importing.md).
 
 ### Preview an import
 
@@ -1305,7 +1305,7 @@ docbank transfer verify <package> [--archive-id <archive-id>] [--json]
 
 Verifies a transfer package from a local directory, ZIP file, or legacy
 Msgvault JSONL file without opening a vault or starting the daemon. The command
-reads only the named path. See [Verify Transfer Packages](usage/transfers.md)
+reads only the named path. See [Verify transfer packages](usage/transfers.md)
 for the integrity checks and legacy compatibility limits.
 
 | Flag | Default | Meaning |
@@ -1387,7 +1387,7 @@ repository lock's owner is known to be gone.
 `create` and `verify` show per-stage progress bars on a terminal and persistent
 lines when redirected. `--progress` chooses the format. Every subcommand
 supports `--json`; long-running commands suppress progress in that mode.
-See [Backup & Restore](usage/backup.md) for the procedure.
+See [Backup and restore](usage/backup.md) for the procedure.
 
 ## docbank daemon
 

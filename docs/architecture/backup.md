@@ -1,6 +1,6 @@
 ---
-title: Backup & Recovery
-description: Docbank's JSONL-native Kit snapshot and restore architecture.
+title: Backup and recovery
+description: How Docbank snapshots and restores a vault using JSONL metadata and a Kit repository.
 ---
 
 # Backup and recovery
@@ -21,7 +21,7 @@ Standalone `docbank backup init`, `backup create`, `backup list`, `backup
 verify`, and `backup restore` use the authenticated daemon API. See the
 [Backup user guide](../usage/backup.md). Applications that own an embedded
 vault use `BackupRepository`, `Vault.CreateBackup`, and `Vault.RestoreBackup`
-directly. See [Embedding Docbank](../embedding.md#back-up-and-restore-an-embedded-vault).
+directly. See [Embed in Go](../embedding.md#back-up-and-restore-an-embedded-vault).
 `BackupRepository.Restore` works without a source vault and uses the build's
 default SQLite driver. `Vault.RestoreBackup` supplies its configured driver and
 adds the source vault root to the protected set. Repository callers must
@@ -34,7 +34,7 @@ before publication.
 You can still take a coherent filesystem copy of local state by stopping the
 daemon and then copying the vault. That copy is not a topology-independent
 backup: it depends on where the vault stores each blob. See
-[Vault Lifecycle](../usage/lifecycle.md#take-a-coherent-backup).
+[Vault lifecycle](../usage/lifecycle.md#take-a-coherent-backup).
 
 The database plus the built-in `blobs/` directory is a complete manual archive
 only while every retained blob has primary authority. A vault may keep the sole
@@ -253,7 +253,7 @@ registry to order those statistics consistently.
 
 Relational validation runs before a restored database is published. Every
 disjoint permanent audit scope, its membership, and its independent chain are
-preserved. [Audited History](audited-history.md) describes the complete
+preserved. [Audited history](audited-history.md) describes the complete
 audited-history backup and restore contract.
 
 ## Who can remove snapshots and reclaim repository space?

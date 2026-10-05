@@ -1,6 +1,6 @@
 ---
-title: Daemon & Process Model
-description: docbank daemon run — the single process that owns the vault, and how the CLI discovers, auto-starts, and stops it.
+title: Daemon and process model
+description: The single process that owns the vault, docbank daemon run, and how the CLI discovers, auto-starts, and stops it.
 ---
 
 # Daemon and process model
@@ -19,7 +19,7 @@ One owner coordinates SQLite writes and content storage. The CLI and agents
 use the same `/api/v1` contract. Because CLI commands cannot open the store
 directly, each command also exercises the API an agent would use.
 
-[Ownership & Concurrency](locking.md) owns the locking contract. Earlier
+[Ownership and concurrency](locking.md) owns the locking contract. Earlier
 development builds opened the store once per command. That historical design
 no longer describes standalone operation.
 
@@ -208,4 +208,4 @@ then logs structured JSON to `$DOCBANK_HOME/logs/`, one file per day
 (`docbank-YYYY-MM-DD.log`). Files rotate at 50 MiB, and the 5 most recent
 rotated files are kept. A foreground `docbank daemon run` logs to stderr
 instead. `DOCBANK_LOG_LEVEL` controls the level for both (see
-[CLI Reference](../cli-reference.md)).
+[CLI reference](../cli-reference.md)).

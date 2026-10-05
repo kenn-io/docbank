@@ -1,5 +1,5 @@
 ---
-title: Editing & Versions
+title: Editing and versions
 description: Stable content-version identity, retrieval, replacement, reversion, and retention over immutable content.
 ---
 

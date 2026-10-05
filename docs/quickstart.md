@@ -39,7 +39,7 @@ for startup and lifetime rules.
 
 Repeat the same import to see the completed files skipped. Docbank checks
 content at the destination name and its collision suffixes. See
-[Importing Documents](usage/importing.md) for the matching rules.
+[Importing documents](usage/importing.md) for the matching rules.
 
 ```
 added: 0  skipped: 214  failed: 0
@@ -126,7 +126,7 @@ docbank revert /taxes/checklist.pdf <old-version-id>
 
 Reverting creates a new current version that records the older version it
 uses. Docbank reuses the stored bytes and preserves both earlier versions.
-See [Editing & Versions](architecture/editing-and-versions.md) for retention
+See [Editing and versions](architecture/editing-and-versions.md) for retention
 and revision rules.
 
 For text and other editor-friendly files, `edit` verifies a private copy, opens
@@ -257,14 +257,14 @@ DOCBANK_HOME="$DOCBANK_RESTORE" docbank verify
 ```
 
 You can use the restored vault independently. Restore does not replace the
-running source vault. See [Backup & Restore](usage/backup.md) for progress
+running source vault. See [Backup and restore](usage/backup.md) for progress
 modes, snapshot selection, overwrite rules, and the proof that restore
 returns.
 
 That is the core document workflow. From here:
 
 - [Capabilities](capabilities.md) gives the complete product map.
-- The [Visual Tour](tour.md) shows the real interfaces.
-- [Vault Lifecycle](usage/lifecycle.md) covers maintenance and upgrades.
-- [Docbank for Agents](agents.md) covers automation.
-- The [CLI Reference](cli-reference.md) documents each command.
+- The [Visual tour](tour.md) shows the real interfaces.
+- [Vault lifecycle](usage/lifecycle.md) covers maintenance and upgrades.
+- [Docbank for agents](agents.md) covers automation.
+- The [CLI reference](cli-reference.md) documents each command.

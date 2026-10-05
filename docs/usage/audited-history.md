@@ -1,6 +1,6 @@
 ---
-title: Permanent Audited History
-description: Permanently retain every version and recorded change beneath a reviewed directory scope.
+title: Permanent audited history
+description: Keep every version and recorded change under a directory permanently, after reviewing what the scope covers.
 ---
 
 # Permanent audited history
@@ -31,8 +31,8 @@ content reachable, so garbage collection cannot remove that content.
     do not become scope members, and their content versions are not protected,
     but their enrollment-time metadata remains in the audit evidence.
 
-See [Audited History](../architecture/audited-history.md) for the evidence
-format and [Integrity & Trust](../architecture/integrity.md) for verification
+See [Audited history](../architecture/audited-history.md) for the evidence
+format and [Integrity and trust](../architecture/integrity.md) for verification
 limits.
 
 ![The Docbank web application showing independently verified permanent audit evidence for a synthetic vault.](https://docbank.ai/assets/generated/web-audit-evidence.png)

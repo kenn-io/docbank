@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-10-05
 title: Document processing configuration
-description: Configure executable processing profiles while keeping credentials outside portable policy.
+description: Configure processing profiles the daemon can run, with credentials kept outside the portable policy.
 ---
 
 # Document processing configuration

@@ -1,6 +1,6 @@
 ---
 title: Setup
-description: Install docbank on Linux, macOS, or Windows and create the vault.
+description: Install Docbank on Linux, macOS, or Windows and create the vault.
 ---
 
 # Setup
@@ -131,8 +131,8 @@ Set `DOCBANK_HOME` to keep the vault somewhere else. See
 [Configuration](configuration.md).
 
 Before importing irreplaceable material, choose a backup location and plan a
-restore test. [Vault Lifecycle](usage/lifecycle.md) explains the operating
-routine, and [Backup & Restore](usage/backup.md) gives the commands.
+restore test. [Vault lifecycle](usage/lifecycle.md) explains the operating
+routine, and [Backup and restore](usage/backup.md) gives the commands.
 
 ## Verifying the toolchain
 

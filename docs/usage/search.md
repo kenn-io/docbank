@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-10-05
 title: Document processing search
-description: Search only the exact document versions a consumer currently authorizes.
+description: Search only the document versions a consumer currently authorizes.
 ---
 
 # Document processing search

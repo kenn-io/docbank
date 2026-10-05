@@ -1,6 +1,6 @@
 ---
-title: Docbank for Agents
-description: Why agents use docbank, which interface to choose, and the safety model for document automation.
+title: Docbank for agents
+description: Why agents use Docbank, which interface to choose, and how it keeps document automation safe.
 ---
 
 # Docbank for agents
@@ -30,7 +30,7 @@ validation, revision checks, and maintenance rules as the CLI.
 | OpenAPI | Client generation and capability discovery | `docbank openapi`, `/openapi.yaml` |
 | Markdown docs | Context retrieval without HTML scraping | Every public `/foo/` page is also published at `/foo.md` |
 
-The [Agent Integration Guide](agents/integration.md) covers endpoint
+The [Agent integration guide](agents/integration.md) covers endpoint
 setup, authentication, upload and download proof, revision-aware mutations,
 backup progress, error handling, and a complete safe filing loop. The
 [HTTP API](architecture/http-api.md) page explains the design contract and
@@ -52,7 +52,7 @@ non-goals.
   effects. See [destructive maintenance](agents/integration.md#treat-destructive-maintenance-as-a-two-step-decision).
 - **Storage moves change where Docbank may read content.** Review a preview,
   execute its token, and follow the job ID. Inspect an uncertain result
-  before retrying the move. See [Multi-store Storage](usage/storage.md).
+  before retrying the move. See [Multi-store storage](usage/storage.md).
 
 ## Common agent workflows
 
@@ -62,7 +62,7 @@ non-goals.
 | Find existing content or download a version | [Read a tree without unbounded responses](agents/integration.md#read-a-tree-without-unbounded-responses) |
 | Replace content, adopt a prior version, or reorganize inspected nodes | [Use revisions for read-modify-write](agents/integration.md#use-revisions-for-read-modify-write) |
 | Capture a backup and check its final result | [Follow backup progress](agents/integration.md#follow-backup-progress-without-scraping-a-cli) |
-| Preview placement, repair storage, or evacuate a store | [Multi-store Storage](usage/storage.md) |
+| Preview placement, repair storage, or evacuate a store | [Multi-store storage](usage/storage.md) |
 
 ## Start integrating
 

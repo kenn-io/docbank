@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-10-05
-title: Agent Integration Guide
-description: Connect an agent to docbank safely using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
+title: Agent integration guide
+description: Connect an agent to Docbank using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
 ---
 
 # Agent integration guide
@@ -915,7 +915,7 @@ byte state before escalating.
 
 A vault can have several disjoint permanent directory scopes. Overlapping and
 nested scopes are rejected. See
-[Permanent Audited History](../usage/audited-history.md) for scope membership
+[Permanent audited history](../usage/audited-history.md) for scope membership
 and maintenance rules.
 
 ## Treat destructive maintenance as a two-step decision

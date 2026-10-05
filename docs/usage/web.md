@@ -1,14 +1,14 @@
 ---
 last_edited: 2026-10-05
 title: Web application
-description: Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
+description: Find, read, organize, and export documents in the local, authenticated web app.
 ---
 
 # Web application
 
-Use the local web application to find documents, read exact saved versions,
-and export the records you select. Import files and email, organize them with
-tags, and review configured processing before it runs. Start it with:
+Use the local web application to find documents, read any saved version, and
+export the records you select. You can also import files and email, organize
+them with tags, and review configured processing before it runs. Start it with:
 
 ```bash
 docbank web
@@ -46,11 +46,11 @@ require the CLI or another API client.
 
 Use the labeled sidebar for **All files**, **Saved queries**, **Collections**,
 and **Trash**. **Review and export** holds search reports, Bates exports, and
-snapshot actions; **Vault** holds backups, storage, jobs, audit evidence, and
+snapshot actions. **Vault** holds backups, storage, jobs, audit evidence, and
 telemetry settings. On a narrow screen, **Open navigation** reveals the same menu.
 
-Folder breadcrumbs let you jump to any parent. File icons and readable type
-names distinguish documents without requiring you to recognize a media type.
+Folder breadcrumbs let you jump to any parent. Each file has an icon and a
+plain type name, so you do not need to recognize its media type.
 
 - Click a row once to inspect it. The authority card updates without opening
   or downloading the file.
@@ -304,9 +304,9 @@ records for review.
 3. Reserve the displayed range, then choose **Start Bates export**.
 4. Wait for **Stamped PDF ready**, then choose **Download verified PDF**.
 
-The output contains the package's selected pages. The retained page map keeps
-their original source-page numbers. Reserved or abandoned numbers remain
-unavailable for reuse.
+The output contains the package's selected pages. The stored page map keeps
+their original source-page numbers. A number that was reserved is never issued
+again, even if the export was abandoned.
 
 ![A completed Bates export with its reserved labels and verified PDF](https://docbank.ai/assets/generated/web-bates-export.png)
 
@@ -589,18 +589,20 @@ committed records and removes unfinished document entries as described in the
 
 ## Process a version and read its text
 
-Processing creates retained text and, with a configured embedding service,
-inputs for search by meaning. Configure a [processing profile](../configuration.md)
-before starting; a new vault has none.
+Processing extracts a document's text and stores it. With a configured
+embedding service, it also prepares the document for search by meaning.
+Configure a [processing profile](../configuration.md) first. A new vault has
+none.
 
 1. Select a document and choose **Process and retrieve** in its details.
 2. Select a profile and review the source version, provider destinations,
    disclosed content, retained outputs, and estimated work.
-3. Choose **Consent and run** only after reviewing that plan. Consent applies
-   to this operator and profile configuration across documents until revoked
-   or expired; it is not limited to this one job.
+3. Choose **Consent and run** only after reviewing that plan. Consent covers
+   this operator and profile configuration for every document, not just this
+   job, until it is revoked or expires.
 4. Follow the job state and coverage. When available, choose **Read sanitized
-   Markdown** to read the verified rendition, the extracted text Docbank retains.
+   Markdown** to read the verified rendition: the extracted text Docbank
+   stored for that version.
 
 ![The processing plan discloses local extraction and a configured network embedding service](https://docbank.ai/assets/generated/web-document-processing-plan.png)
 
@@ -610,14 +612,14 @@ before starting; a new vault has none.
 
 Opening the plan or reading coverage does not start processing. A restored
 vault needs fresh consent before network processing. The
-[processing guide](document-processing.md) owns consent and provider requirements;
-[CLI coverage and text windows](../cli-reference.md#docbank-processing) let you
-inspect results without the browser.
+[processing guide](document-processing.md) explains consent and provider
+requirements. To inspect results without the browser, see
+[CLI coverage and text windows](../cli-reference.md#docbank-processing).
 
 Choose a file's **Find similar** row action to compare its stored embeddings
-with the file versions loaded in the current view. This performs no provider
-call. Missing embeddings must be built through a separately reviewed processing
-run. See [Find similar documents](document-processing.md#find-similar-documents).
+with the file versions loaded in the current view. This calls no provider. If
+embeddings are missing, build them with a processing run, which has its own
+review and consent. See [Find similar documents](document-processing.md#find-similar-documents).
 
 ![Related documents found from stored embeddings in the loaded view](https://docbank.ai/assets/generated/web-similar-1440.png)
 
@@ -886,7 +888,7 @@ a promise that every pack is immediately eligible for compaction.
 
 This drawer is read-only and refreshes from the daemon's current catalog. It
 cannot pack, garbage-collect, or repack content. Use `docbank storage status`
-for structured or scripted inspection, see [Multi-store Storage](storage.md)
+for structured or scripted inspection, see [Multi-store storage](storage.md)
 for repair and placement, and run `docbank storage repack` when you intend to
 rewrite eligible sparse packs and retire their old files.
 

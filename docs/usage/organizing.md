@@ -1,10 +1,10 @@
 ---
 last_edited: 2026-10-05
-title: Organizing & Tagging
-description: Browsing, moving, renaming, and tagging in the virtual tree.
+title: Organizing and tagging
+description: Browse, move, rename, and tag documents in the virtual tree.
 ---
 
-# Organizing & Tagging
+# Organizing and tagging
 
 Move, rename, and tag documents without rewriting their stored bytes. The
 folders in `ls` and `tree` are database entries. Even moving a 4 GB archive
@@ -185,4 +185,4 @@ Repeated `docbank mv` commands are independent transactions. Use `mv batch`
 when partial completion is not acceptable.
 
 Next: find what you filed with [Searching](searching.md), or manage
-deletion and recovery with [Trash, GC, Repack & Verify](trash-and-gc.md).
+deletion and recovery with [Trash, garbage collection, repack, and verify](trash-and-gc.md).

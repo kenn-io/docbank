@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-10-05
 title: Model Context Protocol
-description: Connect a local MCP client to Docbank's bounded, daemon-first document surface.
+description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
 
 # Model Context Protocol

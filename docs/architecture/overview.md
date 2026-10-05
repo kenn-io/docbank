@@ -1,6 +1,6 @@
 ---
-title: How Docbank Works
-description: A guided model of vaults, document identity, immutable content, storage authority, deletion, and recovery.
+title: How Docbank works
+description: A guided model of vaults, document identity, immutable content, storage, deletion, and recovery.
 ---
 
 # How Docbank works
@@ -146,13 +146,13 @@ Docbank keeps logical decisions distinct from physical storage maintenance:
 
 These separate steps give users time to undo a deletion. Docbank retains every
 edit by default. Users and agents choose when to prune history, empty trash,
-and reclaim space from packs. [Editing & Versions](editing-and-versions.md) and
-[Trash, GC, Repack & Verify](../usage/trash-and-gc.md) give the command-level
+and reclaim space from packs. [Editing and versions](editing-and-versions.md) and
+[Trash, garbage collection, repack, and verify](../usage/trash-and-gc.md) give the command-level
 contracts.
 
 Metadata extracted from original file formats is separate from this authority
 chain. It is immutable evidence tied to a content digest and exact version. It
-does not replace the original. [Source Metadata](source-metadata.md) explains
+does not replace the original. [Source metadata](source-metadata.md) explains
 the typed field contract, supported media formats, and current size limit.
 
 ## One logical content store can use several physical locations
@@ -177,9 +177,9 @@ trusted. A later retry can select a different healthy copy.
 Placement manages capacity. It is not synchronization or backup. Backup
 captures every logical blob from one verified candidate and does not record
 the source topology. Default restore rebuilds a fresh local primary. See
-[Multi-store Storage](../usage/storage.md) for registration, placement,
+[Multi-store storage](../usage/storage.md) for registration, placement,
 fencing, repair, and restore mapping, and
-[Loose & Packed Content](packed-storage.md) for representation limits and the
+[Loose and packed content](packed-storage.md) for representation limits and the
 boundary between Docbank policy and Kit mechanics.
 
 ## One owner, two integration modes
@@ -195,7 +195,7 @@ Exactly one process owns an open vault at a time:
 
 A vault is not shared between the two modes concurrently. Hierarchical locks
 also prevent a daemon or restore from operating inside an already owned vault
-tree. [Ownership & Concurrency](locking.md), [Daemon & Process Model](daemon.md),
+tree. [Ownership and concurrency](locking.md), [Daemon and process model](daemon.md),
 and [Embed in Go](../embedding.md) describe those boundaries.
 
 ## Backup reconstructs meaning, not a live database copy
@@ -209,7 +209,7 @@ objects are reused by digest across snapshots.
 Restore publishes a vault only after it verifies the repository, imports the
 logical metadata, rebuilds search and content locations, and checks the result.
 The backup does not require the restored vault to use the source's loose or
-packed layout. [Backup & Recovery](backup.md) owns the capture and restore
+packed layout. [Backup and recovery](backup.md) owns the capture and restore
 sequence, including failure and publication rules.
 
 ## Integrity boundary
@@ -226,22 +226,22 @@ boundaries:
 
 These mechanisms do not make a host administrator, compromised process, or
 someone able to rewrite both data and expected evidence harmless. The
-[Integrity & Trust](integrity.md) page states what is proved, when it is proved,
+[Integrity and trust](integrity.md) page states what is proved, when it is proved,
 and which threats require independent evidence.
 
 ## Where to go next
 
 | If you want to understand… | Read… |
 | --- | --- |
-| How renditions, embeddings, and search indexes relate to originals | [Document Processing](document-processing.md) |
+| How renditions, embeddings, and search indexes relate to originals | [Document processing](document-processing.md) |
 | The on-disk database, blob tree, and enforced invariants | [Storage](storage.md) |
-| Loose publication, packs, GC, and repacking | [Loose & Packed Content](packed-storage.md) |
-| Stable versions, replacement, reversion, and pruning | [Editing & Versions](editing-and-versions.md) |
-| Process ownership and mutation coordination | [Ownership & Concurrency](locking.md) and [Daemon & Process Model](daemon.md) |
-| Incremental snapshots and safe publication on restore | [Backup & Recovery](backup.md) |
+| Loose publication, packs, GC, and repacking | [Loose and packed content](packed-storage.md) |
+| Stable versions, replacement, reversion, and pruning | [Editing and versions](editing-and-versions.md) |
+| Process ownership and mutation coordination | [Ownership and concurrency](locking.md) and [Daemon and process model](daemon.md) |
+| Incremental snapshots and safe publication on restore | [Backup and recovery](backup.md) |
 | The contract shared by the CLI and agents | [HTTP API](http-api.md) |
-| What integrity checks do and do not establish | [Integrity & Trust](integrity.md) |
-| Permanent retention, history, and verification | [Audited History](audited-history.md) |
+| What integrity checks do and do not establish | [Integrity and trust](integrity.md) |
+| Permanent retention, history, and verification | [Audited history](audited-history.md) |
 
 The [Roadmap](../roadmap.md) gives high-level product direction. These pages
 explain implemented behavior and durable design intent. Planned behavior is

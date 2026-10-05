@@ -1,6 +1,6 @@
 ---
-title: Visual Previews
-description: How Docbank identifies and retains canonical visual derivatives.
+title: Visual previews
+description: How Docbank identifies and stores canonical visual derivatives.
 ---
 
 # Visual previews

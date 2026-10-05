@@ -1,10 +1,10 @@
 ---
-title: Importing Documents
+title: Importing documents
 description: Import folders, preview large sources, retry partial imports, and keep changing files up to date.
 last_edited: 2026-10-05
 ---
 
-# Importing Documents
+# Importing documents
 
 Use `docbank add` to copy files or entire folders into the vault. Docbank
 leaves the originals unchanged. After an interruption, run the same command
@@ -106,7 +106,7 @@ For each regular file, Docbank performs two steps:
    These facts survive later renames and moves.
 
 See [Storage](../architecture/storage.md) for the content records and
-[Editing & Versions](../architecture/editing-and-versions.md) for version identity.
+[Editing and versions](../architecture/editing-and-versions.md) for version identity.
 
 ### MIME type detection
 
@@ -410,7 +410,7 @@ Authenticated integrations can send one digest-checked file at a time through
 length, computes both independently while streaming, and creates no node or
 blob record when either differs. See the
 [HTTP API](../architecture/http-api.md#addendum-post-uploads) and
-[Agent Integration Guide](../agents/integration.md#create-and-ingest-safely)
+[Agent integration guide](../agents/integration.md#create-and-ingest-safely)
 for the contract.
 
 Backups include collection labels and their revisions, run membership, and the
