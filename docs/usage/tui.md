@@ -23,60 +23,58 @@ keep an otherwise idle daemon running. See [Daemon](../architecture/daemon.md).
 ## Browse and inspect documents
 
 The main view is a full-width document table. At ordinary terminal widths it
-shows each document's name, type, size, and UTC modification time; search results
-also identify the match kind when space permits. Narrow terminals progressively
-hide secondary columns so the document name remains useful.
+shows each document's name, type, size, and UTC modification time. Search
+results also identify the match kind when space permits. Narrow terminals hide
+secondary columns first so the document name stays readable.
 
 Press <kbd>i</kbd> to leave the table temporarily and inspect the selected
-document's complete stable node selector, path, revision, modification time,
-and—when it is a file—its immutable version, SHA-256 identity, exact size, and
-media type. The same authority view lists every assigned tag name with its
-stable UUID, so renames remain distinguishable from identity. Long authority
-values wrap rather than truncate.
+document's authority: its complete stable node selector, path, revision, and
+modification time. For a file, the view adds its version, SHA-256 identity,
+exact size, and media type. The same view lists every assigned tag name with
+its stable UUID, so you can tell a renamed tag from a different tag. Long
+values wrap instead of being truncated.
 
 ## Read permanent history
 
 Press <kbd>a</kbd> on any selected node to open its permanent audited history.
 The timeline is newest first and shows when each event was recorded, what
 happened, and the primary path, version, or attached-metadata change. Press
-<kbd>Enter</kbd> to inspect the complete immutable event ID, operation and scope
-IDs, revisions, path states, version identities, and typed tag or provenance
-details. Nodes outside an audit scope are identified plainly rather than shown
-with an empty or invented timeline.
+<kbd>Enter</kbd> to inspect the complete event ID, operation and scope IDs,
+revisions, path states, version identities, and typed tag or provenance
+details. A node outside an audit scope is labeled as such instead of showing an
+empty timeline.
 
 ## Inspect jobs, storage, and backups
 
 Press <kbd>J</kbd> to inspect daemon-owned background work without leaving the
 document view. The activity screen shows each stable job name, whether it is
 running, completed, failed, or cancelled, and its start and finish times.
-Inspecting a job exposes its complete terminal failure text. Refresh asks the
-current compatible daemon for a new snapshot; closing the screen returns to the
-same document selection. The current job report shows lifecycle status, not
-completion percentages.
+Inspecting a job shows its complete final failure text. Refresh asks the daemon
+for a new snapshot. Closing the screen returns to the same document selection.
+The current job report shows lifecycle status, not completion percentages.
 
-Press <kbd>O</kbd> for a read-only operational summary. It separates logical
-catalog authority from physical loose-file and pack inventory, including live
-packed content and dead packed payload awaiting an explicit repack. The same
-screen lists the configured backup repository's recovery points with their
-creation time, tag, snapshot ID, file count, and newly added bytes. Storage
-status remains useful when no backup repository is configured; the two
-independent results report their own errors.
+Press <kbd>O</kbd> for a read-only operational summary. It separates what the
+catalog records from the physical loose-file and pack inventory, including live
+packed content and dead packed payload awaiting a repack. The same screen lists
+the configured backup repository's recovery points with their creation time,
+tag, snapshot ID, file count, and newly added bytes. Storage status is still
+shown when no backup repository is configured. The two results are independent
+and report their own errors.
 
 ## Trash and restore documents
 
 Press <kbd>x</kbd> to review moving the selected live node to recoverable
 trash. The confirmation names the escaped path, stable node ID, and exact
-revision that will be changed; a concurrent change is rejected rather than
-silently targeting newer state. The dialog also says plainly that the node
-remains restorable and no content bytes are reclaimed.
+revision that will be changed. If the node changes concurrently, the request is
+rejected instead of being applied to newer state. The dialog also says that the
+node remains restorable and no content bytes are reclaimed.
 
 Press <kbd>T</kbd> to browse independently restorable trash roots, newest
 first. Enter opens a second revision-bound confirmation. A successful restore
-reports the actual live path selected by the daemon after collision suffixing
-or origin-parent fallback. Restoration does not guess or promise the old path.
-Permanent deletion and physical reclamation are deliberately absent from the
-TUI; use the preview-first CLI or authenticated HTTP workflows when that is
-really intended.
+reports the live path the daemon selected after collision suffixing or
+origin-parent fallback. A restore does not promise the old path. The TUI does
+not offer permanent deletion or physical reclamation. Use the preview-first CLI
+or authenticated HTTP workflows for those.
 
 ## Browse load-file packages
 
@@ -86,7 +84,7 @@ Bates label within the selected package. Label results show the label set,
 provenance, and page number when verified.
 
 Each page holds at most 250 packages or members, or 100 label matches. Counts
-describe the current page; a `+` means another page is available. Press
+describe the current page. A `+` means another page is available. Press
 <kbd>n</kbd> to replace the current rows with the next page. Press <kbd>r</kbd>
 to refresh from the first page.
 
@@ -120,19 +118,20 @@ Press <kbd>Esc</kbd> to leave label results, members, or the package browser.
 
 Within audited history, <kbd>n</kbd>/<kbd>→</kbd> loads the next older page and
 <kbd>p</kbd>/<kbd>←</kbd> returns to a cached newer page. Escape returns to the
-same directory or search result and selected document. Each page is bounded to
-100 events; the heading reports its position in the complete history.
+same directory or search result and selected document. Each page holds at most
+100 events. The heading reports its position in the complete history.
 
 ## Search and result limits
 
 Search follows [the same rules as `docbank search`](searching.md). Name matches
-precede content-only matches, and content is available only for supported documents
-whose current bytes completed verified extraction. Results say whether the
-match came from the name or content. Relevance order remains the search default;
-pressing <kbd>s</kbd> opts into a column sort, and cycling through the columns
-returns to relevance. The TUI loads at most 1,000 directory entries or search
-hits and says when more exist. Use CLI or HTTP pagination to list complete directories. Search
-has no continuation cursor; narrow a truncated query as described in
+precede content-only matches, and content is available only for supported
+documents whose current bytes completed verified extraction. Results say
+whether the match came from the name or content. Relevance order is the search
+default. Pressing <kbd>s</kbd> switches to a column sort, and cycling through
+the columns returns to relevance. The TUI loads at most 1,000 directory entries
+or search hits and says when more exist. Use CLI or HTTP pagination to list
+complete directories. Search has no continuation cursor. Narrow a truncated
+query as described in
 [Searching](searching.md#how-do-i-handle-incomplete-results).
 
 ## Current limits
@@ -144,23 +143,24 @@ highlight definitions are managed through the
 
 Press <kbd>Tab</kbd> while searching to cycle through **Names and text**,
 **Auto**, **Lexical**, **Semantic**, and **Hybrid**. Auto uses Hybrid when an
-embedding binding is available and otherwise uses the lexical API mode;
+embedding binding is available and otherwise uses the lexical API mode.
 Semantic and Hybrid require a binding. Press <kbd>Ctrl-R</kbd> to toggle
 reranking when the profile permits it. Changing the mode or reranking setting
 reruns the latest submitted query, including while results are still loading.
-Base rows remain visible while reranking runs, and a failure keeps them with its
-cause. Processing failures fall back to Names and text with the failure shown.
+Base rows remain visible while reranking runs, and a failure keeps them with
+its cause. Processing failures fall back to Names and text with the failure
+shown.
 
 ![Configured text and semantic search in the terminal browser](https://docbank.ai/assets/generated/tui-natural-search.png)
 
 Other mutations, permanent deletion, permanent-audit enrollment, independent
-verification, backup creation/verification/restore, and storage maintenance
-remain outside this interface. Use their ordinary CLI commands or authenticated
-HTTP endpoints.
+verification, backup creation/verification/restore, and storage maintenance are
+not available in this interface. Use their CLI commands or authenticated HTTP
+endpoints.
 
-The <kbd>O</kbd> operations screen keeps storage and backup loading
-independent. Its storage section lists every physical store's role, backend
-kind, observed health, authoritative object count, logical and stored bytes,
-affected live documents, and any sole-authority objects without a readable
-alternative. It is read-only and does not expose binding paths, endpoints,
-credentials, ownership epochs, takeover, repair, or placement controls.
+The <kbd>O</kbd> operations screen loads storage and backups independently. Its
+storage section lists every physical store's role, backend kind, observed
+health, authoritative object count, logical and stored bytes, affected live
+documents, and any sole-authority objects without a readable alternative. It is
+read-only and does not expose binding paths, endpoints, credentials, ownership
+epochs, takeover, repair, or placement controls.

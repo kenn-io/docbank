@@ -1,21 +1,22 @@
 ---
 title: Importing Documents
 description: Import folders, preview large sources, retry partial imports, and keep changing files up to date.
-last_edited: 2026-09-12
+last_edited: 2026-10-05
 ---
 
 # Importing Documents
 
-Use `docbank add` to copy files or entire folders into the vault. Docbank leaves
-the originals unchanged. Repeat the same command after an interruption: it
-skips matching content already imported under a destination name.
+Use `docbank add` to copy files or entire folders into the vault. Docbank
+leaves the originals unchanged. After an interruption, run the same command
+again. It skips files whose content is already imported under a destination
+name.
 
 ## Mailbox archives
 
 For mailbox exports, use `docbank mailbox import` or **Import mailbox** in the
-web app. These retain the original archive and give each message occurrence
-its own document, including repeated content and repeated Message-IDs.
-Decoded attachment documents are published with the message and its receipt.
+web app. Both keep the original archive and give each message occurrence its
+own document, even when content or a Message-ID repeats. Decoded attachment
+documents are published with the message and its receipt.
 
 ```bash
 docbank mailbox import ./All-mail.mbox --dest /mail --id mail-export --preview
@@ -24,47 +25,50 @@ docbank mailbox watch mail-export
 docbank mailbox receipts mail-export --after 0 --limit 100
 ```
 
-Use the same `--id`, source bytes and settings to retry an interrupted upload.
-Verified chunks are checked locally and skipped. The import job uses `--id`
-by default; add a different `--job-id` to import that source into another
-destination without uploading it again.
-The default interpretation is explicitly `mboxrd`; use `--dialect mboxo` for
-that format. The preview samples up to three messages and reads at most 16 MiB
-of expanded message data without guessing the dialect.
-The background job checks Google Takeout ZIPs completely before messages are
-published: unsafe paths, symlinks,
-bad CRCs and excessive expanded data are refused without extracting files to
-a caller-selected directory. Empty mailbox entries are skipped. A resumed job
-reuses the verified entry hashes and resumes after its last committed message;
-compressed entries still require decompression through that position.
+To retry an interrupted upload, use the same `--id`, source bytes, and
+settings. Verified chunks are checked locally and skipped. The import job uses
+`--id` by default. Add a different `--job-id` to import that source into
+another destination without uploading it again.
 
-Jobs survive daemon restart. `mailbox cancel <id>` stops a job;
+The default dialect is `mboxrd`. Use `--dialect mboxo` for that format. The
+preview samples up to three messages, reads at most 16 MiB of expanded message
+data, and does not guess the dialect.
+
+The background job checks a Google Takeout ZIP completely before it publishes
+any message. It refuses unsafe paths, symlinks, bad CRCs, and excessive
+expanded data, and it does not extract files to a caller-selected directory.
+Empty mailbox entries are skipped. A resumed job reuses the verified entry
+hashes and continues after its last committed message. Compressed entries still
+require decompression through that position.
+
+Jobs survive daemon restart. `mailbox cancel <id>` stops a job, and
 `mailbox resume <id>` resumes a canceled or failed job. After each 100,000
-messages, `mailbox continue <id>` explicitly scans the next segment of the
-same source into the same collection. Reports separate imported, rejected,
-pending and canceled occurrences. A partial report with an unscanned
-tail is not a completed import. For another receipts page, pass the last
-returned ordinal as `--after`.
+messages, run `mailbox continue <id>` to scan the next segment of the same
+source into the same collection. Reports separate imported, rejected, pending,
+and canceled occurrences. A partial report with an unscanned tail is not a
+completed import. For another receipts page, pass the last returned ordinal as
+`--after`.
 
 Source labels stay in occurrence provenance. To assign existing Docbank tags,
-opt in with `--label-tag 'Project=existing-tag-id'`; mappings are immutable job
-settings. All mapped tags must exist when a job starts or resumes. A queued or
-running job prevents deletion of its mapped tags. If you delete a mapped tag
-while a job is paused, that job cannot resume. Start a new job with updated
-mappings; it imports the source again.
+opt in with `--label-tag 'Project=existing-tag-id'`. Mappings are job settings
+and cannot be changed. All mapped tags must exist when a job starts or resumes.
+A queued or running job prevents deletion of its mapped tags. If you delete a
+mapped tag while a job is paused, that job cannot resume. Start a new job with
+updated mappings. It imports the source again.
 
-Importing does not grant remote-processing consent. Attachment
-documents may remain pending processing until a suitable profile and consent
-are configured. Mailbox import does not provide PDF email export.
+Importing does not grant remote-processing consent. Attachment documents may
+remain pending processing until a suitable profile and consent are configured.
+Mailbox import does not provide PDF email export.
 
-Containers are retained as ordered, verified 64 MiB chunks, up to 256 GiB.
-Each MBOX or ZIP entry is limited to 50 GiB; ZIPs are limited to 1,000 entries
-and 200 GiB expanded data. Individual emitted EML messages are limited to
-128 MiB, with malformed or oversized messages recorded as rejected. There
-are at most two active uploads per owner and eight globally. Incomplete
-uploads expire 24 hours after creation; sealed sources have no expiry. Jobs
-allow two running globally and eight queued/running globally, at most two
-queued/running per owner. Limits bound work; they are not throughput claims.
+Docbank stores each container as ordered, verified 64 MiB chunks, up to 256
+GiB. Each MBOX or ZIP entry is limited to 50 GiB. A ZIP is limited to 1,000
+entries and 200 GiB expanded data. Each emitted EML message is limited to 128
+MiB, and malformed or oversized messages are recorded as rejected. There are at
+most two active uploads per owner and eight globally. Incomplete uploads expire
+24 hours after creation. Sealed sources have no expiry. Globally, at most two
+jobs run at once and at most eight are queued or running. Each owner can have
+at most two queued or running. These limits bound work. They are not throughput
+claims.
 
 ### Explicit EML transfers
 
@@ -76,15 +80,17 @@ docbank mailbox register synthetic-export 'Explicit exported messages'
 docbank mailbox transfer ./message.eml --archive synthetic-export --reference item-1
 ```
 
-Equal retries return the original receipt. Changed source bytes require
-`--if-rev` with the receipt's target revision and preserve the earlier content
-version. Editing or remapping the target causes a conflict; trashing it returns
-an explicit tombstone and does not resurrect it. Source mappings, exact
-versions, attachment relations and sealed container bytes survive portable
-backup and restore and have no silent retention deadline. There is no release
-command for these retry guarantees; referenced versions and relations cannot
-be silently pruned. Trash empty skips these messages, attachments and containing
-folders while deleting unrelated eligible trash. Ordinary `docbank add message.eml` does not invent an
+A retry with equal bytes returns the original receipt. Changed source bytes
+require `--if-rev` with the receipt's target revision, and the earlier content
+version is preserved. Editing or remapping the target causes a conflict.
+Trashing it returns a tombstone and does not resurrect it.
+
+Source mappings, referenced versions, attachment relations, and sealed
+container bytes survive portable backup and restore and have no silent
+retention deadline. There is no release command for these retry guarantees, and
+referenced versions and relations cannot be silently pruned. Emptying trash
+skips these messages, attachments, and containing folders while deleting
+unrelated eligible trash. Ordinary `docbank add message.eml` does not create an
 external transfer identity.
 
 ## Ordinary file imports
@@ -96,8 +102,8 @@ For each regular file, Docbank performs two steps:
    stored in the vault is reused.
 2. Docbank creates the file entry, its revision-one `content_create` version,
    the record of its stored content, and its provenance in one database
-   transaction. Provenance records the original path and modification time;
-   these facts survive later renames and moves.
+   transaction. Provenance records the original path and modification time.
+   These facts survive later renames and moves.
 
 See [Storage](../architecture/storage.md) for the content records and
 [Editing & Versions](../architecture/editing-and-versions.md) for version identity.
@@ -107,8 +113,9 @@ See [Storage](../architecture/storage.md) for the content records and
 Automatic MIME selection for local imports, `docbank put`, and load-file
 package staging inspects the first 512 bytes with Docbank's pinned signature
 detector. Recognized signatures take priority over the host's extension table,
-including JPEG, HEIC, and HEIF. `docbank put --mime-type` remains an explicit
-override. The `.eml` rule runs first and always uses `message/rfc822`.
+including JPEG, HEIC, and HEIF. `docbank put --mime-type` still overrides
+automatic selection. The `.eml` rule runs first and always uses
+`message/rfc822`.
 
 An extension can refine a broad detector result when it names the same MIME
 node, an alias, a child format, or another member of the `text/plain` family.
@@ -132,11 +139,11 @@ pinned library cannot name as a subtype:
 - Text-family bytes with `.go`, `.rst`, `.yaml`/`.yml`, or `.tex` use
   `text/x-go`, `text/x-rst`, `application/yaml`, or `application/x-tex`.
 
-The pinned detector sees these TIFF-based RAW formats as `image/tiff`; suffix
-rules add their stored subtype without trusting an arbitrary host mapping.
-Automatic local replacements and package staging use the same selector. Each
-content version keeps the MIME observation selected when that version was
-created; existing versions are not rewritten.
+The pinned detector sees these TIFF-based RAW formats as `image/tiff`. The
+suffix rules add their stored subtype without trusting an arbitrary host
+mapping. Automatic local replacements and package staging use the same
+selector. Each content version keeps the MIME observation selected when that
+version was created. Existing versions are not rewritten.
 
 Directory arguments walk recursively. The directory's basename becomes a
 folder under `--dest`, and everything below keeps its relative structure:
@@ -146,16 +153,16 @@ docbank add ~/old-laptop/Documents --dest /archive
 # → /archive/Documents/... mirrors the source tree
 ```
 
-Trailing slashes and `./`-style paths are normalized; `add docs/` and
+Trailing slashes and `./`-style paths are normalized, so `add docs/` and
 `add ./docs` behave identically to `add docs`.
 
 An explicitly named source may be a symlink to a directory. This supports
-ordinary platform layouts such as `~/Dropbox` on macOS: docbank resolves that
-one root link, retains `Dropbox` as the virtual directory name, and records
+ordinary platform layouts such as `~/Dropbox` on macOS. Docbank resolves that
+one root link, keeps `Dropbox` as the virtual directory name, and records
 provenance using the path the user supplied. Symlinks encountered *inside* the
-tree remain skipped and reported, and an explicitly named symlink to a file is
-not imported. Entries filtered by an include or exclude rule are excluded
-without failure; selected non-regular entries are reported as failures.
+tree are still skipped and reported, and an explicitly named symlink to a file
+is not imported. Entries filtered out by an include or exclude rule are not
+failures. Selected non-regular entries are reported as failures.
 
 ## Preflight a large tree
 
@@ -173,7 +180,7 @@ The report separates files currently eligible for packing (through 64 MiB),
 larger files that will remain individual stored files, and files above the
 current format-v1 ingest ceiling. It also reports logical bytes, directory
 count, skipped non-regular entries, filesystem errors, and the largest groups
-by lowercase filename extension. Use `--json` for a structured, bounded report.
+by lowercase filename extension. Use `--json` for a structured report.
 
 Preflight reads metadata only. It does not open cloud placeholders: file
 entries whose contents still need to be downloaded from a provider. This lets
@@ -185,17 +192,17 @@ including iCloud Drive and Google Drive for Desktop placeholders. These files
 also count toward the report's size classes. Check this count before starting
 an import that may require substantial downloading.
 
-A provider may decline to hydrate a placeholder for the process that opens it —
-a daemon started by launchd as a background job is the usual case, while an
-interactive session succeeds. Docbank reports that failure for the individual
-file, names the cause, and suggests opening the file once from a user session
-(or marking it available offline) before retrying the import. Re-run preflight
-after changing selection, then pass the exact same `--include` and `--exclude`
-flags to the real `docbank add` command.
+A provider may decline to download a placeholder's contents for the process
+that opens it. The usual case is a daemon started by launchd as a background
+job, while an interactive session succeeds. Docbank reports that failure for
+the individual file, names the cause, and suggests opening the file once from a
+user session (or marking it available offline) before retrying the import.
+Re-run preflight after changing selection, then pass the same `--include` and
+`--exclude` flags to the real `docbank add` command.
 
 Filesystem names and provenance paths must currently be valid UTF-8. On POSIX
 filesystems that permit other byte sequences, preflight and ingest report each
-such entry with an escaped, printable path; Docbank does not open or import it,
+such entry with an escaped, printable path. Docbank does not open or import it,
 continues with the rest of the tree, and never alters the source.
 
 ### Choose files with include and exclude rules
@@ -211,16 +218,17 @@ subtrees. Exclusions win. Include rules leave directories open for traversal.
 | `report[[]1].txt` | The literal filename `report[1].txt` |
 
 Rules use Go's `path.Match` grammar. `*` and `?` do not cross `/`, and `**`
-does not mean recursive matching. Use `/` separators on every platform;
-backslashes are rejected. Use bracket expressions to match a literal `[`, `?`,
+does not mean recursive matching. Use `/` separators on every platform.
+Backslashes are rejected. Use bracket expressions to match a literal `[`, `?`,
 or `*`. Matching is case-sensitive, including on Windows.
 
-Repeat flags for multiple rules; commas are literal characters. Empty rules,
+Repeat a flag for each rule. Commas are literal characters. Empty rules,
 absolute paths, parent traversal, and malformed patterns are rejected before
-the walk. Watched-inbox exclusions remain literal and do not use this glob syntax.
+the walk. Watched-inbox exclusions remain literal and do not use this glob
+syntax.
 
-When the source argument is one explicit file, a basename rule such as `*.pdf`
-matches it; a path-form rule such as `reports/*.pdf` applies to a directory
+When the source argument is a single file, a basename rule such as `*.pdf`
+matches it. A path-form rule such as `reports/*.pdf` applies to a directory
 source's relative paths.
 
 ## Label and browse one import run
@@ -246,7 +254,7 @@ curl -sS -N -X POST -H "X-Api-Key: $DOCBANK_API_KEY" \
 
 The terminal report includes `ingest_id` when at least one file committed. Use
 that ID with `GET /api/v1/collections/{id}` and
-`GET /api/v1/collections/{id}/members`; list current nonempty runs with
+`GET /api/v1/collections/{id}/members`. List current nonempty runs with
 `GET /api/v1/collections`. Collection membership follows the documents as they
 move within the vault and reports current paths, sizes, and versions. Trashed
 files and superseded provenance disappear from live membership. Caller-supplied
@@ -257,7 +265,7 @@ The label has a separate ETag and edit route. Read
 or `{"label":null}` to the same path with its quoted revision in `If-Match`.
 Non-null labels stay unique even while a collection is empty. After permanent
 audit is enabled, label changes fail with HTTP 409 and
-`audit_mutation_unsupported`; the existing label and collection remain
+`audit_mutation_unsupported`. The existing label and collection remain
 readable.
 
 If only some files succeed, the receipt names the real run and lists failures
@@ -275,24 +283,24 @@ byte totals, then reports content-read progress while it imports:
 docbank add ~/Dropbox --dest /archive --progress plain
 ```
 
-`auto` (the default) draws a progress bar on a terminal and emits durable
-periodic lines when stderr is redirected. `plain` always emits durable lines;
-`bar` forces the redrawable form. Progress belongs on stderr and the terminal
-summary belongs on stdout. Use `--json` to suppress progress and emit only the
-machine-readable terminal report.
+`auto` (the default) draws a progress bar on a terminal and prints periodic
+progress lines when stderr is redirected. `plain` always prints lines, and
+`bar` forces the redrawn bar. Progress goes to stderr and the final summary
+goes to stdout. Use `--json` to suppress progress and emit only the
+machine-readable final report.
 
-The scan totals are an estimate rather than a filesystem lock: a source may
-change before Docbank opens it. Byte progress counts content actually read,
-while a file counts as done only after its individual blob and metadata
-operation returns. Interrupting the command cancels the daemon request.
-Docbank keeps files that completed successfully and skips them on a rerun. It
-does not create a file entry for an incomplete import.
+The scan totals are an estimate, because a source may change before Docbank
+opens it. Byte progress counts content actually read. A file counts as done
+only after its blob and metadata operation returns. Interrupting the command
+cancels the daemon request. Docbank keeps files that completed successfully and
+skips them on a rerun. It does not create a file entry for an incomplete
+import.
 
 ## What happens when I run the import again?
 
-Interrupted a 200,000-file import? Run the same command again. For each
-source file, docbank walks the candidate names in the destination
-directory — `report.pdf`, `report (2).pdf`, `report (3).pdf`, … — and:
+If a 200,000-file import is interrupted, run the same command again. For each
+source file, Docbank walks the candidate names in the destination directory
+(`report.pdf`, `report (2).pdf`, `report (3).pdf`, …) and:
 
 - if any live candidate has the **same content**, the file is counted as
   `skipped` (already imported, even if a prior run imported it under a
@@ -310,17 +318,18 @@ already match a destination node, Docbank adds that existing node to the new
 run without creating a content version. Recording this new membership advances
 the node revision, even without a collection label or any flags. This also
 applies to `--replace` when the bytes are identical. API clients holding the
-old ETag must refresh it before their next write; otherwise `If-Match` returns
+old ETag must refresh it before their next write. Otherwise `If-Match` returns
 `412 stale_revision`. Repeating the same observation within one run is a no-op.
 
-Digest-checked `POST /uploads` retries keep their existing behavior: an equal retry returns the existing node with an unchanged revision
-and does not return an unused ingest identity.
+Digest-checked `POST /uploads` retries are different. An equal retry returns
+the existing node with an unchanged revision and does not return an unused
+ingest identity.
 
 ## Collisions
 
-Two different files arriving at the same virtual name don't conflict —
-the newcomer is suffixed (`scan.pdf` → `scan (2).pdf`). The provenance
-record preserves where each one actually came from.
+Two different files arriving at the same virtual name don't conflict. The
+newcomer gets a suffix (`scan.pdf` → `scan (2).pdf`). The provenance record
+preserves where each one came from.
 
 ## Replace a changing local file
 
@@ -336,26 +345,26 @@ same node. Unchanged bytes count as skipped and keep the stored MIME type and
 version history, while the new run membership advances the node revision as
 [described above](#what-happens-when-i-run-the-import-again). A live directory
 fails that file before source content is opened. If an absent destination is
-claimed while the source is read, the exact create reports a conflict and never
-chooses a suffix. A stale observed revision reports a conflict and leaves the newer
-content current. Omit `--replace` for ordinary collision suffixing.
+claimed while the source is read, the create reports a conflict and does not
+choose a suffix. A stale observed revision reports a conflict and leaves the
+newer content current. Omit `--replace` for ordinary collision suffixing.
 
 ## Inspect where a document came from
 
-Docbank retains the facts about where a document came from as provenance.
-Query a live file by vault path or any retained file by stable node ID:
+Docbank keeps the facts about where a document came from as provenance. Query a
+live file by vault path, or any retained file by stable node ID:
 
 ```bash
 docbank provenance /archive/Documents/report.pdf
 docbank provenance id:42 --json
 ```
 
-The bounded newest-first result identifies the ingest, its source kind and
-description, the original source path and modification time, and the immutable
-SHA-256 identity of each provenance fact. `active` means no newer fact
-supersedes it; corrections retain earlier facts instead of rewriting them.
-Because a source path can disclose machine-local names, provenance is available
-only through the same authenticated API as the document itself.
+The newest-first result identifies the ingest, its source kind and description,
+the original source path and modification time, and the SHA-256 identity of
+each provenance fact. `active` means no newer fact supersedes it. A correction
+adds a fact and keeps the earlier ones. Because a source path can disclose
+machine-local names, provenance is available only through the same
+authenticated API as the document itself.
 
 Reading provenance does not open or change the original file. A provenance
 record also does not prevent ordinary retention or deletion rules from removing
@@ -366,16 +375,16 @@ Applications can append an origin learned later through the
 or [embedded Go API](../embedding.md). They can correct an active
 caller-supplied fact by adding a new fact that supersedes it. CLI and watched
 ingest facts cannot be superseded because Docbank uses them to recognize
-repeated imports; append an additional origin instead. The `provenance` CLI
+repeated imports. Append an additional origin instead. The `provenance` CLI
 command reads this history.
 
 ## Failures don't abort the batch
 
-Unreadable files, permission errors, and non-regular files (symlinks,
-sockets, devices) are recorded and reported at the end; the rest of the
-import continues. A directory that can't be created in the tree (for
-example, its virtual path collides with an existing file) skips that
-subtree and continues with the next.
+Unreadable files, permission errors, and non-regular files (symlinks, sockets,
+devices) are recorded and reported at the end, and the rest of the import
+continues. A directory that can't be created in the tree (for example, its
+virtual path collides with an existing file) skips that subtree and continues
+with the next.
 
 ```
 added: 4211  skipped: 12  failed: 2
@@ -397,16 +406,17 @@ spot-check the imported documents, and capture a [backup](backup.md).
 ## Remote API imports
 
 Authenticated integrations can send one digest-checked file at a time through
-`POST /api/v1/uploads`. The server requires the writer's SHA-256 and byte length,
-computes both independently while streaming, and creates no node or blob
-authority when either differs. See the [HTTP API](../architecture/http-api.md#addendum-post-uploads)
-and [Agent Integration Guide](../agents/integration.md#create-and-ingest-safely)
-for the exact contract.
+`POST /api/v1/uploads`. The server requires the writer's SHA-256 and byte
+length, computes both independently while streaming, and creates no node or
+blob record when either differs. See the
+[HTTP API](../architecture/http-api.md#addendum-post-uploads) and
+[Agent Integration Guide](../agents/integration.md#create-and-ingest-safely)
+for the contract.
 
-Backups include collection labels, their revision fences, run membership, and
-the audit history for repeated operational observations. Older readers that do
-not understand this added authority reject such a snapshot explicitly instead
-of restoring it without the collection records.
+Backups include collection labels and their revisions, run membership, and the
+audit history for repeated operational observations. Older readers that do not
+understand these records reject such a snapshot instead of restoring it without
+the collection records.
 
 ## Continuously ingest a local inbox
 
@@ -432,8 +442,8 @@ The daemon observes a file's filesystem identity, size, and modification time
 for a full settle window before reading it. `minimum_age = "168h"` additionally
 requires seven days since the source's last modification, which is useful when
 an append-heavy session may pause for minutes or hours without being closed.
-The minimum-age gate survives restart; the settle observation deliberately does
-not, so every file still proves a complete unchanged window in the new daemon.
+The minimum-age gate survives restart. The settle observation does not, so
+after a restart every file must again stay unchanged for a full settle window.
 Set `minimum_age = "0s"` or omit it for ordinary inboxes that need only the
 settle window.
 
@@ -443,38 +453,38 @@ or deletes source data. A time window cannot prove that a producer formally
 closed a file, so use a conservative age or point the watch at a completed-file
 handoff directory when one is available.
 
-The watch name and slash-separated relative source path form a stable,
-portable provenance identity. The first stable observation creates the file
-under `destination`; later byte changes append immutable content versions to
-that same stable node. This remains true if a person or agent moves or renames
-the Docbank node after ingestion. Docbank remembers the last content accepted
-from the source independently of the node's current version, so an unchanged
-source does not overwrite a later edit or revert after daemon restart. Removing
-the source leaves the archived node alone. A renamed source-relative path is a
-new identity, not an implicit move.
+The watch name and slash-separated relative source path form a stable, portable
+provenance identity. The first stable observation creates the file under
+`destination`. Later byte changes append content versions to that same node.
+This remains true if a person or agent moves or renames the Docbank node after
+ingestion. Docbank remembers the last content accepted from the source
+independently of the node's current version, so an unchanged source does not
+overwrite a later edit or revert after daemon restart. Removing the source
+leaves the archived node alone. Renaming a source-relative path creates a new
+identity. Docbank does not treat it as a move.
 
 For an agent-session archive, use the source tree itself for the organization
 you want to retain. For example,
 `~/agent-sessions/codex/project-alpha/2026/07/session-01.jsonl` becomes
 `/archives/agents/codex/project-alpha/2026/07/session-01.jsonl` with the
-configuration above. Docbank does not reinterpret a vendor's session format:
-the relative path and source facts remain exact, while each accepted byte
-change becomes an immutable version of that document.
+configuration above. Docbank does not interpret a vendor's session format. It
+keeps the relative path and source facts unchanged, and each accepted byte
+change becomes a new version of that document.
 
-Use `docbank provenance <path-or-id>` to inspect the retained watch identity,
-source-relative path, and immutable supersession history for an imported node.
-JSONL session content up to the normal extraction limit is indexed by the
-built-in plain-text worker, so ordinary `docbank search` can find archived
-session text without a vendor-specific parser. The optional `[storage]`
-schedule packs accumulated small files with a finite per-run budget. It does
-not delete source files, prune versions, run GC, or rewrite existing packs.
-Portable [backup and restore](backup.md) preserve the mirrored hierarchy,
-source provenance, every retained version, and its verified bytes.
+Use `docbank provenance <path-or-id>` to inspect the watch identity,
+source-relative path, and supersession history of an imported node. JSONL
+session content up to the normal extraction limit is indexed by the built-in
+plain-text worker, so ordinary `docbank search` can find archived session text
+without a vendor-specific parser. The optional `[storage]` schedule packs
+accumulated small files with a finite per-run budget. It does not delete source
+files, prune versions, run GC, or rewrite existing packs. Portable
+[backup and restore](backup.md) preserve the mirrored hierarchy, source
+provenance, every retained version, and its verified bytes.
 
-The watcher uses the exact destination name; it does not add a collision
+The watcher uses the exact destination name and does not add a collision
 suffix. It stops with an error if unrelated content already occupies that path
-or the previously mapped node is in trash. `docbank jobs` reports the
-named `watch:<name>` job and any terminal error; correct the problem and restart
-the daemon. Successful additions, updates, and unchanged observations appear
-in the daemon log. See [Configuration](../configuration.md#watched-inboxes) for
-the complete field contract.
+or the previously mapped node is in trash. `docbank jobs` reports the named
+`watch:<name>` job and any terminal error. Correct the problem and restart the
+daemon. Successful additions, updates, and unchanged observations appear in the
+daemon log. See [Configuration](../configuration.md#watched-inboxes) for the
+complete field contract.

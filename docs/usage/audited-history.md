@@ -15,8 +15,8 @@ Once you enable it:
 - Docbank protects every node and retained content version in the reviewed scope.
 - New children inherit protection.
 - Moving or trashing a protected node does not remove protection.
-- Docbank appends supported content, tree, provenance, and tag changes to a history
-  designed to expose tampering.
+- Docbank appends supported content, tree, provenance, and tag changes to a
+  history designed to expose tampering.
 - Ordinary version pruning and permanent trash deletion cannot erase protected
   records or versions.
 
@@ -86,8 +86,8 @@ docbank audit enable id:42 --json
 ## Inspect protection
 
 Vault-wide status identifies the audit history, selected directories, and
-protected member counts. It also reports each scope's baseline, the snapshot
-recorded at enrollment, and chain head, the hash of its latest history entry:
+protected member counts. It also reports each scope's baseline (the snapshot
+recorded at enrollment) and chain head (the hash of its latest history entry):
 
 ```bash
 docbank audit status
@@ -101,12 +101,13 @@ docbank audit status /taxes/2026/return.pdf
 docbank audit status id:57 --json
 ```
 
-An empty timeline is not proof that a node is protected; use `audit status` and
+An empty timeline is not proof that a node is protected. Use `audit status` and
 require `protected: true` plus its scope and baseline identities.
 
 ## Read a node's history
 
-Read the recorded changes for one protected document or directory by its live path:
+Read the recorded changes for one protected document or directory by its live
+path:
 
 ```bash
 docbank audit history /taxes/2026/return.pdf
@@ -119,9 +120,9 @@ Use a stable node ID when a document has moved, or while it is in trash:
 docbank audit history id:57
 ```
 
-Events appear newest first. Each event records its immutable event ID,
-operation ID, scope, time, origin, and node revisions before and after the
-change. Other fields depend on the event:
+Events appear newest first. Each event records its event ID, operation ID,
+scope, time, origin, and node revisions before and after the change. Other
+fields depend on the event:
 
 - Path events record old and new paths and their `live` or `trash` state.
 - Trash paths use `@trash/known/...` or `@trash/unknown/...`, separate from live
@@ -142,12 +143,12 @@ docbank audit history --node-id 57 --limit 50 --cursor <next-cursor> --json
 
 The cursor is bound to the stable node and does not shift when newer events are
 recorded. Do not parse or construct it. A cursor from another node returns
-`invalid_audit_cursor`; a node outside every audit scope returns
+`invalid_audit_cursor`, and a node outside every audit scope returns
 `audit_not_enrolled`.
 
 A protected node adopted during first enrollment may have no node-specific
 events until its first later change. That empty timeline does not weaken its
-baseline protection; `audit status` is the membership authority.
+baseline protection. Use `audit status` to check membership.
 
 ## Read a scope's history
 
@@ -159,14 +160,15 @@ docbank audit history --scope <scope-id>
 docbank audit history --scope <scope-id> --limit 100 --json
 ```
 
-Scope history shows changes to all members without a separate request for
-each document. Each event includes its stable node ID, which human output
-prints as a copyable `id:N` selector. The response also includes the scope
-target, baseline, member count, entry count, and current chain head. These identify the scope and history being read.
+Scope history shows changes to all members without a separate request for each
+document. Each event includes its stable node ID, which human output prints as
+a copyable `id:N` selector. The response also includes the scope target,
+baseline, member count, entry count, and current chain head. These identify the
+scope and history being read.
 
 Pagination uses the same newest-first ordering as node history. A scope cursor
-is opaque, bound to that stable scope ID, and remains stable when later events
-are appended. Reusing it with another scope returns `invalid_audit_cursor`.
+is opaque, bound to that scope ID, and remains stable when later events are
+appended. Reusing it with another scope returns `invalid_audit_cursor`.
 
 ## Verify the permanent evidence
 
@@ -205,12 +207,12 @@ report still includes current metadata and protected-content results.
 `--expected` reads a successful active `audit verify --json` report, not an
 unverified hand-written head. Keep that report outside the vault and retain the
 corresponding verified backups. The proof cannot detect an attacker who can
-replace both the vault and your separately recorded evidence; the external copy
+replace both the vault and your separately recorded evidence. The external copy
 is the trust anchor.
 
-`docbank audit verify` hashes protected content only. `docbank verify` remains
-the broader whole-vault check: it performs the same metadata and audit replay,
-then hashes every cataloged blob, including content outside audit membership.
+`docbank audit verify` hashes protected content only. `docbank verify` is the
+broader whole-vault check. It performs the same metadata and audit replay, then
+hashes every cataloged blob, including content outside audit membership.
 
 ## What remains usable
 
@@ -218,16 +220,16 @@ Protected documents remain working documents. Docbank records direct creation
 and filesystem ingest, verified content replacement and reversion, in-scope
 moves and renames, reversible trash and restore, and tag creation, assignment,
 rename, and deletion. These operations commit their metadata and history
-together; a history failure rolls the visible change back.
+together. A history failure rolls the visible change back.
 
 `rm` remains a soft delete. The protected node stays in recoverable trash and
 can be restored. Physical pack and repack maintenance also remains available
 because it changes representation without removing logical authority, and GC
 can remove only blobs that no content version retains.
 
-Execution of `trash empty --run` and `versions prune --run` is currently
-refused once audit authority exists. Their dry runs remain useful for impact
-inspection. There is deliberately no exceptional audit-destruction command.
+Docbank currently refuses `trash empty --run` and `versions prune --run` once
+audit records exist. Their dry runs still work for inspecting impact. There is
+no command for destroying audit records, even as an exception.
 
 ## Multiple protected directories
 
@@ -252,15 +254,15 @@ live or retained-trash subtree is already permanently protected. Docbank
 rejects moves between scopes and other operations that require one transaction
 to rewrite multiple scope histories, except the shared tag changes described
 below. A vault accepts at most 1,000 permanent scopes so one evidence report
-can include every scope. Status, history, verification,
-JSONL export/import, incremental backup, and restore preserve every scope.
+can include every scope. Status, history, verification, JSONL export/import,
+incremental backup, and restore preserve every scope.
 
 A tag may be assigned to documents in several protected scopes. Renaming or
-deleting that shared tag is one atomic audited operation: every assigned
+deleting that shared tag is one atomic audited operation. Every assigned
 protected node receives the definition event, deletion also records each
-assignment tombstone, every affected scope chain advances, and either all of
-those changes commit or none do. Ordinary optimistic tag revisions still apply,
-so a stale rename or deletion cannot overwrite a newer assignment set.
+assignment tombstone, and every affected scope chain advances. Either all of
+those changes commit or none do. The usual tag revision checks still apply, so
+a stale rename or deletion cannot overwrite a newer assignment set.
 
 ## Current limits
 
