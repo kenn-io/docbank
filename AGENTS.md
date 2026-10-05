@@ -97,7 +97,8 @@ Do not infer fork eligibility or network/cache isolation from this setting.
 2. Never push to or commit on main — feature branches and PRs only.
 3. Do not merge pull requests; opening and reporting them is the agent's
    job, merging is the user's.
-4. Run `prek run` before committing.
+4. Run `prek run` before committing and `prek run --stage pre-push` before
+   pushing; lint and the Huma check run only at push.
 5. Write pull request descriptions for humans. Lead with the user-visible
    outcome in plain language and, when useful, one concrete example. Explain
    the important safety boundary or tradeoff without making the reader decode

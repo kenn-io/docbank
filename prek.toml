@@ -1,15 +1,25 @@
 minimum_prek_version = "0.3.6"
+default_install_hook_types = ["pre-commit", "pre-push"]
 
 [[repos]]
 repo = "local"
 
 [[repos.hooks]]
-id = "go-fmt-lint"
-name = "go-fmt-lint"
+id = "go-fmt"
+name = "go-fmt"
 language = "system"
-entry = "make fmt lint"
+entry = "make fmt"
 pass_filenames = false
 always_run = true
+
+[[repos.hooks]]
+id = "go-lint"
+name = "go-lint"
+language = "system"
+entry = "make lint"
+pass_filenames = false
+always_run = true
+stages = ["pre-push"]
 
 [[repos.hooks]]
 id = "forbid-superpowers-artifacts"
@@ -25,3 +35,4 @@ language = "system"
 entry = "go run go.kenn.io/kit/cmd/huma-check@3e1f59e9011e878ec595aa04aebc8a77c5292c4d -fix=false -tags fts5 ./..."
 pass_filenames = false
 always_run = true
+stages = ["pre-push"]
