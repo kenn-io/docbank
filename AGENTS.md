@@ -116,6 +116,8 @@ Do not infer fork eligibility or network/cache isolation from this setting.
 8. Do not watch, poll, or wait for GitHub Actions or pull request checks unless
    the user explicitly asks you to monitor them. A request to open, update, or
    make a pull request merge-ready does not authorize ongoing CI monitoring.
+9. Pull requests must have a user-facing benefit or improve the developer
+   experience, and the body must say which one.
 
 ## Releases
 
