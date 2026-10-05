@@ -1,9 +1,9 @@
-# Find any document, and every version of it
+# Agent-native document system of record
 
 Docbank is a document vault that runs on your own machine. It imports files,
 email, photos, and recordings, makes their text searchable, and keeps every
-version you save. When you need to hand records to someone else, it exports the
-versions you checked.
+version you save. You and your agents search, review, and export the same
+records.
 
 Docbank is open source under Apache-2.0 and runs on Linux, macOS, and Windows.
 
