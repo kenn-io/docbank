@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-04
+last_edited: 2026-10-05
 title: Embed in Go
 description: Own one or more independently rooted Docbank vaults inside a Go application, with CGO or pure-Go SQLite.
 ---
@@ -42,12 +42,12 @@ Call `Vault.RegisterMailboxArchive(ctx, id, description)` once for a stable
 source archive identity. Then call `Vault.TransferEML(ctx, request, reader)`
 with a `docbank.MailboxTransferRequest`: archive ID, stable occurrence
 reference, SHA-256, byte size, settings identity, destination directory ID
-and document name. Only the supplied reader is consumed; Docbank does not
+and document name. Docbank reads only the supplied reader. It does not
 discover source applications, accounts or host paths.
 
 The returned receipt binds the ordinary message, decoded attachment documents
 and exact retained versions. Equal retries return that receipt. Changing the
-source requires `ExpectedRevision`; a changed target conflicts, and a trashed
+source requires `ExpectedRevision`. A changed target conflicts, and a trashed
 target returns a tombstone. These calls use the vault's existing lifecycle and
 mutation ownership. See [Explicit EML transfers](usage/importing.md#explicit-eml-transfers).
 
@@ -113,25 +113,25 @@ appended, err := vault.AppendProvenance(ctx, receipt.Node.ID,
 ```
 
 The result contains the updated node, live path, appended fact, and receipt.
-Set a positive `IfRevision` to require the node revision you inspected;
-zero makes the operation unconditional.
+Set a positive `IfRevision` to require the node revision you inspected.
+Zero makes the operation unconditional.
 
 To correct an active caller-supplied fact on the same node, set `Supersedes`
 to that fact's identity. Docbank records the source reference exactly as
 supplied and never opens it.
 
 `Put` creates missing virtual directories. Repeating the same bytes and media
-type converges on the current version; changed bytes append an immutable content
-version while preserving the node ID. Supply `PutOptions.Expected` when the
-caller already knows the SHA-256 and byte count and wants Docbank to reject a
-mismatched stream before granting metadata authority. Supply a positive
+type resolves to the current version. Changed bytes append an immutable content
+version and keep the node ID. Supply `PutOptions.Expected` when the caller
+already knows the SHA-256 and byte count and wants Docbank to reject a
+mismatched stream before it commits any metadata. Supply a positive
 `PutOptions.IfRevision` when replacing content derived from an earlier read.
 Docbank rejects the write with `ErrStaleRevision` if the file has changed since
 that revision, including when the new bytes happen to match the current head.
 
 Use `Create` when an application owns an immutable key and must never replace
 different content already stored there. It requires the expected SHA-256 and
-size. An exact retry is idempotent; a different byte identity, media type, or
+size. An exact retry is idempotent. A different byte identity, media type, or
 node kind returns `ErrContentConflict` without appending a version:
 
 ```go
@@ -150,14 +150,14 @@ receipt, err := vault.Create(ctx, "/records/immutable.jsonl", reader,
 
 `CreateOptions.Provenance` lets an embedded owner record where an immutable
 document came from without inventing application-specific Docbank tables. The
-kind and description identify the source system; the reference is an opaque
+kind and description identify the source system. The reference is an opaque
 source-local URI, archive key, path, or other stable identifier. An optional
 `ModifiedAt` records the source's own timestamp in canonical UTC form. Docbank
 does not interpret the reference or grant it retention authority.
 
 For a newly created document, the node, first content version, ingest record,
 and provenance fact commit as one metadata transaction. If any part fails,
-none gains authority. An exact `Create` retry succeeds only when its active
+none is committed. An exact `Create` retry succeeds only when its active
 provenance also matches, so a caller cannot accidentally claim source evidence
 that was never recorded. Superseding that matching fact makes the original
 request return `ErrContentConflict` unless another active fact still matches.
@@ -167,8 +167,8 @@ content and media type are unchanged.
 `AppendProvenance` may supersede active caller-supplied facts on the same node,
 including facts supplied through `CreateOptions.Provenance`. Operational CLI
 and watched-folder ingest facts cannot be superseded, because they keep
-re-ingest idempotent; append newly learned origins alongside them instead.
-Use `Provenance` to inspect the bounded newest-first history:
+re-ingest idempotent. Append newly learned origins alongside them instead.
+Use `Provenance` to page through the history, newest first:
 
 ```go
 page, err := vault.Provenance(ctx, receipt.Node.ID, docbank.ProvenanceOptions{
@@ -184,7 +184,7 @@ for _, fact := range page.Items {
 ```
 
 The node, live path, total, and page come from one read snapshot. `Path` is
-empty for a trashed node. Provenance records origin; it does not prevent trash
+empty for a trashed node. Provenance records origin. It does not prevent trash
 empty, version pruning, or garbage collection. Applications must manage any
 retention policy for external references themselves.
 
@@ -200,7 +200,7 @@ Each value binds a canonical portable profile to its provider implementations.
 binding names from that profile.
 
 Every provider with an `operator_network` or `hosted_provider` trust boundary
-requires an explicit `ProcessingRuntimeDisclosure.Endpoint` when `docbank.New`
+requires a `ProcessingRuntimeDisclosure.Endpoint` when `docbank.New`
 opens the vault. Set `RenditionDisclosure` for a rendition provider and an entry
 in `EmbeddingDisclosures` for each network embedding binding. Opening fails if
 an endpoint is missing or invalid. Docbank cannot infer it from a provider
@@ -211,7 +211,7 @@ contain no URL credentials, query parameters, or fragment. A `local_process`
 provider accepts an empty endpoint or `in-process`. Docbank fills omitted
 processor and deployment identities from the provider and profile, and derives
 metadata classes and retained artifact roles. Review the resulting
-`PlanProcessing` response before granting consent; these disclosures are part
+`PlanProcessing` response before granting consent. These disclosures are part
 of its fingerprint.
 
 For example, given a canonical `profile` with a rendition provider and a
@@ -246,7 +246,7 @@ if err != nil {
 defer vault.Close()
 ```
 
-Use the same endpoints when constructing the providers; a disclosure names a
+Use the same endpoints when constructing the providers. A disclosure names a
 destination but does not configure its transport. Import `document` from
 `go.kenn.io/docbank/document`. See [Document Understanding in Go](document-understanding.md)
 for provider construction and [Document processing](usage/document-processing.md)
@@ -259,7 +259,7 @@ Set `DocumentSearchRequest.ContentFirst` to prefer content matches, following th
 ## Read exact evidence windows
 
 Use `ReadEvidenceWindow` to read a bounded excerpt from a rendition you already
-identified. Retain the file's vault, node, content-version and content SHA-256
+identified. Keep the file's vault, node, content-version and content SHA-256
 alongside the attachment, build and sanitized-Markdown SHA-256 returned by
 `Rendition` or document detail metadata. Pass all seven identities in an
 `EvidenceWindowRequest`:
@@ -278,11 +278,12 @@ if err != nil {
 // Keep window.NextOffset to continue from the exclusive end of this window.
 ```
 
-Offsets count Unicode scalars. Zero `MaxChars` selects 8,000; explicit limits
-are 1 through 16,000. `ActualStart`, `ActualEnd`, and `NextOffset` describe the
-returned range; `ResponseBytes` counts its UTF-8 bytes. A read starting at EOF returns
-empty text with `EOF: true`. An offset beyond EOF matches
-`ErrInvalidRenditionWindow`; malformed references match `ErrInvalidEvidenceRequest`.
+Offsets count Unicode scalars. Zero `MaxChars` selects 8,000. Other values
+must be 1 through 16,000. `ActualStart`, `ActualEnd`, and `NextOffset` describe
+the returned range, and `ResponseBytes` counts its UTF-8 bytes. A read starting
+at EOF returns empty text with `EOF: true`. An offset beyond EOF matches
+`ErrInvalidRenditionWindow`. Malformed references match
+`ErrInvalidEvidenceRequest`.
 
 Only the current, live content version and its active rendition are readable.
 A rename preserves the reference. A content or rendition replacement, trash,
@@ -291,10 +292,11 @@ The read never runs processing, selects a newer rendition, or pins retention.
 The vault lifecycle lease covers the internal blob read and cleanup and is
 released before the function returns. Callers receive text, not an open stream.
 
-The returned digest identifies catalog authority. A bounded read can end before
-whole-artifact checksum verification reaches EOF. Search chunk and embedding
-segment offsets use their own coordinates; do not use them as Markdown offsets.
-Start a document overview at zero, or retain offsets from an earlier window.
+The returned digest is the one the catalog records. A window read can end
+before whole-artifact checksum verification reaches EOF. Search chunk and
+embedding segment offsets use their own coordinates. Do not use them as
+Markdown offsets. Start a document overview at zero, or keep offsets from an
+earlier window.
 See the [HTTP evidence contract](architecture/http-api.md#exact-evidence-windows)
 for the equivalent authenticated route.
 
@@ -326,11 +328,11 @@ if err != nil {
 ```
 
 If that reply is lost, `Vault.RemoteRecordingReceipt` reads the saved receipt by
-operation ID. `ErrNotFound` describes only that read; a submission still in
+operation ID. `ErrNotFound` describes only that read. A submission still in
 flight can commit afterward.
 
 Obtain the file through the caller's own approved path, then attach it with
-the exact SHA-256 and byte count. WAV and MP3 files use the existing media
+its SHA-256 and byte count. WAV and MP3 files use the existing media
 rules. Remote MP4 originals use `video/mp4`, a `.mp4` filename, and limits of
 20 MiB, 2,088,960 coded pixels, 300,000 milliseconds, and 18,000 frames. The
 service's default byte limit is 512 MiB, its hard maximum is 1 GiB, and the
@@ -359,8 +361,8 @@ Import a caption or transcript only after the original is bound. A caption
 uses `application/x-subrip` and the built-in `supplied-captions` profile. It
 keeps cue timing and supplied provenance and supports lexical and auto search.
 Semantic and hybrid search are not configured for supplied captions. A
-transcript uses the built-in `supplied-transcript` profile after an explicit
-plan and consent grant.
+transcript uses the built-in `supplied-transcript` profile after a plan and
+consent grant.
 
 ```go
 caption, err := vault.ImportRecordingArtifact(
@@ -399,11 +401,12 @@ receipt, err := vault.RetryMedia(ctx, "00000000-0000-4000-8000-000000000454",
 ```
 
 `RetryMedia` selects the caller's newest visible occurrence for the source
-and returns after durable queue admission. It cannot select an older occurrence;
-use `PlanProcessing` and `StartProcessing` with that recording's node and current
-content version instead. Read `MediaStatus` for the newest attempt and its
-coverage. Coverage follows the exact source version selected by the visible occurrence, so a transcript for older bytes cannot
-cover a later recording revision. A recognized Cap Cloud or Loom link returns
+and returns once the work is durably queued. It cannot select an older
+occurrence. Use `PlanProcessing` and `StartProcessing` with that recording's
+node and current content version instead. Read `MediaStatus` for the newest
+attempt and its coverage. Coverage follows the source version selected by the
+visible occurrence, so a transcript for older bytes cannot cover a later
+recording revision. A recognized Cap Cloud or Loom link returns
 `unsupported` even when `Acquire` is set, because neither manual reference path
 has a supported automatic download owner. Import the caller-held file with
 `ImportRecordingArtifact`. Other remote acquisition remains unavailable.
@@ -411,7 +414,7 @@ Origin registration is daemon configuration. Embedded vaults register no
 self-hosted Cap origins, so the embedded API does not apply their registered
 origin identity rules.
 
-Read the published transcript with the same stable tuple used for processing:
+Read the published transcript with the same ID tuple used for processing:
 
 ```go
 transcript, err := vault.MediaTranscript(ctx, docbank.MediaTranscriptRequest{
@@ -423,7 +426,7 @@ transcript, err := vault.MediaTranscript(ctx, docbank.MediaTranscriptRequest{
 
 `EvidenceState` is independent of `CoverageState` and `OperationState`.
 `EvidenceState == "ready"` is the only state with text. Units preserve
-retained timing and speaker facts, and `Origin` distinguishes supplied from
+timing and speaker facts, and `Origin` distinguishes supplied from
 generated evidence. A mismatched content version returns `stale` without
 text, so callers must check the complete tuple before displaying a transcript.
 
@@ -432,7 +435,7 @@ text, so callers must check the complete tuple before displaying a transcript.
 `EnsureSourceMetadata` verifies and processes one immutable content version
 with Docbank's current local extractor, then returns its typed metadata. The
 result carries the complete `ContentVersion`, so callers can bind the facts to
-the exact SHA-256 and node version they describe:
+the SHA-256 and node version they describe:
 
 ```go
 metadata, err := vault.EnsureSourceMetadata(ctx, receipt.Version.ID)
@@ -452,9 +455,8 @@ result when one exists. It does not start background workers.
 The method holds the vault's mutation lock during extraction. It verifies the
 complete original, including large media files, then applies the
 [format-specific parsing limits](architecture/source-metadata.md#current-format-boundary).
-Concurrent `Put`, `Create`, and maintenance calls wait.
-If Docbank cannot open or verify the source bytes, it returns
-`ErrContentUnavailable`.
+Concurrent `Put`, `Create`, and maintenance calls wait. If Docbank cannot open
+or verify the source bytes, it returns `ErrContentUnavailable`.
 
 Use `SourceMetadata` for a read-only lookup. It returns `ErrNotFound` when no
 result has been published. Both methods return all local fields, including
@@ -462,78 +464,80 @@ sensitive fields. Your application decides which fields it may disclose.
 
 ## Publish email attachment documents
 
-Use `EnsureEmailMetadata` to retain the MIME inventory for an exact email
-version. Then call `PublishEmailDocuments` with a
-`document.EmailDocumentPublicationRequest`: an operation ID, the exact parent
+Use `EnsureEmailMetadata` to retain the MIME inventory for one email version.
+Then call `PublishEmailDocuments` with a
+`document.EmailDocumentPublicationRequest`: an operation ID, the parent
 node/version/hash/size, the returned generation and attachment IDs, and a
 destination directory ID with its current revision. No host filesystem path
-is accepted. This explicit operation does not run automatically on import.
+is accepted. This operation does not run automatically on import.
 
 Publication verifies retained payload bytes and creates ordinary file documents
 for the full known attachment inventory in one transaction. Inline resources
-are included; body alternatives and multipart containers are excluded. An
+are included, but body alternatives and multipart containers are excluded. An
 attached email becomes a child email, whose own attachments can be published
 separately. An explicitly attached single-part root also becomes a child.
 Parts inside encrypted containers stay encrypted relations without child files.
-The receipt says whether the MIME inventory is `complete` or
-`partial`, and records unavailable, unsupported, failed, or encrypted parts
-without inventing empty files.
+The receipt says whether the MIME inventory is `complete` or `partial`. It
+records unavailable, unsupported, failed, or encrypted parts and does not
+create empty files for them.
 
 Equal bytes share storage but get separate document occurrences. Filenames use
-the safe MIME name plus operation and occurrence identifiers. An explicit
+the safe MIME name plus operation and occurrence identifiers. A
 `reuse` selection may instead identify an existing child version with matching
 bytes and its node revision. Raw filenames remain in the MIME inventory.
 Renames, later content versions, and decoder reprocessing never move an old
 relation to a different version.
 
 Keep the operation ID and request unchanged when retrying. The same request
-returns the original receipt, including after backup and restore; a changed
+returns the original receipt, including after backup and restore. A changed
 request conflicts. `EmailDocumentPublication` reads that receipt.
-`EmailDocumentRelations` selects either an exact parent version or an exact
-child version and returns current processing status with each relation. Pages
+`EmailDocumentRelations` selects either one parent version or one child
+version and returns current processing status with each relation. Pages
 default to 100 rows, accept at most 250, include a total, and return the next
 operation/order pair when another page exists. Publication accepts at most
 1,000 MIME parts, 128 MiB per payload, and 256 MiB of decoded payloads. HTTP
-request and response bodies are bounded to 2 MiB.
+request and response bodies are limited to 2 MiB.
 
 Publication itself does not prove indexing or authorize provider disclosure.
 `RequestEmailDocumentProcessing` submits one receipt occurrence to the ordinary
-rendition scheduler with an explicit processing profile, execution identity,
-artifact policy, principal, scope, and consent classes. Existing consent must
-authorize those exact inputs and retained outputs. `GrantProcessingConsent`
-explicitly grants that authority; `RevokeProcessingConsent` advances the
-principal/scope revocation fence. Publication and processing requests never
-grant consent or inherit it from a parent email. The profile must match a
-configured provider. Docbank inspects the exact child bytes and rejects execution
-metadata that differs from the prepared upload before enqueueing work. The
-embedded method runs the provider and waits for completion; the HTTP endpoint
-returns after enqueueing for the daemon worker. Both paths check consent again
-before provider access and publication. Relation status
-reports `indexed` for complete searchable output from ordinary text extraction
-or an active rendition of that exact child version. Partial or truncated
-renditions report `partial`; empty output reports `none`. Text-extraction
-failures report `failed` with reason `text_extraction_failed`. Completed jobs
-without serving output report `decoded` with reason `rendition_not_serving`.
-Other states include `pending`, `unsupported`, `encrypted`, and `unavailable`.
-Ordinary search returns child
-matches; QueryV1 does not add an email-family traversal predicate.
+rendition scheduler with a processing profile, execution identity, artifact
+policy, principal, scope, and consent classes. Existing consent must authorize
+those exact inputs and retained outputs. `GrantProcessingConsent` grants that
+consent. `RevokeProcessingConsent` advances the principal/scope revocation
+fence. Publication and processing requests never grant consent or inherit it
+from a parent email. The profile must match a configured provider. Docbank
+inspects the child bytes and rejects execution metadata that differs from the
+prepared upload before enqueueing work. The embedded method runs the provider
+and waits for completion. The HTTP endpoint returns after enqueueing for the
+daemon worker. Both paths check consent again before provider access and
+publication.
+
+Relation status reports `indexed` for complete searchable output from ordinary
+text extraction or an active rendition of that child version. Partial or
+truncated renditions report `partial`, and empty output reports `none`.
+Text-extraction failures report `failed` with reason `text_extraction_failed`.
+Completed jobs without serving output report `decoded` with reason
+`rendition_not_serving`. Other states include `pending`, `unsupported`,
+`encrypted`, and `unavailable`. Ordinary search returns child matches. QueryV1
+does not add an email-family traversal predicate.
 
 Trash and restore keep relations and do not cascade to children. A referenced
-version cannot be permanently deleted or pruned. A targeted purge of a referenced
-MIME inventory conflicts; a vault-wide purge skips it and purges other eligible
-derivatives. Conflicts identify the blocking publication operation. To release those references, call
-`RemoveEmailDocumentPublication` with the operation ID and exact request digest.
-This removes that receipt and its relations, preserves ordinary children, and
-relinquishes the operation's retry guarantee. Other receipts retain their own
-references. Ordinary audit and content-retention rules still apply.
-Use a fresh operation ID for a new publication after release, or explicitly reuse
-the existing child versions. A generated filename collision returns
-`email_document_conflict` and leaves the publication uncommitted.
+version cannot be permanently deleted or pruned. A targeted purge of a
+referenced MIME inventory conflicts. A vault-wide purge skips it and purges
+other eligible derivatives. Conflicts identify the blocking publication
+operation. To release those references, call `RemoveEmailDocumentPublication`
+with the operation ID and its request digest. This removes that receipt and
+its relations, preserves ordinary children, and gives up the operation's retry
+guarantee. Other receipts keep their own references. Ordinary audit and
+content-retention rules still apply. Use a fresh operation ID for a new
+publication after release, or reuse the existing child versions. A generated
+filename collision returns `email_document_conflict` and leaves the
+publication uncommitted.
 
 CLI users can [inspect and release blocking receipts](usage/trash-and-gc.md#release-email-attachment-references)
 through the daemon with `docbank email-documents`.
 
-The typed client names the explicit principal/scope consent operations
+The typed client names the principal/scope consent operations
 `GrantScopedProcessingConsent` and `RevokeScopedProcessingConsent` to distinguish
 them from consent for a configured processing plan.
 
@@ -551,18 +555,16 @@ The authenticated HTTP and typed client surfaces expose the same operations:
 
 These routes require the master API key and are outside the current browser
 session capability. All relation and receipt DTOs live in
-`go.kenn.io/docbank/document`. Consumers
-can use the same exact identities for navigation and downloads without
-inferring parentage from names or hashes.
+`go.kenn.io/docbank/document`. Consumers can use the same identities for
+navigation and downloads without inferring parentage from names or hashes.
 
 ## Read canonical visual previews
 
 `EnsureVisualPreview` synchronously processes one immutable content version
 when the current built-in recipe has no recorded result. It returns the active
-preview; if the recipe was already recorded, another recipe's active result
-stays selected. Ready results identify exact preview
-bytes and dimensions; unsupported and failed results carry a stable failure
-code without pretending that content is available.
+preview. If the recipe was already recorded, another recipe's active result
+stays selected. Ready results identify the preview bytes and dimensions.
+Unsupported and failed results carry a stable failure code and no content.
 
 ```go
 preview, err := vault.EnsureVisualPreview(ctx, versionID)
@@ -583,7 +585,7 @@ if preview.State == document.VisualPreviewReady {
 content. It returns `ErrVisualPreviewUnavailable` for a cataloged unsupported
 or failed result and `ErrNotFound` when no preview result exists.
 `VisualPreview` remains a read-only lookup. Opening an embedded vault does not
-start a preview worker; applications choose when to call the synchronous
+start a preview worker. Applications choose when to call the synchronous
 producer. The built-in producer supports JPEG, PNG, GIF, still WebP, and
 supported embedded JPEG previews in ARW, DNG, CR2, NEF, and RAF camera RAW
 files. See [Visual previews](architecture/visual-previews.md) for format limits,
@@ -591,10 +593,10 @@ output size, and recipe selection.
 
 Use `VisualPreviewForSize`, `EnsureVisualPreviewForSize`, and
 `OpenVisualPreviewForSize` with `VisualPreviewGrid`, `VisualPreviewFit`, or
-`VisualPreviewLarge` to read, produce, or stream an exact retained recipe.
+`VisualPreviewLarge` to read, produce, or stream one specific retained recipe.
 Their maximum edges are 512, 2560, and 4096 pixels. Grid and fit leave the
-legacy active head alone. A newly produced large result becomes active;
-reusing a cached result preserves a different head.
+legacy active head alone. A newly produced large result becomes active.
+Reusing a cached result preserves a different head.
 
 `docbank.VisualPreviewSupportsMediaType(mediaType)` checks normalized media
 types without reading or decoding a source. It reports whether a decoder path
@@ -603,24 +605,24 @@ exists. Individual files can still return unsupported or failed results.
 ## Inspect and repair stored content
 
 `Put` and `Create` receipts include `Physical`. This field describes the raw,
-zstd, or packed representation on disk. Use it to inspect storage; use
+zstd, or packed representation on disk. Use it to inspect storage. Use
 `ContentIdentity` to identify document bytes.
 
 `Put` is an idempotent content write, not an integrity repair primitive. Kit's
 structural dedup can reuse an existing canonical representation without hashing
-it, and packed catalog authority can remain selected over a loose copy. When an
-application has trusted bytes for a known SHA-256 and size, `RepairContent`
-verifies the complete stream before replacing physical authority. It preserves
-every node and historical version reference to that identity. Repairing packed
-content makes a verified loose copy authoritative; a later repack reclaims the
-now-dead packed bytes.
+it, and the catalog can keep reading a packed copy even when a loose copy
+exists. When an application has trusted bytes for a known SHA-256 and size,
+`RepairContent` verifies the complete stream before replacing the physical
+copy the catalog reads. It preserves every node and historical version
+reference to that identity. Repairing packed content makes the catalog read a
+verified loose copy. A later repack reclaims the now-dead packed bytes.
 
 ### Choose loose compression
 
-New content remains loose until an explicit `Pack` call. The standalone daemon
-selects zstd when a new loose object is at least 4 KiB and compression saves at
-least 10%. Embedded vaults keep raw loose storage by default; an owner can match
-the daemon policy explicitly or choose application-specific thresholds:
+New content remains loose until you call `Pack`. The standalone daemon selects
+zstd when a new loose object is at least 4 KiB and compression saves at least
+10%. Embedded vaults keep raw loose storage by default. An owner can match the
+daemon policy or choose application-specific thresholds:
 
 ```go
 vault, err := docbank.New(ctx, docbank.Config{
@@ -634,48 +636,48 @@ vault, err := docbank.New(ctx, docbank.Config{
 ```
 
 Docbank keeps zstd only when the logical size meets `MinBytes` and the completed
-encoding saves at least `MinSavingsPercent`; otherwise it publishes raw loose
-content. Enabling compression does not proactively migrate or rewrite existing
-objects. `RepairContent` preserves an existing loose object's raw or zstd
-encoding. It applies this policy only when trusted bytes replace packed or
-missing physical authority. The zero value disables compression, preserving the
-unchanged raw loose layout, and mixed raw, zstd, and packed content remains
-readable through the same verified API. Receipts report the chosen physical
+encoding saves at least `MinSavingsPercent`. Otherwise it publishes raw loose
+content. Enabling compression does not migrate or rewrite existing objects.
+`RepairContent` preserves an existing loose object's raw or zstd encoding. It
+applies this policy only when trusted bytes replace a packed or missing
+physical copy. The zero value disables compression and keeps the raw loose
+layout. Mixed raw, zstd, and packed content remains readable through the same
+verified API. Receipts report the chosen physical
 encoding and stored size without changing the logical SHA-256 or size.
 `PutReceipt.Created` reports a new logical node, while `PhysicalCreated`
 separately reports that the operation published new final loose authority.
 
 An eligible write temporarily needs scratch space for both the raw object and
-its compressed candidate before Docbank chooses one for durable publication.
-`LooseBacklog` reports how much indexed loose content remains eligible for an
-explicit pack pass, including both logical and physically stored bytes and a
+its compressed candidate before Docbank chooses one to publish.
+`LooseBacklog` reports how much indexed loose content remains eligible for a
+pack pass, including both logical and physically stored bytes and a
 split between raw and compressed object counts. Applications can therefore
 schedule packing from physical storage growth without walking loose objects.
 The report does not make packing automatic.
 
 ## Identify a vault and verify reads
 
-`vault.ID()` returns the archive's stable UUID. JSONL backup and restore
-preserve that identity even when the restored vault has a different filesystem
-root; applications can therefore distinguish logical archives without treating
-paths as identity.
+`vault.ID()` returns the archive's UUID. JSONL backup and restore preserve
+that identity even when the restored vault has a different filesystem root, so
+applications can tell archives apart without treating paths as identity.
 
-An `OpenContent` stream is not authoritative until it reaches terminal `io.EOF`
-or `Verify` succeeds. Early `Close` does not drain the stream. `Vault.Close`
+Do not trust an `OpenContent` stream until it reaches terminal `io.EOF` or
+`Verify` succeeds. Early `Close` does not drain the stream. `Vault.Close`
 waits for active operations and streams, closes storage, and releases the vault
 lock.
 
 `OpenContent` and `OpenVersionContent` wrap `ErrContentUnavailable` when the
 catalog-authorized physical content cannot be opened or its physical size
-disagrees with metadata. Metadata lookup failures retain their existing
+disagrees with metadata. Metadata lookup failures keep their existing
 `ErrNotFound`, `ErrNotFile`, or `ErrClosed` classification instead. A canceled
 physical open can match both `context.Canceled` and `ErrContentUnavailable`, so
 callers that distinguish cancellation should check the context error first.
 
 `OpenVersionContentRange` selects a non-empty decoded logical byte range from
-one exact immutable version. Offsets and lengths address the same logical bytes
-described by `ContentVersion.BlobHash` and `Size`, regardless of whether current
-physical authority is raw loose, zstd-compressed loose, packed, or secondary:
+one immutable version. Offsets and lengths address the same logical bytes
+described by `ContentVersion.BlobHash` and `Size`, whether the bytes are
+currently stored raw loose, zstd-compressed loose, packed, or in a secondary
+store:
 
 ```go
 part, err := vault.OpenVersionContentRange(ctx, versionID,
@@ -705,9 +707,9 @@ to read and verify all bytes, or run maintenance verification.
 
 ## Traverse and mutate the tree
 
-`Children` exposes the live virtual tree without materializing an unbounded
-directory. Resolve a directory with `Stat`, then advance through its direct
-children with `Limit` and `Offset`:
+`Children` reads the live virtual tree one page at a time, so a large
+directory is never loaded whole. Resolve a directory with `Stat`, then advance
+through its direct children with `Limit` and `Offset`:
 
 ```go
 manifests, err := vault.Stat(ctx, "/manifests")
@@ -734,13 +736,13 @@ for offset := 0; ; {
 ```
 
 Pages contain directories first and files second, name-sorted within each kind.
-A zero limit uses `DefaultChildrenLimit`; one call cannot exceed
+A zero limit uses `DefaultChildrenLimit`. One call cannot exceed
 `MaxChildrenLimit`. The total and page come from one metadata snapshot, but a
 caller that needs a complete stable traversal must avoid concurrent tree
 mutations between page calls.
 
 Use `Walk` for a complete stable traversal. It pins one SQLite snapshot before
-returning and yields the selected root and its descendants in bounded pages:
+returning and yields the selected root and its descendants in pages:
 
 ```go
 walker, err := vault.Walk(ctx, "/sessions", docbank.WalkOptions{PageSize: 500})
@@ -764,7 +766,7 @@ for {
 }
 ```
 
-A zero page size uses `DefaultWalkPageSize`; no page can exceed
+A zero page size uses `DefaultWalkPageSize`. No page can exceed
 `MaxWalkPageSize`. Paths are limited to `MaxWalkPathBytes`, and absolute tree
 depth is limited to `MaxWalkDepth`. Later tree changes do not enter the snapshot.
 
@@ -778,19 +780,19 @@ It releases the read transaction, dedicated connection, and vault lease.
 `Vault.Close` waits for all walkers and content readers to close.
 
 `MovePath`, `TrashPath`, and `Restore` return the resulting node and canonical
-path. Their optional positive `IfRevision` rejects stale mutations;
-`IfRevision == 0` is unconditional. `EmptyTrash` previews or deletes at most a
-finite number of trash roots: a zero `MaxRoots` uses
-`DefaultTrashEmptyMaxRoots`, and `More` asks the owner to schedule another
-batch.
+path. Their optional positive `IfRevision` rejects stale mutations.
+`IfRevision == 0` is unconditional. `EmptyTrash` previews or deletes a limited
+number of trash roots: a zero `MaxRoots` uses `DefaultTrashEmptyMaxRoots`, and
+`More` asks the owner to schedule another batch.
 
 Use `BatchMove` for an all-or-nothing reorganization of up to
 `MaxBatchMoves` nodes. Each source is either a path resolved inside the
-transaction or a stable node ID with the revision previously inspected. All
-destinations are exact final coordinates whose parents resolve in the planned
-final tree; an existing directory does not mean “move into.” The complete final
-tree is validated before any change, so embedded applications can express file
-or directory swaps and nested moves without temporary names or partial completion.
+transaction or a node ID with the revision previously inspected. Every
+destination is the node's full final path, and its parent resolves in the
+planned final tree. An existing directory does not mean “move into.” Docbank
+validates the complete final tree before any change, so embedded applications
+can express file or directory swaps and nested moves without temporary names
+or partial completion.
 
 ## Back up and restore an embedded vault
 
@@ -849,18 +851,18 @@ To include your application's catalog in the same backup:
 3. Keep the file unchanged until `CreateBackup` returns.
 
 `RecordAs` is the file's relative location beneath the restored vault root.
-Your application must coordinate its own writes during `Prepare`; Docbank's
+Your application must coordinate its own writes during `Prepare`. Docbank's
 freeze pauses Docbank mutations, not changes to an unrelated application
 database. The callback must not call vault mutations while that lock is held.
 
-Extras larger than 64 MiB stream through bounded chunks, including files over
-4 GiB. Those snapshots require backup reader version 6. Once one exists, older
-readers cannot list snapshots, create backups, prune, or restore or verify the
-latest snapshot; verification of all snapshots also fails. They can still
-restore or verify a supported older snapshot by explicit ID. Upgrade every
-reader before writing large extras to a shared repository. Existing extras
-larger than 64 MiB are stored again as chunks on their first capture; their old
-whole-file blobs remain until the older snapshots are removed and pruned.
+Extras larger than 64 MiB stream in chunks, including files over 4 GiB. Those
+snapshots require backup reader version 6. Once one exists, older readers
+cannot list snapshots, create backups, prune, or restore or verify the latest
+snapshot. Verification of all snapshots also fails. They can still restore or
+verify a supported older snapshot by ID. Upgrade every reader before writing
+large extras to a shared repository. Existing extras larger than 64 MiB are
+stored again as chunks on their first capture. Their old whole-file blobs
+remain until the older snapshots are removed and pruned.
 
 Capture fails if an extra's length changes after it is opened. This does not
 detect in-place changes, so the immutable-source requirement still applies.
@@ -868,13 +870,13 @@ Restore stages all extras as complete temporary files before replacing their
 destinations. Allow disk space for those copies alongside any existing files.
 
 Mark files containing credentials or tokens as `Sensitive`. Docbank rejects
-sensitive files in a plaintext repository unless your application explicitly
-sets `AllowPlaintextSecrets` for that backup.
+sensitive files in a plaintext repository unless your application sets
+`AllowPlaintextSecrets` for that backup.
 
 Restore always uses a separate root. It rejects overlap with the live vault
 or repository and checks content, SQLite integrity, and manifest statistics
 before making the result available. Supply other application storage in
-`ProtectedRoots`; Docbank checks those locations before restore cleanup too.
+`ProtectedRoots`. Docbank checks those locations before restore cleanup too.
 Embedded restore builds a fresh primary store. It does not recreate secondary
 store placement.
 
@@ -898,17 +900,17 @@ An omitted snapshot ID selects the latest recovery point. Set `SQLite` in
 `BackupRestoreOptions` to use your application's driver, such as
 `modernc.Driver{}` from `go.kenn.io/docbank/sqlite/modernc`. Omitting it selects
 the build's default driver. An application using modernc in a CGO build should
-select it explicitly for restore too; the default CGO driver needs the `fts5`
-build tag. Restore includes declared host files along with vault content.
-It rejects the repository, declared protected roots, and
-targets held by another vault. Include any offline source or application
-storage you want to preserve in `ProtectedRoots`: the repository cannot infer
-their current locations. `Vault.RestoreBackup` also protects its open vault
-automatically and retains that vault's configured SQLite driver.
+select it explicitly for restore too, because the default CGO driver needs the
+`fts5` build tag. Restore includes declared host files along with vault
+content. It rejects the repository, declared protected roots, and targets held
+by another vault. Include any offline source or application storage you want
+to preserve in `ProtectedRoots`: the repository cannot infer their current
+locations. `Vault.RestoreBackup` also protects its open vault automatically
+and keeps that vault's configured SQLite driver.
 
 ### Remove recovery points and reclaim storage
 
-`BackupRepository.Forget` removes explicitly selected snapshot records;
+`BackupRepository.Forget` removes the snapshot records you select.
 `BackupRepository.Prune` reclaims backup storage that retained snapshots no
 longer need. Neither operation opens the source vault. Retention schedules and
 which recovery points to keep remain the embedding application's policy.
@@ -937,10 +939,10 @@ fmt.Println("Packs selected for cleanup:", cleanup.PacksToRemove)
 ```
 
 Forgetting alone does not reclaim packed bytes. It refuses to remove the last
-recovery point unless `AllowEmpty` is explicit (`ErrBackupLastSnapshot`), and
+recovery point unless `AllowEmpty` is set (`ErrBackupLastSnapshot`), and
 refuses parents needed by retained incremental snapshots
 (`ErrBackupSnapshotRequired`). Both cleanup operations use Kit's exclusive
-repository lock, including dry runs; contention returns
+repository lock, including dry runs. Contention returns
 `ErrBackupRepositoryLocked`. `ForceUnlock` is only for known abandoned locks.
 
 Pruning removes wholly unused packs and rewrites packs with less than half
@@ -953,9 +955,8 @@ operations do not add automatic retention or standalone CLI cleanup commands.
 
 ## Maintain physical storage
 
-Ordinary `Put` calls publish loose content. Call `Pack` explicitly when the
-embedded owner is ready to move authorized loose blobs into managed immutable
-packs:
+Ordinary `Put` calls publish loose content. Call `Pack` when the embedded
+owner is ready to move authorized loose blobs into managed immutable packs:
 
 ```go
 report, err := vault.Pack(ctx, docbank.PackOptions{MaxBytes: 256 << 20})
@@ -970,32 +971,31 @@ if report.More {
 `MaxBytes` is a soft committed raw-byte budget: the pass finishes the blob that
 crosses the budget, seals its pack, and stops. Zero is unlimited. The report
 includes packing, reconciliation, missing/corrupt content, and orphan cleanup
-outcomes; embedded applications should surface those fields rather than treating
-a nil error alone as a complete health report. Packing changes only physical
+outcomes. Embedded applications should surface those fields. A nil error alone
+is not a complete health report. Packing changes only physical
 representation. `OpenContent` keeps the same verified read contract.
 
 Embedded `GarbageCollect`, `Verify`, and `Repack` calls are resumable bounded
-passes. `WorkBudget.MaxObjects == 0` uses the finite
-`DefaultMaintenanceMaxObjects`; larger explicit budgets must not exceed
-`MaxMaintenanceObjects`. A positive `MaxBytes` adds a soft byte bound, so one
-selected object may finish after crossing it. A zero byte bound is unlimited,
-but the object bound still limits each pass.
+passes. `WorkBudget.MaxObjects == 0` uses `DefaultMaintenanceMaxObjects`.
+Larger budgets must not exceed `MaxMaintenanceObjects`. A positive `MaxBytes`
+adds a soft byte bound, so one selected object may finish after crossing it. A
+zero byte bound is unlimited, but the object bound still limits each pass.
 
 When a report has `More`, pass a non-empty `NextCursor` back in the same
-operation's next `WorkBudget`. Treat cursors as opaque and operation-specific;
-malformed cursors and cursors from another operation return
+operation's next `WorkBudget`. Treat cursors as opaque and operation-specific.
+Malformed cursors and cursors from another operation return
 `ErrInvalidMaintenanceCursor`. A Repack pass can validly report more work with
-an empty cursor when completed mutations themselves reduce the candidate set;
-repeat it from an empty cursor. Cursors are continuation positions, not snapshot
-tokens: work inserted earlier in canonical order during a cycle waits for a
-later cycle started without a cursor.
+an empty cursor when completed mutations themselves reduce the candidate set.
+In that case, repeat it from an empty cursor. Cursors are continuation
+positions, not snapshot tokens: work inserted earlier in canonical order
+during a cycle waits for a later cycle started without a cursor.
 
-The bounded embedded contract is intentionally narrower than the standalone
-full-run commands. Embedded `Verify` checks a bounded page of blob bytes but
+The embedded calls do less than the standalone full-run commands. Embedded
+`Verify` checks a bounded page of blob bytes but
 does not perform whole-catalog metadata validation. Embedded `GarbageCollect`
 handles bounded unreachable catalog authority but does not enumerate untracked
-filesystem files. The daemon's `verify` and `gc` commands retain those full-run
-checks.
+filesystem files. The daemon's `verify` and `gc` commands still run those
+full-run checks.
 
 Your application decides when to empty trash and prune prior versions.
 GC can reclaim a blob only after no retained reference needs it. Embedded
@@ -1024,7 +1024,7 @@ vault, err := docbank.New(ctx, docbank.Config{
 ```
 
 Use `sqlite/mattn.Driver` in a CGO build to select the CGO adapter explicitly.
-The adapter is selected when the vault opens; query and transaction operations
+The adapter is selected when the vault opens. Query and transaction operations
 then run directly on that driver's `database/sql` pool. Standalone backup and
 restore paths use the same adapter boundary rather than silently switching
 SQLite implementations.

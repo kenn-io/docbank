@@ -15,7 +15,7 @@ docbank verify
 ```
 
 If a command prints a specific error, preserve it. CLI errors go to stderr and
-return a non-zero status; HTTP errors include a machine-readable `code`.
+return a non-zero status. HTTP errors include a machine-readable `code`.
 
 ## The daemon will not start
 
@@ -28,16 +28,15 @@ DOCBANK_LOG_LEVEL=debug docbank daemon run
 Common causes:
 
 - `config.toml` contains an unknown key, invalid duration, or non-loopback
-  bind address. The daemon rejects these rather than guessing.
-- Another process owns the same vault. Check `docbank daemon status`; do not
+  bind address. The daemon rejects all three.
+- Another process owns the same vault. Check `docbank daemon status`. Do not
   remove `vault.lock` while a daemon may still be alive.
 - The configured port is already in use. Set `api_port = 0` to let the OS
   choose one, or choose another fixed port.
 
 Background daemon logs are JSON files under `$DOCBANK_HOME/logs/`. A data
 command normally repairs stale runtime records and replaces an incompatible
-daemon automatically; `daemon status` and `daemon stop` intentionally do not
-start anything.
+daemon automatically. `daemon status` and `daemon stop` do not start a daemon.
 
 ## A command cannot connect
 
@@ -51,7 +50,7 @@ docbank daemon status
 If restart fails, use foreground mode. If it succeeds but a raw HTTP client
 still fails, confirm that the client uses the daemon's actual address and
 effective API key. With `api_port = 0` or an empty configured key, both change
-when the daemon restarts; the docbank CLI discovers them automatically, but an
+when the daemon restarts. The docbank CLI discovers them automatically, but an
 independent client does not.
 
 For a stable integration, configure a fixed loopback port and API key as shown
@@ -73,10 +72,10 @@ docbank add ~/Documents/archive --dest /imports
 
 A missing or unreadable top-level argument is reported as a failed source, and
 the command continues with any remaining arguments. Docbank does not import
-non-regular files or file symlinks. Name the regular target file explicitly if
-it belongs in the vault. A source argument may be a
-symlink to a directory; links inside that directory are still skipped and
-reported. See [Importing Documents](usage/importing.md).
+non-regular files or file symlinks. Name the regular target file itself if it
+belongs in the vault. A source argument may be a symlink to a directory. Links
+inside that directory are still skipped and reported. See
+[Importing Documents](usage/importing.md).
 
 ## Search cannot find document text
 
@@ -91,18 +90,18 @@ docbank jobs
 Body indexing currently requires verified UTF-8 `text/*`, JSON, or JSONL no
 larger than 16 MiB. It is asynchronous and may take a few seconds after ingest
 or replacement. PDF, office-document, OCR, invalid-UTF-8, NUL-containing, and
-larger content is not indexed; filename search still works. See
-[Searching](usage/searching.md) for the exact contract.
+larger content is not indexed. Filename search still works. See
+[Searching](usage/searching.md) for the full contract.
 
-Transient blob open, read, and verification failures remain queued and are
-retried by the running extractor. Repair or restore unavailable content, then
+The running extractor keeps transient blob open, read, and verification
+failures queued and retries them. Repair or restore unavailable content, then
 retry search after the worker has completed a verified read.
 
 ## A move or restore conflicts
 
 The CLI never overwrites a live file. Moving onto an existing file returns
-`name already exists`; choose another destination or move into an existing
-directory to retain the source name.
+`name already exists`. Choose another destination, or move into an existing
+directory to keep the source name.
 
 Restore handles name reuse automatically by adding a numeric suffix. If its
 original parent was permanently removed, it restores at `/`. Use the path
@@ -110,9 +109,9 @@ printed by `docbank restore` rather than assuming the old path returned.
 
 HTTP clients must also distinguish:
 
-- `409 exists` or `cycle`: the requested tree state is invalid; choose a new
+- `409 exists` or `cycle`: the requested tree state is invalid. Choose a new
   action.
-- `412 stale_revision`: another mutation won; re-read the node and reconsider
+- `412 stale_revision`: another mutation won. Re-read the node and reconsider
   the action before retrying.
 - `428 precondition_required`: read the target node or tag again and send its
   current revision in `If-Match`.
@@ -127,7 +126,7 @@ HTTP clients must also distinguish:
 | `corrupt` | Bytes are readable but no longer match their SHA-256 identity. | Preserve the vault and restore that content from a known-good copy. |
 | `unreadable` | The storage layer returned an I/O or permission error. | Check mounts, permissions, and system logs before retrying. |
 
-Do not run `gc --run` as a repair tool. GC removes unreachable data; it does
+Do not run `gc --run` as a repair tool. GC removes unreachable data. It does
 not repair referenced content. Preserve the affected vault, record the full
 `verify` output, and restore from a snapshot only after identifying which copy
 is known-good.
@@ -146,9 +145,9 @@ See [Trash, GC, Repack & Verify](usage/trash-and-gc.md).
 ## Update fails
 
 `docbank update` requires a published release with a matching SHA-256 checksum.
-It refuses unverifiable assets. An install failure attempts to restart the old
-daemon; inspect `docbank daemon status` afterward and use `daemon run` if it is
-not healthy.
+It refuses unverifiable assets. If the install fails, it attempts to restart
+the old daemon. Inspect `docbank daemon status` afterward and use `daemon run`
+if the daemon is not healthy.
 
 `--force` does not bypass checksum verification. It refreshes release metadata
 and permits replacing an unversioned development build.
@@ -156,8 +155,8 @@ and permits replacing an unversioned development build.
 ## HTTP returns 401
 
 Every `/api/v1` request requires an effective API key, even when
-`api_key = ""` in config—the empty setting means “generate a per-run key.” Use
-exactly one of:
+`api_key = ""` in config. The empty setting means “generate a per-run key.”
+Use exactly one of:
 
 ```text
 X-Api-Key: <key>
@@ -166,7 +165,7 @@ Authorization: Bearer <key>
 
 The health check, ping, interactive API docs, and OpenAPI documents do not
 require authentication. A successful `/health` response shows that the server
-is reachable; it does not check your key. See
+is reachable. It does not check your key. See
 [HTTP API authentication](architecture/http-api.md) for the request contract.
 
 ## Before asking for help

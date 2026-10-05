@@ -14,24 +14,23 @@ arm64 processors.
 - Linux, macOS, or 64-bit Windows on amd64 or arm64.
 
 Installing a release archive needs no build toolchain. Building from source
-additionally requires:
+also requires:
 
-- Go 1.27 or newer with CGO enabled — the store uses
-  [mattn/go-sqlite3](https://github.com/mattn/go-sqlite3)
+- Go 1.27 or newer with CGO enabled (the store uses
+  [mattn/go-sqlite3](https://github.com/mattn/go-sqlite3))
 - A C compiler (Xcode command-line tools on macOS, `gcc`/`clang` on Linux,
   or a MinGW-compatible compiler on Windows)
-- Node.js 24 or newer and npm — source builds compile the embedded web
-  application before the Go binary
+- Node.js 24 or newer and npm (source builds compile the embedded web
+  application before the Go binary)
 
 ## Install a release
 
 Published releases include Linux, macOS, and Windows archives for amd64 and
 arm64 with SHA-256 checksums. The shell and PowerShell installers select the
-native archive and verify it against `SHA256SUMS` before installing, failing
-rather than substituting an incompatible or unverified archive.
+native archive and verify it against `SHA256SUMS` before installing. They stop
+with an error instead of installing an incompatible or unverified archive.
 
-On Linux or macOS, the installer selects the native archive and installs
-`docbank` to `~/.local/bin` by default:
+On Linux or macOS, the installer puts `docbank` in `~/.local/bin` by default:
 
 ```bash
 curl -fsSL https://docbank.ai/install.sh | sh
@@ -48,12 +47,12 @@ irm https://docbank.ai/install.ps1 | iex
 
 It installs to `%LOCALAPPDATA%\Programs\docbank\bin` and adds that directory
 to the user `PATH`. `DOCBANK_INSTALL_DIR` and `DOCBANK_VERSION` provide the
-same overrides as on Unix; set `DOCBANK_NO_MODIFY_PATH=1` to leave `PATH`
+same overrides as on Unix. Set `DOCBANK_NO_MODIFY_PATH=1` to leave `PATH`
 unchanged.
 
 The repository maintains both installers as `scripts/install.sh` and
-`scripts/install.ps1`; docbank.ai serves the same files. To fetch the shell
-installer directly from GitHub instead, run:
+`scripts/install.ps1`, and docbank.ai serves the same files. To fetch the
+shell installer directly from GitHub instead, run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kenn-io/docbank/main/scripts/install.sh | sh
@@ -106,7 +105,7 @@ go build -tags fts5 -o docbank.exe ./cmd/docbank
 go test -tags fts5 ./...
 ```
 
-The SQLite full-text index requires the `fts5` build tag; the Makefile
+The SQLite full-text index requires the `fts5` build tag. The Makefile
 targets set it for you and build the frontend first. If you invoke `go`
 directly on Unix, prepare the embedded frontend and pass the tag yourself:
 
@@ -128,7 +127,7 @@ docbank add ~/Desktop/some-document.pdf
 docbank ls /inbox
 ```
 
-Set `DOCBANK_HOME` to keep the vault somewhere else — see
+Set `DOCBANK_HOME` to keep the vault somewhere else. See
 [Configuration](configuration.md).
 
 Before importing irreplaceable material, choose a backup location and plan a
@@ -142,5 +141,5 @@ make test    # full test suite
 make lint    # golangci-lint
 ```
 
-Both must pass cleanly on a supported platform. If `go test` fails with
+Both must pass on a supported platform. If `go test` fails with
 `undefined: ...fts5...` errors, the `fts5` tag is missing.

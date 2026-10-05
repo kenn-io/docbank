@@ -12,7 +12,7 @@ validation, revision checks, and maintenance rules as the CLI.
 ## What the contract gives an agent
 
 - **Stable references:** a node ID keeps identifying the same document after a
-  rename or move. A SHA-256 hash identifies its exact content.
+  rename or move. A SHA-256 hash identifies its content.
 - **Conflict detection:** send the revision you inspected with `If-Match`.
   If another writer changed the node, the daemon returns HTTP 412.
 - **Content checks:** uploads declare their hash and size. Downloads provide
@@ -30,7 +30,7 @@ validation, revision checks, and maintenance rules as the CLI.
 | OpenAPI | Client generation and capability discovery | `docbank openapi`, `/openapi.yaml` |
 | Markdown docs | Context retrieval without HTML scraping | Every public `/foo/` page is also published at `/foo.md` |
 
-The detailed [Agent Integration Guide](agents/integration.md) covers endpoint
+The [Agent Integration Guide](agents/integration.md) covers endpoint
 setup, authentication, upload and download proof, revision-aware mutations,
 backup progress, error handling, and a complete safe filing loop. The
 [HTTP API](architecture/http-api.md) page explains the design contract and
@@ -51,7 +51,7 @@ non-goals.
 - **Deletion has stages.** Trash, trash empty, GC, and repack have different
   effects. See [destructive maintenance](agents/integration.md#treat-destructive-maintenance-as-a-two-step-decision).
 - **Storage moves change where Docbank may read content.** Review a preview,
-  execute its token, and follow the durable job ID. Inspect an uncertain result
+  execute its token, and follow the job ID. Inspect an uncertain result
   before retrying the move. See [Multi-store Storage](usage/storage.md).
 
 ## Common agent workflows
@@ -67,8 +67,8 @@ non-goals.
 ## Start integrating
 
 1. Generate the current contract with `docbank openapi`.
-2. Configure a stable loopback port and strong API key.
+2. Configure a fixed loopback port and strong API key.
 3. Follow the [integration guide](agents/integration.md) through health,
    authentication, bounded reads, and a revision-aware filing loop.
-4. Use the running OpenAPI document for exact request and response fields.
+4. Use the running OpenAPI document for request and response fields.
    Use structured problem codes to decide how to handle failures.
