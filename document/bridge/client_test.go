@@ -347,40 +347,45 @@ func TestBridgeContractPollsAndFetchesFixedRouteArtifact(t *testing.T) {
 }
 
 func TestBridgeContractHonorsRetryDelayFromPollingError(t *testing.T) {
-	fixture := newBridgeFixture(t)
-	const retryDelay = 40 * time.Millisecond
-	var polls, firstPollAt, secondPollAt atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch {
-		case request.Method == http.MethodPost:
-			writeBridgeJSON(t, response, http.StatusAccepted,
-				pendingEnvelope(fixture, "job-rate-limited", JobQueued))
-		case request.Method == http.MethodGet && polls.Add(1) == 1:
-			firstPollAt.Store(time.Now().UnixNano())
-			value := pendingEnvelope(fixture, "job-rate-limited", JobRunning)
-			value["error"] = map[string]any{
-				"code": string(document.RenditionErrorRateLimited), "message": "retry later",
-				"retry_after_millis": retryDelay.Milliseconds(),
-			}
-			writeBridgeJSON(t, response, http.StatusTooManyRequests, value)
-		case request.Method == http.MethodGet:
-			secondPollAt.Store(time.Now().UnixNano())
-			writeBridgeJSON(t, response, http.StatusOK,
-				completedEnvelope(t, fixture, "job-rate-limited", nil))
-		default:
-			response.WriteHeader(http.StatusNoContent)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
-	client.pollInterval = time.Millisecond
-	client.executor.RequestTimeout = 10 * time.Millisecond
-	_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
-	require.NoError(t, err)
-	assert.Equal(t, int64(2), polls.Load())
-	assert.GreaterOrEqual(t, time.Duration(secondPollAt.Load()-firstPollAt.Load()),
-		retryDelay-5*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		fixture := newBridgeFixture(t)
+		const retryDelay = 40 * time.Millisecond
+		var polls int
+		var firstPollAt, secondPollAt time.Time
+		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
+			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				switch request.Method {
+				case http.MethodPost:
+					_, err := io.Copy(io.Discard, request.Body)
+					require.NoError(t, err)
+					require.NoError(t, request.Body.Close())
+					return bridgeHTTPResponse(t, request, http.StatusAccepted,
+						pendingEnvelope(fixture, "job-rate-limited", JobQueued)), nil
+				case http.MethodGet:
+					polls++
+					if polls == 1 {
+						firstPollAt = time.Now()
+						value := pendingEnvelope(fixture, "job-rate-limited", JobRunning)
+						value["error"] = map[string]any{
+							"code": string(document.RenditionErrorRateLimited), "message": "retry later",
+							"retry_after_millis": retryDelay.Milliseconds(),
+						}
+						return bridgeHTTPResponse(t, request, http.StatusTooManyRequests, value), nil
+					}
+					secondPollAt = time.Now()
+					return bridgeHTTPResponse(t, request, http.StatusOK,
+						completedEnvelope(t, fixture, "job-rate-limited", nil)), nil
+				default:
+					return nil, errors.New("unexpected bridge request")
+				}
+			})})
+		client.pollInterval = time.Millisecond
+		client.executor.RequestTimeout = 10 * time.Millisecond
+		_, err := document.RenderRendition(t.Context(), client, fixture.upload(), fixture.authorization)
+		require.NoError(t, err)
+		assert.Equal(t, 2, polls)
+		assert.Equal(t, retryDelay, secondPollAt.Sub(firstPollAt))
+	})
 }
 
 func TestBridgeContractPreservesTopLevelRetryDelay(t *testing.T) {
