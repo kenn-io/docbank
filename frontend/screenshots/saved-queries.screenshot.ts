@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const screenshots = path.join(repository, ".superpowers/screenshots");
+const screenshots = process.env.DOCBANK_SCREENSHOT_DIR!;
 
 test("saved queries and literal highlight management", async ({ page }) => {
   const workspace = await mkdtemp(path.join(tmpdir(), "docbank-saved-query-"));

@@ -8,11 +8,12 @@ you configure or build that workflow.
 2. [Keep its identity through changes](#identify)
 3. [Choose what may be processed](#authorize)
 4. [Turn a document into usable text](#render)
-5. [Prepare content for meaning-based retrieval](#embed)
+5. [Prepare content for search by meaning](#embed)
 6. [Find the document again](#retrieve)
-7. [Keep processing outputs separate](#replace)
-8. [Work through your preferred interface](#serve)
-9. [Verify a recovery copy](#prove)
+7. [Export the versions you reviewed](#export)
+8. [Keep processing outputs separate](#replace)
+9. [Work through your preferred interface](#serve)
+10. [Verify a recovery copy](#prove)
 
 <a id="ingest"></a>
 
@@ -42,48 +43,54 @@ remain available to inspect or download.
 
 ## Choose what may be processed
 
-Before using a processing provider, choose where document content may go and
-which task is allowed. Configured daemon workers and applications using the Go
-packages have different setup requirements. Follow the configuration or package
-guide for the path you use.
+Choose a configured profile and review its plan for the selected version. The plan names each provider, destination, and kind of content it receives. Grant consent only after reviewing those disclosures. A restored vault needs fresh consent before network processing.
 
-[Processing configuration](/docs/configuration/)
+![The processing plan for one saved version](https://docbank.ai/assets/generated/web-document-processing-plan.png)
+
+[Processing and consent](/docs/usage/document-processing/)
 
 <a id="render"></a>
 
 ## Turn a document into usable text
 
-Optical character recognition (OCR) extracts text from images or scans. A
-rendition is a text or Markdown representation of one saved source version. Go
-applications can use the document packages to prepare this output while keeping
-the original.
+A rendition is the extracted Markdown retained for one saved source version. Run configured processing from the web app, TUI, CLI, HTTP API, or Go API, then read that text without replacing the original. Optical character recognition (OCR) can extract text from images or scans when a supported provider is configured.
 
-[Document understanding in Go](/docs/document-understanding/)
+![Verified retained Markdown from a saved document](https://docbank.ai/assets/generated/web-document-rendition.png)
+
+[Document processing](/docs/usage/document-processing/)
 
 <a id="embed"></a>
 
-## Prepare content for meaning-based retrieval
+## Prepare content for search by meaning
 
-An embedding is a numeric representation used to compare meaning. The Go
-packages split text into bounded inputs and describe the model and settings
-used. Configured daemon workers can process eligible embedding jobs. Ordinary search
-is lexical. [Processing search](/docs/usage/search/) supports semantic and hybrid
-retrieval when a processing profile and embedding binding are configured.
+An embedding represents content as numbers for comparison. Configure an embedding service, review its disclosure, and process the versions you want to search. The web app and TUI offer Semantic and Hybrid search. Finding similar documents uses stored embeddings locally, with no provider call.
 
-[Embedding configuration](/docs/configuration/)
+![Similar documents found from stored embeddings](https://docbank.ai/assets/generated/web-similar-1440.png)
+
+[Processing search](/docs/usage/search/)
 
 <a id="retrieve"></a>
 
 ## Find the document again
 
-Search document names and extracted text, then narrow results with tags,
-folders, media types, or modification dates. Open the matching document or
-download a saved version. The search guide defines the filters and result
-limits.
+Search document names and extracted text, then narrow results with tags, folders, file types, or dates. Save useful queries and highlight sets. Run a lexical query to browse a frozen result set whose rows, counts, and facets stay fixed while documents change.
 
-![Search results in a synthetic vault](https://docbank.ai/assets/generated/web-search-results.png)
+![A frozen query with exact versions and fixed facets](https://docbank.ai/assets/generated/web-snapshot-workspace.png)
 
 [Searching](/docs/usage/searching/)
+
+<a id="export"></a>
+
+## Export the versions you reviewed
+
+Select documents or use the whole frozen query. Preview which originals and
+retained outputs will be included, then build a verified ZIP. Later changes
+do not substitute newer files. For dated search counts, download a CSV with
+its frozen evidence ZIP.
+
+![A verified export ready to download](https://docbank.ai/assets/generated/web-export-ready.png)
+
+[Verified export bundles](/docs/usage/export-bundles/)
 
 <a id="replace"></a>
 
@@ -101,7 +108,8 @@ removed.
 ## Work through your preferred interface
 
 Use the command line, web app, terminal browser, or HTTP API through the local
-daemon. Agents use the same authenticated requests and revision checks. A Go
+daemon. Local agents can connect with `docbank mcp` and use the same exact
+versions and revision checks. A Go
 application can instead own a separate vault in its own process.
 
 [Docbank for agents](/docs/agents/)
@@ -120,3 +128,5 @@ restored copy before you need it for recovery.
 
 Start with the [quickstart](/docs/quickstart/), then use the
 [task guides](/docs/) for commands, automation, storage, and recovery.
+
+[Meet the contributors](https://github.com/kenn-io/docbank#contributors).

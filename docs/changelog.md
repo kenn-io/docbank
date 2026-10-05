@@ -21,6 +21,19 @@ may still evolve, but vaults created by v0.9.0 and later are within the
   `DOCBANK_TELEMETRY_ENABLED=0` to turn it off; see
   [anonymous usage telemetry](configuration.md#anonymous-usage-telemetry).
 
+## [v0.14.0](https://github.com/kenn-io/docbank/releases/tag/v0.14.0) — 2026-08-23
+
+### New features
+
+- Add reusable embedding plans for Go applications.
+
+### Improvements
+
+- Adopt Go 1.27 and JSON v2, including the CI lint toolchain.
+- Probe interleaved documents per format and mixed batches.
+- Add media detection and fail-closed Voyage multimodal embedding contracts.
+- Expose Mistral integration contracts.
+
 ## [v0.13.0](https://github.com/kenn-io/docbank/tree/v0.13.0) — 2026-08-18
 
 ### New features

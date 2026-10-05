@@ -7,25 +7,31 @@
 > **Alpha software.** Keep independent copies of irreplaceable material and
 > verify backups before relying on them.
 
-**Keep, find, and recover documents in a vault you control.**
+**Find the right document. Keep the whole record.**
 
 Docbank is an open-source document vault for people, applications, and agents.
-Import files, organize them in folders, and search their names and extracted
-text. Move or rename a document without changing its ID. Save new versions
-without overwriting earlier ones, and verify backups before you need them.
+Bring files, email, photos, and recordings into a vault you control. Search
+their names and retained text, review exact saved versions, and export selected
+records. Keep earlier content when documents change, and verify backups before
+you need them.
 
 ![The Docbank web application browsing a synthetic vault.](https://docbank.ai/assets/generated/web-vault-browser.png)
 
 Use the command line, local web app, terminal browser, or authenticated HTTP
-API. A local background process, the daemon, owns the vault and handles these
-requests. Go applications can also [embed separately rooted vaults](docs/embedding.md).
+API, or connect an agent with `docbank mcp`. A local background process, the
+daemon, owns the vault and handles these requests. Go applications can also
+[embed separately rooted vaults](docs/embedding.md).
 
 ## What can I use it for?
 
 | Task | Guide |
 | --- | --- |
 | Import and organize records | [Importing](docs/usage/importing.md) and [tagging](docs/usage/organizing.md) |
-| Find a document | [Searching](docs/usage/searching.md) |
+| Find a document | [Searching](docs/usage/searching.md) and [search by meaning](docs/usage/search.md) |
+| Process a version and read its retained text | [Document processing](docs/usage/document-processing.md) |
+| Read email and follow attachments | [Web email reader](docs/usage/web.md#read-archived-email) |
+| Group RAW, JPEG, and XMP files | [Photo assets](docs/usage/photos.md) |
+| Export exact versions and evidence | [Verified bundles](docs/usage/export-bundles.md) and [search reports](docs/usage/search-exports.md) |
 | Keep earlier content versions | [Editing and versions](docs/architecture/editing-and-versions.md) |
 | Automate filing and retrieval | [Agent integration](docs/agents/integration.md) |
 | Recover deleted documents | [Trash and recovery](docs/usage/trash-and-gc.md) |
@@ -140,6 +146,19 @@ Docbank belongs to a family of personal data tools alongside
 [msgvault](https://msgvault.io), the communications archive. Msgvault
 preserves an immutable record of messages; Docbank manages working documents
 that people and agents still organize, retrieve, version, and use.
+
+## Contributors
+
+Thanks to the contributors whose merged work shaped v0.15.0:
+
+- [Joi Ito (@Joi)](https://github.com/Joi): macOS cloud-placeholder preflight and download guidance.
+- [Marius van Niekerk (@mariusvniekerk)](https://github.com/mariusvniekerk): API clients, MCP integration, CI, and shared search and embedding components.
+- [Rod Boev (@rodboev)](https://github.com/rodboev): import and format support, recordings, photos, metadata, and performance.
+- [Rusty Shackleford (@salmonumbrella)](https://github.com/salmonumbrella): document processing, search and review, email, reports, and exports.
+- [Wes McKinney (@wesm)](https://github.com/wesm): storage, backups, the web workspace, performance, and release integration.
+
+See the [release contribution history](https://github.com/kenn-io/docbank/compare/v0.14.0...0f05e925)
+and [all contributors](https://github.com/kenn-io/docbank/graphs/contributors).
 
 ## License
 

@@ -1,14 +1,14 @@
 ---
-last_edited: 2026-09-12
+last_edited: 2026-10-05
 title: Web application
 description: Upload, browse, search, and organize the local vault in a responsive, authenticated web interface.
 ---
 
 # Web application
 
-Use the local web application to upload, browse, search, and tag documents.
-You can also inspect versions, source records, permanent history, storage, and
-backup snapshots. Start it with:
+Use the local web application to find documents, read exact saved versions,
+and export the records you select. Import files and email, organize them with
+tags, and review configured processing before it runs. Start it with:
 
 ```bash
 docbank web
@@ -23,7 +23,9 @@ Choose a task:
 
 - [Browse the vault](#browse-the-vault), [use keyboard shortcuts](#use-keyboard-shortcuts), inspect document details, or
   [select documents on this page](#select-documents-on-this-page).
-- [Upload files](#upload-verified-documents) or [download content](#download-verified-content).
+- [Upload files](#upload-verified-documents), [import email](#import-a-mailbox), or [download content](#download-verified-content).
+- [Process a version and read its text](#process-a-version-and-read-its-text).
+- [Read archived email](#read-archived-email) and [follow attachments](#follow-email-attachments).
 - [Manage tags](#manage-tag-definitions) and [search text](#browse-tags-and-search-text).
 - [Run complete queries](#work-with-a-frozen-query) with exact paging and facets.
 - [Export a verified ZIP](#export-a-verified-zip) from selected documents or a frozen query.
@@ -41,6 +43,14 @@ require the CLI or another API client.
 *Select a document to see its stable identity and content hash beside the table.*
 
 ## Browse the vault
+
+Use the labeled sidebar for **All files**, **Saved queries**, **Collections**,
+and **Trash**. **Review and export** holds search reports, Bates exports, and
+snapshot actions; **Vault** holds backups, storage, jobs, audit evidence, and
+telemetry settings. On a narrow screen, **Open navigation** reveals the same menu.
+
+Folder breadcrumbs let you jump to any parent. File icons and readable type
+names distinguish documents without requiring you to recognize a media type.
 
 - Click a row once to inspect it. The authority card updates without opening
   or downloading the file.
@@ -68,6 +78,8 @@ assigned tag names. Hovering a tag shows its stable UUID and vault-wide
 assignment count; the bounded tag stack expands in place when a node carries
 more than six.
 
+![The slide-out navigation menu on a narrow screen](https://docbank.ai/assets/generated/web-navigation-mobile.png)
+
 ## Use keyboard shortcuts
 
 Press <kbd>?</kbd> or choose the keyboard button in the top bar to see every
@@ -88,6 +100,8 @@ assigned-tag list and sends its displayed revision with the change. A stale
 revision remains visible as an error and is never retried against newer state.
 
 App shortcuts pause while a text field, control, or dialog owns the keyboard.
+
+![Keyboard shortcuts and a configured tag hotkey](https://docbank.ai/assets/generated/web-keyboard-shortcuts.png)
 
 ## Select documents on this page
 
@@ -117,6 +131,8 @@ It does not download document contents, fetch additional metadata, or include
 results beyond the loaded page. Formula-leading text is escaped for spreadsheet
 imports, and international filenames are preserved.
 
+![Checked documents and the page CSV export action](https://docbank.ai/assets/generated/web-visible-page-csv.png)
+
 ## Edit a complete query
 
 Choose **Edit query** to write a complete expression, select simple or advanced
@@ -144,6 +160,8 @@ creates a frozen result through the complete query endpoint. Ordinary
 name/content search remains separate and does not inherit draft constraints.
 See [field-aware query syntax](searching.md#preview-a-field-aware-query).
 
+![The complete query editor with a validated field and Boolean expression](https://docbank.ai/assets/generated/web-query-bar.png)
+
 ## Work with a frozen query
 
 A completed run becomes the accepted frozen snapshot for the tab. Draft edits
@@ -170,6 +188,8 @@ Snapshot handles last for one daemon lifetime, up to 15 minutes idle and 30
 minutes total. Locking the browser session or stopping the daemon revokes them.
 If paging reports that the snapshot is gone, run the complete query again and
 use only the new snapshot and its cursors.
+
+![A frozen query with fixed counts, facets, and document versions](https://docbank.ai/assets/generated/web-snapshot-workspace.png)
 
 ## Read archived email
 
@@ -202,6 +222,10 @@ PDF action downloads retained PDFs or uses the configured renderer, including
 the complete chosen body and quoted text. New rendering requires the pinned
 local Chromium/font configuration; an unavailable renderer reports its reason.
 
+![Archived email with decoded headers and its HTML body](https://docbank.ai/assets/generated/web-email-reader.png)
+
+![Raw headers from the same retained message](https://docbank.ai/assets/generated/web-email-headers.png)
+
 ## Follow email attachments
 
 Choose **Attachments** in the content inspector to see published attachment
@@ -228,6 +252,8 @@ Follow nested messages with **Back to previous document**, or choose **Return
 to frozen document** to restore focus to the original result. These steps do
 not rerun the query, change its snapshot membership, or check attachment rows.
 Ordinary live selections offer the same return path to the selected document.
+
+![Exact attachment documents linked to the selected email](https://docbank.ai/assets/generated/web-email-attachments.png)
 
 ## Export a verified ZIP
 
@@ -262,6 +288,25 @@ Closing the drawer stops its progress reader, not the server job. Reopen
 completed export. Expired authority requires a fresh preview; reloading or
 ending the browser session does not preserve the drawer's job handle.
 
+![A verified bundle ready to download from the reviewed frozen selection](https://docbank.ai/assets/generated/web-export-ready.png)
+
+## Stamp selected pages with Bates labels
+
+Open **Bates export** in the sidebar and select a sealed package. Bates labels
+are sequential identifiers stamped on PDF pages, often used when exchanging
+records for review.
+
+1. Create or select a label namespace, including its prefix and number width.
+2. Choose **Preview Bates labels** and inspect the proposed labels and pages.
+3. Reserve the displayed range, then choose **Start Bates export**.
+4. Wait for **Stamped PDF ready**, then choose **Download verified PDF**.
+
+The output contains the package's selected pages. The retained page map keeps
+their original source-page numbers. Reserved or abandoned numbers remain
+unavailable for reuse.
+
+![A completed Bates export with its reserved labels and verified PDF](https://docbank.ai/assets/generated/web-bates-export.png)
+
 ## Assign and remove tags
 
 1. Select a file or folder.
@@ -295,6 +340,8 @@ After confirmation, the browser reloads current observations; the retained
 receipt may describe an earlier successful operation. See
 [selected-set tagging](organizing.md#tag-a-selected-set-atomically) for retention
 and backup behavior.
+
+![The tag dialog shows how many selected documents already have the chosen tag](https://docbank.ai/assets/generated/web-batch-tags.png)
 
 ### Tag a frozen query
 
@@ -366,16 +413,18 @@ for exhaustive definition management and assignments outside the displayed selec
 
 ## Export dated search counts
 
-Open **Search exports** in the top bar to create a CSV of search counts for
+Open **Search exports** in the sidebar to create a CSV of search counts for
 selected sources and date ranges. Review unresolved dates before downloading
 the CSV or evidence ZIP. **Recent exports** keeps the latest 100 requests and
 outcomes; **Use as draft** runs a request against current data without its old
 date choices. See [Search exports](search-exports.md) for the full workflow,
 count definitions, and expiry limits.
 
+![Search counts for one selected version with CSV and frozen evidence downloads](https://docbank.ai/assets/generated/selected-report-result.png)
+
 ## Saved queries and highlights
 
-Open the bookmark button in the top bar to manage saved queries and highlight
+Open **Saved queries** in the sidebar to manage saved queries and highlight
 sets. A new query starts with the current search text, selected tag and display
 sort. The complete query editor preserves the expression, filters, mode and sort
 together. Choose **Save as new** to name a definition, or **Edit** and **Save
@@ -408,6 +457,10 @@ definitions and reopen the item before deciding again. Deletion requires a
 separate confirmation naming the definition, ID and revision; it never deletes
 documents or discards the kept query draft.
 
+![A named query retaining its complete expression, filters, and sort](https://docbank.ai/assets/generated/web-saved-queries.png)
+
+![A reusable highlight set with literal terms and colors](https://docbank.ai/assets/generated/web-highlight-sets.png)
+
 ## Move a node to recoverable trash
 
 Choose **Move to trash** on the selected live file or folder. Docbank opens a
@@ -425,7 +478,7 @@ collect content, reclaim packed space, or erase permanent audited history.
 
 ## Restore from recoverable trash
 
-Choose the trash button in the top bar to inspect the newest 1,000 independently
+Choose **Trash** in the sidebar to inspect the newest 1,000 independently
 restorable roots. Each entry shows its name, kind, stable node ID, revision,
 trash time, and logical size for files. A folder entry represents the complete
 subtree that left the live tree in that trash operation.
@@ -484,6 +537,20 @@ Browser upload accepts individual files. Folder recursion, server-filesystem
 ingest, watched-inbox configuration, and replacing an existing document remain
 CLI or authenticated API workflows.
 
+## Import a mailbox
+
+1. Browse to the destination folder and choose **Import mailbox**.
+2. Choose an MBOX file or Google Takeout ZIP, then **Upload and preview**.
+3. Review the detected mailbox entries and choose **Import messages**.
+4. Follow the imported and rejected counts until the job finishes.
+
+Each message occurrence becomes its own email document. Repeated messages
+remain separate occurrences, and attachments become child documents. An
+interrupted import resumes after its last saved message. See
+[mailbox import](../cli-reference.md#docbank-mailbox) for CLI status and receipts.
+
+![A completed Takeout import with three separate message occurrences](https://docbank.ai/assets/generated/web-mailbox-import.png)
+
 ## Import load files
 
 1. Browse to the destination folder.
@@ -512,6 +579,42 @@ Closing the drawer stops its progress updates. **Lock web session** revokes
 the session and cancels unfinished imports it owns. Cancellation retains
 committed records and removes unfinished document entries as described in the
 [package command reference](../cli-reference.md#docbank-package).
+
+![A load-file ZIP preview before importing its documents and supplied text](https://docbank.ai/assets/generated/web-load-file-import.png)
+
+## Process a version and read its text
+
+Processing creates retained text and, with a configured embedding service,
+inputs for search by meaning. Configure a [processing profile](../configuration.md)
+before starting; a new vault has none.
+
+1. Select a document and choose **Process and retrieve** in its details.
+2. Select a profile and review the source version, provider destinations,
+   disclosed content, retained outputs, and estimated work.
+3. Choose **Consent and run** only after reviewing that plan. Consent applies
+   to this operator and profile configuration across documents until revoked
+   or expired; it is not limited to this one job.
+4. Follow the job state and coverage. When available, choose **Read sanitized
+   Markdown** to read the verified rendition, the extracted text Docbank retains.
+
+![The processing plan discloses local extraction and a configured network embedding service](https://docbank.ai/assets/generated/web-document-processing-plan.png)
+
+![The finished processing job and retained rendition and embedding coverage](https://docbank.ai/assets/generated/web-document-processing-result.png)
+
+![Verified retained Markdown for the selected source version](https://docbank.ai/assets/generated/web-document-rendition.png)
+
+Opening the plan or reading coverage does not start processing. A restored
+vault needs fresh consent before network processing. The
+[processing guide](document-processing.md) owns consent and provider requirements;
+[CLI coverage and text windows](../cli-reference.md#docbank-processing) let you
+inspect results without the browser.
+
+Choose a file's **Find similar** row action to compare its stored embeddings
+with the file versions loaded in the current view. This performs no provider
+call. Missing embeddings must be built through a separately reviewed processing
+run. See [Find similar documents](document-processing.md#find-similar-documents).
+
+![Related documents found from stored embeddings in the loaded view](https://docbank.ai/assets/generated/web-similar-1440.png)
 
 ## Download verified content
 
@@ -709,7 +812,7 @@ from an empty or non-empty timeline.
 
 ## Verify permanent audit evidence
 
-Choose the shield-check button in the top bar to run the vault-wide permanent
+Choose **Audit evidence** in the sidebar to run the vault-wide permanent
 audit verifier. This is more than reading stored status: Docbank independently
 replays canonical audit history against the current node, version, membership,
 topology, tag, and provenance projections, then reads and recomputes SHA-256 for
@@ -732,7 +835,7 @@ contention or interruption remains visible and can be retried deliberately.
 
 ## Inspect background work
 
-Choose the activity button in the top bar to inspect the jobs owned by the
+Choose **Background jobs** in the sidebar to inspect the jobs owned by the
 current daemon. Each entry identifies the stable job name, whether it is
 running, completed, failed, or cancelled, and its start and finish time.
 Terminal failures include the daemon's bounded error text so an operator can
@@ -746,7 +849,7 @@ lifetime and disappear when that daemon restarts.
 
 ## Inspect physical storage
 
-Choose the storage button in the top bar to see how the current vault occupies
+Choose **Storage** in the sidebar to see how the current vault occupies
 managed blob storage. The summary separates four related quantities:
 
 - **Loose content** is the physical inventory of individual raw or zstd
@@ -782,7 +885,7 @@ packs and retire their old files.
 
 ## Inspect backup snapshots
 
-Choose the backup button in the top bar to inspect the immutable recovery
+Choose **Backup snapshots** in the sidebar to inspect the immutable recovery
 points in the repository selected by `[backup] repo` in `config.toml`. The
 repository path and stable repository ID make the authority being inspected
 explicit. Snapshots appear newest first with their tag, immutable ID, creation
@@ -801,7 +904,7 @@ complete recovery path.
 
 ## Browse import collections
 
-Choose **Import collections** in the top bar to browse the vault's import groups.
+Choose **Collections** in the sidebar to browse the vault's import groups.
 Each card shows its label or source description, ingest time, current live
 file count, and logical bytes. Select a collection to browse its current
 live members and inspect a document by its stable node identity. Counts are
@@ -835,6 +938,10 @@ Select extensions, media types, or media families and choose **New query** to
 open a collection-scoped draft. Multiple selected values use OR. This does not
 change live results or execute a search. Concentrations describe common values,
 not document defects.
+
+![An import collection with a saved label and its document members](https://docbank.ai/assets/generated/web-collections.png)
+
+![An import collection showing file types and processing coverage](https://docbank.ai/assets/generated/web-collection-quality.png)
 
 ## Browser authentication
 

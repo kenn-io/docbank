@@ -79,7 +79,7 @@ test("supports keyboard navigation and returns focus after the image dialog", as
     ).toBeFocused();
   }
 
-  const trigger = page.getByRole("link", { name: /synthetic technical document collection/i });
+  const trigger = page.locator("a[data-lightbox]").first();
   await trigger.click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page.getByRole("button", { name: "Close image" })).toBeFocused();

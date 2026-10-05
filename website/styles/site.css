@@ -598,7 +598,7 @@ dialog img {
   font-family: var(--mono);
   font-size: 0.76rem;
   letter-spacing: 0.08em;
-  content: "0" counter(guide) " / 09";
+  content: counter(guide, decimal-leading-zero) " / 10";
 }
 
 .guide-copy p {

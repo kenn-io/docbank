@@ -43,6 +43,10 @@ has no naming or deletion controls. Use
 [Saved queries and highlights](web.md#saved-queries-and-highlights) to manage
 named search definitions.
 
+![Search-count request scoped to selected document versions](https://docbank.ai/assets/generated/selected-report-draft.png)
+
+![Recent report requests available to reopen as drafts](https://docbank.ai/assets/generated/web-recent-exports.png)
+
 ## Create an export from the CLI
 
 Save this version 1 request as `request.json`:

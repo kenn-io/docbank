@@ -29,6 +29,66 @@ same daemon API, which rejects changes based on an outdated revision. See
 
 ![The Docbank web application managing a synthetic vault's stable tag catalog.](https://docbank.ai/assets/generated/web-tag-catalog.png)
 
+## Review a selection
+
+Check document ranges, apply tags atomically, and download the checked rows as
+CSV. The sidebar groups browsing, review, export, and vault maintenance. On
+narrow screens, open the navigation menu to reach the same tools. See
+[selection and shortcuts](usage/web.md#select-documents-on-this-page).
+
+![A selected document range and its available actions](https://docbank.ai/assets/generated/web-page-selection.png)
+
+## Keep a search and its results
+
+Use the query editor for field and Boolean expressions. Save the complete
+query, reuse highlight terms, and run a lexical query to freeze its rows,
+counts, and facets. A frozen row keeps the version selected when the query ran.
+See [frozen queries](usage/web.md#work-with-a-frozen-query).
+
+![A frozen query workspace with fixed facets and document versions](https://docbank.ai/assets/generated/web-snapshot-workspace.png)
+
+## Read retained text and search by meaning
+
+Review what configured providers receive before granting processing consent.
+Follow the job and read its verified rendition: the extracted Markdown retained
+for that source version. Configured embeddings add Semantic and Hybrid search.
+**Find similar** compares stored embeddings without calling a provider. See
+[processing](usage/document-processing.md) and [search](usage/search.md).
+
+![A reviewed processing plan disclosing provider destinations and retained outputs](https://docbank.ai/assets/generated/web-document-processing-plan.png)
+
+![Search results with text excerpts and semantic matches](https://docbank.ai/assets/generated/web-natural-1440.png)
+
+## Read email with its attachments
+
+Import MBOX or Google Takeout archives, read HTML or plain-text bodies, and
+inspect decoded or raw headers. Follow attachment documents and parent messages
+at their exact versions. See [archived email](usage/web.md#read-archived-email).
+
+![An archived email with decoded headers and an HTML body](https://docbank.ai/assets/generated/web-email-reader.png)
+
+## Download the versions you reviewed
+
+Preview original files and retained outputs from a page, checked rows, or a
+frozen query. Download the verified ZIP when it is ready. Dated search reports
+have separate CSV and frozen evidence downloads. See
+[document bundles](usage/export-bundles.md) and [search reports](usage/search-exports.md).
+
+![A verified export with its download receipt](https://docbank.ai/assets/generated/web-export-ready.png)
+
+![Search counts and evidence downloads for selected versions](https://docbank.ai/assets/generated/selected-report-result.png)
+
+## Exchange packages and label pages
+
+Import load-file packages with their files, supplied text, metadata, and page
+maps. For a sealed package, preview and reserve sequential Bates labels before
+exporting the selected PDF pages. See [load-file import](usage/web.md#import-load-files)
+and [Bates export](usage/web.md#stamp-selected-pages-with-bates-labels).
+
+![A load-file package preview](https://docbank.ai/assets/generated/web-load-file-import.png)
+
+![A completed Bates-stamped PDF export](https://docbank.ai/assets/generated/web-bates-export.png)
+
 ## Verify permanent history
 
 Permanently retain a directory's versions and recorded changes by enabling an

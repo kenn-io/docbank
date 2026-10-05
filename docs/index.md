@@ -20,6 +20,12 @@ New to Docbank? Start with [setup](setup.md), then follow the
 | Import a folder of documents | [Importing documents](usage/importing.md) |
 | Move, rename, or tag documents | [Organizing and tagging](usage/organizing.md) |
 | Find documents by name, text, or filters | [Searching](usage/searching.md) |
+| Search by meaning with configured providers | [Processing search](usage/search.md) |
+| Process a saved version and read its retained text | [Document processing](usage/document-processing.md) |
+| Read email and follow attachments | [Web email reader](usage/web.md#read-archived-email) |
+| Group camera files and filter photo assets | [Photos](usage/photos.md) |
+| Export exact versions as a verified ZIP | [Export bundles](usage/export-bundles.md) |
+| Import review packages or stamp PDF pages | [Web package import](usage/web.md#import-load-files) · [Bates export](usage/web.md#stamp-selected-pages-with-bates-labels) |
 | Export dated search counts with evidence | [Search exports](usage/search-exports.md) |
 | Work in a browser or terminal | [Web application](usage/web.md) · [Terminal browser](usage/tui.md) |
 | Restore a deleted document or reclaim space | [Trash, garbage collection, and repack](usage/trash-and-gc.md) |
@@ -32,6 +38,7 @@ New to Docbank? Start with [setup](setup.md), then follow the
 ## Build an integration
 
 - [Docbank for agents](agents.md) explains which interface to use.
+- [MCP setup](usage/mcp.md) connects a local agent to the daemon.
 - [Agent integration](agents/integration.md) walks through authentication,
   verified transfers, and conflicting edits.
 - [Embed in Go](embedding.md) explains how an application can own its own vault.

@@ -37,6 +37,27 @@ test("reports selected versions and preserves historical downloads", async ({ pa
     }
     expect(searchable).toBe(true);
     const url = await run("web", "--no-browser");
+    // Give imported collections readable synthetic labels instead of exposing
+    // host-specific temporary source paths in the report picker.
+    const launch = new URL(url);
+    const session = new URLSearchParams(launch.hash.slice(1)).get("web_session")!;
+    const api = async (route: string, init: RequestInit = {}) => {
+      const response = await fetch(`http://127.0.0.1:${launch.port}${route}`, {
+        ...init,
+        headers: { Host: launch.host, "X-Docbank-Web-Session": session, ...init.headers },
+      });
+      expect(response.ok).toBe(true);
+      return response;
+    };
+    const collections = await (await api("/api/v1/collections?limit=100&offset=0")).json() as { items: { id: string }[] };
+    for (const [index, collection] of collections.items.entries()) {
+      const route = `/api/v1/collections/${collection.id}/label`;
+      const current = await api(route);
+      await api(route, {
+        method: "PUT", headers: { "Content-Type": "application/json", "If-Match": current.headers.get("ETag")! },
+        body: JSON.stringify({ label: `Review batch ${index + 1}` }),
+      });
+    }
     await page.goto(url);
     await page.getByRole("button", { name: "Search exports", exact: true }).click();
     const drawer = page.getByRole("dialog", { name: "Search exports" });

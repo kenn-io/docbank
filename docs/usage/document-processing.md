@@ -91,6 +91,8 @@ The [CLI reference](../cli-reference.md#find-similar-files) describes the
 equivalent `--similar-to` command.
 
 
+![Similar documents found locally from stored embeddings in the TUI](https://docbank.ai/assets/generated/tui-similar.png)
+
 ## Processing flows and boundaries
 
 Each profile makes its disclosure visible before execution. There are three

@@ -94,7 +94,8 @@ test("downloads the exact 1001-member frozen source through the real export work
     await drawer.getByRole("button", { name: "Start reviewed export", exact: true }).click();
     await expect(drawer.getByText("Archive verified and ready", { exact: true })).toBeVisible({ timeout: 180_000 });
     await mkdir(output!, { recursive: true, mode: 0o700 });
-    await page.screenshot({ path: path.join(output!, "web-export-ready.png"), animations: "disabled" });
+    await drawer.getByRole("button", { name: "Download verified ZIP", exact: true }).scrollIntoViewIfNeeded();
+    await drawer.locator(".job").screenshot({ path: path.join(output!, "web-export-ready.png"), animations: "disabled" });
     const shownHash = await drawer.getByTestId("export-archive-hash").innerText();
     const shownSize = Number(await drawer.getByTestId("export-archive-size").getAttribute("data-bytes"));
     const downloading = page.waitForEvent("download");

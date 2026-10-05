@@ -116,7 +116,10 @@ make docs-deploy DOCS_SOURCE=$(git rev-parse HEAD)
 ```
 
 The command checks that the source is on `origin/main`, descends from the latest
-software release, and contains only approved documentation changes. It then
+software release, and contains only approved documentation changes. The approved
+paths include screenshot tooling in `frontend/screenshots/` and website browser
+checks in `frontend/docs-site/`; application source in `frontend/src/` remains
+a product change. It then
 checks Vercel's production upload report against the same file allowlist and
 10 MiB limit used in CI. An extra file or failed dry run stops deployment
 before upload. The command then uploads an unpromoted production build, waits

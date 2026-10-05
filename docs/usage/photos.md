@@ -93,6 +93,8 @@ docbank jobs cancel <operation-id>
 ID. Follow and stop it like any other durable job: `jobs show` reports progress
 and the import receipt, and `jobs cancel` stops it.
 
+![Photo import progress and its cancellation control in Background jobs](https://docbank.ai/assets/generated/web-photo-import-dark.png)
+
 The import reads RAW files (`.ARW`, `.CR2`, `.CR3`, `.DNG`, `.NEF`, `.ORF`,
 `.RAF`, `.RW2`), images (`.JPG`, `.JPEG`, `.PNG`, `.GIF`, `.WEBP`, `.HEIC`),
 videos (`.MP4`, `.MOV`, `.M4V`, `.AVI`, `.MPG`), and `.XMP` sidecars. It leaves

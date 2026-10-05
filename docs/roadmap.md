@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-13
+last_edited: 2026-10-05
 title: Roadmap
 description: Current capabilities, current limits, and planned product direction.
 ---
@@ -22,6 +22,9 @@ The [changelog](changelog.md) records published releases.
 | Collect documents | Import files and trees, select files with glob patterns, replace existing content deliberately, and watch local inboxes | [Importing](usage/importing.md) |
 | Organize documents | Stable IDs, folders, tags, and atomic batch moves; the web app groups and colors tags | [Organizing](usage/organizing.md) |
 | Find documents | Ranked name and text search, bounded filters without a query, and saved queries and highlight sets through the web app and API | [Searching](usage/searching.md) |
+| Review and export | Frozen queries, verified ZIP bundles, dated search reports, load-file packages, and Bates-stamped selected pages | [Web application](usage/web.md) and [export bundles](usage/export-bundles.md) |
+| Read email and recordings | Mailbox import, exact attachment navigation, retained email PDFs, supplied recordings, and timed transcripts | [Web application](usage/web.md#read-archived-email) and [processing](usage/document-processing.md) |
+| Organize photos | RAW/JPEG/XMP grouping and HTTP browsing with technical metadata filters | [Photo assets](usage/photos.md) |
 | Keep earlier content | Immutable versions, revision checks, reversion, and deliberate history pruning | [Editing and versions](architecture/editing-and-versions.md) |
 | Record origin and evidence | Append-only provenance and permanent audited directory scopes | [Importing](usage/importing.md) and [audited history](usage/audited-history.md) |
 | Recover documents | Recoverable trash, explicit permanent deletion, garbage collection, and pack reclamation | [Trash and GC](usage/trash-and-gc.md) |
@@ -59,9 +62,10 @@ web app, and TUI. [Processing search](usage/search.md) exposes lexical, semantic
 hybrid, and auto modes for an explicit set of authorized source versions.
 
 New imports do not automatically run an OCR-to-semantic-search workflow. The
-default configuration has no processing profiles, and ordinary web and TUI
-search remains lexical. Saving a query with hybrid-search settings does not
-execute processing search.
+default configuration has no processing profiles, and unconfigured search uses
+names and locally extracted text. With a configured embedding binding, web and
+TUI Auto search uses Hybrid. Saving a query with hybrid-search settings does
+not execute it; frozen query snapshots support lexical mode only.
 
 ## What can the human interfaces do?
 

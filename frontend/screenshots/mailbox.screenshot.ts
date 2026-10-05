@@ -68,8 +68,11 @@ test.describe("mailbox import screenshot", () => {
     const message =
       "From sender@example.test Sat Sep 12 10:00:00 2026\n" +
       "Subject: Synthetic project update\nMessage-ID: <same@example.test>\n" +
+      "From: Review team <review@example.test>\nTo: Archive team <archive@example.test>\nDate: Sat, 12 Sep 2026 10:00:00 +0000\n" +
       "X-Gmail-Labels: Inbox,Project\nContent-Type: multipart/mixed; boundary=m\n\n" +
-      "--m\nContent-Type: text/plain\n\nSynthetic project update.\n" +
+      "--m\nContent-Type: multipart/alternative; boundary=a\n\n" +
+      "--a\nContent-Type: text/plain; charset=utf-8\n\nSynthetic project update. The revised schedule is attached. Review the two proposals before Friday.\n" +
+      "--a\nContent-Type: text/html; charset=utf-8\n\n<h2>Project update</h2><p>The revised schedule is attached.</p><ul><li>Review the two proposals before Friday.</li><li>Confirm the document list for the handoff.</li></ul><p>Archive team</p>\n--a--\n" +
       "--m\nContent-Type: text/csv\nContent-Disposition: attachment; filename=project.csv\n\n" +
       "item,count\nsynthetic,2\n--m--\n";
     const source = Buffer.from(message + message + message);
@@ -147,6 +150,25 @@ test.describe("mailbox import screenshot", () => {
       expect(occurrence.location.labels).toEqual(["Inbox", "Project"]);
     }
     await page.screenshot({ path: path.join(output, "web-mailbox-import.png"), fullPage: true });
+    await page.getByRole("button", { name: "Close mailbox import" }).click();
+    await page.getByRole("button", { name: "Refresh current view", exact: true }).click();
+    const messageRow = page.locator(`tr[data-live-node="${occurrences[0]!.target.node_id}"]`);
+    await expect(messageRow).toBeVisible();
+    await messageRow.click();
+    await page.getByRole("tab", { name: "Email", exact: true }).click();
+    const reader = page.getByRole("region", { name: "Email reader", exact: true });
+    await expect(reader.getByText("Synthetic project update", { exact: true })).toBeVisible();
+    const body = page.frameLocator('iframe[title^="Email HTML body"]');
+    await expect(body.getByRole("heading", { name: "Project update" })).toBeVisible();
+    await page.setViewportSize({ width: 860, height: 1500 });
+    await reader.screenshot({ path: path.join(output, "web-email-reader.png"), animations: "disabled" });
+    await reader.getByRole("button", { name: "Show raw headers", exact: true }).click();
+    await expect(reader.getByLabel("Raw email headers")).toContainText("review@example.test");
+    await reader.screenshot({ path: path.join(output, "web-email-headers.png"), animations: "disabled" });
+    await page.getByRole("tab", { name: "Attachments", exact: true }).click();
+    const attachments = page.getByRole("region", { name: "Outgoing attachments" });
+    await expect(attachments.getByRole("button", { name: /Open attachment project.csv/ })).toBeVisible();
+    await page.locator(`[data-source-version="${occurrences[0]!.target.version_id}"]`).screenshot({ path: path.join(output, "web-email-attachments.png"), animations: "disabled" });
     await writeFile(
       path.join(output, "mailbox-proof.json"),
       JSON.stringify({ job, occurrences }, null, 2) + "\n",

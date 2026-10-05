@@ -3,19 +3,19 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Docbank — keep, find, and recover your documents</title>
-    <meta name="description" content="Keep, find, update, and recover documents in an open-source vault you control.">
+    <title>Docbank — find the right document, keep the whole record</title>
+    <meta name="description" content="Find, review, and export documents in an open-source vault that keeps your originals and saved versions.">
     <link rel="canonical" href="https://docbank.ai/">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/styles/site.css">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Your documents. Ready for you and your agents.">
-    <meta property="og:description" content="Keep, find, update, and recover documents in an open-source vault you control.">
+    <meta property="og:title" content="Find the right document. Keep the whole record.">
+    <meta property="og:description" content="Find, review, and export documents in an open-source vault that keeps your originals and saved versions.">
     <meta property="og:url" content="https://docbank.ai/">
     <meta property="og:site_name" content="Docbank">
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="Your documents. Ready for you and your agents.">
-    <meta name="twitter:description" content="Keep, find, update, and recover documents in an open-source vault you control.">
+    <meta name="twitter:title" content="Find the right document. Keep the whole record.">
+    <meta name="twitter:description" content="Find, review, and export documents in an open-source vault that keeps your originals and saved versions.">
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -93,8 +93,8 @@
 
     <main id="main">
       <section class="hero" aria-labelledby="hero-title">
-        <h1 id="hero-title">Your documents. Ready for you and your agents.</h1>
-        <p class="lede">Keep, find, and recover documents in a vault you control. Docbank preserves saved versions, checks file integrity, and gives people and agents the same document IDs.</p>
+        <h1 id="hero-title">Find the right document. Keep the whole record.</h1>
+        <p class="lede">Bring files, email, photos, and recordings into a vault you control. Search their text, review the exact saved version, and export the records you need without losing the originals.</p>
         <div class="install-command" data-install-command data-command="curl -fsSL https://docbank.ai/install.sh | sh">
           <code>curl -fsSL https://docbank.ai/install.sh | sh</code>
           <button class="button install-copy" type="button" data-install-copy>Copy</button>
@@ -104,215 +104,113 @@
           <a class="button primary" href="/guide/">See how it works</a>
           <a class="button" href="/docs/">Read the docs</a>
         </div>
-        <p class="hero-meta">Open source · Apache-2.0 · Command line · Web · Terminal · HTTP API · Go</p>
+        <p class="hero-meta">Open source · Apache-2.0 · Linux · macOS · Windows</p>
       </section>
 
-      <section class="site-section" aria-labelledby="authority-title">
+      <section class="site-section" aria-labelledby="browse-title">
         <div class="section-heading">
-          <div>
-            <p class="section-index">01 / Authority</p>
-            <h2 id="authority-title">What happens to your documents?</h2>
-          </div>
-          <p>Import a file, organize it, find it again, and recover it when needed. Docbank keeps its identity and saved content through each step.</p>
-        </div>
-        <ol class="ledger">
-          <li><strong>Import</strong><span>Copy files into the vault; leave the sources untouched.</span></li>
-          <li><strong>Organize</strong><span>Move and rename documents without changing their IDs.</span></li>
-          <li><strong>Update</strong><span>Save a new version while retaining earlier content.</span></li>
-          <li><strong>Find</strong><span>Search document names and extracted text.</span></li>
-          <li><strong>Recover</strong><span>Restore deleted documents or verify a separate backup.</span></li>
-        </ol>
-      </section>
-
-      <section class="site-section" aria-labelledby="proof-title">
-        <div class="section-heading">
-          <div>
-            <p class="section-index">02 / Guarantees</p>
-            <h2 id="proof-title">Keep a record you can check.</h2>
-          </div>
-          <p>Docbank records which file belongs to each document and saved version. Search indexes help you find that content; checksums let you check it.</p>
-        </div>
-        <div class="proof-grid">
-          <article class="proof">
-            <p class="proof-tag">Saved versions</p>
-            <h3>Keep earlier content.</h3>
-            <p>Each saved version keeps its own content and SHA-256 checksum, a digest used to detect changed bytes. Replacing a document adds a version.</p>
-          </article>
-          <article class="proof">
-            <p class="proof-tag">Conflicting edits</p>
-            <h3>Know when a document changed.</h3>
-            <p>Revision checks reject an edit based on stale information. An agent can read the new revision and decide what to do next.</p>
-          </article>
-          <article class="proof">
-            <p class="proof-tag">Recoverable deletion</p>
-            <h3>Undo a mistaken deletion.</h3>
-            <p>Move documents to trash and restore them later. Permanent deletion and reclaiming disk space are separate actions.</p>
-          </article>
-          <article class="proof">
-            <p class="proof-tag">Verified backups</p>
-            <h3>Test your recovery copy.</h3>
-            <p>Incremental backups reuse unchanged content. Restore into a separate vault and verify the result before you rely on it.</p>
-          </article>
-        </div>
-      </section>
-
-      <section class="site-section" aria-labelledby="capture-title">
-        <div class="section-heading">
-          <div>
-            <p class="section-index">03 / Operation</p>
-            <h2 id="capture-title">Browse your vault.</h2>
-          </div>
-          <p>Browse folders, search documents, inspect saved versions, and manage recoverable trash in the local web app.</p>
+          <div><p class="section-index">01 / Review</p><h2 id="browse-title">Read the file behind the result.</h2></div>
+          <p>Browse folders, follow search matches, and inspect saved versions in the local web app. Check a range of documents, apply a tag to the selection, or export the rows as CSV.</p>
         </div>
         <figure class="capture">
-          <a href="/assets/generated/web-vault-browser.png" data-lightbox>
-            <img src="/assets/generated/web-vault-browser.png" alt="Docbank web vault showing a synthetic technical document collection">
-          </a>
-          <figcaption class="caption">The real web interface against a generated synthetic vault. Select the image to inspect it at full size.</figcaption>
+          <a href="/assets/generated/web-vault-browser.png" data-lightbox><img src="/assets/generated/web-vault-browser.png" alt="Docbank's labeled sidebar, folder breadcrumbs, and document inspector in a synthetic vault"></a>
+          <figcaption class="caption">The Docbank web app with synthetic documents. <a href="/docs/tour/">Take the visual tour.</a></figcaption>
+        </figure>
+      </section>
+
+      <section class="site-section" aria-labelledby="find-title">
+        <div class="section-heading">
+          <div><p class="section-index">02 / Search</p><h2 id="find-title">Find the passage you remember.</h2></div>
+          <p>Search names and extracted text, then narrow the results by folder, tag, file type, or date. A configured embedding service adds search by meaning. Open the retained text to check the source.</p>
+        </div>
+        <div class="proof-grid">
+          <article class="proof"><h3>Keep a useful search.</h3><p>Save a complete query and reuse highlight terms. Browse a frozen result set whose rows, counts, and filters stay fixed while documents change.</p></article>
+          <article class="proof"><h3>Find related documents.</h3><p>Compare a selected file with the other loaded versions using stored embeddings. Finding similar documents makes no provider call.</p></article>
+          <article class="proof"><h3>Read email with its attachments.</h3><p>Import MBOX or Google Takeout archives. Read HTML or plain text, inspect headers, and follow attachments back to the exact parent message.</p></article>
+          <article class="proof"><h3>Find a moment in a recording.</h3><p>Import a transcript or use a configured Docling service to transcribe supplied WAV and MP3 audio. Search results can identify matching time intervals.</p></article>
+        </div>
+        <p><a href="/docs/usage/searching/">Search and filter documents</a> · <a href="/docs/usage/search/">Configure search by meaning</a> · <a href="/docs/usage/photos/">Group and browse photos</a></p>
+        <figure class="capture">
+          <a href="/assets/generated/web-natural-1440.png" data-lightbox><img src="/assets/generated/web-natural-1440.png" alt="Configured document search showing retained text excerpts in the web app" loading="lazy"></a>
+          <figcaption class="caption">Search results show the text and source behind a match.</figcaption>
+        </figure>
+      </section>
+
+      <section class="site-section" aria-labelledby="export-title">
+        <div class="section-heading">
+          <div><p class="section-index">03 / Export</p><h2 id="export-title">Take the records you need.</h2></div>
+          <p>Preview an export before starting it. Docbank fixes the selected versions and verifies the files it puts in the download.</p>
+        </div>
+        <div class="choice-grid">
+          <article class="choice"><h3>Download a checked bundle.</h3><p>Export selected originals and available retained outputs as a ZIP. Later edits do not replace the versions in your plan.</p></article>
+          <article class="choice"><h3>Support a search report.</h3><p>Count search terms across all documents, import collections, or selected versions. Download the CSV with a frozen evidence ZIP.</p></article>
+          <article class="choice"><h3>Exchange review packages.</h3><p>Import files with their review metadata and page maps. Export frozen selections as DAT packages with PDFs or images, or CSV packages with native files.</p></article>
+          <article class="choice"><h3>Label selected pages.</h3><p>Preview and reserve a Bates range: sequential labels stamped on exported PDF pages. Reserved numbers cannot be reused after abandonment.</p></article>
+        </div>
+        <p><a href="/docs/usage/export-bundles/">Verified exports</a> · <a href="/docs/usage/search-exports/">Search reports</a> · <a href="/docs/usage/web/#import-load-files">Load-file packages</a></p>
+        <figure class="capture" style="max-width: 46rem">
+          <a href="/assets/generated/web-export-ready.png" data-lightbox><img src="/assets/generated/web-export-ready.png" alt="A completed verified export ready to download from a frozen query" loading="lazy"></a>
+          <figcaption class="caption">Download the versions included in the reviewed export.</figcaption>
         </figure>
       </section>
 
       <section class="site-section" aria-labelledby="processing-title">
         <div class="section-heading">
-          <div>
-            <p class="section-index">04 / Processing</p>
-            <h2 id="processing-title">Choose where processing runs.</h2>
-          </div>
-          <p>Processing can create text or other outputs from a saved document. You configure the provider and permitted work. The configuration guide defines which runtimes the daemon can use.</p>
+          <div><p class="section-index">04 / Processing</p><h2 id="processing-title">Choose what leaves your vault.</h2></div>
+          <p>Review the provider, destination, and content it will receive before granting processing consent. Use supported local tools, a service you operate, or a hosted provider.</p>
         </div>
-        <div class="choice-grid">
-          <article class="choice">
-            <p class="choice-label">Local</p>
-            <h3>Use your own machine.</h3>
-            <p>Use local tools for work that must stay on hardware you control.</p>
-          </article>
-          <article class="choice">
-            <p class="choice-label">Self-hosted</p>
-            <h3>Operate your own service.</h3>
-            <p>Configure a supported provider endpoint on infrastructure your organization operates.</p>
-          </article>
-          <article class="choice">
-            <p class="choice-label">Hosted</p>
-            <h3>Authorize a hosted provider.</h3>
-            <p>Choose which processing requests may send document content to an external provider.</p>
-          </article>
-          <article class="choice">
-            <p class="choice-label">None</p>
-            <h3>Store without processing.</h3>
-            <p>Keep and retrieve the original even when no processing output is available.</p>
-          </article>
+        <div class="proof-grid">
+          <article class="proof"><h3>Read what was extracted.</h3><p>Processing retains a rendition: the extracted Markdown for one saved version. Read it alongside the original and check processing coverage without starting another job.</p></article>
+          <article class="proof"><h3>Keep the original available.</h3><p>Stored files remain retrievable without processing. New vaults have no processing profiles. Network processing after a restore requires fresh consent.</p></article>
         </div>
-        <p>See <a href="/docs/configuration/">processing configuration</a> and <a href="/docs/document-understanding/">document understanding in Go</a> for requirements and limits.</p>
+        <p>Provider and format support varies by interface. Start with the <a href="/docs/usage/document-processing/">processing guide</a> and <a href="/docs/usage/configuration/">provider configuration</a>. Anonymous usage telemetry is on by default; <a href="/docs/configuration/#anonymous-usage-telemetry">see what it sends and how to turn it off</a>.</p>
       </section>
 
-      <section class="site-section" aria-labelledby="intelligence-title">
+      <section class="site-section" aria-labelledby="history-title">
         <div class="section-heading">
-          <div>
-            <p class="section-index">05 / Intelligence</p>
-            <h2 id="intelligence-title">Build on the original.</h2>
-          </div>
-          <p>A derivative is an output created from a document: extracted text, a preview, or an embedding used to compare meaning. Docbank ties retained derivatives to the source version that produced them.</p>
+          <div><p class="section-index">05 / Recovery</p><h2 id="history-title">Keep earlier versions. Test your backup.</h2></div>
+          <p>Moving or renaming a document keeps its ID. Replacing its content adds a version. Checksums let Docbank detect changed bytes when you retrieve a file.</p>
         </div>
-        <p>Read the <a href="/docs/document-understanding/">Go processing guide</a>, <a href="/docs/usage/searching/">search guide</a>, and <a href="/docs/roadmap/">roadmap</a> for the available interfaces and remaining work.</p>
-        <figure class="diagram pipeline">
-          <img src="/assets/intelligence-pipeline.svg" alt="A source version with its processing outputs: rendition, chunks, embeddings, and index">
-        </figure>
         <div class="proof-grid">
-          <article class="proof">
-            <p class="proof-tag">Trace the source</p>
-            <h3>Know which version was used.</h3>
-            <p>The processing catalog records source versions and processing identities. A generated result can be checked against the input and settings that produced it.</p>
-          </article>
-          <article class="proof">
-            <p class="proof-tag">Configure processing</p>
-            <h3>Make the provider explicit.</h3>
-            <p>Embedding workers require a configured runtime. Applications using the Go provider packages supply credentials, authorization, consent, and scheduling.</p>
-          </article>
-          <article class="proof">
-            <p class="proof-tag">Keep the source</p>
-            <h3>Preserve the saved document.</h3>
-            <p>Processing outputs have their own lifecycle. Creating or removing a derivative does not replace the saved source version.</p>
-          </article>
-          <article class="proof">
-            <p class="proof-tag">Find documents</p>
-            <h3>Search names and text.</h3>
-            <p>The search command finds document names and extracted text with lexical search by default. The <a href="/docs/usage/searching/">search guide</a> owns the supported filters. Configured <a href="/docs/usage/search/">processing search</a> also supports semantic and hybrid retrieval.</p>
-          </article>
+          <article class="proof"><h3>Undo a mistaken deletion.</h3><p>Restore documents from trash. Permanent deletion and reclaiming disk space are separate actions.</p></article>
+          <article class="proof"><h3>Recover on your own storage.</h3><p>Create incremental backups, verify them, and restore a separate vault before you need it. Add filesystem or S3-compatible stores as your collection grows.</p></article>
         </div>
+        <p><a href="/docs/architecture/editing-and-versions/">Saved versions</a> · <a href="/docs/usage/backup/">Backup and restore</a> · <a href="/docs/usage/audited-history/">Permanent audited history</a></p>
       </section>
 
       <section class="site-section" aria-labelledby="interfaces-title">
         <div class="interface-layout">
           <div>
-            <p class="section-index">06 / Interfaces</p>
-            <h2 id="interfaces-title">Choose how you work.</h2>
-            <p class="lede">The command line, web app, terminal browser, and HTTP clients use one local daemon. A Go application can own a separate vault in its own process.</p>
+            <p class="section-index">06 / Automate</p><h2 id="interfaces-title">Give your tools the same records.</h2>
+            <p>The CLI, web app, terminal browser, HTTP API, and local MCP server use one daemon. Agents read the same document IDs and exact versions you do. A Go application can own a separate vault in its own process.</p>
             <ul class="interface-list">
-              <li><strong>CLI</strong><span>Import, search, and maintain documents from scripts.</span></li>
-              <li><strong>Web</strong><span>Browse and manage documents visually.</span></li>
-              <li><strong>TUI</strong><span>Browse the vault with the keyboard.</span></li>
-              <li><strong>HTTP</strong><span>Connect applications through authenticated requests.</span></li>
-              <li><strong>Go</strong><span>Own a separate vault inside your application.</span></li>
-              <li><strong>Agents</strong><span>Use the CLI or HTTP API to work with documents.</span></li>
+              <li><strong>CLI</strong><span>Import, search, export, and maintain documents from scripts.</span></li>
+              <li><strong>Web</strong><span>Read, select, tag, process, and export documents visually.</span></li>
+              <li><strong>TUI</strong><span>Browse, search, and inspect processing from the keyboard.</span></li>
+              <li><strong>MCP</strong><span>Connect local agents with explicit opt-ins for processing and export writes.</span></li>
+              <li><strong>HTTP</strong><span>Integrate through authenticated requests.</span></li>
+              <li><strong>Go</strong><span>Own a vault and its backup lifecycle inside an application.</span></li>
             </ul>
-            <div class="actions">
-              <a class="button" href="/docs/agents/">Integrate an agent</a>
-              <a class="button" href="/docs/architecture/http-api/">Inspect the HTTP contract</a>
-            </div>
+            <div class="actions"><a class="button" href="/docs/usage/mcp/">Connect an agent</a><a class="button" href="/docs/embedding/">Embed in Go</a></div>
           </div>
-          <figure class="diagram">
-            <img src="/assets/interface-map.svg" alt="Docbank interfaces sharing document IDs and saved versions">
-          </figure>
-        </div>
-      </section>
-
-      <section class="site-section" aria-labelledby="boundary-title">
-        <div class="section-heading">
-          <div>
-            <p class="section-index">07 / Boundary</p>
-            <h2 id="boundary-title">Is Docbank right for your records?</h2>
-          </div>
-          <p>Use Docbank when you want to manage documents, retain their versions, and test recovery on storage you control.</p>
-        </div>
-        <div class="boundary-grid">
-          <article class="boundary">
-            <p class="choice-label">Cloud drive</p>
-            <h3>Sync and share files.</h3>
-            <p>Docbank does not synchronize folders across devices or create public share links. Keep a cloud drive if those are the tasks you need.</p>
-          </article>
-          <article class="boundary">
-            <p class="choice-label">Git repository</p>
-            <h3>Review changes to source code.</h3>
-            <p>Docbank organizes documents and saved content versions. It does not provide branches, merges, or code review workflows.</p>
-          </article>
-          <article class="boundary">
-            <p class="choice-label">Docbank</p>
-            <h3>Retain and recover documents.</h3>
-            <p>Keep the document catalog and history under your control. Add filesystem or S3-compatible storage as your collection grows.</p>
-          </article>
+          <figure class="diagram"><img src="/assets/interface-map.svg" alt="Docbank interfaces sharing document IDs and saved versions" loading="lazy"></figure>
         </div>
       </section>
 
       <section class="site-section" aria-labelledby="start-title">
         <div class="section-heading">
-          <div>
-            <p class="section-index">08 / Start</p>
-            <h2 id="start-title">Follow one document through the system.</h2>
-          </div>
+          <div><p class="section-index">07 / Start</p><h2 id="start-title">Start with a folder of documents.</h2></div>
           <div>
             <p>Docbank is alpha software. Keep independent copies of irreplaceable material and verify backups before relying on them.</p>
-            <p>Follow the guide from import to recovery. Use the documentation for setup, everyday tasks, and exact command behavior.</p>
-            <div class="actions">
-              <a class="button primary" href="/guide/">Read the document guide</a>
-              <a class="button" href="/docs/">Open the documentation</a>
-            </div>
+            <p>It does not synchronize folders across devices, create public share links, or provide collaborative editing.</p>
+            <div class="actions"><a class="button primary" href="/docs/quickstart/">Try the quickstart</a><a class="button" href="/guide/">Follow one document</a></div>
           </div>
         </div>
       </section>
     </main>
 
     <footer class="site-footer">
-      <p>Copyright 2026 Kenn Software LLC. Open source under Apache-2.0.</p>
+      <p>Copyright 2026 Kenn Software LLC. Open source under Apache-2.0. <a href="https://github.com/kenn-io/docbank#contributors">Made by our contributors.</a></p>
       <nav class="footer-links" aria-label="Footer navigation">
         <a href="/index.md">Markdown</a>
         <a href="/llms.txt">llms.txt</a>

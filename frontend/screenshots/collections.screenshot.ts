@@ -90,8 +90,8 @@ test("import collections, label conflicts and stable document navigation", async
     const editor = page.getByRole("region", { name: "Query editor" });
     await expect(editor).toBeVisible();
     await expect(editor.getByRole("textbox", { name: "Query expression", exact: true })).toHaveValue('(extension:"txt")');
-    await expect(editor.getByRole("button", { name: "Run query", exact: true })).toBeDisabled();
-    await expect(editor.getByText("Query validated. Execution is unavailable.", { exact: true })).toBeVisible();
+    await expect(editor.getByRole("button", { name: "Run query", exact: true })).toBeEnabled();
+    await expect(editor.getByText("Query validated. Run creates a new frozen snapshot.", { exact: true })).toBeVisible();
     await page.screenshot({ path: path.join(screenshots, "web-collection-quality-suggestion.png"), animations: "disabled" });
     await page.getByRole("button", { name: "Import collections", exact: true }).click();
     await drawer.getByRole("button", { name: `Browse collection Unlabeled import ${collectionID.slice(0, 8)}`, exact: true }).click();

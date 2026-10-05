@@ -5,6 +5,12 @@ repository_root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 validator="$repository_root/scripts/validate-docs-release.sh"
 scratch=$(mktemp -d -t docbank-release-validation.XXXXXX)
 trap 'find "$scratch" -depth -delete' EXIT HUP INT TERM
+# Fixtures must not inherit a caller's Git repository, config, or hooks.
+for variable in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do
+  unset "$variable"
+done
+export GIT_CONFIG_GLOBAL="$scratch/gitconfig"
+export GIT_CONFIG_NOSYSTEM=1
 tests=0
 
 
@@ -59,6 +65,24 @@ expect_fail() {
 
 new_fixture
 expect_pass v1.0.0
+
+new_fixture
+mkdir -p "$fixture/frontend/screenshots"
+printf '// Capture the real interface.\n' > "$fixture/frontend/screenshots/release.screenshot.ts"
+git -C "$fixture" add frontend/screenshots
+git -C "$fixture" commit --quiet -m "docs: refresh interface captures"
+git -C "$fixture" push --quiet origin main
+source_sha=$(git -C "$fixture" rev-parse HEAD)
+expect_pass v1.0.0
+
+new_fixture
+mkdir -p "$fixture/frontend/src"
+printf '<main>Changed application</main>\n' > "$fixture/frontend/src/App.svelte"
+git -C "$fixture" add frontend/src
+git -C "$fixture" commit --quiet -m "feat: change web application"
+git -C "$fixture" push --quiet origin main
+source_sha=$(git -C "$fixture" rev-parse HEAD)
+expect_fail v1.0.0 "release-gated documentation source contains product change: frontend/src/App.svelte"
 
 new_fixture
 git -C "$fixture" switch --quiet --orphan unrelated

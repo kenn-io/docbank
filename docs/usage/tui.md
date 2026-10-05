@@ -95,6 +95,8 @@ of these lists. <kbd>PgUp</kbd>/<kbd>PgDn</kbd> scroll by a screen, and
 <kbd>Home</kbd>/<kbd>End</kbd> select the first or last row on the current page.
 Press <kbd>Esc</kbd> to leave label results, members, or the package browser.
 
+![The terminal browser listing imported load-file packages](https://docbank.ai/assets/generated/tui-packages.png)
+
 ## Keyboard controls
 
 | Key | Action |
@@ -148,6 +150,8 @@ reranking when the profile permits it. Changing the mode or reranking setting
 reruns the latest submitted query, including while results are still loading.
 Base rows remain visible while reranking runs, and a failure keeps them with its
 cause. Processing failures fall back to Names and text with the failure shown.
+
+![Configured text and semantic search in the terminal browser](https://docbank.ai/assets/generated/tui-natural-search.png)
 
 Other mutations, permanent deletion, permanent-audit enrollment, independent
 verification, backup creation/verification/restore, and storage maintenance

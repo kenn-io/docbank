@@ -7,12 +7,20 @@ description: What Docbank does for people, agents, applications, recovery, and p
 
 Docbank stores documents with stable IDs, keeps prior versions, and checks
 content when it reads or writes it. People use the CLI, web application, or
-terminal browser. Agents and external applications use the authenticated HTTP
-API. Go applications can own separate vaults inside their own process.
+terminal browser. Agents use the local MCP server or authenticated HTTP API.
+Go applications can own separate vaults inside their own process.
 
 ## Collect and organize
 
 - Recursively import files and directories without modifying their sources.
+- Select files with include/exclude globs and deliberately replace existing
+  content with `docbank add --replace`.
+- Import MBOX and Google Takeout archives as separate email occurrences with
+  attachment documents.
+- Import load-file packages with supplied text, page maps, labels, families,
+  and custodian claims.
+- Group matching RAW, JPEG, and XMP files as one photo; leave ambiguous groups
+  available for manual pairing.
 - Upload one document with a declared hash and size that Docbank verifies.
 - Arrange documents in a virtual tree without moving stored bytes.
 - Address live documents by path or keep stable numeric node IDs across moves,
@@ -36,7 +44,15 @@ Start with [Importing Documents](usage/importing.md) and
 - Search verified extracted text for supported UTF-8 text, Markdown, JSON, and
   related textual formats.
 - List documents using bounded filters without a text query.
-- Save named queries and reusable highlight sets through the HTTP API.
+- Save complete queries and reusable highlight sets in the web app or HTTP API.
+- Validate field and Boolean expressions, then browse frozen query results whose
+  rows, counts, and facets stay fixed.
+- Search by meaning in the web app and TUI with configured embeddings, or find
+  similar documents locally from stored embeddings.
+- Read archived email with decoded or raw headers and follow exact attachment versions.
+- Read imported or generated transcripts with speaker labels and timing.
+- Browse photo assets over HTTP with camera, lens, ISO, capture date, GPS, and
+  asset filters, showing RAW/JPEG pairs once.
 - Find every retained node and version that refers to a known SHA-256 hash.
 - Download current or historical content and verify its size, hash, and final
   verification result.
@@ -44,6 +60,23 @@ Start with [Importing Documents](usage/importing.md) and
 
 See [Searching](usage/searching.md), the [Web Application](usage/web.md), and
 the [Interactive Terminal Browser](usage/tui.md).
+
+## Export a reviewed selection
+
+- Preview and download verified ZIP bundles of exact document versions.
+- Export checked web rows as CSV, and apply a tag atomically to a selection.
+- Recover retained export plans and inspect unavailable outputs through CLI and MCP.
+- Create dated search-count reports with CSV results and a frozen evidence ZIP.
+- Export frozen selections as DAT packages with PDFs or images, or CSV packages
+  with native files.
+- Reserve Bates labels and export selected pages as stamped PDFs. Abandoned
+  labels remain unavailable for reuse.
+- Retain email PDFs with complete bodies and attachment inventories. New
+  rendering requires opt-in Linux setup; retained downloads remain portable.
+
+See [Verified export bundles](usage/export-bundles.md),
+[Search exports](usage/search-exports.md), [Web exports](usage/web.md#export-a-verified-zip),
+and [Email PDFs](usage/email-pdf.md).
 
 ## Change without erasing history
 
@@ -70,8 +103,12 @@ See [Editing & Versions](architecture/editing-and-versions.md).
   from inaccessible stores and invalid metadata.
 - Create incremental backups and verify their structure and bytes.
 - Restore into a separate vault and verify it before making it available.
-- Use the embedded Go API to preview removal of old backup snapshots and
-  reclaim repository data that no surviving snapshot needs.
+- Create, verify, restore, and clean up backups from embedded Go applications,
+  including application-owned recovery files.
+- Preserve people, custodian information, and decisions through restore.
+- Back up objects larger than 4 GiB. New large-object snapshots require reader
+  version 5; recovery files over 64 MiB require reader version 6. Upgrade shared
+  repository readers before creating these snapshots.
 
 See [Trash, GC, Repack & Verify](usage/trash-and-gc.md),
 [Backup & Restore](usage/backup.md), and [Vault Lifecycle](usage/lifecycle.md).
@@ -111,6 +148,12 @@ trust boundaries.
 ## Build agent and application workflows
 
 - Discover the current daemon and authenticate over loopback.
+- Connect local agents with `docbank mcp`; enable processing, report, export,
+  and package writes only through their respective opt-in flags.
+- Resolve saved citations to exact retained text through HTTP or Go. Unavailable
+  or mismatched references fail instead of substituting newer text.
+- Create, rename, retire, merge, and split people through CLI or API; read person
+  records through MCP.
 - Generate the live OpenAPI contract offline or retrieve it from the daemon.
 - Use stable IDs and revisions to act on inspected documents.
 - Follow progress as one JSON record per line through a final result.
@@ -132,7 +175,9 @@ and the [CLI commands](cli-reference.md#docbank-processing).
 [Processing search](usage/search.md) offers lexical, semantic, hybrid, and auto
 modes inside an explicit set of authorized source versions. Semantic and
 hybrid search require active consent to disclose query text. Ordinary name
-and text search remains separate; auto currently uses lexical retrieval. An
+and text search remains separate. In the web app and TUI, Auto selects Hybrid
+when an embedding binding is available. The processing HTTP API and CLI use
+lexical retrieval for `auto`. An
 explicit rerank option can reorder the revalidated result prefix through a
 configured ZeroEntropy or Cohere adapter. Reranking has its own consent grant,
 4,096-byte excerpt ceiling, and `applied`, `degraded`, or `skipped` receipt.
@@ -148,8 +193,9 @@ and vector matches, with optional query expansion, reranking, and QMD retrieval.
 These components are described in
 [Document Processing](architecture/document-processing.md).
 
-The daemon registers plain-text extraction and two kinds of configured
-[embedding runtime](configuration.md#embedding-workers-and-credentials).
+The daemon supports local plain-text and EPUB extraction, configured Docling
+audio transcription, and configured
+[embedding runtimes](configuration.md#embedding-workers-and-credentials).
 Installing a provider package does not register it with the daemon or prepare
 an import for semantic search. The default configuration has no processing
 profiles, and new imports do not automatically run this processing workflow.
