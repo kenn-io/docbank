@@ -1,10 +1,10 @@
 ---
-last_edited: 2026-09-23
-title: Document Understanding in Go
+last_edited: 2026-10-05
+title: Document understanding in Go
 description: Choose Go packages for document extraction, canonical evidence, renditions, and embeddings without opening a Docbank vault.
 ---
 
-# Document Understanding in Go
+# Document understanding in Go
 
 Use Docbank's Go packages to prepare documents for text search, OCR, or
 embeddings in your own application. OCR extracts text from document images.
@@ -13,8 +13,8 @@ Importing these packages does not start a daemon or open a vault.
 
 Start with the provider-neutral contracts in `document`. Choose a provider
 only after deciding what bytes your application may send and what results it
-may retain. A rendition is a derived, readable representation of a document;
-canonical evidence is the validated text and source locations behind it.
+may retain. A rendition is a derived, readable representation of a document.
+Canonical evidence is the validated text and source locations behind it.
 
 | Your application needs to… | Package under `go.kenn.io/docbank/` |
 |----------------------------|-------------------------------------|
@@ -40,9 +40,9 @@ reference separately lists its executable embedding adapters.
 [Verified page images](architecture/page-images.md) documents the optional pinned
 local page runtime. Page geometry and images are separate from text renditions.
 
-Each adapter implements a bounded extraction contract. “Operator-hosted” means
-you run the service and declare its destination; “hosted” means the adapter
-calls an external provider. The exact format list and limits belong to the
+Each adapter implements an extraction contract with limits. “Operator-hosted”
+means you run the service and declare its destination. “Hosted” means the
+adapter calls an external provider. The format list and limits belong to the
 provider descriptor and profile, not to a filename extension.
 
 | Provider package | Where it runs | Contract and scope |
@@ -62,14 +62,14 @@ provider descriptor and profile, not to a filename extension.
 | [`document/reducto`](https://github.com/kenn-io/docbank/tree/main/document/reducto) | Hosted | Resumable PDF and PPTX parsing through the fixed Reducto API |
 | [`document/bridge`](https://github.com/kenn-io/docbank/tree/main/document/bridge) | Declared service | `docbank-rendition/v1`: submit, poll, cancel, and validate canonical source evidence |
 
-Unstructured and Tika supply compatibility profiles for an operator's bridge;
-they do not install those services. Local-process providers also require the
+Unstructured and Tika supply compatibility profiles for an operator's bridge.
+They do not install those services. Local-process providers also require the
 operator to supply the pinned runtime. Trafilatura on macOS or Windows requires
-an explicitly supplied, audited `IsolatedRunner`.
+a supplied, audited `IsolatedRunner`.
 
 The rendition contract accepts an `AuthorizedUpload` bound to one inspected
 source. Providers cannot substitute a source URL for those bytes. Their
-receipts record the exact source, policy, provider identity, and bounded usage.
+receipts record the source, policy, provider identity, and usage.
 See the [provider contract](https://github.com/kenn-io/docbank/blob/main/document/provider.go)
 and [rendition bridge schema](https://github.com/kenn-io/docbank/blob/main/document/bridge/openapi.yaml)
 for the normative types and wire format.
@@ -80,7 +80,7 @@ for the normative types and wire format.
 with XHTML spine content and no `META-INF/encryption.xml` entry. Encrypted content
 and IDPF/Adobe font obfuscation are rejected as unsupported. Construct it with
 `epub.New(epub.Profile{MaxDocumentBytes: 16 << 20, MaxUnits: 1000})`.
-Both limits are required. Bytes range from 1 through 500 MiB; virtual units
+Both limits are required. Bytes range from 1 through 500 MiB, and virtual units
 range from 1 through 1,000,000. The descriptor reports `local_process` and
 binds both limits to its policy identity.
 
@@ -90,7 +90,7 @@ profile. The daemon also selects this provider with the `docbank-epub-rendition/
 adapter. Its `max_document_bytes` and `max_units` must match the limits used to
 construct the descriptor. Use the public planning and consent flow before
 processing. Filename disclosure follows the profile's `disclose_filename`
-setting; extraction works with the filename disclosed or withheld.
+setting. Extraction works with the filename disclosed or withheld.
 
 Each declared spine occurrence produces one ordered evidence unit with its
 archive path. Repeated references and `linear=no` entries count separately.
@@ -99,7 +99,7 @@ metadata and active XHTML content contribute no text. Images and visual
 layout have limited fidelity.
 
 Usage counts the complete normalized Markdown with LF line endings. Each
-line wraps virtually at 80 Unicode code points; 48 virtual lines make one
+line wraps virtually at 80 Unicode code points, and 48 virtual lines make one
 unit. Every spine entry starts a new page. A 100-line chapter can therefore
 remain one evidence unit while consuming three virtual units. Wrapping leaves
 retained Markdown unchanged. Configure the processing profile's retained
@@ -108,8 +108,9 @@ unit and text limits separately from the provider's virtual-unit ceiling.
 The provider verifies the authorized source length and hash, applies the
 format detector's ZIP limits, and rejects unsupported packages with
 `unsupported_input`. Output, work, or virtual-unit overflow returns
-`policy_rejected`. Exact cumulative `MaxUnits` is accepted. Truncated output
-and partially processed books produce no successful provider result.
+`policy_rejected`. A cumulative total exactly equal to `MaxUnits` is accepted.
+Truncated output and partially processed books produce no successful provider
+result.
 
 ## Build canonical evidence and a rendition
 
@@ -120,9 +121,8 @@ artifacts, and omissions. Locators distinguish pages, slides, sheets, records,
 messages, lines, media segments, and other document units. Media segments use
 half-open millisecond intervals: the start is included and the end is excluded.
 Adjacent and overlapping segments are valid, and an absent time remains absent.
-Completeness explicitly reports
-`complete`, `partial`, or `degraded_provenance`; readable text alone does not
-prove complete source coverage.
+Completeness is reported as `complete`, `partial`, or `degraded_provenance`.
+Readable text alone does not prove complete source coverage.
 
 `BuildRenditionV1` derives sanitized Markdown, normalized units, and lexical
 segments from that evidence. Lexical segments are model-independent text spans
@@ -138,9 +138,9 @@ and [renditions](https://github.com/kenn-io/docbank/blob/main/document/rendition
 
 `document.NormalizeDocument` is the simpler text-normalization contract for
 ordered source units, such as pages. It turns those units into consistent text.
-The result includes heading paths, chunks, checksums, and
-source spans that locate each result in the original input. The same input and
-policy produce the same result.
+The result includes heading paths, chunks, checksums, and source spans that
+locate each result in the original input. The same input and policy produce
+the same result.
 
 ```go
 policy, err := document.NewNormalizePolicy(2_000_000)
@@ -163,7 +163,7 @@ if err != nil {
 The policy's structural values are fixed for its normalization version. The
 only caller-selected input is the maximum normalized document size. A future
 change to the algorithm or structural values requires a new normalization
-version rather than silently changing the meaning of existing checksums.
+version, so existing checksums keep their meaning.
 Source family and unit-kind identifiers must be valid UTF-8 without control
 characters so they remain stable in fingerprints and provider-facing locators.
 Version 3 binds truncation into unit, chunk, and document checksums. A complete
@@ -173,7 +173,8 @@ bound.
 
 ## Build evidence from a supplied transcript
 
-Applications that already have transcript text can pass it through the same evidence and rendition contracts as other document families:
+Applications that already have transcript text can pass it through the same
+evidence and rendition contracts as other document families:
 
 ```go
 evidencePolicy, err := document.NewEvidencePolicy(100_000)
@@ -191,7 +192,7 @@ _ = artifact // retain the provider transcript with the source record
 
 Use a lowercase identifier for the provider. The `supplied-transcript/v1`
 JSON artifact keeps the exact provider name and transcript text. Normalized
-evidence and the rendition—the derived document result—still apply their
+evidence and the rendition (the derived document result) still apply their
 Unicode, Markdown, and character limits.
 
 The evidence uses the `audio` family, a generic unit, and
@@ -209,13 +210,13 @@ a distinct descriptor. Docbank cannot verify that the binding identifies the
 `Source` implementation or the transcripts it returns.
 
 Use `document/mediatranscript` when the source supplies segment timing. Its
-`media-transcript/v1` artifact retains ordered text, exact start and end
+`media-transcript/v1` artifact retains ordered text, start and end
 milliseconds, and an optional speaker for each segment. `ParseSubRip` accepts
 the bounded `subrip/v1` grammar, keeps styling tags verbatim, and infers
 nothing about language, speakers, or timing. `Build` converts that artifact
 into audio or video source evidence and a retained transcript artifact. Segment
 starts must not regress, but adjacent and overlapping cues remain distinct.
-Speaker text participates in evidence identity when present; omitting it keeps
+Speaker text participates in evidence identity when present. Omitting it keeps
 the supplied form free of invented values.
 
 ### Supplied caption timing limits
@@ -223,14 +224,14 @@ the supplied form free of invented values.
 The `supplied-captions` profile rejects the entire caption file if any cue ends
 after the recording's measured duration, even by one millisecond. It preserves
 the supplied times without rounding, clipping, or adding a tolerance. Check that
-the captions match the exact recording before importing them.
+the captions match that recording before importing them.
 
 ## Run Mistral OCR safely
 
 Mistral uploads are refused until an operator supplies a validated capability
 manifest for the configured endpoint, model, and policy. A capability manifest
 records what a live provider probe demonstrated. Docbank supplies no live
-manifest; provider documentation alone does not authorize uploads.
+manifest. Provider documentation alone does not authorize uploads.
 
 The operator prepares that evidence in this order:
 
@@ -244,9 +245,9 @@ formats require operator-supplied synthetic seeds named `doc`, `ppt`, `xls`,
 `numbers`, and `msg`. Fixture and staging directories must be private. The
 authenticated probe authorizes PDF through a provider-request bound. It can
 authorize PPTX when its local slide count matches the provider's processed
-units. It records
-primary-fixture evidence for TXT, Markdown, CSV, JSON, JSONL, YAML, Go,
-Python, JavaScript, RST, LaTeX, XML, EML, and MSG after provider acceptance.
+units. It records primary-fixture evidence for TXT, Markdown, CSV, JSON, JSONL,
+YAML, Go, Python, JavaScript, RST, LaTeX, XML, EML, and MSG after provider
+acceptance.
 Native XLSX remains unauthorized through the capability probe, even when
 extraction succeeds during a probe. Configured render policies use the PDF
 authority for XLSX instead.
@@ -281,7 +282,7 @@ For each production document:
 1. Call `Policy.Authorize(validated manifest, declared format)`.
 2. Check your application's consent record against `PolicyFingerprint`.
 3. Call `Prepare` with private staging storage.
-4. Call `Process`; the detected format must match the authorization.
+4. Call `Process`. The detected format must match the authorization.
 5. Call `Release` on success or failure.
 6. Call `NormalizeDocument(Result.Document, Policy.NormalizePolicy())` on a
    successful result.
@@ -289,8 +290,8 @@ For each production document:
 `Prepare` copies one input into a private, bounded, immutable staging file.
 For direct formats, `Process` reopens and verifies those bytes for every attempt.
 It derives request options from the policy and authorization, bounds the
-response, and converts
-validated provider output into `document.SourceDocument`. For a configured
+response, and converts validated provider output into
+`document.SourceDocument`. For a configured
 render profile, it calls `renderpdf.Convert` once, counts the generated PDF,
 checks `MaxUnits`, `MaxPages`, `MaxPDFBytes`, and `MaxDocumentBytes` before
 HTTP, and uploads that PDF on every retry. The returned document keeps the
@@ -308,28 +309,28 @@ over-limit decks before upload, and compares the provider's processed count with
 that local count. Configured office formats use the shared render route.
 Rendered Word keeps complete page evidence. Rendered presentations and
 spreadsheets use one generic degraded evidence unit with an omission because
-PDF pages do not identify the original units. The receipt
-records the generated PDF hash and input bytes. Text formats use the response
-checks described above. See
+PDF pages do not identify the original units. The receipt records the
+generated PDF hash and input bytes. Text formats use the response checks
+described above. See
 [Mistral rendition processing](https://github.com/kenn-io/docbank/blob/main/document/mistral/rendition.go)
-for the exact source and result checks.
+for the source and result checks.
 
 The PPTX count includes hidden slides. This assumes Mistral processes every
-listed slide; the probe fixture contains one visible slide and does not verify
+listed slide. The probe fixture contains one visible slide and does not verify
 hidden-slide behavior. If Mistral skips hidden slides, the count comparison
 fails after upload and may incur provider charges.
 
 Native XLSX production uploads remain blocked because its native provider
 authority is unverified. With `PolicyConfig.RenderPDF`, XLSX follows the render
 route and Mistral enforces the generated PDF page count before upload. The
-returned processor result keeps the original family and page unit kind;
-rendition evidence for rendered presentations and spreadsheets uses generic
+returned processor result keeps the original family and page unit kind.
+Rendition evidence for rendered presentations and spreadsheets uses generic
 degraded provenance.
 
 The importing application remains responsible for credentials, human consent,
 spending and scheduling limits, durable manifests, job orchestration,
-persistence, and search serving. Those application decisions are intentionally
-outside the reusable packages and their policy identity.
+persistence, and search serving. Those application decisions are outside the
+reusable packages and their policy identity.
 
 ## Prepare text for semantic retrieval
 
@@ -373,33 +374,34 @@ if err != nil {
 ```
 
 Page, heading, region, and table boundaries are preferred before token
-splitting. The configured token budget applies to content only; the document
+splitting. The configured token budget applies to content only. The document
 role envelope and any declared attachment context are rendered on top of it,
 and the complete rendered input is re-counted against the provider limits.
-Overlap is measured in exact emitted tokens, and every input keeps its heading
-path and the source span it was reconstructed from.
+Overlap is measured in emitted tokens, and every input keeps its heading path
+and the source span it was reconstructed from.
 
 Generation limits can reject a build but cannot change its output. They do
 not enter the fingerprints. All other policy values enter the generation's
 policy fingerprint. If declared, `AttachmentContextSnapshot` also binds the
-exact attachment titles and context to the generation's identity.
+attachment titles and context to the generation's identity.
 
 Use `MarshalEmbeddingInputGeneration` to produce the canonical byte form.
-`DecodeEmbeddingInputGeneration` accepts only that form under explicit caller
-limits. It rejects forged totals, policy fingerprints, and checksums.
-`ToEmbeddingInputs` accepts only the exact model-input contract used to build
-the generation.
+`DecodeEmbeddingInputGeneration` accepts only that form, under limits the
+caller supplies. It rejects forged totals, policy fingerprints, and checksums.
+`ToEmbeddingInputs` accepts only the model-input contract used to build the
+generation.
 
 `EgressIdentity` gives applications separate endpoint-sensitive fingerprints
 for document embedding and query embedding. Credentials are not part of those
 identities. `VectorSpaceIdentity` separately pins provider, model revision,
-dimension, and normalization without an endpoint, allowing an application to
+dimension, and normalization without an endpoint. An application can then
 reuse compatible vectors while still requiring fresh consent when their
 destination changes.
 
 The shared retrieval helpers make omitted and `auto` search lexical, so a
-query is not sent to an embedding provider without explicit `semantic` or
-`hybrid` mode. Candidate limits default to 100 and are bounded at 1,000.
+query is not sent to an embedding provider unless the caller selects
+`semantic` or `hybrid` mode. Candidate limits default to 100 and cannot exceed
+1,000.
 `CollectScopedCandidates` requires the backend to apply scope before its
 vector cutoff and pages until authoritative exhaustion or a `limit+1`
 overflow probe. Reciprocal-rank fusion preserves lexical and semantic signals
@@ -409,7 +411,7 @@ and reports overflow from either input lane or the fused union.
 repeatable retrieval systems. Reports include Recall@5/10/20, nDCG@10, MRR,
 hit@1, hit@10, critical misses, provider calls and input/output usage, query
 latency, token evidence, and cost evidence. A system can add an optional
-reranker over a bounded top-N prefix. Ties keep their retrieval order and the
+reranker over a top-N prefix. Ties keep their retrieval order and the
 remaining results stay in place. Repeated trials retain query observations and
 report empirical minimum, mean, maximum, and nearest-rank p95 values. The
 developer comparison uses a temporary real Docbank store and the existing
@@ -417,7 +419,7 @@ lexical, vector-index, and fusion owners. Its synthetic documents are only
 test data. Offline provider rows and synthetic vector rows validate wiring
 only, so they do not support a quality recommendation. Missing provider runs
 or usage evidence remain unavailable. Skipped rerank calls add no usage or
-pricing basis; cost totals use only observations from stages that ran.
+pricing basis. Cost totals use only observations from stages that ran.
 Applications should keep raw as the default until measured results justify a
 different recipe.
 
@@ -460,14 +462,15 @@ compatibility from an equal vector dimension.
 
 Gemini's profile selects inline bytes or the Files API. Direct-file requests
 need matching inspected capability and disclosure fingerprints. The Files API
-path includes bounded polling and cleanup; its policy identity records the
+path includes bounded polling and cleanup. Its policy identity records the
 provider retention ceiling. The direct-file adapter accepts PNG/JPEG images,
 WAV/MP3 audio up to three minutes, MP4/QuickTime video up to two minutes, and
-PDFs up to six pages, subject to matching inspection bounds. The [Gemini contract](https://github.com/kenn-io/docbank/blob/main/document/gemini/profile.go)
+PDFs up to six pages, subject to matching inspection bounds. The
+[Gemini contract](https://github.com/kenn-io/docbank/blob/main/document/gemini/profile.go)
 separates that provider retention from Docbank's local derivative retention.
 
 The standard embedding bridge sends a canonical manifest before any file
-parts and validates the synchronous response against exact input identities.
+parts and validates the synchronous response against the input identities.
 Its [OpenAPI contract](https://github.com/kenn-io/docbank/blob/main/document/embeddingbridge/openapi.yaml)
 and JSON schemas own the wire limits.
 
@@ -502,7 +505,7 @@ if reason != media.ReasonEligible {
 }
 ```
 
-The package has no notion of attachment ownership, roles, or hashes; those are
+The package has no notion of attachment ownership, roles, or hashes. Those are
 application pre-filters.
 
 ## Embed images and video with Voyage
@@ -513,9 +516,8 @@ Docbank ships no live manifest. Each capability is authorized separately:
 JPEG, PNG, WebP, still GIF, animated GIF, and MP4 documents; text queries;
 JPEG, PNG, WebP, and still GIF image queries; text-then-PNG queries;
 text-then-media documents probed per format; and mixed-format batches at the
-policy limit.
-Whether animated GIF, video, or a given query shape may be sent is decided by
-recorded probe evidence, not by assumption.
+policy limit. Recorded probe evidence decides whether animated GIF, video, or
+a given query shape may be sent.
 
 The operator prepares a manifest in this order:
 
@@ -525,15 +527,14 @@ The operator prepares a manifest in this order:
 3. Create `NewClient(API key)` and call `RunCapabilityProbe`.
 4. Review and retain the resulting `CapabilityManifest`.
 
-WebP and MP4 cannot be encoded by the Go standard library, so the operator
-supplies synthetic seeds named `image_webp.webp` and `video_mp4.mp4`, plus
-contrasting `image_webp_alt.webp` and `video_mp4_alt.mp4` variants of the
-same format whose content differs, so pixel contribution is demonstrated
-within each format. The
-seed directory, destination parent, and published fixture directory must be
-owner-private, and fixture generation publishes a complete new directory
-atomically rather than updating an existing directory. The
-probe stores no media, vectors, or responses; the manifest records only
+The Go standard library cannot encode WebP or MP4, so the operator supplies
+synthetic seeds named `image_webp.webp` and `video_mp4.mp4`. The operator also
+supplies `image_webp_alt.webp` and `video_mp4_alt.mp4`: variants of the same
+format with different content, so that pixel contribution is demonstrated
+within each format. The seed directory, destination parent, and published
+fixture directory must be owner-private. Fixture generation publishes a
+complete new directory atomically instead of updating an existing directory.
+The probe stores no media, vectors, or responses. The manifest records only
 sanitized pass, reject, and fail observations.
 
 For each production item:
@@ -553,7 +554,7 @@ It also:
 - Requires the batch capability for more than one input.
 
 `EmbedQuery` accepts `[text]`, `[image]`, or `[text, image]`. Each shape needs
-its own probed capability. Image authorization is per format; combined text and
+its own probed capability. Image authorization is per format. Combined text and
 image queries support PNG only.
 
 Every response vector must have a unique index and the exact dimension.
@@ -638,7 +639,7 @@ This Go API does not add CSV OCR to the daemon or CLI.
 `mistral.Prepare` and `csvpdf.Convert` attach `ocr.PreparationError` to local
 source and conversion failures. Extract it with
 `errors.AsType[*ocr.PreparationError]` and display its `Error()` value. The
-description contains fixed text; the original cause remains available through
+description contains fixed text. The original cause remains available through
 `Unwrap()` for private diagnostics.
 
 Never display the original `err.Error()` or an unwrapped cause. The full error
@@ -668,8 +669,8 @@ Use the original error for scheduling. For `ocr.Processor` failures, use
 `ocr.ErrorKindOf(err)`. For direct `mistral.Prepare` calls, use `errors.Is` with
 `mistral.ErrSpoolCapacity`, `mistral.ErrSpoolUnavailable`, and
 `mistral.ErrInvalidSource`. Use `errors.Is` for context errors in either path
-and for `csvpdf.Convert`. Display descriptions are not retry classifications;
-do not match their text to decide whether to retry.
+and for `csvpdf.Convert`. Display descriptions are not retry classifications.
+Do not match their text to decide whether to retry.
 
 ## Convert office files locally to PDF
 
@@ -684,7 +685,7 @@ content, and then renders only admitted bytes to PDF.
 The built-in runner targets Linux on amd64 and arm64. It requires user, mount,
 PID, network, and IPC namespaces, seccomp filters, and Landlock filesystem ABI 3
 or newer. The application must be allowed to create those namespaces.
-On Ubuntu, AppArmor may block unprivileged user namespaces; the operator's
+On Ubuntu, AppArmor may block unprivileged user namespaces. The operator's
 AppArmor policy must allow the launcher to create them. Container policy must
 also permit the required namespaces. Conversion fails if the required
 isolation cannot be installed. macOS and Windows require an
@@ -726,7 +727,7 @@ func newOfficeRenderPolicy(executableSHA256 string) (renderpdf.Policy, error) {
 ```
 
 Keep the policy for subsequent conversions. Changed runtime bytes or a changed
-executable fail verification; approve the updated installation and rebuild the
+executable fail verification. Approve the updated installation and rebuild the
 policy after a LibreOffice, library, or font update. Do not rediscover the
 runtime or replace the approved digest for each input document.
 
@@ -745,9 +746,9 @@ if err != nil {
 // Keep receipt with pdfSource before a later caller authorizes upload.
 ```
 
-The DOCX, DOC, ODT, and RTF profiles emit FODT. PPT emits FODP. XLS,
-ODS, and XLSX emit FODS. Normalization strips unsafe external and active constructs
-where LibreOffice can remove them; the normalized scan rejects any such
+The DOCX, DOC, ODT, and RTF profiles emit FODT. PPT emits FODP. XLS, ODS, and
+XLSX emit FODS. Normalization strips unsafe external and active constructs
+where LibreOffice can remove them. The normalized scan rejects any such
 constructs that survive. It rejects every `xml:base` attribute, so local
 fragment links cannot inherit an external base URI. Local formulas, internal
 fragment links, and embedded raster images remain valid. Ordinary hyperlinks
@@ -759,24 +760,24 @@ embedded-library marker, and presentation layout placeholders for all ODF object
 types. Local spreadsheet filter and sort ranges are also admitted. The scanner
 still rejects script code, event handlers, external or relative links, DDE,
 external formulas, database sources, charts, OLE, plugins, embedded documents,
-and other active objects.
-The render policy bounds normalized bytes, PDF bytes, work bytes, XML depth and
-elements, and generated PDF pages through `MaxPages`.
+and other active objects. The render policy limits normalized bytes, PDF
+bytes, work bytes, XML depth and elements, and generated PDF pages through
+`MaxPages`.
 
 Each XML character-data token, including base64 image data, is limited to
 1 MiB. A document within the overall byte limit can still exceed this limit
 when it contains a large embedded image.
 
-The receipt records both source and normalized identities, the exact PDF hash,
-the page count, the policy, and the runtime identities. `Result.Source` is a
+The receipt records both source and normalized identities, the PDF hash, the
+page count, the policy, and the runtime identities. `Result.Source` is a
 fresh `application/pdf` source. The receipt does not authorize upload. The
-Mistral adapter reuses this receipt for its configured office route; no daemon
+Mistral adapter reuses this receipt for its configured office route. No daemon
 option or CLI operation is added. Native office authority remains separate
 when the render policy is absent.
 
 ## Package boundary
 
-The dependency direction is deliberate:
+Dependencies run in one direction:
 
 ```text
 application storage and workers
@@ -794,6 +795,6 @@ application storage and workers
 
 No public package imports Docbank's vault, database, daemon, or queue. Local
 extractors can use `document` without depending on Mistral or any network
-transport, applications can use `document/embedding` without a database or
-provider client, and applications can use `document/media` alone to record
-image dimensions at ingest without any provider.
+transport. Applications can use `document/embedding` without a database or
+provider client, and can use `document/media` alone to record image dimensions
+at ingest without any provider.

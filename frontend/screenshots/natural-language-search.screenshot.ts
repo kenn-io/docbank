@@ -177,9 +177,11 @@ trust_boundary = "local_process"
     for (const width of [1440,1280,768,400]) {
       await page.setViewportSize({width,height:960});
       if (width === 400) {
-        for (const name of ["Lock web session", "Recoverable trash", "Backup snapshots", "Saved queries and highlights"]) {
+        await page.getByRole("button", {name:"Open navigation"}).click();
+        for (const name of ["Recoverable trash", "Backup snapshots", "Saved queries and highlights"]) {
           await expect(page.getByRole("button",{name})).toBeVisible();
         }
+        await page.getByRole("button", {name:"Close navigation"}).click();
       }
       await resultPath.scrollIntoViewIfNeeded();
       await page.screenshot({path:path.join(output!,"web-natural-"+width+".png")});

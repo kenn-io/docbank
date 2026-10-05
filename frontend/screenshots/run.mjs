@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +11,7 @@ const repositoryRoot = path.resolve(frontendRoot, "..");
 const workspaceRoot = path.join(repositoryRoot, ".superpowers");
 const output = path.join(workspaceRoot, "screenshots");
 const staging = path.join(workspaceRoot, ".screenshots.next");
+const captures = path.join(workspaceRoot, ".screenshots.capture");
 const manifestPath = path.join(repositoryRoot, "scripts", "docs-assets.txt");
 
 const build = spawnSync("make", ["build"], {
@@ -21,7 +22,9 @@ if (build.error) throw build.error;
 if (build.status !== 0) process.exit(build.status ?? 1);
 
 await rm(staging, { recursive: true, force: true });
+await rm(captures, { recursive: true, force: true });
 await mkdir(staging, { recursive: true, mode: 0o700 });
+await mkdir(captures, { recursive: true, mode: 0o700 });
 
 const playwrightCLI = path.join(
   frontendRoot,
@@ -39,9 +42,6 @@ const result = spawnSync(
     path.join(here, "playwright.config.ts"),
     "--project",
     "chromium",
-    // Remove these exclusions when their images join the published, pinned set.
-    "--grep-invert",
-    "import collections|mailbox import screenshot",
     ...process.argv.slice(2),
   ],
   {
@@ -49,7 +49,14 @@ const result = spawnSync(
     stdio: "inherit",
     env: {
       ...process.env,
-      DOCBANK_SCREENSHOT_DIR: staging,
+      DOCBANK_SCREENSHOT_DIR: captures,
+      DOCBANK_QUERY_BAR_SCREENSHOT_DIR: captures,
+      DOCBANK_TERM_REPORT_SCREENSHOT_DIR: captures,
+      DOCBANK_BATES_SCREENSHOT_DIR: captures,
+      DOCBANK_EXPORT_SCREENSHOT_DIR: captures,
+      DOCBANK_NATURAL_SEARCH_SCREENSHOT_DIR: captures,
+      DOCBANK_SIMILAR_SCREENSHOT_DIR: captures,
+      DOCBANK_SNAPSHOT_SCREENSHOT_DIR: captures,
     },
   },
 );
@@ -62,4 +69,10 @@ if (result.status !== 0) {
 const names = (await readFile(manifestPath, "utf8"))
   .split("\n")
   .filter((line) => line !== "");
+// Proof runs also write receipts and alternate viewport captures. Only the
+// complete public image manifest enters the atomically published set.
+for (const name of names) {
+  await copyFile(path.join(captures, name), path.join(staging, name));
+}
 await publishScreenshots({ output, staging, names });
+await rm(captures, { recursive: true, force: true });

@@ -1,20 +1,19 @@
 ---
-last_edited: 2026-09-27
-title: Photo Assets
-description: Group ordinary file nodes into revisioned photo assets.
+last_edited: 2026-10-05
+title: Photo assets
+description: Group ordinary files into photo assets that carry their own revision.
 ---
 
-# Photo Assets
+# Photo assets
 
-Docbank groups ordinary file nodes into photo assets. The node and its
-immutable content versions remain the byte authority. An asset stores only
-membership, roles, display selection, exclusion, and bounded decision
-receipts.
+Docbank groups ordinary file nodes into photo assets. Each file node and its
+content versions still hold the bytes. An asset stores only membership, roles,
+display selection, exclusion, and bounded decision receipts.
 
 Image files and files with a concrete `video/*` MIME type are enrolled when
 they are created. Audio, generic video, and generic RAW files stay ordinary
 files until an operator promotes or creates an asset explicitly. Enrollment
-is forward-only; adding this feature does not scan older files.
+applies only to new files. Adding this feature does not scan older files.
 
 Replacing or reverting a file's content keeps the file in its asset with the
 same role, even when the new media type would not qualify. A file whose new
@@ -25,22 +24,22 @@ An asset can contain `raw`, `image`, `video`, and `sidecar` members. The
 default display order is RAW, image, then video. A vault preference can select
 image before RAW, and an asset override wins over the vault preference.
 Sidecars never display and must point at a RAW or image member in the same
-asset.
-Removing the selected member chooses another displayable member atomically,
-or stores a null display when none remains. Assets are limited to 256 files.
+asset. Removing the selected member chooses another displayable member
+atomically, or stores a null display when none remains. Assets are limited to
+256 files.
 
 ## Previews
 
 The daemon produces a grid preview with a 512-pixel maximum edge for each
 included photo's selected display file. It discovers new imports continuously
-and resumes missing work after restart. Completed results stay retained.
+and resumes missing work after restart. It keeps completed results.
 
 Embedded applications can request fit previews at 2560 pixels or large
 previews at 4096 pixels. All sizes preserve aspect ratio and never upscale.
 JPEG, PNG, GIF, still WebP, and supported embedded JPEGs in ARW, DNG, CR2,
 NEF, and RAF files have decoder paths. Format support does not guarantee that
 every individual file decodes. Unsupported and deterministic decode failures
-are retained terminal results; temporary storage or read failures retry.
+are stored as terminal results. Temporary storage or read failures retry.
 
 ## CLI
 
@@ -59,9 +58,10 @@ docbank photos assets display <asset-id> [file-id] [--revision REV]
 `inspect`, `create`, and `promote` accept absolute virtual paths or `id:N`
 node selectors, so `inspect id:42` finds the asset that owns file 42, even
 after file 42 is trashed.
-Existing-asset operations read the asset's current revision, send it, and
-retry once if another write changes the asset first. Pass `--revision` with
-the revision from your last inspection when a script needs the write to fail
+
+Operations on an existing asset read its current revision, send it, and retry
+once if another write changes the asset first. Pass `--revision` with the
+revision from your last inspection when a script needs the write to fail
 instead. Omitting the file ID from `display` clears the asset override.
 
 The vault preference is revisioned separately:
@@ -73,10 +73,10 @@ docbank photos settings set image [--revision REV]
 docbank photos settings reset [--revision REV]
 ```
 
-All commands emit bounded JSON. Exit code 4 means the revision is stale: an
-explicit `--revision` no longer matched, or the one automatic retry lost to
-another write. Read the asset or settings again before retrying. The daemon performs role,
-ownership, sidecar, display, and audit checks.
+All commands emit bounded JSON. Exit code 4 means the revision is stale: the
+`--revision` you passed no longer matched, or the one automatic retry lost to
+another write. Read the asset or settings again before retrying. The daemon
+performs role, ownership, sidecar, display, and audit checks.
 
 ## Import a camera folder
 
@@ -90,15 +90,17 @@ docbank jobs cancel <operation-id>
 ```
 
 `photos import` queues the import as a background job and prints its operation
-ID. Follow and stop it like any other durable job: `jobs show` reports progress
-and the import receipt, and `jobs cancel` stops it.
+ID. Follow and stop it like any other background job: `jobs show` reports
+progress and the import receipt, and `jobs cancel` stops it.
+
+![Photo import progress and its cancellation control in Background jobs](https://docbank.ai/assets/generated/web-photo-import-dark.png)
 
 The import reads RAW files (`.ARW`, `.CR2`, `.CR3`, `.DNG`, `.NEF`, `.ORF`,
 `.RAF`, `.RW2`), images (`.JPG`, `.JPEG`, `.PNG`, `.GIF`, `.WEBP`, `.HEIC`),
 videos (`.MP4`, `.MOV`, `.M4V`, `.AVI`, `.MPG`), and `.XMP` sidecars. It leaves
-every other file out and counts it as `unsupported` in the receipt.
-The source folder must exist when you start the import; otherwise the command
-fails with exit code 2 and no import starts.
+every other file out and counts it as `unsupported` in the receipt. The source
+folder must exist when you start the import. Otherwise the command fails with
+exit code 2 and no import starts.
 
 Files with the same folder and name, such as `IMG_0001.ARW`, `IMG_0001.JPG`,
 and `IMG_0001.XMP`, become one photo. The XMP sidecar attaches to the RAW, or
@@ -112,11 +114,11 @@ imported, such as an XMP saved again by a photo editor, becomes a new version
 of the file already in the photo, not a second file.
 
 The import leaves a group unpaired and lists it under `ambiguities` in the
-receipt from `jobs show <operation-id> --json` when:
+receipt from `jobs show <operation-id> --json` in two cases:
 
-- two RAW files share a name, such as `IMG_0001.ARW` and `IMG_0001.DNG`: each
-  RAW and JPEG becomes its own photo and the sidecar stays a plain file;
-- same-name files already sit in separate photos: nothing is merged.
+- Two RAW files share a name, such as `IMG_0001.ARW` and `IMG_0001.DNG`. Each
+  RAW and JPEG becomes its own photo and the sidecar stays a plain file.
+- Same-name files already sit in separate photos. Nothing is merged.
 
 Pair the RAW and JPEG files yourself: `photos assets inspect <asset-id>` shows
 file IDs, `photos assets detach` frees a file, and `photos assets attach` adds
@@ -129,9 +131,11 @@ The import hashes the discovered files, waits one second, then compares each
 durable copy with that observation. It hashes every group member again before
 committing. A changed or deleted source leaves the entire group out and counts
 as changed, even if its size and modification time stayed the same. Import
-again to pick it up. The web Jobs drawer shows progress and has a Cancel
-button while the import runs; it leaves out source paths and the unpaired-group
-list. Cancel takes effect before the next group. A daemon restart resumes an unfinished import by
+again to pick it up.
+
+The web Jobs drawer shows progress and has a Cancel button while the import
+runs. It leaves out source paths and the unpaired-group list. Cancel takes
+effect before the next group. A daemon restart resumes an unfinished import by
 scanning the folder again.
 
 ## HTTP and JSONL
@@ -149,63 +153,74 @@ supported metadata streams restore an empty photo authority.
 
 Email children are identified by `email_document_relations.child_version_id`.
 An image produced by processing remains eligible when it is not an email
-child. Existing graphs survive ordinary trash and restore; permanent node
+child. Existing graphs survive ordinary trash and restore. Permanent node
 deletion removes memberships and repairs the affected asset while preserving
 an empty asset identity.
 
 Automatic enrollment and explicit graph writes are skipped or refused when
 audit authority is active, according to the existing audit boundary. The
 preexisting graph is preserved and becomes read-only when audit is enabled.
+
 ## Browse photo assets over HTTP
 
 `POST /api/v1/photos/assets/query` accepts a `query` object using
 [QueryV1](../architecture/http-api.md#saved-query-and-highlight-definitions),
-optional `coverage`, `page_size` from 1 through 250 and `cursor`. It returns
+optional `coverage`, `page_size` from 1 through 250, and `cursor`. It returns
 `items`, the matching asset `total` counted on the first page, and an optional
-`next_cursor`. Later pages retain that total; start a new browse to refresh it.
+`next_cursor`. Later pages keep that total. Start a new browse to refresh it.
 The default page size is 50. Send the same query and page options with each
-continuation. An edited saved query invalidates its earlier cursor; cursors
-expire after 15 minutes. Results remain live: file changes can move assets
-across the previous page boundary.
+continuation. Editing a saved query invalidates its earlier cursor. Cursors
+expire after 15 minutes. Results are live: file changes can move assets across
+the previous page boundary.
 
 Use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`,
 `iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`,
-`capture_before:2025-01-01`, `gps:"-10,170,10,-170"` or `asset:` followed by a
-canonical UUIDv4. Existing `collection:`, tags and text predicates combine
+`capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, or `asset:` followed by a
+canonical UUIDv4. Existing `collection:`, tag, and text predicates combine
 with these fields. Camera and lens match the complete make or model, ignoring
-case using Unicode case folding. Typed filter arrays OR their values;
-separate filters AND together. Dates use the photo's recorded local calendar
-day, with an inclusive lower bound and exclusive upper bound. A January 1
-photo remains in January 1 date filters even if its recorded UTC offset puts
-it on January 2 in UTC. GPS uses inclusive decimal-string latitude/longitude
-bounds and permits boxes crossing the antimeridian.
+case using Unicode case folding. Values in one typed filter array combine with
+OR. Separate filters combine with AND.
 
-Camera, lens, ISO, capture-date and GPS predicates use the asset's selected
+Dates use the photo's recorded local calendar day, with an inclusive lower
+bound and exclusive upper bound. A January 1 photo remains in January 1 date
+filters even if its recorded UTC offset puts it on January 2 in UTC. GPS uses
+inclusive decimal-string latitude/longitude bounds and permits boxes crossing
+the antimeridian.
+
+Camera, lens, ISO, capture-date, and GPS predicates use the asset's selected
 display file. Metadata from other members is not combined with it. If the
 selected RAW has camera A and its paired JPEG has lens B, `camera:A` matches
 and `lens:B` does not. A sidecar without camera metadata cannot make
 `NOT camera:A` match. Changing the display file changes these metadata matches.
 
-Ordinary text, name, extension, tag and collection predicates still match
+Ordinary text, name, extension, tag, and collection predicates still match
 individual members. One member must satisfy the complete expression, using
 the display file for its photo metadata predicates. For example,
 `extension:xmp AND camera:A` can match a sidecar paired with a display image
 from camera A. Saved expressions follow the same rule. Document queries keep
-using each document's own metadata. Excluded, trashed and displayless assets
+using each document's own metadata. Excluded, trashed, and displayless assets
 stay out.
 
-Sort by `capture_time`, `import_time`, `name`, `modified_at`, `size` or `media_type`, with `asc` or `desc`. Capture sorting converts recorded offsets to UTC; omitted zones use civil calendar coordinates. Missing or unreadable capture times sort last in both directions and do not match capture-date filters. Asset UUID orders equal keys. Names and media types compare only their first 1,024 characters, so longer values that share that prefix also fall back to UUID order. `path` and `relevance` are unsupported by this route. Document snapshots reject `capture_time` and `import_time` with an error naming Photos as the supported view.
+Sort by `capture_time`, `import_time`, `name`, `modified_at`, `size`, or
+`media_type`, with `asc` or `desc`. Capture sorting converts recorded offsets
+to UTC. Omitted zones use civil calendar coordinates. Missing or unreadable
+capture times sort last in both directions and do not match capture-date
+filters. Asset UUID orders equal keys. Names and media types compare only their
+first 1,024 characters, so longer values that share that prefix also fall back
+to UUID order. `path` and `relevance` are unsupported by this route. Document
+snapshots reject `capture_time` and `import_time` with an error naming Photos
+as the supported view.
 
-Each row has grid, fit and large preview slots. `missing` means no retained
-result exists for that recipe. Stored `ready`, `unsupported` and `failed`
-outcomes retain their generation identity. Only ready slots include a
-generation URL and JPEG output metadata. Read that URL with the browser
-session header; credentials stay out of URLs.
+Each row has grid, fit, and large preview slots. `missing` means no result is
+stored for that recipe. Stored `ready`, `unsupported`, and `failed` outcomes
+keep their generation identity. Only ready slots include a generation URL and
+JPEG output metadata. Read that URL with the browser session header.
+Credentials stay out of URLs.
 
 Preview responses use `Cache-Control: private, no-cache`: the browser may keep
 bytes but must check with the server before reusing them. A matching
 `If-None-Match` returns `304` after the server checks the session, current
-display and exclusion state. This avoids reading the preview blob again.
+display, and exclusion state. This avoids reading the preview blob again.
 An excluded asset or replaced display returns `404`, even with a matching
 validator. A response with new bytes verifies the complete image. Listing
 never creates previews.

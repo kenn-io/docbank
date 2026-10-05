@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-29
+last_edited: 2026-10-05
 title: People
 description: List and edit canonical people through the daemon API and CLI, and read them through MCP.
 ---
@@ -8,8 +8,8 @@ description: List and edit canonical people through the daemon API and CLI, and 
 
 Docbank keeps one canonical person record for each person in the vault. The
 daemon API and CLI can list, search, create, rename, retire, merge, and split
-these records. MCP can find and read them. Every existing-person edit uses the
-revision returned by the preceding read.
+these records. MCP can find and read them. Every edit to an existing person
+uses the revision returned by the preceding read.
 
 ## List and search
 
@@ -37,7 +37,7 @@ for package custodian claims.
 ## Edit people
 
 Edits address the person's current `person_id`. A read through a merged
-person's ID returns the survivor, but an edit through that ID returns 404; send
+person's ID returns the survivor, but an edit through that ID returns 404. Send
 the edit to the `person_id` in the read response.
 
 Rename and retire commands require `--revision`. HTTP clients send the
@@ -64,12 +64,13 @@ that every selected member belongs to the source person. A split request
 larger than 1 MiB returns `413` and changes nothing.
 
 The split response includes `source_revision_after` and an ETag for that
-revision. Use this fence for the next source edit. Replaying the same split
-request returns the original fence, even after a later source edit.
+revision. Send that revision with the next edit to the source person.
+Replaying the same split request returns the original revision, even after a
+later source edit.
 
 After every successful person edit, the daemon rebuilds the links between
 documents and people in the background. Until that finishes, document views can
 show the earlier links. The person records themselves are already current.
 
-MCP offers the person reads only; edit people through the CLI or HTTP API.
-The CLI and MCP use the daemon, so they never open the vault directly.
+MCP can read people but cannot edit them. Edit people through the CLI or HTTP
+API. The CLI and MCP go through the daemon and do not open the vault directly.

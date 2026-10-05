@@ -1,6 +1,6 @@
 ---
-title: Daemon & Process Model
-description: docbank daemon run — the single process that owns the vault, and how the CLI discovers, auto-starts, and stops it.
+title: Daemon and process model
+description: The single process that owns the vault, docbank daemon run, and how the CLI discovers, auto-starts, and stops it.
 ---
 
 # Daemon and process model
@@ -19,8 +19,8 @@ One owner coordinates SQLite writes and content storage. The CLI and agents
 use the same `/api/v1` contract. Because CLI commands cannot open the store
 directly, each command also exercises the API an agent would use.
 
-[Ownership & Concurrency](locking.md) owns the locking contract. Earlier
-development builds opened the store once per command; that historical design
+[Ownership and concurrency](locking.md) owns the locking contract. Earlier
+development builds opened the store once per command. That historical design
 no longer describes standalone operation.
 
 ## Lifecycle
@@ -35,10 +35,15 @@ no longer describes standalone operation.
 5. Binds the API listener and serves requests until `SIGINT`, `SIGTERM`, or a
    shutdown request arrives.
 
-`docbank daemon start` spawns the same binary as a detached background
-process running `daemon run`; `docbank daemon stop` asks it to shut down;
-`docbank daemon restart` stops it (tolerating it not already running) and
-starts it again; `docbank daemon status` reports whether it's running.
+The other lifecycle commands control that process:
+
+- `docbank daemon start` spawns the same binary as a detached background
+  process running `daemon run`.
+- `docbank daemon stop` asks it to shut down.
+- `docbank daemon restart` stops it (tolerating it not already running) and
+  starts it again.
+- `docbank daemon status` reports whether it's running.
+
 During graceful shutdown, the daemon:
 
 1. Cancels background tasks.
@@ -63,46 +68,46 @@ docbank daemon stop
 
 ## Discovery
 
-A running daemon writes a runtime record — `$DOCBANK_HOME/daemon.<pid>.json`
-— naming its service (`docbank`), build version, and the actual bound
-address (the configured `api_port` may be `0`, in which case the OS
-picks an ephemeral port and the record carries the real one). The record
-also carries, in its metadata, the process's create-time, a random
-shutdown token generated at startup, and the daemon's effective API key
-(the configured `[server] api_key`, or a freshly generated one when it's
-unset). The record lives inside the 0700 `$DOCBANK_HOME`, so publishing
-the key there — rather than requiring every loopback caller to already
-know it — is safe: only the vault's owner can read it. Same-user CLI
-commands pick the key up from the record automatically; there is no
-keyless request path even when `api_key` is left unset.
+A running daemon writes a runtime record, `$DOCBANK_HOME/daemon.<pid>.json`.
+The record names the daemon's service (`docbank`), build version, and actual
+bound address. The configured `api_port` may be `0`, in which case the OS
+picks an ephemeral port and the record carries the real one. The record's
+metadata also carries the process's create-time, a random shutdown token
+generated at startup, and the daemon's effective API key (the configured
+`[server] api_key`, or a freshly generated one when it's unset).
+
+The record lives inside the 0700 `$DOCBANK_HOME`, so only the vault's owner
+can read it. That makes it safe to publish the key there, and loopback callers
+do not need to know the key in advance. Same-user CLI commands pick the key up
+from the record automatically. There is no keyless request path even when
+`api_key` is left unset.
 
 Discovery lists runtime records, drops any whose PID isn't alive, and
 probes `/api/ping` on the survivors. Two guards keep this safe against
 stale state:
 
 - **PID-reuse guard.** A dead daemon's PID can be reused by an unrelated
-  process before its runtime record is cleaned up. Every record also
-  carries the process's create-time; discovery compares it against the
-  live process at that PID and treats a mismatch as "this record is
-  stale," never signaling or trusting a process it didn't start.
+  process before its runtime record is cleaned up. Every record carries the
+  process's create-time. Discovery compares it against the live process at
+  that PID and treats a mismatch as a stale record. It never signals or
+  trusts a process it didn't start.
 - **Exact version match.** Pre-1.0, there is no compatibility matrix:
   the CLI requires the daemon's version to match its own exactly. `docbank
-  daemon status` and `docbank daemon stop` report *any* live daemon
+  daemon status` and `docbank daemon stop` report any live daemon
   regardless of version (they only discover, never start). Everything
-  that starts a daemon — `daemon start`, `daemon restart`, and the data
-  commands' auto-start — goes through one path (`daemonconn.EnsureDaemon`)
-  that requires the exact match and, on a mismatch, stops the old daemon
-  and starts a fresh one under the launch lock. There is deliberately no
-  way to start a daemon that leaves a stale-version daemon running: the
-  exclusive vault lock already guarantees at most one daemon per vault,
-  and the single convergence path guarantees that the one daemon is
-  current after any successful start.
+  that starts a daemon goes through one path, `daemonconn.EnsureDaemon`:
+  `daemon start`, `daemon restart`, and the data commands' auto-start. That
+  path requires the exact match. On a mismatch, it stops the old daemon and
+  starts a fresh one under the launch lock. No start path leaves a
+  stale-version daemon running. The exclusive vault lock guarantees at most
+  one daemon per vault, and the single start path guarantees that the one
+  daemon is current after any successful start.
 
-An external launch lock under the canonical per-user target-lock registry
-serializes racing starters: two CLI invocations that both find no daemon and
-both try to start one serialize there, and the second re-checks discovery after
-acquiring it instead of spawning a redundant daemon. Keeping launch
-coordination outside `$DOCBANK_HOME` is essential: discovery and launch do not
+A launch lock serializes racing starters. It lives outside `$DOCBANK_HOME`,
+under the canonical per-user target-lock registry. When two CLI invocations
+both find no daemon and both try to start one, the second waits for the lock
+and then re-checks discovery instead of spawning a redundant daemon. Launch
+coordination stays outside `$DOCBANK_HOME` so that discovery and launch do not
 create the target, its database, logs, or runtime records before the child
 daemon acquires the vault-tree lock. `daemon restart` reuses the same lock for
 the start half of the restart. Bootstrap stderr is captured in a private
@@ -133,10 +138,10 @@ new listener that reused the port.
 ## Auto-start and idle shutdown
 
 Every data command calls `daemonconn.Ensure`, which discovers a version- and
-protocol-matched daemon or starts one — the CLI never fails with "no daemon
+protocol-matched daemon or starts one. The CLI never fails with "no daemon
 running" for `add`, `ls`, `cat`, and the rest. The protocol revision in the
 runtime record distinguishes incompatible development builds that share the
-same version string; a missing or mismatched revision forces replacement
+same version string. A missing or mismatched revision forces replacement
 before a CLI data request is sent. `daemon status` and `daemon stop` are
 discovery-only and never start a daemon, so checking on or stopping the daemon
 can't accidentally spawn one.
@@ -145,17 +150,16 @@ A background-spawned daemon (started via auto-start, `daemon start`, or
 `daemon restart`) exits after `[server] idle_timeout` (default 30
 minutes) with no requests, so spawned daemons don't accumulate across
 sessions. `idle_timeout = "0"` disables idle shutdown. A foreground
-`docbank daemon run` never idles out — it runs until signaled or
-stopped.
+`docbank daemon run` never idles out. It runs until signaled or stopped.
 
 ## Background tasks
 
 Every daemon-owned task runs under one supervisor rooted in the daemon's
-shutdown context. Names are unique and stable for the lifetime of that daemon;
-a task panic is recovered and recorded as a failure rather than crashing the
+shutdown context. Names are unique and stable for the lifetime of that daemon.
+A task panic is recovered and recorded as a failure, so it does not crash the
 process. `docbank jobs` and authenticated `GET /api/v1/jobs` expose running and
 terminal state in deterministic order. Terminal records remain until restart,
-which makes a failed task visible instead of silently disappearing.
+so a failed task stays visible.
 
 Every daemon runs three jobs that derive information from retained content:
 
@@ -188,19 +192,20 @@ authority.
 
 The supervisor stops accepting work as soon as shutdown begins, cancels every
 runner, and waits before SQLite and blob storage close. Runners must honor
-their context; the wait is bounded so a defective runner cannot prevent daemon
+their context. The wait is bounded so a defective runner cannot prevent daemon
 exit forever. The background daemon's idle-timeout loop is supervised through
 this same path. Text extraction, watched inboxes, and configured automatic
 packing use this lifecycle. Scheduled packing appears as the `storage:pack`
 job, waits the configured interval after each completed run, and uses the same
-maintenance gate as explicit packing rather than creating an unmanaged
-goroutine. Garbage collection and repacking remain explicit operator actions.
+maintenance gate as a requested pack. It does not create an unmanaged
+goroutine. Garbage collection and repacking run only when an operator requests
+them.
 
 ## Logs
 
-A background daemon creates its logs only after acquiring vault ownership, then
-logs structured JSON to `$DOCBANK_HOME/logs/`, one
-file per day (`docbank-YYYY-MM-DD.log`), rotated at 50 MiB with the 5
-most recent rotated files retained. A foreground `docbank daemon run`
-logs to stderr instead. `DOCBANK_LOG_LEVEL` controls the level for both
-(see [CLI Reference](../cli-reference.md)).
+A background daemon creates its logs only after acquiring vault ownership. It
+then logs structured JSON to `$DOCBANK_HOME/logs/`, one file per day
+(`docbank-YYYY-MM-DD.log`). Files rotate at 50 MiB, and the 5 most recent
+rotated files are kept. A foreground `docbank daemon run` logs to stderr
+instead. `DOCBANK_LOG_LEVEL` controls the level for both (see
+[CLI reference](../cli-reference.md)).

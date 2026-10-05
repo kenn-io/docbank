@@ -33,13 +33,13 @@ preserved. Without `--dest`, files land in `/inbox`.
 
 The first `add` command starts the daemon, the background process that owns
 and reads the vault. Data commands start it automatically when needed. Use
-`docbank daemon status` to inspect it and `docbank daemon stop` to stop it; it
+`docbank daemon status` to inspect it and `docbank daemon stop` to stop it. It
 also exits after a period of inactivity. See [Daemon](architecture/daemon.md)
 for startup and lifetime rules.
 
 Repeat the same import to see the completed files skipped. Docbank checks
-content at the destination name and its collision suffixes; see
-[Importing Documents](usage/importing.md) for the matching rules:
+content at the destination name and its collision suffixes. See
+[Importing documents](usage/importing.md) for the matching rules.
 
 ```
 added: 0  skipped: 214  failed: 0
@@ -97,7 +97,7 @@ docbank cat /taxes/checklist.pdf
 docbank get /taxes/checklist.pdf /tmp/checklist.pdf
 ```
 
-Every imported file also has a stable immutable content-version UUID:
+Every imported file also has an immutable content version with its own UUID:
 
 ```bash
 docbank versions list /taxes/checklist.pdf
@@ -106,7 +106,7 @@ docbank versions cat <version-id> > /tmp/checklist-version.pdf
 ```
 
 The version ID survives node renames and moves. Replace the current content
-without changing the stable file node:
+while keeping the same file node:
 
 ```bash
 docbank put ~/Documents/revised-checklist.pdf /taxes/checklist.pdf
@@ -115,10 +115,10 @@ docbank versions list /taxes/checklist.pdf
 
 `put` hashes the source before contacting the daemon, then inspects the target
 and uploads it, showing separate progress for both file passes. The upload
-requires that freshly observed target revision, so a concurrent change fails
-instead of being overwritten. The prior version remains available through
-`docbank versions cat <old-version-id>`. Adopt it as current without
-erasing the replacement:
+requires the target revision it just observed, so it fails if the target
+changed in the meantime instead of overwriting that change. The prior version
+remains available through `docbank versions cat <old-version-id>`. Adopt it as
+current without erasing the replacement:
 
 ```bash
 docbank revert /taxes/checklist.pdf <old-version-id>
@@ -126,7 +126,7 @@ docbank revert /taxes/checklist.pdf <old-version-id>
 
 Reverting creates a new current version that records the older version it
 uses. Docbank reuses the stored bytes and preserves both earlier versions.
-See [Editing & Versions](architecture/editing-and-versions.md) for retention
+See [Editing and versions](architecture/editing-and-versions.md) for retention
 and revision rules.
 
 For text and other editor-friendly files, `edit` verifies a private copy, opens
@@ -156,7 +156,7 @@ without deleting any document.
 
 ## Reorganize
 
-Moves and renames are metadata-only; the stored bytes never move.
+Moves and renames change only metadata. The stored bytes do not move.
 
 ```bash
 # Rename in place (destination doesn't exist; its parent does)
@@ -186,8 +186,8 @@ ID   PATH
 
 ## Trash and recovery
 
-`rm` is soft deletion — the node (and its subtree, for directories) moves
-to the trash and its name becomes reusable:
+`rm` is soft deletion. The node (and its subtree, for directories) moves to
+the trash and its name becomes reusable:
 
 ```bash
 docbank rm /taxes/2024/return.pdf
@@ -207,7 +207,7 @@ docbank trash empty --older-than 30d --run   # permanently delete old trash
 ## Reclaim and verify
 
 Emptying the trash deletes tree entries, but the underlying bytes remain
-until you garbage-collect. `gc` is a dry run by default; it removes loose files
+until you garbage-collect. `gc` is a dry run by default. It removes loose files
 directly and marks unreachable packed payload as pending repack:
 
 ```bash
@@ -257,13 +257,14 @@ DOCBANK_HOME="$DOCBANK_RESTORE" docbank verify
 ```
 
 You can use the restored vault independently. Restore does not replace the
-running source vault. See [Backup & Restore](usage/backup.md) for progress
-modes, snapshot selection, overwrite rules, and the exact proof returned by
-restore.
+running source vault. See [Backup and restore](usage/backup.md) for progress
+modes, snapshot selection, overwrite rules, and the proof that restore
+returns.
 
-That is the core document workflow. Continue with
-[Capabilities](capabilities.md) for the complete product map, see the real
-interfaces in the [Visual Tour](tour.md), continue with
-[Vault Lifecycle](usage/lifecycle.md) for maintenance and upgrades, explore
-[Docbank for Agents](agents.md) for automation, or use the
-[CLI Reference](cli-reference.md) for exact command semantics.
+That is the core document workflow. From here:
+
+- [Capabilities](capabilities.md) gives the complete product map.
+- The [Visual tour](tour.md) shows the real interfaces.
+- [Vault lifecycle](usage/lifecycle.md) covers maintenance and upgrades.
+- [Docbank for agents](agents.md) covers automation.
+- The [CLI reference](cli-reference.md) documents each command.

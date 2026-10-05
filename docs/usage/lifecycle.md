@@ -1,6 +1,6 @@
 ---
-title: Vault Lifecycle
-description: Operate a docbank vault safely from first import through maintenance, upgrades, snapshots, and recovery.
+title: Vault lifecycle
+description: Operate a Docbank vault safely from first import through maintenance, upgrades, snapshots, and recovery.
 ---
 
 # Vault lifecycle
@@ -13,10 +13,10 @@ You choose when to delete retained data and reclaim its storage.
 
 In standalone CLI mode, the daemon is the only process that opens `docbank.db`
 and the blob store. Embedded Go applications own separately rooted vaults
-in-process; they never share a root with a daemon.
-Ordinary CLI commands send HTTP requests to the daemon and start a compatible
-background daemon automatically. See [Daemon](../architecture/daemon.md) for
-ownership and startup rules.
+in-process. They never share a root with a daemon. Ordinary CLI commands send
+HTTP requests to the daemon and start a compatible background daemon
+automatically. See [Daemon](../architecture/daemon.md) for ownership and
+startup rules.
 
 ```bash
 docbank daemon status
@@ -24,7 +24,7 @@ docbank daemon start       # optional: data commands do this automatically
 docbank daemon stop        # graceful; does not start a stopped daemon
 ```
 
-Use `docbank daemon run` when diagnosing startup or configuration problems: it
+Use `docbank daemon run` when diagnosing startup or configuration problems. It
 stays in the foreground and writes logs to the terminal. Background logs live
 under `$DOCBANK_HOME/logs/`.
 
@@ -33,8 +33,8 @@ under `$DOCBANK_HOME/logs/`.
 ### As documents arrive
 
 Import into `/inbox`, then file from there. Re-running an interrupted import is
-safe: matching content already present under a destination candidate is
-skipped.
+safe. Docbank skips matching content already present under a destination
+candidate.
 
 ```bash
 docbank add ~/Desktop/scans
@@ -53,8 +53,8 @@ Deletion and physical reclamation have separate gates:
 2. `trash empty` permanently removes old tree entries, but is a dry run unless
    `--run` is present.
 3. `gc` reclaims unreachable loose bytes, but is also a dry run unless `--run`
-   is present. Packed bytes become logically dead and await repacking; they are
-   not reported as physically reclaimed.
+   is present. Packed bytes become logically dead and wait for repacking. They
+   are not reported as physically reclaimed.
 4. `storage repack` rewrites eligible sparse packs and retires their old files.
 
 There is no `rm --hard`, and none of these maintenance commands is scheduled
@@ -103,11 +103,11 @@ docbank update
 ```
 
 An install stops a running daemon, replaces the binary, and starts the new
-daemon. If installation fails, docbank attempts to restart the old daemon.
+daemon. If installation fails, Docbank attempts to restart the old daemon.
 `daemon start`, `daemon restart`, and command auto-start also replace a daemon
 whose binary or API protocol is incompatible with the invoking CLI.
 
-For unattended installation, use `docbank update --yes`; do not use `--force`
+For unattended installation, use `docbank update --yes`. Do not use `--force`
 as a routine upgrade flag. It exists to bypass cached release metadata and to
 allow replacing an unversioned development build.
 
@@ -115,7 +115,7 @@ allow replacing an unversioned development build.
 
 Use `backup init`, `backup create`, `backup list`, `backup verify`, and
 `backup restore` to capture and test recovery snapshots. Unchanged content is
-reused across captures. See [Backup & Restore](backup.md) for the procedure.
+reused across captures. See [Backup and restore](backup.md) for the procedure.
 Backup repositories are compressed but **not encrypted**.
 
 ### When is a directory copy enough?
@@ -132,8 +132,8 @@ docbank storage list --json
 Find the store whose `role` is `primary`. Its `authoritative_objects` can be
 compared with `tracked_blobs` from `docbank info`, but the reports are separate
 live snapshots. Watches, ingests, clients, and storage jobs can change either
-count between requests and before daemon shutdown, so matching values are not
-a backup-completeness proof. `sole_authority_objects` is weaker still: a blob
+count between requests and before daemon shutdown, so matching values do not
+prove that a copy is complete. `sole_authority_objects` is weaker still: a blob
 held by two secondaries and absent from the primary is not a sole copy in
 either store.
 
@@ -143,10 +143,10 @@ partial snapshot. Merely copying `config.toml` preserves binding coordinates,
 not secondary bytes. See [Understand primary coverage](storage.md#understand-primary-coverage)
 for the reporting boundary.
 
-If you deliberately need a local-state snapshot, first stop every producer,
-watch, storage job, and client, then stop the daemon before copying so the
-SQLite database and primary catalog cannot change during the copy. Do not use
-this procedure as a complete backup when the vault has used secondary storage.
+If you need a local-state snapshot, first stop every producer, watch, storage
+job, and client, then stop the daemon before copying so the SQLite database and
+primary catalog cannot change during the copy. Do not use this procedure as a
+complete backup when the vault has used secondary storage.
 
 ```bash
 vault="${DOCBANK_HOME:-$HOME/.docbank}"
@@ -156,7 +156,7 @@ docbank daemon start
 ```
 
 When the primary holds all content, copying the whole stopped vault directory
-captures it. The stored archive consists of `docbank.db` and `blobs/`; retain
+captures it. The stored archive consists of `docbank.db` and `blobs/`. Keep
 `config.toml` too when you have customized it. Logs, lock files, and stale
 runtime records are not archive data.
 
@@ -181,7 +181,7 @@ normal use.
 For routine recovery testing, prefer restoring the latest built-in snapshot to
 a separate target and inspecting it under a separate `DOCBANK_HOME`. Restore
 already verifies repository reads, SQLite integrity, and manifest statistics
-before it reports success; `docbank verify` then exercises the resulting live
+before it reports success. `docbank verify` then exercises the resulting live
 store through its normal daemon boundary.
 
 ## Move a vault
@@ -196,15 +196,15 @@ The portable path is a verified backup restore:
 
 Default restore puts all recovered content in a fresh local primary store, so
 the destination does not inherit source paths, endpoints, credentials, or
-ownership epochs. Use an owner-private store mapping only when deliberately
-reconstructing selected placement; see
-[Multi-store Storage](storage.md#backup-and-restore).
+ownership epochs. Use an owner-private store mapping only to reconstruct
+selected placement. See [Multi-store storage](storage.md#backup-and-restore).
 
 If the primary holds every blob, you can also copy the stopped vault directory.
-Stop the source daemon, copy the complete directory, and run the same two checks.
-Linux, macOS, and Windows share the logical vault format. A copied customized
-`config.toml` may contain machine-specific watched paths, secondary bindings,
-or credential profiles; review it before starting the destination daemon.
+Stop the source daemon, copy the complete directory, and run the same two
+checks. Linux, macOS, and Windows share the logical vault format. A copied
+customized `config.toml` may contain machine-specific watched paths, secondary
+bindings, or credential profiles. Review it before starting the destination
+daemon.
 
 ## When something looks wrong
 

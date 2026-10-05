@@ -1,20 +1,20 @@
 ---
-last_edited: 2026-10-01
+last_edited: 2026-10-05
 title: Model Context Protocol
-description: Connect a local MCP client to Docbank's bounded, daemon-first document surface.
+description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
 
 # Model Context Protocol
 
-Docbank exposes a bounded, read-mostly Model Context Protocol server for local
-agents. It implements exactly MCP `2026-07-28` with the official Go SDK at
+Docbank provides a read-mostly Model Context Protocol (MCP) server for local
+agents. It implements only MCP `2026-07-28`, using the official Go SDK at
 `github.com/modelcontextprotocol/go-sdk` v1.7.0. Older MCP versions and the
-legacy `initialize` flow are rejected; clients start with `server/discover`.
+legacy `initialize` flow are rejected. Clients start with `server/discover`.
 
 The MCP process is a client of the selected vault's daemon. It discovers or
-starts that daemon exactly like the CLI and never opens `docbank.db`, a blob,
-pack, or rendition directly. There is no MCP-only embedded-vault path and no
-remote-daemon option.
+starts that daemon the same way the CLI does and never opens `docbank.db`, a
+blob, pack, or rendition directly. There is no MCP-only embedded-vault path and
+no remote-daemon option.
 
 ## Start the server
 
@@ -69,24 +69,24 @@ address.
 
 The HTTP credential is resolved from its environment binding when the MCP
 process starts and remains fixed for that process. Restart the MCP process to
-rotate it. It is separate from the daemon API key: Docbank refuses startup if
-the values match and repeats that check whenever a restarted daemon is
-acquired. The MCP bearer never appears in a flag, URL, runtime record,
-discovery result, log, or error.
+rotate it. It is separate from the daemon API key. Docbank refuses to start if
+the values match and repeats that check whenever it acquires a restarted
+daemon. The MCP bearer never appears in a flag, URL, runtime record, discovery
+result, log, or error.
 
 This bearer is a fixed local credential, not MCP OAuth. Docbank does not
 publish protected-resource metadata, authorization-server discovery, dynamic
 client registration, scopes, or token refresh. A client may connect locally or
-through a trusted tunnel, but it must be able to set the Authorization header;
-clients that require the MCP HTTP OAuth flow are unsupported.
+through a trusted tunnel, but it must be able to set the Authorization header.
+Clients that require the MCP HTTP OAuth flow are not supported.
 
 Both transports have the fixed read catalog described below.
 `--allow-processing` adds only guarded processing start.
-`--allow-package-writes` separately permits load-file preflight, import, and
-custodian changes. `--allow-photo-edits` separately permits photo asset
-mutations. `--allow-export-writes` enables native export jobs and local downloads.
+`--allow-package-writes` permits load-file preflight, import, and custodian
+changes. `--allow-photo-edits` permits photo asset mutations.
+`--allow-export-writes` enables native export jobs and local downloads.
 `--allow-report-writes` enables frozen report creation, revision, and local
-delivery. Each flag is independent; enable the combination you need at startup.
+delivery. Each flag is independent. Enable the combination you need at startup.
 
 ## Exact protocol contract
 
@@ -129,10 +129,10 @@ acknowledges the request and completes immediately.
 
 ## Tool catalog
 
-All inputs and outputs use closed JSON Schema 2020-12 objects: unknown fields
-are rejected. Every successful tool result contains both structured content
-and its JSON text representation. The complete result, including resource
-links, is capped at 1 MiB.
+All inputs and outputs use closed JSON Schema 2020-12 objects, so unknown
+fields are rejected. Every successful tool result contains both structured
+content and its JSON text representation. The complete result, including
+resource links, is capped at 1 MiB.
 
 | Tool | Contract and important bounds |
 | --- | --- |
@@ -144,7 +144,7 @@ links, is capped at 1 MiB.
 | `get_vault_info` | Returns the stable vault ID and aggregate live, trash, version, and blob counts. It never returns the host vault path. |
 | `list_documents` | Lists current, live files. `path_prefix` defaults to `/` and is capped at 16,384 Unicode characters and 16 KiB of UTF-8. Sorts are `path`, `name`, `modified_at`, `size`, and `media_type`, in `asc` or `desc` order. Page size defaults to 50 and is capped at 250. |
 | `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. |
-| `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity fails closed. |
+| `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
 | `read_rendition_text` | Reads the exact vault/node/version/attachment tuple described under [Resources](#resources-and-rendition-windows). |
 | `get_processing_plan` | Requires an exact node ID, content-version UUID, and 1–128-character processing profile name. Returns the complete provider, trust-boundary, retention, estimate, consent, and backup disclosure plus its fingerprint. |
@@ -174,42 +174,44 @@ Starting the server with `--allow-photo-edits` adds these write tools:
 | `promote_photo_asset` | Explicitly creates an asset for one live file node. |
 
 Photo writes make one daemon request. An ambiguous transport failure returns
-`processing_outcome_unknown`; inspect the asset before retrying. Display and
+`processing_outcome_unknown`. Inspect the asset before retrying. Display and
 vault settings writes remain HTTP and CLI operations.
 
-`list_documents` uses live keyset pagination, not a snapshot. A mutation between
-pages can change later membership or order. Each opaque cursor is at most 32 KiB of ASCII, expires after 15 minutes, and
-authenticates the normalized prefix, sort, direction, page size, position, and
-traversal. Cursors carry their own position, so paging does not consume a shared
-daemon cursor quota. The size bound accommodates paths up to 16 KiB. Tampered,
-expired, reused-for-another-query, or daemon-restart-invalidated cursors fail
-instead of restarting at page one.
+`list_documents` uses live keyset pagination, not a snapshot. A mutation
+between pages can change later membership or order. Each opaque cursor is at
+most 32 KiB of ASCII, expires after 15 minutes, and authenticates the
+normalized prefix, sort, direction, page size, position, and traversal. Cursors
+carry their own position, so paging does not consume a shared daemon cursor
+quota. The size bound accommodates paths up to 16 KiB. Tampered, expired,
+reused-for-another-query, or daemon-restart-invalidated cursors fail instead of
+restarting at page one.
 
-`search_documents` resolves its selector to an exact current, live source
-fence before searching. Filters may select a tag UUID, a MIME type of at most
-255 characters, a positive ancestor node ID, and RFC 3339 `modified_since` or
-`modified_before` bounds of at most 64 characters each. A scope above 4,096 versions returns
-`scope_too_large` with the observed count and is never truncated or broadened.
-The result reports the exact fence and fingerprint, requested and actual mode,
-coverage, skipped reasons, and truncation state. It returns at most 100 hits;
-each excerpt is capped at 512 characters and each hit has at most 64 evidence
-identities of at most 1,024 characters each. A result contains at most 64
-skipped-reason codes of at most 64 characters each.
+Before searching, `search_documents` resolves its selector to a source fence:
+the exact set of current, live versions it will search. Filters may select a
+tag UUID, a MIME type of at most 255 characters, a positive ancestor node ID,
+and RFC 3339 `modified_since` or `modified_before` bounds of at most 64
+characters each. A scope above 4,096 versions returns `scope_too_large` with
+the observed count and is never truncated or broadened. The result reports the
+fence and its fingerprint, requested and actual mode, coverage, skipped
+reasons, and truncation state. It returns at most 100 hits. Each excerpt is
+capped at 512 characters and each hit has at most 64 evidence identities of at
+most 1,024 characters each. A result contains at most 64 skipped-reason codes
+of at most 64 characters each.
 
-Document summaries use paths of at most 16,384 characters, names and MIME
-types of at most 255 characters, and at most 64 active rendition identities.
-Processing-plan responses contain at most 129 flow hops, 129 disclosed
-classes, and 129 retained classes. Each runtime disclosure has at most 64
-metadata classes and 64 retained-artifact roles; each flow hop has at most
-three input classes. Processor, endpoint, deployment, model, revision, and
-vector-space strings are capped at 1,024 characters; provider and class names
-are capped at 128. The backup-consequence text is capped at 4,096 characters.
+Document summaries use paths of at most 16,384 characters, names and MIME types
+of at most 255 characters, and at most 64 active rendition identities.
+Processing-plan responses contain at most 129 flow hops, 129 disclosed classes,
+and 129 retained classes. Each runtime disclosure has at most 64 metadata
+classes and 64 retained-artifact roles, and each flow hop has at most three
+input classes. Processor, endpoint, deployment, model, revision, and
+vector-space strings are capped at 1,024 characters, and provider and class
+names at 128. The backup-consequence text is capped at 4,096 characters.
 Processing status contains at most 64 embedding job IDs and caps state, phase,
-and failure codes at 64 characters; `completed_bindings` is capped at 64.
-Processing coverage contains at most 65 classes, with class names capped at
-128 characters, states at 64, and each class count at 4,096. These schema
-limits are admission bounds, not promises that a configured provider or vault
-will fill them.
+and failure codes at 64 characters. `completed_bindings` is capped at 64.
+Processing coverage contains at most 65 classes, with class names capped at 128
+characters, states at 64, and each class count at 4,096. These schema limits
+are admission bounds, not promises that a configured provider or vault will
+fill them.
 
 Expected domain failures return `isError: true` with a structured payload
 capped at 1 KiB and a stable code:
@@ -279,11 +281,10 @@ docbank mcp --transport stdio --allow-processing
 ```
 
 The tool catalog then adds `start_processing`. It accepts only a
-content-version UUID and the exact 64-character plan fingerprint previously
-returned by `get_processing_plan` from the same MCP process. The process
-remembers at most 4,096 reviewed plans. An evicted plan, a fingerprint from
-another process, changed disclosure, changed profile, or stale source fails
-closed.
+content-version UUID and the 64-character plan fingerprint previously returned
+by `get_processing_plan` from the same MCP process. The process remembers at
+most 4,096 reviewed plans. An evicted plan, a fingerprint from another process,
+changed disclosure, changed profile, or stale source is rejected.
 
 MCP cannot grant consent. The tool sends `consent=false` to the daemon and
 succeeds only when the operator already granted consent for the identical plan
@@ -301,14 +302,14 @@ docbank processing build id:<node-id> \
 
 The fingerprint and content-version ID printed by the CLI plan must match the
 MCP plan. `processing build --consent` records consent and also starts the
-reviewed work; it is not a consent-only command. See [Document
-processing](document-processing.md) for the complete operator flow.
+reviewed work. It is not a consent-only command. See
+[Document processing](document-processing.md) for the complete operator flow.
 
 After consent is active, `start_processing` returns the stable queued job
 identities, including at most 64 embedding job IDs, and does not poll. An
 initial `processing_outcome_unknown` result contains no job ID, so its outcome
-cannot be reconciled through MCP. Do not blindly retry it: MCP has no job lookup
-for that case.
+cannot be reconciled through MCP. Do not retry it blindly, because MCP has no
+job lookup for that case.
 
 ## Optional package writes
 
@@ -340,8 +341,8 @@ only when the agent may perform these local reads and vault changes.
 capabilities are needed.
 
 No MCP tool can delete documents, move, rename, tag, restore, prune, pack,
-repack, change configuration, select credentials, grant processing consent,
-or return source bytes. Package preflight may upload a local source container;
+repack, change configuration, select credentials, grant processing consent, or
+return source bytes. Package preflight may upload a local source container, but
 there is no general document upload tool.
 
 ## Cache behavior
@@ -362,8 +363,8 @@ public catalogs.
 
 ## HTTP limits and unsupported surface
 
-HTTP is stateless and POST-only. Each request contains one JSON-RPC message;
-there are no GET streams, sessions, `Mcp-Session-Id`, resume support, or
+HTTP is stateless and POST-only. Each request contains one JSON-RPC message.
+There are no GET streams, sessions, `Mcp-Session-Id`, resume support, or
 `Last-Event-ID`. The server allows 10 seconds to receive request headers. After
 the headers arrive and the request passes the boundary checks, a separate
 two-minute deadline covers request-body reads, daemon work, and response
@@ -382,7 +383,7 @@ writes. The public limits are:
 
 The request Host must identify a loopback address or `localhost`. An absent
 Origin is valid for non-browser clients. If Origin is present, exactly one
-plain-HTTP Origin must match that local Host and port; unsafe or cross-origin
+plain-HTTP Origin must match that local Host and port. Unsafe or cross-origin
 requests are rejected before authentication. Forwarded-host headers do not
 change this decision.
 
@@ -394,38 +395,39 @@ or expose a general write surface.
 Read calls may reacquire the local daemon and retry once only when transport
 failure occurs before any response. Failures after a response are not replayed.
 Daemon acquisition is capped at 45 seconds. Each HTTP request has the
-two-minute post-header deadline above; stdio work otherwise runs until
-completion or client cancellation. Daemon restart, an idle shutdown, or a
-stale runtime record therefore produces a bounded failure or recovers on the
-next safe read without terminating stdio with diagnostics on stdout or leaving
-HTTP pinned to a dead client.
+two-minute post-header deadline above. Stdio work otherwise runs until
+completion or client cancellation. Daemon restart, an idle shutdown, or a stale
+runtime record therefore produces a bounded failure or recovers on the next
+safe read without terminating stdio with diagnostics on stdout or leaving HTTP
+pinned to a dead client.
 
 ## Native export jobs
 
 `get_export_plan`, `get_export_problems`, and `get_export_status` are available
 with all write flags disabled, over stdio or HTTP. Plan inspection requires a
-retained plan ID. `get_export_plan` returns the complete `plan`, including richer
-source, role, count, and volume fields when present. Its `expires_at` is the
-admission deadline; read availability can last longer while a job retains it.
-Reading does not extend either deadline.
+retained plan ID. `get_export_plan` returns the complete `plan`, including
+richer source, role, count, and volume fields when present. Its `expires_at` is
+the admission deadline. The plan can stay readable longer while a job retains
+it. Reading does not extend either deadline.
 
-`get_export_problems` returns a `problems` object with `plan_id`, `fingerprint`,
-`after`, `next`, `total`, and `items`. Omit `after` for the first page, then pass a
-nonzero `next` as `after`; zero marks the last page. The tools return private
-results with `ttlMs: 0`. MCP may retry a read once when transport fails before
-any response starts. Domain errors and partial responses are never retried.
+`get_export_problems` returns a `problems` object with `plan_id`,
+`fingerprint`, `after`, `next`, `total`, and `items`. Omit `after` for the
+first page, then pass a nonzero `next` as `after`. Zero marks the last page.
+The tools return private results with `ttlMs: 0`. MCP may retry a read once
+when transport fails before any response starts. Domain errors and partial
+responses are never retried.
 
 Plan reads use the shared API-key owner and cannot inspect browser-owned plans.
-An expired or removed plan needs a fresh preview with new IDs for a new export;
-inspect an existing job through status. Problem details remain frozen after
+An expired or removed plan needs a fresh preview with new IDs for a new export.
+Inspect an existing job through status. Problem details remain frozen after
 source edits. Totals count unavailable outputs and inventory problems, not
 selected documents. Originals-only previews normally have none.
 
-The fixed 50-item page must fit within 64 KiB. An `export_limit` response returns
-no partial page; HTTP has the same limit and cannot request fewer items.
-Releasing jobs cannot shrink that page. See
-[retained-plan inspection](export-bundles.md#inspect-a-retained-plan) for offsets,
-identity fields, and retention behavior.
+The fixed 50-item page must fit within 64 KiB. An `export_limit` response
+returns no partial page. HTTP has the same limit and cannot request fewer
+items. Releasing jobs cannot shrink that page. See
+[retained-plan inspection](export-bundles.md#inspect-a-retained-plan) for
+offsets, identity fields, and retention behavior.
 
 Start with `docbank mcp --allow-export-writes` to let a client retain exact
 originals and manage their export. Review the selection with the operator.
@@ -438,32 +440,35 @@ originals and manage their export. Review the selection with the operator.
 | `download_export` | `job_id`, absolute `destination_path`, optional `overwrite` (default false). Returns the verified `receipt` and publication state. |
 | `release_export` | `job_id`. Deletes a terminal job and its retained archive, returning `released: true`. |
 
-List versions for each selected node. Copy `content_version_id` to `version_id`,
-`blob_hash` to `sha256`, and copy `node_id` and `size` into each member. This takes
-one `list_document_versions` call per node, with more pages if needed. Each preview
-accepts 1–1,000 retained original versions totaling at most 50 GiB. It can include
-multiple versions of the same node. Size is required, including zero for an empty
-original. Optional `revision` is a current node precondition; omit it unless
-needed. A version's historical node revision is not that precondition.
+List versions for each selected node. Copy `content_version_id` to
+`version_id`, `blob_hash` to `sha256`, and copy `node_id` and `size` into each
+member. This takes one `list_document_versions` call per node, with more pages
+if needed. Each preview accepts 1–1,000 retained original versions totaling at
+most 50 GiB. It can include multiple versions of the same node. Size is
+required, including zero for an empty original. Optional `revision` is a
+current node precondition. Omit it unless needed. A version's historical node
+revision is not that precondition.
 
-Generate all operation IDs before calling. After `export_outcome_unknown`, inspect
-the known job ID or explicitly replay the same request and IDs. The first write
-after a daemon restart can report this even when nothing was sent; Docbank does
+Generate all operation IDs before calling. After `export_outcome_unknown`,
+inspect the known job ID or replay the same request and IDs. The first write
+after a daemon restart can report this even when nothing was sent. Docbank does
 not reconnect and repeat writes automatically. Preview replay must keep member
 order and remains subject to its original ten-minute admission window. After a
-delayed start response, use job status instead of replaying preview. Never reuse
-a released job ID: its replay record has been deleted.
+delayed start response, use job status instead of replaying preview. Never
+reuse a released job ID: its replay record has been deleted.
 
 For `export_timeout`, `export_canceled`, or `export_failed` during start,
 download, or release, read `get_export_status` before retrying. Use the start
-operation ID as the job ID. After a download error, inspect the destination too;
-the file may already be saved. After a release error, not found confirms removal.
+operation ID as the job ID. After a download error, inspect the destination
+too, because the file may already be saved. After a release error, not found
+confirms removal.
 
 MCP shares the API-key owner with the CLI. Completed jobs still occupy the two
-shared job slots until released or expired. Release does not delete originals or
-local downloads. `export_retained` means a download ticket or lease still holds
-the archive; retry release after it closes. The source and plan records have
-separate global limits. See [export limits and recovery](export-bundles.md).
+shared job slots until released or expired. Release does not delete originals
+or local downloads. `export_retained` means a download ticket or lease still
+holds the archive. Retry release after it closes. The source and plan records
+have separate global limits. See
+[export limits and recovery](export-bundles.md).
 
 To save an export:
 
@@ -485,25 +490,28 @@ cancels, or recreates the job automatically.
 
 `state: "published"` means the verified file is saved.
 `state: "published_durability_unknown"` means the file became visible but the
-subsequent directory sync failed. Both return the receipt. `cleanup_failed: true`
-means private staging cleanup failed after publication; the saved file remains.
-Before publication, ordinary failures preserve the destination and attempt
-stage cleanup. `export_integrity` identifies a receipt or archive mismatch;
-`export_local_io` identifies a local file-operation failure. The operator log
-records the operation and its cause; the client receives a fixed message.
-A failed stage cleanup can leave a private stage behind and is logged separately.
-A secondary cleanup failure does not replace the original error.
+subsequent directory sync failed. Both return the receipt.
+`cleanup_failed: true` means private staging cleanup failed after publication.
+The saved file remains. Before publication, ordinary failures preserve the
+destination and attempt stage cleanup. `export_integrity` identifies a receipt
+or archive mismatch, and `export_local_io` identifies a local file-operation
+failure. The operator log records the operation and its cause. The client
+receives a fixed message. A failed stage cleanup can leave a private stage
+behind and is logged separately. A secondary cleanup failure does not replace
+the original error.
 
 `export_unavailable` means the daemon has no export worker. That request made
-no change; check the daemon and retry. For `export_expired`, preview again with
-new IDs if admission expired, or release a retained job whose archive is missing.
+no change. Check the daemon and retry. For `export_expired`, preview again with
+new IDs if admission expired, or release a retained job whose archive is
+missing.
 
 The HTTP two-minute deadline includes daemon verification, transfer, and local
 verification. Archive size alone cannot predict whether all three fit. For a
 large job, use `docbank export download <job-id> <path>` against the same vault
 or a suitable stdio invocation. A later download obtains a fresh ticket and
-transfers the whole file again. A lost response or cancellation after publication
-can leave a verified destination: inspect that file before retrying with overwrite.
+transfers the whole file again. A lost response or cancellation after
+publication can leave a verified destination. Inspect that file before retrying
+with overwrite.
 
 ## Frozen search reports
 
@@ -527,22 +535,23 @@ without it and can inspect CLI-created whole-vault or collection reports too.
 Creation through MCP accepts only exact current document selections. It starts
 no processing or provider work.
 
-1. Use `list_documents` or search to choose node/current-version pairs. For each
-   node, call `list_document_versions` and match the exact version to obtain
-   `blob_hash`. `get_document` inspects a chosen pair; it requires both IDs.
+1. Use `list_documents` or search to choose node/current-version pairs. For
+   each node, call `list_document_versions` and match the exact version to
+   obtain `blob_hash`. `get_document` inspects a chosen pair. It requires both
+   IDs.
 2. Build `selected_documents.documents` with each positive `node_id`, canonical
    lowercase UUIDv4 `version_id`, and lowercase SHA-256 `sha256`. Select each
    node once. Use the [report request format](search-exports.md)
    for terms, inclusive date cutoffs, timezone, and optional processing profile.
-3. Call `create_report`. Omitted `coverage_mode` means `strict`; choose
-   `available_only` explicitly if incomplete evidence is acceptable. A changed
-   selection returns `report_selection_changed`; refresh and reselect rather
-   than substituting newer versions automatically.
+3. Call `create_report`. Omitted `coverage_mode` means `strict`. Choose
+   `available_only` if incomplete evidence is acceptable. A changed selection
+   returns `report_selection_changed`. Refresh and reselect rather than
+   substituting newer versions automatically.
 4. For `needs_review`, page through `get_report_dates`. Keep each member's
    earlier candidates when `candidates_complete` is false. Continue with the
    returned cursor until `next_cursor` is absent. Review the evidence with the
    operator, then submit the existing [date-choice format](search-exports.md)
-   to `revise_report`. Restart date paging on the child; parent cursors cannot
+   to `revise_report`. Restart date paging on the child. Parent cursors cannot
    be used on it.
 5. Read counts and coverage through `get_report_summary`. Download a complete
    report before it expires. To export the same originals, pass the selected
@@ -556,10 +565,10 @@ can remain in an available-only packet without contributing to counted coverage.
 
 Create and revise return compact receipts: `report_id`, optional `parent_id`,
 `state`, `observed_at`, `expires_at`, and `unresolved_dates`. Complete receipts
-also contain `bundle_bytes` and `bundle_sha256`; needs-review receipts omit them.
-A large warning summary does not prevent delivery of the new handle. If full
-summary inspection returns `report_limit`, use
-`docbank search-export show <report-id> --json` or read it through HTTP; dates,
+also contain `bundle_bytes` and `bundle_sha256`. Needs-review receipts omit
+them. A large warning summary does not prevent delivery of the new handle. If
+full summary inspection returns `report_limit`, use
+`docbank search-export show <report-id> --json` or read it through HTTP. Dates,
 revision, and download remain available.
 
 A revision allows 1,000 choices and 4,096 UTF-8 bytes per reason, but the entire
@@ -568,39 +577,41 @@ individual maxima do not fit together. Choose shorter reasons where appropriate
 or submit batches to successive children. Docbank never splits a revision for
 you. For a larger batch, the existing HTTP/CLI revision path accepts 8 MiB.
 
-CLI and MCP share eight report handles. Every revision uses another slot; an
+CLI and MCP share eight report handles. Every revision uses another slot. An
 initial report plus seven revisions fills those slots if no other reports are
 retained. All descendants expire 30 minutes after the original observation.
-Download frees no slot, and there is no report release operation. Wait for expiry
-when capacity is full. The engine also permits two simultaneous builds and 64
-handles or pending builds globally. Restart loses live handles; history receipts
-do not restore their artifacts.
+Download frees no slot, and there is no report release operation. Wait for
+expiry when capacity is full. The engine also permits two simultaneous builds
+and 64 handles or pending builds globally. A restart loses live handles, and
+history receipts do not restore their artifacts.
 
-Writes are never automatically replayed. `report_outcome_unknown` means a create
-or revise call may have succeeded without a usable reply. Inspect history with
-the operator using `docbank search-export history --json`, or through web/HTTP.
-History records requests and outcomes but does not establish live availability
-or reliably identify a lost reply. There is no idempotent replay. A deliberate retry creates another observation or child and
-uses another slot. The first write after a daemon restart may also return this
-conservative error on a stale connection.
+Writes are never automatically replayed. `report_outcome_unknown` means a
+create or revise call may have succeeded without a usable reply. Inspect
+history with the operator using `docbank search-export history --json`, or
+through web/HTTP. History records requests and outcomes but does not establish
+live availability or reliably identify a lost reply. There is no idempotent
+replay. A deliberate retry creates another observation or child and uses
+another slot. The first write after a daemon restart may also return this error
+on a stale connection.
 
 Downloads compare the summary, stream size and digest, and independently
 verified packet before publication. The CLI uses the same verification path.
-Success reports `internally_consistent: true` and `source_verified: false`;
-this does not establish authenticity of the source vault. The receipt's state
+Success reports `internally_consistent: true` and `source_verified: false`.
+This does not establish authenticity of the source vault. The receipt's state
 is `published`, or `published_durability_unknown` if the file was saved but the
 final directory sync failed. `cleanup_failed` separately reports a staging
 cleanup failure. Local causes go to the operator log. If the reply is lost,
 inspect and verify the destination before retrying.
 
 Read `bundle_bytes` before choosing a transport. MCP HTTP's two-minute deadline
-covers transfer, verification, and publication; large ZIPs may not finish.
-Use stdio for the same live handle, or
-`docbank search-export download <report-id> --output report.zip` against the same
-vault. The CLI verifies the existing packet outside the MCP HTTP deadline and
-does not create another report. See [CLI report recovery](search-exports.md#inspect-or-recover-an-existing-export)
+covers transfer, verification, and publication, so large ZIPs may not finish.
+Use stdio for the same live handle, or `docbank search-export download
+<report-id> --output report.zip` against the same vault. The CLI verifies the
+existing packet outside the MCP HTTP deadline and does not create another
+report. See
+[CLI report recovery](search-exports.md#inspect-or-recover-an-existing-export)
 for inspection, history paging, and recovery after a local save error. ZIPs are
-capped at 512 MiB, and concurrent MCP
-downloads share a 1 GiB verification budget. `report_limit` can also mean that
-this shared allowance is exhausted. Source changes after capture leave the
-frozen report's evidence and counts unchanged.
+capped at 512 MiB, and concurrent MCP downloads share a 1 GiB verification
+budget. `report_limit` can also mean that this shared allowance is exhausted.
+Source changes after capture leave the frozen report's evidence and counts
+unchanged.

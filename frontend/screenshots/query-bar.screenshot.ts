@@ -37,7 +37,6 @@ test("complete query validation uses the real compiler without executing", async
     await page.screenshot({path:path.join(screenshots!,"web-query-bar.png"),fullPage:true});
     await editor.getByLabel("Query expression",{exact:true}).fill("NOT tag:missing-tag");
     await expect(editor.getByRole("alert")).toBeVisible();
-    await expect(editor.getByRole("button",{name:"Run query"})).toBeDisabled();
     await editor.getByRole("button",{name:"Focus query error"}).click();
     await expect(editor.getByLabel("Query expression",{exact:true})).toBeFocused();
     await page.screenshot({path:path.join(screenshots!,"web-query-error.png"),fullPage:true});

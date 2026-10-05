@@ -1,13 +1,10 @@
 ---
-last_edited: 2026-09-20
+last_edited: 2026-10-05
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
 
 # Configuration
-
-For optional pinned local email rendering, see
-[Email PDF configuration](usage/email-pdf.md#configure-the-renderer).
 
 Docbank uses `~/.docbank/` with default settings unless you choose another
 vault. Use `DOCBANK_HOME` to select its location. Add `config.toml` when you need
@@ -16,9 +13,12 @@ to change how the daemon runs.
 The file controls the listening address, authentication, idle timeout, backup
 repository, watched inboxes, the optional MCP HTTP credential binding, and
 secondary-store connections. A vault with only a primary store needs no
-configuration file. Each registered secondary store
-needs a matching connection profile after restart. Backup commands need either
-a configured repository or an explicit `--repo` flag.
+configuration file. Each registered secondary store needs a matching
+connection profile after restart. Backup commands need either a configured
+repository or a `--repo` flag.
+
+For optional pinned local email rendering, see
+[Email PDF configuration](usage/email-pdf.md#configure-the-renderer).
 
 For optional bounded PDF and density-qualified PNG rendering, see
 [Verified page images](architecture/page-images.md#configure-the-optional-runtime).
@@ -33,9 +33,8 @@ environment variable:
 export DOCBANK_HOME=/Volumes/Archive/docbank
 ```
 
-Run `docbank info` after selecting a vault to see its canonical path and stable
-vault ID. This is especially useful when one machine has several independent
-Docbank archives:
+Run `docbank info` after selecting a vault to see its canonical path and vault
+ID. This helps when one machine has several independent Docbank archives:
 
 ```bash
 DOCBANK_HOME=/Volumes/Archive/docbank docbank info
@@ -60,7 +59,7 @@ The directory layout is created on first use:
 └── daemon.<pid>.json    # runtime record of a live daemon
 ```
 
-`docbank.db` holds the local catalog; `blobs/` holds the built-in primary
+`docbank.db` holds the local catalog, and `blobs/` holds the built-in primary
 store. A `.zst` file contains compressed content. Hashes and document sizes
 always describe the decoded bytes. Docbank may compress new writes when the
 savings justify it, but it reads existing raw files without converting them.
@@ -84,33 +83,33 @@ A stopped copy of `docbank.db` and `blobs/` is complete only when the primary
 is an authorized location for every retained blob. Copying `config.toml` saves
 secondary-store coordinates, but does not copy their content. Stop the daemon
 before taking a filesystem snapshot. See
-[Vault Lifecycle](usage/lifecycle.md#take-a-coherent-backup).
+[Vault lifecycle](usage/lifecycle.md#take-a-coherent-backup).
 
 Docbank also keeps persistent per-user coordination files under
 `~/.local/state/docbank/target-locks`, using the home directory from the
-operating-system account record. They contain no document data, but must not be
-deleted: daemons and restores use their stable identities to exclude overlapping
-vault trees, including simultaneous restores whose target trees overlap, and
-to serialize daemon launch before the launcher owns or creates the vault root.
+operating-system account record. They contain no document data, but do not
+delete them. Daemons and restores use the files' stable identities to exclude
+overlapping vault trees, including simultaneous restores whose target trees
+overlap. They also use them to serialize daemon launch before the launcher
+owns or creates the vault root.
 
 !!! warning
-    Don't edit or prune `blobs/` or a secondary namespace by hand. Physical
-    files are authorized by the database (including for prior document
-    versions); use
-    `docbank trash empty --run`, `docbank gc --run`, and (for dead packed
-    payload) `docbank storage repack` to reclaim space; use `docbank verify` to
-    check integrity.
+    Don't edit or prune `blobs/` or a secondary namespace by hand. The
+    database authorizes physical files, including files for prior document
+    versions. To reclaim space, use `docbank trash empty --run`,
+    `docbank gc --run`, and (for dead packed payload) `docbank storage repack`.
+    To check integrity, use `docbank verify`.
 
 ## config.toml
 
 `$DOCBANK_HOME/config.toml` is read once, at daemon startup (`docbank
-daemon run` / `daemon start`). `docbank mcp --transport http` also reads and validates the whole file at
-startup, then resolves its named credential binding. The file is optional.
-There are no general per-field environment overrides. `DOCBANK_HOME` selects the vault, and named credential
-bindings can read explicitly configured environment variables.
-Backup commands can override their configured repository with `--repo`. An
-unrecognized key is treated as a typo and rejected at startup rather than
-silently ignored.
+daemon run` / `daemon start`). `docbank mcp --transport http` also reads and
+validates the whole file at startup, then resolves its named credential
+binding. The file is optional. There are no general per-field environment
+overrides. `DOCBANK_HOME` selects the vault, and named credential bindings can
+read the environment variables that the configuration names. Backup commands
+can override their configured repository with `--repo`. The daemon treats an
+unrecognized key as a typo and rejects it at startup instead of ignoring it.
 
 ```toml
 # ~/.docbank/config.toml — optional, defaults shown
@@ -145,60 +144,60 @@ scan_interval = "5s"
 exclude = [".DS_Store", "cache/"]
 ```
 
-- **`bind_addr`** — the interface the API listens on. Loopback only
+- **`bind_addr`**: the interface the API listens on. Loopback only
   (`127.0.0.1`, `::1`, `localhost`): the API is plain HTTP, so a
   non-loopback bind would put the key and vault contents on the wire in
-  cleartext. Reach a remote docbank through an SSH tunnel or VPN.
-- **`api_port`** — `0` picks an ephemeral port; the CLI never needs to
-  know it in advance because it discovers the actual bound address from
-  the daemon's runtime record.
-- **`api_key`** — the daemon checks `X-Api-Key` or `Authorization: Bearer`
+  cleartext. Reach a remote Docbank through an SSH tunnel or VPN.
+- **`api_port`**: `0` picks an ephemeral port. The CLI does not need to
+  know it in advance, because it discovers the bound address from the
+  daemon's runtime record.
+- **`api_key`**: the daemon checks `X-Api-Key` or `Authorization: Bearer`
   on every authenticated request. An empty setting makes the daemon generate
   a key at startup and publish it to same-user clients in the runtime record.
   Set a fixed key when a client cannot read that record, such as a client
   using an SSH tunnel from another machine.
-- **`idle_timeout`** — how long a background daemon waits without
+- **`idle_timeout`**: how long a background daemon waits without
   requests before exiting on its own. `"0"` disables idle shutdown.
   Foreground `docbank daemon run` ignores this and never idles out.
-- **`[web] enabled`** — serves the embedded web application at `/`.
+- **`[web] enabled`**: serves the embedded web application at `/`.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
-  independent of a configured `api_port`. Disabling it 404s `/` and `/assets/`;
-  the API and `/docs` are unaffected. See [Web application](usage/web.md).
-- **`[mcp.http] credential_binding`** — names the separate inbound credential
+  independent of a configured `api_port`. Disabling it 404s `/` and `/assets/`.
+  The API and `/docs` are unaffected. See [Web application](usage/web.md).
+- **`[mcp.http] credential_binding`**: names the separate inbound credential
   used by `docbank mcp --transport http`. An empty value leaves stdio available
   but makes HTTP startup fail. See [MCP HTTP credential](#mcp-http-credential).
-- **`[backup] repo`** — default immutable snapshot repository used when a
-  backup command or API request omits `repo`. `~/...` expands against the
-  daemon user's home; a relative path is resolved beneath `$DOCBANK_HOME`.
+- **`[backup] repo`**: default snapshot repository used when a backup
+  command or API request omits `repo`. `~/...` expands against the daemon
+  user's home. A relative path is resolved beneath `$DOCBANK_HOME`.
   Keep the repository outside the live vault in normal deployments.
-- **`[backup] zstd_level`** — repository compression level. `0` uses Kit's
-  default; explicit values are limited to `1` through `19`.
-- **`[storage] pack_interval`** — schedules non-destructive packing of
+- **`[backup] zstd_level`**: repository compression level. `0` uses Kit's
+  default. Other values must be between `1` and `19`.
+- **`[storage] pack_interval`**: schedules non-destructive packing of
   authorized loose blobs. `"0"` disables the schedule. A configured schedule
   runs once when the daemon starts and then at this interval.
-- **`[storage] pack_max_bytes`** — finite soft raw-byte budget for each
+- **`[storage] pack_max_bytes`**: soft raw-byte budget for each
   scheduled run. It must be positive when `pack_interval` is enabled. Remaining
   loose content waits for a later run.
 
 Scheduled packing is visible as the `storage:pack` job and keeps an auto-started
-daemon alive so the schedule is meaningful. It uses the same maintenance gate
+daemon alive so the schedule can run. It uses the same maintenance gate
 as `docbank storage pack`: ordinary mutations may briefly receive
 `maintenance_busy` and can retry. Each scheduled pass requests cancellation at
 `pack_interval` and releases the gate when the pass returns. Remaining indexed
 loose content is retried on the next pass. Work that ignores context can delay
 gate release. Set `pack_interval` comfortably above the time needed to build
-and seal one pack so each pass can make progress; repeated
+and seal one pack so each pass can make progress. Repeated
 `automatic packing canceled at interval; retrying` warnings can indicate that
 the interval is too short. Automatic packing does not delete logical content
-and does not run GC or repack; those reclamation operations remain explicit
-operator choices.
+and does not run GC or repack. An operator still has to request those
+reclamation operations.
 
 ### MCP HTTP credential
 
 The MCP HTTP listener requires a named credential binding. Configuration keeps
-only the environment-variable name; the bearer value remains in the MCP
-process environment:
+only the environment-variable name. The bearer value stays in the MCP process
+environment:
 
 ```toml
 [mcp.http]
@@ -214,8 +213,8 @@ environment-variable name must use ordinary shell-variable syntax. The bearer
 is non-empty, contains no spaces or control bytes, and is capped at 4,096
 bytes.
 
-Docbank resolves the bearer once when the MCP HTTP process starts; changing the
-environment does not rotate a running process. It must remain separate from
+Docbank resolves the bearer once when the MCP HTTP process starts. Changing
+the environment does not rotate a running process. The bearer must differ from
 `[server] api_key` and from an ephemeral daemon key published in the runtime
 record. HTTP startup acquires the effective daemon first and refuses a reused
 value. The same exclusion remains active if the daemon later restarts and the
@@ -224,20 +223,20 @@ MCP process reacquires it.
 There is no raw bearer field in `config.toml`, command-line token flag, URL
 credential, or runtime-record publication. Supply the environment variable to
 the MCP child through an owner-controlled secret or process manager. This is a
-fixed local bearer, not OAuth; see [Model Context Protocol](usage/mcp.md) for
+fixed local bearer, not OAuth. See [Model Context Protocol](usage/mcp.md) for
 the complete transport boundary.
 
 ### Watched inboxes
 
 Each `[[watch]]` entry makes the daemon poll one local directory recursively.
-`source` must be absolute or begin with `~/`; `destination` is an absolute path
+`source` must be absolute or begin with `~/`. `destination` is an absolute path
 in Docbank's virtual tree. Symlinks and other non-regular entries inside the
-source are ignored. `exclude` remains a literal name-or-relative-path rule. It
+source are ignored. `exclude` is a literal name-or-relative-path rule. It
 is independent of the glob include and exclude patterns accepted by
 `docbank add`.
 
 Traversal stays on the source's filesystem mount. It does not enter symlinks,
-Windows directory reparse points, or nested mounts; configure another
+Windows directory reparse points, or nested mounts. Configure another
 `[[watch]]` entry when content on a separate mounted filesystem should also be
 imported. This boundary prevents an aliased vault directory from becoming its
 own input.
@@ -252,22 +251,22 @@ The daemon checks each file in this order:
 
 For example, `minimum_age = "168h"` requires a file to be at least seven days
 old and unchanged for the complete settle window. The default `"0s"` disables
-this age check. The source timestamp still applies after a daemon restart;
-the in-memory settle observation starts again. This helps with sessions or
+this age check. The source timestamp still applies after a daemon restart,
+but the in-memory settle observation starts again. This helps with sessions or
 recordings that pause before they finish.
 
 `scan_interval` controls observation frequency. Zero settle and scan values
-select the defaults shown above; explicit values must be positive.
+select the defaults shown above. Any other value must be positive.
 `minimum_age` must not be negative.
 
 Minimum age is a conservative time policy, not proof that the producing
-application explicitly closed a file. Choose a window appropriate to the
+application closed a file. Choose a window appropriate to the
 producer, or watch a directory that receives only completed files when the
 producer offers a close/rename handoff.
 
 A file that disappears during observation, or is still held exclusively by a
 Windows producer, is treated as unsettled and retried from a fresh window.
-Other read failures remain visible job errors rather than being ignored.
+Other read failures appear as job errors.
 
 Docbank identifies each watched source by `(name, relative source path)`.
 Keep the watch name when moving its local `source` root. Later content changes
@@ -275,7 +274,7 @@ then add versions to the same Docbank node, even if someone moved that node in
 the virtual tree.
 
 Renaming the relative source path creates a new source identity. Each identity
-owns one Docbank node; two watched sources cannot claim the same node.
+owns one Docbank node, and two watched sources cannot claim the same node.
 Deleting a source file does not delete its Docbank node.
 
 Docbank separately remembers the last bytes accepted from each source. If a
@@ -286,32 +285,32 @@ change at the watched source appends another version.
 Watchers run as jobs named `watch:<name>`. `docbank watch list` and
 `GET /api/v1/watches` pair each runner's state with its effective source,
 destination, settle window, minimum source age, scan interval, and exclusion
-policy; use `--json` when an agent needs the complete rules. `docbank jobs`
-and `GET /api/v1/jobs` remain the all-task view.
-A source, destination, or read failure leaves the named job in the failed state
-and records the reason. Restart the daemon after correcting the problem.
+policy. Use `--json` when an agent needs the complete rules. `docbank jobs`
+and `GET /api/v1/jobs` remain the all-task view. A source, destination, or
+read failure leaves the named job in the failed state and records the reason.
+Restart the daemon after correcting the problem.
 Per-file successes are written to the daemon log. A configured watch keeps a
 background daemon alive regardless of `idle_timeout`.
 
-Inspect the durable source facts attached to an imported file with
+Inspect the source facts recorded for an imported file with
 `docbank provenance <path-or-id>` or `GET /api/v1/nodes/{id}/provenance`.
-This is distinct from job status: provenance survives daemon restarts and
-records successful ingest authority, while `docbank jobs` describes only the
-current daemon run.
+Provenance is distinct from job status. It survives daemon restarts and
+records where successfully ingested content came from, while `docbank jobs`
+describes only the current daemon run.
 
 Watched inboxes never modify or delete their source files. Configuration is
-machine-local and is not part of metadata-v1 backup/restore, while the stable
-watch name, relative path, stable node mapping, and last accepted content
-identity are preserved in portable metadata. The watcher does not pack content
-itself. Configure `[storage] pack_interval` when accumulated loose content
-should be packed automatically; GC and repack remain explicit.
+machine-local and is not part of metadata-v1 backup/restore. Portable metadata
+does preserve the watch name, relative path, node mapping, and last accepted
+content identity. The watcher does not pack content itself. Configure
+`[storage] pack_interval` when accumulated loose content should be packed
+automatically. GC and repack still run only on request.
 
 ### Supplied audio transcription
 
 The daemon can transcribe supplied WAV and MP3 files through a configured
 Docling Serve deployment. The profile's descriptor, artifact policy, filename
-disclosure, and trust boundary remain portable; the endpoint, transport
-policy, and secret binding remain local to the daemon.
+disclosure, and trust boundary are portable. The endpoint, transport policy,
+and secret binding stay local to the daemon.
 
 Use `adapter_contract = "docbank-docling-asr/v1"` and set
 `credential_binding = "credential:<name>"` on the rendition profile. Its
@@ -320,11 +319,11 @@ Use `adapter_contract = "docbank-docling-asr/v1"` and set
 transport timeout fields. `spki_sha256` can pin the deployment certificate.
 The endpoint must be a root origin. `allowed_cidrs` must contain at least one
 network, and `proxy_mode` must be `"disabled"`. HTTP endpoints require the
-`operator_network` trust boundary; certificate pins require HTTPS. An explicit
-port must be between 1 and 65535. Redirects are not followed.
+`operator_network` trust boundary, and certificate pins require HTTPS. An
+explicit port must be between 1 and 65535. Redirects are not followed.
 
 Set a positive `max_transcript_chars` on the rendition profile. This limit
-bounds generated transcript evidence and is part of the descriptor's policy
+caps the generated transcript and is part of the descriptor's policy
 fingerprint. Each processing profile keeps its own `max_document_chars` limit
 for subsequent processing. A runtime with no selecting profile remains staged
 and isn't executable.
@@ -334,8 +333,8 @@ with `stale_authority`. Plan the work and grant consent for the changed profile
 before retrying it.
 
 For this adapter, `disclosure_fingerprint` binds the descriptor, endpoint, and
-deployment fingerprint. Recompute it when the endpoint or deployment changes;
-the daemon rejects a mismatched binding before it starts provider work.
+deployment fingerprint. Recompute it when the endpoint or deployment changes.
+The daemon rejects a mismatched binding before it starts provider work.
 Go applications can use `docling.ASRDisclosureFingerprint` from
 `go.kenn.io/docbank/document/docling`. Operators can compute the same value
 from their config with Python 3.11 or later. Replace the path and profile name
@@ -360,13 +359,13 @@ PY
 The daemon registers one provider per descriptor fingerprint. Profiles with
 the same descriptor must use identical endpoint, credentials, and runtime
 settings. Two Docling deployments with the same descriptor cannot run together
-in one daemon; conflicting settings prevent startup.
+in one daemon. Conflicting settings prevent startup.
 
 The daemon also registers two local media profiles. `supplied-transcript`
 processes supplied WAV and MP3 transcript text as untimed evidence.
 `supplied-captions` processes supplied SubRip captions for WAV, MP3, and MP4
 originals as timed evidence. Both names are reserved for these built-in
-profiles; a configured profile with either name prevents startup.
+profiles. A configured profile with either name prevents startup.
 
 The daemon reads the credential from the named environment binding when the
 adapter sends a provider request. A missing secret fails that processing
@@ -387,11 +386,11 @@ the endpoint, transport policy, or environment binding.
 
 The daemon runs retained embedding jobs for its configured OpenAI-compatible
 and Voyage runtimes. Other [provider packages](document-understanding.md) are
-available to Go applications; they are not additional daemon runtime choices.
+available to Go applications. The daemon cannot run them.
 
-An embedding is a numeric representation used to compare document meaning. Each provider
-binding publishes its own results; one provider's failure does not remove
-another binding's completed vectors.
+An embedding is a numeric representation used to compare document meaning.
+Each provider binding publishes its own results. One provider's failure does
+not remove another binding's completed vectors.
 
 Configuring a provider does not prepare inputs or apply a processing profile
 to new imports. A job requires all of the following:
@@ -409,13 +408,13 @@ requirements are met again.
 input kind, dimensions, formatters, compatibility identity, descriptor and
 disclosure fingerprints, byte limits, and `optional` or `required` activation.
 Chunk bindings also pin their tokenizer and chunk policy in `.chunk`. Use the
-fingerprints from the exact provisioned profile and deployment; arbitrary
+fingerprints from the provisioned profile and deployment. Arbitrary
 fingerprints or an endpoint's model alias do not establish compatibility.
 
 #### Text-service configuration
 
 For OpenAI-compatible text services, prefer Kit's
-`[embedding_profiles.<name>.embedder]` schema. Keep DocBank's pinned descriptor,
+`[embedding_profiles.<name>.embedder]` schema. Keep Docbank's pinned descriptor,
 consent, input kind, byte limits, normalization, model-input contract and chunk
 policy in the existing profile tables.
 
@@ -441,7 +440,7 @@ api_key = { env = "DOCBANK_EMBEDDING_PRIMARY_KEY" }
 
 `base_url` ends in `/v1` or `/v1/embeddings`. Public-IP HTTP endpoints are
 rejected. Plaintext private-network endpoints require
-`trust_private_network = true`; the existing CIDR and proxy controls still
+`trust_private_network = true`. The existing CIDR and proxy controls still
 apply. The `fingerprint_salt` pins the model revision. Unless a
 `provider_revision_header` is configured, it also supplies the deployment epoch.
 
@@ -450,30 +449,30 @@ The API key may be a literal string, `{ env = "NAME" }`, or
 references. Kit requires credential files to be private, regular files owned by
 the current user. File paths follow Kit's rules: `~/` expands to the daemon
 user's home, and relative paths use its working directory. Sources are resolved
-for each request; startup does not read them. A missing secret becomes an
+for each request. Startup does not read them. A missing secret becomes an
 authorization failure when that provider is used. File changes take effect on
 the next request. Environment changes require restarting the daemon.
 
-Keep `credential_binding` as the stable portable name. It is the name, not
-the secret or its source, that enters the immutable profile. If `api_key` is
-unset, an existing `credential_bindings` entry still supplies the secret.
-Without either source, startup reports that the credential source is not
-configured.
-Never put secret values in processing profiles, fingerprints, receipts,
-backups, or source-controlled configuration.
+Keep `credential_binding` as the portable name. The immutable profile records
+that name, not the secret or its source. If `api_key` is unset, an existing
+`credential_bindings` entry still supplies the secret. Without either source,
+startup reports that the credential source is not configured. Never put secret
+values in processing profiles, fingerprints, receipts, backups, or
+source-controlled configuration.
 
 Kit's default batch size is 32 and its default timeout is 30 seconds. When
-converting a legacy configuration, set these values explicitly to the existing
-limits. The same effective settings produce the same canonical identities and
-reuse existing generations. Changing the model, revision or input recipe still
-requires a matching pinned descriptor and profile.
+converting a legacy configuration, set both values to the existing limits
+instead of relying on those defaults. The same effective settings produce the
+same canonical identities and reuse existing generations. Changing the model,
+revision or input recipe still requires a matching pinned descriptor and
+profile.
 
-This adapter keeps DocBank's document/query formatting and chunk preparation.
-`input_type_mode` must be `"none"`; configure roles in `model_input`.
+This adapter keeps Docbank's document/query formatting and chunk preparation.
+`input_type_mode` must be `"none"`. Configure roles in `model_input`.
 `model_context_tokens` and `max_batch_tokens` must remain zero. Nonzero values
 are rejected because this adapter does not use Kit token packing. The
-profile's normalization setting remains authoritative: adopting Kit's schema
-does not normalize returned vectors.
+profile's normalization setting still decides normalization: adopting Kit's
+schema does not normalize returned vectors.
 
 #### Legacy text-service configuration
 
@@ -483,9 +482,9 @@ supported. Prefer the `embedder` table for new text-service configurations.
 Native and multimodal providers retain their existing configuration.
 
 If both forms specify a setting, their effective values must agree. For
-example, `embedder.dims = 768` conflicts with `dimensions = 1024`. An explicit
-`api_key` and an existing named credential entry must reference the same
-environment variable; otherwise remove the legacy entry when switching
+example, `embedder.dims = 768` conflicts with `dimensions = 1024`. If `api_key`
+is set and a named credential entry also exists, both must reference the same
+environment variable. Otherwise remove the legacy entry when switching
 sources. Profiles that share a credential name must agree on its source.
 
 ```toml
@@ -521,25 +520,25 @@ and must be supplied separately after restoring a vault.
 
 Request timeouts must also be positive and at most five minutes. Retry policy
 belongs to the worker, so runtime configuration has no retry-count or retry-delay
-fields. The worker handles transient failures and capacity-driven batch splits;
-malformed responses are recorded separately from rejected document input.
+fields. The worker handles transient failures and capacity-driven batch splits.
+It records malformed responses separately from rejected document input.
 
 #### Model input
 
 `[embedding_profiles.<name>.model_input]` pins how document and query inputs are
 formatted. Its `profile` selects a named contract such as `nomic/v1`, `bge-m3/v1`,
-`e5/v1`, or `gte/v1`; it is not an arbitrary provider model name. The resulting
+`e5/v1`, or `gte/v1`. It is not an arbitrary provider model name. The resulting
 contract must match the binding's `compatibility_id` and provider descriptor.
-For `custom/v1`, supply `compatibility_id` and explicit `.document` and `.query`
-encoders, each with `mode` and `template`. Templates use `{{content}}`; contract
+For `custom/v1`, supply `compatibility_id` plus `.document` and `.query`
+encoders, each with `mode` and `template`. Templates use `{{content}}`. Contract
 validation checks the supported roles and formatting rules. `query_instruction`
 is available only to contracts that support it.
 
-Discovery uses bounded pages and waits one minute between complete passes.
+Discovery reads in pages and waits one minute between complete passes.
 Existing queued work is still checked on the normal one-second idle cadence.
-Missing or invalid generation bytes are skipped during discovery so later
-candidates can proceed; a later pass retries discovery. Database failures retain
-their separate bounded storage-retry behavior. Terminal jobs do not retain
+Discovery skips missing or invalid generation bytes so later candidates can
+proceed, and a later pass retries them. Database failures keep their
+separate bounded storage-retry behavior. Terminal jobs do not retain
 superseded generations after their last embedding set is collected, while
 queued/running jobs and explicit retention roots keep their inputs.
 
@@ -585,15 +584,15 @@ transport policy to the reviewed plan.
 Adding this section changes the plan fingerprint and makes the plan report
 consent required until reranking is approved. Existing grants remain valid for
 the operations they already cover, including searches without `--rerank`.
-Granting the revised plan approves all configured profile operations together;
-reranking has its own grant record, but no separate approval step. Follow the
+Granting the revised plan approves all configured profile operations together.
+Reranking has its own grant record, but no separate approval step. Follow the
 [search consent walkthrough](usage/search.md#consent-before-semantic-or-hybrid-search)
 to review and grant the revised plan.
 
 ### Self-hosted Cap origins
 
 Register a self-hosted Cap deployment under `[media_origins.<name>]`. The
-endpoint is one exact HTTP(S) origin. Cap share and embed paths are recognized
+endpoint is a single HTTP(S) origin. Cap share and embed paths are recognized
 only on that origin. The deployment revision, credential binding, network
 allowlist, TLS pins, and probe timeout are part of the daemon configuration.
 
@@ -616,10 +615,10 @@ probe_timeout = "30s"
 ```
 
 HTTPS uses the system trust store. A private deployment may use HTTP when its
-configuration names explicit allowed CIDRs. The daemon resolves the named
-credential only for the registered origin and runs a bounded probe at startup.
-Recognized recordings remain `access_required`; this slice has no byte
-download path.
+configuration lists allowed CIDRs. The daemon resolves the named credential
+only for the registered origin and runs a bounded probe at startup. Recognized
+recordings remain `access_required`. Docbank has no byte download path for
+them.
 
 Registration affects new submissions. A generic source retained earlier stays
 separate from a later registered-origin submission.
@@ -630,14 +629,14 @@ separate from a later registered-origin submission.
 S3-compatible secondary storage. Filesystem profiles use `kind = "filesystem"`
 and an absolute `path`. S3 profiles use `kind = "s3"`, `endpoint`, `region`,
 `bucket`, optional `prefix`, `credential_profile`, and `force_path_style`.
-`priority` controls read preference after current health; lower values are
+`priority` controls read preference after current health. Lower values are
 preferred. The complete workflow and examples are in
-[Multi-store Storage](usage/storage.md).
+[Multi-store storage](usage/storage.md).
 
-Bindings are loaded once when the daemon starts. They are deliberately absent
-from logical metadata, audit evidence, and backups. Restart after editing a
-profile; Docbank reports a typed stale-configuration error rather than
-hot-reloading credentials or paths underneath active jobs.
+Bindings are loaded once when the daemon starts. Logical metadata, audit
+evidence, and backups do not include them. Restart after editing a profile.
+Docbank reports a typed stale-configuration error instead of hot-reloading
+credentials or paths underneath active jobs.
 
 S3 endpoints must use authenticated HTTPS, including loopback services.
 Docbank rejects plain HTTP: a loopback port does not identify which process
@@ -668,8 +667,8 @@ The daemon validates its listening address at startup. An invalid setting makes
 - A **loopback** `bind_addr` (`127.0.0.1`, `::1`, `localhost`) is the
   only accepted value. An empty `api_key` is fine there: the daemon
   generates one at startup instead.
-- Every non-loopback address — wildcard, private-network, or public,
-  keyed or not — is rejected. The API is plain HTTP; a key sent in
+- Every non-loopback address (wildcard, private-network, or public,
+  keyed or not) is rejected. The API is plain HTTP, so a key sent in
   cleartext is not protection. Remote access goes through an SSH tunnel
   or VPN to the loopback listener until the daemon grows TLS.
 
@@ -687,10 +686,10 @@ The daemon validates its listening address at startup. An invalid setting makes
 
 The daemon reports anonymous usage events so the Docbank team can count
 vaults whose daemon runs and vaults whose web app gets opened. Counts are per
-vault, not per person: one person with three vaults counts three times. It sends them in HTTPS
-batches to PostHog's US ingest endpoint (PostHog project 434713). The browser
-never contacts PostHog: the web app posts its event to its own daemon, which
-sends it.
+vault, not per person: one person with three vaults counts three times. The
+daemon sends events in HTTPS batches to PostHog's US ingest endpoint (PostHog
+project 434713). The browser never contacts PostHog: the web app posts its
+event to its own daemon, which sends it.
 
 Docbank sends three events:
 
@@ -717,7 +716,7 @@ Each event carries exactly these fields:
 
 Usage telemetry never carries document content, filenames, paths, hashes,
 tags, queries, the vault ID, account names, the hostname, or configuration
-values. PostHog does see the request's source IP address; Docbank asks it not
+values. PostHog does see the request's source IP address. Docbank asks it not
 to geolocate. Separately configured document providers are unrelated to usage
 telemetry and unchanged by it.
 

@@ -53,7 +53,7 @@ function installCopyButton() {
         status.textContent = "";
       }, 2000);
     } catch {
-      status.textContent = "Copy failed — select the command text instead";
+      status.textContent = "Copy failed. Select the command text instead.";
     }
   });
 }

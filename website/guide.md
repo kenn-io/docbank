@@ -1,122 +1,168 @@
-# Keep a document from import to recovery
+# Follow one document through Docbank
 
-Import a document, save changes, and recover it later. These steps explain what
-Docbank keeps and which choices belong to you. Processing steps apply only when
-you configure or build that workflow.
+This guide follows a single document from import to backup. Each step says what
+Docbank stores and what is left for you to decide. The processing steps apply
+only if you set up processing.
 
 1. [Import the file](#ingest)
-2. [Keep its identity through changes](#identify)
-3. [Choose what may be processed](#authorize)
-4. [Turn a document into usable text](#render)
-5. [Prepare content for meaning-based retrieval](#embed)
+2. [Move, rename, or replace it](#identify)
+3. [Review what processing will send](#authorize)
+4. [Extract the text](#render)
+5. [Add search by meaning](#embed)
 6. [Find the document again](#retrieve)
-7. [Keep processing outputs separate](#replace)
-8. [Work through your preferred interface](#serve)
-9. [Verify a recovery copy](#prove)
+7. [Export the versions you reviewed](#export)
+8. [Processing outputs stay separate](#replace)
+9. [Use any interface](#serve)
+10. [Back up, then test a restore](#prove)
 
 <a id="ingest"></a>
 
 ## Import the file
 
-Docbank copies the file into your vault and leaves the source untouched. Browse
-the copy in a familiar folder tree. Docbank records a checksum so it can check
-that the saved bytes have not changed.
+Docbank copies the file into the vault and leaves the source where it was. The
+copy appears in a folder tree you can browse. Docbank records a checksum at
+import, so it can tell later whether the stored bytes have changed.
 
-![Synthetic Docbank vault after import](https://docbank.ai/assets/generated/web-vault-browser.png)
+![The web app showing a folder of imported documents in a synthetic vault](https://docbank.ai/assets/generated/web-vault-browser.png)
+
+A vault of synthetic documents after import.
 
 [Importing documents](/docs/usage/importing/)
 
 <a id="identify"></a>
 
-## Keep its identity through changes
+## Move, rename, or replace it
 
-Each document has a stable node ID. Moving or renaming it changes the path, not
-the ID. Replacing its content saves a new version; retained earlier versions
-remain available to inspect or download.
+Every document has a node ID that stays the same for its whole life. Moving or
+renaming the document changes its path and nothing else. Replacing its content
+saves a new version, and the earlier versions you keep can still be opened or
+downloaded.
 
-![Retained versions and download action](https://docbank.ai/assets/generated/web-retained-version-download.png)
+![The version history of one document, with a download button for the selected version](https://docbank.ai/assets/generated/web-retained-version-download.png)
+
+Each saved version of a document can be downloaded.
 
 [Editing and versions](/docs/architecture/editing-and-versions/)
 
 <a id="authorize"></a>
 
-## Choose what may be processed
+## Review what processing will send
 
-Before using a processing provider, choose where document content may go and
-which task is allowed. Configured daemon workers and applications using the Go
-packages have different setup requirements. Follow the configuration or package
-guide for the path you use.
+Processing is set up as profiles. Choose one, and Docbank shows its plan for
+the selected version: each provider, where it runs, and the kind of content it
+will receive. Give consent once you have read the plan. A vault restored from a
+backup needs new consent before any network processing.
 
-[Processing configuration](/docs/configuration/)
+![A processing plan listing the providers and the content each one will receive](https://docbank.ai/assets/generated/web-document-processing-plan.png)
+
+The plan for one version, shown before anything is sent.
+
+[Processing and consent](/docs/usage/document-processing/)
 
 <a id="render"></a>
 
-## Turn a document into usable text
+## Extract the text
 
-Optical character recognition (OCR) extracts text from images or scans. A
-rendition is a text or Markdown representation of one saved source version. Go
-applications can use the document packages to prepare this output while keeping
-the original.
+Processing produces a rendition: the document’s text as Markdown, saved against
+the version it came from. Start it from the web app, TUI, CLI, HTTP API, or Go
+API. The original file is not changed. With a supported provider, optical
+character recognition (OCR) reads text from scans and images.
 
-[Document understanding in Go](/docs/document-understanding/)
+![The extracted Markdown text of a saved document, shown in the web app](https://docbank.ai/assets/generated/web-document-rendition.png)
+
+The extracted text of one saved version.
+
+[Document processing](/docs/usage/document-processing/)
 
 <a id="embed"></a>
 
-## Prepare content for meaning-based retrieval
+## Add search by meaning
 
-An embedding is a numeric representation used to compare meaning. The Go
-packages split text into bounded inputs and describe the model and settings
-used. Configured daemon workers can process eligible embedding jobs. Ordinary search
-is lexical. [Processing search](/docs/usage/search/) supports semantic and hybrid
-retrieval when a processing profile and embedding binding are configured.
+An embedding is a list of numbers that stands for a piece of content, so
+similar content can be found by comparing numbers. Configure an embedding
+service, review what it will receive, and process the versions you want to
+search. The web app and TUI then offer Semantic and Hybrid search. Finding
+similar documents compares embeddings already in the vault and calls no
+provider.
 
-[Embedding configuration](/docs/configuration/)
+![A list of documents ranked by similarity to the selected file](https://docbank.ai/assets/generated/web-similar-1440.png)
+
+Similar documents, ranked from stored embeddings.
+
+[Search by meaning](/docs/usage/search/)
 
 <a id="retrieve"></a>
 
 ## Find the document again
 
-Search document names and extracted text, then narrow results with tags,
-folders, media types, or modification dates. Open the matching document or
-download a saved version. The search guide defines the filters and result
-limits.
+Search file names and extracted text, then narrow the results by tag, folder,
+file type, or date. Save the queries and highlight terms you use often. A
+lexical (keyword) query can also be frozen: its rows, counts, and facets stay
+as they were when it ran, whatever changes in the vault afterwards.
 
-![Search results in a synthetic vault](https://docbank.ai/assets/generated/web-search-results.png)
+![A frozen query in the web app, with its result rows and facet counts](https://docbank.ai/assets/generated/web-snapshot-workspace.png)
+
+A frozen query keeps the versions it found.
 
 [Searching](/docs/usage/searching/)
 
+<a id="export"></a>
+
+## Export the versions you reviewed
+
+Select documents, or take a whole frozen query. Docbank lists the originals and
+processing outputs the export will include, then builds a ZIP and verifies it.
+If a document changes after you start, the export still holds the version you
+selected. For search counts over a date range, download the CSV report with its
+evidence ZIP.
+
+![The export drawer reporting a verified ZIP that is ready to download](https://docbank.ai/assets/generated/web-export-ready.png)
+
+A finished export, verified and ready to download.
+
+[Verified export bundles](/docs/usage/export-bundles/)
+
 <a id="replace"></a>
 
-## Keep processing outputs separate
+## Processing outputs stay separate
 
-Text, previews, embeddings, and indexes are derivatives: outputs made from saved
-documents. Docbank records their source versions separately from the originals.
-Processing and retention rules determine when those outputs can be replaced or
-removed.
+Text, previews, embeddings, and indexes are derivatives: outputs computed from
+a saved document. Docbank stores them apart from the original and records which
+version each one came from. Processing and retention rules decide when a
+derivative can be replaced or removed.
+
+![A cycle of consent, processing, search, and removal around an original that does not change](https://docbank.ai/assets/derivative-cycle.svg)
 
 [Processing and retention](/docs/architecture/overview/)
 
 <a id="serve"></a>
 
-## Work through your preferred interface
+## Use any interface
 
-Use the command line, web app, terminal browser, or HTTP API through the local
-daemon. Agents use the same authenticated requests and revision checks. A Go
-application can instead own a separate vault in its own process.
+The command line, web app, terminal browser, and HTTP API all go through the
+local daemon. A local agent connects with `docbank mcp` and works with the same
+versions and revision checks. A Go application can instead own a separate vault
+in its own process.
+
+![The CLI, web app, TUI, HTTP API, Go API, and agents all reading the same documents and versions](https://docbank.ai/assets/interface-map.svg)
 
 [Docbank for agents](/docs/agents/)
 
 <a id="prove"></a>
 
-## Verify a recovery copy
+## Back up, then test a restore
 
-Create an incremental backup, verify its content, and restore it into a separate
-vault. Backups retain document content, metadata, and saved history. Test the
-restored copy before you need it for recovery.
+Create an incremental backup and verify it. Then restore it into a separate
+vault and check the result before you need it. A backup holds document content,
+metadata, and version history.
 
-![Recorded history in a synthetic vault](https://docbank.ai/assets/generated/web-audit-evidence.png)
+![Three steps: take a snapshot, verify it, and restore it into a separate vault](https://docbank.ai/assets/recovery-flow.svg)
 
 [Backup and restore](/docs/usage/backup/)
 
-Start with the [quickstart](/docs/quickstart/), then use the
-[task guides](/docs/) for commands, automation, storage, and recovery.
+## Next steps
+
+Run the [quickstart](/docs/quickstart/) to try these steps on your own files.
+The [task guides](/docs/) cover commands, automation, storage, and recovery.
+
+[Meet the contributors](https://github.com/kenn-io/docbank#contributors).
