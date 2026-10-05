@@ -21,3 +21,4 @@ docs/zensical-public-docs.*
 docs/.zensical-build.*
 .kata.local.toml
 .env*
+.vercel
