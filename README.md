@@ -164,7 +164,7 @@ Thanks to everyone whose work went into v0.15.0:
 - [Rusty Shackleford (@salmonumbrella)](https://github.com/salmonumbrella): document processing, search and review, email, reports, and exports.
 - [Wes McKinney (@wesm)](https://github.com/wesm): storage, backups, the web workspace, performance, and release integration.
 
-See the [release contribution history](https://github.com/kenn-io/docbank/compare/v0.14.0...0f05e925)
+See the [release contribution history](https://github.com/kenn-io/docbank/compare/v0.14.0...v0.15.0)
 and [all contributors](https://github.com/kenn-io/docbank/graphs/contributors).
 
 ## License
