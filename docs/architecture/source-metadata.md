@@ -26,9 +26,11 @@ family from which the extractor read the field.
 
 The `kind` field selects one payload: `string`, `string_list`, `integer`,
 `number`, `boolean`, or `timestamp`. Timestamps preserve the source's stated
-precision and timezone. Keys describe the fact; `source_field` preserves its
+precision and timezone. Keys describe the fact. `source_field` preserves its
 format-specific label. For example, PDF `CreationDate`, EXIF `DateTimeOriginal`,
-and MP4 `mvhd.CreationTime` each produce the key `created` in their own namespace.
+and MP4 `mvhd.CreationTime` each produce the key `created` in their own
+namespace.
+
 The current extractor publishes these fields when the source contains them:
 
 | Namespace | Sources | Canonical keys |
@@ -52,7 +54,7 @@ pair, invalid coordinate, or zero-zero placeholder is omitted with a warning.
 Complete EXIF GPS date and time fields become one UTC timestamp. GPS coordinate
 fields and `email.bcc` are marked sensitive. The embedded API returns them
 because its caller is trusted application code. Browser-session reads remove
-sensitive fields; other callers must enforce their own disclosure boundary.
+sensitive fields. Other callers must enforce their own disclosure boundary.
 
 ## Current format boundary
 
@@ -67,13 +69,12 @@ image-dimension facts through their Canon TIFF/EXIF metadata boxes. Other
 proprietary container headers need their own bounded parser.
 
 The daemon processes source metadata in the background. Embedded callers choose
-when to process a version with `EnsureSourceMetadata`; both use the same parser.
+when to process a version with `EnsureSourceMetadata`. Both use the same parser.
 Originals through 64 MiB fit the general in-memory read. JPEG, TIFF-family, RAF,
 CR3, and MP4 originals beyond the 20 MiB general media-inspection limit use
-bounded media parsing instead. JPEG and TIFF-based files
-use a 20 MiB leading metadata window. The resulting generation includes a
-`metadata_window_limited` warning because metadata after that window may be
-omitted.
+bounded media parsing instead. JPEG and TIFF-based files use a 20 MiB leading
+metadata window. The resulting generation includes a `metadata_window_limited`
+warning because metadata after that window may be omitted.
 
 For large media files, the worker verifies the complete content identity
 before bounded parsing:
@@ -87,23 +88,23 @@ before bounded parsing:
   Do not buffer or decode the RAW image payload. Malformed structure produces a
   durable warning.
 
-Storage and read failures remain retryable. Other formats
-larger than 64 MiB receive `input_too_large` until they have a bounded parser.
+Storage and read failures remain retryable. Other formats larger than 64 MiB
+receive `input_too_large` until they have a bounded parser.
 
 ## Generations and reads
 
 An extractor fingerprint identifies the complete local parser bundle. A parser
 change creates a new immutable generation and moves the active head for that
-content SHA-256; old generations remain evidence. Retrying the same generation
+content SHA-256. Old generations remain evidence. Retrying the same generation
 is idempotent. Because the fingerprint covers every parser, any change to it
 makes the daemon re-read and re-extract every retained original in every
-vault; a test pins the fingerprint so that cost is taken deliberately.
+vault. A test pins the fingerprint so that cost is taken deliberately.
 
 The active head follows the last successful publication, including publication
-of an already-recorded generation. Fingerprints identify parser bundles; they
+of an already-recorded generation. Fingerprints identify parser bundles. They
 do not order extractors by age. After switching binaries, an explicit ensure
 reactivates the running binary's evidence even if another extractor published
-more recently. The first ensure re-reads and re-extracts the original; subsequent
+more recently. The first ensure re-reads and re-extracts the original. Subsequent
 ensures reuse that active generation. The daemon backfill only processes
 originals missing a generation for its fingerprint, so it does not reactivate
 already-recorded evidence by itself.
@@ -114,8 +115,9 @@ projection row that maps those claims into nullable typed columns. Generations
 without any of them, such as PDFs and email, get no row. The store records the
 `photo-technical/v2` recipe that built its rows in a one-row state table,
 separately from extractor fingerprints, because the mapping and embedded map
-can change without changing the source evidence. When the recipe changes, the next store open re-projects every generation from
-its retained canonical JSON, without reading originals. Reads bind the
+can change without changing the source evidence. When the recipe changes, the
+next store open re-projects every generation from its retained canonical JSON,
+without reading originals. Reads bind the
 projection to the requested content version through its blob hash and active
 source head, then validate the canonical source checksum. This keeps historical
 version reads exact and lets duplicate versions share one generation row.
@@ -131,12 +133,13 @@ coordinates when the offline Natural Earth resolver returns no label. Labels
 are coarse country, region, and nearby-city text. A region names the label
 only when a point inside the region lies in the photo's country, so overlapping
 simplified borders cannot pair one country with a neighbor's region. A city
-within 25 km names the label only when the map's country and region borders place it in the same
-country and region as the photo, so a city in a gap between simplified borders
-is never used. Ocean coordinates and border gaps remain unlabeled.
+within 25 km names the label only when the map's country and region borders
+place it in the same country and region as the photo, so a city in a gap
+between simplified borders is never used. Ocean coordinates and border gaps
+remain unlabeled.
 
 Projection rows stay out of metadata JSONL and backups. Restore rebuilds them
-from the restored source generations' canonical evidence; no original blob
+from the restored source generations' canonical evidence. No original blob
 read is needed.
 
 The HTTP node and content-version detail surfaces return the active generation.

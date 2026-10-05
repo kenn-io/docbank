@@ -21,11 +21,11 @@ contracts.
 Initial ingest and remote upload create an immutable `content_create` record in
 the same SQLite transaction as the file node. The record carries:
 
-- a random, canonical UUIDv4 `version_id` that is never allocator-derived;
-- the stable node ID and node revision that introduced it;
-- SHA-256, byte length, and media type for the immutable blob;
-- a canonical UTC recording time; and
-- a separate random operation UUID and transition kind.
+- a random, canonical UUIDv4 `version_id` that is never allocator-derived
+- the stable node ID and node revision that introduced it
+- SHA-256, byte length, and media type for the immutable blob
+- a canonical UTC recording time
+- a separate random operation UUID and transition kind
 
 The node's `current_version_id` points to a version belonging to that same node.
 SQLite enforces the cross-reference, one version per node revision, and one
@@ -45,18 +45,18 @@ docbank versions cat <version-id> > return.pdf
 docbank refs <sha256>
 ```
 
-`versions list` is newest-first and bounded by `--limit` and `--offset`; `--json`
-returns the complete page envelope including `total`. `versions show` and
-`versions cat` address metadata or bytes by UUID, independent of the node's current path.
-`refs` performs the inverse lookup: one content hash to every stable
-node/version pair that retains it, including prior versions and trash.
+`versions list` is newest-first and bounded by `--limit` and `--offset`.
+`--json` returns the complete page envelope including `total`. `versions show`
+and `versions cat` address metadata or bytes by UUID, independent of the node's
+current path. `refs` performs the inverse lookup: one content hash to every
+stable node/version pair that retains it, including prior versions and trash.
 
 The HTTP equivalents are:
 
-- `GET /api/v1/nodes/{id}/versions?limit=&offset=`;
-- `GET /api/v1/versions/{version_id}`;
-- `GET /api/v1/versions/{version_id}/content`;
-- `GET /api/v1/content-references?sha256=&limit=&offset=`.
+- `GET /api/v1/nodes/{id}/versions?limit=&offset=`
+- `GET /api/v1/versions/{version_id}`
+- `GET /api/v1/versions/{version_id}/content`
+- `GET /api/v1/content-references?sha256=&limit=&offset=`
 
 Current-node and ID-addressed version streams both send
 `X-Docbank-Content-Version`, `X-Docbank-Blob-Hash`, and
@@ -67,8 +67,8 @@ compare the trailer before publishing them.
 ## Retention and backup
 
 Every retained content-version row is a GC reachability root, whether or not it
-is the current head. Explicit version pruning or deletion of a file's tree
-metadata through trash empty can release those references; only then can an
+is the current head. Version pruning, or deletion of a file's tree metadata
+through trash empty, can release those references. Only then can an
 unreferenced blob become a GC candidate. Repack may change physical placement
 but not version identity.
 
@@ -98,13 +98,13 @@ to reject a stale or invalid target before the large body is transmitted.
 
 The corresponding `PUT /api/v1/nodes/{id}/content` body is the raw file bytes.
 It requires `If-Match`, `X-Docbank-Blob-Hash`, and
-`X-Docbank-Blob-Size`; `Content-Type` becomes version metadata. The daemon
+`X-Docbank-Blob-Size`. `Content-Type` becomes version metadata. The daemon
 durably writes and independently hashes the body first. Only an exact match
 allows one transaction to create the `content_replace` record, advance
 `current_version_id`, update metadata, and bump the node revision. The response
 returns the new node and version plus the computed identity and resulting ETag.
 
-A stale revision fails with `412`; a size or digest mismatch fails with `422`.
+A stale revision fails with `412`. A size or digest mismatch fails with `422`.
 Neither grants new metadata or blob authority. A crash or rejection after the
 durable write may leave an authority-free loose object for ordinary GC. The old
 head remains readable throughout. Even a replacement with identical bytes
@@ -121,7 +121,7 @@ docbank edit /taxes/2025/notes.md
 file only after its version ID, size, SHA-256, and terminal content digest all
 verify. It then runs the blocking command selected by `--editor`, `VISUAL`, or
 `EDITOR`, falling back to `vi` on Unix and Notepad on Windows. Unix editor
-commands use shell-style quoting; Windows commands use native Windows
+commands use shell-style quoting. Windows commands use native Windows
 command-line parsing so quoted executable paths and backslashes remain intact.
 Docbank does not invoke a shell. The editor must wait until the file is closed.
 
@@ -149,19 +149,19 @@ Reversion changes metadata only. The selected version must belong to the
 target file and must not already be current. Docbank checks the target's
 inspected revision, then performs these steps in one transaction:
 
-1. Create a `content_revert` version with the source's exact blob hash, size,
-   and media type.
+1. Create a `content_revert` version with the source's blob hash, size, and
+   media type.
 2. Record the source version ID.
 3. Advance `current_version_id` and the node revision.
 
 Docbank does not read, copy, or rewrite loose or packed bytes during reversion.
 
 The source and every intervening version remain immutable and addressable. A
-later repeat of the same historical choice creates another explicit revert
-operation rather than reusing the earlier history row. Because no content is
-destroyed, reversion needs no destructive confirmation. A stale node fails with
-`412`; a source from another node and an already-current source fail with
-structured `422` errors.
+later repeat of the same historical choice creates another revert operation
+rather than reusing the earlier history row. Because no content is destroyed,
+reversion needs no destructive confirmation. A stale node fails with `412`. A
+source from another node and an already-current source fail with structured
+`422` errors.
 
 `POST /api/v1/nodes/{id}/revert` accepts `source_version_id` with `If-Match`.
 Its receipt returns the resulting node, the new reversion row, the complete
@@ -172,8 +172,8 @@ node, revision, source, and content-authority fields agree.
 
 `put`, changed `edit` sessions, and `revert` retain every prior content version
 by default. Docbank does not choose an age or history limit for the operator.
-When a file's old versions are no longer wanted, pruning is explicit and
-preview-first:
+When a file's old versions are no longer wanted, the operator prunes them with
+a command that previews by default:
 
 ```bash
 docbank versions prune /taxes/2025/return.pdf --keep-newest 3
@@ -185,10 +185,10 @@ docbank versions prune /taxes/2025/return.pdf --all-prior
 Exactly one selector is accepted. Nothing changes without `--run`, and every
 request is bound to the node ID and revision inspected by the client. The
 current content is always retained. Ordinary selectors never select the
-current row and also retain any source version still required by a remaining
+current row. They also retain any source version still required by a remaining
 `content_revert` record, reporting that dependency rather than producing a
-dangling history graph. `--all-prior` can release the complete older graph;
-when the current head is itself a revert, the transaction first installs a
+dangling history graph. `--all-prior` can release the complete older graph.
+When the current head is itself a revert, the transaction first installs a
 same-byte, source-free `content_replace` checkpoint and then removes the old
 graph, including the superseded revert head.
 
@@ -198,15 +198,15 @@ request. Time can advance without changing a node revision, so a later
 the boundary after the preview. This never selects a version younger than the
 requested age. When exact replay of a preview matters, execute its returned
 candidate IDs with repeated `--version` selectors instead. Explicit-ID requests
-are bounded to 1,000 IDs; larger selections can be applied in batches, reading
+are bounded to 1,000 IDs. Larger selections can be applied in batches, reading
 the advanced node revision before each subsequent batch.
 
 Pruning deletes version authority, not bytes. Its report distinguishes logical
 bytes, shared blobs that remain reachable, loose blobs that become eligible for
 `gc`, and packed payload that needs `gc` followed by `storage repack`. A blob
 with loose and packed locations across different stores appears in both
-physical-maintenance classes, with the overlap reported explicitly. A run that
-deletes versions advances the node revision exactly once; an empty selection is
+physical-maintenance classes, and the report states the overlap. A run that
+deletes versions advances the node revision exactly once. An empty selection is
 a no-op. There is no automatic retention policy.
 
 ```mermaid
@@ -219,7 +219,7 @@ flowchart LR
 
 ## Why blobs will not be edited in place
 
-In-place mutation would break the defining guarantees simultaneously: the
+In-place mutation would break several guarantees at once: the
 object name would stop matching its SHA-256, duplicate references would observe
 unexpected changes, a partial write could tear content, and the previous bytes
 would be lost. Keeping the byte layer append-only makes transactional pointer

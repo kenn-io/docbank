@@ -18,28 +18,30 @@ for Go integration.
 ## Which entry point owns the operation?
 
 Standalone `docbank backup init`, `backup create`, `backup list`, `backup
-verify`, and `backup restore` use the authenticated daemon API; see the
+verify`, and `backup restore` use the authenticated daemon API. See the
 [Backup user guide](../usage/backup.md). Applications that own an embedded
 vault use `BackupRepository`, `Vault.CreateBackup`, and `Vault.RestoreBackup`
-directly; see [Embedding Docbank](../embedding.md#back-up-and-restore-an-embedded-vault).
+directly. See [Embedding Docbank](../embedding.md#back-up-and-restore-an-embedded-vault).
 `BackupRepository.Restore` works without a source vault and uses the build's
 default SQLite driver. `Vault.RestoreBackup` supplies its configured driver and
 adds the source vault root to the protected set. Repository callers must
-explicitly declare any offline storage that restore must preserve.
+declare any offline storage that restore must preserve.
 
 Both methods use the same restore path. It excludes the repository and protected
 roots, locks the target hierarchy, restores host files, and verifies the result
 before publication.
-A coherent local-state filesystem snapshot remains available by stopping the
-daemon before copying the vault, but it is not a topology-independent backup;
-see [Vault Lifecycle](../usage/lifecycle.md#take-a-coherent-backup).
 
-The database plus built-in `blobs/` directory is a complete manual archive only
-while every retained blob has primary authority. A vault may deliberately keep
-its sole verified copy in a secondary store, so the built-in snapshot workflow
-is the topology-independent recovery authority: it reads one verified
+You can still take a coherent filesystem copy of local state by stopping the
+daemon and then copying the vault. That copy is not a topology-independent
+backup: it depends on where the vault stores each blob. See
+[Vault Lifecycle](../usage/lifecycle.md#take-a-coherent-backup).
+
+The database plus the built-in `blobs/` directory is a complete manual archive
+only while every retained blob has primary authority. A vault may keep the sole
+verified copy of a blob in a secondary store. The built-in snapshot workflow is
+therefore the topology-independent recovery authority. It reads one verified
 candidate for every logical blob or fails without publishing a partial
-snapshot. Configuration is useful to retain when customized; logs, locks, and
+snapshot. Keep the configuration if you customized it. Logs, locks, and
 runtime records are not archive state. A restored copy is not trusted until
 `docbank verify` succeeds.
 
@@ -76,14 +78,14 @@ describe different authority handoffs.
 Docbank exports logical metadata as deterministic JSONL: one JSON record per
 line, with stable record and field ordering. Snapshot manifests identify this
 artifact as `docbank-metadata-jsonl-v1`. It contains the complete virtual
-directory tree and file records,
-including stable IDs, content hashes, timestamps, trash coordinates, prior
-versions, ingest provenance, watched-source cursors, tags, and extracted text.
+directory tree and file records, including stable IDs, content hashes,
+timestamps, trash coordinates, prior versions, ingest provenance,
+watched-source cursors, tags, and extracted text.
 Snapshots also preserve people, their identifiers and merge/split history,
 custodian assignments, document assertions, and match candidates. Restore
 rebuilds document–person links from those records after rebuilding document
-events. In audited vaults, this rebuild does not create people or candidates;
-actors without a retained match remain unresolved.
+events. In audited vaults, this rebuild does not create people or candidates.
+Actors without a retained match remain unresolved.
 
 It omits rebuildable full-text and vector indexes and physical pack mappings.
 Restore rebuilds full-text search and vector indexes from retained records.
@@ -91,29 +93,25 @@ When a vector source cannot be rebuilt locally, restore records that missing
 coverage instead of calling an external provider. Restore grants physical
 authority only after content has been verified and published.
 
-Import targets must be fresh
-current-schema databases;
-a malformed or referentially incomplete stream leaves the pristine target
-unchanged.
+Import targets must be fresh current-schema databases. A malformed or
+referentially incomplete stream leaves the target unchanged.
 
-Capture makes two deterministic passes over the same pinned
-transaction: the first establishes the exact artifact size and the second
-streams the bytes into Kit without materializing a second database or a JSONL
-temporary file.
+Capture makes two deterministic passes over the same pinned transaction. The
+first establishes the artifact size. The second streams the bytes into Kit
+without materializing a second database or a JSONL temporary file.
 
-The header also preserves the node-ID allocation high-water
-mark, including IDs whose rows were later deleted, so restore never reuses a
-value that an external reference may remember.
+The header also preserves the node-ID allocation high-water mark, including
+IDs whose rows were later deleted. Restore therefore never reuses a value that
+an external reference may remember.
 
 ## When does copied content become trusted?
 
 Capture reads raw loose, zstd loose, and packed blobs through Kit's
 bounded-memory stream. The physical source encoding is not copied into backup
-metadata: Kit decodes and verifies the logical bytes before repository
+metadata. Kit decodes and verifies the logical bytes before repository
 publication. The archive may grant authority to copied bytes only after
-terminal EOF verifies
-their stored framing, decoded length, and SHA-256 identity; opening a stream or
-closing it early is not a successful copy.
+terminal EOF verifies their stored framing, decoded length, and SHA-256
+identity. Opening a stream or closing it early is not a successful copy.
 
 ## How does restore publish a complete vault?
 
@@ -128,9 +126,9 @@ Restore performs these steps in Kit's private staging area:
 
 Source pack rows never enter the JSONL artifact. Docbank's restore wrapper owns
 both the metadata restorer and packed target, keeping their policies together.
-Integration coverage proves logical JSONL equality, loose and packed source capture,
-packed publication, large loose-object fallback, and reads every restored blob
-through the same mixed store used by a live vault.
+Integration tests cover logical JSONL equality, loose and packed source
+capture, packed publication, and large loose-object fallback. They also read
+every restored blob through the same mixed store used by a live vault.
 
 ### How are multiple stores restored?
 
@@ -141,7 +139,7 @@ publishes or adopts immutable destination objects, reads every object back,
 and records mapped authority while target-tree coordination remains held.
 A remote-only database is published without primary catalog authority, but
 restore leaves the now-untracked primary files intact until publication
-succeeds; ordinary garbage collection may reclaim them afterward. A failed
+succeeds. Ordinary garbage collection may reclaim them afterward. A failed
 restore therefore cannot remove bytes still owned by the database it was meant
 to replace. Audit-protected bytes retain primary authority unless the mapping
 includes the explicit remote-only acknowledgement.
@@ -153,13 +151,13 @@ recoverable publication. Before replacing the database, Docbank durably records
 the prior database fingerprint and both marker identities, installs and reads
 back the restored marker, and rolls it back if publication fails. If the process
 stops between those steps, the next restore compares the visible database with
-that fingerprint without opening unknown files for mutation; a normal vault
+that fingerprint without opening unknown files for mutation. A normal vault
 open reconciles its validated catalog identity. Storage access begins only
 after the marker agrees with the database that actually became visible.
 
 !!! info "Historical snapshot format"
     Earlier development snapshots used Kit's SQLite page-map metadata. The
-    restore wrapper still reads them. Every new capture uses JSONL; callers
+    restore wrapper still reads them. Every new capture uses JSONL. Callers
     cannot select the historical format for a new snapshot.
 
 ## Which operations may run during capture?
@@ -179,15 +177,15 @@ This lets one manifest bind an application's catalog snapshot to Docbank's
 logical snapshot without extending the freeze across repository preparation or
 content streaming.
 
-Credential-bearing extras retain Kit's sensitivity marker;
-the current plaintext repository refuses them unless the embedding application
-explicitly permits plaintext secret capture for that backup.
+Credential-bearing extras retain Kit's sensitivity marker. The current
+plaintext repository refuses them unless the embedding application explicitly
+permits plaintext secret capture for that backup.
 
 ## How do clients know capture or verification succeeded?
 
 Kit's structured progress events remain structured across the daemon boundary.
 The streaming create endpoint emits NDJSON stage updates followed by one
-terminal result or error; the typed client validates that sequence before
+terminal result or error. The typed client validates that sequence before
 reporting success. The human CLI renders the same events as terminal bars or
 plain log lines. Machine-readable CLI output uses the non-streaming endpoint so
 stdout remains one JSON document.
@@ -199,7 +197,7 @@ referenced content, deduplicating shared objects across selected snapshots, and
 returns every finding rather than stopping at the first damaged object. Kit's
 shared repository lock permits concurrent verifies and restores while excluding
 repository writers. The daemon's authenticated JSON endpoint returns one
-complete typed report; its NDJSON endpoint carries progress followed by exactly
+complete typed report. Its NDJSON endpoint carries progress followed by exactly
 one terminal report or error.
 
 ## How does restore protect other directories?
@@ -255,9 +253,8 @@ registry to order those statistics consistently.
 
 Relational validation runs before a restored database is published. Every
 disjoint permanent audit scope, its membership, and its independent chain are
-preserved; the complete
-audited-history backup and restore contract is described in
-[Audited History](audited-history.md).
+preserved. [Audited History](audited-history.md) describes the complete
+audited-history backup and restore contract.
 
 ## Who can remove snapshots and reclaim repository space?
 
@@ -272,13 +269,14 @@ Both methods work without a source vault and return partial reports with errors.
 
 Kit serializes cleanup with its exclusive repository lock. Pruning publishes
 replacement packs and a live index before retiring old indexes and then old
-packs; retry after interruption recomputes live references and cleanup candidates.
-Only wholly dead packs and packs below half-live encoded payload are reclaimed or rewritten.
-This leaves mostly-live packs partly unused. Removing snapshot records alone
-does not reclaim their stored bytes, and neither operation promises secure
-erasure. Scheduling and recovery-point selection belong to the embedding host;
-the daemon and CLI do not expose these cleanup operations.
+packs. A retry after interruption recomputes live references and cleanup
+candidates. Only wholly dead packs and packs below half-live encoded payload
+are reclaimed or rewritten. This leaves mostly-live packs partly unused.
+Removing snapshot records alone does not reclaim their stored bytes, and
+neither operation promises secure erasure. Scheduling and recovery-point
+selection belong to the embedding host. The daemon and CLI do not expose these
+cleanup operations.
 
 Backup and live packed storage share Kit's physical formats and verification
-primitives, but docbank remains responsible for which catalog rows belong in a
-snapshot. Kit does not infer application liveness or reach into docbank SQL.
+primitives, but Docbank remains responsible for which catalog rows belong in a
+snapshot. Kit does not infer application liveness or reach into Docbank SQL.

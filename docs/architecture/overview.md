@@ -34,7 +34,7 @@ Five ideas explain most of the system:
 2. A **node** is a directory or file with a stable numeric ID. Its path can
    change without changing which document it is.
 3. A file's **content version** is an immutable historical record with its own
-   random UUID. Editing or reverting creates a new version; it never rewrites
+   random UUID. Editing or reverting creates a new version. It never rewrites
    an old one.
 4. A **blob** is the byte content of one or more versions. Its SHA-256 digest is
    its identity, so byte-identical files share storage automatically.
@@ -67,8 +67,7 @@ A name or a stray file cannot authorize a read on its own.
 
 ## Identity, addressing, and authority
 
-These values answer different questions and are intentionally not
-interchangeable:
+These values answer different questions and are not interchangeable:
 
 | Value | What it answers | Stability and authority |
 | --- | --- | --- |
@@ -82,7 +81,7 @@ interchangeable:
 
 This is why an automation should remember node and version IDs, not paths
 alone. It is also why finding a correctly named file under `blobs/` does not
-make that file part of the vault: only a committed catalog reference does.
+make that file part of the vault. Only a committed catalog reference does.
 
 ## How a write becomes authoritative
 
@@ -91,7 +90,7 @@ before committing metadata that names them.
 
 1. Docbank streams the source into private staging while counting and hashing
    it. A verified upload or replacement must declare the expected size and
-   digest; a mismatch ends the operation without granting node authority.
+   digest. A mismatch ends the operation without granting node authority.
 2. The content store syncs the completed bytes, closes them, publishes them
    under their digest, and syncs the containing directory.
 3. One SQLite transaction creates or updates the node, records the immutable
@@ -108,8 +107,8 @@ back:
 
 If the process fails before step 3, durable bytes may exist without a database
 reference. They are harmless orphans: normal reads cannot see them, and garbage
-collection can reclaim them later. The reverse state—a committed version whose
-bytes were never durably published—is prevented by the ordering.
+collection can reclaim them later. The ordering prevents the reverse state: a
+committed version whose bytes were never durably published.
 
 Tree mutations such as move, rename, trash, restore, tag assignment, reversion,
 and version pruning happen in SQLite transactions. Path-based mutation
@@ -139,7 +138,7 @@ Docbank keeps logical decisions distinct from physical storage maintenance:
 | --- | --- | --- |
 | Edit or replace | Adds an immutable version and advances the file's current pointer | Prior versions are not rewritten |
 | Revert | Adds a new version that records the selected historical source | History is not rewound or erased |
-| Version prune | Removes selected history under a revision check; dry-run is the default, but execution may be requested directly | Current content remains; `--all-prior` may replace a current revert with a same-byte checkpoint before deleting the prior version identity, and shared bytes may remain live |
+| Version prune | Removes selected history under a revision check; dry-run is the default, but execution may be requested directly | Current content remains. `--all-prior` may replace a current revert with a same-byte checkpoint before deleting the prior version identity, and shared bytes may remain live |
 | Trash | Detaches a subtree from the live tree while retaining its identity, bytes, and restore coordinates | No content is physically reclaimed |
 | Trash empty | Permanently removes selected trashed metadata | Unreferenced loose files and dead pack entries may still occupy disk |
 | GC | Removes unreferenced catalog authority and loose bytes | Dead entries inside an immutable pack do not shrink that pack |
@@ -152,8 +151,8 @@ and reclaim space from packs. [Editing & Versions](editing-and-versions.md) and
 contracts.
 
 Metadata extracted from original file formats is separate from this authority
-chain. It is immutable evidence tied to a content digest and exact version, not
-a replacement for the original. [Source Metadata](source-metadata.md) explains
+chain. It is immutable evidence tied to a content digest and exact version. It
+does not replace the original. [Source Metadata](source-metadata.md) explains
 the typed field contract, supported media formats, and current size limit.
 
 ## One logical content store can use several physical locations
@@ -166,18 +165,18 @@ changing the blob digest, version identity, or document path.
 Every ingest first lands in the vault's fixed local filesystem primary. A vault
 may also authorize verified copies in secondary filesystem or S3-compatible
 stores. Paths, endpoints, buckets, credentials, and observed availability stay
-outside portable document metadata; the catalog records stable store identity
+outside portable document metadata. The catalog records stable store identity
 and which locations have been independently verified for each SHA-256 object.
 
 Readers therefore do not care whether content is loose or packed, local or
 remote. They select a currently usable catalog-authorized candidate and verify
 the complete decoded identity. A failed stream is never silently continued
-from another location because bytes from the first candidate are not yet
-trusted; a later retry can select a different healthy copy.
+from another location, because bytes from the first candidate are not yet
+trusted. A later retry can select a different healthy copy.
 
-Placement is explicit capacity management, not synchronization or backup.
-Backup captures every logical blob from one verified candidate, not the source
-topology, and default restore rebuilds a fresh local primary. See
+Placement manages capacity. It is not synchronization or backup. Backup
+captures every logical blob from one verified candidate and does not record
+the source topology. Default restore rebuilds a fresh local primary. See
 [Multi-store Storage](../usage/storage.md) for registration, placement,
 fencing, repair, and restore mapping, and
 [Loose & Packed Content](packed-storage.md) for representation limits and the
@@ -201,10 +200,10 @@ and [Embed in Go](../embedding.md) describe those boundaries.
 
 ## Backup reconstructs meaning, not a live database copy
 
-Snapshots are immutable and incremental. Embedded applications can explicitly
-forget selected snapshots and reclaim repository data that no surviving
-snapshot uses. Each snapshot contains a complete deterministic JSONL description
-of the logical vault plus every retained content and derivative blob. Unchanged
+Snapshots are immutable and incremental. Embedded applications can forget
+selected snapshots and reclaim repository data that no surviving snapshot
+uses. Each snapshot contains a complete deterministic JSONL description of the
+logical vault plus every retained content and derivative blob. Unchanged
 objects are reused by digest across snapshots.
 
 Restore publishes a vault only after it verifies the repository, imports the
@@ -217,10 +216,13 @@ sequence, including failure and publication rules.
 
 Docbank is designed to detect truncation, corruption, stale writes, malformed
 metadata, and incomplete recovery within its application and storage
-boundaries. SHA-256 identifies bytes; revisions and ETags bind mutations to
-observed state; catalog authority excludes stray storage; full verification
-reads and hashes content; and restore validates the logical relations before
-publication.
+boundaries:
+
+- SHA-256 identifies bytes.
+- Revisions and ETags bind mutations to observed state.
+- Catalog authority excludes stray storage.
+- Full verification reads and hashes content.
+- Restore validates the logical relations before publication.
 
 These mechanisms do not make a host administrator, compromised process, or
 someone able to rewrite both data and expected evidence harmless. The
@@ -242,5 +244,5 @@ and which threats require independent evidence.
 | Permanent retention, history, and verification | [Audited History](audited-history.md) |
 
 The [Roadmap](../roadmap.md) gives high-level product direction. These pages
-explain implemented behavior and durable design intent; planned behavior is
-marked explicitly. They do not track implementation work or status.
+explain implemented behavior and durable design intent. Planned behavior is
+marked as planned. They do not track implementation work or status.

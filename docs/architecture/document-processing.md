@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-14
+last_edited: 2026-10-05
 title: Document Processing
 description: How Docbank derives readable evidence and search data while preserving original versions and explicit processing consent.
 ---
@@ -8,8 +8,8 @@ description: How Docbank derives readable evidence and search data while preserv
 
 Docbank keeps original document versions and the results derived from them
 separately. A new extractor or embedding model can produce a new result without
-rewriting the original. Search uses only results that the vault has explicitly
-published for the relevant document version.
+rewriting the original. Search uses only results that the vault has published
+for the relevant document version.
 
 This page describes the implemented Go contracts and internal processing
 architecture. For an application choosing extractors or embedding providers,
@@ -20,7 +20,7 @@ start with [Document Understanding in Go](../document-understanding.md).
 | Interface | Current scope |
 |-----------|---------------|
 | Public `document/*` Go packages | Evidence, rendition, OCR, upload, embedding, and provider contracts; the importing application owns orchestration and persistence |
-| Public embedded vault API | Plan and run processing, read retained renditions and coverage, and search exact source versions in lexical, semantic, or hybrid mode; also process local metadata and read visual previews; see [Embed in Go](../embedding.md) |
+| Public embedded vault API | Plan and run processing, read retained renditions and coverage, and search exact source versions in lexical, semantic, or hybrid mode. Also process local metadata and read visual previews. See [Embed in Go](../embedding.md) |
 | Daemon background jobs | Local metadata, checksum, and visual-preview work; configured rendition and embedding jobs; vector-index rebuilding |
 | Internal processing and storage packages | Profiles, consent, publication, retention, and derivative purge |
 | Internal retrieval packages | Lexical, semantic, and hybrid retrieval; optional expansion and reranking; QMD export and query adapters |
@@ -30,7 +30,7 @@ start with [Document Understanding in Go](../document-understanding.md).
 The default configuration has no processing profiles. The daemon can execute
 its built-in plaintext and EPUB rendition adapters and the OpenAI-compatible
 and Voyage embedding runtimes listed in [Configuration][embedding-runtime].
-Other public provider packages are available to embedded Go callers; adding a
+Other public provider packages are available to embedded Go callers. Adding a
 package does not register a daemon runtime. Configuration alone does not grant
 consent or enqueue work.
 
@@ -39,7 +39,7 @@ consent or enqueue work.
 `configureRenditionProviders` selects `document/epub` for `docbank-epub-rendition/v1`
 and passes the existing byte and unit limits to its constructor. The provider
 owns the `epub.in-process-v1` descriptor and virtual-unit policy. Startup
-rejects descriptor or trust-boundary drift; unknown adapters remain
+rejects descriptor or trust-boundary drift. Unknown adapters remain
 unavailable.
 
 [Document processing](../usage/document-processing.md) follows the operator
@@ -87,8 +87,8 @@ identities. They do not require a hosted rendition provider.
 
 A processing profile is an immutable description of extraction, text handling,
 embedding inputs, retention, disclosure, and retrieval limits. Its fingerprint
-is a checksum of that declared policy. Credentials are named bindings; their
-secret values are not retained in the profile.
+is a checksum of that declared policy. Credentials are named bindings. The
+profile does not retain their secret values.
 
 Docbank also computes separate fingerprints for the rendition request,
 evidence and lexical policy, each embedding-input policy, each vector space,
@@ -118,7 +118,7 @@ immediate and ultimate processor, endpoint, deployment, model and revision,
 vector space, provider-visible metadata, and retained artifact roles. The plan
 fingerprint seals those values alongside the exact source and portable profile.
 Embedded callers supply endpoint disclosures for network providers when opening
-the vault; [Embed in Go](../embedding.md#configure-document-processing) describes
+the vault. [Embed in Go](../embedding.md#configure-document-processing) describes
 the configuration contract.
 
 A durable consent grant records the principal, scope, processing-profile and
@@ -137,33 +137,33 @@ These rules are implemented in the
 [upload package](https://github.com/kenn-io/docbank/tree/main/document/upload),
 and [provider transport](https://github.com/kenn-io/docbank/tree/main/document/providerhttp).
 Provider capability manifests and a vault's human-consent records serve
-different purposes; neither substitutes for the other.
+different purposes. Neither substitutes for the other.
 
 ## Publish complete results for exact versions
 
 The rendition catalog separates an immutable build from the attachment that
 allows one content version to use it. Several attachments can reuse a build
-inside the vault. An active head selects the attachment visible for an exact
+inside the vault. An active head selects the attachment visible for one
 content-version and processing-profile pair.
 
 Workers retain attempts, leases, and provider-operation state separately from
 completed builds. A resumable provider can continue polling a recorded
 operation without reopening source bytes. If a submission outcome is ambiguous,
 the worker resumes a known operation or requires operator action instead of
-automatically uploading the source again. A late or stale worker
-cannot publish over newer authority. Rendition attachment and lexical serving
+automatically uploading the source again. A late or stale worker cannot
+publish over newer authority. Rendition attachment and lexical serving
 generation changes publish together.
 
 Embedding inputs, vector sets, and version-specific embedding sets are also
 immutable records. Each embedding binding has its own active head, so an
 optional failed binding does not replace another binding's successful result.
-Vector values live in validated blob artifacts; SQLite records their identity
+Vector values live in validated blob artifacts. SQLite records their identity
 and membership. The vector-index worker builds disposable generations from
 those retained sets and publishes only against the source membership it read.
 Reader leases keep a selected generation available during a query.
 
 Coverage reads source visibility, serving heads, and replacement jobs in one
-catalog snapshot. A replacement counts as `rebuilding`; the separate
+catalog snapshot. A replacement counts as `rebuilding`. The separate
 `previous_generation_serving` count records whether a complete prior result
 remains available. Those documents are not also counted as `complete`. Embedding
 coverage uses the same current attachment and evidence checks as search. A
@@ -180,17 +180,17 @@ and [vector-index catalog](https://github.com/kenn-io/docbank/blob/main/internal
 
 The internal searcher treats omitted and `auto` modes as lexical. Explicit
 semantic and hybrid modes require compatible active vector authority and a
-query encoder. The source-version fence selects eligible vectors from current, live
-attachments before scoring. Missing vector-row authority stops the search. Results
-retain source references, lexical and semantic rank contributions, coverage,
-truncation, and degradation information. Candidates are checked against current
-vault authority before they are passed to optional reranking.
+query encoder. The source-version fence selects eligible vectors from current,
+live attachments before scoring. Missing vector-row authority stops the search.
+Results retain source references, lexical and semantic rank contributions,
+coverage, truncation, and degradation information. Candidates are checked
+against current vault authority before they are passed to optional reranking.
 
 For a timed rendition segment, lexical evidence resolves the exact lexical
 segment to its build unit. Rendition-chunk semantic evidence resolves the exact
 input generation and source unit from retained canonical artifacts. Both paths
 return the same optional `time_span` shape and the exact build identity.
-Direct-file embeddings and untimed evidence omit `time_span`; zero is a valid
+Direct-file embeddings and untimed evidence omit `time_span`. Zero is a valid
 segment start and remains present in JSON. Hybrid results retain each lane's
 separate evidence reference instead of combining disjoint spans. The daemon HTTP
 API preserves these spans for CLI and web clients.
@@ -198,7 +198,7 @@ API preserves these spans for CLI and web clients.
 The processing service caches verified timing mappings for up to 100,000 inputs.
 A cold lookup still reads the retained generation and evidence artifacts. If an
 artifact cannot be read or verified, search omits the affected semantic hit and
-marks the report `truncated`; other documents remain available.
+marks the report `truncated`. Other documents remain available.
 
 Query expansion produces bounded alternate queries. Reranking reorders an
 already authorized candidate list from bounded excerpts and evidence
@@ -224,7 +224,7 @@ against the current vault and requested scope. QMD's index does not become the
 source of document ownership or current-version truth.
 
 Similar-document retrieval scores every stored source row against the fenced
-candidate rows. Cosine and dot product keep the greatest score; L2 keeps the
+candidate rows. Cosine and dot product keep the greatest score. L2 keeps the
 smallest distance and returns its negative. The store preserves every document
 membership when several documents share a vector-set row. It deduplicates only
 the scoring inputs, then expands matches before excluding the source node and
@@ -233,8 +233,8 @@ as one row with `duplicate_count: 1`.
 
 Current/live eligibility, binding authority, and vector-index leases apply to
 both source and candidates. The final transaction rechecks source identity and
-the source manifest. Missing source coverage returns an unavailable report;
-it never invokes an encoder or provider. Ordinary processing search keeps its
+the source manifest. Missing source coverage returns an unavailable report.
+It never invokes an encoder or provider. Ordinary processing search keeps its
 existing document results. See the [HTTP contract](http-api.md#similar-documents).
 
 The [searcher](https://github.com/kenn-io/docbank/blob/main/internal/retrieval/search.go)
@@ -251,15 +251,15 @@ content versions remain separate authority.
 
 Backups include the retained derivative catalog and the blobs it authorizes.
 Restore validates them and rebuilds lexical and vector indexes from retained
-local data; it does not rerun extraction or call embedding providers. See
+local data. It does not rerun extraction or call embedding providers. See
 [Backup architecture](backup.md) for the snapshot and restore boundary.
 
 The internal derivative-purge operation removes selected serving attachments
 and collects complete builds or generations only when no remaining root needs
 them. Shared attachments, active workers and readers, and backup pins can
 retain a result. A durable suppression prevents background discovery from
-silently recreating an explicitly purged result; rebuilding requires an
-explicit authorization that supersedes that suppression.
+silently recreating a purged result. Rebuilding requires an explicit
+authorization that supersedes that suppression.
 
 Derivative purge preserves original versions and does not erase copies in
 existing backup repositories. Removing a source version first revokes its

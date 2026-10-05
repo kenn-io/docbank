@@ -16,38 +16,39 @@ format or migration behavior. Existing raw loose files remain valid
 indefinitely and need no conversion.
 
 New loose objects of at least 4 KiB use zstd when it saves at least 10% of their
-size. Otherwise Docbank keeps the raw bytes. Docbank manages this choice;
-standalone users do not select a compression format.
+size. Otherwise Docbank keeps the raw bytes. Docbank manages this choice.
+Standalone users do not select a compression format.
 
 `docbank storage status` exposes loose and packed inventory through the
-authenticated daemon API, and `docbank storage pack` explicitly moves authorized
-loose content into immutable packs with an optional work budget. An application
-that exclusively owns an embedded vault can invoke the same packing and
-reconciliation pass through `Vault.Pack`; it cannot bypass the catalog or Kit's
+authenticated daemon API. `docbank storage pack` moves authorized loose content
+into immutable packs with an optional work budget. An application that
+exclusively owns an embedded vault can invoke the same packing and
+reconciliation pass through `Vault.Pack`. It cannot bypass the catalog or Kit's
 maintenance coordinator. `docbank storage repack` compacts eligible sparse packs
 and retires dead pack files. Embedded owners also have bounded `GarbageCollect`,
-`Verify`, and `Repack` passes. Startup never implicitly rewrites blob bytes, and
+`Verify`, and `Repack` passes. Startup never rewrites blob bytes, and
 configured daemon scheduling applies only to bounded packing. Garbage
-collection, verification, and repacking remain explicit operator actions.
+collection, verification, and repacking run only when an operator requests
+them.
 
 Large collections of small files are expensive to enumerate, copy, and restore.
 msgvault uses immutable pack files as the steady-state storage format for
-attachments. docbank reuses that work rather than growing an independent pack
+attachments. Docbank reuses that work rather than growing an independent pack
 index, reader cache, recovery state machine, and repacker.
 
 `kit/packstore` sits above the low-level `kit/pack` format. It provides a mixed
 loose-and-packed content-addressed store, so migration can be gradual and
-interrupted work remains recoverable. Docbank explicitly caps new loose-object
-admission at 64 TiB while keeping packing, packed reads, and packed restore at 64
-MiB. Admission follows Kit's logical backup-object limit; packing remains an
-independent application policy. An admitted object
-above 64 MiB remains loose, readable, and eligible for backup; pack maintenance
-reports it as deferred instead of attempting to prepare it.
+interrupted work remains recoverable. Docbank caps new loose-object admission
+at 64 TiB and keeps packing, packed reads, and packed restore at 64 MiB.
+Admission follows Kit's logical backup-object limit. Packing remains an
+independent application policy. An admitted object above 64 MiB remains loose,
+readable, and eligible for backup. Pack maintenance reports it as deferred
+instead of attempting to prepare it.
 
 Loose compression is a write policy, not a new content identity. When an
 embedded `Config` enables it, Docbank finishes the candidate zstd stream and
-keeps it only when the configured minimum size and savings threshold are met;
-otherwise it publishes the raw form. Existing raw objects are not rewritten. The
+keeps it only when the configured minimum size and savings threshold are met.
+Otherwise it publishes the raw form. Existing raw objects are not rewritten. The
 catalog records the selected encoding and stored bytes, while the canonical
 identity remains SHA-256 over decoded logical bytes.
 
@@ -55,29 +56,29 @@ identity remains SHA-256 over decoded logical bytes.
 
 Kit owns mechanics that must behave identically in both applications:
 
-- canonical loose and pack paths, hash validation, and mixed-storage reads;
-- bounded pack-reader caching and safe reader retirement;
-- staging cleanup, orphan reconciliation, packing, unpacking, and repacking;
+- canonical loose and pack paths, hash validation, and mixed-storage reads
+- bounded pack-reader caching and safe reader retirement
+- staging cleanup, orphan reconciliation, packing, unpacking, and repacking
 - crash ordering, verification, cancellation, work budgets, and maintenance
-  statistics; and
-- safe physical deletion after a transactional mapping replacement.
+  statistics
+- safe physical deletion after a transactional mapping replacement
 
 Each application retains the policy that gives those mechanics meaning:
 
-- its schema, migrations, and SQL queries;
-- the definition of whether a content hash is live;
-- transactional mapping changes and compare-and-swap checks;
-- product-specific retention and deletion rules; and
-- daemon scheduling, commands, logging, and backup compatibility adapters.
+- its schema, migrations, and SQL queries
+- the definition of whether a content hash is live
+- transactional mapping changes and compare-and-swap checks
+- product-specific retention and deletion rules
+- daemon scheduling, commands, logging, and backup compatibility adapters
 
 This boundary matters because the applications have different reachability
 rules. msgvault derives liveness from attachment content and thumbnail
-references. In docbank, a row in `blobs` grants physical read authority. Current
+references. In Docbank, a row in `blobs` grants physical read authority. Current
 GC keeps that row while any live node, trashed node, or recorded prior version
 refers to it. Kit therefore accepts an application-supplied catalog and does not
 own either application's schema or garbage-collection policy. Physical
-maintenance therefore cannot choose application-level liveness. It can only act
-on the catalog authority that docbank's tree, trash, version, and retention
+maintenance cannot choose application-level liveness. It can only act
+on the catalog authority that Docbank's tree, trash, version, and retention
 rules have already made reachable or unreachable.
 
 ## Consequences for docbank
@@ -86,9 +87,9 @@ Docbank owns only its catalog adapter, daemon wiring, released-schema cutover
 policy, and end-to-end verification. It does not fork Kit's reader cache,
 reconciliation, or repacker. Raw and zstd loose representations remain recovery
 paths and staging representations before packing. Both names identify the same
-logical SHA-256 and decoded size. Status and GC report their physical stored bytes;
-reads, backup, verification, and packing decode and verify the logical bytes
-before granting authority. Streaming reads remain bounded-memory. A caller
+logical SHA-256 and decoded size. Status and GC report their physical stored
+bytes. Reads, backup, verification, and packing decode and verify the logical
+bytes before granting authority. Streaming reads remain bounded-memory. A caller
 that needs a seekable handle to compressed loose content may require Kit to
 create a private decoded temporary file, so sequential consumers should prefer
 the streaming API.
@@ -96,7 +97,7 @@ the streaming API.
 An eligible compressed write privately stages both the complete raw object and
 its zstd candidate before choosing which one to publish. Temporary-space
 planning must therefore allow roughly the raw size plus the compressed size for
-each concurrent write; cancellation and failed writes remove those private
+each concurrent write. Cancellation and failed writes remove those private
 candidates without granting metadata authority.
 
 `RepairContent` verifies trusted bytes against one existing logical SHA-256
@@ -110,7 +111,7 @@ The limits serve different purposes:
 - The 64 TiB admission ceiling matches the largest logical object Kit backup
   can represent with bounded chunk recipes. Backup splits objects above 64 MiB
   into chunks and preserves their whole-file hashes. Snapshots using recipes
-  require a version-5 reader; existing snapshots remain readable. Restore writes
+  require a version-5 reader. Existing snapshots remain readable. Restore writes
   these large objects as complete loose files.
 - The 64 MiB packed-content limit bounds pack preparation. A 1 GiB pack
   candidate could require about 2.004 GiB of scratch space before frame overhead.
@@ -133,23 +134,22 @@ changing physical pack authority.
 
 Kit retains an unpack primitive because shared storage tests, migrations, and a
 future purpose-built recovery tool may need to materialize packed content loose.
-Docbank intentionally does not expose that primitive as a normal API or CLI
-operation.
+Docbank does not expose that primitive as a normal API or CLI operation.
 
 Packing exists to avoid the enumeration, backup, and restore cost of thousands
 of small files. A general unpack command would recreate that problem, could
 temporarily require space for both representations, and would make users manage
-an implementation format that docbank should own. Recovery belongs in verified
-backup/restore or a concrete repair workflow; the existence of a low-level Kit
+an implementation format that Docbank should own. Recovery belongs in verified
+backup/restore or a concrete repair workflow. The existence of a low-level Kit
 operation is not by itself a product use case.
 
 Configured automatic packing is a current daemon capability. It applies a
-finite byte budget through the same maintenance gate as explicit packing;
-garbage collection and repacking remain deliberate operator actions. External
-content references are not a current operator capability. Backup, replacement,
+finite byte budget through the same maintenance gate as a requested pack.
+Garbage collection and repacking run only when an operator requests them.
+External content references are not a current operator capability. Backup, replacement,
 repair, reversion, and maintenance use the catalog and content-hash boundary
 rather than private pack internals.
 
 Next: [Storage](storage.md) documents the schema and blob-store invariants
-beneath this layer; [Trash, GC, Repack & Verify](../usage/trash-and-gc.md) is
+beneath this layer. [Trash, GC, Repack & Verify](../usage/trash-and-gc.md) is
 the operator workflow above it.
