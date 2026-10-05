@@ -9,7 +9,7 @@ Every public page is also published as raw Markdown at the route listed below.
 - [Document guide](https://docbank.ai/guide.md): Follow a document from import through saved versions, processing choices, and recovery.
 
 ## Overview
-- [Docbank documentation](https://docbank.ai/docs/index.md): Install Docbank, organize documents, automate a vault, and verify backups.
+- [Docbank documentation](https://docbank.ai/docs/index.md): Install Docbank, then find the guide for importing, searching, exporting, automating, or backing up a vault.
 
 ## Changelog
 - [Changelog](https://docbank.ai/docs/changelog.md): Release history.
@@ -17,8 +17,8 @@ Every public page is also published as raw Markdown at the route listed below.
 ## Start Here
 - [Setup](https://docbank.ai/docs/setup.md): Install docbank on Linux, macOS, or Windows and create the vault.
 - [Quickstart](https://docbank.ai/docs/quickstart.md): A ten-minute tour of the docbank CLI.
-- [Capabilities](https://docbank.ai/docs/capabilities.md): What Docbank does for people, agents, applications, recovery, and physical storage.
-- [Visual Tour](https://docbank.ai/docs/tour.md): See Docbank's real web and terminal interfaces running against synthetic document vaults.
+- [Capabilities](https://docbank.ai/docs/capabilities.md): What Docbank can do today, grouped by task, with links to the guide for each.
+- [Visual tour](https://docbank.ai/docs/tour.md): Screenshots of the Docbank web app and terminal browser, taken against synthetic vaults.
 
 ## Work with Documents
 - [Importing Documents](https://docbank.ai/docs/usage/importing.md): Import folders, preview large sources, retry partial imports, and keep changing files up to date.
@@ -75,5 +75,5 @@ Every public page is also published as raw Markdown at the route listed below.
 - [Document derivatives](https://docbank.ai/docs/architecture/document-derivatives.md): Authority, retention, retrieval, and rendition format for processed document derivatives.
 
 ## Project
-- [Roadmap](https://docbank.ai/docs/roadmap.md): Current capabilities, current limits, and planned product direction.
+- [Roadmap](https://docbank.ai/docs/roadmap.md): What Docbank does today, what it does not do yet, and what is planned.
 - [License](https://docbank.ai/docs/license.md): Docbank is open-source software licensed under the Apache License, Version 2.0.

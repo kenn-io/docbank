@@ -71,6 +71,12 @@
 
 html {
   scroll-behavior: smooth;
+  scrollbar-color: var(--rule) var(--ink);
+}
+
+::selection {
+  color: var(--text);
+  background: rgb(65 215 189 / 32%);
 }
 
 body {
@@ -87,8 +93,14 @@ body > footer {
 
 a {
   color: var(--teal-strong);
+  text-decoration-color: rgb(120 234 214 / 55%);
   text-decoration-thickness: 1px;
   text-underline-offset: 0.2em;
+  transition: color 120ms ease-out, text-decoration-color 120ms ease-out;
+}
+
+a:hover {
+  text-decoration-color: currentcolor;
 }
 
 a:hover {
@@ -187,6 +199,7 @@ a:hover {
   display: flex;
   gap: 0.5rem;
   font-size: 0.64rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .facts[hidden],
@@ -274,7 +287,7 @@ h1 {
   margin-bottom: 1.5rem;
   font-size: clamp(2.75rem, 7.5vw, 5.75rem);
   font-weight: 500;
-  letter-spacing: -0.055em;
+  letter-spacing: -0.04em;
 }
 
 h2 {
@@ -292,7 +305,7 @@ h3 {
 }
 
 .lede {
-  max-width: 56rem;
+  max-width: 62ch;
   margin-bottom: 2rem;
   color: var(--muted);
   font-size: clamp(1.08rem, 2vw, 1.35rem);
@@ -339,11 +352,9 @@ h3 {
 }
 
 .hero-meta {
-  margin: 3rem 0 0;
+  margin: 2.5rem 0 0;
   color: var(--muted);
-  font-family: var(--mono);
-  font-size: 0.76rem;
-  letter-spacing: 0.04em;
+  font-size: 0.88rem;
 }
 
 .actions {
@@ -368,6 +379,12 @@ button.button {
   background: var(--panel);
   cursor: pointer;
   text-decoration: none;
+  transition: color 120ms ease-out, background-color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.button:active,
+button.button:active {
+  transform: translateY(1px);
 }
 
 .button:hover,
@@ -402,8 +419,12 @@ button.button:hover {
 }
 
 .section-heading p {
-  max-width: 44rem;
+  max-width: 68ch;
   color: var(--muted);
+}
+
+.section-heading h2 {
+  margin-bottom: 0;
 }
 
 .section-links {
@@ -422,14 +443,17 @@ button.button:hover {
 .feature-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px;
-  padding: 1px;
-  background: var(--rule);
+  column-gap: clamp(2rem, 6vw, 5rem);
+  border-top: 1px solid var(--rule);
 }
 
 .feature {
-  padding: clamp(1.5rem, 4vw, 2.5rem);
-  background: var(--panel);
+  padding: 1.75rem 0 2rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.feature p {
+  max-width: 60ch;
 }
 
 .feature p:last-child {
@@ -445,6 +469,8 @@ button.button:hover {
   display: block;
   border: 1px solid var(--rule);
   background: var(--panel);
+  cursor: zoom-in;
+  transition: border-color 120ms ease-out;
 }
 
 .capture > a:hover {
@@ -513,9 +539,10 @@ dialog img {
   padding: 0.8rem;
   color: var(--muted);
   background: var(--panel);
-  font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
   text-decoration: none;
+  transition: color 120ms ease-out, background-color 120ms ease-out;
 }
 
 .guide-nav a:hover {
@@ -544,13 +571,15 @@ dialog img {
   display: block;
   margin-bottom: 1rem;
   color: var(--teal);
-  font-family: var(--mono);
-  font-size: 0.76rem;
-  letter-spacing: 0.08em;
+  font-size: 0.88rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.6;
   content: "Step " counter(guide) " of 10";
 }
 
 .guide-copy p {
+  max-width: 60ch;
   color: var(--muted);
 }
 
@@ -611,8 +640,8 @@ dialog::backdrop {
 
 .dialog-header p {
   margin: 0;
-  font-family: var(--mono);
-  font-size: 0.8rem;
+  color: var(--muted);
+  font-size: 0.88rem;
 }
 
 .dialog-close {
@@ -624,6 +653,11 @@ dialog::backdrop {
   background: var(--panel);
   font: inherit;
   cursor: pointer;
+}
+
+.dialog-close:hover {
+  border-color: var(--teal);
+  background: var(--panel-raised);
 }
 
 dialog img {
@@ -642,8 +676,8 @@ dialog img {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .guide-media {
-    order: -1;
+  .section-heading {
+    gap: 1rem;
   }
 }
 

@@ -37,7 +37,7 @@ The web app with a vault of synthetic documents. [Take the visual tour](/docs/to
 
 Search covers file names and the text Docbank extracts from each document.
 Narrow the results by folder, tag, file type, or date. Connect an embedding
-service to search by meaning as well. Each result shows the matching text, so
+service to search by meaning as well. Results show the text that matched, so
 you can check it against the original.
 
 - **Saved and frozen searches.** Save a query, or a set of terms to highlight,
@@ -57,9 +57,9 @@ you can check it against the original.
 [Configure search by meaning](/docs/usage/search/) ·
 [Group and browse photos](/docs/usage/photos/)
 
-![Search results in the web app, each with an excerpt of the matching text](https://docbank.ai/assets/generated/web-natural-1440.png)
+![Search results in the web app, with an excerpt of the matching text](https://docbank.ai/assets/generated/web-natural-1440.png)
 
-Each search result shows the text that matched.
+Search results with an excerpt of the text that matched.
 
 ## Export what you reviewed
 
