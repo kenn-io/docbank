@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -22,11 +23,12 @@ type reportOriginal struct {
 type reportRenditionFixture struct {
 	config  config.Config
 	profile string
+	name    string
 }
 
 func newReportRenditionFixture(t *testing.T) reportRenditionFixture {
 	t.Helper()
-	f := reportRenditionFixture{config: config.Default()}
+	f := reportRenditionFixture{config: config.Default(), name: "archive"}
 	hash := sha256Hex
 	f.config.RenditionProfiles["primary"] = config.RenditionProfileConfig{
 		AdapterContract: "synthetic-pdf/v1", CredentialBinding: "credential:synthetic",
@@ -59,9 +61,9 @@ func newReportRenditionFixture(t *testing.T) reportRenditionFixture {
 func (f reportRenditionFixture) publish(
 	t *testing.T, catalog *store.Store, blobs *blob.Store,
 	node store.Node, source document.SourceEvidenceV1,
-) {
+) store.RenditionAttachmentRecord {
 	t.Helper()
-	resolved, err := f.config.ProcessingProfile("archive")
+	resolved, err := f.config.ProcessingProfile(f.name)
 	require.NoError(t, err)
 	canonical, fingerprints, err := document.CanonicalProfile(resolved.Document)
 	require.NoError(t, err)
@@ -85,11 +87,13 @@ func (f reportRenditionFixture) publish(
 	require.NoError(t, err)
 	rendition, err := document.BuildRenditionV1(normalized, renditionPolicy)
 	require.NoError(t, err)
+	publicationID := uuid.New().String()
+	buildID := sha256Hex("build:" + publicationID)
 	policy := jsontext.Value(`{"roles":[` +
 		`{"max_count":1,"min_count":1,"role":"normalized_evidence"},` +
 		`{"max_count":1,"min_count":1,"role":"sanitized_markdown"}],"version":1}`)
 	build := store.RenditionBuildRecord{
-		ID: sha256Hex("build:" + node.CurrentVersionID), VaultID: catalog.VaultID(),
+		ID: buildID, VaultID: catalog.VaultID(),
 		SourceSHA256: node.BlobHash, RenditionRequestFingerprint: fingerprints.RenditionRequest,
 		EvidenceLexicalFingerprint: fingerprints.EvidenceLexical,
 		CapturedArtifactPolicy:     policy, CapturedArtifactPolicyFingerprint: sha256Hex(string(policy)),
@@ -99,9 +103,9 @@ func (f reportRenditionFixture) publish(
 		MarkdownChecksum: rendition.MarkdownChecksum, Completeness: document.EvidenceComplete,
 		CompletedAt: "2026-09-11T12:00:00.000000000Z", DeclaredArtifactCount: 2,
 		Artifacts: []store.RenditionArtifactRecord{
-			{ID: "artifact_" + evidenceHash, Role: "normalized_evidence", BlobHash: evidenceHash,
+			{ID: evidenceHash, Role: "normalized_evidence", BlobHash: evidenceHash,
 				Size: int64(len(evidence)), Checksum: evidenceHash, State: store.RenditionArtifactVerified},
-			{ID: "artifact_" + rendition.MarkdownChecksum, Role: "sanitized_markdown",
+			{ID: rendition.MarkdownChecksum, Role: "sanitized_markdown",
 				BlobHash: rendition.MarkdownChecksum, Size: int64(len(rendition.Markdown)),
 				Checksum: rendition.MarkdownChecksum, State: store.RenditionArtifactVerified},
 		},
@@ -117,7 +121,7 @@ func (f reportRenditionFixture) publish(
 			CharEnd: segment.CharEnd, Checksum: segment.Checksum, Text: segment.Text})
 	}
 	attachment := store.RenditionAttachmentRecord{
-		ID: sha256Hex("attachment:" + node.CurrentVersionID), VaultID: catalog.VaultID(),
+		ID: sha256Hex("attachment:" + publicationID), VaultID: catalog.VaultID(),
 		ContentVersionID: node.CurrentVersionID, BuildID: build.ID, Profile: profile,
 		AttachedAt: "2026-09-11T12:01:00.000000000Z",
 	}
@@ -128,11 +132,12 @@ func (f reportRenditionFixture) publish(
 		Head: store.RenditionHeadRecord{ContentVersionID: node.CurrentVersionID,
 			ProcessingProfileFingerprint: f.profile, AttachmentID: attachment.ID,
 			PublishedAt: "2026-09-11T12:02:00.000000000Z"},
-		LexicalGenerationID: sha256Hex("generation:" + node.CurrentVersionID),
+		LexicalGenerationID: sha256Hex("generation:" + publicationID),
 		Artifacts: []processing.StagedArtifact{
 			{ID: build.Artifacts[0].ID, Payload: bytes.NewReader(evidence)},
 			{ID: build.Artifacts[1].ID, Payload: bytes.NewReader(rendition.Markdown)},
 		},
 	})
 	require.NoError(t, err)
+	return attachment
 }

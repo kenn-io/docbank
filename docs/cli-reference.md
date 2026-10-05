@@ -1008,6 +1008,7 @@ version 1 request format, date choices, counts, and retention limits.
 
 ```
 docbank processing profiles [--json]
+docbank processing coverage <version-id> --profile <name> [--json]
 docbank processing plan <path-or-id> --profile <name> [--json]
 docbank processing build <path-or-id> --profile <name> --plan-fingerprint <sha256> --consent [--json | --ndjson]
 docbank processing status <job-id> [--json]
@@ -1015,6 +1016,12 @@ docbank processing status <job-id> [--json]
 
 `profiles` lists names the daemon can execute, their rendition and embedding
 bindings, and profile fingerprints. The default configuration lists none.
+
+`coverage` inspects one exact UUIDv4 version under an executable profile. It
+prints rendition and embedding counters without starting processing; stale or
+unavailable evidence is successful diagnostic output. JSON contains
+`content_version_id` and `coverage`. See [Inspect evidence before reporting](usage/document-processing.md#inspect-evidence-before-reporting)
+for profile restrictions and the distinction from report coverage.
 
 `plan` resolves a live file's current version and reports its provider flows,
 disclosed and retained classes, estimates, consent state, and backup effect.
@@ -1040,13 +1047,21 @@ expiry or revocation.
 
 ```
 docbank rendition get <attachment-id> [--max-bytes <n>]
+docbank rendition window <path-or-id> --version <version-id> --profile <name>
+  [--attachment <attachment-id>] [--offset <n>] [--max-chars <n>] [--json]
 ```
 
-Writes an active retained sanitized-Markdown attachment to stdout only after
+`get` writes an active retained sanitized-Markdown attachment to stdout only after
 verifying the complete stream. The attachment ID must be lowercase SHA-256.
 `--max-bytes` accepts 1–67,108,864 and defaults to 67,108,864 (64 MiB). Missing,
 oversized, incomplete, or invalid renditions return a nonzero exit code.
 The output includes the [Markdown envelope and body-relative navigation](architecture/document-derivatives.md#sanitized-markdown-contract).
+
+`window` reads bounded Markdown from the named executable profile's active
+rendition. It requires an explicit current version and prints a pinned
+continuation command. It does not verify the complete artifact. See
+[Read and continue a text window](usage/document-processing.md#read-and-continue-a-text-window)
+for offsets, limits, JSON fields, and discovery costs.
 
 ## docbank tui
 

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-09-14
+last_edited: 2026-10-04
 title: Document processing
 description: Preview, consent to, and run configured document derivatives without losing source authority.
 ---
@@ -166,6 +166,72 @@ Docbank's provider transports. It does **not** attest to onward traffic from
 those endpoints: `endpoint_onward_egress=not_attested` means the operator must
 check that separately. The runner stops its processes and removes its temporary
 vault, binary, logs, and build cache on exit, including after failure.
+
+## Inspect evidence before reporting
+
+Use `stat --json` to obtain a file's `current_version_id`, then inspect that
+exact version without starting processing:
+
+```bash
+docbank stat /inbox/notes.txt --json
+docbank processing coverage <version-id> --profile <name> --json
+docbank rendition window /inbox/notes.txt --version <version-id> --profile <name>
+```
+
+Both commands require a profile listed by `docbank processing profiles --json`.
+A configured profile whose runtime is unavailable is not enough, even if its
+renditions are retained. Reports can still use retained evidence under such a
+configured profile. A profile error here does not mean that evidence is missing.
+
+Coverage reports rendition and embedding counters for the one requested
+version. JSON contains `content_version_id` and the complete `coverage` object;
+human output names the profile, fingerprint, state, and each class's counters.
+Unavailable, partial, rebuilding, and stale observations exit successfully.
+Unknown, replaced, or trashed versions count as stale for a required rendition;
+an unneeded class marked `not_required` does not establish source availability.
+`previous_generation_serving` overlaps rebuilding and is not an additional
+population to add to the total.
+
+These processing counters do not inspect term matches, dates, or attachment
+families. They do not promise that a [strict report](search-exports.md) will
+succeed.
+
+### Read and continue a text window
+
+`rendition window` requires the selected version to remain current and live.
+It discovers the active rendition for the named profile and returns at most
+8,000 characters by default. Use `--max-chars` for 1–16,000 characters and
+`--json` for the text, full rendition identity, offsets, and EOF flag.
+The text is stored Markdown, including its metadata envelope and escaped
+punctuation. It is not rendered or unescaped.
+
+The human result prints a continuation command. Follow it to keep reading
+the same attachment:
+
+```bash
+docbank rendition window id:<node-id> --version <version-id> --profile <name> \
+  --attachment <attachment-id> --offset <next-offset> --max-chars 8000
+```
+
+Offsets count Unicode scalar values, not bytes or visible grapheme clusters.
+Offsets range from 0 to 2,147,483,647. A nonzero offset requires an attachment
+ID, and a pinned first window can also use `--attachment` at offset zero.
+The command refuses a replaced rendition instead of continuing into its
+replacement. An offset exactly at EOF succeeds with empty text; an offset
+past EOF fails. No command automatically fetches the remaining windows.
+
+Discovery uses the document catalog. It cannot find a file deeper than 256 path
+components, with a path longer than 16 KiB in UTF-8 bytes, or with a filename
+longer than 255 Unicode scalar values. The filename cap does not apply to
+ancestor directories. The CLI explains the exceeded limit; refreshing the
+selection does not solve it. A known active attachment can bypass discovery
+with `--attachment`, while retaining the version and profile checks.
+
+Each unpinned discovery scans the traversable live vault tree. Pinned calls
+skip that scan. The text reader still reads from the beginning to reach the
+requested offset, so a bounded result does not imply a constant-time seek.
+A window identifies the full artifact's checksum but does not independently
+verify the entire file. Use `rendition get` below for that verification.
 
 ## Read a retained rendition
 

@@ -41,10 +41,15 @@ func (c *Connection) RenditionTextWindow(
 	if len(encoded) > maxRenditionWindowResponseBytes {
 		return api.RenditionTextWindow{}, errors.New("rendition window response is too large")
 	}
-	var result api.RenditionTextWindow
-	if err := json.Unmarshal(encoded, &result, json.RejectUnknownMembers(true)); err != nil {
+	var transport struct {
+		api.RenditionTextWindow
+
+		Schema string `json:"$schema,omitzero"`
+	}
+	if err := json.Unmarshal(encoded, &transport, json.RejectUnknownMembers(true)); err != nil {
 		return api.RenditionTextWindow{}, errors.New("rendition window response is invalid")
 	}
+	result := transport.RenditionTextWindow
 	if err := validateRenditionTextWindow(request, result); err != nil {
 		return api.RenditionTextWindow{}, err
 	}

@@ -1,6 +1,6 @@
 # Inspect processing coverage and retained text from the CLI
 
-Status: proposed; not implemented. Revised after adversarial specification review.
+Status: implemented. The reviewed contract below describes the CLI commands.
 
 Source baseline: `eba64ff4b039226b545cd25b9d722cc7bb87385c`, after #788.
 Parent scope: [local document review and export, #719](https://github.com/kenn-io/docbank/issues/719).
@@ -30,6 +30,12 @@ No HTTP endpoint, generated client, database layout, report or bundle format,
 MCP tool, provider runtime, or web/TUI feature changes are proposed. Coverage
 calculation and the text reader stay unchanged. No polling, automatic retries,
 background processing, batch coverage output, or new retained artifact is added.
+
+Implementation correction: the existing window client rejected Huma's
+`$schema` response field. It now accepts that framework field while retaining
+strict decoding of other fields, size bounds, and identity checks. Real-daemon
+inspection tests reproduced the failure; the correction also applies to MCP
+callers of the same helper.
 
 ### Profile boundary
 
@@ -325,8 +331,8 @@ These examples define adapter behavior; the underlying engine is already tested.
    Reuse the publication mechanics from `reportRenditionFixture` where suitable,
    not its synthetic adapter configuration, which the daemon cannot execute.
    Give each publication distinct build, attachment, and lexical-generation
-   identities; the existing helper's version-only IDs cannot be reused for
-   two profiles or replacements on one version. Close setup store handles
+   identities; the fixture now allocates them per publication and returns the
+   attachment receipt. Close setup store handles
    before daemon ownership. Observe no new processing jobs caused by inspection
    and verify the existing full `rendition get` behavior remains intact.
 8. A configured synthetic-only profile with retained evidence is absent from
@@ -351,5 +357,5 @@ normal Go/lint/docs checks. No new dependency or public test-only hook is needed
 Documentation belongs in `docs/usage/document-processing.md`, with an exact
 selection example and the distinction between processing coverage, report
 coverage, and full-artifact verification. Document executable-profile scope,
-catalog discovery limits, and the tree/prefix scan costs. Keep the proposed
-commands out of current-behavior guides until their implementation lands.
+catalog discovery limits, and the tree/prefix scan costs. The implementation
+documents these commands in the usage guide and CLI reference.

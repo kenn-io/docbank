@@ -189,7 +189,7 @@ func (w familyFixtureWriter) retain(
 	if strings.HasSuffix(node.Name, ".eml") {
 		family, unit, locator = "mail", document.EvidenceUnitMessage, document.EvidenceLocatorMessage
 	}
-	w.fixture.publish(t, w.catalog, w.blobs, node, document.SourceEvidenceV1{
+	published := w.fixture.publish(t, w.catalog, w.blobs, node, document.SourceEvidenceV1{
 		ContractVersion: document.SourceEvidenceContractV1, Completeness: document.EvidenceComplete,
 		Family: family, UnitKind: unit, Units: []document.SourceEvidenceUnitV1{{Order: 0, Text: text,
 			Locator: document.SourceEvidenceLocatorV1{
@@ -199,7 +199,7 @@ func (w familyFixtureWriter) retain(
 	require.NoError(t, err)
 	require.Equal(t, node.CurrentVersionID, active.Attachment.ContentVersionID)
 	require.Equal(t, w.fixture.profile, active.Head.ProcessingProfileFingerprint)
-	require.Equal(t, sha256Hex("build:"+node.CurrentVersionID), active.Build.ID)
+	require.Equal(t, published.BuildID, active.Build.ID)
 	stream, _, err = w.blobs.OpenStreamContext(t.Context(), active.Build.MarkdownChecksum)
 	require.NoError(t, err)
 	markdown, err := io.ReadAll(stream)

@@ -2,18 +2,21 @@
 
 Reviewed design: [Inspect processing coverage and retained text from the CLI](2026-10-04-cli-document-inspection-design.md).
 
-Status: proposed. This is the author's source check, not an independent review
-or evidence that the new commands are implemented.
+Status: implemented. The source review below records the design-stage checks;
+the final section records implementation evidence. This is an author review.
 
 ## Baseline
 
 - Source revision: `eba64ff4b039226b545cd25b9d722cc7bb87385c`, the merged #788.
-- Design SHA-256: `4be3b6b08cca36ce270d35c8e57090d0225f5a50fa00f8fd67ea9866d127cc3c`.
+- Design SHA-256: `7bddb7189f5c52b677d0ce2b96acab0e67d1fde3a10db7fe65393aecafc33258`.
 - Initial design commit: `013af97f`; its design SHA-256 was
   `f9cf46e268eef7c1aea323bef337a6ae3aa61d9aa5e42197b6da395348f3130f`.
-- This revision changes only the design and author review. Product source,
-  existing tests, generated clients, and dependencies still match the source
-  baseline. There are no Git submodules.
+- Reviewed spec revision: `f2a97706`, with design SHA-256
+  `4be3b6b08cca36ce270d35c8e57090d0225f5a50fa00f8fd67ea9866d127cc3c`.
+- Both design-stage revisions changed only these two documents. Implementation
+  adds CLI commands, tests and usage documentation, and corrects the shared
+  window client's decoding of Huma's schema field. The source-claim table
+  retains line references to the design baseline. There are no Git submodules.
 - Relevant pins: Go 1.27.0, Huma v2.38.0, Cobra v1.10.2, Kit v0.31.1.
 
 ## Findings
@@ -117,8 +120,8 @@ CGO_ENABLED=1 go test -tags fts5 \
 The same command also passed with `CGO_ENABLED=0`. All three packages reported
 success in each mode. This covers the existing HTTP coverage behavior, exact
 evidence-window identity and visibility checks, shared Unicode reader behavior,
-and daemon-client response validation. It does not exercise the proposed CLI
-commands, which do not exist yet, or establish native macOS/Windows results.
+and daemon-client response validation. At that stage the new CLI commands did
+not exist; those tests did not exercise them or establish native macOS/Windows results.
 
 For this revision, the following existing tests also passed with `-tags fts5`
 and `-count=1` in both SQLite modes on Linux/amd64:
@@ -132,13 +135,38 @@ and `-count=1` in both SQLite modes on Linux/amd64:
 
 These checks exercise the existing plaintext runtime registration, catalog
 bounds, and audit/profile reads. The omitted synthetic profile and the proposed
-CLI bypass/error behavior are source-backed design requirements, not newly
-executed CLI tests. No product or test code changed in this revision.
+CLI bypass/error behavior were source-backed design requirements at that stage.
+No product or test code changed in that specification revision.
 
-## Verdict and adversarial focus
+## Implementation evidence
 
-The revised contract addresses the two Medium findings and both Low notes.
-It remains a proposal, ready for re-review before implementation planning.
-Focus on the executable-profile limitation, the discovery-versus-pinned paths,
-and the catalog-limit advice. The new commands and their acceptance examples
-still require implementation evidence; existing engine tests do not prove them.
+The implementation has focused command tests and three real-daemon workflows.
+They cover exact coverage identities and counters, unsupported profiles,
+Unicode continuation and EOF, catalog limits with pinned bypass, source trash
+and replacement, and rendition replacement. Audit identity works before and
+after enrollment. Persisted rendition and embedding job tables remain empty
+after inspection. Setup stores close before daemon ownership; all data is synthetic.
+
+The real-daemon test initially failed because strict window decoding rejected
+Huma's `$schema` field. The shared helper now permits that field and still
+rejects other unknown fields. A focused daemon-client test reproduced the
+failure before the fix and passes afterward, alongside the real-daemon tests.
+
+The retained fixture publishes deterministic Markdown bodies through
+`ArtifactPublisher`; it does not produce the worker's self-describing envelope.
+Full-stream verification remains covered by
+`TestRenditionCLIEmitsExactSelfDescribingMarkdown`, using an enveloped artifact.
+The shared publication fixture now accepts a named profile, returns its
+attachment receipt, and gives every publication fresh build, attachment and
+lexical-generation IDs. Existing family checks still compare the published
+receipt against the stored active build.
+
+The following focused run passed in both CGO and pure-Go SQLite modes:
+
+```sh
+go test -tags fts5 ./cmd/docbank ./internal/daemonconn \
+  -run 'Test(DocumentInspection|ReportPDF|ReportFamily|ProcessingCoverage|RenditionWindow|RenditionTextWindow|RenditionCLI)' \
+  -count=1
+```
+
+This is Linux/amd64 execution evidence, not native macOS or Windows qualification.
