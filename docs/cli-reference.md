@@ -745,7 +745,7 @@ and maximum page sizes are 50 and 500. `next_cursor` in JSON, or the `next
 cursor` line in human output, continues
 through older events without shifting when a newer operation is appended. A
 cursor is opaque and bound to its stable node. Use `--node-id` for a moved or
-trashed node. A protected enrollment-baseline member has no node-specific
+trashed node. A protected enrollment-baseline member can have no node-specific
 events until its first later mutation. Use `audit status` to check membership.
 
 `audit history --scope <scope-id>` reads the same canonical events across all
