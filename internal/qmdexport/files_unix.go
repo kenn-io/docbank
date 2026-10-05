@@ -30,5 +30,3 @@ func openPrivateFile(path string) (*os.File, error) {
 	}
 	return file, nil
 }
-
-func renamePublished(source, destination string) error { return os.Rename(source, destination) }

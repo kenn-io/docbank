@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"go.kenn.io/kit/atomicfile"
@@ -13,7 +12,7 @@ var syncGetDestinationDir = pack.SyncDir
 
 func publishGetFile(stagedPath, outputPath string, overwrite bool) error {
 	if overwrite {
-		if err := os.Rename(stagedPath, outputPath); err != nil {
+		if err := atomicfile.Replace(stagedPath, outputPath); err != nil {
 			return err
 		}
 	} else if err := atomicfile.PublishNoReplace(stagedPath, outputPath); err != nil {

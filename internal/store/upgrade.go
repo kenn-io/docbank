@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/pack"
 
 	docsqlite "go.kenn.io/docbank/sqlite"
@@ -67,7 +68,7 @@ var releasedStorageSchemas = []releasedStorageSchema{
 }
 
 var (
-	renameUpgradeFile         = os.Rename
+	renameUpgradeFile         = atomicfile.Replace
 	removeInvalidUpgradeStage = removeUpgradeFileSet
 )
 

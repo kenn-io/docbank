@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/pack"
 )
 
@@ -29,7 +30,7 @@ func Publish(stagedPath, destinationPath string, overwrite bool) (bool, error) {
 		return false, errors.New("staged file must share the destination directory or its private child")
 	}
 	if overwrite {
-		if err := replaceFile(stagedPath, destinationPath); err != nil {
+		if err := atomicfile.Replace(stagedPath, destinationPath); err != nil {
 			return false, err
 		}
 	} else {
