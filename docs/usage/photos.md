@@ -156,5 +156,60 @@ an empty asset identity.
 Automatic enrollment and explicit graph writes are skipped or refused when
 audit authority is active, according to the existing audit boundary. The
 preexisting graph is preserved and becomes read-only when audit is enabled.
-Browsing and query predicates, technical photo metadata, owners, and browser
-UI belong to later slices.
+## Browse photo assets over HTTP
+
+`POST /api/v1/photos/assets/query` accepts a `query` object using
+[QueryV1](../architecture/http-api.md#saved-query-and-highlight-definitions),
+optional `coverage`, `page_size` from 1 through 250 and `cursor`. It returns
+`items`, the matching asset `total` counted on the first page, and an optional
+`next_cursor`. Later pages retain that total; start a new browse to refresh it.
+The default page size is 50. Send the same query and page options with each
+continuation. An edited saved query invalidates its earlier cursor; cursors
+expire after 15 minutes. Results remain live: file changes can move assets
+across the previous page boundary.
+
+Use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`,
+`iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`,
+`capture_before:2025-01-01`, `gps:"-10,170,10,-170"` or `asset:` followed by a
+canonical UUIDv4. Existing `collection:`, tags and text predicates combine
+with these fields. Camera and lens match the complete make or model, ignoring
+case using Unicode case folding. Typed filter arrays OR their values;
+separate filters AND together. Dates use the photo's recorded local calendar
+day, with an inclusive lower bound and exclusive upper bound. A January 1
+photo remains in January 1 date filters even if its recorded UTC offset puts
+it on January 2 in UTC. GPS uses inclusive decimal-string latitude/longitude
+bounds and permits boxes crossing the antimeridian.
+
+Camera, lens, ISO, capture-date and GPS predicates use the asset's selected
+display file. Metadata from other members is not combined with it. If the
+selected RAW has camera A and its paired JPEG has lens B, `camera:A` matches
+and `lens:B` does not. A sidecar without camera metadata cannot make
+`NOT camera:A` match. Changing the display file changes these metadata matches.
+
+Ordinary text, name, extension, tag and collection predicates still match
+individual members. One member must satisfy the complete expression, using
+the display file for its photo metadata predicates. For example,
+`extension:xmp AND camera:A` can match a sidecar paired with a display image
+from camera A. Saved expressions follow the same rule. Document queries keep
+using each document's own metadata. Excluded, trashed and displayless assets
+stay out.
+
+Sort by `capture_time`, `import_time`, `name`, `modified_at`, `size` or `media_type`, with `asc` or `desc`. Capture sorting converts recorded offsets to UTC; omitted zones use civil calendar coordinates. Missing or unreadable capture times sort last in both directions and do not match capture-date filters. Asset UUID orders equal keys. Names and media types compare only their first 1,024 characters, so longer values that share that prefix also fall back to UUID order. `path` and `relevance` are unsupported by this route. Document snapshots reject `capture_time` and `import_time` with an error naming Photos as the supported view.
+
+Each row has grid, fit and large preview slots. `missing` means no retained
+result exists for that recipe. Stored `ready`, `unsupported` and `failed`
+outcomes retain their generation identity. Only ready slots include a
+generation URL and JPEG output metadata. Read that URL with the browser
+session header; credentials stay out of URLs.
+
+Preview responses use `Cache-Control: private, no-cache`: the browser may keep
+bytes but must check with the server before reusing them. A matching
+`If-None-Match` returns `304` after the server checks the session, current
+display and exclusion state. This avoids reading the preview blob again.
+An excluded asset or replaced display returns `404`, even with a matching
+validator. A response with new bytes verifies the complete image. Listing
+never creates previews.
+
+The initial count evaluates the whole query. Later pages seek from the last
+sort key. Queries that collapse duplicate content still evaluate the complete
+matching population to choose representatives before returning a page.

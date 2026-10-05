@@ -141,3 +141,57 @@ it.each(["end", "cancel"])("reads export progress incrementally before stream %s
     await events.return(undefined);
   }
 });
+
+it("sends photo query intent through the generated read-only POST and preserves preview bytes", async () => {
+  const query = { filters: { kinds: ["photo"], iso_min: 0, gps_bounds: { south: "-10", west: "170", north: "10", east: "-170" } }, sort: { field: "capture_time", direction: "desc" } };
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json({ items: [], total: 0 })).mockResolvedValueOnce(new Response("synthetic JPEG", { headers: { "Content-Type": "image/jpeg" } }));
+  await api.listPhotoAssets({ query } as api.PhotoBrowseRequest, { session: "synthetic-session" });
+  const [url, request] = fetch.mock.calls[0];
+  expect(url).toBe("/api/v1/photos/assets/query");
+  expect(request?.method).toBe("POST");
+  expect(JSON.parse(String(request?.body))).toEqual({ query });
+  expect(new Headers(request?.headers).get("X-Docbank-Web-Session")).toBe("synthetic-session");
+  const response = await api.readPhotoPreview("00000000-0000-4000-8000-000000000001", "a".repeat(64),
+    { "If-None-Match": '"older-generation"' }, { session: "synthetic-session" });
+  expect(response).toBeInstanceOf(Response);
+  expect(await response.text()).toBe("synthetic JPEG");
+  expect(String(fetch.mock.calls[1][0])).not.toContain("synthetic-session");
+  const previewHeaders = new Headers(fetch.mock.calls[1][1]?.headers);
+  expect(previewHeaders.get("If-None-Match")).toBe('"older-generation"');
+  expect(previewHeaders.get("X-Docbank-Web-Session")).toBe("synthetic-session");
+});
+
+it("preserves a conditional photo preview's empty 304 response", async () => {
+  const etag = '"cached-generation"';
+  const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, {
+    status: 304, headers: { ETag: etag, "Cache-Control": "private, no-cache" },
+  }));
+  const response = await api.readPhotoPreview("00000000-0000-4000-8000-000000000001", "a".repeat(64),
+    { "If-None-Match": etag }, { session: "synthetic-session" });
+  expect(response.status).toBe(304);
+  expect(response.headers.get("ETag")).toBe(etag);
+  expect(await response.text()).toBe("");
+  const [url, request] = fetch.mock.calls[0];
+  expect(url).toBe(`/api/v1/photos/assets/00000000-0000-4000-8000-000000000001/previews/${"a".repeat(64)}`);
+  const headers = new Headers(request?.headers);
+  expect(headers.get("Accept")).toBe("image/jpeg");
+  expect(headers.get("If-None-Match")).toBe(etag);
+  expect(headers.get("X-Docbank-Web-Session")).toBe("synthetic-session");
+});
+
+it("preserves photo preview errors after conditional revalidation", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(
+    { code: "not_found", detail: "Photo is no longer included." }, { status: 404 },
+  ));
+  await expect(api.readPhotoPreview("00000000-0000-4000-8000-000000000001", "a".repeat(64),
+    { "If-None-Match": '"cached-generation"' }, { session: "synthetic-session" })).rejects.toMatchObject({
+    status: 404, code: "not_found", message: "Photo is no longer included.",
+  });
+});
+
+it("keeps 304 outside JSON response contracts", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 304 }));
+  await expect(api.listPhotoAssets({ query: {} } as api.PhotoBrowseRequest)).rejects.toMatchObject({
+    status: 304, message: "HTTP 304",
+  });
+});

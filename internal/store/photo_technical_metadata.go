@@ -11,14 +11,17 @@ import (
 	"strings"
 	"sync"
 
+	"golang.org/x/text/cases"
+
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/geo"
+	"go.kenn.io/docbank/internal/query"
 )
 
 // PhotoTechnicalProjectionRecipe identifies the mapping and embedded
 // gazetteer data used to derive projection rows. Changing it re-projects every
 // retained source generation the next time a store opens.
-const PhotoTechnicalProjectionRecipe = "photo-technical/v1"
+const PhotoTechnicalProjectionRecipe = "photo-technical/v2"
 
 // PhotoTechnicalFields are typed facts projected from one source-metadata
 // generation. Nil values mean that the source did not provide a valid fact.
@@ -58,8 +61,9 @@ var photoTechnicalColumns = func() []string {
 
 var (
 	photoTechnicalSelect = "p." + strings.Join(photoTechnicalColumns, ",p.")
-	photoTechnicalInsert = "INSERT INTO photo_technical_metadata(generation_id," +
-		strings.Join(photoTechnicalColumns, ",") + ") VALUES(?" + strings.Repeat(",?", len(photoTechnicalColumns)) +
+	photoTechnicalInsert = "INSERT INTO photo_technical_metadata(generation_id,capture_sort_key,capture_date," +
+		"camera_make_folded,camera_model_folded,lens_make_folded,lens_model_folded," +
+		strings.Join(photoTechnicalColumns, ",") + ") VALUES(?,?,?,?,?,?,?" + strings.Repeat(",?", len(photoTechnicalColumns)) +
 		") ON CONFLICT(generation_id) DO NOTHING"
 )
 
@@ -287,7 +291,25 @@ func insertPhotoTechnicalMetadataTx(
 	if fields.empty() {
 		return nil
 	}
-	_, err := tx.ExecContext(ctx, photoTechnicalInsert, append([]any{generationID}, fields.columnValues()...)...)
+	var captureKey, captureDate string
+	if fields.CaptureTime != nil {
+		captureKey = query.CaptureTimeKey(*fields.CaptureTime, *fields.CaptureTimePrecision,
+			*fields.CaptureTimeTimezone, *fields.CaptureTimeOffset)
+		if captureKey != "" {
+			// Date filters follow the source's calendar day, before timezone conversion.
+			captureDate = (*fields.CaptureTime)[:len("2006-01-02")]
+		}
+	}
+	args := []any{generationID, captureKey, captureDate}
+	fold := cases.Fold()
+	for _, label := range []*string{fields.CameraMake, fields.CameraModel, fields.LensMake, fields.LensModel} {
+		folded := ""
+		if label != nil {
+			folded = fold.String(*label)
+		}
+		args = append(args, folded)
+	}
+	_, err := tx.ExecContext(ctx, photoTechnicalInsert, append(args, fields.columnValues()...)...)
 	return err
 }
 

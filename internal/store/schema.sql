@@ -436,6 +436,10 @@ CREATE INDEX IF NOT EXISTS nodes_parent ON nodes(parent_id);
 CREATE INDEX IF NOT EXISTS nodes_parent_name_id ON nodes(parent_id, name, id);
 CREATE INDEX IF NOT EXISTS nodes_live_modified ON nodes(modified_at DESC, name, id)
     WHERE trashed_at IS NULL;
+CREATE INDEX IF NOT EXISTS nodes_photo_import ON nodes(created_at)
+    WHERE trashed_at IS NULL AND kind='file';
+CREATE INDEX IF NOT EXISTS nodes_photo_name ON nodes(substr(name,1,1024))
+    WHERE trashed_at IS NULL AND kind='file';
 CREATE INDEX IF NOT EXISTS nodes_trashed ON nodes(trashed_at) WHERE trashed_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS blobs (
@@ -520,6 +524,10 @@ CREATE TABLE IF NOT EXISTS photo_technical_metadata (
     camera_model           TEXT,
     lens_make              TEXT,
     lens_model             TEXT,
+    camera_make_folded     TEXT NOT NULL DEFAULT '',
+    camera_model_folded    TEXT NOT NULL DEFAULT '',
+    lens_make_folded       TEXT NOT NULL DEFAULT '',
+    lens_model_folded      TEXT NOT NULL DEFAULT '',
     iso                    INTEGER,
     exposure_time_seconds  REAL,
     f_number               REAL,
@@ -532,6 +540,8 @@ CREATE TABLE IF NOT EXISTS photo_technical_metadata (
     capture_time_precision TEXT,
     capture_time_timezone  TEXT,
     capture_time_offset    TEXT,
+    capture_sort_key       TEXT NOT NULL DEFAULT '',
+    capture_date           TEXT NOT NULL DEFAULT '',
     orientation            INTEGER,
     latitude               REAL,
     longitude              REAL,
@@ -539,13 +549,15 @@ CREATE TABLE IF NOT EXISTS photo_technical_metadata (
 );
 
 CREATE INDEX IF NOT EXISTS photo_technical_metadata_camera
-    ON photo_technical_metadata(camera_make, camera_model);
+    ON photo_technical_metadata(camera_make_folded, camera_model_folded);
 CREATE INDEX IF NOT EXISTS photo_technical_metadata_lens
-    ON photo_technical_metadata(lens_make, lens_model);
+    ON photo_technical_metadata(lens_make_folded, lens_model_folded);
 CREATE INDEX IF NOT EXISTS photo_technical_metadata_iso
     ON photo_technical_metadata(iso);
-CREATE INDEX IF NOT EXISTS photo_technical_metadata_capture_time
-    ON photo_technical_metadata(capture_time);
+CREATE INDEX IF NOT EXISTS photo_technical_metadata_capture_sort_key
+    ON photo_technical_metadata(capture_sort_key);
+CREATE INDEX IF NOT EXISTS photo_technical_metadata_capture_date
+    ON photo_technical_metadata(capture_date);
 CREATE INDEX IF NOT EXISTS photo_technical_metadata_location
     ON photo_technical_metadata(latitude, longitude);
 
@@ -950,6 +962,8 @@ CREATE TABLE IF NOT EXISTS content_versions (
 CREATE INDEX IF NOT EXISTS content_versions_node
     ON content_versions(node_id, node_revision DESC);
 CREATE INDEX IF NOT EXISTS content_versions_blob ON content_versions(blob_hash);
+CREATE INDEX IF NOT EXISTS content_versions_photo_size ON content_versions(printf('%020d',size));
+CREATE INDEX IF NOT EXISTS content_versions_photo_media_type ON content_versions(substr(COALESCE(mime_type,''),1,1024));
 
 -- Media source authority separates an immutable recording identity and its
 -- exact revisions from each caller's independently revocable occurrence.

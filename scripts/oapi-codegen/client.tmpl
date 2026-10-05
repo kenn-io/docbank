@@ -81,7 +81,7 @@ func (c *{{$clientName}}) {{$op.ID}}(ctx context.Context{{ if $op.HasRequestOpti
         return nil, fmt.Errorf("error executing request: %w", err)
     }
     if resp.Streaming {
-        return nil, c.acceptStream(resp{{range $op.Response.Successes}}, {{.StatusCode}}{{end}})
+        return nil, c.acceptStream(resp{{range $op.Response.Successes}}, {{.StatusCode}}{{end}}{{if eq $op.ID "ReadPhotoPreview"}}, 304{{end}})
     }
     return responseParser(ctx, resp)
 }
@@ -92,20 +92,27 @@ func (c *{{$clientName}}) {{$op.ID}}(ctx context.Context{{ if $op.HasRequestOpti
 
 {{ template "client" dict "config" .Config "operations" .Operations }}
 
-{{define "resultType"}}{{if gt (len .Response.Successes) 1}}{{.ID}}Result{{else}}{{.Response.Success.ResponseName}}{{end}}{{end}}
+{{define "resultType"}}{{if or (gt (len .Response.Successes) 1) (eq .ID "ReadPhotoPreview")}}{{.ID}}Result{{else}}{{.Response.Success.ResponseName}}{{end}}{{end}}
 
 {{range .Operations}}{{$op := .}}
-{{if gt (len $op.Response.Successes) 1}}
+{{if or (gt (len $op.Response.Successes) 1) (eq $op.ID "ReadPhotoPreview")}}
 // {{$op.ID}}Result contains the decoded body for the returned success status.
 type {{$op.ID}}Result struct {
     {{range $op.Response.Successes}}Status{{.StatusCode}} *{{.ResponseName}}
     {{end}}
+    {{if eq $op.ID "ReadPhotoPreview"}}Status304 *struct{}{{end}}
 }
 {{end}}{{end}}
 
 {{- define "responseParserFn" }}{{$op := .op}}
 responseParser := func(_ context.Context, resp *runtime.Response) (*{{template "resultType" $op}}, error) {
     switch resp.StatusCode {
+    {{/* The generator drops bodyless non-2xx responses. Preview revalidation
+         declares 304 and needs a distinct successful result with no bytes. */}}
+    {{if eq $op.ID "ReadPhotoPreview"}}
+    case 304:
+        return &ReadPhotoPreviewResult{Status304: new(struct{})}, nil
+    {{end}}
     {{range $op.Response.Successes}}{{$rcd := .}}
     case {{.StatusCode}}:
         {{if eq .ResponseName "struct{}"}}
@@ -123,19 +130,23 @@ responseParser := func(_ context.Context, resp *runtime.Response) (*{{template "
             }
         }
         {{end}}
-        {{if gt (len $op.Response.Successes) 1}}
+        {{if or (gt (len $op.Response.Successes) 1) (eq $op.ID "ReadPhotoPreview")}}
         return &{{$op.ID}}Result{Status{{.StatusCode}}: target}, nil
         {{else}}
         return target, nil
         {{end}}
     {{end}}
     default:
+        {{if eq $op.ID "ReadPhotoPreview"}}
+        return nil, decodeAPIError[Error](resp, "Error")
+        {{else}}
         {{with $op.Response.Error}}{{if .ResponseName}}
         return nil, decodeAPIError[{{.ResponseName}}](resp, "{{.ResponseName}}")
         {{else}}
         return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
         {{end}}{{else}}
         return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+        {{end}}
         {{end}}
     }
 }

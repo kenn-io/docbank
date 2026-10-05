@@ -231,6 +231,7 @@ func NewServer(d Deps) *Server {
 	registerPackageRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
 	registerPhotoRoutes(humaAPI, d, g)
+	registerPhotoQueryRoutes(humaAPI, d, cursorService)
 	registerPeopleRoutes(humaAPI, d, g)
 	registerPhotoImportRoutes(humaAPI, d, g)
 	clearLongRunningBodyReadDeadlines(humaAPI)

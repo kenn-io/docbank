@@ -112,13 +112,17 @@ A generation with at least one camera, lens, exposure, dimension,
 capture-time, orientation, or GPS claim also gets one indexed photo technical
 projection row that maps those claims into nullable typed columns. Generations
 without any of them, such as PDFs and email, get no row. The store records the
-`photo-technical/v1` recipe that built its rows in a one-row state table,
+`photo-technical/v2` recipe that built its rows in a one-row state table,
 separately from extractor fingerprints, because the mapping and embedded map
 can change without changing the source evidence. When the recipe changes, the next store open re-projects every generation from
 its retained canonical JSON, without reading originals. Reads bind the
 projection to the requested content version through its blob hash and active
 source head, then validate the canonical source checksum. This keeps historical
 version reads exact and lets duplicate versions share one generation row.
+
+The projection also stores capture sort keys, local calendar dates and
+case-folded camera/lens labels, so browsing does not re-parse source evidence.
+These derived columns stay out of metadata JSONL and are rebuilt on restore.
 
 Capture timestamps retain normalized text, raw text, precision, timezone kind,
 and offset. A date-only value keeps its omitted timezone. The GPS adapter
