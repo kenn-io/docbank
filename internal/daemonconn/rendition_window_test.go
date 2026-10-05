@@ -36,7 +36,11 @@ func TestRenditionTextWindowUsesTypedDaemonRouteAndValidatesAuthority(t *testing
 		}
 		assert.Equal(t, request, got)
 		response.Header().Set("Content-Type", "application/json")
-		assert.NoError(t, json.MarshalWrite(response, want))
+		assert.NoError(t, json.MarshalWrite(response, struct {
+			api.RenditionTextWindow
+
+			Schema string `json:"$schema"`
+		}{want, "http://127.0.0.1/schemas/RenditionTextWindow.json"}))
 	}))
 	t.Cleanup(server.Close)
 
@@ -133,5 +137,17 @@ func TestRenditionTextWindowRejectsMismatchedOrOversizedResponses(t *testing.T) 
 		t.Cleanup(server.Close)
 		_, err := New(server.URL, "").RenditionTextWindow(t.Context(), request)
 		require.Error(t, err)
+	})
+	t.Run("unknown field", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			assert.NoError(t, json.MarshalWrite(w, struct {
+				api.RenditionTextWindow
+
+				Unexpected bool `json:"unexpected"`
+			}{valid, true}))
+		}))
+		t.Cleanup(server.Close)
+		_, err := New(server.URL, "").RenditionTextWindow(t.Context(), request)
+		require.ErrorContains(t, err, "response is invalid")
 	})
 }

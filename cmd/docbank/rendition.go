@@ -13,7 +13,7 @@ var renditionMaxBytes int64
 
 var renditionCmd = &cobra.Command{
 	Use:   "rendition",
-	Short: "Read verified retained document renditions",
+	Short: "Read retained document renditions",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
@@ -56,6 +56,7 @@ func runRenditionGet(cmd *cobra.Command, c *daemonconn.Connection, attachmentID 
 }
 
 func init() {
+	renditionCmd.AddCommand(newRenditionWindowCommand())
 	renditionGetCmd.Flags().Int64Var(&renditionMaxBytes, "max-bytes", 64<<20,
 		"maximum complete rendition bytes to accept (1-67108864)")
 	renditionCmd.AddCommand(renditionGetCmd)
