@@ -122,7 +122,7 @@ Create an incremental backup, verify its content, and restore it into a separate
 vault. Backups retain document content, metadata, and saved history. Test the
 restored copy before you need it for recovery.
 
-![Recorded history in a synthetic vault](https://docbank.ai/assets/generated/web-audit-evidence.png)
+![Verified snapshot restoring a vault without a processing provider](https://docbank.ai/assets/recovery-flow.svg)
 
 [Backup and restore](/docs/usage/backup/)
 
