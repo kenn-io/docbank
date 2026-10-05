@@ -132,11 +132,6 @@ docs-link:
 	}
 
 docs-deploy:
-	@if [ -z "$(DOCS_SOURCE)" ]; then \
-		echo "DOCS_SOURCE is required and must be a full source commit SHA." >&2; \
-		echo "Run: make docs-deploy DOCS_SOURCE=$$(git rev-parse HEAD)" >&2; \
-		exit 1; \
-	fi
 	DOCS_SOURCE="$(DOCS_SOURCE)" ./scripts/deploy-docs.sh
 
 help:

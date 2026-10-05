@@ -43,7 +43,7 @@ Do not infer fork eligibility or network/cache isolation from this setting.
 - A software release makes a documentation source eligible; it does not publish
   that source. The selected source is normally the post-tag documentation-only
   follow-up. Deployment still requires maintainer authorization. From the
-  repository root, `make docs-deploy DOCS_SOURCE=$(git rev-parse HEAD)` uploads
+  repository root, `make docs-deploy` uses `HEAD` as the source and uploads
   an unpromoted production build, verifies it and the release boundary, and
   then promotes it. The deploy path does not generate screenshots, build the
   product, run Docker, or install frontend dependencies. Pull-request jobs
