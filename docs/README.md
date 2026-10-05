@@ -109,14 +109,20 @@ A maintainer must still authorize every deployment.
 ## How do I deploy an approved source?
 
 Link the Vercel project once from the repository root with `make docs-link`.
-Deploy an exact eligible source from a clean checkout with:
+Deploy the current commit from a clean checkout with:
 
 ```bash
-make docs-deploy DOCS_SOURCE=$(git rev-parse HEAD)
+make docs-deploy
 ```
 
+The command uses `HEAD` as the source. To require a particular commit, pass
+`DOCS_SOURCE=<full-commit-sha>`; it must match the checked-out commit.
+
 The command checks that the source is on `origin/main`, descends from the latest
-software release, and contains only approved documentation changes. It then
+software release, and contains only approved documentation changes. The approved
+paths include screenshot tooling in `frontend/screenshots/` and website browser
+checks in `frontend/docs-site/`; application source in `frontend/src/` remains
+a product change. It then
 checks Vercel's production upload report against the same file allowlist and
 10 MiB limit used in CI. An extra file or failed dry run stops deployment
 before upload. The command then uploads an unpromoted production build, waits

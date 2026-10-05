@@ -460,6 +460,7 @@ test("snapshot workspace recovers exact real-daemon actions without changing fro
     await page.getByRole("option", { name: "path", exact: true }).click();
     await expect(runQuery).toBeEnabled();
     await page.getByRole("button", { name: "Close query editor", exact: true }).click();
+    await page.getByText("Frozen query snapshot", { exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: path.join(screenshots!, "web-snapshot-workspace.png"), animations: "disabled" });
 
     await page.getByRole("checkbox", { name: "Select /Workspace review/workspace-0000.txt", exact: true }).check();

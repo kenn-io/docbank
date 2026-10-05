@@ -1,10 +1,10 @@
 ---
-last_edited: 2026-09-14
-title: Verify Transfer Packages
+last_edited: 2026-10-05
+title: Verify transfer packages
 description: Check a Msgvault transfer package locally before importing it.
 ---
 
-# Verify Transfer Packages
+# Verify transfer packages
 
 Docbank can verify a portable Msgvault transfer package without opening a
 vault or starting either application's daemon:
@@ -50,17 +50,18 @@ Local verification checks the archive ID's syntax but cannot check vault
 registration. Import must separately confirm that the same ID is registered.
 Missing or malformed archive IDs are usage errors and exit with status 2.
 
-Docbank retains the exact legacy input bytes and SHA-256 while it builds a
-temporary normalized package. Reports label this as
-`package_authority: "legacy_compatibility"`; it is not a native
+Docbank keeps the legacy input bytes and their SHA-256 unchanged while it
+builds a temporary normalized package. Reports label this as
+`package_authority: "legacy_compatibility"`. It is not a native
 `msgvault-transfer/1` producer export. The adapter leaves export sequence,
 snapshot, and creation authority absent. Its ordering timestamps keep the
-original offset, fractional width (including comma fractions), and raw spelling,
-with no sent or received date kind asserted. The JSON report exposes unavailable `raw`,
-`attachment_bytes`, `people`, and `history` capabilities with the reasons
-`format_v1_no_raw`, `format_v1_no_attachments`,
-`format_v1_no_person_uid`, and `format_v1_no_history`. These format limitations
-do not claim producer coverage or attachment counts.
+original offset, fractional width (including comma fractions), and raw
+spelling, and the adapter does not assert a sent or received date kind. The
+JSON report marks the `raw`, `attachment_bytes`, `people`, and `history`
+capabilities as unavailable, with the reasons `format_v1_no_raw`,
+`format_v1_no_attachments`, `format_v1_no_person_uid`, and
+`format_v1_no_history`. These format limitations do not claim producer coverage
+or attachment counts.
 
 Legacy source routes remain empty because the format carries no acquisition
 route. For example, a SyncTech export does not establish whether its source was

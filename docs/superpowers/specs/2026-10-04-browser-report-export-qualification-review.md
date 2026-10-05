@@ -8,7 +8,9 @@ Design: `2026-10-04-browser-report-export-qualification-design.md`.
 Design SHA-256:
 `d75c959207af19b9c2b1da1ca749cc781e3f90f797e40f1f7c3ea832a14155d7`.
 Source baseline: `eec4756eeedf751e0f48af9e3d56c9ac7ea98ba8`, merged #791.
-Product code, dependencies, and generated clients are unchanged from that baseline.
+This slice changes no product code, dependencies, or generated clients. The
+branch also incorporates newer main changes; final qualification uses that
+combined source, with its exact commit recorded in the PR handoff.
 The initial author pass reviewed the two then-untracked specification documents.
 The 2026-10-05 recheck compared against `f5ba5c8a`; only these two documents
 changed, and the source baseline remains unchanged.

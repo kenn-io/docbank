@@ -1,10 +1,10 @@
 ---
-last_edited: 2026-09-13
-title: Format Coverage
+last_edited: 2026-10-05
+title: Format coverage
 description: How Docbank reports detection, retention, metadata, expansion, text, page, and transcript support from the running binary.
 ---
 
-# Format Coverage
+# Format coverage
 
 Docbank reports format support from the running binary. The
 `format-coverage/v1` record combines the classified format catalog with
@@ -43,15 +43,15 @@ Each capability has one of four states:
 | `unsupported` | No implementation is available for this capability. |
 | `not_applicable` | The capability does not apply to this format. |
 
-The runtime has no archive decoder. Archive
-`expand` therefore reports `unsupported`; catalog extensions and MIME hints do
-not turn an absent decoder into an unqualified implementation.
+The runtime has no archive decoder. Archive `expand` therefore reports
+`unsupported`. Catalog extensions and MIME hints do not turn an absent decoder
+into an unqualified implementation.
 
 ## Provider qualification
 
 A provider declaration does not qualify a result by itself. Docbank joins a
-catalog row to a configured provider using the catalog media family,
-the exact `MediaType`, and `original_file` input. Text requires declared
+catalog row to a configured provider using the catalog media family, the exact
+`MediaType`, and `original_file` input. Text requires declared
 Markdown output, pages require the image artifact role, and transcripts
 require the transcript role on an audio/video format. Qualification also
 requires the same descriptor fingerprint to match registered fixture evidence.
@@ -60,7 +60,7 @@ No shipped rendition provider is qualified for text, pages, or transcripts.
 Configured providers report their declared capabilities as `unqualified`.
 The only provider qualification exercises a synthetic PDF-to-Markdown test
 provider. Local detection, retention, and metadata have separate fixture
-qualifications; those do not qualify rendition output.
+qualifications. Those do not qualify rendition output.
 
 Provider alternatives remain separate variants. This prevents one provider's
 text qualification from becoming another provider's page or transcript claim.
@@ -73,14 +73,14 @@ Format IDs and extensions resolve against the full constructor snapshot before
 an optional `family` filter is applied. Lookup preserves the caller's exact
 query and returns one of:
 
-- `format` with the matching classified format;
+- `format` with the matching classified format
 - `pending` with a support limitation for a recognized format that is not yet
-  in the catalog;
-- `unknown_format` when neither inventory contains the query.
+  in the catalog
+- `unknown_format` when neither inventory contains the query
 
 An unknown lookup is a successful read. The HTTP endpoint returns status 200,
 so callers can distinguish an inventory gap from a transport or server error.
-Use at most one of `format` and `extension`; sending both returns
+Use at most one of `format` and `extension`. Sending both returns
 `422 invalid_format_query`.
 
 ## Keep the record current

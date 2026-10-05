@@ -15,7 +15,7 @@ const optionalFilterFields = new Set([
   "paths", "exclude_paths", "collection_ids", "exclude_collection_ids", "tag_ids",
   "exclude_tag_ids", "no_tags", "media_families", "mime_types", "extensions",
   "modified_after", "modified_before", "size_min", "size_max", "text_coverage",
-  "has_duplicates", "collapse_duplicates",
+  "has_duplicates", "collapse_duplicates", "kinds", "cameras", "lenses", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds", "asset_ids",
 ]);
 const uuidV4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const extensionPattern = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -26,11 +26,22 @@ export type MediaFamily = typeof mediaFamilies[number];
 export type TextCoverage = typeof textCoverageValues[number];
 
 export interface QuerySort {
-  field: "name" | "path" | "modified_at" | "size" | "media_type" | "relevance";
+  field: "name" | "path" | "modified_at" | "size" | "media_type" | "relevance" | "capture_time" | "import_time";
   direction: "asc" | "desc";
 }
 
+export interface GPSBounds { south: string; west: string; north: string; east: string }
+
 export interface QueryFilters {
+  kinds?: ("photo" | "video")[];
+  cameras?: string[];
+  lenses?: string[];
+  iso_min?: number;
+  iso_max?: number;
+  capture_after?: string;
+  capture_before?: string;
+  gps_bounds?: GPSBounds;
+  asset_ids?: string[];
   paths?: string[];
   exclude_paths?: string[];
   collection_ids?: string[];
@@ -115,8 +126,15 @@ export function canonicalQuery(value: Query): string {
   if (normalized.filters.size_min) filters.size_min = normalized.filters.size_min;
   if (normalized.filters.tag_ids?.length) filters.tag_ids = normalized.filters.tag_ids;
   if (normalized.filters.text_coverage?.length) filters.text_coverage = normalized.filters.text_coverage;
+  for (const field of ["kinds", "cameras", "lenses", "asset_ids"] as const) {
+    const values = normalized.filters[field];
+    if (values?.length) filters[field] = values;
+  }
+  for (const field of ["iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds"] as const) {
+    if (normalized.filters[field] !== undefined) filters[field] = normalized.filters[field];
+  }
   const encoded = JSON.stringify({
-    filters,
+    filters: Object.fromEntries(Object.entries(filters).sort(([a], [b]) => compareUnicodeScalars(a, b))),
     mode: normalized.mode,
     sort: { direction: normalized.sort.direction, field: normalized.sort.field },
     syntax: normalized.syntax,
@@ -166,6 +184,15 @@ export async function highlightSetFingerprint(value: HighlightSet): Promise<stri
 
 function parseFilters(input: Record<string, unknown>): QueryFilters {
   return {
+    kinds: optionalStringArray(input.kinds, "filters.kinds") as QueryFilters["kinds"],
+    cameras: optionalStringArray(input.cameras, "filters.cameras"),
+    lenses: optionalStringArray(input.lenses, "filters.lenses"),
+    asset_ids: optionalStringArray(input.asset_ids, "filters.asset_ids"),
+    iso_min: optionalNullableInteger(input.iso_min, "filters.iso_min"),
+    iso_max: optionalNullableInteger(input.iso_max, "filters.iso_max"),
+    capture_after: optionalNullableString(input.capture_after, "filters.capture_after"),
+    capture_before: optionalNullableString(input.capture_before, "filters.capture_before"),
+    gps_bounds: input.gps_bounds === undefined || input.gps_bounds === null ? undefined : normalizeGPSBounds(input.gps_bounds),
     paths: optionalStringArray(input.paths, "filters.paths"),
     exclude_paths: optionalStringArray(input.exclude_paths, "filters.exclude_paths"),
     collection_ids: optionalStringArray(input.collection_ids, "filters.collection_ids"),
@@ -196,13 +223,22 @@ function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
   if (scalarLength(value.text) > 8192) throw new Error("query text exceeds 8192 Unicode scalars");
   if (!(["simple", "advanced"] as string[]).includes(syntax)) throw new Error("query syntax is unknown");
   if (!(["lexical", "semantic", "hybrid"] as string[]).includes(mode)) throw new Error("query mode is unknown");
-  if (!(["name", "path", "modified_at", "size", "media_type", "relevance"] as string[]).includes(sort.field) ||
+  if (!(["name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time"] as string[]).includes(sort.field) ||
       !(["asc", "desc"] as string[]).includes(sort.direction)) throw new Error("query sort is invalid");
   return { v, text: value.text, syntax, mode, filters: normalizeFilters(value.filters ?? {}), sort };
 }
 
 function normalizeFilters(value: QueryFilters): QueryFilters {
   const result: QueryFilters = {
+    kinds: normalizeSet(value.kinds, 64, (v) => v === "photo" || v === "video", "kinds") as QueryFilters["kinds"],
+    cameras: normalizeSet(value.cameras, 64, validPhotoLabel, "cameras"),
+    lenses: normalizeSet(value.lenses, 64, validPhotoLabel, "lenses"),
+    asset_ids: normalizeSet(value.asset_ids, 64, (v) => uuidV4Pattern.test(v), "asset_ids"),
+    iso_min: normalizeSize(value.iso_min, "iso_min"),
+    iso_max: normalizeSize(value.iso_max, "iso_max"),
+    capture_after: normalizeCaptureDate(value.capture_after),
+    capture_before: normalizeCaptureDate(value.capture_before),
+    gps_bounds: value.gps_bounds === undefined ? undefined : normalizeGPSBounds(value.gps_bounds),
     paths: normalizeSet(value.paths, 64, validVirtualPath, "paths"),
     exclude_paths: normalizeSet(value.exclude_paths, 64, validVirtualPath, "exclude_paths"),
     collection_ids: normalizeSet(value.collection_ids, 64, (item) => uuidV4Pattern.test(item), "collection_ids"),
@@ -221,6 +257,8 @@ function normalizeFilters(value: QueryFilters): QueryFilters {
     has_duplicates: Boolean(value.has_duplicates) || undefined,
     collapse_duplicates: Boolean(value.collapse_duplicates) || undefined,
   };
+  if (result.iso_min !== undefined && result.iso_max !== undefined && result.iso_min > result.iso_max) throw new Error("iso_min exceeds iso_max");
+  if (result.capture_after && result.capture_before && result.capture_after >= result.capture_before) throw new Error("capture_after must precede capture_before");
   if (result.no_tags && result.tag_ids?.length) throw new Error("no_tags conflicts with tag_ids");
   if (result.modified_after && result.modified_before &&
       timestampComparable(result.modified_after) >= timestampComparable(result.modified_before)) {
@@ -591,4 +629,35 @@ function lowerASCII(value: string): string | null {
 function invalidMIMEQuotedCharacter(character: string): boolean {
   const code = character.charCodeAt(0);
   return code < 0x20 && character !== "\t" || code === 0x7f;
+}
+
+function validPhotoLabel(value: string): boolean {
+  return value.length > 0 && scalarLength(value) <= 256 && !value.includes("\0");
+}
+
+function normalizeCaptureDate(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value) || value.startsWith("0000")) throw new Error("capture date must be YYYY-MM-DD");
+  normalizeTimestamp(`${value}T00:00:00Z`, "capture date");
+  return value;
+}
+
+function normalizeCoordinate(value: unknown, limit: number): string {
+  if (typeof value !== "string" || value.length > 64 || !/^-?[0-9]+(?:\.[0-9]+)?$/.test(value)) throw new Error("coordinate must be a bounded decimal string");
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < -limit || number > limit) throw new Error("coordinate outside geographic bounds");
+  let sign = value.startsWith("-") ? "-" : "";
+  const parts = (sign ? value.slice(1) : value).split(".");
+  const whole = parts[0].replace(/^0+/, "") || "0";
+  const fraction = (parts[1] || "").replace(/0+$/, "");
+  if (whole === "0" && !fraction) sign = "";
+  return `${sign}${whole}${fraction ? `.${fraction}` : ""}`;
+}
+
+function normalizeGPSBounds(value: unknown): GPSBounds {
+  const input = requireObject(value, "gps_bounds");
+  requireOnlyKeys(input, ["south", "west", "north", "east"], "gps_bounds");
+  const result = { east: normalizeCoordinate(input.east, 180), north: normalizeCoordinate(input.north, 90), south: normalizeCoordinate(input.south, 90), west: normalizeCoordinate(input.west, 180) };
+  if (Number(result.south) > Number(result.north)) throw new Error("south exceeds north");
+  return result;
 }

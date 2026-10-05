@@ -1,98 +1,81 @@
 ---
-last_edited: 2026-09-11
+last_edited: 2026-10-05
 ---
 
-# Web screenshots
+# Documentation screenshots
 
 This Playwright harness captures the actual daemon-served Docbank interface
-against a temporary synthetic vault. It does not use mocked API responses or a
-developer's existing vault.
+against temporary synthetic vaults. The documentation images use real daemon
+responses. Configured embedding providers are loopback test services; they
+show the interface, not the quality of a particular model's results.
 
-Install Chromium once:
+Install the locked frontend dependencies and matching Chromium once:
 
 ```sh
 cd frontend
 npm ci
-node node_modules/@playwright/test/cli.js install-deps chromium
 node node_modules/@playwright/test/cli.js install chromium
 ```
 
-Then run from the repository root:
+Linux hosts also need Chromium's system dependencies. Terminal captures require
+`tmux`. Run the complete generation from the repository root:
 
 ```sh
 make docs-screenshots
 ```
 
-The command builds the current frontend and Docbank binary, creates and seeds
-an owner-private temporary vault, opens the daemon-issued browser session,
-captures the requested state, stops the daemon, and removes the vault.
-Generated images are atomically published beneath `.superpowers/screenshots/`
-for visual inspection and orphan-branch publication; the current set captures
-desktop and mobile page selection, move-to-trash and restore confirmations,
-the tag-definition catalog, and a completed tag assignment, current vault browsing, extracted-text search, retained-version
-selection, packed-storage status, and independently verified permanent-audit
-evidence. The processing plan, partial semantic coverage, and sanitized Markdown
-rendition are captured separately under `.superpowers/processing-screenshots/`
-for pull request review. Generated images are intentionally not committed to the main branch.
-The Playwright config sets `DOCBANK_TELEMETRY_ENABLED=0` for every spec, so harness daemons send no usage telemetry.
+The command builds the frontend and Docbank binary, seeds owner-private
+synthetic vaults, captures the real interfaces, stops its daemons, and removes
+the vaults. `DOCBANK_TELEMETRY_ENABLED=0` disables telemetry for every spec.
+Do not run another build while a capture is using the binary or embedded assets.
 
-The command must produce the complete set listed in `scripts/docs-assets.txt`.
-Documentation builds consume a reviewed set and never run this harness.
+## Review and publish the complete set
 
-For focused harness development, invoke Playwright directly with a separate
-temporary `DOCBANK_SCREENSHOT_DIR`; the root Make target intentionally rejects
-partial generations:
+The public set is listed in `scripts/docs-assets.txt`. It covers the sidebar
+and mobile navigation, selection and keyboard shortcuts, tags, saved and frozen
+queries, collection quality, processing and retained text, semantic search and
+similar documents, email and attachments, reports, ZIP and Bates exports,
+load-file imports, photo-import jobs, storage, recovery, and the TUI.
+
+The runner gathers screenshots and proof receipts in
+`.superpowers/.screenshots.capture/`. After every case succeeds, it copies only
+the image manifest to a staging directory and validates that complete set
+before replacing `.superpowers/screenshots/`. Missing captures leave the prior
+set intact. Extra proof receipts, downloaded bundles, and viewport variants
+never enter the published set.
+
+1. Run `make docs-screenshots` and inspect **every** final image at its original
+   resolution, including its filename and embedded metadata.
+2. Publish the complete reviewed set as one orphan `docs-assets` commit. Its
+   tree must contain exactly the PNG files in the manifest.
+3. Pin that exact commit in `scripts/docs-assets.ref`.
+4. Run `make docs-assets-sync` and `make docs-build` after the final edit.
+
+Generated images do not belong on a source branch. Documentation builds consume
+the immutable pin and never generate screenshots or follow a branch head.
+
+## Work on one capture
+
+Use a separate ignored output directory. The root Make target rejects partial
+sets. For example:
 
 ```sh
-cd frontend
-DOCBANK_SCREENSHOT_DIR="$(mktemp -d)" node node_modules/@playwright/test/cli.js test \
-  --config screenshots/playwright.config.ts --project chromium \
-  --grep "trash confirmation"
-```
-
-The collection case runs separately until both images are included in a complete
-published, pinned `docs-assets` set. `make docs-screenshots` excludes it until
-then. It imports two synthetic documents and exercises label rename, a concurrent
-label conflict, clearing, and document navigation:
-
-```sh
-make build
+mkdir -p .superpowers/collection-screenshots
 DOCBANK_SCREENSHOT_DIR="$PWD/.superpowers/collection-screenshots" \
   node frontend/node_modules/@playwright/test/cli.js test \
-  --config frontend/screenshots/playwright.config.ts --project chromium \
-  --grep "import collections"
-```
-
-It captures the member browser and the preserved draft after a label conflict
-as `web-collections.png` and `web-collection-label-conflict.png`.
-
-The PR-only snapshot case seeds 1,001 synthetic documents and exercises the
-real daemon, browser IndexedDB, recovery checkpoint import, exact retry, and
-stale revision fence. Its dedicated output stays outside the strict
-documentation screenshot set:
-
-```sh
-make build
-DOCBANK_SNAPSHOT_SCREENSHOT_DIR="$PWD/.superpowers/snapshot-integrated-final" \
-  node frontend/node_modules/@playwright/test/cli.js test \
-  snapshot-workspace.screenshot.ts \
+  collections.screenshot.ts \
   --config frontend/screenshots/playwright.config.ts --project chromium
 ```
 
-The PR-only similar-documents case processes four synthetic files through a
-loopback embedding stub, verifies that similarity sends no provider request,
-and captures widths 1440, 1280, 768, and 400. The same run captures the actual
-TUI through tmux, using WSL Ubuntu on Windows, or records the terminal
-availability blocker. It accepts `DOCBANK_SCREENSHOT_BINARY` and its cleanup
-stops the daemon and removes the temporary vault:
+The query, report, Bates, export, semantic-search, similar-document, and snapshot
+specs accept dedicated `DOCBANK_*_SCREENSHOT_DIR` variables. The complete runner
+sets them all to its capture directory. Focused runs must set the variable used
+by that spec.
 
-```sh
-make build
-DOCBANK_SIMILAR_SCREENSHOT_DIR="$PWD/.superpowers/similar-screenshots" \
-  node frontend/node_modules/@playwright/test/cli.js test \
-  similar-documents.screenshot.ts \
-  --config frontend/screenshots/playwright.config.ts --project chromium
-```
+Separate opt-in proofs cover Linux page rendering, retained email PDFs from a
+real synthetic Linux backup, and attachment navigation through Go-owned daemon
+fixtures. Their setup is defined in the corresponding spec or Go test. They are
+not substitutes for the complete public image set.
 
 ## Report and original-export qualification
 

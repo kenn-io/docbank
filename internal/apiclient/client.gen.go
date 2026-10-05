@@ -8276,6 +8276,53 @@ func (c *Client) CreatePhotoAsset(ctx context.Context, options *CreatePhotoAsset
 	return responseParser(ctx, resp)
 }
 
+// ListPhotoAssets Browse matching photo assets with live keyset pagination
+func (c *Client) ListPhotoAssets(ctx context.Context, options *ListPhotoAssetsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPhotoAssetsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/assets/query",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPhotoAssetsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPhotoAssetsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPhotoAssetsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPhotoAssetsErrorResponse](resp, "ListPhotoAssetsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/query")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetPhotoAsset Inspect one photo asset
 func (c *Client) GetPhotoAsset(ctx context.Context, options *GetPhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPhotoAssetResponse, error) {
 	var err error
@@ -8510,6 +8557,49 @@ func (c *Client) DetachPhotoFile(ctx context.Context, options *DetachPhotoFileRe
 	}
 	if resp.Streaming {
 		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReadPhotoPreview Read verified bytes of an eligible exact photo preview
+func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadPhotoPreviewResult, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/previews/{generation_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadPhotoPreviewResult, error) {
+		switch resp.StatusCode {
+
+		case 304:
+			return &ReadPhotoPreviewResult{Status304: new(struct{})}, nil
+
+		case 200:
+
+			target := new(ReadPhotoPreviewResponse(resp.Content))
+
+			return &ReadPhotoPreviewResult{Status200: target}, nil
+
+		default:
+
+			return nil, decodeAPIError[Error](resp, "Error")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/previews/{generation_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200, 304)
 	}
 	return responseParser(ctx, resp)
 }
@@ -12253,6 +12343,13 @@ func (c *Client) Health(ctx context.Context, reqEditors ...runtime.RequestEditor
 		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
+}
+
+// ReadPhotoPreviewResult contains the decoded body for the returned success status.
+type ReadPhotoPreviewResult struct {
+	Status200 *ReadPhotoPreviewResponse
+
+	Status304 *struct{}
 }
 
 // GetDocumentRenditionResult contains the decoded body for the returned success status.
@@ -17670,6 +17767,34 @@ func (o *CreatePhotoAssetRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// ListPhotoAssetsRequestOptions is the options needed to make a request to ListPhotoAssets.
+type ListPhotoAssetsRequestOptions struct {
+	Body *ListPhotoAssetsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPhotoAssetsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPhotoAssetsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPhotoAssetsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPhotoAssetsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetPhotoAssetRequestOptions is the options needed to make a request to GetPhotoAsset.
 type GetPhotoAssetRequestOptions struct {
 	PathParams *GetPhotoAssetPath
@@ -17863,6 +17988,44 @@ func (o *DetachPhotoFileRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *DetachPhotoFileRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// ReadPhotoPreviewRequestOptions is the options needed to make a request to ReadPhotoPreview.
+type ReadPhotoPreviewRequestOptions struct {
+	PathParams *ReadPhotoPreviewPath
+	Header     *ReadPhotoPreviewHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadPhotoPreviewRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadPhotoPreviewRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadPhotoPreviewRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadPhotoPreviewRequestOptions) GetHeader() (map[string]string, error) {
 	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
 	if err != nil {
 		return nil, err
@@ -20194,6 +20357,13 @@ const (
 	VerifiedEmpty                            RenditionTextReceiptState = "verified_empty"
 )
 
+type SavedQueryFiltersSchemaKinds string
+
+const (
+	SavedQueryFiltersSchemaKindsPhoto SavedQueryFiltersSchemaKinds = "photo"
+	SavedQueryFiltersSchemaKindsVideo SavedQueryFiltersSchemaKinds = "video"
+)
+
 type SavedQueryFiltersSchemaMediaFamilies string
 
 const (
@@ -20233,12 +20403,14 @@ const (
 type SavedQuerySortSchemaField string
 
 const (
-	MediaType  SavedQuerySortSchemaField = "media_type"
-	ModifiedAt SavedQuerySortSchemaField = "modified_at"
-	Name       SavedQuerySortSchemaField = "name"
-	Path       SavedQuerySortSchemaField = "path"
-	Relevance  SavedQuerySortSchemaField = "relevance"
-	Size       SavedQuerySortSchemaField = "size"
+	CaptureTime SavedQuerySortSchemaField = "capture_time"
+	ImportTime  SavedQuerySortSchemaField = "import_time"
+	MediaType   SavedQuerySortSchemaField = "media_type"
+	ModifiedAt  SavedQuerySortSchemaField = "modified_at"
+	Name        SavedQuerySortSchemaField = "name"
+	Path        SavedQuerySortSchemaField = "path"
+	Relevance   SavedQuerySortSchemaField = "relevance"
+	Size        SavedQuerySortSchemaField = "size"
 )
 
 type SavedQueryV1SchemaMode string
@@ -20416,6 +20588,10 @@ type AttachPhotoFileHeaders struct {
 
 type DetachPhotoFileHeaders struct {
 	IfMatch string `json:"If-Match"`
+}
+
+type ReadPhotoPreviewHeaders struct {
+	IfNoneMatch *string `json:"If-None-Match,omitempty"`
 }
 
 type PromotePhotoNodeHeaders struct {
@@ -20841,6 +21017,11 @@ type DetachPhotoFilePath struct {
 	FileID  string `json:"file_id"`
 }
 
+type ReadPhotoPreviewPath struct {
+	AssetID      string `json:"asset_id"`
+	GenerationID string `json:"generation_id"`
+}
+
 type GetPhotoAssetByNodePath struct {
 	NodeID int64 `json:"node_id"`
 }
@@ -21139,6 +21320,8 @@ type SplitPersonBody = SplitPersonRequest
 type RebuildDocumentPeopleBody = PeopleRebuildRequest
 
 type CreatePhotoAssetBody = CreatePhotoAssetRequest
+
+type ListPhotoAssetsBody = PhotoBrowseRequest
 
 type SetPhotoDisplayBody = SetPhotoDisplayRequest
 
@@ -22307,6 +22490,10 @@ type CreatePhotoAssetResponse = api.PhotoAsset
 
 type CreatePhotoAssetErrorResponse = Error
 
+type ListPhotoAssetsResponse = api.PhotoBrowsePage
+
+type ListPhotoAssetsErrorResponse = Error
+
 type GetPhotoAssetResponse = api.PhotoAsset
 
 type GetPhotoAssetErrorResponse = Error
@@ -22326,6 +22513,8 @@ type AttachPhotoFileErrorResponse = Error
 type DetachPhotoFileResponse = api.PhotoAsset
 
 type DetachPhotoFileErrorResponse = Error
+
+type ReadPhotoPreviewResponse = []byte
 
 type StartPhotoImportResponse = api.StorageOperation
 
@@ -23111,6 +23300,8 @@ type FormatVariantCapabilityV1 = document.FormatVariantCapabilityV1
 
 type GCReport = api.GCReport
 
+type GPSBounds = query.GPSBounds
+
 type GcRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
@@ -23410,9 +23601,19 @@ type PersonSummary = api.PersonSummary
 
 type PhotoAsset = api.PhotoAsset
 
+type PhotoBrowsePage = api.PhotoBrowsePage
+
+type PhotoBrowseRequest = api.PhotoBrowseRequest
+
+type PhotoBrowseRow = api.PhotoBrowseRow
+
 type PhotoFile = api.PhotoFile
 
 type PhotoImportStartRequest = api.PhotoImportStartRequest
+
+type PhotoPreviewSlot = api.PhotoPreviewSlot
+
+type PhotoPreviewSlots = api.PhotoPreviewSlots
 
 type PhotoSettings = api.PhotoSettings
 
@@ -23680,13 +23881,22 @@ type SavedQuery = api.SavedQuery
 type SavedQueryCreateRequest = api.SavedQueryCreateRequest
 
 type SavedQueryFiltersSchema struct {
+	AssetIds             []uuid.UUID                            `json:"asset_ids,omitempty"`
+	Cameras              []string                               `json:"cameras,omitempty"`
+	CaptureAfter         *runtime.Date                          `json:"capture_after,omitempty"`
+	CaptureBefore        *runtime.Date                          `json:"capture_before,omitempty"`
 	CollapseDuplicates   *bool                                  `json:"collapse_duplicates,omitempty"`
 	CollectionIds        []uuid.UUID                            `json:"collection_ids,omitempty"`
 	ExcludeCollectionIds []uuid.UUID                            `json:"exclude_collection_ids,omitempty"`
 	ExcludePaths         []string                               `json:"exclude_paths,omitempty"`
 	ExcludeTagIds        []uuid.UUID                            `json:"exclude_tag_ids,omitempty"`
 	Extensions           []string                               `json:"extensions,omitempty"`
+	GpsBounds            *SavedQueryFiltersSchema_GpsBounds     `json:"gps_bounds,omitempty"`
 	HasDuplicates        *bool                                  `json:"has_duplicates,omitempty"`
+	IsoMax               *int64                                 `json:"iso_max,omitempty"`
+	IsoMin               *int64                                 `json:"iso_min,omitempty"`
+	Kinds                []SavedQueryFiltersSchemaKinds         `json:"kinds,omitempty"`
+	Lenses               []string                               `json:"lenses,omitempty"`
 	MediaFamilies        []SavedQueryFiltersSchemaMediaFamilies `json:"media_families,omitempty"`
 	MimeTypes            []string                               `json:"mime_types,omitempty"`
 	ModifiedAfter        *time.Time                             `json:"modified_after,omitempty"`
@@ -23697,6 +23907,13 @@ type SavedQueryFiltersSchema struct {
 	SizeMin              *int64                                 `json:"size_min,omitempty"`
 	TagIds               []uuid.UUID                            `json:"tag_ids,omitempty"`
 	TextCoverage         []SavedQueryFiltersSchemaTextCoverage  `json:"text_coverage,omitempty"`
+}
+
+type SavedQueryFiltersSchema_GpsBounds struct {
+	East  string `json:"east"`
+	North string `json:"north"`
+	South string `json:"south"`
+	West  string `json:"west"`
 }
 
 type SavedQueryPage = api.SavedQueryPage

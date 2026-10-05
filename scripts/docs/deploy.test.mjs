@@ -78,7 +78,7 @@ if (args.includes("--dry")) {
 `);
   await chmod(path.join(bin, "vercel"), 0o755);
 
-  for (const scenario of ["extra-file", "dry-run-failure", "cancel-inspect", "allowed"]) {
+  for (const scenario of ["extra-file", "dry-run-failure", "cancel-inspect", "allowed", "default-source", "wrong-source"]) {
     await t.test(scenario, async () => {
       await writeFile(env.DEPLOY_CALLS, "");
       const reported = scenario === "extra-file" ? [...files, { path: extra, size: 40 }] : files;
@@ -86,16 +86,24 @@ if (args.includes("--dry")) {
       const result = spawnSync("sh", ["scripts/deploy-docs.sh"], {
         cwd: repo, env: {
           ...env,
+          DOCS_SOURCE: scenario === "default-source" ? "" : scenario === "wrong-source" ? "0000000000000000000000000000000000000000" : env.DOCS_SOURCE,
           DRY_EXIT: scenario === "dry-run-failure" ? "1" : "0",
           CANCEL_INSPECT: scenario === "cancel-inspect" ? "1" : "0",
         },
         encoding: "utf8", timeout: 30_000,
       });
-      const calls = (await readFile(env.DEPLOY_CALLS, "utf8")).trim().split("\n").map(JSON.parse);
+      const calls = (await readFile(env.DEPLOY_CALLS, "utf8")).trim().split("\n").filter(Boolean).map(JSON.parse);
+      if (scenario === "wrong-source") {
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /DOCS_SOURCE must equal HEAD/);
+        assert.deepEqual(calls, [], "a mismatched source must stop before contacting Vercel");
+        return;
+      }
+      if (scenario === "default-source") assert.equal(result.status, 0, result.stderr);
       assert.ok(calls[0].includes("--dry"), "first Vercel call must be a dry run");
       assert.ok(calls[0].includes("--prod"), "check the production upload inputs");
       assert.ok(calls[0].includes("--json"), "validate the structured upload report");
-      if (scenario === "allowed") {
+      if (scenario === "allowed" || scenario === "default-source") {
         assert.equal(result.status, 0, result.stderr);
         assert.deepEqual(calls.slice(1).map(([command]) => command), ["deploy", "inspect", "promote"]);
       } else if (scenario === "cancel-inspect") {

@@ -49,11 +49,14 @@ git diff --name-only "$expected_tag..$source_sha" | while IFS= read -r changed_p
     scripts/docs-assets.txt | \
     scripts/sync-docs-assets.sh | \
     scripts/validate-docs-release.sh | \
+    scripts/validate-docs-release.test.sh | \
     scripts/vercel-build-docs.sh | \
     scripts/vercel-install-docs.sh | \
     vercel.json | \
     LICENSES/* | \
     docs/* | \
+    frontend/docs-site/* | \
+    frontend/screenshots/* | \
     scripts/docs/* | \
     website/*)
       ;;

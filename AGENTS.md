@@ -43,7 +43,7 @@ Do not infer fork eligibility or network/cache isolation from this setting.
 - A software release makes a documentation source eligible; it does not publish
   that source. The selected source is normally the post-tag documentation-only
   follow-up. Deployment still requires maintainer authorization. From the
-  repository root, `make docs-deploy DOCS_SOURCE=$(git rev-parse HEAD)` uploads
+  repository root, `make docs-deploy` uses `HEAD` as the source and uploads
   an unpromoted production build, verifies it and the release boundary, and
   then promotes it. The deploy path does not generate screenshots, build the
   product, run Docker, or install frontend dependencies. Pull-request jobs
@@ -97,7 +97,8 @@ Do not infer fork eligibility or network/cache isolation from this setting.
 2. Never push to or commit on main — feature branches and PRs only.
 3. Do not merge pull requests; opening and reporting them is the agent's
    job, merging is the user's.
-4. Run `prek run` before committing.
+4. Run `prek run` before committing and `prek run --stage pre-push` before
+   pushing; lint and the Huma check run only at push.
 5. Write pull request descriptions for humans. Lead with the user-visible
    outcome in plain language and, when useful, one concrete example. Explain
    the important safety boundary or tradeoff without making the reader decode
@@ -116,6 +117,8 @@ Do not infer fork eligibility or network/cache isolation from this setting.
 8. Do not watch, poll, or wait for GitHub Actions or pull request checks unless
    the user explicitly asks you to monitor them. A request to open, update, or
    make a pull request merge-ready does not authorize ongoing CI monitoring.
+9. Pull requests must have a user-facing benefit or improve the developer
+   experience, and the body must say which one.
 
 ## Releases
 

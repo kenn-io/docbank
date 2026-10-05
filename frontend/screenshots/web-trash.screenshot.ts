@@ -35,7 +35,7 @@ const searchResultsScreenshotPath = screenshotPathFor("web-search-results.png");
 const retainedVersionScreenshotPath = screenshotPathFor(
   "web-retained-version-download.png",
 );
-const visiblePageCSVScreenshotPath = path.join(repositoryRoot, ".superpowers", "web-visible-page-csv.png");
+const visiblePageCSVScreenshotPath = screenshotPathFor("web-visible-page-csv.png");
 const packedStorageScreenshotPath = screenshotPathFor("web-storage-status.png");
 
 async function expectDockInViewport(page: Page, dock: Locator): Promise<void> {
@@ -66,9 +66,9 @@ async function expectFocusAboveDock(page: Page, dock: Locator): Promise<void> {
   expect(focusedBox.y + focusedBox.height).toBeLessThanOrEqual(dockBox.y);
 }
 
-const processingScreenshotDirectory = path.join(repositoryRoot, ".superpowers", "processing-screenshots");
+const processingScreenshotDirectory = screenshotDirectory;
 const processingPlanScreenshotPath = path.join(processingScreenshotDirectory, "web-document-processing-plan.png");
-const processingPartialScreenshotPath = path.join(processingScreenshotDirectory, "web-document-processing-partial.png");
+const processingResultScreenshotPath = path.join(processingScreenshotDirectory, "web-document-processing-result.png");
 const renditionScreenshotPath = path.join(processingScreenshotDirectory, "web-document-rendition.png");
 
 test.describe("Docbank web screenshots", () => {
@@ -157,16 +157,20 @@ test.describe("Docbank web screenshots", () => {
     await rm(packedStorageScreenshotPath, { force: true });
     await mkdir(processingScreenshotDirectory, { recursive: true, mode: 0o700 });
     await rm(processingPlanScreenshotPath, { force: true });
-    await rm(processingPartialScreenshotPath, { force: true });
+    await rm(processingResultScreenshotPath, { force: true });
     await rm(renditionScreenshotPath, { force: true });
     const archive = path.join(workspace, "archive-store");
     const backup = path.join(workspace, "backup-repository");
     await mkdir(vault, { recursive: true, mode: 0o700 });
     await mkdir(archive, { recursive: true, mode: 0o700 });
 
-    embeddingServer = createServer((_request, response) => {
-      response.writeHead(503, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ error: { message: "synthetic provider unavailable" } }));
+    embeddingServer = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      const body = JSON.parse(Buffer.concat(chunks).toString()) as { input: string | string[] };
+      const inputs = Array.isArray(body.input) ? body.input : [body.input];
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ object: "list", model: "synthetic-model", data: inputs.map((_, index) => ({ object: "embedding", index, embedding: [1, 0] })), usage: { prompt_tokens: inputs.length, total_tokens: inputs.length } }));
     });
     await new Promise<void>((resolve, reject) => {
       embeddingServer!.once("error", reject);
@@ -692,6 +696,7 @@ trust_boundary = "local_process"
 
     await page.keyboard.press("Shift+/");
     await expect(help.getByRole("combobox", { name: "Tag shortcut 1: tax" })).toBeVisible();
+    await page.screenshot({ path: screenshotPathFor("web-keyboard-shortcuts.png"), animations: "disabled" });
   });
 
   test("trash confirmation", async ({ page }) => {
@@ -741,6 +746,7 @@ trust_boundary = "local_process"
     await batchTags.getByRole("combobox", { name: "Tag for selected documents: Choose a tag…" }).click();
     await page.getByRole("option", { name: "tax", exact: true }).click();
     await expect(batchTags.getByText("1 of 2 selected documents have this tag.")).toBeVisible();
+    await page.screenshot({ path: screenshotPathFor("web-batch-tags.png"), animations: "disabled" });
     await batchTags.getByRole("button", { name: "Done" }).click();
     await selectionDock
       .getByRole("button", { name: "Clear selection" })
@@ -923,9 +929,10 @@ trust_boundary = "local_process"
     });
     await processing.getByRole("button", { name: "Consent and run" }).click();
     await expect(processing.getByRole("button", { name: "Read sanitized Markdown" })).toBeVisible({ timeout: 30_000 });
-    await expect(processing).toContainText(/semantic.*rebuilding/i);
+    await expect(processing).toContainText(/semantic.*complete/i);
+    await processing.getByRole("region", { name: "Document processing coverage" }).scrollIntoViewIfNeeded();
     await page.screenshot({
-      path: processingPartialScreenshotPath,
+      path: processingResultScreenshotPath,
       fullPage: true,
       animations: "disabled",
     });
@@ -1041,12 +1048,25 @@ trust_boundary = "local_process"
       });
       const row = page.getByRole("row").filter({ has: checkbox });
       await page.keyboard.press("Tab");
+      await expect(page.getByRole("button", {
+        name: `Find documents similar to document-${String(index - 1).padStart(3, "0")}.txt`,
+      })).toBeFocused();
+      await page.keyboard.press("Tab");
       await expect(row).toBeFocused();
       await expectFocusAboveDock(page, dock);
       await page.keyboard.press("Tab");
       await expect(checkbox).toBeFocused();
       await expectFocusAboveDock(page, dock);
     }
+  });
+
+  test("mobile navigation", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(webURL);
+    await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+    await expect(page.getByRole("navigation", { name: "Docbank navigation" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Search exports", exact: true })).toBeVisible();
+    await page.screenshot({ path: screenshotPathFor("web-navigation-mobile.png"), animations: "disabled" });
   });
 
   test("TUI storage operations", async ({ page }) => {

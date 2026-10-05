@@ -5,21 +5,174 @@ description: Release history.
 
 # Changelog
 
-This page records user-visible changes in every tagged release. Dates come
-from the annotated release tags. Docbank remains pre-1.0, so public interfaces
-may still evolve, but vaults created by v0.9.0 and later are within the
+This page records user-visible changes in every tagged release. Docbank remains
+pre-1.0, so public interfaces may still evolve, but vaults created by v0.9.0 and
+later are within the
 [storage compatibility boundary](architecture/storage.md#released-upgrades).
 
-## Unreleased
+## [v0.15.0](https://github.com/kenn-io/docbank/releases/tag/v0.15.0) — 2026-10-05
 
 ### New features
 
-- The daemon now sends anonymous usage telemetry: `daemon_started` and
-  `daemon_active` at each daemon start and daily while it runs, and
-  `app_opened` when the web app opens. Each vault has its own random install
-  ID, and no document content, names, paths or queries leave the machine. Set
-  `DOCBANK_TELEMETRY_ENABLED=0` to turn it off; see
-  [anonymous usage telemetry](configuration.md#anonymous-usage-telemetry).
+- Process selected document versions from the web app, TUI, CLI, HTTP API, or
+  embedded Go API. Review what providers receive before granting consent, follow
+  job progress, and read verified renditions, the extracted Markdown DocBank
+  retains. Restored vaults require fresh consent for network processing.
+- Inspect processing coverage and retained text without starting work. Use
+  `docbank processing coverage` for an exact version and
+  `docbank rendition window` to read text in bounded sections.
+- Resolve saved citations to the exact retained text through HTTP or embedded
+  Go. Reads refuse unavailable or mismatched references instead of substituting
+  newer text.
+- Search by meaning from the web app and TUI with a configured embedding
+  service. Optional ZeroEntropy or Cohere reranking reorders results using
+  disclosed excerpts. Find similar documents using stored embeddings without a
+  provider call.
+- Save complete queries and reusable highlight sets, validate field and Boolean
+  expressions, and browse frozen query results. Rows, counts, and facets stay
+  fixed while documents change.
+- Select document ranges, apply tags to a selection atomically, and export
+  checked rows as CSV. Keyboard shortcuts support browsing, selection, and tag
+  assignment.
+- Preview and export exact document versions as verified ZIP bundles. The web
+  app supports selections, pages, and frozen queries; CLI and MCP exports
+  support up to 1,000 selected originals, including historical versions.
+  Explicitly release completed jobs to free export slots.
+- Recover saved export plans and inspect missing outputs through CLI and MCP.
+  Existing plans remain available without creating another preview.
+- Create dated search-count reports for all documents, import collections, or
+  exact selected versions. Review ambiguous dates and download CSV results with
+  a frozen evidence ZIP. CLI and MCP support report inspection, history, and
+  download; live reports expire after 30 minutes.
+- Preflight and import load-file packages, which pair document files with review
+  metadata and page maps. Directory and ZIP imports preserve supplied text,
+  labels, family relationships, and custodian claims.
+- Export frozen document selections as DAT packages with PDFs or images, or CSV
+  packages with native files. Selected-page exports retain their original
+  source-page numbers.
+- Publish selected pages as Bates-stamped PDFs with sequential page labels.
+  Preview labels before reserving a range, and download output checked against
+  the selected pages. Abandoned numbers remain unavailable for reuse.
+- Import MBOX and Google Takeout ZIP archives as individual emails with
+  attachments as child documents. Interrupted imports resume after the last
+  saved message, and repeated messages remain separate occurrences.
+- Read archived email in the web inspector with decoded or raw headers and HTML
+  or plain-text bodies. Follow attachments and parent messages at their exact
+  versions, including nested emails.
+- Retain email PDFs with headers, full body text, inline images, and attachment
+  inventories. Rendering requires opt-in Linux setup; retained PDFs remain
+  downloadable after restore and on macOS or Windows. Batch exports include
+  retained PDFs and attachment occurrences.
+- Retain supplied WAV and MP3 recordings, import transcripts, or transcribe
+  audio through configured Docling services. Read exact-version transcripts with
+  speaker labels and timing, and receive matched recording intervals in search
+  results.
+- Associate manually imported recordings with remote references. DocBank
+  recognizes Cap Cloud, registered self-hosted Cap, and Loom links; automatic
+  acquisition remains unavailable. Loom imports accept exported MP4 and SRT
+  files. Check a recording-link submission by operation ID without resending its
+  private link.
+- Group matching RAW, JPEG, and XMP files as one photo during import. Ambiguous
+  groups remain available for manual pairing. Browse photos by camera, lens,
+  ISO, capture date, GPS, kind, or asset ID, with RAW/JPEG pairs shown once.
+- Read photo and video metadata from exact originals, including supported camera
+  RAW formats and large JPEG, TIFF, and MP4 files. Photo place-name lookup runs
+  offline. Embedded applications can request retained previews at 512px, 2560px,
+  or 4096px for supported formats.
+- Create, rename, retire, merge, and split people through CLI and API, and read
+  person records through MCP. Backups preserve people, custodian information,
+  and decisions; restore rebuilds document–person links.
+- Create, verify, restore, and clean up backups from embedded Go applications
+  without a daemon. Include application-owned recovery files in the same
+  snapshot, restore after losing the original vault, and select the SQLite
+  driver.
+- Back up and restore objects larger than 4 GiB, including embedded recovery
+  files. New large-object snapshots require reader version 5; recovery files
+  over 64 MiB require reader version 6. Upgrade shared repository readers before
+  creating those snapshots.
+- Choose import files with include and exclude glob patterns. Use
+  `docbank add --replace` to update an existing document's history. Existing `--exclude`
+  values now use glob matching.
+- Inspect locally extracted source metadata and available MD5 fingerprints
+  through document details. HTTP and embedded Go callers can append or correct
+  provenance after import. Embedded callers can also make content replacement
+  conditional on the revision they read.
+- Connect local agents with `docbank mcp` to browse, search, and read exact
+  versions through the daemon. Processing, report, export, and package writes
+  require their respective opt-in flags.
+- Extract EPUB text locally in the daemon. Go integrations also gain local and
+  hosted extraction providers and embedding adapters for OpenAI, Cohere, Gemini,
+  ZeroEntropy, and operator-run compatible services. Availability depends on the
+  interface and configured provider.
+- Process additional formats through Mistral in Go applications, including PPTX,
+  fourteen text formats, and Office files converted locally to PDF. Replace v3
+  capability manifests with freshly probed v4 manifests before processing any
+  format. Text uploads use byte limits without a pre-upload page or spending
+  bound.
+- Verify Msgvault transfer directories, ZIPs, and legacy JSONL exports locally
+  with `docbank transfer verify`.
+
+### Improvements
+
+- Navigate the web app through a labeled sidebar, clickable folder breadcrumbs,
+  and a slide-out menu on narrow screens. File icons and readable type names
+  replace raw media types in the list.
+- Find related tags under shared slash-separated prefixes. Tags keep consistent
+  colors across the catalog, filters, and assignments, including after renaming.
+- Import large directories and upload batches faster, without imports slowing
+  progressively as sibling counts grow. CLI commands also start faster.
+- Search large filename sets and return large result pages faster. HTTP and
+  embedded Go callers can set `content_first` to place document and transcript
+  matches ahead of filename-only matches.
+- Browse large directories and heavily used tags faster. Document details,
+  downloads, vault information, and storage reports also take less time.
+- Inspect format capabilities with `docbank formats`, including distinctions
+  between recognition, retention, extraction, and provider qualification. On
+  macOS, import preflight counts cloud placeholders and failed downloads explain
+  how to make files available locally.
+- Open vaults when the account home is unwritable by setting `DOCBANK_LOCK_DIR`
+  to a writable absolute directory. Processes accessing overlapping vaults must
+  share that setting.
+- Report anonymous daemon activity and web app opens by default. Events exclude
+  document content, filenames, paths, tags, and searches. Set
+  `DOCBANK_TELEMETRY_ENABLED=0` and restart the daemon to opt out.
+- Refuse private-file writes on Unix locations where DocBank cannot verify
+  private permissions, including NFS and FUSE mounts. This affects restored
+  configuration and web launch files.
+
+### Bug fixes
+
+- Identify JPEGs from their contents even when a Windows registry change assigns
+  the `.jpg` extension the wrong type. YAML and TeX files also count as
+  searchable text. Already stored files retain their existing types.
+- Keep exclusively held files pending in Windows watched folders until they
+  become readable, then wait for a fresh settle window. Retry when a checked
+  file changes into a directory before opening.
+- Keep `docbank info` and `docbank storage status` readable when packing removes
+  loose files during a status scan.
+
+### Contributors
+
+Thank you to [Joi Ito (@Joi)](https://github.com/Joi),
+[Marius van Niekerk (@mariusvniekerk)](https://github.com/mariusvniekerk),
+[Rod Boev (@rodboev)](https://github.com/rodboev),
+[Rusty Shackleford (@salmonumbrella)](https://github.com/salmonumbrella), and
+[Wes McKinney (@wesm)](https://github.com/wesm) for their contributions to v0.15.0.
+
+See the [full release contribution history](https://github.com/kenn-io/docbank/compare/v0.14.0...v0.15.0).
+
+## [v0.14.0](https://github.com/kenn-io/docbank/releases/tag/v0.14.0) — 2026-08-23
+
+### New features
+
+- Add reusable embedding plans for Go applications.
+
+### Improvements
+
+- Adopt Go 1.27 and JSON v2, including the CI lint toolchain.
+- Probe interleaved documents per format and mixed batches.
+- Add media detection and fail-closed Voyage multimodal embedding contracts.
+- Expose Mistral integration contracts.
 
 ## [v0.13.0](https://github.com/kenn-io/docbank/tree/v0.13.0) — 2026-08-18
 

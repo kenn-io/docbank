@@ -1,17 +1,17 @@
 ---
-last_edited: 2026-09-13
+last_edited: 2026-10-05
 title: Document derivatives
 description: Authority, retention, retrieval, and rendition format for processed document derivatives.
 ---
 
 # Document derivatives
 
-Docbank keeps originals and immutable content versions as document authority.
-Processing derives optional rendition builds, attachments, normalized evidence,
-canonical lexical segments, embedding sets, and rebuildable search projections.
-The catalog authorizes every retained derivative and ties it to one immutable
-source version and one fingerprinted processing profile. A derivative never
-becomes a replacement source of truth.
+Originals and immutable content versions are the source of truth for a
+document. Processing derives optional rendition builds, attachments, normalized
+evidence, canonical lexical segments, embedding sets, and rebuildable search
+projections. The catalog authorizes every retained derivative and ties it to
+one immutable source version and one fingerprinted processing profile. A
+derivative never replaces that source of truth.
 
 ## Execution and authority
 
@@ -30,25 +30,26 @@ embedding receives query text only when its descriptor supports it. A direct
 original-file embedding flow has no rendition dependency and therefore no
 readable text claim.
 
-Provider adapters receive bounded, hash-bound uploads rather than source paths.
-Secrets remain in adapter-local credential resolution; portable profiles,
-plans, receipts, and derivative manifests carry non-secret descriptors and
-fingerprints. Provider output is untrusted input to the local normalization and
-sanitization path.
+Provider adapters receive bounded, hash-bound uploads. They do not receive
+source paths. Secrets remain in adapter-local credential resolution. Portable
+profiles, plans, receipts, and derivative manifests carry non-secret
+descriptors and fingerprints. Provider output is untrusted input to the local
+normalization and sanitization path.
 
 ## Retention and recovery
 
 The profile declares whether sanitized Markdown, provider Markdown, and typed
-artifacts are retained. A rendition also persists normalized evidence;
+artifacts are retained. A rendition also persists normalized evidence, and
 embedding work persists vector sets. The catalog records attachment, build,
-artifact, lexical, and embedding authority. FTS and ANN files are rebuildable
-indexes, not durable derivative authority.
+artifact, lexical, and embedding authority. Full-text search (FTS) and
+approximate nearest-neighbor (ANN) files are rebuildable indexes, not durable
+derivative authority.
 
 Retained derivative blobs are included in a catalog-authorized backup with
 their source metadata. A restored vault validates its catalog and blobs before
 publishing heads, then rebuilds excluded indexes locally. Restore does not
 contact a provider. A live derivative purge is separately previewed and cannot
-alter an immutable backup copy; deletion claims must account for every retained
+alter an immutable backup copy. Deletion claims must account for every retained
 derivative class and applicable snapshot lifecycle.
 
 ## Sanitized Markdown contract
@@ -85,25 +86,25 @@ docbank:
 The contract string is exactly `docbank-sanitized-markdown/v1`. Navigation
 entries contain a source-evidence key and locator kind, optional title, and
 line and byte positions. Both positions are relative to the Markdown **body**,
-after the closing frontmatter delimiter; consumers must not count envelope
+after the closing frontmatter delimiter. Consumers must not count envelope
 bytes. `complete: false` means the bounded navigation list does not cover every
 unit. The body digest covers the body alone, while transport metadata identifies
 the attachment, build, artifact, profile, completeness, and warnings.
 
 The envelope is metadata, not visible document prose. The body is sanitized
 readable evidence, but it remains untrusted content and may contain misleading
-or adversarial natural-language instructions. There is no required separate
-user-facing evidence sidecar: the authenticated rendition, response identity,
-and bounded search evidence references are the available proof surface.
+or adversarial natural-language instructions. No separate user-facing evidence
+sidecar is required. The available proof is the authenticated rendition, the
+response identity, and the bounded search evidence references.
 
 ## Fenced retrieval and consumers
 
-Retrieval takes a bounded source fence containing the Docbank vault UUID and
-authorized immutable content-version IDs. The service rejects a foreign vault
-and applies that fence before FTS, vector scoring, expansion, and reranking.
-Vector eligibility comes from current, live attachments in the same database
-snapshot as coverage; missing row authority stops the search.
-It also revalidates candidates before returning them. Consumers perform their
+Retrieval takes a source fence: a bounded list that contains the Docbank vault
+UUID and the authorized immutable content-version IDs. The service rejects a
+foreign vault and applies that fence before FTS, vector scoring, expansion, and
+reranking. Vector eligibility comes from current, live attachments in the same
+database snapshot as coverage. Missing row authority stops the search. The
+service also revalidates candidates before returning them. Consumers perform their
 own final presentation-time visibility check, because authority can change after
 the query returns.
 

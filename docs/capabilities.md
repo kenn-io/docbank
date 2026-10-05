@@ -1,162 +1,238 @@
 ---
 title: Capabilities
-description: What Docbank does for people, agents, applications, recovery, and physical storage.
+description: What Docbank can do today, grouped by task, with links to the guide for each.
 ---
 
 # Capabilities
 
-Docbank stores documents with stable IDs, keeps prior versions, and checks
-content when it reads or writes it. People use the CLI, web application, or
-terminal browser. Agents and external applications use the authenticated HTTP
-API. Go applications can own separate vaults inside their own process.
+Docbank gives every document a stable ID, keeps its earlier versions, and
+checks content whenever it reads or writes it. People use the CLI, web
+application, or terminal browser. Agents use the local MCP server or the
+authenticated HTTP API. Go applications can own separate vaults inside their
+own process.
+
+This page lists what Docbank does today. Each section links to the guide that
+explains how.
 
 ## Collect and organize
 
-- Recursively import files and directories without modifying their sources.
-- Upload one document with a declared hash and size that Docbank verifies.
-- Arrange documents in a virtual tree without moving stored bytes.
-- Address live documents by path or keep stable numeric node IDs across moves,
-  renames, trash, and restore.
-- Define stable tags, rename their display names, and assign them independently
-  of folder placement. The web app groups slash-separated names and keeps each
-  tag's color when its name changes.
+- Import files and whole directory trees. Docbank never modifies the source.
+- Choose which files to import with include and exclude globs. Replace
+  existing content on purpose with `docbank add --replace`.
+- Import MBOX and Google Takeout archives. Each occurrence of a message is kept
+  separately, and attachments become documents of their own.
+- Import load-file packages with their supplied text, page maps, labels,
+  families, and custodian claims.
+- Group matching RAW, JPEG, and XMP files as one photo. Ambiguous groups are
+  left for you to pair by hand.
+- Upload a single document with a declared hash and size, which Docbank
+  verifies.
+- Arrange documents in folders. The folder tree is virtual, so moving a
+  document does not move its stored bytes.
+- Refer to a live document by path, or by a numeric node ID that stays the same
+  through moves, renames, trash, and restore.
+- Define tags and assign them regardless of folder. Renaming a tag changes its
+  display name and nothing else. The web app groups slash-separated tag names
+  and keeps each tag's color when its name changes.
 - Move several nodes in one operation that either applies the whole plan or
   changes nothing.
-- Watch local inboxes and import files after they stop changing.
+- Watch local inbox folders and import files once they stop changing.
 
-Start with [Importing Documents](usage/importing.md) and
-[Organizing & Tagging](usage/organizing.md).
+Start with [Importing documents](usage/importing.md) and
+[Organizing and tagging](usage/organizing.md).
 
 ## Find and retrieve
 
-- Browse directories and trees with response limits, sizes, and modification
-  times.
-- Search live names with ranked results and filter by path, media type,
-  modification time, or tag ID.
-- Search verified extracted text for supported UTF-8 text, Markdown, JSON, and
-  related textual formats.
-- List documents using bounded filters without a text query.
-- Save named queries and reusable highlight sets through the HTTP API.
-- Find every retained node and version that refers to a known SHA-256 hash.
-- Download current or historical content and verify its size, hash, and final
+- Browse directories and trees with sizes and modification times. Responses are
+  limited in size.
+- Search the names of live documents with ranked results, and filter by path,
+  media type, modification time, or tag ID.
+- Search the verified extracted text of UTF-8 text, Markdown, JSON, and related
+  text formats.
+- List documents by filter alone, without a text query.
+- Save complete queries and reusable highlight sets in the web app or through
+  the HTTP API.
+- Write queries with field and Boolean expressions, which Docbank validates.
+  Freeze a query's results so its rows, counts, and facets stay fixed.
+- Search by meaning in the web app and TUI once embeddings are configured, or
+  find similar documents locally from stored embeddings.
+- Read archived email with decoded or raw headers, and follow each attachment
+  to the version that was attached.
+- Read imported or generated transcripts with speaker labels and timing.
+- Browse photo assets over HTTP and filter by camera, lens, ISO, capture date,
+  GPS, and asset type. A RAW/JPEG pair appears once.
+- Given a SHA-256 hash, find every node and version that still refers to it.
+- Download current or earlier content and check its size, hash, and final
   verification result.
 - Save a local download only after the complete temporary file verifies.
 
-See [Searching](usage/searching.md), the [Web Application](usage/web.md), and
-the [Interactive Terminal Browser](usage/tui.md).
+See [Searching](usage/searching.md), the [Web application](usage/web.md), and
+the [Interactive terminal browser](usage/tui.md).
 
-## Change without erasing history
+## Export a reviewed selection
 
-- Keep every content edit as an immutable version by default.
+- Preview and download verified ZIP bundles of the document versions you
+  selected.
+- Export checked rows in the web app as CSV, or apply a tag to the whole
+  selection in one atomic step.
+- Reopen a stored export plan and see which outputs are unavailable, through
+  the CLI and MCP.
+- Create search-count reports for a date range, as a CSV of results with a
+  frozen evidence ZIP.
+- Export frozen selections as DAT packages with PDFs or images, or as CSV
+  packages with native files.
+- Reserve Bates labels and export selected pages as stamped PDFs. Labels from
+  an abandoned export are not reused.
+- Keep PDF renderings of email, each with the complete body and an inventory of
+  attachments. Rendering new PDFs needs an opt-in Linux setup. PDFs that are
+  already stored can be downloaded on any platform.
+
+See [Verified export bundles](usage/export-bundles.md),
+[Search exports](usage/search-exports.md),
+[Web exports](usage/web.md#export-a-verified-zip), and
+[Email PDFs](usage/email-pdf.md).
+
+## Edit without losing history
+
+- By default, every content edit is kept as an immutable version.
 - Replace content only if the node still has the revision the writer inspected.
-- Revert by creating a new current version that records which prior version
+- Revert by creating a new current version that records which earlier version
   supplied its content.
-- Retrieve any retained version by its stable UUID after the document moves.
-- Preview and deliberately prune unwanted non-current history when unlimited
-  retention is not appropriate.
-- Record where content came from. Keep the original facts when adding a correction.
+- Retrieve any kept version by its UUID, even after the document moves.
+- Preview and prune older versions when you do not want to keep them all.
+- Record where content came from. A correction is added next to the original
+  record and does not replace it.
 
-See [Editing & Versions](architecture/editing-and-versions.md).
+See [Editing and versions](architecture/editing-and-versions.md).
 
 ## Recover and verify
 
-- Move nodes to recoverable trash without reclaiming content.
-- Restore the same node ID even when its former name is taken or its parent
-  is missing.
-- Permanently empty selected trash only through a preview-first operation.
-- Reclaim unreachable loose content with explicit garbage collection, then
-  compact dead packed payload separately.
-- Recompute content hashes and report missing or corrupt bytes separately
-  from inaccessible stores and invalid metadata.
+- Move nodes to trash without reclaiming their content.
+- Restore a node with the same ID, even when its former name is taken or its
+  parent is missing.
+- Empty selected trash permanently, always through a preview first.
+- Reclaim content that nothing refers to by running garbage collection.
+  Compacting dead space inside packs is a separate step.
+- Recompute content hashes. The report separates missing or corrupt bytes from
+  inaccessible stores and invalid metadata.
 - Create incremental backups and verify their structure and bytes.
-- Restore into a separate vault and verify it before making it available.
-- Use the embedded Go API to preview removal of old backup snapshots and
-  reclaim repository data that no surviving snapshot needs.
+- Restore into a separate vault and verify it before putting it to use.
+- Create, verify, restore, and clean up backups from embedded Go applications,
+  including recovery files the application owns.
+- Keep people, custodian information, and decisions through a restore.
+- Back up objects larger than 4 GiB. New large-object snapshots require reader
+  version 5, and recovery files over 64 MiB require reader version 6. Upgrade
+  every reader of a shared repository before creating these snapshots.
 
-See [Trash, GC, Repack & Verify](usage/trash-and-gc.md),
-[Backup & Restore](usage/backup.md), and [Vault Lifecycle](usage/lifecycle.md).
+See [Trash, garbage collection, and repack](usage/trash-and-gc.md),
+[Backup and restore](usage/backup.md), and
+[Vault lifecycle](usage/lifecycle.md).
 
-## Retain permanent evidence
+## Keep permanent audited history
 
-- Preview exactly what a permanent audited scope will protect before enabling
-  an irreversible retention promise.
+- Preview what a permanent audit scope will protect before you enable it.
+  Enabling a scope cannot be undone.
 - Keep enrolled history protected after moves and trash.
 - Extend protection to new descendants of an enrolled directory.
-- Record supported content, tree, tag, and source-history changes in an
-  ordered history that cannot be edited through Docbank.
-- Browse node or scope history and verify it by replaying the recorded events.
+- Record supported content, tree, tag, and source-history changes in an ordered
+  history that cannot be edited through Docbank.
+- Browse the history of a node or a scope, and verify it by replaying the
+  recorded events.
 - Compare the latest history hashes with evidence saved outside the vault.
-- Preserve audited history through deterministic backup and restore.
+- Keep audited history through backup and restore, which reproduce it
+  deterministically.
 
-See [Permanent Audited History](usage/audited-history.md).
+See [Permanent audited history](usage/audited-history.md).
 
-## Place physical content deliberately
+## Choose where content is stored
 
-- Import into a fixed local primary store.
-- Store content as separate raw or zstd-compressed objects, then combine
-  eligible small objects into packs that Docbank seals against further writes.
-- Attach fenced secondary filesystem or HTTPS S3-compatible namespaces without
-  placing their deployment coordinates or credentials in portable metadata.
-- Preview copy or move costs, verification reads, egress, scratch space,
-  shared-reference constraints, audit pins, and pack-level reclamation.
-- Repair a damaged location from another verified copy, salvage uniquely held
-  content from a fenced store, and evacuate a secondary before unregistering it.
-- Keep backups complete across remote-only placement and restore either into a
-  fresh local primary or an explicitly mapped target topology.
+- Import into a local primary store, whose location is fixed.
+- Store content as separate raw or zstd-compressed objects. Docbank then
+  combines eligible small objects into packs and seals each pack against
+  further writes.
+- Attach secondary stores: filesystem directories or HTTPS S3-compatible
+  namespaces, each fenced by an ownership marker. Their locations and
+  credentials stay out of the vault's portable metadata.
+- Before copying or moving content, preview the cost: verification reads,
+  egress, scratch space, shared-reference constraints, audit pins, and
+  pack-level reclamation.
+- Repair a damaged location from another verified copy, salvage content held
+  only in a fenced store, and evacuate a secondary store before unregistering
+  it.
+- Keep backups complete when some content exists only in a remote store.
+  Restore into a fresh local primary store, or into a target layout you map
+  explicitly.
 
-Placement is capacity management, not synchronization, sharing, encryption, or
-backup. See [Multi-store Storage](usage/storage.md) for the operational and
-trust boundaries.
+Placing content in another store adds capacity. It does not synchronize, share,
+encrypt, or back up that content. See [Multi-store storage](usage/storage.md)
+for how to operate stores and what each one is trusted with.
 
 ## Build agent and application workflows
 
-- Discover the current daemon and authenticate over loopback.
-- Generate the live OpenAPI contract offline or retrieve it from the daemon.
-- Use stable IDs and revisions to act on inspected documents.
-- Follow progress as one JSON record per line through a final result.
-- Inspect durable job IDs after an uncertain client outcome or daemon restart.
-- Embed a vault through `go.kenn.io/docbank`, choosing CGO or pure-Go SQLite,
-  with the same exclusive ownership and content checks.
+- Discover the running daemon and authenticate over loopback.
+- Connect local agents with `docbank mcp`. Processing, report, export, and
+  package writes are each off until you pass the matching opt-in flag.
+- Resolve a saved citation to the exact text it cited, through HTTP or Go. A
+  reference that is unavailable or no longer matches fails. Docbank does not
+  substitute newer text.
+- Create, rename, retire, merge, and split people through the CLI or API, and
+  read person records through MCP.
+- Generate the OpenAPI contract offline, or retrieve it from the daemon.
+- Act on a document you inspected by using its stable ID and revision.
+- Follow progress as one JSON record per line, ending with a final result.
+- Look up a job by its durable ID after a client loses track of it or the
+  daemon restarts.
+- Embed a vault through `go.kenn.io/docbank` with CGO or pure-Go SQLite. An
+  embedded vault has the same exclusive ownership and content checks.
 
-See [Docbank for Agents](agents.md), the
-[Agent Integration Guide](agents/integration.md), and [Embed in Go](embedding.md).
+See [Docbank for agents](agents.md), the
+[Agent integration guide](agents/integration.md), and
+[Embed in Go](embedding.md).
 
-## Process documents and search retained results
+## Process documents and search the results
 
-Operators can [configure a processing profile](usage/configuration.md), review
-what providers receive, grant consent, and run it for one exact document
-version. The CLI, web app, and TUI expose processing plans, job status, and
-verified retained Markdown. See the [processing workflow](usage/document-processing.md)
-and the [CLI commands](cli-reference.md#docbank-processing).
+You can [configure a processing profile](usage/configuration.md), review what
+each provider will receive, grant consent, and run the profile against one
+version of a document. The CLI, web app, and TUI show processing plans, job
+status, and the verified Markdown that processing produced. See the
+[processing workflow](usage/document-processing.md) and the
+[CLI commands](cli-reference.md#docbank-processing).
 
-[Processing search](usage/search.md) offers lexical, semantic, hybrid, and auto
-modes inside an explicit set of authorized source versions. Semantic and
-hybrid search require active consent to disclose query text. Ordinary name
-and text search remains separate; auto currently uses lexical retrieval. An
-explicit rerank option can reorder the revalidated result prefix through a
-configured ZeroEntropy or Cohere adapter. Reranking has its own consent grant,
-4,096-byte excerpt ceiling, and `applied`, `degraded`, or `skipped` receipt.
+[Processing search](usage/search.md) has lexical, semantic, hybrid, and auto
+modes. It searches only the source versions you have authorized. Semantic and
+hybrid search send query text to a provider, so they need active consent.
+Ordinary name and text search is separate from processing search.
+
+In the web app and TUI, Auto selects Hybrid when an embedding binding is
+available. The processing HTTP API and CLI use lexical retrieval for `auto`.
+
+Reranking is optional and off unless you ask for it. It reorders the first
+results, after Docbank has revalidated them, through a configured ZeroEntropy
+or Cohere adapter. Reranking has its own consent grant, a 4,096-byte excerpt
+ceiling, and a receipt that reads `applied`, `degraded`, or `skipped`.
 
 Go applications can use the [document packages](document-understanding.md) to
 prepare text and Markdown renditions, call OCR and embedding providers, and
-keep results tied to the original content. The embedded vault API also reads
-source metadata and generates [visual previews](architecture/visual-previews.md).
+keep each result tied to the content it came from. The embedded vault API also
+reads source metadata and generates
+[visual previews](architecture/visual-previews.md).
 
-The vault retains processing profiles, disclosure consent, derived results, and
-independent embedding sets. Its internal retrieval components combine lexical
-and vector matches, with optional query expansion, reranking, and QMD retrieval.
-These components are described in
-[Document Processing](architecture/document-processing.md).
+The vault stores processing profiles, disclosure consent, derived results, and
+independent embedding sets. Internally, retrieval combines lexical and vector
+matches, with optional query expansion, reranking, and QMD retrieval.
+[Document processing](architecture/document-processing.md) describes these
+components.
 
-The daemon registers plain-text extraction and two kinds of configured
-[embedding runtime](configuration.md#embedding-workers-and-credentials).
-Installing a provider package does not register it with the daemon or prepare
-an import for semantic search. The default configuration has no processing
-profiles, and new imports do not automatically run this processing workflow.
+The daemon can extract plain text and EPUB locally. With configuration, it can
+also transcribe audio through Docling and run
+[embedding runtimes](configuration.md#embedding-workers-and-credentials).
+Installing a provider package does not register it with the daemon, and does
+not prepare an import for semantic search. The default configuration has no
+processing profiles, and new imports do not run this workflow automatically.
 
-## Deliberate boundaries
+## What Docbank does not do
 
-Docbank does not synchronize a mutable folder between devices, create public
+Docbank does not synchronize a working folder between devices, create public
 share links, provide collaborative editing, or encrypt live secondary stores.
-See the [Roadmap](roadmap.md) for planned product work and the linked guides
-for each interface's current limits.
+The [roadmap](roadmap.md) lists planned work, and each linked guide lists the
+current limits of its interface.

@@ -1,6 +1,6 @@
 ---
-title: Multi-store Storage
-description: Keep document bytes local-first, add filesystem or S3-compatible stores, and move verified authority deliberately.
+title: Multi-store storage
+description: Keep document bytes local first, add filesystem or S3-compatible stores, and move verified content between them.
 ---
 
 # Multi-store storage
@@ -11,16 +11,16 @@ filesystem store, called the primary. You can then copy or move verified
 content to a secondary filesystem or S3-compatible store.
 
 Docbank records which stores hold a verified copy of each retained content
-hash. This catalog record authorizes a store to serve those bytes. Moving
-content between stores manages capacity; it does not synchronize arbitrary
-filesystem changes, manage bucket lifecycle rules, or replace a complete
-[backup](backup.md).
+hash. This catalog record, called authority on this page, authorizes a store to
+serve those bytes. Moving content between stores manages capacity. It does not
+synchronize arbitrary filesystem changes, manage bucket lifecycle rules, or
+replace a complete [backup](backup.md).
 
 ![The Docbank web application showing the primary and a secondary physical store for a synthetic vault.](https://docbank.ai/assets/generated/web-multi-store-storage.png)
 
-The web application and TUI expose this inventory read-only. Registration,
-placement, repair, takeover, evacuation, and removal remain explicit CLI or
-master-key API operations.
+The web application and TUI show this inventory read-only. Registration,
+placement, repair, takeover, evacuation, and removal are CLI or master-key API
+operations.
 
 ## Configure a binding
 
@@ -62,8 +62,8 @@ authenticated proxy.
     storage operator is outside the intended trust boundary.
 
 Restart the daemon after editing `config.toml`. Binding configuration is read
-once at startup; a running daemon fails with `storage_configuration_stale`
-rather than guessing about newly edited settings.
+once at startup. A running daemon fails with `storage_configuration_stale`
+instead of guessing about newly edited settings.
 
 ## Attach and inspect a store
 
@@ -83,28 +83,28 @@ Docbank always treats a canonical UUID selector as an ID, not a display name.
 `--refresh` checks the ownership marker again. Ordinary status uses the
 daemon's recorded observations without a network request on every read.
 
-Use `--takeover` to transfer a store namespace from another vault instance.
-A namespace is the filesystem directory or S3 prefix reserved for that store.
+Use `--takeover` to transfer a store namespace from another vault instance. A
+namespace is the filesystem directory or S3 prefix reserved for that store.
 Takeover writes a new ownership epoch, the value identifying the current owner,
-and blocks the former owner from using the store normally. Two live vaults
-cannot share one prefix this way.
+and blocks the former owner from using the store normally. To the former owner,
+the store is now fenced. Two live vaults cannot share one prefix this way.
 
 Each active secondary must own a disjoint namespace. Filesystem paths may not
 overlap the vault, a watched inbox, or another active filesystem store. S3
 stores may not use equal or nested prefixes under the same canonical endpoint
-and bucket. The ownership marker is the authoritative fence; path and prefix
+and bucket. The ownership marker is the authoritative check. Path and prefix
 comparisons reject obvious aliases before Docbank contacts the backend.
 
 `storage list` and `storage status` separate catalog authority from observed
 availability. `authoritative_objects` counts verified locations recorded for a
 store. `unreadable_objects` counts objects for which every authorized location
-is currently offline, so two unavailable replicas do not misleadingly look
-readable. Missing, corrupt, fenced, unavailable, and unbound states remain
-distinct because their recovery actions differ.
+is currently offline, so two unavailable replicas do not look readable.
+Missing, corrupt, fenced, unavailable, and unbound states are reported
+separately because their recovery actions differ.
 
 ### Understand primary coverage
 
-Two typed reports expose the counts used to diagnose primary coverage:
+Two reports provide the counts used to diagnose primary coverage:
 
 ```bash
 docbank info --json
@@ -113,14 +113,14 @@ docbank storage list --json
 
 The `authoritative_objects` value for the store whose `role` is `primary` can
 be compared with `tracked_blobs` from `docbank info`. A lower primary count is
-a warning that content is held elsewhere. Matching counts are not an atomic
-proof: the endpoints use separate live snapshots, and watches, ingests,
-clients, or storage jobs can change placement before shutdown.
-`sole_authority_objects` cannot establish coverage either because two
-secondary replicas can make neither one a sole copy while the primary still
-has no location. Use `docbank backup create` for a complete,
-topology-independent recovery point; it verifies one authorized location for
-every logical blob or fails without publishing a partial backup.
+a warning that content is held elsewhere. Matching counts are not proof. The
+endpoints use separate live snapshots, and watches, ingests, clients, or
+storage jobs can change placement before shutdown. `sole_authority_objects`
+cannot establish coverage either, because two secondary replicas can make
+neither one a sole copy while the primary still has no location. Use
+`docbank backup create` for a complete, topology-independent recovery point. It
+verifies one authorized location for every logical blob or fails without
+publishing a partial backup.
 
 ## Place retained content
 
@@ -154,8 +154,9 @@ bucket lifecycle rules, storage administrators, or lost credentials.
 
 Docbank tries the locations recorded for each blob in stable priority order. An
 unavailable redundant store does not block a healthy copy. Missing and corrupt
-locations are reported distinctly and are immediately demoted for the current
-daemon run; durable catalog authority changes only through an explicit repair.
+locations are reported separately and demoted immediately for the current
+daemon run. The authority recorded in the catalog changes only when you run a
+repair.
 
 ```bash
 docbank storage repair <sha256> --store cold
@@ -163,8 +164,8 @@ docbank storage repair --run --token <preview-token>
 ```
 
 Repair republishes verified bytes from another readable location. For a store
-whose ownership marker has been taken over, salvage is an explicit read-only
-recovery into the primary:
+whose ownership marker has been taken over, salvage recovers bytes into the
+primary and only reads from that store:
 
 ```bash
 docbank storage salvage <sha256> --store cold
@@ -172,14 +173,14 @@ docbank storage salvage --run --token <preview-token>
 ```
 
 Salvage never restores ordinary authority to the fenced store. Every operation
-has a durable ID; inspect interrupted or uncertain work with `docbank jobs`
-and `docbank jobs show <operation-id>`.
+has a durable ID. Inspect interrupted or uncertain work with `docbank jobs` and
+`docbank jobs show <operation-id>`.
 
 Physical deletion happens after catalog authority has moved. If that cleanup
-temporarily fails, the operation returns to the durable queue with the failure
-visible and the daemon retries it; it is never left looking actively running
-after its worker has stopped. The already verified destination remains
-authoritative while retry proceeds.
+fails temporarily, the operation returns to the durable queue with the failure
+visible, and the daemon retries it. It is never left looking as if it is
+running after its worker has stopped. The verified destination remains
+authoritative during the retry.
 
 ## Evacuate and remove
 
@@ -190,18 +191,18 @@ docbank storage detach cold
 docbank storage unregister cold
 ```
 
-Evacuation copies every object held only by the secondary into the primary.
-It verifies the destination, then removes the secondary locations from the
-catalog. Immutable pack containers may retain unused bytes until repack. Detach preserves the
-empty store identity while removing it from runtime use; unregister is the
-separate final action and is accepted only for an empty detached store.
+Evacuation copies every object held only by the secondary into the primary. It
+verifies the destination, then removes the secondary locations from the
+catalog. Immutable pack containers may keep unused bytes until repack. Detach
+removes the empty store from runtime use and preserves its identity. Unregister
+is the separate final action and is accepted only for an empty detached store.
 
 ## Backup and restore
 
-Every successful backup remains complete even when the live vault is
-remote-only: it reads and verifies one candidate for every logical blob. A
-sole unavailable location makes the snapshot fail rather than publish a
-partial recovery point.
+Every successful backup is complete, even when the live vault is remote-only.
+It reads and verifies one candidate for every logical blob. If a blob's only
+location is unavailable, the snapshot fails instead of publishing a partial
+recovery point.
 
 The snapshot carries a deterministic `docbank-placement-v1` artifact with
 source store IDs, display names, backend kinds, roles, per-hash source store

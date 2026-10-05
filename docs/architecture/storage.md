@@ -12,12 +12,12 @@ copies in secondary stores.
 
 Use `docbank backup create` to capture content across all stores. Copying the
 database and primary directory is a complete manual archive only when the
-primary holds every retained blob; stop the daemon before making that copy.
-Run `docbank verify` before relying on the result. [Backup & Recovery](backup.md)
+primary holds every retained blob. Stop the daemon before making that copy.
+Run `docbank verify` before relying on the result. [Backup and recovery](backup.md)
 owns the complete capture and restore contract.
 
 This page owns the on-disk layout, schema relationships, and upgrade rules.
-Start with [How Docbank Works](overview.md) for the document model.
+Start with [How Docbank works](overview.md) for the document model.
 
 ## Blob store
 
@@ -30,8 +30,8 @@ blobs/
 
 Blobs are immutable and deduplicated by SHA-256 over their decoded bytes. New
 content is first published loose in the fixed local primary. Objects of at
-least 4 KiB use zstd only when
-it saves at least 10%; smaller or incompressible objects remain raw. The shared
+least 4 KiB use zstd only when it saves at least 10%. Smaller or
+incompressible objects remain raw. The shared
 Kit engine supports moving either loose encoding into sealed packs without
 changing identity. Reads consult the SQLite catalog and transparently use raw
 loose, compressed loose, or packed content from an authorized filesystem or
@@ -51,9 +51,9 @@ database reference only after the blob is durable. A crash before that commit
 can leave an **orphan blob**: bytes with no catalog authority. Reads cannot see
 it, and `gc` can reclaim it.
 
-Stale `tmp/` files from interrupted writes are cleaned at startup — but
-only when no other docbank process holds the vault (see
-[Ownership & Concurrency](locking.md)).
+Startup removes stale `tmp/` files from interrupted writes, but only when no
+other Docbank process holds the vault (see
+[Ownership and concurrency](locking.md)).
 
 ## Database schema
 
@@ -114,17 +114,16 @@ nodes_fts      -- FTS5 external-content index over live node names
 identity. `blob_locations` is physical authority: each row says a specific
 store has a verified representation that may satisfy reads. Runtime health is
 observed separately and never rewrites those durable rows. Pack identity is
-store-scoped, so the same immutable pack may legitimately exist in more than
-one store.
+store-scoped, so the same immutable pack may exist in more than one store.
 
 Store bindings are machine-local `config.toml` profiles rather than portable
 authority. The catalog keeps only the profile name and a fenced ownership
-epoch. See [Multi-store Storage](../usage/storage.md) for the operator model and
+epoch. See [Multi-store storage](../usage/storage.md) for the operator model and
 the sections below for the complete authority boundary.
 
 The API key protects daemon access, not direct physical-store access. Loose
 objects and packs in secondary filesystem and S3 namespaces are encoded and
-content-verified but not encrypted by Docbank; raw store readers are inside the
+content-verified but not encrypted by Docbank. Raw store readers are inside the
 deployment trust boundary. Provider/filesystem encryption and access control
 remain external responsibilities, while native live-store encryption is
 deferred product scope.
@@ -136,17 +135,17 @@ records an explicit, monotonically increasing storage-schema version. Opening
 any supported older vault with a newer incompatible schema performs a logical
 cutover rather than a sequence of in-place SQL mutations:
 
-1. checkpoint and read the released database without changing its schema;
-2. export and validate deterministic metadata-v1 JSONL;
-3. import that stream into a fresh current-schema database;
-4. restore loose and packed physical authority, then validate and checkpoint;
-5. retain a version-identified source recovery copy and atomically publish the
+1. Checkpoint and read the released database without changing its schema.
+2. Export and validate deterministic metadata-v1 JSONL.
+3. Import that stream into a fresh current-schema database.
+4. Restore loose and packed physical authority, then validate and checkpoint.
+5. Retain a version-identified source recovery copy and atomically publish the
    new database.
 
 The cutover driver is shared by every released generation. A small source
 adapter describes how to export that generation's logical authority and
 restore its physical blob catalog. The v0.9.0 adapter recognizes the one
-released database that predates the explicit version marker; later generations
+released database that predates the explicit version marker. Later generations
 are selected only by their stored version. An older binary refuses a database
 from a newer generation instead of attempting to interpret it. The current
 physical identity column deliberately differs from the mandatory v0.9 startup
@@ -155,7 +154,7 @@ silently writing with obsolete storage rules.
 
 For a v0.9.0 source the recovery copy is `<database>.v0.9.0.bak`. It contains
 private vault metadata and inherits the vault's owner-private boundary. Keep it
-until the upgraded vault and a fresh backup have been verified; it may then be
+until the upgraded vault and a fresh backup have been verified. It may then be
 removed while the daemon is stopped. Blob files are neither duplicated nor
 recompressed by this cutover.
 
@@ -164,12 +163,12 @@ current version belonging to that node, while directories cannot carry one.
 Version UUIDs and their introducing operation UUIDs are random, canonical
 UUIDv4 values. `(node_id, node_revision)` and
 `(node_id, introduced_operation_id)` are unique. See
-[Editing & Versions](editing-and-versions.md) for the read and retention
+[Editing and versions](editing-and-versions.md) for the read and retention
 contract.
 
 Each provenance fact has a SHA-256 identity derived from its immutable node,
 ingest, original-path, mtime, and optional predecessor fields. Current ingest
-creates an unsuperseded fact; SQL prevents rewriting ingest or provenance rows.
+creates an unsuperseded fact. SQL prevents rewriting ingest or provenance rows.
 JSONL preserves the identity and optional `supersedes` edge and rejects a
 dangling, cross-node, branching, or cyclic graph during import.
 
@@ -183,18 +182,19 @@ enrollment: topology and attached-metadata genesis, a shared baseline, sticky
 membership, an enrollment event, scope chain, and allocation lineage. Import
 recomputes every canonical digest and reconciles the protected closure with the
 restored current state before accepting it. A vault's first audit scope is
-created through the public enrollment workflow (`docbank audit enable`);
-until a scope is enrolled, this authority remains dormant. Once audit
+created through the public enrollment workflow (`docbank audit enable`).
+Until a scope is enrolled, this authority remains dormant. Once audit
 authority exists, the Go store rejects logical mutation classes that do not yet
-record an audit transition. Supported transitions — filesystem ingest, content
-replacement and reversion, in-scope moves and renames, reversible trash and
-restore, and tag creation, assignment, and rename — commit in the same
-metadata transaction as the change they record: every authority change
-advances the allocation lineage, content operations add immutable versions,
-and changes with scoped effects additionally record events and scope-chain
-entries. Pack layout and backup reads
-remain maintainable. The mutation and maintenance contract is maintained
-in [Audited History](audited-history.md).
+record an audit transition.
+
+The supported transitions are filesystem ingest, content replacement and
+reversion, in-scope moves and renames, reversible trash and restore, and tag
+creation, assignment, and rename. Each commits in the same metadata transaction
+as the change it records. Every authority change advances the allocation
+lineage. Content operations add immutable versions. Changes with scoped effects
+also record events and scope-chain entries. Pack layout and backup reads remain
+maintainable. [Audited history](audited-history.md) owns the mutation and
+maintenance contract.
 
 ## Structural invariants enforced in the schema
 
@@ -207,13 +207,13 @@ backend:
   indexes, so a partial unique index on a constant expression does it:
   `CREATE UNIQUE INDEX one_root ON nodes((1)) WHERE parent_id IS NULL`.
 - **Live-sibling name uniqueness.**
-  `UNIQUE(parent_id, name) WHERE trashed_at IS NULL` — trashed nodes
+  `UNIQUE(parent_id, name) WHERE trashed_at IS NULL`. Trashed nodes
   never block a name.
 - **Kind/content consistency.** A CHECK constraint ties
   `kind = 'file'` to `current_version_id IS NOT NULL` and directories to NULL.
 - **Referential integrity.** Content-version `blob_hash` values reference
-  `blobs`; a blob row can't be deleted while any retained version points at it,
-  which is what makes GC's reachability query trustworthy.
+  `blobs`. A blob row can't be deleted while any retained version points at it,
+  which makes GC's reachability query trustworthy.
 
 The Go store layer enforces the remaining rules:
 
@@ -225,7 +225,7 @@ The Go store layer enforces the remaining rules:
 Tag IDs are random UUIDv4 values and names are NFC-normalized, mutable text.
 Assignments refer to the stable ID. Each tag revision covers its name and
 complete assignment set. Real assignment changes bump both the tag and directly
-affected node; renaming bumps the tag and every assigned node once in the same
+affected node. Renaming bumps the tag and every assigned node once in the same
 transaction. Delete checks the tag revision before cascading through
 assignments, not nodes. Emptying tagged trash advances each affected tag once
 before its assignments cascade away.
@@ -233,7 +233,7 @@ before its assignments cascade away.
 ## Timestamps and identity
 
 - All timestamps are UTC RFC 3339 text.
-- **Node IDs are canonical**; paths are derived for display. Every CLI
+- **Node IDs are canonical.** Paths are derived for display. Every CLI
   listing includes IDs, and ID-based operations (`restore`) survive any
   amount of renaming.
 

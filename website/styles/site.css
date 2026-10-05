@@ -71,6 +71,12 @@
 
 html {
   scroll-behavior: smooth;
+  scrollbar-color: var(--rule) var(--ink);
+}
+
+::selection {
+  color: var(--text);
+  background: rgb(65 215 189 / 32%);
 }
 
 body {
@@ -87,8 +93,14 @@ body > footer {
 
 a {
   color: var(--teal-strong);
+  text-decoration-color: rgb(120 234 214 / 55%);
   text-decoration-thickness: 1px;
   text-underline-offset: 0.2em;
+  transition: color 120ms ease-out, text-decoration-color 120ms ease-out;
+}
+
+a:hover {
+  text-decoration-color: currentcolor;
 }
 
 a:hover {
@@ -187,6 +199,7 @@ a:hover {
   display: flex;
   gap: 0.5rem;
   font-size: 0.64rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .facts[hidden],
@@ -205,11 +218,6 @@ a:hover {
 }
 
 .wordmark,
-.eyebrow,
-.section-index,
-.ledger strong,
-.proof-tag,
-.choice-label,
 code,
 kbd {
   font-family: var(--mono);
@@ -260,18 +268,6 @@ main {
   padding-bottom: clamp(3rem, 7vw, 5rem);
 }
 
-.eyebrow,
-.section-index,
-.proof-tag,
-.choice-label {
-  margin: 0 0 1rem;
-  color: var(--teal);
-  font-size: 0.76rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 h1,
 h2,
 h3,
@@ -291,7 +287,7 @@ h1 {
   margin-bottom: 1.5rem;
   font-size: clamp(2.75rem, 7.5vw, 5.75rem);
   font-weight: 500;
-  letter-spacing: -0.055em;
+  letter-spacing: -0.04em;
 }
 
 h2 {
@@ -309,7 +305,7 @@ h3 {
 }
 
 .lede {
-  max-width: 56rem;
+  max-width: 62ch;
   margin-bottom: 2rem;
   color: var(--muted);
   font-size: clamp(1.08rem, 2vw, 1.35rem);
@@ -356,11 +352,9 @@ h3 {
 }
 
 .hero-meta {
-  margin: 3rem 0 0;
+  margin: 2.5rem 0 0;
   color: var(--muted);
-  font-family: var(--mono);
-  font-size: 0.76rem;
-  letter-spacing: 0.04em;
+  font-size: 0.88rem;
 }
 
 .actions {
@@ -385,6 +379,12 @@ button.button {
   background: var(--panel);
   cursor: pointer;
   text-decoration: none;
+  transition: color 120ms ease-out, background-color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.button:active,
+button.button:active {
+  transform: translateY(1px);
 }
 
 .button:hover,
@@ -418,76 +418,45 @@ button.button:hover {
   margin-bottom: clamp(2rem, 5vw, 4rem);
 }
 
-.section-heading p:last-child {
-  max-width: 44rem;
+.section-heading p {
+  max-width: 68ch;
   color: var(--muted);
 }
 
-.ledger {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 1px;
-  margin: 0;
-  padding: 1px;
-  background: var(--rule);
-  list-style: none;
+.section-heading h2 {
+  margin-bottom: 0;
 }
 
-.ledger li {
-  min-height: 10rem;
-  padding: 1.25rem;
-  background: var(--panel);
-}
-
-.ledger strong,
-.ledger span {
-  display: block;
-}
-
-.ledger strong {
-  margin-bottom: 2rem;
-  color: var(--teal-strong);
-  font-size: 0.76rem;
-  text-transform: uppercase;
-}
-
-.ledger span {
+.section-links {
+  margin: 1.5rem 0 0;
   color: var(--muted);
 }
 
-.proof-grid,
-.choice-grid {
+.section-links + .capture {
+  margin-top: clamp(2rem, 5vw, 3rem);
+}
+
+.capture-narrow {
+  max-width: 46rem;
+}
+
+.feature-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px;
-  padding: 1px;
-  background: var(--rule);
+  column-gap: clamp(2rem, 6vw, 5rem);
+  border-top: 1px solid var(--rule);
 }
 
-.boundary-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px;
-  padding: 1px;
-  background: var(--rule);
+.feature {
+  padding: 1.75rem 0 2rem;
+  border-bottom: 1px solid var(--rule);
 }
 
-.pipeline {
-  margin: 0 0 clamp(2rem, 5vw, 3rem);
-  border: 1px solid var(--rule);
-  background: var(--panel);
+.feature p {
+  max-width: 60ch;
 }
 
-.proof,
-.choice,
-.boundary {
-  padding: clamp(1.5rem, 4vw, 2.5rem);
-  background: var(--panel);
-}
-
-.proof p:last-child,
-.choice p:last-child,
-.boundary p:last-child {
+.feature p:last-child {
   margin-bottom: 0;
   color: var(--muted);
 }
@@ -500,6 +469,8 @@ button.button:hover {
   display: block;
   border: 1px solid var(--rule);
   background: var(--panel);
+  cursor: zoom-in;
+  transition: border-color 120ms ease-out;
 }
 
 .capture > a:hover {
@@ -534,6 +505,10 @@ dialog img {
   list-style: none;
 }
 
+.interface-layout h2 + p {
+  color: var(--muted);
+}
+
 .interface-list strong,
 .interface-list span {
   display: block;
@@ -550,7 +525,7 @@ dialog img {
 
 .guide-nav {
   display: grid;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1px;
   margin: 2.5rem 0 0;
   padding: 1px;
@@ -564,9 +539,10 @@ dialog img {
   padding: 0.8rem;
   color: var(--muted);
   background: var(--panel);
-  font-family: var(--mono);
-  font-size: 0.75rem;
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
   text-decoration: none;
+  transition: color 120ms ease-out, background-color 120ms ease-out;
 }
 
 .guide-nav a:hover {
@@ -595,13 +571,15 @@ dialog img {
   display: block;
   margin-bottom: 1rem;
   color: var(--teal);
-  font-family: var(--mono);
-  font-size: 0.76rem;
-  letter-spacing: 0.08em;
-  content: "0" counter(guide) " / 09";
+  font-size: 0.88rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.6;
+  content: "Step " counter(guide) " of 10";
 }
 
 .guide-copy p {
+  max-width: 60ch;
   color: var(--muted);
 }
 
@@ -662,8 +640,8 @@ dialog::backdrop {
 
 .dialog-header p {
   margin: 0;
-  font-family: var(--mono);
-  font-size: 0.8rem;
+  color: var(--muted);
+  font-size: 0.88rem;
 }
 
 .dialog-close {
@@ -675,6 +653,11 @@ dialog::backdrop {
   background: var(--panel);
   font: inherit;
   cursor: pointer;
+}
+
+.dialog-close:hover {
+  border-color: var(--teal);
+  background: var(--panel-raised);
 }
 
 dialog img {
@@ -689,24 +672,12 @@ dialog img {
     grid-template-columns: 1fr;
   }
 
-  .ledger {
+  .guide-nav {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .ledger li:last-child {
-    grid-column: 1 / -1;
-  }
-
-  .guide-nav {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .boundary-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .guide-media {
-    order: -1;
+  .section-heading {
+    gap: 1rem;
   }
 }
 
@@ -737,17 +708,9 @@ dialog img {
     font-size: clamp(2.5rem, 13vw, 4rem);
   }
 
-  .ledger,
-  .proof-grid,
-  .choice-grid,
-  .boundary-grid,
-  .interface-list,
-  .guide-nav {
+  .feature-grid,
+  .interface-list {
     grid-template-columns: 1fr;
-  }
-
-  .ledger li:last-child {
-    grid-column: auto;
   }
 
   .site-footer {

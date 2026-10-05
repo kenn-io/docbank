@@ -110,6 +110,14 @@ func TestWorkspaceQueryRoutesStrictBodiesAndStableErrors(t *testing.T) {
 			}
 		})
 	}
+	for _, field := range []string{"capture_time", "import_time"} {
+		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries",
+			headers, fmt.Sprintf(`{"query":{"sort":{"field":%q,"direction":"asc"}}}`, field))
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+		problem := decodeProblem(t, body)
+		assert.Equal(t, "invalid_query", problem.Code)
+		assert.Equal(t, fmt.Sprintf("sort %q is only supported in Photos", field), problem.Detail)
+	}
 
 	createdResp, createdBody := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries",
 		headers, `{"query":{},"page_size":50}`)

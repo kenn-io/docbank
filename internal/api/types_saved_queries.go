@@ -55,28 +55,44 @@ type savedQueryV1Schema struct {
 }
 
 type savedQuerySortSchema struct {
-	Field     string `json:"field,omitempty" enum:"name,path,modified_at,size,media_type,relevance" default:"name"`
+	Field     string `json:"field,omitempty" enum:"name,path,modified_at,size,media_type,relevance,capture_time,import_time" default:"name"`
 	Direction string `json:"direction,omitempty" enum:"asc,desc" default:"asc"`
 }
 
+type savedQueryGPSBoundsSchema struct {
+	South string `json:"south" maxLength:"64"`
+	West  string `json:"west" maxLength:"64"`
+	North string `json:"north" maxLength:"64"`
+	East  string `json:"east" maxLength:"64"`
+}
+
 type savedQueryFiltersSchema struct {
-	Paths                []string `json:"paths,omitempty" maxItems:"64"`
-	ExcludePaths         []string `json:"exclude_paths,omitempty" maxItems:"64"`
-	CollectionIDs        []string `json:"collection_ids,omitempty" maxItems:"64" format:"uuid"`
-	ExcludeCollectionIDs []string `json:"exclude_collection_ids,omitempty" maxItems:"64" format:"uuid"`
-	TagIDs               []string `json:"tag_ids,omitempty" maxItems:"64" format:"uuid"`
-	ExcludeTagIDs        []string `json:"exclude_tag_ids,omitempty" maxItems:"64" format:"uuid"`
-	NoTags               *bool    `json:"no_tags,omitempty" nullable:"true"`
-	MediaFamilies        []string `json:"media_families,omitempty" maxItems:"13" enum:"email,document,spreadsheet,presentation,image,audio_video,text,source_code,web,calendar,archive,cad,unknown"`
-	MIMETypes            []string `json:"mime_types,omitempty" maxItems:"64"`
-	Extensions           []string `json:"extensions,omitempty" maxItems:"32" pattern:"^[a-z0-9](?:[a-z0-9_-]{0,31})$"`
-	ModifiedAfter        *string  `json:"modified_after,omitempty" nullable:"true" format:"date-time"`
-	ModifiedBefore       *string  `json:"modified_before,omitempty" nullable:"true" format:"date-time"`
-	SizeMin              *int64   `json:"size_min,omitempty" nullable:"true" minimum:"0" maximum:"9007199254740991"`
-	SizeMax              *int64   `json:"size_max,omitempty" nullable:"true" minimum:"0" maximum:"9007199254740991"`
-	TextCoverage         []string `json:"text_coverage,omitempty" maxItems:"6" enum:"complete,partial,failed,unprocessed,none,unavailable"`
-	HasDuplicates        *bool    `json:"has_duplicates,omitempty" nullable:"true"`
-	CollapseDuplicates   *bool    `json:"collapse_duplicates,omitempty" nullable:"true"`
+	Kinds                []string                           `json:"kinds,omitempty" maxItems:"64" enum:"photo,video"`
+	Cameras              []string                           `json:"cameras,omitempty" maxItems:"64"`
+	Lenses               []string                           `json:"lenses,omitempty" maxItems:"64"`
+	AssetIDs             []string                           `json:"asset_ids,omitempty" maxItems:"64" format:"uuid"`
+	ISOMin               *int64                             `json:"iso_min,omitempty" nullable:"true" minimum:"0" maximum:"9007199254740991"`
+	ISOMax               *int64                             `json:"iso_max,omitempty" nullable:"true" minimum:"0" maximum:"9007199254740991"`
+	CaptureAfter         *string                            `json:"capture_after,omitempty" nullable:"true" format:"date"`
+	CaptureBefore        *string                            `json:"capture_before,omitempty" nullable:"true" format:"date"`
+	GPSBounds            *savedQueryNullableGPSBoundsSchema `json:"gps_bounds,omitempty" nullable:"true"`
+	Paths                []string                           `json:"paths,omitempty" maxItems:"64"`
+	ExcludePaths         []string                           `json:"exclude_paths,omitempty" maxItems:"64"`
+	CollectionIDs        []string                           `json:"collection_ids,omitempty" maxItems:"64" format:"uuid"`
+	ExcludeCollectionIDs []string                           `json:"exclude_collection_ids,omitempty" maxItems:"64" format:"uuid"`
+	TagIDs               []string                           `json:"tag_ids,omitempty" maxItems:"64" format:"uuid"`
+	ExcludeTagIDs        []string                           `json:"exclude_tag_ids,omitempty" maxItems:"64" format:"uuid"`
+	NoTags               *bool                              `json:"no_tags,omitempty" nullable:"true"`
+	MediaFamilies        []string                           `json:"media_families,omitempty" maxItems:"13" enum:"email,document,spreadsheet,presentation,image,audio_video,text,source_code,web,calendar,archive,cad,unknown"`
+	MIMETypes            []string                           `json:"mime_types,omitempty" maxItems:"64"`
+	Extensions           []string                           `json:"extensions,omitempty" maxItems:"32" pattern:"^[a-z0-9](?:[a-z0-9_-]{0,31})$"`
+	ModifiedAfter        *string                            `json:"modified_after,omitempty" nullable:"true" format:"date-time"`
+	ModifiedBefore       *string                            `json:"modified_before,omitempty" nullable:"true" format:"date-time"`
+	SizeMin              *int64                             `json:"size_min,omitempty" nullable:"true" minimum:"0" maximum:"9007199254740991"`
+	SizeMax              *int64                             `json:"size_max,omitempty" nullable:"true" minimum:"0" maximum:"9007199254740991"`
+	TextCoverage         []string                           `json:"text_coverage,omitempty" maxItems:"6" enum:"complete,partial,failed,unprocessed,none,unavailable"`
+	HasDuplicates        *bool                              `json:"has_duplicates,omitempty" nullable:"true"`
+	CollapseDuplicates   *bool                              `json:"collapse_duplicates,omitempty" nullable:"true"`
 }
 
 type highlightSetV1Schema struct {
@@ -124,4 +140,12 @@ type SavedQueryPatch struct {
 	Name        *string            `json:"name,omitzero"`
 	Description *string            `json:"description,omitzero"`
 	Payload     *SavedQueryPayload `json:"payload,omitzero"`
+}
+
+type savedQueryNullableGPSBoundsSchema savedQueryGPSBoundsSchema
+
+func (savedQueryNullableGPSBoundsSchema) Schema(r huma.Registry) *huma.Schema {
+	schema := *r.Schema(reflect.TypeFor[savedQueryGPSBoundsSchema](), false, "")
+	schema.Nullable = true
+	return &schema
 }
