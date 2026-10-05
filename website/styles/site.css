@@ -205,11 +205,6 @@ a:hover {
 }
 
 .wordmark,
-.eyebrow,
-.section-index,
-.ledger strong,
-.proof-tag,
-.choice-label,
 code,
 kbd {
   font-family: var(--mono);
@@ -258,18 +253,6 @@ main {
 
 .hero.compact {
   padding-bottom: clamp(3rem, 7vw, 5rem);
-}
-
-.eyebrow,
-.section-index,
-.proof-tag,
-.choice-label {
-  margin: 0 0 1rem;
-  color: var(--teal);
-  font-size: 0.76rem;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 h1,
@@ -418,45 +401,25 @@ button.button:hover {
   margin-bottom: clamp(2rem, 5vw, 4rem);
 }
 
-.section-heading p:last-child {
+.section-heading p {
   max-width: 44rem;
   color: var(--muted);
 }
 
-.ledger {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 1px;
-  margin: 0;
-  padding: 1px;
-  background: var(--rule);
-  list-style: none;
-}
-
-.ledger li {
-  min-height: 10rem;
-  padding: 1.25rem;
-  background: var(--panel);
-}
-
-.ledger strong,
-.ledger span {
-  display: block;
-}
-
-.ledger strong {
-  margin-bottom: 2rem;
-  color: var(--teal-strong);
-  font-size: 0.76rem;
-  text-transform: uppercase;
-}
-
-.ledger span {
+.section-links {
+  margin: 1.5rem 0 0;
   color: var(--muted);
 }
 
-.proof-grid,
-.choice-grid {
+.section-links + .capture {
+  margin-top: clamp(2rem, 5vw, 3rem);
+}
+
+.capture-narrow {
+  max-width: 46rem;
+}
+
+.feature-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
@@ -464,30 +427,12 @@ button.button:hover {
   background: var(--rule);
 }
 
-.boundary-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px;
-  padding: 1px;
-  background: var(--rule);
-}
-
-.pipeline {
-  margin: 0 0 clamp(2rem, 5vw, 3rem);
-  border: 1px solid var(--rule);
-  background: var(--panel);
-}
-
-.proof,
-.choice,
-.boundary {
+.feature {
   padding: clamp(1.5rem, 4vw, 2.5rem);
   background: var(--panel);
 }
 
-.proof p:last-child,
-.choice p:last-child,
-.boundary p:last-child {
+.feature p:last-child {
   margin-bottom: 0;
   color: var(--muted);
 }
@@ -534,6 +479,10 @@ dialog img {
   list-style: none;
 }
 
+.interface-layout h2 + p {
+  color: var(--muted);
+}
+
 .interface-list strong,
 .interface-list span {
   display: block;
@@ -550,7 +499,7 @@ dialog img {
 
 .guide-nav {
   display: grid;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1px;
   margin: 2.5rem 0 0;
   padding: 1px;
@@ -598,7 +547,7 @@ dialog img {
   font-family: var(--mono);
   font-size: 0.76rem;
   letter-spacing: 0.08em;
-  content: counter(guide, decimal-leading-zero) " / 10";
+  content: "Step " counter(guide) " of 10";
 }
 
 .guide-copy p {
@@ -689,20 +638,8 @@ dialog img {
     grid-template-columns: 1fr;
   }
 
-  .ledger {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .ledger li:last-child {
-    grid-column: 1 / -1;
-  }
-
   .guide-nav {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .boundary-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .guide-media {
@@ -737,17 +674,9 @@ dialog img {
     font-size: clamp(2.5rem, 13vw, 4rem);
   }
 
-  .ledger,
-  .proof-grid,
-  .choice-grid,
-  .boundary-grid,
-  .interface-list,
-  .guide-nav {
+  .feature-grid,
+  .interface-list {
     grid-template-columns: 1fr;
-  }
-
-  .ledger li:last-child {
-    grid-column: auto;
   }
 
   .site-footer {

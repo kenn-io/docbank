@@ -3,19 +3,19 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Keep a document from import to recovery — Docbank</title>
-    <meta name="description" content="Learn how Docbank preserves document IDs, saved versions, processing inputs, and backups.">
+    <title>Follow one document through Docbank</title>
+    <meta name="description" content="Follow one document through Docbank, from import and saved versions to processing, search, export, and a tested backup.">
     <link rel="canonical" href="https://docbank.ai/guide/">
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/styles/site.css">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Keep a document from import to recovery">
-    <meta property="og:description" content="Learn how Docbank preserves document IDs, saved versions, processing inputs, and backups.">
+    <meta property="og:title" content="Follow one document through Docbank">
+    <meta property="og:description" content="Follow one document through Docbank, from import and saved versions to processing, search, export, and a tested backup.">
     <meta property="og:url" content="https://docbank.ai/guide/">
     <meta property="og:site_name" content="Docbank">
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="Keep a document from import to recovery">
-    <meta name="twitter:description" content="Learn how Docbank preserves document IDs, saved versions, processing inputs, and backups.">
+    <meta name="twitter:title" content="Follow one document through Docbank">
+    <meta name="twitter:description" content="Follow one document through Docbank, from import and saved versions to processing, search, export, and a tested backup.">
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -93,20 +93,19 @@
 
     <main id="main">
       <header class="hero compact">
-        <p class="eyebrow">Operator guide</p>
-        <h1>Keep a document from import to recovery</h1>
-        <p class="lede">Import a document, save changes, and recover it later. These steps explain what Docbank keeps and which choices belong to you. Processing steps apply only when you configure or build that workflow.</p>
-        <ol class="guide-nav" aria-label="Guide stops">
+        <h1>Follow one document through Docbank</h1>
+        <p class="lede">This guide follows a single document from import to backup. Each step says what Docbank stores and what is left for you to decide. The processing steps apply only if you set up processing.</p>
+        <ol class="guide-nav" aria-label="Guide steps">
           <li><a href="#ingest">01 Import</a></li>
-          <li><a href="#identify">02 Keep identity</a></li>
-          <li><a href="#authorize">03 Choose processing</a></li>
+          <li><a href="#identify">02 Move and edit</a></li>
+          <li><a href="#authorize">03 Review processing</a></li>
           <li><a href="#render">04 Extract text</a></li>
-          <li><a href="#embed">05 Prepare embeddings</a></li>
+          <li><a href="#embed">05 Add embeddings</a></li>
           <li><a href="#retrieve">06 Find</a></li>
           <li><a href="#export">07 Export</a></li>
-          <li><a href="#replace">08 Keep outputs separate</a></li>
-          <li><a href="#serve">09 Choose an interface</a></li>
-          <li><a href="#prove">10 Recover</a></li>
+          <li><a href="#replace">08 Manage outputs</a></li>
+          <li><a href="#serve">09 Pick an interface</a></li>
+          <li><a href="#prove">10 Back up</a></li>
         </ol>
       </header>
 
@@ -114,119 +113,134 @@
         <li class="guide-stop" id="ingest">
           <div class="guide-copy">
             <h2>Import the file</h2>
-            <p>Docbank copies the file into your vault and leaves the source untouched. Browse the copy in a familiar folder tree. Docbank records a checksum so it can check that the saved bytes have not changed.</p>
+            <p>Docbank copies the file into the vault and leaves the source where it was. The copy appears in a folder tree you can browse. Docbank records a checksum at import, so it can tell later whether the stored bytes have changed.</p>
             <a href="/docs/usage/importing/">Importing documents</a>
           </div>
           <div class="guide-media">
             <figure class="capture">
-              <a href="/assets/generated/web-vault-browser.png" data-lightbox>
-                <img src="/assets/generated/web-vault-browser.png" alt="Synthetic Docbank vault after document ingestion">
-              </a>
-              <figcaption class="caption">A generated vault in the real web interface.</figcaption>
+              <a href="/assets/generated/web-vault-browser.png" data-lightbox><img src="/assets/generated/web-vault-browser.png" alt="The web app showing a folder of imported documents in a synthetic vault"></a>
+              <figcaption class="caption">A vault of synthetic documents after import.</figcaption>
             </figure>
           </div>
         </li>
-
         <li class="guide-stop" id="identify">
           <div class="guide-copy">
-            <h2>Keep its identity through changes</h2>
-            <p>Each document has a stable node ID. Moving or renaming it changes the path, not the ID. Replacing its content saves a new version; retained earlier versions remain available to inspect or download.</p>
+            <h2>Move, rename, or replace it</h2>
+            <p>Every document has a node ID that stays the same for its whole life. Moving or renaming the document changes its path and nothing else. Replacing its content saves a new version, and the earlier versions you keep can still be opened or downloaded.</p>
             <a href="/docs/architecture/editing-and-versions/">Editing and versions</a>
           </div>
           <div class="guide-media">
             <figure class="capture">
-              <a href="/assets/generated/web-retained-version-download.png" data-lightbox>
-                <img src="/assets/generated/web-retained-version-download.png" alt="Docbank retained version history and download action">
-              </a>
-              <figcaption class="caption">Retained versions remain inspectable and retrievable.</figcaption>
+              <a href="/assets/generated/web-retained-version-download.png" data-lightbox><img src="/assets/generated/web-retained-version-download.png" alt="The version history of one document, with a download button for the selected version" loading="lazy"></a>
+              <figcaption class="caption">Each saved version of a document can be downloaded.</figcaption>
             </figure>
           </div>
         </li>
-
         <li class="guide-stop" id="authorize">
           <div class="guide-copy">
-            <h2>Choose what may be processed</h2><p>Choose a configured profile and review its plan for the selected version. The plan names each provider, destination, and kind of content it receives. Grant consent only after reviewing those disclosures. A restored vault needs fresh consent before network processing.</p><a href="/docs/usage/document-processing/">Processing and consent</a>
+            <h2>Review what processing will send</h2>
+            <p>Processing is set up as profiles. Choose one, and Docbank shows its plan for the selected version: each provider, where it runs, and the kind of content it will receive. Give consent once you have read the plan. A vault restored from a backup needs new consent before any network processing.</p>
+            <a href="/docs/usage/document-processing/">Processing and consent</a>
           </div>
-          <div class="guide-media"><figure class="capture"><a href="/assets/generated/web-document-processing-plan.png" data-lightbox><img src="/assets/generated/web-document-processing-plan.png" alt="The processing plan for one saved version" loading="lazy"></a></figure></div>
+          <div class="guide-media">
+            <figure class="capture">
+              <a href="/assets/generated/web-document-processing-plan.png" data-lightbox><img src="/assets/generated/web-document-processing-plan.png" alt="A processing plan listing the providers and the content each one will receive" loading="lazy"></a>
+              <figcaption class="caption">The plan for one version, shown before anything is sent.</figcaption>
+            </figure>
+          </div>
         </li>
-
         <li class="guide-stop" id="render">
           <div class="guide-copy">
-            <h2>Turn a document into usable text</h2><p>A rendition is the extracted Markdown retained for one saved source version. Run configured processing from the web app, TUI, CLI, HTTP API, or Go API, then read that text without replacing the original. Optical character recognition (OCR) can extract text from images or scans when a supported provider is configured.</p><a href="/docs/usage/document-processing/">Document processing</a>
+            <h2>Extract the text</h2>
+            <p>Processing produces a rendition: the document&rsquo;s text as Markdown, saved against the version it came from. Start it from the web app, TUI, CLI, HTTP API, or Go API. The original file is not changed. With a supported provider, optical character recognition (OCR) reads text from scans and images.</p>
+            <a href="/docs/usage/document-processing/">Document processing</a>
           </div>
-          <div class="guide-media"><figure class="capture"><a href="/assets/generated/web-document-rendition.png" data-lightbox><img src="/assets/generated/web-document-rendition.png" alt="Verified retained Markdown from a saved document" loading="lazy"></a></figure></div>
+          <div class="guide-media">
+            <figure class="capture">
+              <a href="/assets/generated/web-document-rendition.png" data-lightbox><img src="/assets/generated/web-document-rendition.png" alt="The extracted Markdown text of a saved document, shown in the web app" loading="lazy"></a>
+              <figcaption class="caption">The extracted text of one saved version.</figcaption>
+            </figure>
+          </div>
         </li>
-
         <li class="guide-stop" id="embed">
           <div class="guide-copy">
-            <h2>Prepare content for search by meaning</h2><p>An embedding represents content as numbers for comparison. Configure an embedding service, review its disclosure, and process the versions you want to search. The web app and TUI offer Semantic and Hybrid search. Finding similar documents uses stored embeddings locally, with no provider call.</p><a href="/docs/usage/search/">Processing search</a>
+            <h2>Add search by meaning</h2>
+            <p>An embedding is a list of numbers that stands for a piece of content, so similar content can be found by comparing numbers. Configure an embedding service, review what it will receive, and process the versions you want to search. The web app and TUI then offer Semantic and Hybrid search. Finding similar documents compares embeddings already in the vault and calls no provider.</p>
+            <a href="/docs/usage/search/">Search by meaning</a>
           </div>
-          <div class="guide-media"><figure class="capture"><a href="/assets/generated/web-similar-1440.png" data-lightbox><img src="/assets/generated/web-similar-1440.png" alt="Similar documents found from stored embeddings" loading="lazy"></a></figure></div>
+          <div class="guide-media">
+            <figure class="capture">
+              <a href="/assets/generated/web-similar-1440.png" data-lightbox><img src="/assets/generated/web-similar-1440.png" alt="A list of documents ranked by similarity to the selected file" loading="lazy"></a>
+              <figcaption class="caption">Similar documents, ranked from stored embeddings.</figcaption>
+            </figure>
+          </div>
         </li>
-
         <li class="guide-stop" id="retrieve">
           <div class="guide-copy">
-            <h2>Find the document again</h2><p>Search document names and extracted text, then narrow results with tags, folders, file types, or dates. Save useful queries and highlight sets. Run a lexical query to browse a frozen result set whose rows, counts, and facets stay fixed while documents change.</p><a href="/docs/usage/searching/">Searching</a>
+            <h2>Find the document again</h2>
+            <p>Search file names and extracted text, then narrow the results by tag, folder, file type, or date. Save the queries and highlight terms you use often. A lexical (keyword) query can also be frozen: its rows, counts, and facets stay as they were when it ran, whatever changes in the vault afterwards.</p>
+            <a href="/docs/usage/searching/">Searching</a>
           </div>
-          <div class="guide-media"><figure class="capture"><a href="/assets/generated/web-snapshot-workspace.png" data-lightbox><img src="/assets/generated/web-snapshot-workspace.png" alt="A frozen query with exact versions and fixed facets" loading="lazy"></a></figure></div>
+          <div class="guide-media">
+            <figure class="capture">
+              <a href="/assets/generated/web-snapshot-workspace.png" data-lightbox><img src="/assets/generated/web-snapshot-workspace.png" alt="A frozen query in the web app, with its result rows and facet counts" loading="lazy"></a>
+              <figcaption class="caption">A frozen query keeps the versions it found.</figcaption>
+            </figure>
+          </div>
         </li>
-
         <li class="guide-stop" id="export">
-          <div class="guide-copy"><h2>Export the versions you reviewed</h2><p>Select documents or use the whole frozen query. Preview which originals and retained outputs will be included, then build a verified ZIP. Later changes do not substitute newer files. For dated search counts, download a CSV with its frozen evidence ZIP.</p><a href="/docs/usage/export-bundles/">Verified export bundles</a></div>
-          <div class="guide-media"><figure class="capture"><a href="/assets/generated/web-export-ready.png" data-lightbox><img src="/assets/generated/web-export-ready.png" alt="A verified export ready to download" loading="lazy"></a></figure></div>
+          <div class="guide-copy">
+            <h2>Export the versions you reviewed</h2>
+            <p>Select documents, or take a whole frozen query. Docbank lists the originals and processing outputs the export will include, then builds a ZIP and verifies it. If a document changes after you start, the export still holds the version you selected. For search counts over a date range, download the CSV report with its evidence ZIP.</p>
+            <a href="/docs/usage/export-bundles/">Verified export bundles</a>
+          </div>
+          <div class="guide-media">
+            <figure class="capture">
+              <a href="/assets/generated/web-export-ready.png" data-lightbox><img src="/assets/generated/web-export-ready.png" alt="The export drawer reporting a verified ZIP that is ready to download" loading="lazy"></a>
+              <figcaption class="caption">A finished export, verified and ready to download.</figcaption>
+            </figure>
+          </div>
         </li>
-
         <li class="guide-stop" id="replace">
           <div class="guide-copy">
-            <h2>Keep processing outputs separate</h2>
-            <p>Text, previews, embeddings, and indexes are derivatives: outputs made from saved documents. Docbank records their source versions separately from the originals. Processing and retention rules determine when those outputs can be replaced or removed.</p>
+            <h2>Processing outputs stay separate</h2>
+            <p>Text, previews, embeddings, and indexes are derivatives: outputs computed from a saved document. Docbank stores them apart from the original and records which version each one came from. Processing and retention rules decide when a derivative can be replaced or removed.</p>
             <a href="/docs/architecture/overview/">Processing and retention</a>
           </div>
           <div class="guide-media">
-            <figure class="diagram">
-              <img src="/assets/derivative-cycle.svg" alt="Consent, derivation, retrieval, and purge cycling around a source that stays exact">
-            </figure>
+            <figure class="diagram"><img src="/assets/derivative-cycle.svg" alt="A cycle of consent, processing, search, and removal around an original that does not change" loading="lazy"></figure>
           </div>
         </li>
-
         <li class="guide-stop" id="serve">
           <div class="guide-copy">
-            <h2>Work through your preferred interface</h2>
-            <p>Use the command line, web app, terminal browser, or HTTP API through the local daemon. Local agents can connect with <code>docbank mcp</code> and use the same exact versions and revision checks. A Go application can instead own a separate vault in its own process.</p>
+            <h2>Use any interface</h2>
+            <p>The command line, web app, terminal browser, and HTTP API all go through the local daemon. A local agent connects with <code>docbank mcp</code> and works with the same versions and revision checks. A Go application can instead own a separate vault in its own process.</p>
             <a href="/docs/agents/">Docbank for agents</a>
           </div>
           <div class="guide-media">
-            <figure class="diagram">
-              <img src="/assets/interface-map.svg" alt="Command line, web, terminal, HTTP, Go, and agent interfaces using the Docbank document model">
-            </figure>
+            <figure class="diagram"><img src="/assets/interface-map.svg" alt="The CLI, web app, TUI, HTTP API, Go API, and agents all reading the same documents and versions" loading="lazy"></figure>
           </div>
         </li>
-
         <li class="guide-stop" id="prove">
           <div class="guide-copy">
-            <h2>Verify a recovery copy</h2>
-            <p>Create an incremental backup, verify its content, and restore it into a separate vault. Backups retain document content, metadata, and saved history. Test the restored copy before you need it for recovery.</p>
+            <h2>Back up, then test a restore</h2>
+            <p>Create an incremental backup and verify it. Then restore it into a separate vault and check the result before you need it. A backup holds document content, metadata, and version history.</p>
             <a href="/docs/usage/backup/">Backup and restore</a>
           </div>
           <div class="guide-media">
-            <figure class="diagram">
-              <img src="/assets/recovery-flow.svg" alt="Verified snapshot restoring a vault without a processing provider">
-            </figure>
+            <figure class="diagram"><img src="/assets/recovery-flow.svg" alt="Three steps: take a snapshot, verify it, and restore it into a separate vault" loading="lazy"></figure>
           </div>
         </li>
       </ol>
 
-      <section class="site-section" aria-labelledby="operate-title">
+      <section class="site-section" aria-labelledby="next-title">
         <div class="section-heading">
+          <h2 id="next-title">Next steps</h2>
           <div>
-            <p class="section-index">Next</p>
-            <h2 id="operate-title">Operate the vault.</h2>
-          </div>
-          <div>
-            <p>Start with the quickstart, then use the task guides for commands, automation, storage, and recovery.</p>
+            <p>Run the quickstart to try these steps on your own files. The task guides cover commands, automation, storage, and recovery.</p>
             <div class="actions">
               <a class="button primary" href="/docs/quickstart/">Run the quickstart</a>
-              <a class="button" href="/docs/">Open all documentation</a>
+              <a class="button" href="/docs/">Browse the docs</a>
             </div>
           </div>
         </div>
@@ -234,11 +248,11 @@
     </main>
 
     <footer class="site-footer">
-      <p>Keep the original and check every saved version. <a href="https://github.com/kenn-io/docbank#contributors">Meet the contributors.</a></p>
+      <p>Copyright 2026 Kenn Software LLC. Open source under Apache-2.0. <a href="https://github.com/kenn-io/docbank#contributors">Made by our contributors.</a></p>
       <nav class="footer-links" aria-label="Footer navigation">
-        <a href="/">Product</a>
         <a href="/guide.md">Markdown</a>
-        <a href="/docs/">Operating docs</a>
+        <a href="/llms.txt">llms.txt</a>
+        <a href="https://github.com/kenn-io/docbank/blob/main/LICENSE">License</a>
       </nav>
     </footer>
 

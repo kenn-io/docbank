@@ -1,8 +1,11 @@
 # Find the right document. Keep the whole record.
 
-Bring files, email, photos, and recordings into a vault you control. Search their text, review the exact saved version, and export the records you need without losing the originals.
+Docbank is a document vault that runs on your own machine. It imports files,
+email, photos, and recordings, makes their text searchable, and keeps every
+version you save. When you need to hand records to someone else, it exports the
+versions you checked.
 
-Docbank is open source under Apache-2.0, for Linux, macOS, and Windows.
+Docbank is open source under Apache-2.0 and runs on Linux, macOS, and Windows.
 
 ## Install
 
@@ -20,118 +23,129 @@ irm https://docbank.ai/install.ps1 | iex
 
 Then [try the quickstart](/docs/quickstart/) or read the [setup guide](/docs/setup/).
 
-## Read the file behind the result
+## Browse and read your documents
 
-Browse folders, follow search matches, and inspect saved versions in the local
-web app. Check a range of documents, apply a tag to the selection, or export
-the rows as CSV.
+The local web app shows the vault as folders. Open a document to read it, see
+its earlier versions, and check where it came from. Select several documents to
+tag them together or download the list as CSV.
 
-[![Docbank's labeled sidebar, folder breadcrumbs, and document inspector in a synthetic vault](https://docbank.ai/assets/generated/web-vault-browser.png)](https://docbank.ai/assets/generated/web-vault-browser.png)
+[![The Docbank web app with a folder of documents on the left and the selected document's details on the right](https://docbank.ai/assets/generated/web-vault-browser.png)](https://docbank.ai/assets/generated/web-vault-browser.png)
 
-The Docbank web app with synthetic documents. [Take the visual tour](/docs/tour/).
+The web app with a vault of synthetic documents. [Take the visual tour](/docs/tour/).
 
-## Find the passage you remember
+## Search by what a document says
 
-Search names and extracted text, then narrow the results by folder, tag, file
-type, or date. A configured embedding service adds search by meaning. Open the
-retained text to check the source.
+Search covers file names and the text Docbank extracts from each document.
+Narrow the results by folder, tag, file type, or date. Connect an embedding
+service to search by meaning as well. Each result shows the matching text, so
+you can check it against the original.
 
-- **Keep a useful search.** Save a complete query and reuse highlight terms.
-  Browse a frozen result set whose rows, counts, and filters stay fixed while
-  documents change.
-- **Find related documents.** Compare a selected file with the other loaded
-  versions using stored embeddings. Finding similar documents makes no provider call.
-- **Read email with its attachments.** Import MBOX or Google Takeout archives.
-  Read HTML or plain text, inspect headers, and follow attachments back to the
-  exact parent message.
-- **Find a moment in a recording.** Import a transcript or use a configured
-  Docling service to transcribe supplied WAV and MP3 audio. Search results can
-  identify matching time intervals.
+- **Saved and frozen searches.** Save a query, or a set of terms to highlight,
+  and use it again later. Freeze a query's results to keep the same documents,
+  counts, and filters while the vault changes underneath.
+- **Similar documents.** Pick a file and Docbank ranks the others in the
+  current view by similarity. It compares embeddings already stored in the
+  vault and sends nothing to a provider.
+- **Email.** Import an MBOX file or a Google Takeout archive. Read each message
+  as HTML or plain text, look at its headers, and move between a message and
+  its attachments.
+- **Recordings.** Import a transcript, or have a Docling service you configure
+  transcribe WAV and MP3 audio. Search results can point to the part of the
+  recording that matched.
 
 [Search and filter documents](/docs/usage/searching/) ·
 [Configure search by meaning](/docs/usage/search/) ·
 [Group and browse photos](/docs/usage/photos/)
 
-![Configured document search showing retained text excerpts in the web app](https://docbank.ai/assets/generated/web-natural-1440.png)
+![Search results in the web app, each with an excerpt of the matching text](https://docbank.ai/assets/generated/web-natural-1440.png)
 
-Search results show the text and source behind a match.
+Each search result shows the text that matched.
 
-## Take the records you need
+## Export what you reviewed
 
-Preview an export before starting it. Docbank fixes the selected versions and
-verifies the files it puts in the download.
+Docbank shows what an export will contain before it builds anything. The export
+uses the versions you selected, even if those documents change afterwards, and
+Docbank verifies every file it puts in the download.
 
-- **Download a checked bundle.** Export selected originals and available retained
-  outputs as a ZIP. Later edits do not replace the versions in your plan.
-- **Support a search report.** Count search terms across all documents, import
-  collections, or selected versions. Download the CSV with a frozen evidence ZIP.
-- **Exchange review packages.** Import files with their review metadata and page
-  maps. Export frozen selections as DAT packages with PDFs or images, or CSV
-  packages with native files.
-- **Label selected pages.** Preview and reserve a Bates range: sequential labels
-  stamped on exported PDF pages. Reserved numbers cannot be reused after abandonment.
+- **ZIP bundles.** Download the selected originals as one ZIP. Where Docbank
+  holds extracted text, page images, or email PDFs for those versions, the
+  bundle can include them.
+- **Search reports.** Count search matches over a date range across all
+  documents, chosen imports, or a selection. The CSV of counts comes with a ZIP
+  of the evidence behind them, so someone else can check the numbers.
+- **Load-file packages.** Import a load file with its documents, metadata, and
+  page maps. Export a frozen selection as a DAT package with PDFs or images, or
+  as a CSV package with the native files.
+- **Bates labels.** Stamp sequential Bates labels on the PDF pages you export.
+  Docbank reserves the range before it stamps, and never issues a reserved
+  number again, even if you abandon the export.
 
 [Verified exports](/docs/usage/export-bundles/) ·
 [Search reports](/docs/usage/search-exports/) ·
 [Load-file packages](/docs/usage/web/#import-load-files)
 
-![A completed verified export ready to download from a frozen query](https://docbank.ai/assets/generated/web-export-ready.png)
+![The export drawer reporting a verified ZIP that is ready to download](https://docbank.ai/assets/generated/web-export-ready.png)
 
-Download the versions included in the reviewed export.
+A finished export, verified and ready to download.
 
-## Choose what leaves your vault
+## You decide what leaves the vault
 
-Review the provider, destination, and content it will receive before granting
-processing consent. Use supported local tools, a service you operate, or a hosted provider.
+Extracting text or building embeddings can mean sending content to another
+service. Before that happens, Docbank shows a plan that names each provider,
+where it runs, and what it will receive. Nothing is sent until you consent. You
+can use local tools, a service you host, or a hosted provider.
 
-- **Read what was extracted.** Processing retains a rendition: the extracted
-  Markdown for one saved version. Read it alongside the original and check
-  processing coverage without starting another job.
-- **Keep the original available.** Stored files remain retrievable without
-  processing. New vaults have no processing profiles. Network processing after
-  a restore requires fresh consent.
+- **Extracted text you can read.** Processing saves the extracted text as
+  Markdown, tied to the version it came from. Read it next to the original, and
+  see which documents have been processed without starting another job.
+- **Processing is optional.** A new vault has no processing profiles, and you
+  can always retrieve your files without them. After you restore from a backup,
+  network processing needs your consent again.
 
-Provider and format support varies by interface. Start with the
+Supported providers and formats differ between interfaces. See the
 [processing guide](/docs/usage/document-processing/) and
-[provider configuration](/docs/usage/configuration/). Anonymous usage telemetry
-is on by default; [see what it sends and how to turn it off](/docs/configuration/#anonymous-usage-telemetry).
+[provider configuration](/docs/usage/configuration/). Docbank sends anonymous
+usage telemetry by default.
+[See what it sends and how to turn it off](/docs/configuration/#anonymous-usage-telemetry).
 
-## Keep earlier versions. Test your backup.
+## Versions, trash, and backups
 
-Moving or renaming a document keeps its ID. Replacing its content adds a version.
-Checksums let Docbank detect changed bytes when you retrieve a file.
+Moving or renaming a document does not change its ID. Saving new content adds a
+version and keeps the old one. Docbank records a checksum for every file and
+uses it to detect changed bytes when you retrieve the file.
 
-- **Undo a mistaken deletion.** Restore documents from trash. Permanent deletion
-  and reclaiming disk space are separate actions.
-- **Recover on your own storage.** Create incremental backups, verify them, and
-  restore a separate vault before you need it. Add filesystem or S3-compatible
-  stores as your collection grows.
+- **Trash.** A deleted document goes to the trash, and you can restore it from
+  there. Deleting it permanently and reclaiming the disk space are separate
+  steps.
+- **Backups and storage.** Backups are incremental. Verify one, then restore it
+  into a separate vault to test it before you need it. As the collection grows,
+  add filesystem or S3-compatible stores.
 
 [Saved versions](/docs/architecture/editing-and-versions/) ·
 [Backup and restore](/docs/usage/backup/) ·
 [Permanent audited history](/docs/usage/audited-history/)
 
-## Give your tools the same records
+## Use it from a terminal, a browser, or an agent
 
-The CLI, web app, terminal browser, HTTP API, and local MCP server use one
-daemon. Agents read the same document IDs and exact versions you do. A Go
-application can own a separate vault in its own process.
+The CLI, web app, terminal browser, HTTP API, and local MCP server all talk to
+one daemon, so they see the same documents, IDs, and versions. A Go application
+can instead own a separate vault in its own process.
 
 | Interface | Use it to |
 | --- | --- |
-| CLI | Import, search, export, and maintain documents from scripts. |
-| Web | Read, select, tag, process, and export documents visually. |
-| TUI | Browse, search, and inspect processing from the keyboard. |
-| MCP | Connect local agents with explicit opt-ins for processing and export writes. |
-| HTTP | Integrate through authenticated requests. |
-| Go | Own a vault and its backup lifecycle inside an application. |
+| CLI | Import, search, export, and maintain a vault from scripts. |
+| Web | Read, select, tag, process, and export documents in a browser. |
+| TUI | Browse, search, and check on processing from the keyboard. |
+| MCP | Connect a local agent. Processing and export writes stay off until you enable them. |
+| HTTP | Integrate other software through authenticated requests. |
+| Go | Run a vault and its backups inside your own application. |
 
 [Connect an agent](/docs/usage/mcp/) or [embed in Go](/docs/embedding/).
 
-## Start with a folder of documents
+## Before you start
 
-Docbank is alpha software. Keep independent copies of irreplaceable material and
-verify backups before relying on them.
+Docbank is alpha software. Keep your own copies of anything irreplaceable, and
+verify a backup before you rely on it.
 
 It does not synchronize folders across devices, create public share links, or
 provide collaborative editing.
