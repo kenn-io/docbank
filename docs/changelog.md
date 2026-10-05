@@ -151,6 +151,16 @@ later are within the
 - Keep `docbank info` and `docbank storage status` readable when packing removes
   loose files during a status scan.
 
+### Contributors
+
+Thank you to [Joi Ito (@Joi)](https://github.com/Joi),
+[Marius van Niekerk (@mariusvniekerk)](https://github.com/mariusvniekerk),
+[Rod Boev (@rodboev)](https://github.com/rodboev),
+[Rusty Shackleford (@salmonumbrella)](https://github.com/salmonumbrella), and
+[Wes McKinney (@wesm)](https://github.com/wesm) for their contributions to v0.15.0.
+
+See the [full release contribution history](https://github.com/kenn-io/docbank/compare/v0.14.0...v0.15.0).
+
 ## [v0.14.0](https://github.com/kenn-io/docbank/releases/tag/v0.14.0) — 2026-08-23
 
 ### New features
