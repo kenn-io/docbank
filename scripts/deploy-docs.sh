@@ -9,24 +9,10 @@ if ! command -v vercel >/dev/null 2>&1; then
 fi
 
 cd "$repo_root"
-if [ -n "$(git status --porcelain)" ]; then
-  printf 'refusing documentation deploy from a dirty worktree\n' >&2
-  exit 1
-fi
-head_sha=$(git rev-parse HEAD)
-source_sha=${DOCS_SOURCE:-$head_sha}
-if [ "$head_sha" != "$source_sha" ]; then
-  printf 'DOCS_SOURCE must equal HEAD: expected %s, got %s\n' "$head_sha" "$source_sha" >&2
-  exit 1
-fi
 if [ ! -f .vercel/project.json ] && { [ -z "${VERCEL_ORG_ID:-}" ] || [ -z "${VERCEL_PROJECT_ID:-}" ]; }; then
   printf 'documentation project is not linked; run make docs-link or provide Vercel project IDs\n' >&2
   exit 1
 fi
-
-git fetch --quiet origin refs/heads/main:refs/remotes/origin/main --tags
-expected_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' origin/main)
-./scripts/validate-docs-release.sh "$source_sha" "$expected_tag"
 
 upload_report=$(mktemp)
 trap 'rm -f -- "$upload_report"' EXIT
@@ -46,5 +32,4 @@ case "$deployment_url" in
 esac
 
 vercel inspect "$deployment_url" --wait --timeout 10m
-./scripts/validate-docs-release.sh "$source_sha" "$expected_tag"
 vercel promote "$deployment_url" --yes

@@ -89,51 +89,27 @@ documentation build or deployment.
 Never capture a developer vault, publish a partial set, or point the build at a
 mutable branch head.
 
-## Which source can I publish?
-
-Published documentation describes the selected software release. Sources on
-`main` are candidate documentation for the next release. Describe merged
-capabilities in present tense there; do not add per-feature release-timing
-notes. Before release, verify that each documented capability is in the tag.
-Defer documentation for anything that will not ship.
-
-Do not publish a candidate feature preview before its binary is tagged.
-A software release makes its documentation eligible for deployment; it does
-not publish it. The selected source is normally the documentation-only follow-up
-after the tag and release notes exist. That follow-up adds the final changelog
-entry and may correct wording, but must not advertise behavior absent from the
-release. It does not require another software tag.
-
-A maintainer must still authorize every deployment.
-
-## How do I deploy an approved source?
+## How do I deploy documentation?
 
 Link the Vercel project once from the repository root with `make docs-link`.
-Deploy the current commit from a clean checkout with:
+Edit the documentation, then deploy the files in your working directory:
 
 ```bash
 make docs-deploy
 ```
 
-The command uses `HEAD` as the source. To require a particular commit, pass
-`DOCS_SOURCE=<full-commit-sha>`; it must match the checked-out commit.
+Uncommitted edits are included. Documentation patches can be deployed
+independently of software releases. Keep published claims accurate for the
+version they describe. A maintainer must authorize each deployment.
 
-The command checks that the source is on `origin/main`, descends from the latest
-software release, and contains only approved documentation changes. The approved
-paths include screenshot tooling in `frontend/screenshots/` and website browser
-checks in `frontend/docs-site/`; application source in `frontend/src/` remains
-a product change. It then
-checks Vercel's production upload report against the same file allowlist and
-10 MiB limit used in CI. An extra file or failed dry run stops deployment
-before upload. The command then uploads an unpromoted production build, waits
-for Vercel to verify it, repeats the release check, and only then promotes it. Deployment does not generate
+The command checks Vercel's upload report against the public file allowlist and
+10 MiB limit used in CI. An extra file or failed dry run stops deployment before
+upload. It then uploads a production build, waits for Vercel to verify it, and
+promotes it to the production domain. Deployment does not generate
 screenshots, build the product, run Docker, or install frontend dependencies.
 
-The protected `Deploy documentation` workflow provides the same path for an
-explicitly supplied source SHA. A credential-free job checks that SHA against
-the release policy from `main` before the protected production job receives
-the validated SHA. It has no automatic push, pull-request, tag, or release
-trigger.
+The protected `Deploy documentation` workflow deploys the branch or tag selected
+when you run it. It has no automatic push, pull-request, tag, or release trigger.
 
 CI checks local files selected by `.vercelignore` against the upload allowlist
 and 10 MiB limit. This check runs on pull requests and `main` without Vercel

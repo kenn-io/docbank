@@ -1,11 +1,10 @@
 # Tiered Documentation Site Design
 
 > **Historical design context.** This document preserves the original site
-> proposal and its dependency and release gates. Its proposed product wording
-> is superseded by the maintained website and guides, which describe the
-> available interfaces in plain language. The merge and publication conditions
-> below remain in force until their stated dependencies are satisfied. Follow
-> [the publishing guide](../../README.md) for the current layout and checks.
+> proposal. Its release and publication gates are superseded: maintainers can
+> patch and deploy documentation independently of software releases. Its
+> proposed product wording is superseded by the maintained website and guides.
+> Follow [the publishing guide](../../README.md) for current deployment steps.
 
 ## Objective
 

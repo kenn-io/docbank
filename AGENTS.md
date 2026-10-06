@@ -40,17 +40,17 @@ Do not infer fork eligibility or network/cache isolation from this setting.
   Run `make docs-build` after the final source or asset-pin edit. The strict
   build stages only the explicit public allowlist into `site/`; internal plans,
   scripts, and agent instructions must not enter the output.
-- A software release makes a documentation source eligible; it does not publish
-  that source. The selected source is normally the post-tag documentation-only
-  follow-up. Deployment still requires maintainer authorization. From the
-  repository root, `make docs-deploy` uses `HEAD` as the source and uploads
-  an unpromoted production build, verifies it and the release boundary, and
-  then promotes it. The deploy path does not generate screenshots, build the
+- From the repository root, `make docs-deploy` deploys the current working
+  directory, including uncommitted documentation edits. Do not add release-tag,
+  commit-SHA, ancestry, clean-worktree, or changed-path requirements to docs
+  deployment. Deployment requires maintainer authorization. The command uploads
+  an unpromoted production build, verifies it, and then promotes it.
+  The deploy path does not generate screenshots, build the
   product, run Docker, or install frontend dependencies. Pull-request jobs
   never receive Vercel credentials; CI checks local upload inputs against
   `.vercelignore`, the allowlist, and the size limit without calling Vercel.
-  The manual production workflow validates its requested source without
-  credentials before entering the protected environment.
+  The manual production workflow deploys its selected branch or tag through
+  the protected production environment.
 
 ## Documentation
 
@@ -72,8 +72,7 @@ Do not infer fork eligibility or network/cache isolation from this setting.
 - Keep the website, its Markdown companions, README, and documentation on
   message. Published documentation describes its selected release; sources on
   `main` describe the candidate release in present tense. Follow
-  [docs/README.md](docs/README.md) for the publishing layout, release boundary,
-  and checks.
+  [docs/README.md](docs/README.md) for the publishing layout and checks.
 
 ## Private Data Boundary
 
@@ -161,15 +160,8 @@ Do not infer fork eligibility or network/cache isolation from this setting.
   must not carry task breakdowns, sequencing, ownership, or completion
   criteria. `docs/roadmap.md` is the one high-level public product-status view;
   kata is the sole source of truth for actionable work and its status.
-- Public documentation deployment is gated by the corresponding software
-  release tag. There is no rendered preview or public deployment of candidate
-  feature documentation before that binary is tagged. Treat public-doc sources
-  on `main` as the candidate documentation for the next release, not as a live
-  view of an unreleased binary. Once a capability merges, describe it directly
-  in present tense; do not add "next release", source-build availability, or
-  other feature-timing annotations. Release preparation must verify that every
-  documented capability is present in the tag and defer documentation for
-  anything that will not ship.
+- Documentation can be patched and deployed independently of software
+  releases. Keep published claims accurate for the version they describe.
 - The release's own changelog entry is intentionally added after the tag and
   GitHub release exist, in a documentation-only follow-up PR using the final
   published notes and date. Wording-only corrections found during that pass may
