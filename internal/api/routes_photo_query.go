@@ -106,7 +106,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		OperationID: "readPhotoPreview", Method: http.MethodGet,
 		Path:        "/api/v1/photos/assets/{asset_id}/previews/{generation_id}",
 		Summary:     "Read verified bytes of an eligible exact photo preview",
-		Description: "Returns 304 Not Modified without a body when If-None-Match matches an eligible generation. Private caches must revalidate before reuse.",
+		Description: "Returns 304 Not Modified without a body when If-None-Match matches an eligible generation. Private HTTP caches must revalidate before reuse. The Photos loaded view retains fetched preview bytes for the authenticated session. Every network request checks current preview eligibility.",
 		Responses: map[string]*huma.Response{
 			"200": {
 				Description: "Verified JPEG preview",

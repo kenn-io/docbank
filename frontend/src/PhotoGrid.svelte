@@ -53,7 +53,7 @@
     return () => { current = false; resize.disconnect(); };
   });
   $effect(() => {
-    if (initialized && totalHeight < scrollTop + viewport + 800) onloadmore();
+    if (initialized && totalHeight < scrollTop + viewport + 800) untrack(onloadmore);
   });
 
   function jump(year: string) {
@@ -86,6 +86,7 @@
       }
       element.scrollTop = newTop;
       scrollTop = element.scrollTop;
+      await tick();
     };
   }
 </script>
@@ -105,7 +106,7 @@
 </div>
 
 <style>
-  .photo-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; padding: 0 52px 0 12px; }
+  .photo-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; padding: 0 52px 0 12px; }
   .sticky-month { position: sticky; top: 0; height: 36px; display: flex; align-items: center; background: var(--bg-surface); border-bottom: 1px solid var(--border-default); font-size: var(--font-size-sm); color: var(--text-primary); font-weight: 600; z-index: 2; }
   .year-scrubber { position: sticky; top: 44px; float: right; width: 48px; margin-right: -50px; height: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .grid { position: relative; }

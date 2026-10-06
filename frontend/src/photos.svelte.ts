@@ -37,7 +37,7 @@ export class Photos {
     try { localStorage.setItem(densityKey, density); } catch { /* Keep the current session's preference. */ }
   }
 
-  async loadMore() {
+  async loadMore(preserve?: () => (() => Promise<void>) | undefined) {
     if (this.disposed || this.loading || this.error || (this.started && !this.cursor)) return;
     this.loading = true;
     const controller = this.controller;
@@ -45,6 +45,7 @@ export class Photos {
       const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
       if (controller.signal.aborted) return;
       const seen = new Set(this.items.map(item => item.asset_id));
+      const restore = preserve?.();
       this.items = [...this.items, ...page.items.filter(item => {
         if (seen.has(item.asset_id)) return false;
         seen.add(item.asset_id);
@@ -53,6 +54,7 @@ export class Photos {
       this.total = page.total;
       this.cursor = page.next_cursor;
       this.started = true;
+      await restore?.();
     } catch (cause) {
       if (controller.signal.aborted) return;
       if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
@@ -67,7 +69,7 @@ export class Photos {
     if (this.replacement || this.expired) return this.replace(this.replacement ?? "expiry", preserve);
     this.error = "";
     this.expired = false;
-    return this.loadMore();
+    return this.loadMore(preserve);
   }
 
   refresh(preserve?: () => (() => Promise<void>) | undefined) {

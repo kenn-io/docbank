@@ -17,7 +17,7 @@
   const groupingOptions = [{ value: "months", label: "Months" }, { value: "sessions", label: "Capture sessions" }];
 
   onMount(() => {
-    if (!photos.started && !photos.error) void photos.loadMore();
+    if (!photos.started && !photos.error) void photos.loadMore(preserve);
   });
   function escape(event: KeyboardEvent) {
     if (event.key === "Escape" && !(event.target instanceof Element && event.target.closest("input, select, textarea, [role=dialog]"))) photos.clearSelection();
@@ -38,13 +38,13 @@
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
   {/if}
   {#if photos.items.length}
-    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore()} />
+    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} />
   {:else if !photos.loading && !photos.error}
     <EmptyState title="Your photo library is empty" description="Import photos with docbank photos import to browse them here.">
       {#snippet icon()}<ImageIcon size="24" />{/snippet}
     </EmptyState>
   {/if}
-  {#if photos.loading}<div class="photo-loading" role="status"><Spinner size={14} />Loading photos…</div>{/if}
+  <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{/if}</div>
   <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} truncated={photos.items.length < photos.total} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} />
 </main>
 
@@ -55,6 +55,6 @@
   .library-title span { font-size: var(--font-size-xs); color: var(--text-muted); }
   .photo-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .photo-error { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-5); color: var(--text-primary); background: var(--bg-inset); }
-  .photo-loading { display: flex; gap: var(--space-2); align-items: center; justify-content: center; padding: var(--space-2); color: var(--text-muted); font-size: var(--font-size-sm); }
+  .photo-loading { height: 28px; flex-shrink: 0; display: flex; gap: var(--space-2); align-items: center; justify-content: center; padding: var(--space-2); color: var(--text-muted); font-size: var(--font-size-sm); }
   @media (max-width: 640px) { .photo-toolbar { padding: var(--space-3); } }
 </style>

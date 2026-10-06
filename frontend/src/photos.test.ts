@@ -11,13 +11,30 @@ it("keeps earlier pages on failure, waits for Retry, and reuses the failed curso
     .mockResolvedValueOnce(response([photo(2), photo(3)]));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
+  let finish!: (response: Response) => void;
+  let release!: () => void;
+  fetcher.mockReset().mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Temporary read failure" }), { status: 503 }))
+    .mockResolvedValueOnce(response([photo(2), photo(3)]));
+  const restore = vi.fn(() => new Promise<void>(resolve => release = resolve));
+  const preserve = vi.fn(() => restore);
+  const initial = photos.loadMore(preserve);
+  expect(preserve).not.toHaveBeenCalled();
+  finish(response([photo(1)], "next-page"));
+  await vi.waitFor(() => expect(restore).toHaveBeenCalledTimes(1));
   await photos.loadMore();
-  await photos.loadMore();
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(photos.loading).toBe(true);
+  release(); await initial;
+  restore.mockImplementation(async () => {});
+  await photos.loadMore(preserve);
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1"]);
   expect(photos.error).toBe("Temporary read failure");
   await photos.loadMore();
   expect(fetcher).toHaveBeenCalledTimes(2);
-  await photos.retry();
+  await photos.retry(preserve);
+  expect(preserve).toHaveBeenCalledTimes(2);
+  expect(restore).toHaveBeenCalledTimes(2);
   expect(photos.items).toHaveLength(3);
   expect(JSON.parse(fetcher.mock.calls[2][1].body).cursor).toBe("next-page");
   expect(fetcher.mock.calls[0][1].headers.get("X-Docbank-Web-Session")).toBe("scoped");
