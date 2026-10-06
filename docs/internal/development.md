@@ -194,13 +194,15 @@ rationale.
 
 ### Timing checks
 
-`make lint` runs kit's `deadlinetest` analyzer through the `kennlint` plugin.
-It reports `context.WithTimeout`, `time.After`, timers, and `Eventually` calls
-in tests with a budget below one second outside a synctest bubble. A short
-positive `Never` window is allowed, since it can only check less. A site may
-carry `//nolint:kennlint // reason` only when the asserted result is the
-deadline expiring, or when a `select` on a timer shows that an event does not
-happen; the reason names the case and what holds the wait.
+`make lint` runs kit's `sleeptest` and `deadlinetest` analyzers through the
+`kennlint` plugin. They report `time.Sleep`, and `context.WithTimeout`,
+`time.After`, timers, or `Eventually` calls with a budget below one second, in
+tests outside a synctest bubble. A short positive `Never` window is allowed,
+since it can only check less. A deadline finding may carry
+`//nolint:kennlint // reason` only when the asserted result is the deadline
+expiring, or when a `select` on a timer shows that an event does not happen;
+the reason names the case and what holds the wait. A sleep finding's reason
+names the real-clock dependency that keeps it out of a bubble.
 
 Use `testing/synctest` for channels, callbacks, timers, goroutines, and readers
 owned by a test. Keep waits for provider HTTP, managed commands, daemons,

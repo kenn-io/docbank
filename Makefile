@@ -76,12 +76,12 @@ docs-screenshots:
 fmt:
 	go fmt ./...
 
-$(CUSTOM_GCL): .custom-gcl.yml go.mod
+$(CUSTOM_GCL): .custom-gcl.yml
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
 		echo "golangci-lint not found. Install: https://golangci-lint.run/usage/install/" >&2; \
 		exit 1; \
 	fi
-	golangci-lint custom --destination "$(CURDIR)/.cache/golangci-lint" --name custom-gcl --version v2.13.1
+	golangci-lint custom --destination "$(CURDIR)/.cache/golangci-lint" --name custom-gcl
 
 lint: $(CUSTOM_GCL)
 	"$(CUSTOM_GCL)" run --allow-serial-runners --fix ./...

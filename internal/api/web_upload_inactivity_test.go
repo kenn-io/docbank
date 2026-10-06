@@ -52,7 +52,7 @@ func TestWebUploadInactivityExcludesConsumerWork(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, <-sent)
 			// Storage work can outlast the network inactivity limit after bytes arrive.
-			time.Sleep(2 * reader.inactivity)
+			time.Sleep(2 * reader.inactivity) //nolint:kennlint // stands in for storage work outlasting the real websocket's inactivity limit, which synctest can't host
 			rest, err := io.ReadAll(reader)
 			require.NoError(t, err)
 			require.Equal(t, "abcdef", string(prefix)+string(rest))

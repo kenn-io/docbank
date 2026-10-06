@@ -110,7 +110,7 @@ func importEmbeddedPackage(t *testing.T, vault *docbank.Vault, preflightID, name
 		if status.State == "complete" || status.State == "partial" || status.State == "failed" {
 			return status
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) //nolint:kennlint // polls a background package import that runs SQLite and file I/O on the real clock
 	}
 	return status
 }

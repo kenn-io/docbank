@@ -107,10 +107,10 @@ linters:
     custom:
       kennlint:
         type: module
-        description: Kit deadlinetest, sub-second wall-clock budgets in tests outside synctest.
+        description: Kit sleeptest and deadlinetest, wall-clock sleeps and sub-second budgets in tests outside synctest.
         original-url: go.kenn.io/kit/lint
         settings:
-          disable: [errtext, nohttpmux, rowserrcheck, sleeptest, sqlcheck, sqlclosecheck, testifyhelper]
+          disable: [errtext, nohttpmux, rowserrcheck, sqlcheck, sqlclosecheck, testifyhelper]
 
     errorlint:
       comparison: true
@@ -240,11 +240,6 @@ linters:
       - linters: [staticcheck]
         path: _test\.go
         text: "SA5011"
-
-      # Test sleeps already carry //nolint:kennlint reasons for sleeptest, which stays disabled until its backlog is cleared.
-      - linters: [nolintlint]
-        path: _test\.go
-        text: 'is unused for linter "kennlint"'
 
       # CreateRaw owns the legacy DOS timestamp bytes in published Mistral
       # fixtures. Using FileHeader.Modified adds an extended timestamp and

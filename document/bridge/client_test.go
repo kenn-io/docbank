@@ -1070,12 +1070,17 @@ func TestBridgeContractBoundsPollingRetriesAndRefusesRedirects(t *testing.T) {
 func TestBridgeContractCancelsRemoteJobWhenContextEnds(t *testing.T) {
 	fixture := newBridgeFixture(t)
 	var deletes atomic.Int64
+	polling := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.Method {
 		case http.MethodPost:
 			writeBridgeJSON(t, response, http.StatusAccepted,
 				pendingEnvelope(fixture, "job-cancel", JobQueued))
 		case http.MethodGet:
+			select {
+			case polling <- struct{}{}:
+			default:
+			}
 			<-request.Context().Done()
 		case http.MethodDelete:
 			deletes.Add(1)
@@ -1084,10 +1089,11 @@ func TestBridgeContractCancelsRemoteJobWhenContextEnds(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the GET handler blocks until the request ends
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	go func() { <-polling; cancel() }()
 	_, err := client.Render(ctx, fixture.upload(), fixture.authorization)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorIs(t, err, context.Canceled)
 	var providerError *document.RenditionProviderError
 	require.ErrorAs(t, err, &providerError)
 	assert.Equal(t, document.RenditionErrorCanceled, providerError.Code())
