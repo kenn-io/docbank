@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Build and promote documentation
+    name: Build and publish documentation
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -29,7 +29,7 @@ jobs:
       - name: Install pinned Vercel CLI
         run: npm install --global vercel@58.4.4
 
-      - name: Verify, build, inspect, and promote
+      - name: Check upload inputs, build, and publish
         env:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}

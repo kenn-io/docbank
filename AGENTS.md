@@ -43,8 +43,9 @@ Do not infer fork eligibility or network/cache isolation from this setting.
 - From the repository root, `make docs-deploy` deploys the current working
   directory, including uncommitted documentation edits. Do not add release-tag,
   commit-SHA, ancestry, clean-worktree, or changed-path requirements to docs
-  deployment. Deployment requires maintainer authorization. The command uploads
-  an unpromoted production build, verifies it, and then promotes it.
+  deployment. Deployment requires maintainer authorization. After checking the
+  upload inputs, the command uses `vercel deploy --prod` to build and publish.
+  Keep domain redirects in Vercel's project settings.
   The deploy path does not generate screenshots, build the
   product, run Docker, or install frontend dependencies. Pull-request jobs
   never receive Vercel credentials; CI checks local upload inputs against

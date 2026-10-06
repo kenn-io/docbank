@@ -22,14 +22,4 @@ trap 'exit 143' TERM
 vercel deploy --prod --skip-domain --yes --dry --json > "$upload_report"
 node scripts/docs/assert-vercel-dry-run.mjs "$upload_report"
 
-deployment_url=$(vercel deploy --prod --skip-domain --yes)
-case "$deployment_url" in
-  https://*.vercel.app) ;;
-  *)
-    printf 'Vercel did not return a deployment URL: %s\n' "$deployment_url" >&2
-    exit 1
-    ;;
-esac
-
-vercel inspect "$deployment_url" --wait --timeout 10m
-vercel promote "$deployment_url" --yes
+vercel deploy --prod --yes
