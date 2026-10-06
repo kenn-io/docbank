@@ -52,15 +52,18 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
     .mockResolvedValueOnce(response([photo(2), photo(3)], "new-tail"));
   vi.stubGlobal("fetch", fetcher);
   const restore = vi.fn(async () => {});
-  const photos = new Photos("scoped", vi.fn(), () => restore);
+  const preserve = vi.fn(() => restore);
+  const photos = new Photos("scoped", vi.fn());
   await photos.loadMore(); await photos.loadMore();
   photos.select("photo-2", new MouseEvent("click"), ["photo-1", "photo-2", "photo-3"]);
-  await photos.refresh();
+  await photos.refresh(preserve);
+  expect(preserve).not.toHaveBeenCalled();
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-2", "photo-3"]);
   expect(photos.cursor).toBe("old-tail");
   expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
   expect(restore).not.toHaveBeenCalled();
-  await photos.retry();
+  await photos.retry(preserve);
+  expect(preserve).toHaveBeenCalledTimes(1);
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-4", "photo-1", "photo-2", "photo-3"]);
   expect(photos.cursor).toBe("new-tail");
   expect(restore).toHaveBeenCalledTimes(1);
@@ -142,5 +145,26 @@ it("remembers density with safe defaults for unknown or unavailable storage", ()
   expect(loadDensity()).toBe("comfortable");
   expect(() => photos.setDensity("large")).not.toThrow();
   expect(photos.density).toBe("large");
+  photos.dispose();
+});
+
+
+it("captures navigation only when the final replacement page succeeds", async () => {
+  let finish!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response([photo(1), photo(2)]))
+    .mockResolvedValueOnce(response([photo(1)], "last"))
+    .mockImplementationOnce(() => new Promise(resolve => finish = resolve)));
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadMore();
+  const restore = vi.fn(async () => {});
+  const preserve = vi.fn(() => { expect(photos.scrollTop).toBe(9000); return restore; });
+  const refresh = photos.refresh(preserve);
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  expect(preserve).not.toHaveBeenCalled();
+  photos.scrollTop = 9000;
+  finish(response([photo(2)]));
+  await refresh;
+  expect(preserve).toHaveBeenCalledTimes(1);
+  expect(restore).toHaveBeenCalledTimes(1);
   photos.dispose();
 });

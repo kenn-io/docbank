@@ -53,11 +53,10 @@ export class PhotoPreviewCache {
       signal.throwIfAborted();
       try {
         // The network response varies by credentials; retained keys contain no credentials.
-        await cache.put(key, new Response(await response.arrayBuffer(), { headers: { "Content-Type": "image/jpeg" } }));
+        const bytes = await response.arrayBuffer();
+        await cache.put(key, new Response(bytes, { headers: { "Content-Type": "image/jpeg" } }));
         signal.throwIfAborted();
-        const stored = await cache.match(key);
-        if (!stored) throw new Error("Preview was not retained");
-        return stored.blob();
+        return new Blob([bytes], { type: "image/jpeg" });
       } catch (cause) {
         if (signal.aborted) throw signal.reason;
         throw new Error("Preview storage is unavailable. Retry preview.", { cause });

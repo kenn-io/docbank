@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-06
 title: Web application
 description: Find, read, organize, and export documents in the local, authenticated web app.
 ---
@@ -43,6 +43,10 @@ require the CLI or another API client.
 *Select a document to see its stable identity and content hash beside the table.*
 
 ## Browse the vault
+
+**Documents** and **Photos** at the top of the sidebar switch workspaces.
+Photos replaces document navigation with **Library** and keeps your place
+until the session locks. See [Browse photos](photos.md#browse-in-the-web-app).
 
 Use the labeled sidebar for **All files**, **Saved queries**, **Collections**,
 and **Trash**. **Review and export** holds search reports, Bates exports, and

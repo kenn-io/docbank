@@ -1,6 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
+import { Photos } from "./photos.svelte.js";
+import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photo } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
@@ -13,7 +15,9 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Page unavailable" }), { status: 503 }))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3)], total: 3 })));
   vi.stubGlobal("fetch", fetcher);
-  render(PhotosWorkspace, { session: "scoped", onauthfailure: vi.fn() });
+  const photos = new Photos("scoped", vi.fn());
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
   await screen.findByText("Page unavailable");
   expect(screen.getByRole("button", { name: "Select Photo 1.jpg" })).toBeTruthy();
   expect(fetcher).toHaveBeenCalledTimes(2);
@@ -26,4 +30,10 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   await fireEvent.click(screen.getByRole("button", { name: "Select Photo 3.jpg" }), { shiftKey: true });
   await fireEvent.keyDown(window, { key: "Escape" });
   await waitFor(() => expect(screen.queryByText(/selected photos/)).toBeNull());
+  cleanup();
+  render(PhotosWorkspace, { photos, cache });
+  await screen.findByRole("button", { name: "Select Photo 3.jpg" });
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  photos.dispose();
+  await cache.dispose();
 });

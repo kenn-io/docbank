@@ -1,7 +1,9 @@
+import { Blob } from "node:buffer";
 import { afterEach, expect, it, vi } from "vitest";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 
 function storage() {
+  vi.stubGlobal("Blob", Blob);
   const data = new Map<string, Map<string, Response>>();
   const open = vi.fn(async (name: string) => {
     const entries = data.get(name) ?? new Map<string, Response>();
@@ -27,10 +29,12 @@ it("shares pending reads, retains bytes without fetch, and releases settled entr
   const first = cache.get("asset", "generation");
   expect(cache.get("asset", "generation")).toBe(first);
   expect(await (await first).text()).toBe("synthetic-jpeg");
+  const opened = await stored.open.mock.results[0].value;
+  expect(opened.match).toHaveBeenCalledTimes(1);
+  expect(opened.put).toHaveBeenCalledTimes(1);
   expect(await (await cache.get("asset", "generation")).text()).toBe("synthetic-jpeg");
   expect(fetcher).toHaveBeenCalledTimes(1);
   expect((cache as unknown as { entries: Map<string, Promise<Blob>> }).entries.size).toBe(0);
-  const opened = await stored.open.mock.results[0].value;
   const key = opened.put.mock.calls[0][0];
   expect(key.credentials).toBe("omit");
   expect([...key.headers]).toHaveLength(0);

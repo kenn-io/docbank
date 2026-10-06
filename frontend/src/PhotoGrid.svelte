@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { Button } from "@kenn-io/kit-ui";
   import { computeMonthLayout, HEADER_HEIGHT, type PhotoGroup } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoMonthChunk from "./PhotoMonthChunk.svelte";
 
-  let { groups, targetRowHeight, cache, selectedIDs, onselect, oncheck, onloadmore }: {
+  let { groups, targetRowHeight, cache, selectedIDs, onselect, oncheck, onloadmore, scrollTop = $bindable(0) }: {
     groups: PhotoGroup[];
     targetRowHeight: number;
     cache: PhotoPreviewCache;
@@ -13,10 +13,11 @@
     onselect: (id: string, event: MouseEvent) => void;
     oncheck: (id: string, checked: boolean, range: boolean) => void;
     onloadmore: () => void;
+    scrollTop?: number;
   } = $props();
   let container = $state<HTMLDivElement>();
   let width = $state(800);
-  let scrollTop = $state(0);
+  let initialized = $state(false);
   let viewport = $state(960);
   const chunks = $derived.by(() => {
     let offset = 0;
@@ -34,6 +35,8 @@
   $effect(() => {
     if (!container) return;
     const element = container;
+    const savedTop = untrack(() => scrollTop);
+    let current = true;
     const resize = new ResizeObserver(() => {
       width = Math.max(1, element.clientWidth - 64);
       viewport = element.clientHeight;
@@ -41,10 +44,16 @@
     resize.observe(element);
     width = Math.max(1, element.clientWidth - 64);
     viewport = element.clientHeight;
-    return () => resize.disconnect();
+    void tick().then(() => {
+      if (!current) return;
+      element.scrollTop = savedTop;
+      scrollTop = element.scrollTop;
+      initialized = true;
+    });
+    return () => { current = false; resize.disconnect(); };
   });
   $effect(() => {
-    if (totalHeight < scrollTop + viewport + 800) onloadmore();
+    if (initialized && totalHeight < scrollTop + viewport + 800) onloadmore();
   });
 
   function jump(year: string) {
@@ -81,15 +90,17 @@
   }
 </script>
 
-<div class="photo-scroll" bind:this={container} onscroll={() => scrollTop = container?.scrollTop ?? 0} data-testid="photo-scroll">
+<div class="photo-scroll" bind:this={container} onscroll={() => { if (initialized) scrollTop = container?.scrollTop ?? 0; }} data-testid="photo-scroll">
   <div class="sticky-month" aria-live="polite">{activeLabel}</div>
   <nav class="year-scrubber" aria-label="Photo years">
     {#each years as year}<Button size="sm" onclick={() => jump(year)}>{year}</Button>{/each}
   </nav>
   <div class="grid" style:height={`${totalHeight}px`}>
+    {#if initialized}
     {#each chunks as chunk (chunk.group.key)}
       <PhotoMonthChunk group={chunk.group} layout={chunk.layout} offset={chunk.offset} top={Math.max(0, scrollTop - viewport)} bottom={scrollTop + 2 * viewport} {cache} {selectedIDs} {onselect} {oncheck} />
     {/each}
+    {/if}
   </div>
 </div>
 

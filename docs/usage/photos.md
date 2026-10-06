@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-06
 title: Photo assets
 description: Group ordinary files into photo assets that carry their own revision.
 ---
@@ -23,7 +23,7 @@ selection, including loaded photos outside the screen. Ctrl-click or
 Command-click toggles a photo. Each photo also has a checkbox for touch.
 The selection dock can select all loaded photos or clear the selection.
 
-Previews already seen stay in a private browser cache while the Photos workspace is open. Only mounted photos keep image URLs. Closing the workspace or leaving the page deletes its cache. Storage failures offer Retry preview.
+Photos, selection, and scroll position stay in place across Documents/Photos switches until the session locks or ends. Previews already seen stay in a private browser cache for that signed-in session. Only mounted photos keep image URLs. Docbank deletes the cache when the session locks or ends, or the page closes. If the browser exits abnormally, the cache stays in the site's browser storage under the browser's quota until site data is cleared. Storage failures offer Retry preview.
 Pending, unsupported, and failed previews have separate placeholders. Choose
 Refresh previews to reload the listing after background preview work finishes.
 If a page fails to load, the earlier photos remain visible. Retry requests the

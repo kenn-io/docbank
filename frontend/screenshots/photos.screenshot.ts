@@ -18,7 +18,9 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
   const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0" };
   const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
   const requests = new Map<string, number>();
+  let listings = 0;
   page.on("request", request => {
+    if (request.url().includes("/photos/assets/query")) listings++;
     if (request.url().includes("/previews/")) requests.set(request.url(), (requests.get(request.url()) ?? 0) + 1);
   });
   try {
@@ -64,6 +66,17 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     });
     await page.locator(`[data-asset="${visibleID}"]`).getByRole("checkbox").check();
     const position = await scroll.evaluate(element => element.scrollTop);
+    await page.waitForLoadState("networkidle");
+    const beforeSwitch = new Map(requests);
+    const beforeListings = listings;
+    await page.getByRole("button", { name: "Documents", exact: true }).click();
+    await page.getByRole("button", { name: "Photos", exact: true }).click();
+    await expect(page.getByText("10,000 photos · 10,000 loaded")).toBeVisible();
+    await expect(page.getByText("1 selected photo", { exact: true })).toBeVisible();
+    await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBe(position);
+    await page.waitForLoadState("networkidle");
+    expect(listings).toBe(beforeListings);
+    expect(requests).toEqual(beforeSwitch);
     await page.route("**/api/v1/photos/assets/query", route => route.abort("failed"), { times: 1 });
     await page.getByRole("button", { name: "Refresh previews" }).click();
     await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
@@ -73,6 +86,19 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     await expect(page.getByRole("button", { name: "Refresh previews" })).toBeEnabled({ timeout: 60_000 });
     await expect(page.getByText("1 selected photo", { exact: true })).toBeVisible();
     expect(await scroll.evaluate(element => element.scrollTop)).toBeCloseTo(position, 0);
+    let release!: () => void;
+    let entered!: () => void;
+    const delayed = new Promise<void>(resolve => entered = resolve);
+    const hold = new Promise<void>(resolve => release = resolve);
+    await page.route("**/api/v1/photos/assets/query", async route => { entered(); await hold; await route.continue(); }, { times: 1 });
+    await page.getByRole("button", { name: "Refresh previews" }).click();
+    await delayed;
+    await page.getByRole("navigation", { name: "Photo years" }).getByRole("button", { name: "2022", exact: true }).click();
+    const latestPosition = await scroll.evaluate(element => element.scrollTop);
+    expect(latestPosition).not.toBe(position);
+    release();
+    await expect(page.getByRole("button", { name: "Refresh previews" })).toBeEnabled({ timeout: 60_000 });
+    expect(await scroll.evaluate(element => element.scrollTop)).toBeCloseTo(latestPosition, 0);
     await page.getByRole("button", { name: "Clear selection", exact: true }).click();
     await scroll.evaluate(element => element.scrollTop = 0);
     await expect(page.locator(`[data-asset="${firstAsset}"] img`)).toBeVisible();

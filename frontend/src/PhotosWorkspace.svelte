@@ -1,25 +1,23 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount } from "svelte";
   import { Button, EmptyState, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import ImageIcon from "@lucide/svelte/icons/image";
-  import { Photos } from "./photos.svelte.js";
+  import type { Photos } from "./photos.svelte.js";
   import { groupPhotos, ROW_HEIGHTS, type Density } from "./photoGrid.js";
-  import { PhotoPreviewCache } from "./photoPreviewCache.js";
+  import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoGrid from "./PhotoGrid.svelte";
   import SelectionDock from "./SelectionDock.svelte";
 
-  let { session, onauthfailure }: { session: string; onauthfailure: (cause: unknown) => void } = $props();
+  let { photos, cache }: { photos: Photos; cache: PhotoPreviewCache } = $props();
   let grid = $state<{ preservePosition: () => (() => Promise<void>) }>();
-  const photos = untrack(() => new Photos(session, cause => onauthfailure(cause), () => grid?.preservePosition()));
-  const cache = untrack(() => new PhotoPreviewCache(session, cause => onauthfailure(cause)));
+  const preserve = () => grid?.preservePosition();
   const groups = $derived(groupPhotos(photos.items, photos.grouping));
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));
   const densityOptions = [{ value: "compact", label: "Compact" }, { value: "comfortable", label: "Comfortable" }, { value: "large", label: "Large" }];
   const groupingOptions = [{ value: "months", label: "Months" }, { value: "sessions", label: "Capture sessions" }];
 
   onMount(() => {
-    void photos.loadMore();
-    return () => { photos.dispose(); cache.dispose(); };
+    if (!photos.started && !photos.error) void photos.loadMore();
   });
   function escape(event: KeyboardEvent) {
     if (event.key === "Escape" && !(event.target instanceof Element && event.target.closest("input, select, textarea, [role=dialog]"))) photos.clearSelection();
@@ -33,14 +31,14 @@
     <div class="photo-controls">
       <SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => photos.grouping = value as "months" | "sessions"} />
       <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => photos.setDensity(value as Density)} />
-      <Button size="sm" disabled={photos.loading} onclick={() => void photos.refresh()}>Refresh previews</Button>
+      <Button size="sm" disabled={photos.loading} onclick={() => void photos.refresh(preserve)}>Refresh previews</Button>
     </div>
   </div>
   {#if photos.error}
-    <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry()}>Retry</Button></div>
+    <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
   {/if}
   {#if photos.items.length}
-    <PhotoGrid bind:this={grid} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore()} />
+    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore()} />
   {:else if !photos.loading && !photos.error}
     <EmptyState title="Your photo library is empty" description="Import photos with docbank photos import to browse them here.">
       {#snippet icon()}<ImageIcon size="24" />{/snippet}

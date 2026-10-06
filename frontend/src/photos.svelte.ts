@@ -1,7 +1,7 @@
 import { listPhotoAssets, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
-import { clearSelection, toggleIDSelection, type SelectionState } from "./selection.js";
+import { clearSelection, reconcileIDSelection, toggleIDSelection, type SelectionState } from "./selection.js";
 
 export const photoQuery: SavedQueryV1Schema = { v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "capture_time", direction: "desc" } };
 const densityKey = "docbank.photos.density";
@@ -20,16 +20,17 @@ export class Photos {
   cursor = $state<string | undefined>();
   loading = $state(false);
   error = $state("");
+  scrollTop = $state(0);
   grouping = $state<"months" | "sessions">("months");
   density = $state<Density>(loadDensity());
   selection = $state<SelectionState<string>>(clearSelection<string>());
-  private started = false;
+  started = false;
   private expired = false;
   private replacement: "refresh" | "expiry" | undefined;
   private controller = new AbortController();
   private disposed = false;
 
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void, private preservePosition?: () => (() => Promise<void>) | undefined) {}
+  constructor(private session: string, private onauthfailure: (cause: unknown) => void) {}
 
   setDensity(density: Density) {
     this.density = density;
@@ -62,18 +63,18 @@ export class Photos {
     }
   }
 
-  retry() {
-    if (this.replacement || this.expired) return this.replace(this.replacement ?? "expiry");
+  retry(preserve?: () => (() => Promise<void>) | undefined) {
+    if (this.replacement || this.expired) return this.replace(this.replacement ?? "expiry", preserve);
     this.error = "";
     this.expired = false;
     return this.loadMore();
   }
 
-  refresh() {
-    return this.replace("refresh");
+  refresh(preserve?: () => (() => Promise<void>) | undefined) {
+    return this.replace("refresh", preserve);
   }
 
-  private async replace(mode: "refresh" | "expiry") {
+  private async replace(mode: "refresh" | "expiry", preserve?: () => (() => Promise<void>) | undefined) {
     if (this.disposed) return;
     this.controller.abort();
     this.controller = new AbortController();
@@ -82,7 +83,6 @@ export class Photos {
     this.replacement = mode;
     this.loading = true;
     this.error = "";
-    const restore = this.preservePosition?.();
     const tail = this.items.at(-1)?.asset_id;
     const candidate = new Map<string, PhotoBrowseRow>();
     let cursor: string | undefined;
@@ -100,14 +100,12 @@ export class Photos {
         if (foundTail && (mode === "refresh" || reachedPreviously)) break;
       } while (cursor);
       if (signal.aborted) throw signal.reason;
+      const restore = preserve?.();
       this.items = [...candidate.values()];
       this.total = total;
       this.cursor = cursor;
       this.started = true;
-      this.selection = {
-        selectedIDs: new Set([...this.selection.selectedIDs].filter(id => candidate.has(id))),
-        anchorID: this.selection.anchorID && candidate.has(this.selection.anchorID) ? this.selection.anchorID : undefined,
-      };
+      this.selection = reconcileIDSelection(this.selection, new Set(candidate.keys()));
       this.expired = false;
       this.replacement = undefined;
       await restore?.();

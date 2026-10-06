@@ -71,6 +71,8 @@
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
+  import { Photos } from "./photos.svelte.js";
+  import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { SelectionTarget } from "./selection.js";
   import ShortcutHelpModal from "./ShortcutHelpModal.svelte";
@@ -168,11 +170,18 @@
 
   let webSession = $state("");
   let photoMode = $state(location.pathname === "/photos");
+  let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
+
+  $effect(() => {
+    if (!webSession) return;
+    const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
+    photoState = state;
+    return () => { state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
+  });
 
   function switchWorkspace(photos: boolean) {
     photoMode = photos;
     navOpen = false;
-    activePanel = null;
     history.pushState(null, "", `${photos ? "/photos" : "/"}${location.search}${location.hash}`);
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
@@ -1881,7 +1890,7 @@
   }
 </script>
 
-<svelte:window onpopstate={() => { photoMode = location.pathname === "/photos"; activePanel = null; }} />
+<svelte:window onpopstate={() => { photoMode = location.pathname === "/photos"; }} />
 {#if !webSession}
   <main class="unlock-shell">
     <Card level="raised" title="Open your Docbank">
@@ -2032,8 +2041,8 @@
       {/snippet}
     </TopBar>
 
-    {#if photoMode}
-      {#key webSession}<PhotosWorkspace session={webSession} onauthfailure={handleFailure} />{/key}
+    {#if photoMode && photoState}
+      {#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} />{/key}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
     {#if savedQueryDraft}

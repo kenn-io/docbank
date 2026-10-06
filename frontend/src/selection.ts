@@ -66,7 +66,10 @@ export function reconcileSelection(
   state: SelectionState,
   rows: readonly SelectableRow[],
 ): SelectionState {
-  const eligible = new Set(eligibleIDs(rows));
+  return reconcileIDSelection(state, new Set(eligibleIDs(rows)));
+}
+
+export function reconcileIDSelection<ID>(state: SelectionState<ID>, eligible: ReadonlySet<ID>): SelectionState<ID> {
   const selectedIDs = new Set(
     [...state.selectedIDs].filter((id) => eligible.has(id)),
   );
