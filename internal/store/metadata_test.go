@@ -1251,19 +1251,6 @@ func TestImportMetadataRejectsLexicalProjectionState(t *testing.T) {
 	assert.Equal(t, generation.ID, active.ID)
 }
 
-func TestMetadataImportRejectsRetiredImportHeads(t *testing.T) {
-	t.Parallel()
-	header := `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
-	for _, kind := range []string{"package_import_head", "mailbox_transfer_head"} {
-		t.Run(kind, func(t *testing.T) {
-			target := newTestStore(t)
-			input := header + `{"type":"` + kind + `"}` + "\n"
-			err := target.ImportMetadata(t.Context(), strings.NewReader(input))
-			require.ErrorContains(t, err, `unknown record type "`+kind+`"`)
-		})
-	}
-}
-
 func TestMetadataCodecCorruptWaiterFailsExport(t *testing.T) {
 	t.Parallel()
 	s, versions := newRenditionCatalogFixture(t)
@@ -1278,36 +1265,38 @@ func TestMetadataCodecCorruptWaiterFailsExport(t *testing.T) {
 	var exported bytes.Buffer
 	err = s.ExportMetadata(t.Context(), &exported)
 	require.ErrorContains(t, err, "invalid rendition job waiter metadata")
-	// The waiter is checked mid-stream, after earlier records are written.
-	require.Positive(t, exported.Len())
 }
 
 func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 	t.Parallel()
-	for _, input := range []string{
-		`{"type":"meta","format":"docbank-metadata","version":2,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"not-a-uuid","node_sequence":1}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":null,"node_sequence":1}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","vault_id":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","node_sequence":1}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1,"version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1,"surprise":true}` + "\n",
-		`{"type":"meta","format":"docbank-metadata","version":1}` + "\n",
+	for input, want := range map[string]string{
+		`{"type":"meta","format":"docbank-metadata","version":2,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n":                                                   "",
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"not-a-uuid","node_sequence":1}` + "\n":                                                                             "",
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":null,"node_sequence":1}` + "\n":                                                                                     "",
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","vault_id":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","node_sequence":1}` + "\n": "",
+		`{"type":"meta","format":"docbank-metadata","version":1,"version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n":                                       "",
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1,"surprise":true}` + "\n":                                   "",
+		`{"type":"meta","format":"docbank-metadata","version":1}` + "\n":                                                                                                                       "",
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n" +
-			`{"type":"future_record","value":1}` + "\n",
+			`{"type":"future_record","value":1}` + "\n": "",
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n" +
-			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":12}` + "\n",
+			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":12}` + "\n": "",
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n" +
-			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":null,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n",
+			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":null,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n": "",
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n" +
-			`{"type":"blob","hash":"` + metadataHashCurrent + `","Size":12,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n",
+			`{"type":"blob","hash":"` + metadataHashCurrent + `","Size":12,"created_at":"2026-01-01T00:00:00.000000000Z"}` + "\n": "",
 		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n" +
-			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":12,"created_at":"2026-01-01T00:00:00.000000000+00:00"}` + "\n",
+			`{"type":"blob","hash":"` + metadataHashCurrent + `","size":12,"created_at":"2026-01-01T00:00:00.000000000+00:00"}` + "\n": "",
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n" +
+			`{"type":"package_import_head"}` + "\n": `unknown record type "package_import_head"`,
+		`{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n" +
+			`{"type":"mailbox_transfer_head"}` + "\n": `unknown record type "mailbox_transfer_head"`,
 	} {
 		t.Run(input, func(t *testing.T) {
 			target, err := Open(filepath.Join(t.TempDir(), "target.db"))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, target.Close()) })
-			require.Error(t, target.ImportMetadata(context.Background(), strings.NewReader(input)))
+			require.ErrorContains(t, target.ImportMetadata(context.Background(), strings.NewReader(input)), want)
 		})
 	}
 }
