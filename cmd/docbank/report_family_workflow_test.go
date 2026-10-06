@@ -14,7 +14,7 @@ import (
 
 func TestReportFamilySelectedDocuments(t *testing.T) {
 	f := newFamilyReportFixture(t, "selected")
-	stop := f.start(t)
+	stop := f.start(t, f.root)
 	client := startFamilyMCP(t)
 	want := familyReportExpectation{
 		counts: []report.Counts{
@@ -39,7 +39,7 @@ func TestReportFamilySelectedDocuments(t *testing.T) {
 
 func TestReportFamilySharedChild(t *testing.T) {
 	f := newFamilyReportFixture(t, "shared")
-	stop := f.start(t)
+	stop := f.start(t, f.root)
 	client := startFamilyMCP(t)
 	want := familyReportExpectation{
 		counts: []report.Counts{
@@ -99,7 +99,7 @@ func TestReportFamilySharedChild(t *testing.T) {
 
 func TestReportFamilyIncompleteInventory(t *testing.T) {
 	f := newFamilyReportFixture(t, "partial")
-	stop := f.start(t)
+	stop := f.start(t, f.root)
 	client := startFamilyMCP(t)
 	available := f.request
 	available.CoverageMode = "available_only"
@@ -122,7 +122,7 @@ func TestReportFamilyIncompleteInventory(t *testing.T) {
 	verifyFamilyPackets(t, cli.packet, mcp.packet)
 }
 
-func assertFamilyRefused(t *testing.T, client *familyMCP, request report.Request) {
+func assertFamilyCLIRefused(t *testing.T, request report.Request) {
 	t.Helper()
 	before := reportHistory(t)
 	encoded, err := json.Marshal(request)
@@ -134,6 +134,12 @@ func assertFamilyRefused(t *testing.T, client *familyMCP, request report.Request
 	require.NotRegexp(t, `\b[0-9a-f]{48}\b`, out, "refusal must not return a report handle")
 	require.NoFileExists(t, destination)
 	require.Equal(t, before, reportHistory(t), "CLI refusal must not add history")
+}
+
+func assertFamilyRefused(t *testing.T, client *familyMCP, request report.Request) {
+	t.Helper()
+	assertFamilyCLIRefused(t, request)
+	before := reportHistory(t)
 	raw := client.call(t, "create_report", map[string]any{"request": request})
 	var failure struct {
 		Code     string `json:"code"`

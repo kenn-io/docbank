@@ -15,7 +15,7 @@ import (
 
 func TestReportFamilyExplicitOriginalExports(t *testing.T) {
 	f := newFamilyReportFixture(t, "selected")
-	stop := f.start(t)
+	stop := f.start(t, f.root)
 	client := startFamilyMCP(t)
 	var saved []struct {
 		path      string

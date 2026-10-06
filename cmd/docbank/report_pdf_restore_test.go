@@ -32,7 +32,7 @@ func TestReportPDFRestore(t *testing.T) {
 	}
 	_, err := runCLI(t, "backup", "init")
 	require.NoError(t, err)
-	current := backupPDFSnapshot(t, "current-selection")
+	current := backupReportSnapshot(t, "current-selection")
 
 	replacement := reportPDF(t, "Replacement without the selected terms or dated evidence.")
 	_, err = runCLI(t, "put", writeSourceFile(t, "replacement.pdf", string(replacement)),
@@ -50,10 +50,10 @@ func TestReportPDFRestore(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, want, actual, "replacement and trash must leave the captured report unchanged")
 	assertPDFSelectionChanged(t, f.request)
-	changed := backupPDFSnapshot(t, "changed-selection")
+	changed := backupReportSnapshot(t, "changed-selection")
 	targets := []struct{ name, root string }{
-		{"current-selection", restorePDFSnapshot(t, current)},
-		{"changed-selection", restorePDFSnapshot(t, changed)},
+		{"current-selection", restoreReportSnapshot(t, current)},
+		{"changed-selection", restoreReportSnapshot(t, changed)},
 	}
 	// Both restores use the source daemon. Stop it before changing the CLI home.
 	stop()
@@ -110,7 +110,7 @@ func assertPDFSelectionChanged(t *testing.T, request report.Request) {
 	require.NoFileExists(t, destination)
 }
 
-func backupPDFSnapshot(t *testing.T, tag string) string {
+func backupReportSnapshot(t *testing.T, tag string) string {
 	t.Helper()
 	out, err := runCLI(t, "backup", "create", "--tag", tag, "--jobs", "1", "--json")
 	require.NoError(t, err)
@@ -125,7 +125,7 @@ func backupPDFSnapshot(t *testing.T, tag string) string {
 	return snapshot.ID
 }
 
-func restorePDFSnapshot(t *testing.T, snapshot string) string {
+func restoreReportSnapshot(t *testing.T, snapshot string) string {
 	t.Helper()
 	target := filepath.Join(t.TempDir(), "restored")
 	out, err := runCLI(t, "backup", "restore", snapshot, "--target", target,
