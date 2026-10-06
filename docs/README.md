@@ -11,7 +11,6 @@ plus internal design material.
 | `website/guide/index.html` and `website/guide.md` | How does a document move through the system? | `/guide/` and `/guide.md` |
 | `docs/*.md`, `usage/`, `agents/`, and `architecture/` | How do I use, integrate, or maintain it? | `/docs/` and its child routes |
 | `docs/internal/` | How is the implementation organized, and why? | Never published |
-| `superpowers/specs/` (beneath this directory) | What did an earlier design propose or approve? | Never published or included in normal navigation |
 
 Give each fact one owning guide or reference. Link to that section elsewhere.
 The product page introduces the value; the guide explains the document model;
