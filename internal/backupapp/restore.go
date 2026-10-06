@@ -221,8 +221,12 @@ func RestoreWithPlacement(
 	result, restoreErr := backup.Restore(ctx, repo, app, opts)
 	if restoreErr != nil {
 		if primaryHandoff != nil {
+			// Restore can fail during cleanup after publishing the database.
+			// Reconcile against that database rather than assuming a rollback.
 			restoreErr = errors.Join(
-				restoreErr, primaryHandoff.Rollback(context.WithoutCancel(ctx)),
+				restoreErr, RecoverInterruptedPrimaryHandoff(
+					context.WithoutCancel(ctx), opts.TargetDir, driver,
+				),
 			)
 		}
 	} else if primaryHandoff != nil {

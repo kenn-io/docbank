@@ -2876,3 +2876,65 @@ func TestDerivativeAuthorityCoversEveryProviderArtifactRole(t *testing.T) {
 	}
 	assert.Equal(t, append(store.PersistedRenditionArtifactRoles(), "lexical_projection"), classes)
 }
+
+func TestOverwriteCleanupFailurePreservesPublishedOwnership(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	content := bytes.Repeat([]byte("synthetic recoverable content\n"), 4096)
+	var hash string
+	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
+		var err error
+		hash, _, err = fixture.blobs.WriteContext(t.Context(), bytes.NewReader(content))
+		if err != nil {
+			return err
+		}
+		_, err = fixture.metadata.CreateFile(t.Context(), fixture.metadata.RootID(),
+			"compressed.txt", hash, int64(len(content)), "text/plain")
+		return err
+	}))
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	_, err = backupapp.Create(t.Context(), repo, "test-version", fixture.metadata,
+		fixture.blobs, backup.CreateOptions{Jobs: 1})
+	require.NoError(t, err)
+
+	target := filepath.Join(t.TempDir(), "existing-vault")
+	priorOwnership := seedOwnedVault(t, target)
+	layout, err := packstore.NewLayout(filepath.Join(target, "blobs"),
+		packstore.LayoutOptions{Staging: packstore.StagingSameDirectory})
+	require.NoError(t, err)
+	loose, err := packstore.NewLooseStore(layout)
+	require.NoError(t, err)
+	receipt, err := loose.Write(t.Context(), bytes.NewReader(content), packstore.WriteOptions{
+		Durability: packstore.DurablePublication, Dedup: packstore.VerifyFullHash,
+		ExpectedHash: packstore.Hash(hash),
+		Compression:  packstore.LooseCompressionOptions{Enabled: true},
+	})
+	require.NoError(t, err)
+	require.Equal(t, packstore.LooseEncodingZstd, receipt.Encoding)
+	raw := filepath.Join(target, "blobs", hash[:2], hash)
+	require.NoError(t, os.MkdirAll(raw, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(raw, "obstruction"), []byte("occupied"), 0o600))
+
+	result, err := backupapp.RestoreWithPlacement(
+		t.Context(), repo, "test-version", store.DefaultSQLiteDriver(),
+		backup.RestoreOptions{TargetDir: target, Overwrite: true, Jobs: 1},
+		backupapp.RestorePlacementOptions{Map: &backupapp.RestoreStoreMap{
+			Version: backupapp.RestoreStoreMapVersion,
+		}},
+	)
+	require.ErrorContains(t, err, "database published but removing alternate loose content")
+	require.NotNil(t, result)
+	metadata, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, metadata.Close()) }()
+	assert.NotEqual(t, priorOwnership, store.NewPackCatalog(metadata).PrimaryOwnership())
+	blobs, err := blob.New(store.NewPackCatalog(metadata), filepath.Join(target, "blobs"))
+	require.NoError(t, err, "cleanup failure must retain ownership for the published database")
+	defer func() { require.NoError(t, blobs.Close()) }()
+	reader, err := blobs.OpenContext(t.Context(), hash)
+	require.NoError(t, err)
+	got, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.NoError(t, reader.Close())
+	assert.Equal(t, content, got)
+}
