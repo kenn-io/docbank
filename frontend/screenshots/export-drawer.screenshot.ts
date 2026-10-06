@@ -18,7 +18,7 @@ test("downloads the exact 1001-member frozen source through the real export work
   test.setTimeout(900_000);
   const workspace = await mkdtemp(path.join(tmpdir(), "docbank-export-proof-"));
   const vault = path.join(workspace, "vault"), sources = path.join(workspace, "Export proof");
-  const run = async (...args: string[]) => (await exec(path.join(repository, "docbank"), args, { cwd: repository, env: { ...process.env, DOCBANK_HOME: vault }, timeout: 300_000, maxBuffer: 4 * 1024 * 1024 })).stdout.trim();
+  const run = async (...args: string[]) => (await exec(path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank"), args, { cwd: repository, env: { ...process.env, DOCBANK_HOME: vault }, timeout: 300_000, maxBuffer: 4 * 1024 * 1024 })).stdout.trim();
   try {
     await mkdir(sources, { mode: 0o700 });
     for (let i = 0; i < 1001; i++) await writeFile(path.join(sources, `export-${String(i).padStart(4, "0")}.txt`), `Synthetic export document ${i}. Original frozen bytes.\n`, { mode: 0o600 });

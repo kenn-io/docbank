@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -32,10 +33,14 @@ func TestEmailViewerRealDaemonBrowser(t *testing.T) {
 	}
 	repository, err := filepath.Abs("../..")
 	require.NoError(t, err)
+	binary := filepath.Join(repository, "bin", "docbank")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
 	vault := filepath.Join(t.TempDir(), "vault")
 	run := func(args ...string) []byte {
 		t.Helper()
-		cmd := exec.CommandContext(t.Context(), filepath.Join(repository, "docbank"), args...)
+		cmd := exec.CommandContext(t.Context(), binary, args...)
 		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+vault, "DOCBANK_TELEMETRY_ENABLED=0")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(out))
@@ -43,11 +48,11 @@ func TestEmailViewerRealDaemonBrowser(t *testing.T) {
 	}
 	run("daemon", "start")
 	t.Cleanup(func() {
-		cmd := exec.Command(filepath.Join(repository, "docbank"), "daemon", "stop")
+		cmd := exec.Command(binary, "daemon", "stop")
 		cmd.Env = append(os.Environ(), "DOCBANK_HOME="+vault, "DOCBANK_TELEMETRY_ENABLED=0")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(out))
-		status := exec.Command(filepath.Join(repository, "docbank"), "daemon", "status", "--json")
+		status := exec.Command(binary, "daemon", "status", "--json")
 		status.Env = append(os.Environ(), "DOCBANK_HOME="+vault)
 		out, err = status.CombinedOutput()
 		require.NoError(t, err, string(out))

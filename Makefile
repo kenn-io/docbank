@@ -24,14 +24,14 @@ export GOLANGCI_LINT_CACHE
 .PHONY: build install clean test test-v openapi generate-api check-timing-budgets frontend frontend-test frontend-dev docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
 
 build: frontend
-	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o docbank ./cmd/docbank
+	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o bin/ ./cmd/docbank
 
 install: frontend
 	@mkdir -p "$(HOME)/.local/bin"
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o "$(HOME)/.local/bin/docbank" ./cmd/docbank
 
 clean:
-	rm -f docbank
+	rm -rf bin
 	find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
 	rm -rf frontend/dist
 
@@ -45,10 +45,10 @@ check-timing-budgets:
 	go run -tags "$(BUILD_TAGS)" ./scripts/check-timing-budgets .
 
 openapi:
-	go run -tags "$(BUILD_TAGS)" ./cmd/docbank openapi > openapi.yaml
+	go run -tags "$(BUILD_TAGS)" ./cmd/docbank openapi > internal/api/openapi.yaml
 
 generate-api: openapi
-	go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.15 --config oapi-codegen.yaml openapi.yaml
+	go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.15 --config scripts/oapi-codegen/config.yaml internal/api/openapi.yaml
 	cd frontend && npm run generate:api
 
 frontend:

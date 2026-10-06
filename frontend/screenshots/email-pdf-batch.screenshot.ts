@@ -44,7 +44,7 @@ test("real Takeout exports verified PDFs and explicit attachment occurrences thr
   test.setTimeout(900_000);
   const workspace = await mkdtemp(path.join(tmpdir(), "docbank-email-batch-proof-"));
   const vault = path.join(workspace, "vault");
-  const run = async (...args: string[]) => (await exec(path.join(repository, "docbank"), args, {
+  const run = async (...args: string[]) => (await exec(path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank"), args, {
     cwd: repository,
     env: {
       PATH: process.env.PATH, LANG: "C.UTF-8", DOCBANK_HOME: vault,

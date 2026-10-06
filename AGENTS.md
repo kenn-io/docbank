@@ -54,6 +54,14 @@ Do not infer fork eligibility or network/cache isolation from this setting.
 
 ## Documentation
 
+- Use Superpowers specs and plans while designing and implementing work. Keep
+  these working documents in ignored `.superpowers/specs/` and
+  `.superpowers/plans/`, not in tracked documentation.
+- Before opening or updating a pull request, distill its specs, plans, and
+  review notes into the owning living architecture or user-facing guide.
+  Preserve the resulting behavior, contracts, rationale, and active exceptions;
+  verify them against the implementation. Remove working documents from the
+  proposed changes. Keep unfinished work in kata, not in published task lists.
 - Write for the person trying to use or maintain Docbank. Lead with the
   outcome, name who does what, use short sentences, and explain unfamiliar terms.
 - Organize around reader questions. Put purpose and current capabilities first;
@@ -74,6 +82,21 @@ Do not infer fork eligibility or network/cache isolation from this setting.
   `main` describe the candidate release in present tense. Follow
   [docs/README.md](docs/README.md) for the publishing layout, release boundary,
   and checks.
+
+## Repository layout
+
+- Keep the root for the public `go.kenn.io/docbank` package, its tests, project
+  entry points, legal files, and configuration that tools discover there.
+  Moving the public package changes its import path; tidying files alone does
+  not justify that API change.
+- Put contributor guidance in `docs/internal/`, public guides in `docs/`,
+  development tooling in `scripts/`, and service deployments in `deploy/`.
+  Keep component-specific inputs beside their owner: the daemon API schema
+  belongs in `internal/api/`, and Go client templates in `scripts/oapi-codegen/`.
+- Write local binaries to ignored `bin/` and temporary work to ignored
+  `.superpowers/`. Do not leave reports, captures, or scratch files at the root.
+- Follow the [development guide](docs/internal/development.md) for the layout
+  and generated-file workflow.
 
 ## Private Data Boundary
 

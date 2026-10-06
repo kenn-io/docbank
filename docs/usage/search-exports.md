@@ -242,12 +242,13 @@ creation dates. Coarse or unusable dates are not silently made precise.
 
 Coverage reports scoped documents, searchable documents, missing text,
 incomplete families, and fallback dates for each row and across the union of
-the date ranges. `available_only` can omit documents without a usable selected
-date from coverage while keeping them as packet members. **Selected documents
-(N)** is the input population. `scoped` counts only documents inside at least
-one term's date range with a usable date. Missing evidence does not prove that
-a document has no relevant content. Keep the coverage receipt with the CSV when
-sharing counts.
+the date ranges. Incomplete-family coverage counts selected, date-eligible
+documents, not distinct family groups. `available_only` can omit documents
+without a usable selected date from coverage while keeping them as packet
+members. **Selected documents (N)** is the input population. `scoped` counts
+only documents inside at least one term's date range with a usable date.
+Missing evidence does not prove that a document has no relevant content. Keep
+the coverage receipt with the CSV when sharing counts.
 
 ## Evidence and retention limits
 

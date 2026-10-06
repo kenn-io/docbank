@@ -35,7 +35,7 @@ images remain readable without a renderer.
 Build the inspector from the same source revision as Docbank:
 
 ```sh
-go build -tags fts5 -o docbank-page-inspect ./document/pagerender/cmd/docbank-page-inspect
+go build -tags fts5 -o bin/ ./document/pagerender/cmd/docbank-page-inspect
 ```
 
 Install all three at immutable regular-file paths, resolve symlinks, calculate

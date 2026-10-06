@@ -75,6 +75,11 @@ The daemon checks the complete identity and size. It never substitutes the
 current version. Names and paths are frozen at preview time. Only the selected
 originals are exported: no descendants, attachments, or renditions are added.
 
+You can explicitly select a published attachment as an ordinary original.
+Omitting it excludes its separate file and manifest row. An exported original
+email still contains every MIME part in its original bytes; selecting only the
+parent does not redact its attachments.
+
 Keep the request and operation IDs for retries. Repeat exactly the same request
 after a lost response. Changed input under an existing ID conflicts. After a
 long interruption, inspect the known job ID or repeat `start`, rather than

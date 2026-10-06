@@ -17,9 +17,15 @@ contributor guidance and is excluded from the public Zensical site.
 - [Daemon and API design](daemon-api-design.md) — sole vault ownership,
   discovery, authentication, revisions, path operations, maintenance gating,
   and errors.
+- [Search reports and evidence inspection](search-reports.md) — exact selection,
+  frozen evidence, family membership, history, recovery, and bounded reads.
+- [Export bundle design](export-bundles.md) — exact versions, replay, retention,
+  verified delivery, and explicit release.
 - [Development guide](development.md) — where changes belong, which
   cross-layer contracts must move together, and how design documentation stays
   current.
+- [Documentation publishing](../README.md) — site assembly, Markdown peers,
+  screenshot pins, and the software release boundary.
 - [CSV to PDF conversion](csv-pdf.md) — bounded local conversion, receipts,
   and the separate upload-authorization boundary.
 - [Render documents to PDF](render-pdf.md) — isolated DOCX normalization,

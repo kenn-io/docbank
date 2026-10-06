@@ -11,7 +11,7 @@ import type { SnapshotPage as QuerySnapshotPage } from "../src/snapshots.js";
 
 const execFileAsync = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const binary = path.join(repository, "docbank");
+const binary = path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const screenshots = process.env.DOCBANK_SNAPSHOT_SCREENSHOT_DIR;
 test.skip(
   !screenshots,

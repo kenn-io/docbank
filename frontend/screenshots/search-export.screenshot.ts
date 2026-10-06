@@ -16,7 +16,7 @@ test("reports selected versions and preserves historical downloads", async ({ pa
   test.setTimeout(240_000);
   const scratch = await mkdtemp(path.join(tmpdir(), "docbank-search-"));
   const vault = path.join(scratch, "vault");
-  const run = async (...args: string[]) => (await exec(path.join(repository, "docbank"), args, {
+  const run = async (...args: string[]) => (await exec(path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank"), args, {
     cwd: repository, env: { ...process.env, DOCBANK_HOME: vault }, timeout: 90_000,
   })).stdout.trim();
   let running = false;

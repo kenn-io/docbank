@@ -13,7 +13,7 @@ import { parseCSV } from "../test-support/csv.js";
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(here, "..", "..");
-const binary = path.join(repositoryRoot, "docbank");
+const binary = path.join(repositoryRoot, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const screenshotDirectory = process.env.DOCBANK_SCREENSHOT_DIR;
 if (!screenshotDirectory) throw new Error("DOCBANK_SCREENSHOT_DIR is required");
 const screenshotPathFor = (name: string): string =>

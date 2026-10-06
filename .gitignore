@@ -1,7 +1,10 @@
-# roborev snapshots
+# Local reviews and working documents
 /.roborev/
 /.superpowers/
-/docbank
+/docs/superpowers/
+
+# Local binaries
+/bin/
 
 # Frontend dependencies and generated embed output
 node_modules/
