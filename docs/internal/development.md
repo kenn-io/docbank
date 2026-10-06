@@ -198,11 +198,14 @@ rationale.
 `kennlint` plugin. They report `time.Sleep`, and `context.WithTimeout`,
 `time.After`, timers, or `Eventually` calls with a budget below one second, in
 tests outside a synctest bubble. A short positive `Never` window is allowed,
-since it can only check less. A deadline finding may carry
-`//nolint:kennlint // reason` only when the asserted result is the deadline
-expiring, or when a `select` on a timer shows that an event does not happen;
-the reason names the case and what holds the wait. A sleep finding's reason
-names the real-clock dependency that keeps it out of a bubble.
+since it can only check less.
+
+A deadline finding may carry `//nolint:kennlint // reason` in three cases: the
+asserted result is the deadline expiring; a `select` on a timer shows that an
+event does not happen; or the call sits in a helper that runs only inside a
+bubble the analyzer can't see across the call. The reason names the case and
+what holds the wait. A sleep finding's reason names the real-clock dependency
+that keeps it out of a bubble.
 
 Use `testing/synctest` for channels, callbacks, timers, goroutines, and readers
 owned by a test. Keep waits for provider HTTP, managed commands, daemons,

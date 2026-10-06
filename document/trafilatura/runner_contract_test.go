@@ -272,7 +272,7 @@ func defaultRun(ctx context.Context, runnerIdentity string, request IsolatedRunR
 		select {
 		case <-ctx.Done():
 			return isolatedResult(runnerIdentity, request, nil), ctx.Err()
-		case <-time.After(40 * time.Millisecond): //nolint:kennlint // the deadline is the expected result; the fake child outlasts the authorization expiry inside the caller's synctest bubble
+		case <-time.After(40 * time.Millisecond): //nolint:kennlint // runs only inside the expired-after-child synctest bubble in provider_test.go, so this is fake time the authorization expiry falls within
 		}
 	case "unbounded-output":
 		return isolatedResult(runnerIdentity, request, nil), ErrChildOutputTooLarge
