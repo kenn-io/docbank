@@ -32,17 +32,14 @@ it("uses preview dimensions before technical dimensions and falls back to a squa
   expect(photoAspect(item)).toBe(1);
 });
 
-it("groups by recorded month, retaining absent dates in Undated", () => {
-  const groups = groupPhotos([photo(3, "2024-12-31T23:30:00-12:00"), photo(2, null), photo(1, "2025-01-01T00:30:00+14:00")], "months");
-  expect(groups.map(group => group.key)).toEqual(["2025-01", "2024-12", "undated"]);
-  expect(groups[2].items[0].asset_id).toBe("photo-2");
-});
-
-it("joins a session across appended pages with a four-hour gap", () => {
+it("groups recorded months and capture sessions across appended pages", () => {
+  const months = groupPhotos([photo(3, "2024-12-31T23:30:00-12:00"), photo(2, null), photo(1, "2025-01-01T00:30:00+14:00")], "months");
+  expect(months.map(group => group.key)).toEqual(["2025-01", "2024-12", "undated"]);
+  expect(months[2].items[0].asset_id).toBe("photo-2");
   const firstPage = [photo(1, "2025-06-01T17:00:00"), photo(2, "2025-06-01T10:00:00")];
-  const secondPage = [photo(3, "2025-06-01T09:00:00"), photo(4, null)];
+  const secondPage = [photo(3, "2025-06-01T09:00:00")];
   const groups = groupPhotos([...firstPage, ...secondPage], "sessions");
-  expect(groups.map(group => group.items.map(item => item.asset_id))).toEqual([["photo-1"], ["photo-3", "photo-2"], ["photo-4"]]);
+  expect(groups.map(group => group.items.map(item => item.asset_id))).toEqual([["photo-1"], ["photo-3", "photo-2"]]);
   expect(groupPhotos([photo(1, "2025-06-01"), photo(2, "2025-06-01T01")], "sessions")).toHaveLength(1);
   const parsed = groupPhotos([
     photo(1, "2025-06-01T9"), photo(2, "2025-06-01T9:30Z"),

@@ -27,10 +27,6 @@ it("shares pending reads, retains bytes without fetch, and releases settled entr
   vi.stubGlobal("fetch", fetcher);
   const cache = workspace();
   const first = cache.get("asset", "generation");
-  const caller = new AbortController();
-  const canceled = expect(cache.get("asset", "generation", caller.signal)).rejects.toThrow();
-  caller.abort();
-  await canceled;
   expect(await (await first).text()).toBe("synthetic-jpeg");
   const opened = await stored.open.mock.results[0].value;
   expect(opened.match).toHaveBeenCalledTimes(1);

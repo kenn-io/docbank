@@ -6,14 +6,12 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clea
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
 
 it("keeps earlier pages on failure, waits for Retry, and reuses the failed cursor", async () => {
-  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1)], "next-page"))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Temporary read failure" }), { status: 503 }))
-    .mockResolvedValueOnce(response([photo(2), photo(3)]));
+  const fetcher = vi.fn();
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   let finish!: (response: Response) => void;
   let release!: () => void;
-  fetcher.mockReset().mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+  fetcher.mockImplementationOnce(() => new Promise(resolve => finish = resolve))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Temporary read failure" }), { status: 503 }))
     .mockResolvedValueOnce(response([photo(2), photo(3)]));
   const restore = vi.fn(() => new Promise<void>(resolve => release = resolve));
