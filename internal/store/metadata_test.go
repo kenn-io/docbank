@@ -1251,6 +1251,37 @@ func TestImportMetadataRejectsLexicalProjectionState(t *testing.T) {
 	assert.Equal(t, generation.ID, active.ID)
 }
 
+func TestMetadataImportRejectsRetiredImportHeads(t *testing.T) {
+	t.Parallel()
+	header := `{"type":"meta","format":"docbank-metadata","version":1,"vault_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","node_sequence":1}` + "\n"
+	for _, kind := range []string{"package_import_head", "mailbox_transfer_head"} {
+		t.Run(kind, func(t *testing.T) {
+			target := newTestStore(t)
+			input := header + `{"type":"` + kind + `"}` + "\n"
+			err := target.ImportMetadata(t.Context(), strings.NewReader(input))
+			require.ErrorContains(t, err, `unknown record type "`+kind+`"`)
+		})
+	}
+}
+
+func TestMetadataCodecCorruptWaiterFailsExport(t *testing.T) {
+	t.Parallel()
+	s, versions := newRenditionCatalogFixture(t)
+	request := renditionJobTestRequest(versions[0], catalogProcessingProfile(t, false))
+	grantRenditionJobConsent(t, s, request)
+	_, waiter, err := s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(t.Context(),
+		`UPDATE rendition_job_waiters SET state='synthetic-invalid' WHERE waiter_id=?`, waiter.ID)
+	require.NoError(t, err)
+
+	var exported bytes.Buffer
+	err = s.ExportMetadata(t.Context(), &exported)
+	require.ErrorContains(t, err, "invalid rendition job waiter metadata")
+	// The waiter is checked mid-stream, after earlier records are written.
+	require.Positive(t, exported.Len())
+}
+
 func TestImportMetadataRejectsUnknownVersionAndFields(t *testing.T) {
 	t.Parallel()
 	for _, input := range []string{

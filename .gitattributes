@@ -36,5 +36,3 @@ internal/api/openapi.yaml linguist-generated=true
 internal/apiclient/*.gen.go linguist-generated=true
 frontend/src/generated/** linguist-generated=true
 frontend/package-lock.json linguist-generated=true
-# The backup codec goldens are byte-for-byte oracles, not text files.
-internal/store/testdata/metadata-codec-golden* -text
