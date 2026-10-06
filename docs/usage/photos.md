@@ -16,8 +16,8 @@ the same position when further results remain.
 
 Choose Months or Capture sessions to group the grid. A session joins captures
 with gaps of four hours or less. Compact, Comfortable, and Large change the
-grid density. The browser remembers the density after a reload, including
-when you open a fresh `docbank web` session link.
+grid density. The browser remembers the density across reloads and fresh
+`docbank web` links until the daemon restarts on a new address.
 
 Click a photo to select it. Shift-click adds the range from the previous
 selection, including loaded photos outside the screen. Ctrl-click or
