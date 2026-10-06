@@ -132,7 +132,7 @@ docs-link:
 	}
 
 docs-deploy:
-	DOCS_SOURCE="$(DOCS_SOURCE)" ./scripts/deploy-docs.sh
+	./scripts/deploy-docs.sh
 
 help:
 	@echo "Targets: build install clean test test-v openapi generate-api frontend frontend-test frontend-dev docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"

@@ -8,11 +8,10 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
-test("production deployment checks its upload report before uploading", async (t) => {
+test("documentation deployment checks working-tree uploads before publishing", async (t) => {
   const scratch = await mkdtemp(path.join(tmpdir(), "docbank-deploy-test-"));
   t.after(() => rm(scratch, { recursive: true, force: true }));
   const repo = path.join(scratch, "repo");
-  const remote = path.join(scratch, "remote.git");
   const bin = path.join(scratch, "bin");
   await mkdir(path.join(repo, "scripts", "docs"), { recursive: true });
   await mkdir(bin);
@@ -34,8 +33,8 @@ test("production deployment checks its upload report before uploading", async (t
     return result.stdout.trim();
   };
   for (const relative of [
+    "Makefile",
     "scripts/deploy-docs.sh",
-    "scripts/validate-docs-release.sh",
     "scripts/docs/assert-vercel-dry-run.mjs",
   ]) {
     await copyFile(path.join(repositoryRoot, relative), path.join(repo, relative));
@@ -53,16 +52,13 @@ test("production deployment checks its upload report before uploading", async (t
   const extra = "website/assets/operator-notes.txt";
   await mkdir(path.dirname(path.join(repo, extra)), { recursive: true });
   await writeFile(path.join(repo, extra), "Synthetic non-publication input.\n");
-  git("init", "--quiet", "--bare", remote);
   git("init", "--quiet", "-b", "main");
   git("config", "user.name", "Deployment Test");
   git("config", "user.email", "deploy-test@example.invalid");
   git("add", ".");
   git("commit", "--quiet", "-m", "release fixture");
-  git("tag", "v1.0.0");
-  git("remote", "add", "origin", remote);
-  git("push", "--quiet", "origin", "main", "--tags");
-  env.DOCS_SOURCE = git("rev-parse", "HEAD");
+  // Deploy local documentation edits without a release tag or remote.
+  await writeFile(path.join(repo, "website/index.html"), "Updated documentation.\n");
   await writeFile(path.join(bin, "vercel"), `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
@@ -78,32 +74,26 @@ if (args.includes("--dry")) {
 `);
   await chmod(path.join(bin, "vercel"), 0o755);
 
-  for (const scenario of ["extra-file", "dry-run-failure", "cancel-inspect", "allowed", "default-source", "wrong-source"]) {
+  for (const scenario of ["extra-file", "dry-run-failure", "cancel-inspect", "allowed"]) {
     await t.test(scenario, async () => {
       await writeFile(env.DEPLOY_CALLS, "");
       const reported = scenario === "extra-file" ? [...files, { path: extra, size: 40 }] : files;
       await writeFile(env.UPLOAD_REPORT, JSON.stringify({ files: reported }));
-      const result = spawnSync("sh", ["scripts/deploy-docs.sh"], {
+      const result = spawnSync("make", ["docs-deploy"], {
         cwd: repo, env: {
           ...env,
-          DOCS_SOURCE: scenario === "default-source" ? "" : scenario === "wrong-source" ? "0000000000000000000000000000000000000000" : env.DOCS_SOURCE,
           DRY_EXIT: scenario === "dry-run-failure" ? "1" : "0",
           CANCEL_INSPECT: scenario === "cancel-inspect" ? "1" : "0",
         },
         encoding: "utf8", timeout: 30_000,
       });
       const calls = (await readFile(env.DEPLOY_CALLS, "utf8")).trim().split("\n").filter(Boolean).map(JSON.parse);
-      if (scenario === "wrong-source") {
-        assert.notEqual(result.status, 0);
-        assert.match(result.stderr, /DOCS_SOURCE must equal HEAD/);
-        assert.deepEqual(calls, [], "a mismatched source must stop before contacting Vercel");
-        return;
-      }
-      if (scenario === "default-source") assert.equal(result.status, 0, result.stderr);
+      if (scenario === "allowed") assert.equal(result.status, 0, result.stderr);
+      assert.ok(calls.length > 0, result.stderr);
       assert.ok(calls[0].includes("--dry"), "first Vercel call must be a dry run");
       assert.ok(calls[0].includes("--prod"), "check the production upload inputs");
       assert.ok(calls[0].includes("--json"), "validate the structured upload report");
-      if (scenario === "allowed" || scenario === "default-source") {
+      if (scenario === "allowed") {
         assert.equal(result.status, 0, result.stderr);
         assert.deepEqual(calls.slice(1).map(([command]) => command), ["deploy", "inspect", "promote"]);
       } else if (scenario === "cancel-inspect") {
