@@ -796,7 +796,7 @@ func TestPDFiumDeniedFilesystemAndCancellation(t *testing.T) {
 	cancel()
 	_, err = engine.Render(ctx, Source{bytes.NewReader(pdf), int64(len(pdf)), digest(pdf)}, redaction.Page{Number: 1, FrameSHA256: digest([]byte("frame")), Width: 85000, Height: 110000}, qualificationRecipe())
 	require.ErrorIs(t, err, context.Canceled)
-	ctx, cancel = context.WithTimeout(t.Context(), time.Nanosecond)
+	ctx, cancel = context.WithTimeout(t.Context(), 0)
 	defer cancel()
 	require.ErrorIs(t, e.withInstance(ctx, func(pdfium.Pdfium) error { t.Fatal("expired context entered WASM"); return nil }), context.DeadlineExceeded)
 }
