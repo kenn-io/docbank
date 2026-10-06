@@ -105,9 +105,8 @@ fi
 
 tree_files="$scratch/tree-files"
 git -C "$git_repo" ls-tree -r --name-only "$asset_ref" | LC_ALL=C sort > "$tree_files"
-if ! diff -u "$manifest" "$tree_files" >/dev/null; then
+if [[ "$(<"$manifest")" != "$(<"$tree_files")" ]]; then
   printf 'docs asset commit tree differs from manifest\n' >&2
-  diff -u "$manifest" "$tree_files" >&2 || true
   exit 1
 fi
 if git -C "$git_repo" ls-tree -r "$asset_ref" | awk '$1 != "100644" { found=1 } END { exit !found }'; then

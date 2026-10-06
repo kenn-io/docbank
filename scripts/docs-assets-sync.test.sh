@@ -6,10 +6,11 @@ sync_script="$script_dir/sync-docs-assets.sh"
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "$test_root"' EXIT INT TERM
 
+for variable in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do
+  unset "$variable"
+done
 export GIT_CONFIG_GLOBAL="$test_root/gitconfig"
 export GIT_CONFIG_NOSYSTEM=1
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY
-unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE
 
 manifest="$test_root/docs-assets.txt"
 ref_file="$test_root/docs-assets.ref"
@@ -21,6 +22,18 @@ if command -v sha256sum >/dev/null 2>&1; then
 else
   checksum() { shasum -a 256 "$@"; }
 fi
+
+# The Vercel build image has these tools but no diff utility.
+sync_bin="$test_root/bin"
+mkdir -p "$sync_bin"
+for tool in awk bash basename dirname find git grep mkdir mktemp mv od rm sh sort tr uniq wc; do
+  ln -s "$(command -v "$tool")" "$sync_bin/$tool"
+done
+for tool in sha256sum shasum; do
+  if executable=$(command -v "$tool"); then
+    ln -s "$executable" "$sync_bin/$tool"
+  fi
+done
 
 fail() {
   printf 'docs asset sync test failed: %s\n' "$1" >&2
@@ -76,6 +89,7 @@ run_sync() {
   DOCBANK_DOCS_ASSETS_MANIFEST="$manifest" \
   DOCBANK_DOCS_ASSETS_REF="$ref_file" \
   DOCBANK_DOCS_ASSETS_CACHE="$cache" \
+  PATH="$sync_bin" \
     "$sync_script"
 }
 
@@ -92,6 +106,7 @@ run_sync
 destination="$cache/$fixture_commit"
 test -f "$destination/one.png" || fail "valid PNG was not cached"
 test -f "$destination/.sha256" || fail "checksum record was not cached"
+cmp "$fixture/one.png" "$destination/one.png" || fail "cached PNG differs from the source"
 before_checksum="$(checksum "$destination/one.png")"
 
 printf 'docs-assets-candidate\n' > "$ref_file"
