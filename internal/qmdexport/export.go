@@ -24,6 +24,7 @@ import (
 	"golang.org/x/text/transform"
 
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 	"go.kenn.io/kit/safefileio"
@@ -253,7 +254,7 @@ func publish(ctx context.Context, root, collection string, sources []Source, cat
 		if err := ctx.Err(); err != nil {
 			return Receipt{}, err
 		}
-		if err := renamePublished(stage, final); err != nil {
+		if err := atomicfile.Replace(stage, final); err != nil {
 			return Receipt{}, fmt.Errorf("publish qmd export generation: %w", err)
 		}
 	} else if statErr != nil {
@@ -564,7 +565,7 @@ func publishCurrent(ctx context.Context, root, generationID string) (retErr erro
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := renamePublished(path, filepath.Join(root, "CURRENT")); err != nil {
+	if err := atomicfile.Replace(path, filepath.Join(root, "CURRENT")); err != nil {
 		return fmt.Errorf("publish qmd export current pointer: %w", err)
 	}
 	path = ""

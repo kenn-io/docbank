@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 	"go.kenn.io/kit/safefileio"
@@ -285,7 +286,7 @@ func writePrimaryRestoreHandoff(
 		return fmt.Errorf("closing primary restore handoff staging: %w", err)
 	}
 	open = false
-	if err := os.Rename(stagedPath, primaryRestoreHandoffPath(blobsDir)); err != nil {
+	if err := atomicfile.Replace(stagedPath, primaryRestoreHandoffPath(blobsDir)); err != nil {
 		return fmt.Errorf("publishing primary restore handoff: %w", err)
 	}
 	if err := pack.SyncDir(dir); err != nil {

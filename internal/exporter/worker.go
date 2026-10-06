@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/safefileio"
 )
 
@@ -223,7 +224,7 @@ func (w *Worker) RunOne(ctx context.Context) (bool, error) {
 				return err
 			}
 			destination := filepath.Join(w.dir, claim.Job.ID+".zip")
-			if err := os.Rename(file.Name(), destination); err != nil {
+			if err := atomicfile.Replace(file.Name(), destination); err != nil {
 				return err
 			}
 			if err := w.retryCatalog(work, func() error {

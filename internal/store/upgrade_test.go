@@ -999,7 +999,7 @@ func TestV090CutoverPublicationFailureRestoresReleasedDatabase(t *testing.T) { /
 		if calls == 2 {
 			return errors.New("injected upgraded-database publication failure")
 		}
-		return os.Rename(oldPath, newPath)
+		return originalRename(oldPath, newPath)
 	}
 
 	_, err := Open(dbPath, driver)

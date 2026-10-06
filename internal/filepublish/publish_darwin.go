@@ -14,7 +14,3 @@ func renameNoReplace(stagedPath, destinationPath string) error {
 	}
 	return nil
 }
-
-func replaceFile(stagedPath, destinationPath string) error {
-	return os.Rename(stagedPath, destinationPath)
-}
