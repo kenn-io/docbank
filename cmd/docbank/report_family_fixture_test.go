@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -214,24 +215,30 @@ func (f *familyReportFixture) identity(key string) report.Identity {
 	return report.Identity{NodeID: member.NodeID, VersionID: member.VersionID, SHA256: member.SHA256}
 }
 
-func (f *familyReportFixture) start(t *testing.T) func() {
+func (f *familyReportFixture) start(t *testing.T, root string) func() {
 	t.Helper()
+	path := filepath.Join(root, "config.toml")
+	tables := make(map[string]any)
+	_, err := toml.DecodeFile(path, &tables)
+	if !errors.Is(err, os.ErrNotExist) {
+		require.NoError(t, err)
+	}
+	// Preserve duration strings and restored storage bindings as TOML values.
+	tables["rendition_profiles"] = f.config.RenditionProfiles
+	tables["retrieval_profiles"] = f.config.RetrievalProfiles
+	tables["processing_profiles"] = f.config.ProcessingProfiles
 	var content bytes.Buffer
-	require.NoError(t, toml.NewEncoder(&content).Encode(map[string]any{
-		"rendition_profiles":  f.config.RenditionProfiles,
-		"retrieval_profiles":  f.config.RetrievalProfiles,
-		"processing_profiles": f.config.ProcessingProfiles,
-	}))
-	require.NoError(t, os.WriteFile(filepath.Join(f.root, "config.toml"), content.Bytes(), 0o600))
-	loaded, err := config.Load(f.root)
+	require.NoError(t, toml.NewEncoder(&content).Encode(tables))
+	require.NoError(t, os.WriteFile(path, content.Bytes(), 0o600))
+	loaded, err := config.Load(root)
 	require.NoError(t, err)
 	profile, err := loaded.ProcessingProfile("archive")
 	require.NoError(t, err)
 	_, fingerprints, err := document.CanonicalProfile(profile.Document)
 	require.NoError(t, err)
 	require.Equal(t, f.profile, fingerprints.Profile)
-	t.Setenv("DOCBANK_HOME", f.root)
+	t.Setenv("DOCBANK_HOME", root)
 	stop := startServe(t)
-	waitForDaemon(t, f.root)
+	waitForDaemon(t, root)
 	return stop
 }

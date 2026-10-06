@@ -234,6 +234,12 @@ evidence.
 The ZIP omits unrelated relationship groups and their warnings. Documents outside
 the selected scope do not contribute to counts.
 
+A trashed attachment cannot connect a fresh report's family, and its published
+parent has incomplete family coverage. If the parent and attachment versions
+are still current, restoring the attachment from trash makes the link available
+to fresh reports again. Backup and restore preserve the published relationships
+and trash state; an already captured report keeps its original family evidence.
+
 Date selection prefers source evidence appropriate to the document kind,
 then labeled document dates, then source metadata and recorded import or vault
 dates. Equally preferred conflicting dates require review. Signed, effective,
