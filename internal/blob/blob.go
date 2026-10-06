@@ -4,7 +4,6 @@ package blob
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/md5" //nolint:gosec // Auxiliary MD5 is interoperability metadata; SHA-256 remains authoritative.
 	"encoding/hex"
@@ -616,32 +615,40 @@ func (s *Store) WriteDetailedContext(ctx context.Context, r io.Reader) (WriteRec
 	if err := ctx.Err(); err != nil {
 		return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
 	}
-	compression := s.compression
-	if compression.Enabled && compression.MinBytes > 0 {
+	opts := packstore.WriteOptions{
+		Durability:  packstore.DurablePublication,
+		Dedup:       packstore.VerifyTypeAndSize,
+		MaxBytes:    MaxIngestBytes,
+		Compression: s.compression,
+	}
+	if opts.Compression.Enabled && opts.Compression.MinBytes > 0 {
 		// Kit decides whether to keep compressed bytes after encoding. Avoid
 		// constructing an encoder at all for files below our minimum. Bound
 		// read-ahead even when embedded callers configure a larger minimum.
-		prefix := int(min(compression.MinBytes, 4<<10))
+		prefix := int(min(opts.Compression.MinBytes, 4<<10))
 		buffered := bufio.NewReaderSize(contextReader{ctx: ctx, reader: r}, prefix)
 		head, err := buffered.Peek(prefix)
 		switch err {
 		case nil:
 			r = buffered
 		case io.EOF: // Match io.Copy: only exact EOF ends the stream successfully.
-			compression.Enabled = false
-			// Peek consumes EOF. Replay its bytes without reading past that EOF.
-			r = bytes.NewReader(head)
+			opts.Compression.Enabled = false
+			// The complete content is already buffered. Let Kit identify a
+			// duplicate before writing and syncing another staging file.
+			result, err := s.loose.WriteBytes(ctx, head, opts)
+			if err != nil {
+				return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
+			}
+			receipt := writeReceipt(result)
+			sum := md5.Sum(head) //nolint:gosec // Auxiliary interoperability digest.
+			receipt.MD5 = hex.EncodeToString(sum[:])
+			return receipt, nil
 		default:
 			return WriteReceipt{}, fmt.Errorf("reading blob prefix: %w", err)
 		}
 	}
 	auxiliary := md5.New() //nolint:gosec // Interoperability-only digest; SHA-256 remains authoritative.
-	result, err := s.loose.Write(ctx, io.TeeReader(r, auxiliary), packstore.WriteOptions{
-		Durability:  packstore.DurablePublication,
-		Dedup:       packstore.VerifyTypeAndSize,
-		MaxBytes:    MaxIngestBytes,
-		Compression: compression,
-	})
+	result, err := s.loose.Write(ctx, io.TeeReader(r, auxiliary), opts)
 	if err != nil {
 		return WriteReceipt{}, fmt.Errorf("writing blob: %w", err)
 	}

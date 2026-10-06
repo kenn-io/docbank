@@ -25,10 +25,11 @@ import (
 )
 
 func TestWriteReceiptIncludesAuxiliaryMD5WithoutChangingSHA256Identity(t *testing.T) {
-	bs := newTestBlobStore(t)
+	bs := newTestBlobStoreWithOptions(t, ManagedOptions())
 	for name, content := range map[string][]byte{
-		"content": []byte("synthetic auxiliary checksum bytes"),
-		"empty":   {},
+		"content":  []byte("synthetic auxiliary checksum bytes"),
+		"empty":    {},
+		"streamed": bytes.Repeat([]byte("synthetic streamed checksum bytes"), 256),
 	} {
 		t.Run(name, func(t *testing.T) {
 			first, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(content))
@@ -112,6 +113,25 @@ func TestCompressedWriteKeepsSmallObjectRaw(t *testing.T) {
 	require.FileExists(t, bs.path(receipt.Hash))
 	require.NoFileExists(t, bs.compressedPath(receipt.Hash))
 	assertVerifiedBlob(t, bs, receipt.Hash, content)
+}
+
+func TestBufferedDuplicateDoesNotStageContent(t *testing.T) {
+	bs := newTestBlobStoreWithOptions(t, ManagedOptions())
+	content := []byte("synthetic duplicate content")
+	first, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(content))
+	require.NoError(t, err)
+
+	// A duplicate whose bytes are already buffered needs no temporary file.
+	// Make staging unavailable to detect an unnecessary second publication.
+	require.NoError(t, os.Remove(bs.tmpDir()))
+	require.NoError(t, os.WriteFile(bs.tmpDir(), []byte("not a directory"), 0o600))
+	second, err := bs.WriteDetailedContext(t.Context(), bytes.NewReader(content))
+	require.NoError(t, err)
+	assert.Equal(t, first.Hash, second.Hash)
+	assert.Equal(t, first.MD5, second.MD5)
+	assert.Equal(t, first.Size, second.Size)
+	assert.False(t, second.Created)
+	assertVerifiedBlob(t, bs, second.Hash, content)
 }
 
 func TestCompressedWriteMinimumAcrossShortReads(t *testing.T) {
@@ -553,7 +573,7 @@ func TestWriteSurfacesSyncDirFailure(t *testing.T) {
 }
 
 func TestWriteDedupFastPathSurfacesSyncDirFailure(t *testing.T) {
-	bs := newTestBlobStore(t)
+	bs := newTestBlobStoreWithOptions(t, ManagedOptions())
 	content := "dedup me"
 
 	hash1, size1, err := bs.Write(strings.NewReader(content))
