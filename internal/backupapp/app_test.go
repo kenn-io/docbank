@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1638,6 +1639,12 @@ func TestMalformedJSONLRestoreLeavesNoPublishedDatabase(t *testing.T) {
 func TestLooseAbovePackingLimitSnapshotVerifyAndRestore(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	size := blob.MaxPackedBlobBytes + 1
+	if value := os.Getenv("DOCBANK_LARGE_OBJECT_TEST_BYTES"); value != "" {
+		var err error
+		size, err = strconv.ParseInt(value, 10, 64)
+		require.NoError(t, err)
+		require.Greater(t, size, blob.MaxPackedBlobBytes)
+	}
 	var hash string
 	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
 		var err error
@@ -1681,10 +1688,15 @@ func TestLooseAbovePackingLimitSnapshotVerifyAndRestore(t *testing.T) {
 	require.NoError(t, stream.Close())
 	physical, err := restoredStore.PhysicalContent(t.Context(), hash)
 	require.NoError(t, err)
-	assert.Equal(t, store.PhysicalContent{
-		Kind: "loose", Encoding: "raw", LogicalBytes: size,
-		StoredBytes: size, PackEligible: false,
-	}, physical)
+	assert.Equal(t, "loose", physical.Kind)
+	assert.Equal(t, "zstd", physical.Encoding)
+	assert.Equal(t, size, physical.LogicalBytes)
+	assert.Less(t, physical.StoredBytes, size/10)
+	assert.False(t, physical.PackEligible)
+	compressed, err := os.Stat(filepath.Join(target, "blobs", hash[:2], hash+".zst"))
+	require.NoError(t, err)
+	assert.Equal(t, physical.StoredBytes, compressed.Size())
+	assert.NoFileExists(t, filepath.Join(target, "blobs", hash[:2], hash))
 	backlog, err := restoredStore.LooseBacklog(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, store.LooseBacklog{}, backlog)

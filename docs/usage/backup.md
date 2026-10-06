@@ -200,6 +200,14 @@ verified individual blob file instead. The result reports the loose count and
 grouped fallback reasons. This is a representation choice, not an integrity
 failure.
 
+Individual files use the same compression policy as normal Docbank imports:
+files of at least 4 KiB use zstd when it saves at least 10%. This includes
+large files reconstructed from backup chunks. The restored database and host
+extras remain ordinary files. Restoring an individual file temporarily needs
+space for its uncompressed bytes and its compressed candidate; the unused
+copy is removed when that file finishes. An overwrite restore reuses
+existing verified files in their current encoding.
+
 Snapshots also carry a non-secret `docbank-placement-v1` description of source
 stores and the hashes held by each. Default restore places all verified content
 in a fresh local primary store. It gives that store a new ID and ownership

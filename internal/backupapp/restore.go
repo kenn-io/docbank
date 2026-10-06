@@ -144,6 +144,10 @@ func RestoreWithPlacement(
 	}
 	opts.SQLiteOpener = SQLiteOpener(driver)
 	opts.MetadataRestorer = metadataRestorer{driver: driver}
+	opts.LooseCompression = packstore.LooseCompressionOptions{
+		Enabled: true, MinBytes: blob.ManagedLooseCompressionMinBytes,
+		MinSavingsPercent: blob.ManagedLooseCompressionMinSavingsPercent,
+	}
 	var sourcePlacement placementManifest
 	var app backup.App = New(version)
 	var primaryHandoff *blob.PrimaryRestoreHandoff
@@ -202,7 +206,7 @@ func RestoreWithPlacement(
 			return err
 		}
 		if err := verifyRestoredRenditionHeads(
-			hookCtx, staged.TargetDir, staged.DBPath, driver,
+			hookCtx, staged.TargetDir, staged.DBPath, driver, staged.LooseContent,
 		); err != nil {
 			return err
 		}
@@ -240,6 +244,7 @@ func RestoreWithPlacement(
 
 func verifyRestoredRenditionHeads(
 	ctx context.Context, target, databasePath string, driver docsqlite.Driver,
+	loose []packstore.WriteResult,
 ) (retErr error) {
 	metadata, err := store.OpenForRestore(databasePath, driver)
 	if err != nil {
@@ -248,6 +253,18 @@ func verifyRestoredRenditionHeads(
 	defer func() {
 		retErr = errors.Join(retErr, metadata.Close())
 	}()
+	for _, receipt := range loose {
+		encoding := "raw"
+		if receipt.Encoding == packstore.LooseEncodingZstd {
+			encoding = "zstd"
+		}
+		if _, err := metadata.RepairBlobAuthority(ctx, receipt.Hash.String(), receipt.Size, store.BlobPhysical{
+			Encoding: encoding, StoredBytes: receipt.StoredSize,
+			PackEligible: receipt.Size <= blob.MaxPackedBlobBytes,
+		}); err != nil {
+			return fmt.Errorf("backupapp: recording restored loose content: %w", err)
+		}
+	}
 	if err := metadata.VerifyRestoredRenditionBlobAuthority(ctx); err != nil {
 		return fmt.Errorf("backupapp: verifying restored rendition authority: %w", err)
 	}
