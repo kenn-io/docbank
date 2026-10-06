@@ -67,14 +67,17 @@ if (args.includes("--dry")) {
   process.stdout.write(fs.readFileSync(process.env.UPLOAD_REPORT));
   process.exitCode = Number(process.env.DRY_EXIT || 0);
 } else if (args[0] === "deploy") {
-  console.log("https://fixture.vercel.app");
-} else if (args[0] === "inspect" && process.env.CANCEL_INSPECT === "1") {
-  process.kill(process.ppid, "SIGTERM");
+  if (process.env.DEPLOY_EXIT === "1") {
+    console.error("deployment build failed");
+    process.exitCode = 1;
+  } else {
+    console.log(JSON.stringify({ status: "ok", deployment: { url: "https://fixture.vercel.app" } }));
+  }
 }
 `);
   await chmod(path.join(bin, "vercel"), 0o755);
 
-  for (const scenario of ["extra-file", "dry-run-failure", "cancel-inspect", "allowed"]) {
+  for (const scenario of ["extra-file", "dry-run-failure", "deploy-failure", "allowed"]) {
     await t.test(scenario, async () => {
       await writeFile(env.DEPLOY_CALLS, "");
       const reported = scenario === "extra-file" ? [...files, { path: extra, size: 40 }] : files;
@@ -83,22 +86,24 @@ if (args.includes("--dry")) {
         cwd: repo, env: {
           ...env,
           DRY_EXIT: scenario === "dry-run-failure" ? "1" : "0",
-          CANCEL_INSPECT: scenario === "cancel-inspect" ? "1" : "0",
+          DEPLOY_EXIT: scenario === "deploy-failure" ? "1" : "0",
         },
         encoding: "utf8", timeout: 30_000,
       });
       const calls = (await readFile(env.DEPLOY_CALLS, "utf8")).trim().split("\n").filter(Boolean).map(JSON.parse);
-      if (scenario === "allowed") assert.equal(result.status, 0, result.stderr);
       assert.ok(calls.length > 0, result.stderr);
       assert.ok(calls[0].includes("--dry"), "first Vercel call must be a dry run");
       assert.ok(calls[0].includes("--prod"), "check the production upload inputs");
       assert.ok(calls[0].includes("--json"), "validate the structured upload report");
-      if (scenario === "allowed") {
-        assert.equal(result.status, 0, result.stderr);
-        assert.deepEqual(calls.slice(1).map(([command]) => command), ["deploy", "inspect", "promote"]);
-      } else if (scenario === "cancel-inspect") {
-        assert.notEqual(result.status, 0, "termination must stop deployment");
-        assert.deepEqual(calls.slice(1).map(([command]) => command), ["deploy", "inspect"]);
+      if (scenario === "allowed" || scenario === "deploy-failure") {
+        assert.deepEqual(calls.slice(1), [["deploy", "--prod", "--yes"]]);
+        if (scenario === "allowed") {
+          assert.equal(result.status, 0, result.stderr);
+          assert.match(result.stdout, /https:\/\/fixture\.vercel\.app/);
+        } else {
+          assert.notEqual(result.status, 0, "failed builds must fail the command");
+          assert.match(result.stderr, /deployment build failed/);
+        }
       } else {
         assert.notEqual(result.status, 0);
         assert.equal(calls.length, 1, "rejected inputs must never be uploaded or promoted");

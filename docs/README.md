@@ -140,9 +140,13 @@ version they describe. A maintainer must authorize each deployment.
 
 The command checks Vercel's upload report against the public file allowlist and
 10 MiB limit used in CI. An extra file or failed dry run stops deployment before
-upload. It then uploads a production build, waits for Vercel to verify it, and
-promotes it to the production domain. Deployment does not generate
+upload. It then runs `vercel deploy --prod --yes`; Vercel builds the site and
+publishes the successful deployment. Deployment does not generate
 screenshots, build the product, run Docker, or install frontend dependencies.
+
+Vercel's project settings redirect `docbank.ai` to `www.docbank.ai`. Keep domain
+redirects there; a reverse redirect in `vercel.json` makes asset requests loop
+between the two domains.
 
 The protected `Deploy documentation` workflow deploys the branch or tag selected
 when you run it. It has no automatic push, pull-request, tag, or release trigger.
