@@ -140,7 +140,51 @@ Any new endpoint that changes reachability or physical content must be placed
 on the correct side of the gate. Read-only metadata and content streams do not
 need it unless their contract requires a globally quiescent snapshot.
 
+### Export release and downloads
+
+The export worker coordinates archive deletion with download leases. A lease
+keeps an archive available for an outstanding ticket or active download.
+`Worker.Release` and `Worker.Cleanup` take the worker mutex before the mutation
+gate; lease acquisition and release use that same mutex. This ordering prevents
+a new download from acquiring an archive while release removes it. The worker
+owns the gate acquisition, so the release route must not acquire it again.
+
+Explicit release authorizes a terminal job inside the store transaction before
+removing its archive. It then deletes the job row and recomputes source and plan
+retention from their admission deadlines and other jobs. Filesystem deletion
+and database commit are not atomic: a rollback can leave a retained job whose
+archive is already gone. Retrying release therefore tolerates a missing file.
+Release stays explicit so callers can download again or recover after a local
+save error. See the [export guide](../usage/export-bundles.md#free-a-finished-job-slot)
+for caller-visible errors and recovery.
+
+### Frozen report capture
+
+`Store.MaterializeTermReportFrame` checks the complete selected identity set
+and captures search matches in one SQLite snapshot and lexical generation.
+A separate preflight read would allow document replacement between validation
+and capture. The report service holds `OperationGate.CaptureContext` while
+capturing metadata and reading the exact retained text it names. This protects
+the content from maintenance without blocking ordinary mutations.
+
+After preparation, counts and date revisions use the captured frame. They do
+not consult current documents or hold source content against deletion. This
+keeps a report stable without retaining the original files for its lifetime.
+The [report guide](../usage/search-exports.md#evidence-and-retention-limits)
+owns the separate lifetimes of live handles, saved history, and evidence ZIPs.
+
 ## API shape and errors
+
+### MCP response budgets
+
+MCP success results carry the payload as both JSON text and structured content.
+`boundedToolSuccess` checks the encoded result against the 1 MiB response limit;
+checking the payload alone would miss the second copy and JSON escaping.
+Report date reads request 256 KiB pages to leave room for both forms and
+protocol metadata. The report pager returns whole evidence items and a cursor
+to the first item that did not fit. It does not shorten quotes to fit a page.
+See the [MCP report guide](../usage/mcp.md#frozen-search-reports) for continuation
+and client limits.
 
 ### Photo browsing and preview reads
 
