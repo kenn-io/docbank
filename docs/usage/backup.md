@@ -182,10 +182,11 @@ unless you pass `--overwrite`. Overwrite is a merge: files absent from the
 snapshot remain in place. The old database and SQLite sidecars remain intact
 until all repository content has been read and verified, the replacement
 database passes `integrity_check`, and its logical statistics match the
-manifest. Only then is the database published. A failed or cancelled restore
-does not publish `docbank.db` for a new target and does not replace an existing
-database. The built-in primary's ownership marker follows the same boundary.
-Ordinary failures restore the prior marker. An interrupted handoff is
+manifest. Only then is the database published. Failure or cancellation before
+publication leaves an existing database intact and creates no `docbank.db` for
+a new target. If cleanup fails after publication, restore reports an error and
+keeps the new database and its ownership marker. Earlier failures restore the
+prior marker. An interrupted handoff is
 reconciled when the vault is opened or the restore is retried, against a
 durable fingerprint of the prior database and the validated identity of
 whichever database was published. An unrelated file named `docbank.db` is never
@@ -199,6 +200,15 @@ or object exceeds Docbank's current storage policy, restore writes it as a
 verified individual blob file instead. The result reports the loose count and
 grouped fallback reasons. This is a representation choice, not an integrity
 failure.
+
+Individual files use the standalone daemon's compression policy, including
+when restoring through the embedded API:
+files of at least 4 KiB use zstd when it saves at least 10%. This includes
+large files reconstructed from backup chunks. The restored database and host
+extras remain ordinary files. Restoring an individual file temporarily needs
+space for its uncompressed bytes and its compressed candidate; the unused
+copy is removed when that file finishes. An overwrite restore reuses
+existing verified files in their current encoding.
 
 Snapshots also carry a non-secret `docbank-placement-v1` description of source
 stores and the hashes held by each. Default restore places all verified content

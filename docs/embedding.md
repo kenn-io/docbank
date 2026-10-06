@@ -640,8 +640,10 @@ encoding saves at least `MinSavingsPercent`. Otherwise it publishes raw loose
 content. Enabling compression does not migrate or rewrite existing objects.
 `RepairContent` preserves an existing loose object's raw or zstd encoding. It
 applies this policy only when trusted bytes replace a packed or missing
-physical copy. The zero value disables compression and keeps the raw loose
-layout. Mixed raw, zstd, and packed content remains readable through the same
+physical copy. The zero value writes new loose content as raw.
+[Backup restore](usage/backup.md#where-does-restored-content-go) applies its own
+managed packing and compression policy, independently of these write options.
+Mixed raw, zstd, and packed content remains readable through the same
 verified API. Receipts report the chosen physical
 encoding and stored size without changing the logical SHA-256 or size.
 `PutReceipt.Created` reports a new logical node, while `PhysicalCreated`

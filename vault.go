@@ -93,7 +93,9 @@ const (
 )
 
 // LooseCompressionOptions controls whether eligible new loose content may use
-// zstd physical storage. The zero value preserves the legacy raw layout.
+// zstd physical storage during writes. The zero value writes new loose content
+// as raw. Backup restore applies its own managed storage policy, including
+// compression, independently of these options.
 type LooseCompressionOptions struct {
 	Enabled           bool
 	MinBytes          int64

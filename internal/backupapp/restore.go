@@ -144,6 +144,10 @@ func RestoreWithPlacement(
 	}
 	opts.SQLiteOpener = SQLiteOpener(driver)
 	opts.MetadataRestorer = metadataRestorer{driver: driver}
+	opts.LooseCompression = packstore.LooseCompressionOptions{
+		Enabled: true, MinBytes: blob.ManagedLooseCompressionMinBytes,
+		MinSavingsPercent: blob.ManagedLooseCompressionMinSavingsPercent,
+	}
 	var sourcePlacement placementManifest
 	var app backup.App = New(version)
 	var primaryHandoff *blob.PrimaryRestoreHandoff
@@ -201,6 +205,11 @@ func RestoreWithPlacement(
 		if err := primaryHandoff.Prepare(hookCtx); err != nil {
 			return err
 		}
+		if err := recordRestoredLooseContent(
+			hookCtx, staged.DBPath, driver, staged.LooseContent,
+		); err != nil {
+			return err
+		}
 		if err := verifyRestoredRenditionHeads(
 			hookCtx, staged.TargetDir, staged.DBPath, driver,
 		); err != nil {
@@ -217,8 +226,12 @@ func RestoreWithPlacement(
 	result, restoreErr := backup.Restore(ctx, repo, app, opts)
 	if restoreErr != nil {
 		if primaryHandoff != nil {
+			// Restore can fail during cleanup after publishing the database.
+			// Reconcile against that database rather than assuming a rollback.
 			restoreErr = errors.Join(
-				restoreErr, primaryHandoff.Rollback(context.WithoutCancel(ctx)),
+				restoreErr, RecoverInterruptedPrimaryHandoff(
+					context.WithoutCancel(ctx), opts.TargetDir, driver,
+				),
 			)
 		}
 	} else if primaryHandoff != nil {
@@ -236,6 +249,26 @@ func RestoreWithPlacement(
 		return result, restoreErr
 	}
 	return result, nil
+}
+
+func recordRestoredLooseContent(
+	ctx context.Context, databasePath string, driver docsqlite.Driver,
+	loose []packstore.WriteResult,
+) (retErr error) {
+	if len(loose) == 0 {
+		return nil
+	}
+	metadata, err := store.OpenForRestore(databasePath, driver)
+	if err != nil {
+		return fmt.Errorf("backupapp: opening restored loose content catalog: %w", err)
+	}
+	defer func() {
+		retErr = errors.Join(retErr, metadata.Close())
+	}()
+	if err := metadata.RecordRestoredLooseContent(ctx, loose); err != nil {
+		return fmt.Errorf("backupapp: recording restored loose content: %w", err)
+	}
+	return nil
 }
 
 func verifyRestoredRenditionHeads(

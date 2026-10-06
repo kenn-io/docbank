@@ -450,42 +450,75 @@ func writeAdoption(
 func (s *Store) RepairBlobAuthority(
 	ctx context.Context, hash string, size int64, physical BlobPhysical,
 ) (int64, error) {
+	var references int64
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		references, err = s.repairBlobAuthorityTx(ctx, tx, hash, size, physical)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	return references, nil
+}
+
+// RecordRestoredLooseContent records Kit's verified receipts in one transaction
+// before the restored database is published. A rejected receipt leaves the
+// entire batch unchanged.
+func (s *Store) RecordRestoredLooseContent(ctx context.Context, receipts []packstore.WriteResult) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		for _, receipt := range receipts {
+			encoding, err := looseEncodingName(receipt.Encoding)
+			if err != nil {
+				return fmt.Errorf("recording restored blob %s: %w", receipt.Hash, err)
+			}
+			if _, err := s.repairBlobAuthorityTx(ctx, tx, receipt.Hash.String(), receipt.Size, BlobPhysical{
+				Encoding: encoding, StoredBytes: receipt.StoredSize,
+				PackEligible: receipt.Size <= maxPackEligibleBytes,
+			}); err != nil {
+				return fmt.Errorf("recording restored blob %s: %w", receipt.Hash, err)
+			}
+		}
+		return nil
+	})
+}
+
+func (s *Store) repairBlobAuthorityTx(
+	ctx context.Context, tx *sql.Tx, hash string, size int64, physical BlobPhysical,
+) (int64, error) {
 	storage, err := normalizeBlobPhysical(size, []BlobPhysical{physical})
 	if err != nil {
 		return 0, fmt.Errorf("recording repaired blob %s: %w", hash, err)
 	}
 	var references int64
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var recordedSize int64
-		err := tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash = ?`, hash).Scan(&recordedSize)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("reading repaired blob %s: %w", hash, err)
-		}
-		if recordedSize != size {
-			return fmt.Errorf("blob %s: recorded size %d does not match repaired size %d",
-				hash, recordedSize, size)
-		}
-		if err := ensureBlobChecksumTx(tx, BlobChecksumRecord{
-			BlobSHA256: hash, MD5: storage.MD5,
-		}); err != nil {
-			return err
-		}
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM content_versions WHERE blob_hash = ?`, hash,
-		).Scan(&references); err != nil {
-			return fmt.Errorf("counting repaired blob references %s: %w", hash, err)
-		}
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM blob_pack_entries WHERE blob_hash = ? AND store_id = ?`,
-			hash, s.primaryStoreID); err != nil {
-			return fmt.Errorf("retiring packed authority for repaired blob %s: %w", hash, err)
-		}
-		return writeLooseLocationTx(ctx, tx, s.primaryStoreID, hash, storage)
-	})
+	var recordedSize int64
+	err = tx.QueryRowContext(ctx, `SELECT size FROM blobs WHERE hash = ?`, hash).Scan(&recordedSize)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
 	if err != nil {
+		return 0, fmt.Errorf("reading repaired blob %s: %w", hash, err)
+	}
+	if recordedSize != size {
+		return 0, fmt.Errorf("blob %s: recorded size %d does not match repaired size %d",
+			hash, recordedSize, size)
+	}
+	if err := ensureBlobChecksumTx(tx, BlobChecksumRecord{
+		BlobSHA256: hash, MD5: storage.MD5,
+	}); err != nil {
+		return 0, err
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM content_versions WHERE blob_hash = ?`, hash,
+	).Scan(&references); err != nil {
+		return 0, fmt.Errorf("counting repaired blob references %s: %w", hash, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM blob_pack_entries WHERE blob_hash = ? AND store_id = ?`,
+		hash, s.primaryStoreID); err != nil {
+		return 0, fmt.Errorf("retiring packed authority for repaired blob %s: %w", hash, err)
+	}
+	if err := writeLooseLocationTx(ctx, tx, s.primaryStoreID, hash, storage); err != nil {
 		return 0, err
 	}
 	return references, nil
