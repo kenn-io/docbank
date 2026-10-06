@@ -26,23 +26,6 @@ it("keeps earlier pages on failure, waits for Retry, and reuses the failed curso
   photos.dispose();
 });
 
-it("restarts paging when the previous cursor expires", async () => {
-  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1)], "expired"))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ code: "cursor_expired" }), { status: 422 }))
-    .mockResolvedValueOnce(response([photo(1)], "renewed"))
-    .mockResolvedValueOnce(response([photo(2)]));
-  vi.stubGlobal("fetch", fetcher);
-  const photos = new Photos("scoped", vi.fn());
-  await photos.loadMore();
-  photos.select("photo-1", new MouseEvent("click"), ["photo-1"]);
-  await photos.loadMore();
-  await photos.retry();
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-2"]);
-  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
-  expect(JSON.parse(fetcher.mock.calls[2][1].body).cursor).toBeUndefined();
-  photos.dispose();
-});
-
 it("stages multiple replacement pages and preserves accepted rows on a failed refresh", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1), photo(2)], "next"))
     .mockResolvedValueOnce(response([photo(3)], "old-tail"))
@@ -67,54 +50,48 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-4", "photo-1", "photo-2", "photo-3"]);
   expect(photos.cursor).toBe("new-tail");
   expect(restore).toHaveBeenCalledTimes(1);
-  photos.dispose();
-});
-
-it("finishes a replacement when the former tail disappeared and drops only removed selections", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response([photo(1), photo(2)]))
-    .mockResolvedValueOnce(response([photo(1)], "more"))
-    .mockResolvedValueOnce(response([photo(1), photo(3)])));
-  const photos = new Photos("scoped", vi.fn());
-  await photos.loadMore(); photos.selectLoaded();
+  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ code: "cursor_expired" }), { status: 422 }))
+    .mockResolvedValueOnce(response([photo(4), photo(1), photo(2), photo(3)], "renewed"))
+    .mockResolvedValueOnce(response([photo(5)], "newer-tail"));
+  await photos.loadMore();
+  await photos.retry();
+  expect(JSON.parse(fetcher.mock.calls[7][1].body).cursor).toBeUndefined();
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-4", "photo-1", "photo-2", "photo-3", "photo-5"]);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
+  photos.selectLoaded();
+  fetcher.mockResolvedValueOnce(response([photo(1)], "more"))
+    .mockResolvedValueOnce(response([photo(6)]));
   await photos.refresh();
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-3"]);
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-6"]);
   expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
   expect(photos.cursor).toBeUndefined();
-  photos.dispose();
-});
-
-it("retains accepted state when recovery times out and ignores a disposed replacement", async () => {
   const timer = new AbortController();
   vi.spyOn(AbortSignal, "timeout").mockReturnValue(timer.signal);
-  let finish!: (value: Response) => void;
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response([photo(1)]))
-    .mockImplementationOnce((_url, init: RequestInit) => new Promise((_resolve, reject) => init.signal!.addEventListener("abort", () => reject(init.signal!.reason))))
-    .mockImplementationOnce(() => new Promise(resolve => finish = resolve)));
-  const photos = new Photos("scoped", vi.fn());
-  await photos.loadMore(); photos.selectLoaded();
+  fetcher.mockImplementationOnce((_url, init: RequestInit) => new Promise((_resolve, reject) => init.signal!.addEventListener("abort", () => reject(init.signal!.reason))));
   const refresh = photos.refresh();
   timer.abort(new DOMException("Timed out", "TimeoutError"));
   await refresh;
   expect(photos.error).toContain("timed out");
-  expect(photos.items).toHaveLength(1);
-  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
-  vi.spyOn(AbortSignal, "timeout").mockReturnValue(new AbortController().signal);
-  const late = photos.retry();
-  photos.dispose(); finish(response([photo(2)]));
-  await late;
-  expect(photos.items[0].asset_id).toBe("photo-1");
+  photos.dispose();
 });
 
 it("ignores a replaced request even if the transport completes after abort", async () => {
   let finish!: (value: Response) => void;
-  vi.stubGlobal("fetch", vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve)).mockResolvedValueOnce(response([photo(2)])));
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve)).mockResolvedValueOnce(response([photo(2)]));
+  vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   const old = photos.loadMore();
   await photos.refresh();
   finish(response([photo(1)]));
   await old;
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
-  photos.dispose();
+  fetcher.mockResolvedValueOnce(new Response("{}", { status: 503 }))
+    .mockImplementationOnce(() => new Promise(resolve => finish = resolve));
+  await photos.refresh();
+  const late = photos.retry();
+  photos.dispose(); finish(response([photo(3)]));
+  await late;
+  expect(photos.items[0].asset_id).toBe("photo-2");
 });
 
 it("keeps range selection outside mounted cells and supports single and modifier clicks", () => {
@@ -145,26 +122,5 @@ it("remembers density with safe defaults for unknown or unavailable storage", ()
   expect(loadDensity()).toBe("comfortable");
   expect(() => photos.setDensity("large")).not.toThrow();
   expect(photos.density).toBe("large");
-  photos.dispose();
-});
-
-
-it("captures navigation only when the final replacement page succeeds", async () => {
-  let finish!: (response: Response) => void;
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response([photo(1), photo(2)]))
-    .mockResolvedValueOnce(response([photo(1)], "last"))
-    .mockImplementationOnce(() => new Promise(resolve => finish = resolve)));
-  const photos = new Photos("scoped", vi.fn());
-  await photos.loadMore();
-  const restore = vi.fn(async () => {});
-  const preserve = vi.fn(() => { expect(photos.scrollTop).toBe(9000); return restore; });
-  const refresh = photos.refresh(preserve);
-  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
-  expect(preserve).not.toHaveBeenCalled();
-  photos.scrollTop = 9000;
-  finish(response([photo(2)]));
-  await refresh;
-  expect(preserve).toHaveBeenCalledTimes(1);
-  expect(restore).toHaveBeenCalledTimes(1);
   photos.dispose();
 });

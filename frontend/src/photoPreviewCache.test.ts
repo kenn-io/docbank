@@ -40,22 +40,14 @@ it("shares pending reads, retains bytes without fetch, and releases settled entr
   expect([...key.headers]).toHaveLength(0);
   await cache.get("asset", "new-generation");
   expect(fetcher).toHaveBeenCalledTimes(2);
-  await cache.dispose();
-  expect(stored.data.size).toBe(0);
-});
-
-it("isolates two workspaces and deletes only the disposed cache", async () => {
-  const stored = storage();
-  const fetcher = vi.fn(async () => new Response("synthetic-jpeg"));
-  vi.stubGlobal("fetch", fetcher);
-  const first = workspace(); const second = workspace();
-  await first.get("asset", "generation"); await second.get("asset", "generation");
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  const second = workspace();
+  await second.get("asset", "generation");
+  expect(fetcher).toHaveBeenCalledTimes(3);
   expect(stored.data.size).toBe(2);
-  await first.dispose();
+  await cache.dispose();
   expect(stored.data.size).toBe(1);
   await second.get("asset", "generation");
-  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(fetcher).toHaveBeenCalledTimes(3);
 });
 
 it("routes expired network authentication to the workspace handler", async () => {
@@ -89,34 +81,30 @@ it("reports storage failure and retries rather than retaining an in-memory subst
 it("deletes its cache when disposal races opening and rejects the late request", async () => {
   const stored = storage();
   const normalOpen = stored.open.getMockImplementation()!;
-  let finish!: () => void;
+  let finish: (() => void) | undefined;
   stored.open.mockImplementation(name => new Promise(resolve => { finish = () => void normalOpen(name).then(resolve); }));
   const cache = workspace();
   const request = cache.get("asset", "generation");
   const rejected = expect(request).rejects.toThrow();
   const disposed = cache.dispose();
-  finish();
+  finish!();
   await Promise.all([disposed, rejected]);
   expect(stored.data.size).toBe(0);
-});
 
-it("deletes its cache during a write and on pagehide", async () => {
-  const stored = storage();
-  const normalOpen = stored.open.getMockImplementation()!;
-  let finish!: () => void;
   stored.open.mockImplementation(async name => {
     const opened = await normalOpen(name);
     opened.put.mockImplementation((key, response) => new Promise(resolve => { finish = () => { void (stored.data.get(name)?.set(key.url, response)); resolve(); }; }));
     return opened;
   });
   vi.stubGlobal("fetch", vi.fn(async () => new Response("synthetic-jpeg")));
-  const cache = workspace();
-  const request = cache.get("asset", "generation");
-  const rejected = expect(request).rejects.toThrow();
+  finish = undefined;
+  const writing = workspace();
+  const write = writing.get("asset", "generation");
+  const writeRejected = expect(write).rejects.toThrow();
   await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
   window.dispatchEvent(new Event("pagehide"));
-  await cache.dispose();
-  finish();
-  await rejected;
+  await vi.waitFor(() => expect(stored.data.size).toBe(0));
+  finish!();
+  await writeRejected;
   expect(stored.data.size).toBe(0);
 });

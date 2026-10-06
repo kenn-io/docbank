@@ -8,10 +8,10 @@ it("fits panoramas and full justified rows within the available width", () => {
     expect(row.items.at(-1)!.x + row.items.at(-1)!.width).toBeLessThanOrEqual(800.001);
   }
   expect(layout.rows[0].height).toBe(40);
-  expect(computeMonthLayout([], 800, 200).intrinsicHeight).toBe(0);
 });
 
 it("bounds the mounted rows in one month with 10,000 photos", () => {
+  expect(computeMonthLayout([], 800, 200).intrinsicHeight).toBe(0);
   const items = Array.from({ length: 10_000 }, (_, index) => photo(index));
   const layout = computeMonthLayout(items, 1200, 200);
   expect(layout.intrinsicHeight).toBe(layout.totalHeight + 44);
@@ -44,14 +44,11 @@ it("joins a session across appended pages with a four-hour gap", () => {
   const groups = groupPhotos([...firstPage, ...secondPage], "sessions");
   expect(groups.map(group => group.items.map(item => item.asset_id))).toEqual([["photo-1"], ["photo-3", "photo-2"], ["photo-4"]]);
   expect(groupPhotos([photo(1, "2025-06-01"), photo(2, "2025-06-01T01")], "sessions")).toHaveLength(1);
-});
-
-it("accepts the producer's single-digit hours, partial zones and fractional separators", () => {
-  const groups = groupPhotos([
+  const parsed = groupPhotos([
     photo(1, "2025-06-01T9"), photo(2, "2025-06-01T9:30Z"),
     photo(3, "2025-06-01T9:45+00:00"), photo(4, "2025-06-01T10:00:00,123456789Z"),
     photo(5, "2025-06-01T10:00:00.123456789Z"), photo(6, "invalid"),
   ], "sessions");
-  expect(groups[0].items).toHaveLength(5);
-  expect(groups[1].key).toBe("undated");
+  expect(parsed[0].items).toHaveLength(5);
+  expect(parsed[1].key).toBe("undated");
 });
