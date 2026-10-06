@@ -17,19 +17,18 @@
   } = $props();
   const inWindow = $derived(offset <= bottom && offset + layout.intrinsicHeight >= top);
   const rows = $derived(inWindow ? visibleRows(layout.rows, top - offset - HEADER_HEIGHT, bottom - offset - HEADER_HEIGHT) : []);
+  const cells = $derived(rows.flatMap(row => row.items.map(cell => ({ photo: group.items[cell.index], x: cell.x, y: row.y, width: cell.width, height: row.height }))));
 </script>
 
 <section class="photo-month" data-month={group.key} style:height={`${layout.intrinsicHeight}px`} aria-label={group.label}>
   {#if inWindow}
     <h2>{group.label}<span>{group.items.length} photos</span></h2>
     <div class="cells" style:height={`${layout.totalHeight}px`}>
-      {#each rows as row (row.y)}
-        {#each row.items as cell (cell.index)}
-          {@const photo = group.items[cell.index]}
-          <div class="cell" style:left={`${cell.x}px`} style:top={`${row.y}px`} style:width={`${cell.width}px`} style:height={`${row.height}px`}>
-            <PhotoCell {photo} {cache} selected={selectedIDs.has(photo.asset_id)} onclick={event => onselect(photo.asset_id, event)} oncheck={(checked, range) => oncheck(photo.asset_id, checked, range)} />
-          </div>
-        {/each}
+      {#each cells as cell (cell.photo.asset_id)}
+        {@const photo = cell.photo}
+        <div class="cell" style:left={`${cell.x}px`} style:top={`${cell.y}px`} style:width={`${cell.width}px`} style:height={`${cell.height}px`}>
+          <PhotoCell {photo} {cache} selected={selectedIDs.has(photo.asset_id)} onclick={event => onselect(photo.asset_id, event)} oncheck={(checked, range) => oncheck(photo.asset_id, checked, range)} />
+        </div>
       {/each}
     </div>
   {/if}

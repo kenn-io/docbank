@@ -40,6 +40,8 @@ it("groups recorded months and capture sessions across appended pages", () => {
   const secondPage = [photo(3, "2025-06-01T09:00:00")];
   const groups = groupPhotos([...firstPage, ...secondPage], "sessions");
   expect(groups.map(group => group.items.map(item => item.asset_id))).toEqual([["photo-1"], ["photo-3", "photo-2"]]);
+  const latestKey = groups[0].key;
+  expect(groupPhotos([...firstPage, ...secondPage, photo(4, "2025-06-01T17:00:00"), photo(5, "2025-06-01T16:00:00")], "sessions")[0].key).toBe(latestKey);
   expect(groupPhotos([photo(1, "2025-06-01"), photo(2, "2025-06-01T01")], "sessions")).toHaveLength(1);
   const parsed = groupPhotos([
     photo(1, "2025-06-01T9"), photo(2, "2025-06-01T9:30Z"),

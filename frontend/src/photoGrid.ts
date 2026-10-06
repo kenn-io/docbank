@@ -112,7 +112,9 @@ export function groupPhotos(items: PhotoBrowseRow[], grouping: "months" | "sessi
       if (clock - previous > 4 * 3600 * 1000) {
         groups.push({ key: item.asset_id, label: `${item.capture_time!.slice(0, 10)} · Capture session`, year: item.capture_time!.slice(0, 4), items: [] });
       }
-      groups[groups.length - 1].items.push(item);
+      const group = groups[groups.length - 1];
+      if (clock > previous) group.key = item.asset_id;
+      group.items.push(item);
       previous = clock;
     }
     groups.reverse();

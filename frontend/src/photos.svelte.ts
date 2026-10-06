@@ -1,4 +1,5 @@
 import { listPhotoAssets, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
 import { clearSelection, reconcileIDSelection, toggleIDSelection, type SelectionState } from "./selection.js";
@@ -8,7 +9,7 @@ const densityKey = "docbank.photos.density";
 
 export function loadDensity(): Density {
   try {
-    const value = localStorage.getItem(densityKey);
+    const value = localPreferenceStorage()?.getItem(densityKey);
     if (value && Object.hasOwn(ROW_HEIGHTS, value)) return value as Density;
   } catch { /* Browsing also works when local storage is disabled. */ }
   return "comfortable";
@@ -34,7 +35,7 @@ export class Photos {
 
   setDensity(density: Density) {
     this.density = density;
-    try { localStorage.setItem(densityKey, density); } catch { /* Keep the current session's preference. */ }
+    try { localPreferenceStorage()?.setItem(densityKey, density); } catch { /* Keep the current session's preference. */ }
   }
 
   async loadMore(preserve?: () => (() => Promise<void>) | undefined) {

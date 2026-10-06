@@ -68,6 +68,8 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
           const response = await route.fetch({ url: url.href, headers: { ...await route.request().allHeaders(), host } });
           entered(); await resumed; await route.fulfill({ response });
         }, { times: 1 });
+        let releasePreviews = () => {};
+        let pendingURL = "";
         if (loaded.includes("1,750 loaded")) {
           await page.route("**/api/v1/photos/assets/query", route => route.abort("failed"), { times: 1 });
           await requestNext(true);
@@ -75,12 +77,35 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
           await page.getByRole("button", { name: "Retry", exact: true }).click();
         } else await requestNext(true);
         await held;
+        if (loaded.includes("1,750 loaded")) {
+          const previewsHeld = new Promise<void>(resolve => releasePreviews = resolve);
+          await page.route("**/previews/**", async route => {
+            const id = route.request().url().split("/photos/assets/")[1].split("/")[0];
+            const visible = await page.locator(`[data-asset="${id}"]`).evaluate(element => { const box = element.getBoundingClientRect(); const viewport = element.closest(".photo-scroll")!.getBoundingClientRect(); return box.bottom > viewport.top + 36 && box.top < viewport.bottom; }).catch(() => false);
+            if (!pendingURL && visible) { pendingURL = route.request().url(); await previewsHeld; }
+            await route.continue();
+          });
+          await scroll.evaluate(element => element.scrollTop -= 4_000);
+          await expect.poll(() => pendingURL).not.toBe("");
+        }
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
         const anchor = await scroll.evaluate(element => {
           const top = element.getBoundingClientRect().top;
           const cell = [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(item => item.getBoundingClientRect().bottom > top + 36)!;
           return { id: cell.dataset.asset!, offset: cell.getBoundingClientRect().top - top };
         });
+        const images = [];
+        if (loaded.includes("1,750 loaded")) {
+          for (const image of await scroll.locator("img").elementHandles()) {
+            if (await image.evaluate(element => { const box = element.getBoundingClientRect(); const viewport = element.closest(".photo-scroll")!.getBoundingClientRect(); return box.bottom > viewport.top + 36 && box.top < viewport.bottom; })) images.push(image);
+          }
+          expect(images.length).toBeGreaterThan(0);
+        }
+        const pendingID = pendingURL.split("/photos/assets/")[1]?.split("/")[0];
+        const pendingCell = pendingID ? await page.locator(`[data-asset="${pendingID}"]`).elementHandle() : null;
+        if (loaded.includes("1,750 loaded")) expect(pendingCell).not.toBeNull();
+        const pendingRequests = requests.get(pendingURL);
+        const canceledBeforeAppend = canceledPreviews;
         if (loaded.endsWith("· 750 loaded")) {
           const retained = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async name => (await (await caches.open(name)).keys()).map(key => key.url)))).flat());
           const seen = new Map([...requests].filter(([url]) => retained.includes(url)));
@@ -104,6 +129,15 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
         await expect(page.getByRole("button", { name: "Refresh previews" })).toBeEnabled();
         const offset = await page.locator(`[data-asset="${anchor.id}"]`).evaluate(element => element.getBoundingClientRect().top - element.closest(".photo-scroll")!.getBoundingClientRect().top);
         expect(offset).toBeCloseTo(anchor.offset, 0);
+        for (const image of images) expect(await image.evaluate(element => element.isConnected)).toBe(true);
+        if (pendingCell) {
+          expect(await pendingCell.evaluate(element => element.isConnected)).toBe(true);
+          expect(requests.get(pendingURL)).toBe(pendingRequests);
+          expect(canceledPreviews).toBe(canceledBeforeAppend);
+          releasePreviews();
+          await expect(page.locator(`[data-asset="${pendingID}"] img`)).toBeVisible();
+          await page.unroute("**/previews/**");
+        }
         const settled = listings;
         await page.waitForTimeout(300);
         expect(listings).toBe(settled);

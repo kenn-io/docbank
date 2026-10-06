@@ -1,10 +1,7 @@
 import { getReadPhotoPreviewUrl, readPhotoPreview } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 
-type PendingPreview = { promise: Promise<Blob>; controller: AbortController; callers: number };
-
 export class PhotoPreviewCache {
-  private entries = new Map<string, PendingPreview>();
   private controller = new AbortController();
   private name = `docbank-photo-previews-${crypto.randomUUID()}`;
   private cache?: Promise<Cache>;
@@ -16,37 +13,10 @@ export class PhotoPreviewCache {
   }
 
   get(assetID: string, generationID: string, caller?: AbortSignal): Promise<Blob> {
-    if (caller?.aborted) return Promise.reject(caller.reason);
-    const path = getReadPhotoPreviewUrl(assetID, generationID);
-    let entry = this.entries.get(path);
-    if (!entry) {
-      const controller = new AbortController();
-      const signal = AbortSignal.any([controller.signal, this.controller.signal, AbortSignal.timeout(30_000)]);
-      entry = { controller, callers: 0, promise: this.read(assetID, generationID, path, signal).catch(cause => {
-        if (!signal.aborted && cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
-        throw cause;
-      }) };
-      const pending = entry;
-      entry.promise = entry.promise.finally(() => { if (this.entries.get(path) === pending) this.entries.delete(path); });
-      this.entries.set(path, entry);
-    }
-    const pending = entry;
-    pending.callers++;
-    return new Promise<Blob>((resolve, reject) => {
-      let finished = false;
-      const finish = () => {
-        if (finished) return false;
-        finished = true;
-        caller?.removeEventListener("abort", abort);
-        if (--pending.callers === 0 && this.entries.get(path) === pending) {
-          this.entries.delete(path);
-          pending.controller.abort();
-        }
-        return true;
-      };
-      const abort = () => { if (finish()) reject(caller!.reason); };
-      caller?.addEventListener("abort", abort, { once: true });
-      pending.promise.then(blob => { if (finish()) resolve(blob); }, cause => { if (finish()) reject(cause); });
+    const signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(30_000), ...(caller ? [caller] : [])]);
+    return this.read(assetID, generationID, getReadPhotoPreviewUrl(assetID, generationID), signal).catch(cause => {
+      if (!signal.aborted && cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      throw cause;
     });
   }
 

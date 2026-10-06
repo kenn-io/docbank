@@ -71,6 +71,7 @@
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
+  import { localPreferenceStorage } from "./browser-storage.js";
   import { Photos } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import ImageIcon from "@lucide/svelte/icons/image";
@@ -531,14 +532,6 @@
   function invalidateTagHotkeyMutation(): void {
     tagHotkeyGeneration += 1;
     pendingTagHotkey = "";
-  }
-
-  function localPreferenceStorage(): Storage | undefined {
-    try {
-      return globalThis.localStorage;
-    } catch {
-      return undefined;
-    }
   }
 
   function clearShortcutFeedback(): void {

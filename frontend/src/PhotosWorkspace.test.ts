@@ -52,3 +52,36 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   photos.dispose();
   await cache.dispose();
 });
+
+it("retains visible cells and pending previews across a prepend larger than the window", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const cell = this.closest<HTMLElement>(".cell");
+    const scroll = this.closest<HTMLElement>(".photo-scroll");
+    return cell && scroll ? new DOMRect(0, Number.parseFloat(cell.style.top) + 44 - scroll.scrollTop, Number.parseFloat(cell.style.width), Number.parseFloat(cell.style.height)) : new DOMRect(0, 0, 1000, 400);
+  });
+  vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL() {} });
+  const photos = new Photos("scoped", vi.fn());
+  const initial = Array.from({ length: 6 }, (_, index) => photo(index + 1, `2025-06-01T${12 + index}:00:00`));
+  for (const item of initial) item.previews.grid = { state: "ready", generation_id: "generation" };
+  photos.items = initial; photos.started = true; photos.cursor = "older"; photos.grouping = "sessions";
+  let finishPreview!: (blob: Blob) => void;
+  const get = vi.fn((id: string, _generation: string, _signal: AbortSignal) => id === "photo-2" ? new Promise<Blob>(resolve => finishPreview = resolve) : Promise.resolve(new Blob(["synthetic"])));
+  let finishPage!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => finishPage = resolve)));
+  render(PhotosWorkspace, { photos, cache: { get } as unknown as PhotoPreviewCache });
+  const image = await screen.findByRole("img", { name: "Photo 1.jpg" });
+  await waitFor(() => expect(get).toHaveBeenCalledTimes(6));
+  const pendingSignal = get.mock.calls.find(([id]) => id === "photo-2")![2];
+  finishPage(new Response(JSON.stringify({ items: Array.from({ length: 60 }, (_, index) => photo(index + 7, "2025-06-01T11:00:00")), total: 66 })));
+  await waitFor(() => expect(photos.loading).toBe(false));
+  expect(image.isConnected).toBe(true);
+  expect(screen.getByRole("img", { name: "Photo 1.jpg" })).toBe(image);
+  expect(pendingSignal.aborted).toBe(false);
+  expect(get.mock.calls.filter(([id]) => initial.some(item => item.asset_id === id))).toHaveLength(6);
+  finishPreview(new Blob(["completed"]));
+  await screen.findByRole("img", { name: "Photo 2.jpg" });
+  photos.dispose();
+});

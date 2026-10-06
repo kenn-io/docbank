@@ -73,7 +73,6 @@
     const id = cell?.dataset.asset;
     const pixelOffset = cell ? cell.getBoundingClientRect().top - viewportTop : 0;
     return async () => {
-      await tick();
       let newTop = oldTop;
       if (id) {
         for (const chunk of chunks) {
@@ -84,6 +83,8 @@
           break;
         }
       }
+      scrollTop = newTop;
+      await tick();
       element.scrollTop = newTop;
       scrollTop = element.scrollTop;
       await tick();
