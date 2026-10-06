@@ -30,8 +30,10 @@
   <div class="photo-toolbar">
     <div class="library-title"><h1>Library</h1><span>{photos.total.toLocaleString()} photos · {photos.items.length.toLocaleString()} loaded</span></div>
     <div class="photo-controls">
-      <SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => photos.grouping = value as "months" | "sessions"} />
-      <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => photos.setDensity(value as Density)} />
+      <div class="photo-options">
+        <SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => photos.grouping = value as "months" | "sessions"} />
+        <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => photos.setDensity(value as Density)} />
+      </div>
       <Button size="sm" disabled={photos.loading} onclick={() => void photos.refresh(preserve)}>Refresh previews</Button>
     </div>
   </div>
@@ -54,7 +56,8 @@
   .photo-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border-default); }
   .library-title h1 { margin: 0 0 4px; font-size: var(--font-size-lg); color: var(--text-primary); }
   .library-title span { font-size: var(--font-size-xs); color: var(--text-muted); }
-  .photo-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .photo-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-5); --kit-control-height: 30px; }
+  .photo-options { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .photo-error { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-5); color: var(--text-primary); background: var(--bg-inset); }
   .photo-loading { height: 38px; flex-shrink: 0; display: flex; gap: var(--space-2); align-items: center; justify-content: center; padding: var(--space-2); color: var(--text-muted); font-size: var(--font-size-sm); }
   @media (max-width: 640px) { .photo-toolbar { padding: var(--space-3); } }

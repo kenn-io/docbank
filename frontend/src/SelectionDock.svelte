@@ -52,7 +52,7 @@
       <strong>{selectedCount} selected {context === "photos" ? (selectedCount === 1 ? "photo" : "photos") : `on this ${context === "snapshot" ? "frozen page" : "page"}`}</strong>
       {#if context === "snapshot"}
         <span>Visible selection only · whole query has {wholeQueryCount} documents</span>
-      {:else if truncated}<span>{context === "photos" ? "More photos load as you scroll" : "More results exist beyond this page"}</span>{/if}
+      {:else if truncated && context !== "photos"}<span>More results exist beyond this page</span>{/if}
     </div>
   {/snippet}
 

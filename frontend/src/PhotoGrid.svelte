@@ -38,11 +38,11 @@
     const savedTop = untrack(() => scrollTop);
     let current = true;
     const resize = new ResizeObserver(() => {
-      width = Math.max(1, element.clientWidth - 64);
+      width = Math.max(1, element.clientWidth - 92);
       viewport = element.clientHeight;
     });
     resize.observe(element);
-    width = Math.max(1, element.clientWidth - 64);
+    width = Math.max(1, element.clientWidth - 92);
     viewport = element.clientHeight;
     void tick().then(() => {
       if (!current) return;
@@ -107,8 +107,8 @@
 </div>
 
 <style>
-  .photo-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; padding: 0 52px 0 12px; }
+  .photo-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; display: grid; grid-template-columns: minmax(0, 1fr) 64px; column-gap: 8px; align-content: start; padding: 0 8px 0 12px; }
   .sticky-month { position: sticky; top: 0; height: 36px; display: flex; align-items: center; background: var(--bg-surface); border-bottom: 1px solid var(--border-default); font-size: var(--font-size-sm); color: var(--text-primary); font-weight: 600; z-index: 2; }
-  .year-scrubber { position: sticky; top: 44px; float: right; width: 48px; margin-right: -50px; height: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .grid { position: relative; }
+  .year-scrubber { position: sticky; top: 44px; grid-column: 2; grid-row: 1; height: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .grid { position: relative; grid-column: 1; }
 </style>

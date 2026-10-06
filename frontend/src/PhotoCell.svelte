@@ -58,6 +58,6 @@
   img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 100%; font-size: var(--font-size-xs); }
   .pending { background: var(--bg-surface-hover); }
-  .photo-check { position: absolute; top: 8px; left: 8px; padding: 4px; background: var(--bg-surface); border-radius: var(--radius-sm); }
+  .photo-check { position: absolute; top: 8px; left: 8px; display: flex; }
   .retry-preview { position: absolute; bottom: 8px; left: 8px; background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 4px 8px; font-size: var(--font-size-xs); }
 </style>
