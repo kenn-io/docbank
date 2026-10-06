@@ -29,15 +29,77 @@ it("keeps earlier pages on failure, waits for Retry, and reuses the failed curso
 it("restarts paging when the previous cursor expires", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1)], "expired"))
     .mockResolvedValueOnce(new Response(JSON.stringify({ code: "cursor_expired" }), { status: 422 }))
+    .mockResolvedValueOnce(response([photo(1)], "renewed"))
     .mockResolvedValueOnce(response([photo(2)]));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   await photos.loadMore();
+  photos.select("photo-1", new MouseEvent("click"), ["photo-1"]);
   await photos.loadMore();
   await photos.retry();
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-2"]);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
   expect(JSON.parse(fetcher.mock.calls[2][1].body).cursor).toBeUndefined();
   photos.dispose();
+});
+
+it("stages multiple replacement pages and preserves accepted rows on a failed refresh", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1), photo(2)], "next"))
+    .mockResolvedValueOnce(response([photo(3)], "old-tail"))
+    .mockResolvedValueOnce(response([photo(4), photo(1)], "replacement"))
+    .mockResolvedValueOnce(new Response("{}", { status: 503 }))
+    .mockResolvedValueOnce(response([photo(4), photo(1)], "replacement"))
+    .mockResolvedValueOnce(response([photo(2), photo(3)], "new-tail"));
+  vi.stubGlobal("fetch", fetcher);
+  const restore = vi.fn(async () => {});
+  const photos = new Photos("scoped", vi.fn(), () => restore);
+  await photos.loadMore(); await photos.loadMore();
+  photos.select("photo-2", new MouseEvent("click"), ["photo-1", "photo-2", "photo-3"]);
+  await photos.refresh();
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-2", "photo-3"]);
+  expect(photos.cursor).toBe("old-tail");
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
+  expect(restore).not.toHaveBeenCalled();
+  await photos.retry();
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-4", "photo-1", "photo-2", "photo-3"]);
+  expect(photos.cursor).toBe("new-tail");
+  expect(restore).toHaveBeenCalledTimes(1);
+  photos.dispose();
+});
+
+it("finishes a replacement when the former tail disappeared and drops only removed selections", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response([photo(1), photo(2)]))
+    .mockResolvedValueOnce(response([photo(1)], "more"))
+    .mockResolvedValueOnce(response([photo(1), photo(3)])));
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadMore(); photos.selectLoaded();
+  await photos.refresh();
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-3"]);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  expect(photos.cursor).toBeUndefined();
+  photos.dispose();
+});
+
+it("retains accepted state when recovery times out and ignores a disposed replacement", async () => {
+  const timer = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValue(timer.signal);
+  let finish!: (value: Response) => void;
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response([photo(1)]))
+    .mockImplementationOnce((_url, init: RequestInit) => new Promise((_resolve, reject) => init.signal!.addEventListener("abort", () => reject(init.signal!.reason))))
+    .mockImplementationOnce(() => new Promise(resolve => finish = resolve)));
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadMore(); photos.selectLoaded();
+  const refresh = photos.refresh();
+  timer.abort(new DOMException("Timed out", "TimeoutError"));
+  await refresh;
+  expect(photos.error).toContain("timed out");
+  expect(photos.items).toHaveLength(1);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  vi.spyOn(AbortSignal, "timeout").mockReturnValue(new AbortController().signal);
+  const late = photos.retry();
+  photos.dispose(); finish(response([photo(2)]));
+  await late;
+  expect(photos.items[0].asset_id).toBe("photo-1");
 });
 
 it("ignores a replaced request even if the transport completes after abort", async () => {

@@ -77,6 +77,8 @@ real synthetic Linux backup, and attachment navigation through Go-owned daemon
 fixtures. Their setup is defined in the corresponding spec or Go test. They are
 not substitutes for the complete public image set.
 
+The 10,000-photo grid proof uses `DOCBANK_PHOTOS_SCREENSHOT_DIR`. It creates a synthetic vault and checks paging, selection, retained previews, recovery, and bounded image URLs. It runs separately from ordinary screenshot publication.
+
 ## Report and original-export qualification
 
 Run the combined browser workflow from the repository root:

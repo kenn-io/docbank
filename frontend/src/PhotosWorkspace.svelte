@@ -9,7 +9,8 @@
   import SelectionDock from "./SelectionDock.svelte";
 
   let { session, onauthfailure }: { session: string; onauthfailure: (cause: unknown) => void } = $props();
-  const photos = untrack(() => new Photos(session, cause => onauthfailure(cause)));
+  let grid = $state<{ preservePosition: () => (() => Promise<void>) }>();
+  const photos = untrack(() => new Photos(session, cause => onauthfailure(cause), () => grid?.preservePosition()));
   const cache = untrack(() => new PhotoPreviewCache(session, cause => onauthfailure(cause)));
   const groups = $derived(groupPhotos(photos.items, photos.grouping));
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));
@@ -39,7 +40,7 @@
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry()}>Retry</Button></div>
   {/if}
   {#if photos.items.length}
-    <PhotoGrid {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore()} />
+    <PhotoGrid bind:this={grid} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore()} />
   {:else if !photos.loading && !photos.error}
     <EmptyState title="Your photo library is empty" description="Import photos with docbank photos import to browse them here.">
       {#snippet icon()}<ImageIcon size="24" />{/snippet}

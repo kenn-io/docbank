@@ -45,3 +45,13 @@ it("joins a session across appended pages with a four-hour gap", () => {
   expect(groups.map(group => group.items.map(item => item.asset_id))).toEqual([["photo-1"], ["photo-3", "photo-2"], ["photo-4"]]);
   expect(groupPhotos([photo(1, "2025-06-01"), photo(2, "2025-06-01T01")], "sessions")).toHaveLength(1);
 });
+
+it("accepts the producer's single-digit hours, partial zones and fractional separators", () => {
+  const groups = groupPhotos([
+    photo(1, "2025-06-01T9"), photo(2, "2025-06-01T9:30Z"),
+    photo(3, "2025-06-01T9:45+00:00"), photo(4, "2025-06-01T10:00:00,123456789Z"),
+    photo(5, "2025-06-01T10:00:00.123456789Z"), photo(6, "invalid"),
+  ], "sessions");
+  expect(groups[0].items).toHaveLength(5);
+  expect(groups[1].key).toBe("undated");
+});

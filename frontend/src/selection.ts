@@ -16,8 +16,8 @@ function eligibleIDs(rows: readonly SelectableRow[]): number[] {
   return rows.filter((row) => row.node.kind === "file").map((row) => row.node.id);
 }
 
-export function clearSelection(): SelectionState {
-  return { selectedIDs: new Set<number>(), anchorID: undefined };
+export function clearSelection<ID = number>(): SelectionState<ID> {
+  return { selectedIDs: new Set<ID>(), anchorID: undefined };
 }
 
 export function selectVisibleDocuments(rows: readonly SelectableRow[]): SelectionState {

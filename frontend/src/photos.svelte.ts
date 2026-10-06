@@ -1,7 +1,7 @@
 import { listPhotoAssets, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
-import { toggleIDSelection, type SelectionState } from "./selection.js";
+import { clearSelection, toggleIDSelection, type SelectionState } from "./selection.js";
 
 export const photoQuery: SavedQueryV1Schema = { v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "capture_time", direction: "desc" } };
 const densityKey = "docbank.photos.density";
@@ -22,13 +22,14 @@ export class Photos {
   error = $state("");
   grouping = $state<"months" | "sessions">("months");
   density = $state<Density>(loadDensity());
-  selection = $state<SelectionState<string>>({ selectedIDs: new Set(), anchorID: undefined });
+  selection = $state<SelectionState<string>>(clearSelection<string>());
   private started = false;
   private expired = false;
+  private replacement: "refresh" | "expiry" | undefined;
   private controller = new AbortController();
   private disposed = false;
 
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void) {}
+  constructor(private session: string, private onauthfailure: (cause: unknown) => void, private preservePosition?: () => (() => Promise<void>) | undefined) {}
 
   setDensity(density: Density) {
     this.density = density;
@@ -42,7 +43,12 @@ export class Photos {
     try {
       const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
       if (controller.signal.aborted) return;
-      this.items = [...this.items, ...page.items];
+      const seen = new Set(this.items.map(item => item.asset_id));
+      this.items = [...this.items, ...page.items.filter(item => {
+        if (seen.has(item.asset_id)) return false;
+        seen.add(item.asset_id);
+        return true;
+      })];
       this.total = page.total;
       this.cursor = page.next_cursor;
       this.started = true;
@@ -57,28 +63,61 @@ export class Photos {
   }
 
   retry() {
-    if (this.expired) {
-      this.items = [];
-      this.cursor = undefined;
-      this.started = false;
-      this.clearSelection();
-    }
+    if (this.replacement || this.expired) return this.replace(this.replacement ?? "expiry");
     this.error = "";
     this.expired = false;
     return this.loadMore();
   }
 
   refresh() {
+    return this.replace("refresh");
+  }
+
+  private async replace(mode: "refresh" | "expiry") {
+    if (this.disposed) return;
     this.controller.abort();
     this.controller = new AbortController();
-    this.items = [];
-    this.cursor = undefined;
-    this.started = false;
-    this.loading = false;
+    const controller = this.controller;
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
+    this.replacement = mode;
+    this.loading = true;
     this.error = "";
-    this.expired = false;
-    this.clearSelection();
-    return this.loadMore();
+    const restore = this.preservePosition?.();
+    const tail = this.items.at(-1)?.asset_id;
+    const candidate = new Map<string, PhotoBrowseRow>();
+    let cursor: string | undefined;
+    let total = 0;
+    let foundTail = !tail;
+    try {
+      do {
+        const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
+        if (signal.aborted) throw signal.reason;
+        const reachedPreviously = foundTail;
+        for (const item of page.items) candidate.set(item.asset_id, item);
+        foundTail ||= !!tail && candidate.has(tail);
+        total = page.total;
+        cursor = page.next_cursor;
+        if (foundTail && (mode === "refresh" || reachedPreviously)) break;
+      } while (cursor);
+      if (signal.aborted) throw signal.reason;
+      this.items = [...candidate.values()];
+      this.total = total;
+      this.cursor = cursor;
+      this.started = true;
+      this.selection = {
+        selectedIDs: new Set([...this.selection.selectedIDs].filter(id => candidate.has(id))),
+        anchorID: this.selection.anchorID && candidate.has(this.selection.anchorID) ? this.selection.anchorID : undefined,
+      };
+      this.expired = false;
+      this.replacement = undefined;
+      await restore?.();
+    } catch (cause) {
+      if (controller.signal.aborted) return;
+      if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      this.error = signal.aborted ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (!controller.signal.aborted) this.loading = false;
+    }
   }
 
   select(id: string, event: MouseEvent, orderedIDs: string[]) {
@@ -92,7 +131,7 @@ export class Photos {
     this.selection = toggleIDSelection(this.selection, orderedIDs, id, checked, range);
   }
 
-  clearSelection() { this.selection = { selectedIDs: new Set(), anchorID: undefined }; }
+  clearSelection() { this.selection = clearSelection<string>(); }
   selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; }
   dispose() { this.disposed = true; this.controller.abort(); }
 }

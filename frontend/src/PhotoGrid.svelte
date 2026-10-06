@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { Button } from "@kenn-io/kit-ui";
-  import { computeMonthLayout, type PhotoGroup } from "./photoGrid.js";
+  import { computeMonthLayout, HEADER_HEIGHT, type PhotoGroup } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoMonthChunk from "./PhotoMonthChunk.svelte";
 
@@ -52,6 +53,31 @@
       container.scrollTo({ top: Math.ceil(chunk.offset) });
       scrollTop = Math.ceil(chunk.offset);
     }
+  }
+
+  export function preservePosition() {
+    const element = container;
+    if (!element) return async () => {};
+    const oldTop = element.scrollTop;
+    const viewportTop = element.getBoundingClientRect().top;
+    const cell = [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(item => item.getBoundingClientRect().bottom > viewportTop + 36);
+    const id = cell?.dataset.asset;
+    const pixelOffset = cell ? cell.getBoundingClientRect().top - viewportTop : 0;
+    return async () => {
+      await tick();
+      let newTop = oldTop;
+      if (id) {
+        for (const chunk of chunks) {
+          const index = chunk.group.items.findIndex(item => item.asset_id === id);
+          if (index < 0) continue;
+          const row = chunk.layout.rows.find(row => row.items.some(item => item.index === index));
+          if (row) newTop = chunk.offset + HEADER_HEIGHT + row.y + 36 - pixelOffset;
+          break;
+        }
+      }
+      element.scrollTop = newTop;
+      scrollTop = element.scrollTop;
+    };
   }
 </script>
 

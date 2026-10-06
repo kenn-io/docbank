@@ -81,14 +81,15 @@ function monthLabel(key: string): string {
 
 // Floating EXIF dates retain their recorded clock time regardless of the browser's zone.
 function captureClock(value: string): number {
-  if (/(Z|[+-]\d{2}:\d{2})$/.test(value)) return Date.parse(value);
-  const [date, clock = "00:00:00"] = value.split("T");
-  return Date.parse(`${date}T${clock.padEnd(8, ":00")}Z`);
+  const match = /^(\d{4}-\d{2}-\d{2})(?:T(\d{1,2})(?::(\d{2}))?(?::(\d{2})([.,]\d+)?)?)?(Z|[+-]\d{2}:\d{2})?$/.exec(value);
+  if (!match) return NaN;
+  const [, date, hour = "00", minute = "00", second = "00", fraction = "", zone = "Z"] = match;
+  return Date.parse(`${date}T${hour.padStart(2, "0")}:${minute}:${second}${fraction.replace(",", ".")}${zone}`);
 }
 
 export function groupPhotos(items: PhotoBrowseRow[], grouping: "months" | "sessions"): PhotoGroup[] {
-  const undated = items.filter(item => !item.capture_time);
-  const dated = items.filter(item => item.capture_time);
+  const undated = items.filter(item => !item.capture_time || !Number.isFinite(captureClock(item.capture_time)));
+  const dated = items.filter(item => item.capture_time && Number.isFinite(captureClock(item.capture_time)));
   const groups: PhotoGroup[] = [];
   if (grouping === "months") {
     const byMonth = new Map<string, PhotoGroup>();

@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
-const output = process.env.DOCBANK_SCREENSHOT_DIR;
-test.skip(!output, "DOCBANK_SCREENSHOT_DIR enables synthetic photo proof");
+const output = process.env.DOCBANK_PHOTOS_SCREENSHOT_DIR;
+test.skip(!output, "DOCBANK_PHOTOS_SCREENSHOT_DIR enables synthetic photo proof");
 
 test("10,000 photos stay windowed, retain previews and selection, and remember density", async ({ page }) => {
   test.setTimeout(900_000);
@@ -23,6 +23,14 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
   });
   try {
     await mkdir(output!, { recursive: true });
+    await page.addInitScript(() => {
+      const active = new Set<string>();
+      Object.assign(window, { photoActiveURLs: active });
+      const create = URL.createObjectURL.bind(URL);
+      const revoke = URL.revokeObjectURL.bind(URL);
+      URL.createObjectURL = blob => { const url = create(blob); active.add(url); return url; };
+      URL.revokeObjectURL = url => { active.delete(url); revoke(url); };
+    });
     await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault], { cwd: repository, env, timeout: 480_000 });
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
@@ -39,6 +47,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       await scroll.evaluate(element => element.scrollTop = element.scrollHeight);
       await expect.poll(() => page.locator(".library-title span").innerText()).not.toBe(loaded);
       expect(await page.locator("[data-asset]").count()).toBeLessThan(200);
+      expect(await page.evaluate(() => (window as unknown as { photoActiveURLs: Set<string> }).photoActiveURLs.size)).toBeLessThan(200);
     }
     await expect(page.getByText("10,000 photos · 10,000 loaded")).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Photo years" }).getByRole("button", { name: "2022", exact: true })).toBeVisible();
@@ -49,6 +58,22 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     await page.getByRole("button", { name: "Clear selection", exact: true }).click();
     await page.getByRole("navigation", { name: "Photo years" }).getByRole("button", { name: "2024", exact: true }).click();
     await expect(page.locator(".sticky-month")).toContainText("2024");
+    const visibleID = await scroll.evaluate(element => {
+      const top = element.getBoundingClientRect().top + 36;
+      return [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(cell => cell.getBoundingClientRect().top >= top)?.dataset.asset;
+    });
+    await page.locator(`[data-asset="${visibleID}"]`).getByRole("checkbox").check();
+    const position = await scroll.evaluate(element => element.scrollTop);
+    await page.route("**/api/v1/photos/assets/query", route => route.abort("failed"), { times: 1 });
+    await page.getByRole("button", { name: "Refresh previews" }).click();
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+    await expect(page.getByText("1 selected photo", { exact: true })).toBeVisible();
+    expect(await scroll.evaluate(element => element.scrollTop)).toBeCloseTo(position, 0);
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Refresh previews" })).toBeEnabled({ timeout: 60_000 });
+    await expect(page.getByText("1 selected photo", { exact: true })).toBeVisible();
+    expect(await scroll.evaluate(element => element.scrollTop)).toBeCloseTo(position, 0);
+    await page.getByRole("button", { name: "Clear selection", exact: true }).click();
     await scroll.evaluate(element => element.scrollTop = 0);
     await expect(page.locator(`[data-asset="${firstAsset}"] img`)).toBeVisible();
     await page.waitForLoadState("networkidle");
@@ -59,6 +84,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     await expect(page.locator(`[data-asset="${firstAsset}"] img`)).toBeVisible();
     await page.waitForLoadState("networkidle");
     for (const [url, count] of seen) expect(requests.get(url)).toBe(count);
+    expect(await page.evaluate(() => (window as unknown as { photoActiveURLs: Set<string> }).photoActiveURLs.size)).toBeLessThan(200);
     await page.getByRole("combobox", { name: /^Grid density/ }).click();
     await page.getByRole("option", { name: "Compact", exact: true }).click();
     const fresh = new URL(await run("web", "--no-browser"));

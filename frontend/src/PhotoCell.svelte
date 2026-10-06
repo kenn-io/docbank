@@ -13,18 +13,21 @@
   } = $props();
   let url = $state("");
   let failed = $state(false);
+  let errorMessage = $state("");
   let retry = $state(0);
   $effect(() => {
     const slot = photo.previews.grid;
     void retry;
     url = "";
     failed = false;
+    errorMessage = "";
     if (slot.state !== "ready" || !slot.generation_id) return;
     let current = true;
-    void cache.get(photo.asset_id, slot.generation_id).then(value => {
-      if (current) url = value;
-    }).catch(() => { if (current) failed = true; });
-    return () => { current = false; };
+    let objectURL = "";
+    void cache.get(photo.asset_id, slot.generation_id).then(blob => {
+      if (current) { objectURL = URL.createObjectURL(blob); url = objectURL; }
+    }).catch(cause => { if (current) { failed = true; errorMessage = cause instanceof Error ? cause.message : String(cause); } });
+    return () => { current = false; if (objectURL) URL.revokeObjectURL(objectURL); };
   });
   const placeholder = $derived(failed || photo.previews.grid.state === "failed" ? "Preview failed" : photo.previews.grid.state === "unsupported" ? "Preview unsupported" : photo.previews.grid.state === "missing" ? "Preview pending" : "Loading preview");
 </script>
@@ -34,7 +37,7 @@
     {#if url}
       <img src={url} alt={photo.name} onerror={() => { url = ""; failed = true; }} />
     {:else}
-      <span class="placeholder" class:pending={placeholder === "Preview pending"}>
+      <span class="placeholder" title={errorMessage} class:pending={placeholder === "Preview pending"}>
         <ImageIcon size="24" aria-hidden="true" />
         <span>{placeholder}</span>
       </span>
