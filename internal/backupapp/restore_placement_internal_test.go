@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/packstore"
 
@@ -16,6 +17,63 @@ import (
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestRecordRestoredLooseContent(t *testing.T) {
+	for _, fault := range []string{"none", "encoding", "missing", "size"} {
+		t.Run(fault, func(t *testing.T) {
+			databasePath := filepath.Join(t.TempDir(), "docbank.db")
+			metadata, err := store.Open(databasePath)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+			first, second := strings.Repeat("a", 64), strings.Repeat("b", 64)
+			for _, hash := range []string{first, second} {
+				_, err := metadata.CreateFile(t.Context(), metadata.RootID(), hash+".txt", hash, 20, "text/plain")
+				require.NoError(t, err)
+			}
+			receipts := []packstore.WriteResult{
+				{Hash: packstore.Hash(first), Size: 20, StoredSize: 8, Encoding: packstore.LooseEncodingZstd},
+				{Hash: packstore.Hash(second), Size: 20, StoredSize: 20, Encoding: packstore.LooseEncodingRaw},
+			}
+			switch fault {
+			case "encoding":
+				receipts[1].Encoding = 255
+			case "missing":
+				receipts[1].Hash = packstore.Hash(strings.Repeat("c", 64))
+			case "size":
+				receipts[1].Size = 21
+				receipts[1].StoredSize = 21
+			}
+			err = recordRestoredLooseContent(t.Context(), databasePath, store.DefaultSQLiteDriver(), receipts)
+			if fault == "none" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), receipts[1].Hash.String())
+				switch fault {
+				case "encoding":
+					assert.Contains(t, err.Error(), "encoding")
+				case "missing":
+					require.ErrorIs(t, err, store.ErrNotFound)
+				case "size":
+					assert.Contains(t, err.Error(), "size")
+				}
+			}
+			physical, err := metadata.PhysicalContent(t.Context(), first)
+			require.NoError(t, err)
+			if fault == "none" {
+				assert.Equal(t, "zstd", physical.Encoding)
+				assert.Equal(t, int64(8), physical.StoredBytes)
+			} else {
+				assert.Equal(t, "raw", physical.Encoding, "a rejected batch must leave prior authority intact")
+				assert.Equal(t, int64(20), physical.StoredBytes)
+			}
+			physical, err = metadata.PhysicalContent(t.Context(), second)
+			require.NoError(t, err)
+			assert.Equal(t, "raw", physical.Encoding)
+			assert.Equal(t, int64(20), physical.StoredBytes)
+		})
+	}
+}
 
 func TestClaimRestoreBackendFencesPostClaimPublication(t *testing.T) {
 	namespace := filepath.Join(t.TempDir(), "archive")
@@ -69,7 +127,7 @@ func TestRestoredRenditionVerificationPreservesPreparedHandoff(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, handoff.Prepare(t.Context()))
 	require.NoError(t, verifyRestoredRenditionHeads(
-		t.Context(), target, databasePath, store.DefaultSQLiteDriver(), nil,
+		t.Context(), target, databasePath, store.DefaultSQLiteDriver(),
 	))
 	metadata, err = store.Open(databasePath)
 	require.NoError(t, err)
@@ -81,7 +139,7 @@ func TestRestoredRenditionVerificationPreservesPreparedHandoff(t *testing.T) {
 	pending, err := blob.PrimaryRestoreHandoffPending(filepath.Join(target, "blobs"))
 	require.NoError(t, err)
 	require.True(t, pending, "verification must leave crash recovery authority intact")
-	require.NoError(t, handoff.Rollback(t.Context()))
+	require.NoError(t, RecoverInterruptedPrimaryHandoff(t.Context(), target, store.DefaultSQLiteDriver()))
 }
 
 func TestPrepareRestoreMappingsRejectsOverlappingFilesystemNamespaces(t *testing.T) {

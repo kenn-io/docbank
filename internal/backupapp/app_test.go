@@ -2915,6 +2915,7 @@ func TestOverwriteCleanupFailurePreservesPublishedOwnership(t *testing.T) {
 	require.NoError(t, os.MkdirAll(raw, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(raw, "obstruction"), []byte("occupied"), 0o600))
 
+	// An empty store map keeps this small file loose so restore reaches alternate cleanup.
 	result, err := backupapp.RestoreWithPlacement(
 		t.Context(), repo, "test-version", store.DefaultSQLiteDriver(),
 		backup.RestoreOptions{TargetDir: target, Overwrite: true, Jobs: 1},

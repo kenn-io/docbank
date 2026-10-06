@@ -98,16 +98,6 @@ func (h *PrimaryRestoreHandoff) Prepare(ctx context.Context) error {
 	return nil
 }
 
-// Commit verifies the post-restore marker and removes the recovery record.
-func (h *PrimaryRestoreHandoff) Commit(ctx context.Context) error {
-	return h.finish(ctx, &h.record.Next)
-}
-
-// Rollback restores the marker that preceded an unpublished restore.
-func (h *PrimaryRestoreHandoff) Rollback(ctx context.Context) error {
-	return h.finish(ctx, h.record.Prior)
-}
-
 // PrimaryRestoreHandoffPending reports whether a prior restore needs marker
 // reconciliation. It does not follow a replacement symlink at the record path.
 func PrimaryRestoreHandoffPending(blobsDir string) (bool, error) {
@@ -126,6 +116,7 @@ func PrimaryRestoreHandoffPending(blobsDir string) (bool, error) {
 
 // RecoverPrimaryRestoreHandoff reconciles an interrupted marker transition
 // against the ownership recorded by the database that is currently published.
+// The caller must hold exclusive coordination for the vault throughout recovery.
 func RecoverPrimaryRestoreHandoff(
 	ctx context.Context,
 	blobsDir string,
@@ -160,9 +151,8 @@ func RecoverPrimaryRestoreHandoff(
 	return reconcilePrimaryOwnership(ctx, blobsDir, record, desired)
 }
 
-func (h *PrimaryRestoreHandoff) finish(
-	ctx context.Context, desired *packstore.Ownership,
-) error {
+// Commit verifies the post-restore marker and removes the recovery record.
+func (h *PrimaryRestoreHandoff) Commit(ctx context.Context) error {
 	record, exists, err := readPrimaryRestoreHandoff(h.blobsDir)
 	if err != nil {
 		return err
@@ -178,7 +168,7 @@ func (h *PrimaryRestoreHandoff) finish(
 			packstore.ErrStoreFenced,
 		)
 	}
-	return reconcilePrimaryOwnership(ctx, h.blobsDir, record, desired)
+	return reconcilePrimaryOwnership(ctx, h.blobsDir, record, &h.record.Next)
 }
 
 func reconcilePrimaryOwnership(

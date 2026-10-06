@@ -205,8 +205,13 @@ func RestoreWithPlacement(
 		if err := primaryHandoff.Prepare(hookCtx); err != nil {
 			return err
 		}
+		if err := recordRestoredLooseContent(
+			hookCtx, staged.DBPath, driver, staged.LooseContent,
+		); err != nil {
+			return err
+		}
 		if err := verifyRestoredRenditionHeads(
-			hookCtx, staged.TargetDir, staged.DBPath, driver, staged.LooseContent,
+			hookCtx, staged.TargetDir, staged.DBPath, driver,
 		); err != nil {
 			return err
 		}
@@ -246,9 +251,28 @@ func RestoreWithPlacement(
 	return result, nil
 }
 
+func recordRestoredLooseContent(
+	ctx context.Context, databasePath string, driver docsqlite.Driver,
+	loose []packstore.WriteResult,
+) (retErr error) {
+	if len(loose) == 0 {
+		return nil
+	}
+	metadata, err := store.OpenForRestore(databasePath, driver)
+	if err != nil {
+		return fmt.Errorf("backupapp: opening restored loose content catalog: %w", err)
+	}
+	defer func() {
+		retErr = errors.Join(retErr, metadata.Close())
+	}()
+	if err := metadata.RecordRestoredLooseContent(ctx, loose); err != nil {
+		return fmt.Errorf("backupapp: recording restored loose content: %w", err)
+	}
+	return nil
+}
+
 func verifyRestoredRenditionHeads(
 	ctx context.Context, target, databasePath string, driver docsqlite.Driver,
-	loose []packstore.WriteResult,
 ) (retErr error) {
 	metadata, err := store.OpenForRestore(databasePath, driver)
 	if err != nil {
@@ -257,18 +281,6 @@ func verifyRestoredRenditionHeads(
 	defer func() {
 		retErr = errors.Join(retErr, metadata.Close())
 	}()
-	for _, receipt := range loose {
-		encoding := "raw"
-		if receipt.Encoding == packstore.LooseEncodingZstd {
-			encoding = "zstd"
-		}
-		if _, err := metadata.RepairBlobAuthority(ctx, receipt.Hash.String(), receipt.Size, store.BlobPhysical{
-			Encoding: encoding, StoredBytes: receipt.StoredSize,
-			PackEligible: receipt.Size <= blob.MaxPackedBlobBytes,
-		}); err != nil {
-			return fmt.Errorf("backupapp: recording restored loose content: %w", err)
-		}
-	}
 	if err := metadata.VerifyRestoredRenditionBlobAuthority(ctx); err != nil {
 		return fmt.Errorf("backupapp: verifying restored rendition authority: %w", err)
 	}
