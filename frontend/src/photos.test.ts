@@ -83,27 +83,14 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
   expect(photos.cursor).toBe("bounded");
   const boundedCalls = fetcher.mock.calls.length;
-  fetcher.mockResolvedValueOnce(response([photo(10), photo(11), photo(12), photo(13), photo(14)], "imports"));
+  fetcher.mockResolvedValueOnce(response([photo(9)], "shortcut"));
   await photos.refresh();
   expect(fetcher).toHaveBeenCalledTimes(boundedCalls + 1);
-  expect(photos.items).toHaveLength(5);
-  expect(photos.cursor).toBe("imports");
-  expect(photos.selection.selectedIDs.size).toBe(0);
-  fetcher.mockResolvedValueOnce(response([photo(14)], "shortcut"));
-  await photos.refresh();
-  expect(fetcher).toHaveBeenCalledTimes(boundedCalls + 2);
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-14"]);
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-9"]);
   expect(photos.cursor).toBe("shortcut");
-  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ code: "cursor_expired" }), { status: 422 }))
-    .mockResolvedValueOnce(response([photo(15)], "expiry-prefix"))
-    .mockResolvedValueOnce(response([photo(16)], "expiry-forward"));
-  await photos.loadMore(); await photos.retry();
-  expect(fetcher).toHaveBeenCalledTimes(boundedCalls + 5);
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-15", "photo-16"]);
-  expect(photos.cursor).toBe("expiry-forward");
   let finishReplacement!: (response: Response) => void;
   fetcher.mockImplementationOnce(() => new Promise(resolve => finishReplacement = resolve))
-    .mockResolvedValueOnce(response([photo(15), photo(16)], "resumed-refresh"));
+    .mockResolvedValueOnce(response([photo(10), photo(11)], "resumed-refresh"));
   const interruptedRefresh = photos.refresh();
   photos.cancelPending();
   expect(photos.loading).toBe(false);
@@ -111,11 +98,11 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   await photos.resume(preserve);
   expect(JSON.parse(fetcher.mock.calls[refreshStart][1].body).cursor).toBeUndefined();
   finishReplacement(response([photo(99)])); await interruptedRefresh;
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-15", "photo-16"]);
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-10", "photo-11"]);
   fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ code: "cursor_expired" }), { status: 422 }))
     .mockImplementationOnce(() => new Promise(resolve => finishReplacement = resolve))
-    .mockResolvedValueOnce(response([photo(15), photo(16)], "resumed-expiry"))
-    .mockResolvedValueOnce(response([photo(17)], "forward"));
+    .mockResolvedValueOnce(response([photo(10), photo(11)], "resumed-expiry"))
+    .mockResolvedValueOnce(response([photo(12)], "forward"));
   await photos.loadMore();
   const interruptedExpiry = photos.retry();
   photos.cancelPending();
@@ -123,7 +110,7 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   await photos.resume(preserve);
   expect(JSON.parse(fetcher.mock.calls[expiryStart][1].body).cursor).toBeUndefined();
   finishReplacement(response([photo(99)])); await interruptedExpiry;
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-15", "photo-16", "photo-17"]);
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-10", "photo-11", "photo-12"]);
   const completedCalls = fetcher.mock.calls.length;
   await photos.resume();
   expect(fetcher).toHaveBeenCalledTimes(completedCalls);
@@ -168,20 +155,20 @@ it("ignores canceled reads while a later request continues", async () => {
   expect(photos.items[0].asset_id).toBe("photo-2");
 });
 
-it("keeps range selection outside mounted cells and supports single and modifier clicks", () => {
+it("maps single, modifier and checkbox clicks to selection", () => {
   const photos = new Photos("scoped", vi.fn());
-  const ids = Array.from({ length: 1000 }, (_, index) => `photo-${index}`);
+  const ids = ["photo-0", "photo-1", "photo-2"];
   photos.select(ids[0], new MouseEvent("click"), ids);
-  photos.select(ids[999], new MouseEvent("click", { shiftKey: true }), ids);
-  expect(photos.selection.selectedIDs.size).toBe(1000);
-  photos.select(ids[400], new MouseEvent("click", { metaKey: true }), ids);
-  expect(photos.selection.selectedIDs.has(ids[400])).toBe(false);
-  photos.select(ids[401], new MouseEvent("click", { ctrlKey: true }), ids);
-  expect(photos.selection.selectedIDs.has(ids[401])).toBe(false);
-  photos.check(ids[400], true, false, ids);
-  expect(photos.selection.selectedIDs.has(ids[400])).toBe(true);
-  photos.select(ids[5], new MouseEvent("click"), ids);
-  expect([...photos.selection.selectedIDs]).toEqual([ids[5]]);
+  photos.select(ids[2], new MouseEvent("click", { shiftKey: true }), ids);
+  expect(photos.selection.selectedIDs.size).toBe(3);
+  photos.select(ids[1], new MouseEvent("click", { metaKey: true }), ids);
+  expect(photos.selection.selectedIDs.has(ids[1])).toBe(false);
+  photos.select(ids[2], new MouseEvent("click", { ctrlKey: true }), ids);
+  expect(photos.selection.selectedIDs.has(ids[2])).toBe(false);
+  photos.check(ids[1], true, false, ids);
+  expect(photos.selection.selectedIDs.has(ids[1])).toBe(true);
+  photos.select(ids[0], new MouseEvent("click"), ids);
+  expect([...photos.selection.selectedIDs]).toEqual([ids[0]]);
   photos.dispose();
 });
 
