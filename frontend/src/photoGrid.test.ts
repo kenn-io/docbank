@@ -1,0 +1,47 @@
+import { expect, it } from "vitest";
+import { computeJustified, computeMonthLayout, groupPhotos, photoAspect, visibleRows } from "./photoGrid.js";
+import { photo } from "./photo-test-fixtures.js";
+
+it("fits panoramas and full justified rows within the available width", () => {
+  const layout = computeJustified([{ aspect: 20 }, ...Array.from({ length: 20 }, () => ({ aspect: 1.5 }))], { containerWidth: 800, targetRowHeight: 200 });
+  for (const row of layout.rows) {
+    expect(row.items.at(-1)!.x + row.items.at(-1)!.width).toBeLessThanOrEqual(800.001);
+  }
+  expect(layout.rows[0].height).toBe(40);
+  expect(computeMonthLayout([], 800, 200).intrinsicHeight).toBe(0);
+});
+
+it("bounds the mounted rows in one month with 10,000 photos", () => {
+  const items = Array.from({ length: 10_000 }, (_, index) => photo(index));
+  const layout = computeMonthLayout(items, 1200, 200);
+  expect(layout.intrinsicHeight).toBe(layout.totalHeight + 44);
+  for (const top of [0, 10_000, 100_000, layout.totalHeight - 1000]) {
+    const rows = visibleRows(layout.rows, top, top + 2000);
+    expect(rows.flatMap(row => row.items).length).toBeLessThan(100);
+    expect(rows.every(row => row.y + row.height >= top && row.y <= top + 2000)).toBe(true);
+  }
+});
+
+it("uses preview dimensions before technical dimensions and falls back to a square", () => {
+  const item = photo(1);
+  expect(photoAspect(item)).toBe(1.5);
+  item.previews.grid = { state: "ready", width: 400, height: 600 };
+  expect(photoAspect(item)).toBe(2 / 3);
+  item.previews.grid = { state: "missing" };
+  item.height_px = null;
+  expect(photoAspect(item)).toBe(1);
+});
+
+it("groups by recorded month, retaining absent dates in Undated", () => {
+  const groups = groupPhotos([photo(1, "2025-01-01T00:30:00+14:00"), photo(2, null), photo(3, "2024-12-30T23:30:00-12:00")], "months");
+  expect(groups.map(group => group.key)).toEqual(["2025-01", "2024-12", "undated"]);
+  expect(groups[2].items[0].asset_id).toBe("photo-2");
+});
+
+it("joins a session across appended pages with a four-hour gap", () => {
+  const firstPage = [photo(1, "2025-06-01T17:00:00"), photo(2, "2025-06-01T10:00:00")];
+  const secondPage = [photo(3, "2025-06-01T09:00:00"), photo(4, null)];
+  const groups = groupPhotos([...firstPage, ...secondPage], "sessions");
+  expect(groups.map(group => group.items.map(item => item.asset_id))).toEqual([["photo-1"], ["photo-3", "photo-2"], ["photo-4"]]);
+  expect(groupPhotos([photo(1, "2025-06-01"), photo(2, "2025-06-01T01")], "sessions")).toHaveLength(1);
+});

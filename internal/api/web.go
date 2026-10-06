@@ -21,12 +21,14 @@ func registerWeb(mux *http.ServeMux, enabled bool, webURL string) {
 		panic("api: embedded web index is missing")
 	}
 	static := http.FileServer(http.FS(assets))
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
+	index := func(w http.ResponseWriter, _ *http.Request) {
 		setWebHeaders(w, webURL)
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(indexHTML)
-	})
+	}
+	mux.HandleFunc("GET /{$}", index)
+	mux.HandleFunc("GET /photos", index)
 	mux.Handle("GET /assets/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setWebHeaders(w, webURL)
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")

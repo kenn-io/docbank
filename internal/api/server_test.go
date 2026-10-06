@@ -324,10 +324,18 @@ func TestWebApplication(t *testing.T) {
 	assert.Contains(t, resp.Header.Get("Content-Security-Policy"), "img-src 'self' data: blob:")
 	assert.Equal(t, "no-referrer", resp.Header.Get("Referrer-Policy"))
 	assert.Contains(t, strings.ToLower(body), "<!doctype html>")
+	photoResp, photoBody := get(t, ts, "/photos", map[string]string{"X-Api-Key": ""})
+	assert.Equal(t, http.StatusOK, photoResp.StatusCode)
+	assert.Equal(t, body, photoBody)
+	for _, header := range []string{"Content-Type", "Cache-Control", "Content-Security-Policy", "Referrer-Policy", "X-Content-Type-Options"} {
+		assert.Equal(t, resp.Header.Get(header), photoResp.Header.Get(header))
+	}
 
 	off := func(d *api.Deps) { d.Cfg.Web.Enabled = false }
 	ts2, _ := newTestServer(t, off)
 	resp, _ = get(t, ts2, "/", nil)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	resp, _ = get(t, ts2, "/photos", nil)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 

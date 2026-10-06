@@ -6,6 +6,29 @@ description: Group ordinary files into photo assets that carry their own revisio
 
 # Photo assets
 
+## Browse in the web app
+
+Open `docbank web` and choose **Photos** in the sidebar. Library opens at
+`/photos`, newest captures first. Photos without a capture date appear under
+Undated. The year buttons jump to the years loaded so far; scrolling loads
+more photos and reveals older years.
+
+Choose Months or Capture sessions to group the grid. A session joins captures
+with gaps of four hours or less. Compact, Comfortable, and Large change the
+grid density. The browser remembers the density after a reload, including
+when you open a fresh `docbank web` session link.
+
+Click a photo to select it. Shift-click adds the range from the previous
+selection, including loaded photos outside the screen. Ctrl-click or
+Command-click toggles a photo. Each photo also has a checkbox for touch.
+The selection dock can select all loaded photos or clear the selection.
+
+Previews already seen remain available while the Photos workspace is open.
+Pending, unsupported, and failed previews have separate placeholders. Choose
+Refresh previews to reload the listing after background preview work finishes.
+If a page fails to load, the earlier photos remain visible. Retry requests the
+failed page again; an expired cursor restarts the listing.
+
 Docbank groups ordinary file nodes into photo assets. Each file node and its
 content versions still hold the bytes. An asset stores only membership, roles,
 display selection, exclusion, and bounded decision receipts.

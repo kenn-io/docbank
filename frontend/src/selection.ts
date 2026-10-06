@@ -2,9 +2,9 @@ import type { Node } from "./generated/docbank.js";
 
 export type SelectableRow = { node: Node; path: string };
 
-export type SelectionState = {
-  selectedIDs: Set<number>;
-  anchorID: number | undefined;
+export type SelectionState<ID = number> = {
+  selectedIDs: Set<ID>;
+  anchorID: ID | undefined;
 };
 
 export type SelectionTarget = {
@@ -31,7 +31,16 @@ export function toggleDocumentSelection(
   checked: boolean,
   range: boolean,
 ): SelectionState {
-  const displayedIDs = eligibleIDs(displayedRows);
+  return toggleIDSelection(state, eligibleIDs(displayedRows), targetID, checked, range);
+}
+
+export function toggleIDSelection<ID>(
+  state: SelectionState<ID>,
+  displayedIDs: readonly ID[],
+  targetID: ID,
+  checked: boolean,
+  range: boolean,
+): SelectionState<ID> {
   const targetIndex = displayedIDs.indexOf(targetID);
   const anchorIndex =
     state.anchorID === undefined ? -1 : displayedIDs.indexOf(state.anchorID);
