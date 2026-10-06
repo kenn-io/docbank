@@ -1067,34 +1067,6 @@ func TestBridgeContractBoundsPollingRetriesAndRefusesRedirects(t *testing.T) {
 	})
 }
 
-func TestBridgeContractCancelsRemoteJobWhenContextEnds(t *testing.T) {
-	fixture := newBridgeFixture(t)
-	var deletes atomic.Int64
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch request.Method {
-		case http.MethodPost:
-			writeBridgeJSON(t, response, http.StatusAccepted,
-				pendingEnvelope(fixture, "job-cancel", JobQueued))
-		case http.MethodGet:
-			cancel()
-			<-request.Context().Done()
-		case http.MethodDelete:
-			deletes.Add(1)
-			response.WriteHeader(http.StatusNoContent)
-		}
-	}))
-	t.Cleanup(server.Close)
-	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
-	_, err := client.Render(ctx, fixture.upload(), fixture.authorization)
-	require.ErrorIs(t, err, context.Canceled)
-	var providerError *document.RenditionProviderError
-	require.ErrorAs(t, err, &providerError)
-	assert.Equal(t, document.RenditionErrorCanceled, providerError.Code())
-	require.Eventually(t, func() bool { return deletes.Load() == 1 }, time.Second, time.Millisecond)
-}
-
 func TestBridgeContractClassifiesInternalTotalTimeout(t *testing.T) {
 	fixture := newBridgeFixture(t)
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -1130,7 +1102,7 @@ func TestBridgeContractBoundsCancellationCleanup(t *testing.T) {
 	now := time.Now()
 	synctest.Test(t, func(t *testing.T) {
 		time.Sleep(time.Until(now))
-		var cleanupBudget atomic.Int64
+		var cleanupBudget, deletes atomic.Int64
 		client := newTestBridgeClientWithHTTP(t, "https://bridge.invalid", fixture.descriptor, nil,
 			&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 				switch request.Method {
@@ -1147,6 +1119,7 @@ func TestBridgeContractBoundsCancellationCleanup(t *testing.T) {
 					deadline, ok := request.Context().Deadline()
 					require.True(t, ok)
 					cleanupBudget.Store(int64(time.Until(deadline)))
+					deletes.Add(1)
 					return &http.Response{
 						StatusCode: http.StatusNoContent, Body: http.NoBody, Request: request,
 					}, nil
@@ -1160,6 +1133,10 @@ func TestBridgeContractBoundsCancellationCleanup(t *testing.T) {
 
 		_, err := client.Render(ctx, fixture.upload(), fixture.authorization)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
+		var providerError *document.RenditionProviderError
+		require.ErrorAs(t, err, &providerError)
+		assert.Equal(t, document.RenditionErrorCanceled, providerError.Code())
+		assert.Equal(t, int64(1), deletes.Load())
 		budget := time.Duration(cleanupBudget.Load())
 		assert.Positive(t, budget)
 		assert.LessOrEqual(t, budget, 5*time.Second)
