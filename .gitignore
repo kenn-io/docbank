@@ -16,10 +16,13 @@ internal/web/dist/*
 **/__pycache__/
 /.cache/docs-assets/
 /site/
+/.site.next.*/
+/.site.previous/
 /.vercel/
 /.vercel-tools/
 docs/.venv/
 docs/site/
+/docs/zensical-site.*/
 docs/zensical-public-docs.*
 docs/.zensical-build.*
 .kata.local.toml
