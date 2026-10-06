@@ -499,7 +499,7 @@ func TestPlacementRunnerCleanupRetryWaitsForConcurrentIngestPublication(t *testi
 			t.Fatal("cleanup did not wait behind the active ingest mutation")
 		default:
 		}
-		probeCtx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+		probeCtx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; queued maintenance keeps the mutation probe waiting
 		probeErr := blobs.WithMutation(probeCtx, func() error { return nil })
 		cancel()
 		maintenanceQueued = errors.Is(probeErr, context.DeadlineExceeded)

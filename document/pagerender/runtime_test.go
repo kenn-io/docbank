@@ -270,7 +270,7 @@ func TestRealRuntimeInspectAndRenderPDFAndPNG(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = engine.command(t.Context(), compiled, nil, 2<<30, 1024)
 	require.ErrorIs(t, err, ErrUnsupported, "3 GiB allocation must fail under the actual 2 GiB pre-exec limit")
-	timeout, stop := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	timeout, stop := context.WithTimeout(t.Context(), 200*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the probe's wait mode runs until it is killed
 	defer stop()
 	_, _, err = engine.command(timeout, compiled, nil, 2<<30, 1024, "wait")
 	require.ErrorIs(t, err, context.DeadlineExceeded)

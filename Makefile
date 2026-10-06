@@ -21,7 +21,10 @@ DEFAULT_GOLANGCI_LINT_CACHE := $(shell git rev-parse --path-format=absolute --gi
 GOLANGCI_LINT_CACHE ?= $(DEFAULT_GOLANGCI_LINT_CACHE)
 export GOLANGCI_LINT_CACHE
 
-.PHONY: build install clean test test-v openapi generate-api check-timing-budgets frontend frontend-test frontend-dev report-export-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
+# golangci-lint built with kit's kennlint plugin; rebuilt when its pins change.
+CUSTOM_GCL := $(CURDIR)/.cache/golangci-lint/custom-gcl$(if $(filter Windows_NT,$(OS)),.exe)
+
+.PHONY: build install clean test test-v openapi generate-api frontend frontend-test frontend-dev report-export-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
 
 build: frontend
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o bin/ ./cmd/docbank
@@ -35,14 +38,11 @@ clean:
 	find internal/web/dist -mindepth 1 ! -name .keep -exec rm -rf {} +
 	rm -rf frontend/dist
 
-test: check-timing-budgets
+test:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" ./...
 
 test-v:
 	go test -timeout 20m -tags "$(BUILD_TAGS)" -v ./...
-
-check-timing-budgets:
-	go run -tags "$(BUILD_TAGS)" ./scripts/check-timing-budgets .
 
 openapi:
 	go run -tags "$(BUILD_TAGS)" ./cmd/docbank openapi > internal/api/openapi.yaml
@@ -76,19 +76,18 @@ docs-screenshots:
 fmt:
 	go fmt ./...
 
-lint: check-timing-budgets
+$(CUSTOM_GCL): .custom-gcl.yml go.mod
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
 		echo "golangci-lint not found. Install: https://golangci-lint.run/usage/install/" >&2; \
 		exit 1; \
 	fi
-	golangci-lint run --allow-serial-runners --fix ./...
+	golangci-lint custom --destination "$(CURDIR)/.cache/golangci-lint" --name custom-gcl --version v2.13.1
 
-lint-ci: check-timing-budgets
-	@if ! command -v golangci-lint >/dev/null 2>&1; then \
-		echo "golangci-lint not found. Install: https://golangci-lint.run/usage/install/" >&2; \
-		exit 1; \
-	fi
-	golangci-lint run --allow-serial-runners ./...
+lint: $(CUSTOM_GCL)
+	"$(CUSTOM_GCL)" run --allow-serial-runners --fix ./...
+
+lint-ci: $(CUSTOM_GCL)
+	"$(CUSTOM_GCL)" run --allow-serial-runners ./...
 
 tidy:
 	go mod tidy

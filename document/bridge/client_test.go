@@ -1084,7 +1084,7 @@ func TestBridgeContractCancelsRemoteJobWhenContextEnds(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client := newTestBridgeClient(t, server.URL, fixture.descriptor, nil)
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the GET handler blocks until the request ends
 	defer cancel()
 	_, err := client.Render(ctx, fixture.upload(), fixture.authorization)
 	require.ErrorIs(t, err, context.DeadlineExceeded)

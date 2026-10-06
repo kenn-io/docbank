@@ -207,7 +207,7 @@ func TestMaintainerSharesDocbankMutationCoordinator(t *testing.T) {
 
 	lease, err := physical.Coordinator().AcquireMutation(ctx)
 	require.NoError(t, err)
-	waitCtx, cancel := context.WithTimeout(ctx, 25*time.Millisecond)
+	waitCtx, cancel := context.WithTimeout(ctx, 25*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the held mutation lease keeps Pack waiting
 	_, err = physical.Maintainer().Pack(waitCtx, packstore.PackOptions{})
 	cancel()
 	require.ErrorIs(t, err, context.DeadlineExceeded)

@@ -308,7 +308,7 @@ func testRenditionWorkerFencesConsentRevocationThroughProviderExecution(
 	select {
 	case revokeErr := <-revocationDone:
 		require.FailNow(t, "consent revocation crossed an unstarted provider fence", revokeErr)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the unstarted provider fence keeps revocation blocked
 	}
 
 	close(allowProvider)
@@ -320,7 +320,7 @@ func testRenditionWorkerFencesConsentRevocationThroughProviderExecution(
 	select {
 	case revokeErr := <-revocationDone:
 		require.FailNow(t, "consent revocation crossed an active provider fence", revokeErr)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the active provider fence keeps revocation blocked
 	}
 	close(provider.renderRelease)
 	require.NoError(t, <-revocationDone)

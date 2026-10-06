@@ -125,7 +125,7 @@ func TestWorkerRetriesCatalogContention(t *testing.T) {
 			select {
 			case err := <-done:
 				t.Fatalf("worker stopped during temporary contention: %v", err)
-			case <-time.After(50 * time.Millisecond):
+			case <-time.After(50 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the open SQLite transaction keeps the worker in contention
 			}
 			require.NoError(t, tx.Rollback())
 			if phase == "startup" {

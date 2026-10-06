@@ -28,3 +28,7 @@ docs/.zensical-build.*
 .kata.local.toml
 .env*
 .vercel
+
+# Custom golangci-lint build with kit analyzers
+/custom-gcl
+/.cache/golangci-lint/

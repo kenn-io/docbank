@@ -319,7 +319,7 @@ func TestIndexWorkerRunReturnsDiscoveryFailure(t *testing.T) {
 	catalog, _ := newIndexCatalogFixture(t)
 	worker := newIndexWorkerForTest(t, catalog)
 	worker.catalog = metadata
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	err = worker.Run(ctx)
 	require.Error(t, err, "a broken catalog must not leave the supervised worker appearing healthy")
@@ -369,7 +369,7 @@ func TestIndexWorkerRunDoesNotHideCleanupFailureBehindMembershipDrift(t *testing
 	catalog.publishErr = store.ErrVectorIndexSourceStale
 	catalog.abandonErr = errors.New("synthetic abandonment failure")
 	worker := newIndexWorkerForTest(t, catalog)
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	require.ErrorIs(t, worker.Run(ctx), catalog.abandonErr)
 }

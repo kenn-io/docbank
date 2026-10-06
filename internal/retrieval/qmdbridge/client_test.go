@@ -380,7 +380,7 @@ func TestSearchHoldsConsentThroughEgress(t *testing.T) {
 			case err := <-revoked:
 				t.Errorf("revocation completed before the authorized HTTP request: %v", err)
 				early = true
-			case <-time.After(20 * time.Millisecond):
+			case <-time.After(20 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the authorized request fence keeps revocation blocked
 			}
 			close(authorizer.proceed)
 			<-started
@@ -389,7 +389,7 @@ func TestSearchHoldsConsentThroughEgress(t *testing.T) {
 				case err := <-revoked:
 					t.Errorf("revocation completed while reading the response: %v", err)
 					early = true
-				case <-time.After(20 * time.Millisecond):
+				case <-time.After(20 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the open response keeps revocation blocked
 				}
 			}
 			if outcome == "canceled" {

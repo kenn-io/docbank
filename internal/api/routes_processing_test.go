@@ -498,7 +498,7 @@ func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 
 	// HTTP shutdown cannot drain the worker after this client has disconnected.
 	// The API owner must cancel it and wait for provider cleanup itself.
-	shutdownCtx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the provider holds accepted processing until released
 	defer cancel()
 	require.ErrorIs(t, catalog.Server.Shutdown(shutdownCtx), context.DeadlineExceeded)
 	select {
@@ -514,7 +514,7 @@ func TestProcessingShutdownDrainsAcceptedJobAndPreservesRecovery(t *testing.T) {
 	select {
 	case <-closed:
 		t.Fatal("server closed while the provider still owned processing resources")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the provider holds accepted processing, so Close cannot finish
 	}
 	closeProcessingSignal(provider.release)
 	select {

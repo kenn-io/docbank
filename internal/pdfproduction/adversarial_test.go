@@ -393,7 +393,7 @@ func TestCanceledEngineAcquireDoesNotWaitForActivePage(t *testing.T) {
 	select {
 	case secondErr = <-second:
 		close(release)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		close(release)
 		secondErr = <-second
 		t.Error("canceled engine acquisition blocked behind an active page")

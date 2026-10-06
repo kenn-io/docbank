@@ -177,10 +177,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Test
-        run: |
-          # The deadline-lint branch deletes this script; skip it there until that lands.
-          if [ -d scripts/check-timing-budgets ]; then make check-timing-budgets; fi
-          bash scripts/test-go-ci.sh
+        run: bash scripts/test-go-ci.sh
 
       - name: Embedded modernc restore without FTS5 build tags
         env:
@@ -235,17 +232,8 @@ jobs:
         with:
           version: v2.13.1
 
+      # Reuse the binary the action built; a second action step would build it for Windows.
       - name: Run golangci-lint for Windows
-        if: hashFiles('.custom-gcl.yml') == ''
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        env:
-          GOOS: windows
-        with:
-          version: v2.13.1
-
-      # With a plugin build, reuse the binary the first step built; the action would build it for Windows.
-      - name: Run custom golangci-lint for Windows
-        if: hashFiles('.custom-gcl.yml') != ''
         env:
           GOOS: windows
         run: ./custom-gcl run ./...

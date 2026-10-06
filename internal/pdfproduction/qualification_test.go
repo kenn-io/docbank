@@ -689,7 +689,7 @@ func TestWASMBackingConcurrentAcquireCancellation(t *testing.T) {
 	manager := newBackingManager(128)
 	first, err := manager.acquire(t.Context(), 128)
 	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the first lease holds the only backing
 	defer cancel()
 	result := make(chan error, 1)
 	go func() {
@@ -769,7 +769,7 @@ func TestPDFiumSequentialEnginesReuseBacking(t *testing.T) {
 	e2, ok := second.(*pdfiumEngine)
 	require.True(t, ok)
 	require.Same(t, e1.cache, e2.cache, "concurrent engine acquisition shares only pinned compiled code")
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the first engine holds the shared session
 	defer cancel()
 	require.ErrorIs(t, e2.withInstance(ctx, func(pdfium.Pdfium) error { t.Fatal("concurrent session entered WASM"); return nil }), context.DeadlineExceeded)
 	require.Nil(t, e2.session, "waiting must not allocate a second backing")

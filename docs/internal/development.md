@@ -194,17 +194,18 @@ rationale.
 
 ### Timing checks
 
-Run `go run -tags fts5 ./scripts/check-timing-budgets .` to scan Go test files
-for package-qualified `Eventually`, `EventuallyWithT`, and `Never` calls with
-literal completion budgets below one second. Named expressions remain outside
-the check. The checker leaves the source unchanged.
+`make lint` runs kit's `deadlinetest` analyzer through the `kennlint` plugin.
+It reports `context.WithTimeout`, `time.After`, timers, and `Eventually` calls
+in tests with a budget below one second outside a synctest bubble. A short
+positive `Never` window is allowed, since it can only check less. A site may
+carry `//nolint:kennlint // reason` only when the asserted result is the
+deadline expiring, or when a `select` on a timer shows that an event does not
+happen; the reason names the case and what holds the wait.
 
 Use `testing/synctest` for channels, callbacks, timers, goroutines, and readers
 owned by a test. Keep waits for provider HTTP, managed commands, daemons,
 sockets, files, OS locks, SQLite, blob stores, process-global state, and held
-mutexes on the real clock. The checker has one finite allowance for the backup
-freeze observation in `vault_external_test.go`; it does not make that test
-bubble-safe.
+mutexes on the real clock.
 
 ## Verification contract
 

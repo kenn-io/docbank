@@ -55,6 +55,7 @@ linters:
     - ineffassign
     - intrange
     - iotamixing
+    - kennlint
     - loggercheck
     - makezero
     - mirror
@@ -103,6 +104,14 @@ linters:
   #   pending dedicated passes: contextcheck, noctx (see follow-up PRs)
 
   settings:
+    custom:
+      kennlint:
+        type: module
+        description: Kit deadlinetest, sub-second wall-clock budgets in tests outside synctest.
+        original-url: go.kenn.io/kit/lint
+        settings:
+          disable: [errtext, nohttpmux, rowserrcheck, sleeptest, sqlcheck, sqlclosecheck, testifyhelper]
+
     errorlint:
       comparison: true
       asserts: true
@@ -215,12 +224,6 @@ linters:
         path: _test\.go
         text: "G204|G704|G306|G301|G302|G101|G117|G703|G122|G403|G115"
 
-      # The timing-budget CLI intentionally walks its local root argument.
-      # G703's taint result varies between equivalent lint runs.
-      - linters: [gosec]
-        path: scripts/check-timing-budgets/main\.go
-        text: "G703"
-
       # gosec's taint rules (G7xx) fire nondeterministically between runs, so
       # an inline //nolint fails nolintlint whenever the taint pass stays
       # quiet. The endpoint comes from the OCR policy, which pins it.
@@ -237,6 +240,11 @@ linters:
       - linters: [staticcheck]
         path: _test\.go
         text: "SA5011"
+
+      # Test sleeps already carry //nolint:kennlint reasons for sleeptest, which stays disabled until its backlog is cleared.
+      - linters: [nolintlint]
+        path: _test\.go
+        text: 'is unused for linter "kennlint"'
 
       # CreateRaw owns the legacy DOS timestamp bytes in published Mistral
       # fixtures. Using FileHeader.Modified adds an extended timestamp and
