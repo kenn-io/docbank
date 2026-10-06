@@ -77,11 +77,30 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
   photos.selectLoaded();
   fetcher.mockResolvedValueOnce(response([photo(1)], "more"))
-    .mockResolvedValueOnce(response([photo(6)]));
+    .mockResolvedValueOnce(response([photo(6), photo(7), photo(8), photo(9)], "bounded"));
   await photos.refresh();
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-6"]);
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-6", "photo-7", "photo-8", "photo-9"]);
   expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
-  expect(photos.cursor).toBeUndefined();
+  expect(photos.cursor).toBe("bounded");
+  const boundedCalls = fetcher.mock.calls.length;
+  fetcher.mockResolvedValueOnce(response([photo(10), photo(11), photo(12), photo(13), photo(14)], "imports"));
+  await photos.refresh();
+  expect(fetcher).toHaveBeenCalledTimes(boundedCalls + 1);
+  expect(photos.items).toHaveLength(5);
+  expect(photos.cursor).toBe("imports");
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  fetcher.mockResolvedValueOnce(response([photo(14)], "shortcut"));
+  await photos.refresh();
+  expect(fetcher).toHaveBeenCalledTimes(boundedCalls + 2);
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-14"]);
+  expect(photos.cursor).toBe("shortcut");
+  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ code: "cursor_expired" }), { status: 422 }))
+    .mockResolvedValueOnce(response([photo(15)], "expiry-prefix"))
+    .mockResolvedValueOnce(response([photo(16)], "expiry-forward"));
+  await photos.loadMore(); await photos.retry();
+  expect(fetcher).toHaveBeenCalledTimes(boundedCalls + 5);
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-15", "photo-16"]);
+  expect(photos.cursor).toBe("expiry-forward");
   const timer = new AbortController();
   vi.spyOn(AbortSignal, "timeout").mockReturnValue(timer.signal);
   fetcher.mockImplementationOnce((_url, init: RequestInit) => new Promise((_resolve, reject) => init.signal!.addEventListener("abort", () => reject(init.signal!.reason))));

@@ -24,11 +24,11 @@ selection, including loaded photos outside the screen. Ctrl-click or
 Command-click toggles a photo. Each photo also has a checkbox for touch.
 The selection dock can select all loaded photos or clear the selection.
 
-Photos, selection, and scroll position stay in place across Documents/Photos switches until the session locks or ends. Previews already seen stay in a private browser cache for that signed-in session. Only mounted photos keep image URLs. Docbank deletes the cache when the session locks or ends, or the page closes. If the browser exits abnormally, the cache stays in the site's browser storage under the browser's quota until site data is cleared. Storage failures offer Retry preview.
+Photos, selection, and scroll position stay in place across Documents/Photos switches until the session locks or ends. Previews already seen stay in a private browser cache for that signed-in session. Only mounted photos keep image URLs. Docbank deletes the cache when the session locks or ends, or the page closes. If the browser exits abnormally, the cache stays in the site's browser storage under the browser's quota until site data is cleared. Previews still display when browser storage is unavailable, but revisiting them may download them again.
 Pending, unsupported, and failed previews have separate placeholders. Choose
 Refresh previews to reload the listing after background preview work finishes.
 If a page fails to load, the earlier photos remain visible. Retry requests the
-failed page again. Refresh and expired-cursor recovery keep loaded photos, selection, and your place while they rebuild the listing. They publish the replacement after it succeeds; a failed attempt keeps the earlier view available for Retry. Recovery stops after one minute and offers Retry if it needs more time.
+failed page again. Refresh and expired-cursor recovery keep loaded photos and your place while they rebuild the loaded prefix, retaining selected photos present in that prefix. They publish the replacement after it succeeds; a failed attempt keeps the earlier view available for Retry. Recovery stops after one minute and offers Retry if it needs more time.
 
 Docbank groups ordinary file nodes into photo assets. Each file node and its
 content versions still hold the bytes. An asset stores only membership, roles,

@@ -86,23 +86,43 @@ it("routes expired network authentication to the workspace handler", async () =>
   expect(auth).toHaveBeenCalledTimes(1);
 });
 
-it("reports storage failure and retries rather than retaining an in-memory substitute", async () => {
+it("displays network bytes when storage fails and retains only healthy writes", async () => {
   const stored = storage();
-  const normalOpen = stored.open.getMockImplementation()!;
   stored.open.mockRejectedValueOnce(new Error("Storage disabled"));
   const fetcher = vi.fn(async () => new Response("synthetic-jpeg"));
   vi.stubGlobal("fetch", fetcher);
   const cache = workspace();
-  await expect(cache.get("asset", "generation")).rejects.toThrow("Preview storage is unavailable");
-  expect(fetcher).not.toHaveBeenCalled();
-  stored.open.mockImplementation(normalOpen);
+  expect(await (await cache.get("asset", "generation")).text()).toBe("synthetic-jpeg");
+  expect(await (await cache.get("asset", "generation")).text()).toBe("synthetic-jpeg");
+  expect(fetcher).toHaveBeenCalledTimes(2);
   await cache.get("asset", "generation");
-  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(fetcher).toHaveBeenCalledTimes(2);
   const opened = await stored.open.mock.results[1].value;
-  opened.put.mockRejectedValueOnce(new Error("Quota exceeded"));
-  await expect(cache.get("asset", "other-generation")).rejects.toThrow("Preview storage is unavailable");
-  await cache.get("asset", "other-generation");
-  expect(fetcher).toHaveBeenCalledTimes(3);
+  opened.match.mockRejectedValueOnce(new Error("Read disabled"));
+  expect(await (await cache.get("asset", "match-failure")).text()).toBe("synthetic-jpeg");
+  await cache.get("asset", "match-failure");
+  const reopened = await stored.open.mock.results[2].value;
+  reopened.put.mockRejectedValueOnce(new Error("Quota exceeded"));
+  expect(await (await cache.get("asset", "put-failure")).text()).toBe("synthetic-jpeg");
+  await cache.get("asset", "put-failure");
+  expect(fetcher).toHaveBeenCalledTimes(6);
+  await cache.get("asset", "put-failure");
+  expect(fetcher).toHaveBeenCalledTimes(6);
+  fetcher.mockRejectedValueOnce(new Error("Network failed"));
+  await expect(cache.get("asset", "network-failure")).rejects.toThrow("Network failed");
+  const broken = new Response("broken-body");
+  vi.spyOn(broken, "arrayBuffer").mockRejectedValueOnce(new Error("Body failed"));
+  fetcher.mockResolvedValueOnce(broken);
+  await expect(cache.get("asset", "body-failure")).rejects.toThrow("Body failed");
+  let rejectOpen!: (cause: Error) => void;
+  const opening = new Promise<typeof opened>((_resolve, reject) => rejectOpen = reject);
+  stored.open.mockReturnValueOnce(opening);
+  const unavailable = workspace();
+  const caller = new AbortController();
+  const rejected = expect(unavailable.get("asset", "canceled", caller.signal)).rejects.toThrow();
+  caller.abort(); rejectOpen(new Error("Storage unavailable"));
+  await opening.catch(() => {}); await rejected;
+  expect(fetcher).toHaveBeenCalledTimes(8);
 });
 
 it("deletes its cache when disposal races opening and rejects the late request", async () => {

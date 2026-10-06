@@ -85,21 +85,22 @@ export class Photos {
     this.replacement = mode;
     this.loading = true;
     this.error = "";
+    const count = this.items.length;
     const tail = this.items.at(-1)?.asset_id;
     const candidate = new Map<string, PhotoBrowseRow>();
     let cursor: string | undefined;
     let total = 0;
-    let foundTail = !tail;
+    let reachedPrefix = !count;
     try {
       do {
         const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
         if (signal.aborted) throw signal.reason;
-        const reachedPreviously = foundTail;
+        const reachedPreviously = reachedPrefix;
         for (const item of page.items) candidate.set(item.asset_id, item);
-        foundTail ||= !!tail && candidate.has(tail);
+        reachedPrefix ||= (!!tail && candidate.has(tail)) || candidate.size >= count;
         total = page.total;
         cursor = page.next_cursor;
-        if (foundTail && (mode === "refresh" || reachedPreviously)) break;
+        if (reachedPrefix && (mode === "refresh" || reachedPreviously)) break;
       } while (cursor);
       if (signal.aborted) throw signal.reason;
       const restore = preserve?.();

@@ -58,7 +58,7 @@ export class PhotoPreviewCache {
       signal.addEventListener("abort", onabort, { once: true });
     });
     const read = async () => {
-      let cache: Cache;
+      let cache: Cache | undefined;
       const key = new Request(new URL(path, location.origin), { credentials: "omit" });
       let cached: Response | undefined;
       try {
@@ -66,26 +66,23 @@ export class PhotoPreviewCache {
         cache = await this.cache;
         signal.throwIfAborted();
         cached = await cache.match(key);
-      } catch (cause) {
-        if (signal.aborted) throw signal.reason;
+      } catch {
+        signal.throwIfAborted();
         this.cache = undefined;
-        throw new Error("Preview storage is unavailable. Retry preview.", { cause });
+        cache = undefined;
       }
       signal.throwIfAborted();
       if (cached) return cached.blob();
       const response = await readPhotoPreview(assetID, generationID, undefined, { session: this.session, signal });
       signal.throwIfAborted();
+      const bytes = await response.arrayBuffer();
+      signal.throwIfAborted();
       try {
         // The network response varies by credentials; retained keys contain no credentials.
-        const bytes = await response.arrayBuffer();
-        signal.throwIfAborted();
-        await cache.put(key, new Response(bytes, { headers: { "Content-Type": "image/jpeg" } }));
-        signal.throwIfAborted();
-        return new Blob([bytes], { type: "image/jpeg" });
-      } catch (cause) {
-        if (signal.aborted) throw signal.reason;
-        throw new Error("Preview storage is unavailable. Retry preview.", { cause });
-      }
+        await cache?.put(key, new Response(bytes, { headers: { "Content-Type": "image/jpeg" } }));
+      } catch { signal.throwIfAborted(); }
+      signal.throwIfAborted();
+      return new Blob([bytes], { type: "image/jpeg" });
     };
     return Promise.race([read(), aborted]).finally(() => signal.removeEventListener("abort", onabort));
   }
