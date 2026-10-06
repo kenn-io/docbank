@@ -267,7 +267,9 @@ synthetic workspace. Keep browser tokens out of screenshots and logs. After
 the workflow, stop the daemon and confirm it is stopped before reading the
 temporary database. From the TypeScript harness, invoke `python3` with Python's
 standard-library `sqlite3`, using `sqlite3.connect(uri, uri=True)` and a file
-URI with `mode=ro&immutable=1`. Build the URI with `Path.resolve().as_uri()`;
+URI with `mode=ro&immutable=1`. Before opening it, require that `docbank.db-wal`
+is absent or empty. Run the Python checks with `-E` so inherited environment
+settings cannot disable assertions. Build the URI with `Path.resolve().as_uri()`;
 the database path is a separate process argument, not interpolated Python or
 shell code. Query `rendition_jobs` and `embedding_jobs`, require zero rows in
 both, and close the connection. This matches the stopped-vault check in

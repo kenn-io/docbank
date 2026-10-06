@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
+import { inspect, promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import type { DatePage, Identity, Node, Plan, Summary } from "../src/generated/docbank.js";
 import { getGetTermReportUrl } from "../src/generated/docbank.js";
@@ -31,6 +31,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
   const post = (route: string) => page.waitForResponse(response =>
     new URL(response.url()).pathname === route && response.request().method() === "POST");
   let started = false;
+  let failure: unknown;
   const stop = async () => {
     if (!started) return;
     let pid: number | undefined;
@@ -40,8 +41,9 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       if (before.running) await run("daemon", "stop");
       const after = JSON.parse(await run("daemon", "status", "--json"));
       if (after.running !== false) throw new Error("Daemon is still running");
-    } catch {
-      throw new Error(`Synthetic daemon ${pid ?? "unknown"} did not stop; retained ${scratch}`);
+    } catch (cause) {
+      throw new Error(`Synthetic daemon ${pid ?? "unknown"} did not stop; retained ${scratch}`,
+        { cause });
     }
   };
   try {
@@ -80,7 +82,10 @@ test("qualifies selected reports and original exports", async ({ page }) => {
     const session = new URLSearchParams(issued.hash.slice(1)).get("web_session");
     if (!session) throw new Error("Synthetic web session missing");
     try { await page.goto(issued.toString()); }
-    catch { throw new Error("Could not open the synthetic browser session"); }
+    catch (cause) {
+      const detail = String(cause).replaceAll(session, "[redacted]");
+      throw new Error("Could not open the synthetic browser session", { cause: new Error(detail) });
+    }
     const drawer = page.getByRole("dialog", { name: "Search exports", exact: true });
     const exportDrawer = page.getByRole("dialog", { name: "Verified export", exact: true });
 
@@ -273,7 +278,7 @@ test("qualifies selected reports and original exports", async ({ page }) => {
       originals: nodes.slice(0, 3).map(node => ({ ...members.find(m => m.node_id === node.id),
         hex: sources.get(node.name)!.toString("hex") })),
     }), { mode: 0o600 });
-    const verifyArtifacts = async () => exec("python3", ["-c", String.raw`
+    const verifyArtifacts = async () => exec("python3", ["-E", "-c", String.raw`
 import csv, hashlib, io, json, sys, zipfile
 from pathlib import Path
 expected = json.loads(Path(sys.argv[1]).read_text())
@@ -398,10 +403,13 @@ print('Verified report evidence, CSV and all three original byte streams')
     expect(await run("search-export", "verify", packet)).toContain("internally consistent: true");
     await verifyArtifacts();
     expect(JSON.parse(await run("daemon", "status", "--json")).running).toBe(false);
-    await exec("python3", ["-c", String.raw`
+    await exec("python3", ["-E", "-c", String.raw`
 import sqlite3, sys
 from pathlib import Path
-uri = Path(sys.argv[1]).resolve().as_uri() + '?mode=ro&immutable=1'
+database = Path(sys.argv[1]).resolve()
+wal = database.with_name(database.name + '-wal')
+assert not wal.exists() or wal.stat().st_size == 0, 'Stopped database has a nonempty WAL'
+uri = database.as_uri() + '?mode=ro&immutable=1'
 connection = sqlite3.connect(uri, uri=True)
 try:
     assert connection.execute('SELECT COUNT(*) FROM rendition_jobs').fetchone() == (0,)
@@ -409,8 +417,19 @@ try:
 finally:
     connection.close()
 `, path.join(vault, "docbank.db")], { timeout: 30_000 });
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    await stop();
-    await rm(scratch, { recursive: true, force: true });
+    try {
+      await stop();
+      await rm(scratch, { recursive: true, force: true });
+    } catch (cleanupError) {
+      if (failure !== undefined) {
+        throw new Error(`Browser qualification cleanup failed: ${inspect(cleanupError)}`,
+          { cause: failure });
+      }
+      throw cleanupError;
+    }
   }
 });

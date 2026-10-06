@@ -24,6 +24,7 @@ try {
       PLAYWRIGHT_JSON_OUTPUT_FILE: report,
     };
     try {
+      await rm(env.DOCBANK_REPORT_EXPORT_SCREENSHOT_DIR, { recursive: true, force: true });
       const build = spawnSync("go", ["build", "-tags", "fts5", "-o", binary, "./cmd/docbank"], {
         cwd: repository, env, stdio: "inherit", timeout: 600_000,
       });

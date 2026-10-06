@@ -6,7 +6,7 @@ CI job has not run; the main-pinned dispatcher activates it after merge.
 
 Design: `2026-10-04-browser-report-export-qualification-design.md`.
 Design SHA-256:
-`d75c959207af19b9c2b1da1ca749cc781e3f90f797e40f1f7c3ea832a14155d7`.
+`8c1e2ecbf19662da8aec3ba11e414350bb13a3bee66964e68520f8a1143b165d`.
 Source baseline: `eec4756eeedf751e0f48af9e3d56c9ac7ea98ba8`, merged #791.
 This slice changes no product code, dependencies, or generated clients. The
 branch also incorporates newer main changes; final qualification uses that
@@ -115,7 +115,8 @@ are not three shared-family identifiers.
 
 The parent read uses the generated URL builder and a same-origin browser fetch
 with the original session header. The database URI appends
-`?mode=ro&immutable=1` to `Path.resolve().as_uri()`. Missing or relative binary
+`?mode=ro&immutable=1` to `Path.resolve().as_uri()` after rejecting a nonempty
+WAL. Python runs with `-E` to keep assertions enabled. Missing or relative binary
 overrides fail before vault creation. Review captures show the real export,
 date-review, and completed-report states with synthetic data only.
 
