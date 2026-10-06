@@ -33,7 +33,7 @@ it("uses preview dimensions before technical dimensions and falls back to a squa
 });
 
 it("groups by recorded month, retaining absent dates in Undated", () => {
-  const groups = groupPhotos([photo(1, "2025-01-01T00:30:00+14:00"), photo(2, null), photo(3, "2024-12-30T23:30:00-12:00")], "months");
+  const groups = groupPhotos([photo(3, "2024-12-31T23:30:00-12:00"), photo(2, null), photo(1, "2025-01-01T00:30:00+14:00")], "months");
   expect(groups.map(group => group.key)).toEqual(["2025-01", "2024-12", "undated"]);
   expect(groups[2].items[0].asset_id).toBe("photo-2");
 });

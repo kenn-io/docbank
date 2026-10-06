@@ -44,17 +44,17 @@
       {#snippet icon()}<ImageIcon size="24" />{/snippet}
     </EmptyState>
   {/if}
-  <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{/if}</div>
+  <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
   <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} truncated={photos.items.length < photos.total} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} />
 </main>
 
 <style>
-  .photos-workspace { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; background: var(--bg-surface); }
+  .photos-workspace { max-height: calc(100dvh - var(--header-height)); display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; background: var(--bg-surface); }
   .photo-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border-default); }
   .library-title h1 { margin: 0 0 4px; font-size: var(--font-size-lg); color: var(--text-primary); }
   .library-title span { font-size: var(--font-size-xs); color: var(--text-muted); }
   .photo-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .photo-error { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-5); color: var(--text-primary); background: var(--bg-inset); }
-  .photo-loading { height: 28px; flex-shrink: 0; display: flex; gap: var(--space-2); align-items: center; justify-content: center; padding: var(--space-2); color: var(--text-muted); font-size: var(--font-size-sm); }
+  .photo-loading { height: 38px; flex-shrink: 0; display: flex; gap: var(--space-2); align-items: center; justify-content: center; padding: var(--space-2); color: var(--text-muted); font-size: var(--font-size-sm); }
   @media (max-width: 640px) { .photo-toolbar { padding: var(--space-3); } }
 </style>

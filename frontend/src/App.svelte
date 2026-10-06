@@ -180,8 +180,9 @@
   });
 
   function switchWorkspace(photos: boolean) {
-    photoMode = photos;
     navOpen = false;
+    if (photoMode === photos) return;
+    photoMode = photos;
     history.pushState(null, "", `${photos ? "/photos" : "/"}${location.search}${location.hash}`);
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);

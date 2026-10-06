@@ -18,6 +18,8 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
   const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0" };
   const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
   const requests = new Map<string, number>();
+  let canceledPreviews = 0;
+  page.on("requestfailed", request => { if (request.url().includes("/previews/") && request.failure()?.errorText.includes("ABORTED")) canceledPreviews++; });
   let listings = 0;
   const captureTimes = new Map<string, string>();
   const recordCaptures = async (response: Response) => {
@@ -51,9 +53,11 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     await page.locator("[data-asset]").first().getByRole("button").first().click();
     await page.getByRole("combobox", { name: /^Group photos/ }).click();
     await page.getByRole("option", { name: "Capture sessions", exact: true }).click();
-    const requestNext = async () => {
-      await scroll.evaluate(element => element.scrollTop = Math.max(0, element.scrollTop - 1600));
-      await scroll.evaluate(async element => { await new Promise(requestAnimationFrame); element.scrollTop = element.scrollHeight - element.clientHeight - 400; });
+    const requestNext = async (anchor = false) => {
+      const button = page.getByRole("button", { name: "Load more", exact: true });
+      await button.focus();
+      await page.keyboard.press("Enter");
+      await scroll.evaluate((element, gap) => element.scrollTop = element.scrollHeight - element.clientHeight - gap, anchor ? 400 : 0);
     };
     for (let count = 0; count < 50; count++) {
       if (await page.getByText("10,000 photos · 10,000 loaded").isVisible()) break;
@@ -75,10 +79,10 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
         }, { times: 1 });
         if (loaded.includes("1,750 loaded")) {
           await page.route("**/api/v1/photos/assets/query", route => route.abort("failed"), { times: 1 });
-          await requestNext();
+          await requestNext(true);
           await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
           await page.getByRole("button", { name: "Retry", exact: true }).click();
-        } else await requestNext();
+        } else await requestNext(true);
         await held;
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
         const anchor = await scroll.evaluate(element => {
@@ -108,6 +112,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     }
     await expect(page.getByText("10,000 photos · 10,000 loaded")).toBeVisible();
     await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
     page.off("response", recordCaptures);
     await expect(page.getByRole("navigation", { name: "Photo years" }).getByRole("button", { name: "2022", exact: true })).toBeVisible();
     await page.getByRole("combobox", { name: /^Group photos/ }).click();
@@ -163,13 +168,29 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     await scroll.evaluate(element => element.scrollTop = 0);
     await expect(page.locator(`[data-asset="${firstAsset}"] img`)).toBeVisible();
     await page.waitForLoadState("networkidle");
-    const seen = new Map(requests);
+    const retained = await page.evaluate(async () => {
+      const names = (await caches.keys()).filter(name => name.startsWith("docbank-photo-previews-"));
+      return (await Promise.all(names.map(async name => (await (await caches.open(name)).keys()).map(key => key.url)))).flat();
+    });
+    const seen = new Map([...requests].filter(([url]) => retained.includes(url)));
     await scroll.evaluate(element => element.scrollTop = 15_000);
     await page.waitForLoadState("networkidle");
     await scroll.evaluate(element => element.scrollTop = 0);
     await expect(page.locator(`[data-asset="${firstAsset}"] img`)).toBeVisible();
     await page.waitForLoadState("networkidle");
     for (const [url, count] of seen) expect(requests.get(url)).toBe(count);
+    expect(await page.evaluate(() => (window as unknown as { photoActiveURLs: Set<string> }).photoActiveURLs.size)).toBeLessThan(200);
+    const beforeFling = canceledPreviews;
+    await page.route("**/previews/**", async route => { await new Promise(resolve => setTimeout(resolve, 100)); await route.continue(); });
+    for (const top of [40_000, 80_000, 120_000, 160_000, 200_000]) {
+      await scroll.evaluate((element, position) => element.scrollTop = position, top);
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+    }
+    await expect.poll(() => canceledPreviews).toBeGreaterThan(beforeFling);
+    await expect(scroll.locator("img").first()).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    await expect.poll(() => scroll.locator("img").count()).toBe(await page.locator("[data-asset]").count());
+    await page.unroute("**/previews/**");
     expect(await page.evaluate(() => (window as unknown as { photoActiveURLs: Set<string> }).photoActiveURLs.size)).toBeLessThan(200);
     await page.getByRole("combobox", { name: /^Grid density/ }).click();
     await page.getByRole("option", { name: "Compact", exact: true }).click();
@@ -181,6 +202,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     await expect(scroll.locator("img").first()).toBeVisible();
     for (const width of [1440, 400]) {
       await page.setViewportSize({ width, height: 960 });
+      await expect(page.getByRole("button", { name: "Load more", exact: true })).toBeInViewport();
       for (const theme of ["light", "dark"]) {
         await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
         await page.screenshot({ path: path.join(output!, `web-photos-${width}-${theme}.png`), animations: "disabled", timeout: 15_000 });

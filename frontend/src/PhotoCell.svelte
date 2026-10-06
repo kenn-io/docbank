@@ -22,12 +22,13 @@
     failed = false;
     errorMessage = "";
     if (slot.state !== "ready" || !slot.generation_id) return;
+    const controller = new AbortController();
     let current = true;
     let objectURL = "";
-    void cache.get(photo.asset_id, slot.generation_id).then(blob => {
+    void cache.get(photo.asset_id, slot.generation_id, controller.signal).then(blob => {
       if (current) { objectURL = URL.createObjectURL(blob); url = objectURL; }
     }).catch(cause => { if (current) { failed = true; errorMessage = cause instanceof Error ? cause.message : String(cause); } });
-    return () => { current = false; if (objectURL) URL.revokeObjectURL(objectURL); };
+    return () => { current = false; controller.abort(); if (objectURL) URL.revokeObjectURL(objectURL); };
   });
   const placeholder = $derived(failed || photo.previews.grid.state === "failed" ? "Preview failed" : photo.previews.grid.state === "unsupported" ? "Preview unsupported" : photo.previews.grid.state === "missing" ? "Preview pending" : "Loading preview");
 </script>

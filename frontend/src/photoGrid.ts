@@ -103,6 +103,7 @@ export function groupPhotos(items: PhotoBrowseRow[], grouping: "months" | "sessi
       }
       group.items.push(item);
     }
+    groups.sort((a, b) => b.key.localeCompare(a.key));
   } else {
     const sorted = [...dated].sort((a, b) => captureClock(a.capture_time!) - captureClock(b.capture_time!));
     let previous = -Infinity;

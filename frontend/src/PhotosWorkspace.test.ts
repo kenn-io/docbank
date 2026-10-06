@@ -26,6 +26,16 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   expect(screen.getByText("2 selected photos")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await screen.findByRole("button", { name: "Select Photo 3.jpg" });
+  let finish!: (response: Response) => void;
+  fetcher.mockImplementationOnce(() => new Promise(resolve => finish = resolve));
+  photos.cursor = "manual-page";
+  await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+  expect(await screen.findByText("Loading photos…")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  finish(new Response(JSON.stringify({ items: [photo(4)], total: 4 })));
+  await screen.findByRole("button", { name: "Select Photo 4.jpg" });
+  expect(screen.getByText("2 selected photos")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   await fireEvent.keyDown(window, { key: "Escape" });
   await waitFor(() => expect(screen.queryByText(/selected photos/)).toBeNull());
   photos.dispose();

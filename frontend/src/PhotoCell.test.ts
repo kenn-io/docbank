@@ -17,10 +17,12 @@ it("revokes mounted URLs and ignores previews that complete after unmount", asyn
   const first = render(PhotoCell, props);
   await screen.findByRole("img");
   first.unmount();
+  expect(get.mock.calls[0][2].aborted).toBe(true);
   expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:synthetic");
   const second = render(PhotoCell, props);
   await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
   second.unmount();
+  expect(get.mock.calls[1][2].aborted).toBe(true);
   finish(new Blob(["late-jpeg"]));
   await new Promise(resolve => setTimeout(resolve, 0));
   expect(URL.createObjectURL).toHaveBeenCalledTimes(1);

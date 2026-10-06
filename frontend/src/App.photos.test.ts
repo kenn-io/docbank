@@ -31,6 +31,9 @@ it("retains photo state and previews across sidebar switches until lock", async 
   const previews = () => fetcher.mock.calls.filter(([url]) => url.includes("/previews/")).length;
   expect(listings()).toBe(1);
   expect(previews()).toBe(1);
+  const historyLength = history.length;
+  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  expect(history.length).toBe(historyLength);
   await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   expect(location.pathname).toBe("/");
   expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();

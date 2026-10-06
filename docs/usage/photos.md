@@ -11,7 +11,8 @@ description: Group ordinary files into photo assets that carry their own revisio
 Open `docbank web` and choose **Photos** in the sidebar. Library opens at
 `/photos`, newest captures first. Photos without a capture date appear under
 Undated. The year buttons jump to the years loaded so far; scrolling loads
-more photos and reveals older years.
+more photos and reveals older years. Choose **Load more** to continue from
+the same position when further results remain.
 
 Choose Months or Capture sessions to group the grid. A session joins captures
 with gaps of four hours or less. Compact, Comfortable, and Large change the
