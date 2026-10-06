@@ -17,7 +17,8 @@
   const groupingOptions = [{ value: "months", label: "Months" }, { value: "sessions", label: "Capture sessions" }];
 
   onMount(() => {
-    if (!photos.started && !photos.error) void photos.loadMore(preserve);
+    void photos.resume(preserve);
+    return () => photos.cancelPending();
   });
   function escape(event: KeyboardEvent) {
     if (event.key === "Escape" && !(event.target instanceof Element && event.target.closest("input, select, textarea, [role=dialog]"))) photos.clearSelection();

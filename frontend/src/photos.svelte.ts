@@ -65,6 +65,19 @@ export class Photos {
     }
   }
 
+  cancelPending() {
+    if (this.disposed) return;
+    this.controller.abort();
+    this.controller = new AbortController();
+    this.loading = false;
+  }
+
+  resume(preserve?: () => (() => Promise<void>) | undefined) {
+    if (this.error) return;
+    if (this.replacement) return this.retry(preserve);
+    if (!this.started) return this.loadMore(preserve);
+  }
+
   retry(preserve?: () => (() => Promise<void>) | undefined) {
     if (this.replacement || this.expired) return this.replace(this.replacement ?? "expiry", preserve);
     this.error = "";

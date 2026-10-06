@@ -81,6 +81,25 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
           const cell = [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(item => item.getBoundingClientRect().bottom > top + 36)!;
           return { id: cell.dataset.asset!, offset: cell.getBoundingClientRect().top - top };
         });
+        if (loaded.endsWith("· 750 loaded")) {
+          const retained = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async name => (await (await caches.open(name)).keys()).map(key => key.url)))).flat());
+          const seen = new Map([...requests].filter(([url]) => retained.includes(url)));
+          let resumePage!: () => void;
+          let requested!: () => void;
+          const continued = new Promise<void>(resolve => resumePage = resolve);
+          const pending = new Promise<void>(resolve => requested = resolve);
+          await page.route("**/api/v1/photos/assets/query", async route => { requested(); await continued; await route.continue(); }, { times: 1 });
+          await page.getByRole("button", { name: "Documents", exact: true }).click();
+          release();
+          await page.getByRole("button", { name: "Photos", exact: true }).click();
+          await pending;
+          await expect(page.getByText(loaded, { exact: true })).toBeVisible();
+          await expect(page.getByText("1 selected photo", { exact: true })).toBeVisible();
+          await expect.poll(() => page.locator(`[data-asset="${anchor.id}"]`).evaluate(element => element.getBoundingClientRect().top - element.closest(".photo-scroll")!.getBoundingClientRect().top)).toBeCloseTo(anchor.offset, 0);
+          await expect.poll(() => scroll.locator("img").count()).toBe(await page.locator("[data-asset]").count());
+          for (const [url, count] of seen) expect(requests.get(url)).toBe(count);
+          resumePage();
+        }
         release();
         await expect(page.getByRole("button", { name: "Refresh previews" })).toBeEnabled();
         const offset = await page.locator(`[data-asset="${anchor.id}"]`).evaluate(element => element.getBoundingClientRect().top - element.closest(".photo-scroll")!.getBoundingClientRect().top);

@@ -17,7 +17,7 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  render(PhotosWorkspace, { photos, cache });
+  let view = render(PhotosWorkspace, { photos, cache });
   await screen.findByText("Page unavailable");
   expect(screen.getByRole("button", { name: "Select Photo 1.jpg" })).toBeTruthy();
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
@@ -32,7 +32,18 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
   expect(await screen.findByText("Loading photos…")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
-  finish(new Response(JSON.stringify({ items: [photo(4)], total: 4 })));
+  view.unmount();
+  expect(fetcher.mock.calls[3][1].signal.aborted).toBe(true);
+  let finishFresh!: (response: Response) => void;
+  fetcher.mockImplementationOnce(() => new Promise(resolve => finishFresh = resolve));
+  view = render(PhotosWorkspace, { photos, cache });
+  await screen.findByRole("button", { name: "Select Photo 3.jpg" });
+  expect(screen.getByText("2 selected photos")).toBeTruthy();
+  finish(new Response(JSON.stringify({ items: [photo(99)], total: 4 })));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(5));
+  expect(photos.loading).toBe(true);
+  expect(screen.queryByRole("button", { name: "Select Photo 99.jpg" })).toBeNull();
+  finishFresh(new Response(JSON.stringify({ items: [photo(4)], total: 4 })));
   await screen.findByRole("button", { name: "Select Photo 4.jpg" });
   expect(screen.getByText("2 selected photos")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();

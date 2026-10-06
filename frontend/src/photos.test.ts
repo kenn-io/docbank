@@ -60,6 +60,8 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   expect(photos.cursor).toBe("old-tail");
   expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
   expect(restore).not.toHaveBeenCalled();
+  photos.cancelPending(); await photos.resume(preserve);
+  expect(fetcher).toHaveBeenCalledTimes(4);
   await photos.retry(preserve);
   expect(preserve).toHaveBeenCalledTimes(1);
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-4", "photo-1", "photo-2", "photo-3"]);
@@ -99,6 +101,32 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   expect(fetcher).toHaveBeenCalledTimes(boundedCalls + 5);
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-15", "photo-16"]);
   expect(photos.cursor).toBe("expiry-forward");
+  let finishReplacement!: (response: Response) => void;
+  fetcher.mockImplementationOnce(() => new Promise(resolve => finishReplacement = resolve))
+    .mockResolvedValueOnce(response([photo(15), photo(16)], "resumed-refresh"));
+  const interruptedRefresh = photos.refresh();
+  photos.cancelPending();
+  expect(photos.loading).toBe(false);
+  const refreshStart = fetcher.mock.calls.length;
+  await photos.resume(preserve);
+  expect(JSON.parse(fetcher.mock.calls[refreshStart][1].body).cursor).toBeUndefined();
+  finishReplacement(response([photo(99)])); await interruptedRefresh;
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-15", "photo-16"]);
+  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ code: "cursor_expired" }), { status: 422 }))
+    .mockImplementationOnce(() => new Promise(resolve => finishReplacement = resolve))
+    .mockResolvedValueOnce(response([photo(15), photo(16)], "resumed-expiry"))
+    .mockResolvedValueOnce(response([photo(17)], "forward"));
+  await photos.loadMore();
+  const interruptedExpiry = photos.retry();
+  photos.cancelPending();
+  const expiryStart = fetcher.mock.calls.length;
+  await photos.resume(preserve);
+  expect(JSON.parse(fetcher.mock.calls[expiryStart][1].body).cursor).toBeUndefined();
+  finishReplacement(response([photo(99)])); await interruptedExpiry;
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-15", "photo-16", "photo-17"]);
+  const completedCalls = fetcher.mock.calls.length;
+  await photos.resume();
+  expect(fetcher).toHaveBeenCalledTimes(completedCalls);
   const timer = new AbortController();
   vi.spyOn(AbortSignal, "timeout").mockReturnValue(timer.signal);
   fetcher.mockImplementationOnce((_url, init: RequestInit) => new Promise((_resolve, reject) => init.signal!.addEventListener("abort", () => reject(init.signal!.reason))));
@@ -109,22 +137,34 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   photos.dispose();
 });
 
-it("ignores a replaced request even if the transport completes after abort", async () => {
+it("ignores canceled reads while a later request continues", async () => {
   let finish!: (value: Response) => void;
-  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve)).mockResolvedValueOnce(response([photo(2)]));
+  let finishNew!: (value: Response) => void;
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockResolvedValueOnce(response([photo(2)], "next"));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
-  const old = photos.loadMore();
-  await photos.refresh();
-  finish(response([photo(1)]));
-  await old;
+  const initial = photos.resume();
+  photos.cancelPending();
+  await photos.resume();
+  finish(response([photo(1)])); await initial;
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
+  fetcher.mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockImplementationOnce(() => new Promise(resolve => finishNew = resolve));
+  const old = photos.loadMore();
+  photos.cancelPending();
+  const current = photos.loadMore();
+  finish(response([photo(3)])); await old;
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
+  expect(photos.loading).toBe(true);
+  finishNew(response([photo(4)])); await current;
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2", "photo-4"]);
   fetcher.mockResolvedValueOnce(new Response("{}", { status: 503 }))
     .mockImplementationOnce(() => new Promise(resolve => finish = resolve));
   await photos.refresh();
   const late = photos.retry();
   photos.dispose(); finish(response([photo(3)]));
-  await late;
+  await late; await photos.resume();
   expect(photos.items[0].asset_id).toBe("photo-2");
 });
 
