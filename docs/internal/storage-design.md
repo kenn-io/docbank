@@ -141,6 +141,13 @@ that doubles common-path I/O without systematically protecting existing
 references. Full content validation belongs to `verify`, which covers every
 authorized blob.
 
+With loose compression enabled, read-ahead buffers up to the smaller of the
+compression minimum and 4 KiB. If the source ends before the buffer fills, Docbank
+passes the complete bytes to Kit's in-memory writer. Kit hashes those bytes
+before touching staging, so a duplicate avoids a temporary write and its syncs.
+The existing object's type, size, and durability checks still apply. Larger
+sources continue through the streaming writer.
+
 Content replacement uses the same ordering. A cheap node/revision check occurs
 before reading a potentially large request, but it is only an optimization.
 After durable publication, the metadata transaction repeats the target and
