@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -42,14 +43,14 @@ func TestPhotoSetLifecycle(t *testing.T) {
 	noop, err := s.UpdatePhotoSet(ctx, set.ID, set.Revision, new("Trip"), new(true), &cover)
 	require.NoError(t, err)
 	require.Equal(t, set, noop)
-	copy, err := s.DuplicatePhotoSet(ctx, set.ID, set.Revision, "Copy")
+	duplicate, err := s.DuplicatePhotoSet(ctx, set.ID, set.Revision, "Copy")
 	require.NoError(t, err)
-	require.Equal(t, int64(1), copy.Revision)
-	require.True(t, copy.Starred)
-	require.Equal(t, set.CoverAssetID, copy.CoverAssetID)
+	require.Equal(t, int64(1), duplicate.Revision)
+	require.True(t, duplicate.Starred)
+	require.Equal(t, set.CoverAssetID, duplicate.CoverAssetID)
 	ids, err := photoSetMemberIDs(ctx, s.db, set.ID)
 	require.NoError(t, err)
-	copyIDs, err := photoSetMemberIDs(ctx, s.db, copy.ID)
+	copyIDs, err := photoSetMemberIDs(ctx, s.db, duplicate.ID)
 	require.NoError(t, err)
 	require.Equal(t, ids, copyIDs)
 	set, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, false, PhotoSetSelection{AssetIDs: []string{a.ID}})
@@ -63,7 +64,7 @@ func TestPhotoSetLifecycle(t *testing.T) {
 	albums, err := s.ListPhotoSets(ctx, "")
 	require.NoError(t, err)
 	require.Len(t, albums, 1)
-	require.Equal(t, copy.ID, albums[0].ID)
+	require.Equal(t, duplicate.ID, albums[0].ID)
 	for _, asset := range []PhotoAsset{a, b} {
 		actual, err := s.PhotoAssetByID(ctx, asset.ID)
 		require.NoError(t, err)
@@ -101,7 +102,7 @@ func TestPhotoSetQueryReceiptsCoverCompleteLargeScope(t *testing.T) {
 	ctx := t.Context()
 	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		for i := range 10001 {
-			node, _, err := s.createFileTx(ctx, tx, s.RootID(), fmt.Sprintf("photo-%05d.jpg", i), browseHash(fmt.Sprint(i)), 20, "image/jpeg")
+			node, _, err := s.createFileTx(ctx, tx, s.RootID(), fmt.Sprintf("photo-%05d.jpg", i), browseHash(strconv.Itoa(i)), 20, "image/jpeg")
 			if err != nil {
 				return err
 			}
@@ -122,6 +123,7 @@ func TestPhotoSetQueryReceiptsCoverCompleteLargeScope(t *testing.T) {
 	require.Equal(t, int64(10001), summary.MemberCount)
 	rows, err := s.db.QueryContext(ctx, `SELECT before_revision,after_revision,before_json,after_json FROM photo_change_receipts WHERE set_id=? AND operation='set_add'`, set.ID)
 	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
 	seen := map[string]bool{}
 	count := 0
 	for rows.Next() {
@@ -169,7 +171,7 @@ func TestPhotoSetBrowseFiltersVisibilityAndCursor(t *testing.T) {
 		if i < 4 {
 			node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
 			require.NoError(t, err)
-			browsePhotoMetadata(t, s, node, fmt.Sprint(i), photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(fmt.Sprintf("2024-01-%02d", i+1), fmt.Sprintf("2024-01-%02d", i+1), document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
+			browsePhotoMetadata(t, s, node, strconv.Itoa(i), photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(fmt.Sprintf("2024-01-%02d", i+1), fmt.Sprintf("2024-01-%02d", i+1), document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
 		}
 	}
 	set, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: ids})

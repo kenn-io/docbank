@@ -26,6 +26,7 @@ type PhotoSet struct {
 
 type PhotoSetSummary struct {
 	PhotoSet
+
 	MemberCount           int64   `json:"member_count"`
 	IncludedCount         int64   `json:"included_count"`
 	EffectiveCoverAssetID *string `json:"effective_cover_asset_id,omitzero"`
@@ -112,11 +113,11 @@ func (s *Store) ListPhotoSets(ctx context.Context, recipe string) ([]PhotoSetSum
 		if err != nil {
 			return err
 		}
+		defer func() { _ = rows.Close() }()
 		var ids []string
 		for rows.Next() {
 			var id string
 			if err := rows.Scan(&id); err != nil {
-				_ = rows.Close()
 				return err
 			}
 			ids = append(ids, id)

@@ -15,6 +15,7 @@ type PhotoAlbum struct {
 
 type PhotoAlbumSummary struct {
 	PhotoAlbum
+
 	MemberCount           int64   `json:"member_count" minimum:"0"`
 	IncludedCount         int64   `json:"included_count" minimum:"0"`
 	EffectiveCoverAssetID *string `json:"effective_cover_asset_id,omitzero" format:"uuid"`
