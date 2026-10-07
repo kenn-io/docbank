@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
@@ -16,6 +17,7 @@ const photoBrowseConfiguredCoverage = "configured"
 
 // PhotoBrowseRequest supplies query meaning and exact preview recipe identities.
 type PhotoBrowseRequest struct {
+	SetID    string
 	Query    query.Query
 	Coverage CoverageSelection
 	PageSize int
@@ -92,6 +94,18 @@ func (s *Store) ListPhotoAssets(
 		}
 		sortField := compiled.Query.Sort.Field
 		from, sortKey, ok := photoBrowseOrder(sortField)
+		if request.SetID != "" {
+			if _, err := photoSetByID(ctx, q, request.SetID); err != nil {
+				return err
+			}
+		}
+		if sortField == "added_time" {
+			if request.SetID == "" {
+				return ErrInvalidPhotoQuery
+			}
+			from = `photo_set_members sm CROSS JOIN photo_assets a ON a.asset_id=sm.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`)
+			sortKey, ok = "sm.added_at", true
+		}
 		if !ok {
 			return fmt.Errorf("%w: unsupported sort", ErrInvalidPhotoQuery)
 		}
@@ -109,7 +123,8 @@ func (s *Store) ListPhotoAssets(
 			Dependencies []query.Dependency
 			Coverage     CoverageSelection
 			PageSize     int
-		}{canonical, compiled.Dependencies, coverage, request.PageSize})
+			SetID        string
+		}{canonical, compiled.Dependencies, coverage, request.PageSize, request.SetID})
 		if err != nil {
 			return err
 		}
@@ -124,6 +139,10 @@ func (s *Store) ListPhotoAssets(
 		match, err := photoBrowseMatch(compiled, generation.ID, coverage)
 		if err != nil {
 			return err
+		}
+		if request.SetID != "" {
+			match.sql += ` AND EXISTS (SELECT 1 FROM photo_set_members scope WHERE scope.asset_id=a.asset_id AND scope.set_id=?)`
+			match.args = append(match.args, request.SetID)
 		}
 		bind := func(sql string, args []any) (string, []any, error) {
 			return bindQueryPopulation(compiledQueryFragment{
@@ -157,8 +176,15 @@ func (s *Store) ListPhotoAssets(
 			order := key + ` ` + primary + `,a.asset_id ASC`
 			where := key + `>''`
 			args := append([]any(nil), match.args...)
+			if sortField == "added_time" {
+				where = `sm.set_id=? AND ` + where
+				args = append(args, request.SetID)
+			}
 			if missing {
 				pageFrom = photoBrowseDisplayFrom
+				if sortField == "added_time" {
+					continue
+				}
 				key = photoBrowseMissingKey(sortField)
 				where = key + `=''`
 				order = `a.asset_id ASC`

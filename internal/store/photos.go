@@ -246,6 +246,7 @@ func marshalPhotoState(value any) (string, error) {
 type photoReceipt struct {
 	Operation      string
 	AssetID        string
+	SetID          string
 	SettingsKey    string
 	BeforeRevision int64
 	AfterRevision  int64
@@ -268,10 +269,10 @@ func writePhotoReceiptTx(ctx context.Context, tx *sql.Tx, receipt photoReceipt) 
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO photo_change_receipts(
-			receipt_id, operation, asset_id, settings_key, before_revision,
+			receipt_id, operation, asset_id, settings_key, set_id, before_revision,
 			after_revision, before_json, after_json, created_at
-		) VALUES(?,?,?,?,?,?,?,?,?)`, receiptID, receipt.Operation, nullablePhotoText(receipt.AssetID),
-		nullablePhotoText(receipt.SettingsKey), receipt.BeforeRevision, receipt.AfterRevision,
+		) VALUES(?,?,?,?,?,?,?,?,?,?)`, receiptID, receipt.Operation, nullablePhotoText(receipt.AssetID),
+		nullablePhotoText(receipt.SettingsKey), nullablePhotoText(receipt.SetID), receipt.BeforeRevision, receipt.AfterRevision,
 		beforeJSON, afterJSON, nowRFC3339()); err != nil {
 		return fmt.Errorf("recording photo receipt: %w", err)
 	}

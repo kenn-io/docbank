@@ -100,7 +100,7 @@ func normalizePhotoFilters(value Filters) (Filters, error) {
 		valid  func(string) bool
 		name   string
 	}{
-		{&value.Kinds, func(v string) bool { return oneOf(v, "photo", "video") }, "kinds"}, {&value.Cameras, validPhotoLabel, "cameras"}, {&value.Lenses, validPhotoLabel, "lenses"}, {&value.AssetIDs, validUUIDv4, "asset_ids"},
+		{&value.Kinds, func(v string) bool { return oneOf(v, "photo", "video") }, "kinds"}, {&value.Cameras, validPhotoLabel, "cameras"}, {&value.Lenses, validPhotoLabel, "lenses"}, {&value.AssetIDs, validUUIDv4, "asset_ids"}, {&value.SetIDs, validUUIDv4, "set_ids"},
 	} {
 		*set.values, err = normalizeSet(*set.values, maxIDValues, set.valid, set.name)
 		if err != nil {

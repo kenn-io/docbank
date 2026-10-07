@@ -2875,6 +2875,7 @@ export interface Filters {
   modified_before?: string;
   no_tags?: boolean;
   paths?: string[];
+  set_ids?: string[];
   /** @nullable */
   size_max?: number | null;
   size_min?: number;
@@ -4327,6 +4328,282 @@ export interface PersonSplitReceipt {
   source_revision_after: number;
 }
 
+export interface PhotoAlbum {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  cover_asset_id?: string | null;
+  created_at: string;
+  /** @nullable */
+  deleted_at?: string | null;
+  id: string;
+  /** @maxLength 256 */
+  name: string;
+  /** @minimum 1 */
+  revision: number;
+  starred: boolean;
+  updated_at: string;
+}
+
+export interface PhotoAlbumCoverRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  asset_id?: string | null;
+}
+
+export type WorkspaceQueryCoverageConfiguration = typeof WorkspaceQueryCoverageConfiguration[keyof typeof WorkspaceQueryCoverageConfiguration];
+
+
+export const WorkspaceQueryCoverageConfiguration = {
+  configured: 'configured',
+  unconfigured: 'unconfigured',
+  profile_required: 'profile_required',
+} as const;
+
+export interface WorkspaceQueryCoverage {
+  configuration: WorkspaceQueryCoverageConfiguration;
+  /** @pattern ^[0-9a-f]{64}$ */
+  profile_fingerprint?: string;
+}
+
+export type SavedQueryFiltersSchemaKindsItem = typeof SavedQueryFiltersSchemaKindsItem[keyof typeof SavedQueryFiltersSchemaKindsItem];
+
+
+export const SavedQueryFiltersSchemaKindsItem = {
+  photo: 'photo',
+  video: 'video',
+} as const;
+
+export type SavedQueryFiltersSchemaMediaFamiliesItem = typeof SavedQueryFiltersSchemaMediaFamiliesItem[keyof typeof SavedQueryFiltersSchemaMediaFamiliesItem];
+
+
+export const SavedQueryFiltersSchemaMediaFamiliesItem = {
+  email: 'email',
+  document: 'document',
+  spreadsheet: 'spreadsheet',
+  presentation: 'presentation',
+  image: 'image',
+  audio_video: 'audio_video',
+  text: 'text',
+  source_code: 'source_code',
+  web: 'web',
+  calendar: 'calendar',
+  archive: 'archive',
+  cad: 'cad',
+  unknown: 'unknown',
+} as const;
+
+export type SavedQueryFiltersSchemaTextCoverageItem = typeof SavedQueryFiltersSchemaTextCoverageItem[keyof typeof SavedQueryFiltersSchemaTextCoverageItem];
+
+
+export const SavedQueryFiltersSchemaTextCoverageItem = {
+  complete: 'complete',
+  partial: 'partial',
+  failed: 'failed',
+  unprocessed: 'unprocessed',
+  none: 'none',
+  unavailable: 'unavailable',
+} as const;
+
+/**
+ * @nullable
+ */
+export type SavedQueryFiltersSchemaGpsBounds = {
+  /** @maxLength 64 */
+  east: string;
+  /** @maxLength 64 */
+  north: string;
+  /** @maxLength 64 */
+  south: string;
+  /** @maxLength 64 */
+  west: string;
+} | null;
+
+export interface SavedQueryFiltersSchema {
+  /** @maxItems 64 */
+  asset_ids?: string[];
+  /** @maxItems 64 */
+  cameras?: string[];
+  /** @nullable */
+  capture_after?: string | null;
+  /** @nullable */
+  capture_before?: string | null;
+  /** @nullable */
+  collapse_duplicates?: boolean | null;
+  /** @maxItems 64 */
+  collection_ids?: string[];
+  /** @maxItems 64 */
+  exclude_collection_ids?: string[];
+  /** @maxItems 64 */
+  exclude_paths?: string[];
+  /** @maxItems 64 */
+  exclude_tag_ids?: string[];
+  /**
+     * @maxItems 32
+     * @items.pattern ^[a-z0-9](?:[a-z0-9_-]{0,31})$
+     */
+  extensions?: string[];
+  /** @nullable */
+  gps_bounds?: SavedQueryFiltersSchemaGpsBounds;
+  /** @nullable */
+  has_duplicates?: boolean | null;
+  /**
+     * @minimum 0
+     * @maximum 9007199254740991
+     * @nullable
+     */
+  iso_max?: number | null;
+  /**
+     * @minimum 0
+     * @maximum 9007199254740991
+     * @nullable
+     */
+  iso_min?: number | null;
+  /** @maxItems 64 */
+  kinds?: SavedQueryFiltersSchemaKindsItem[];
+  /** @maxItems 64 */
+  lenses?: string[];
+  /** @maxItems 13 */
+  media_families?: SavedQueryFiltersSchemaMediaFamiliesItem[];
+  /** @maxItems 64 */
+  mime_types?: string[];
+  /** @nullable */
+  modified_after?: string | null;
+  /** @nullable */
+  modified_before?: string | null;
+  /** @nullable */
+  no_tags?: boolean | null;
+  /** @maxItems 64 */
+  paths?: string[];
+  /** @maxItems 64 */
+  set_ids?: string[];
+  /**
+     * @minimum 0
+     * @maximum 9007199254740991
+     * @nullable
+     */
+  size_max?: number | null;
+  /**
+     * @minimum 0
+     * @maximum 9007199254740991
+     * @nullable
+     */
+  size_min?: number | null;
+  /** @maxItems 64 */
+  tag_ids?: string[];
+  /** @maxItems 6 */
+  text_coverage?: SavedQueryFiltersSchemaTextCoverageItem[];
+}
+
+export type SavedQueryV1SchemaMode = typeof SavedQueryV1SchemaMode[keyof typeof SavedQueryV1SchemaMode];
+
+
+export const SavedQueryV1SchemaMode = {
+  lexical: 'lexical',
+  semantic: 'semantic',
+  hybrid: 'hybrid',
+} as const;
+
+export type SavedQuerySortSchemaDirection = typeof SavedQuerySortSchemaDirection[keyof typeof SavedQuerySortSchemaDirection];
+
+
+export const SavedQuerySortSchemaDirection = {
+  asc: 'asc',
+  desc: 'desc',
+} as const;
+
+export type SavedQuerySortSchemaField = typeof SavedQuerySortSchemaField[keyof typeof SavedQuerySortSchemaField];
+
+
+export const SavedQuerySortSchemaField = {
+  name: 'name',
+  path: 'path',
+  modified_at: 'modified_at',
+  size: 'size',
+  media_type: 'media_type',
+  relevance: 'relevance',
+  capture_time: 'capture_time',
+  import_time: 'import_time',
+  added_time: 'added_time',
+} as const;
+
+export interface SavedQuerySortSchema {
+  direction?: SavedQuerySortSchemaDirection;
+  field?: SavedQuerySortSchemaField;
+}
+
+export type SavedQueryV1SchemaSyntax = typeof SavedQueryV1SchemaSyntax[keyof typeof SavedQueryV1SchemaSyntax];
+
+
+export const SavedQueryV1SchemaSyntax = {
+  simple: 'simple',
+  advanced: 'advanced',
+} as const;
+
+export type SavedQueryV1SchemaV = typeof SavedQueryV1SchemaV[keyof typeof SavedQueryV1SchemaV];
+
+
+export const SavedQueryV1SchemaV = {
+  NUMBER_1: 1,
+} as const;
+
+export interface SavedQueryV1Schema {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  filters?: SavedQueryFiltersSchema;
+  mode?: SavedQueryV1SchemaMode;
+  sort?: SavedQuerySortSchema;
+  syntax?: SavedQueryV1SchemaSyntax;
+  /** @maxLength 8192 */
+  text?: string;
+  v?: SavedQueryV1SchemaV;
+}
+
+export interface PhotoAlbumMembersRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxItems 1000 */
+  asset_ids?: string[];
+  coverage?: WorkspaceQueryCoverage;
+  query?: SavedQueryV1Schema;
+}
+
+export interface PhotoAlbumNameRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  name: string;
+}
+
+export interface PhotoAlbumSummary {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @nullable */
+  cover_asset_id?: string | null;
+  /** @nullable */
+  cover_generation_id?: string | null;
+  created_at: string;
+  /** @nullable */
+  deleted_at?: string | null;
+  /** @nullable */
+  effective_cover_asset_id?: string | null;
+  id: string;
+  /** @minimum 0 */
+  included_count: number;
+  /** @minimum 0 */
+  member_count: number;
+  /** @maxLength 256 */
+  name: string;
+  /** @minimum 1 */
+  revision: number;
+  starred: boolean;
+  updated_at: string;
+}
+
 export type PhotoAssetDisplaySource = typeof PhotoAssetDisplaySource[keyof typeof PhotoAssetDisplaySource];
 
 
@@ -4469,211 +4746,6 @@ export interface PhotoBrowsePage {
   total: number;
 }
 
-export type WorkspaceQueryCoverageConfiguration = typeof WorkspaceQueryCoverageConfiguration[keyof typeof WorkspaceQueryCoverageConfiguration];
-
-
-export const WorkspaceQueryCoverageConfiguration = {
-  configured: 'configured',
-  unconfigured: 'unconfigured',
-  profile_required: 'profile_required',
-} as const;
-
-export interface WorkspaceQueryCoverage {
-  configuration: WorkspaceQueryCoverageConfiguration;
-  /** @pattern ^[0-9a-f]{64}$ */
-  profile_fingerprint?: string;
-}
-
-export type SavedQueryFiltersSchemaKindsItem = typeof SavedQueryFiltersSchemaKindsItem[keyof typeof SavedQueryFiltersSchemaKindsItem];
-
-
-export const SavedQueryFiltersSchemaKindsItem = {
-  photo: 'photo',
-  video: 'video',
-} as const;
-
-export type SavedQueryFiltersSchemaMediaFamiliesItem = typeof SavedQueryFiltersSchemaMediaFamiliesItem[keyof typeof SavedQueryFiltersSchemaMediaFamiliesItem];
-
-
-export const SavedQueryFiltersSchemaMediaFamiliesItem = {
-  email: 'email',
-  document: 'document',
-  spreadsheet: 'spreadsheet',
-  presentation: 'presentation',
-  image: 'image',
-  audio_video: 'audio_video',
-  text: 'text',
-  source_code: 'source_code',
-  web: 'web',
-  calendar: 'calendar',
-  archive: 'archive',
-  cad: 'cad',
-  unknown: 'unknown',
-} as const;
-
-export type SavedQueryFiltersSchemaTextCoverageItem = typeof SavedQueryFiltersSchemaTextCoverageItem[keyof typeof SavedQueryFiltersSchemaTextCoverageItem];
-
-
-export const SavedQueryFiltersSchemaTextCoverageItem = {
-  complete: 'complete',
-  partial: 'partial',
-  failed: 'failed',
-  unprocessed: 'unprocessed',
-  none: 'none',
-  unavailable: 'unavailable',
-} as const;
-
-/**
- * @nullable
- */
-export type SavedQueryFiltersSchemaGpsBounds = {
-  /** @maxLength 64 */
-  east: string;
-  /** @maxLength 64 */
-  north: string;
-  /** @maxLength 64 */
-  south: string;
-  /** @maxLength 64 */
-  west: string;
-} | null;
-
-export interface SavedQueryFiltersSchema {
-  /** @maxItems 64 */
-  asset_ids?: string[];
-  /** @maxItems 64 */
-  cameras?: string[];
-  /** @nullable */
-  capture_after?: string | null;
-  /** @nullable */
-  capture_before?: string | null;
-  /** @nullable */
-  collapse_duplicates?: boolean | null;
-  /** @maxItems 64 */
-  collection_ids?: string[];
-  /** @maxItems 64 */
-  exclude_collection_ids?: string[];
-  /** @maxItems 64 */
-  exclude_paths?: string[];
-  /** @maxItems 64 */
-  exclude_tag_ids?: string[];
-  /**
-     * @maxItems 32
-     * @items.pattern ^[a-z0-9](?:[a-z0-9_-]{0,31})$
-     */
-  extensions?: string[];
-  /** @nullable */
-  gps_bounds?: SavedQueryFiltersSchemaGpsBounds;
-  /** @nullable */
-  has_duplicates?: boolean | null;
-  /**
-     * @minimum 0
-     * @maximum 9007199254740991
-     * @nullable
-     */
-  iso_max?: number | null;
-  /**
-     * @minimum 0
-     * @maximum 9007199254740991
-     * @nullable
-     */
-  iso_min?: number | null;
-  /** @maxItems 64 */
-  kinds?: SavedQueryFiltersSchemaKindsItem[];
-  /** @maxItems 64 */
-  lenses?: string[];
-  /** @maxItems 13 */
-  media_families?: SavedQueryFiltersSchemaMediaFamiliesItem[];
-  /** @maxItems 64 */
-  mime_types?: string[];
-  /** @nullable */
-  modified_after?: string | null;
-  /** @nullable */
-  modified_before?: string | null;
-  /** @nullable */
-  no_tags?: boolean | null;
-  /** @maxItems 64 */
-  paths?: string[];
-  /**
-     * @minimum 0
-     * @maximum 9007199254740991
-     * @nullable
-     */
-  size_max?: number | null;
-  /**
-     * @minimum 0
-     * @maximum 9007199254740991
-     * @nullable
-     */
-  size_min?: number | null;
-  /** @maxItems 64 */
-  tag_ids?: string[];
-  /** @maxItems 6 */
-  text_coverage?: SavedQueryFiltersSchemaTextCoverageItem[];
-}
-
-export type SavedQueryV1SchemaMode = typeof SavedQueryV1SchemaMode[keyof typeof SavedQueryV1SchemaMode];
-
-
-export const SavedQueryV1SchemaMode = {
-  lexical: 'lexical',
-  semantic: 'semantic',
-  hybrid: 'hybrid',
-} as const;
-
-export type SavedQuerySortSchemaDirection = typeof SavedQuerySortSchemaDirection[keyof typeof SavedQuerySortSchemaDirection];
-
-
-export const SavedQuerySortSchemaDirection = {
-  asc: 'asc',
-  desc: 'desc',
-} as const;
-
-export type SavedQuerySortSchemaField = typeof SavedQuerySortSchemaField[keyof typeof SavedQuerySortSchemaField];
-
-
-export const SavedQuerySortSchemaField = {
-  name: 'name',
-  path: 'path',
-  modified_at: 'modified_at',
-  size: 'size',
-  media_type: 'media_type',
-  relevance: 'relevance',
-  capture_time: 'capture_time',
-  import_time: 'import_time',
-} as const;
-
-export interface SavedQuerySortSchema {
-  direction?: SavedQuerySortSchemaDirection;
-  field?: SavedQuerySortSchemaField;
-}
-
-export type SavedQueryV1SchemaSyntax = typeof SavedQueryV1SchemaSyntax[keyof typeof SavedQueryV1SchemaSyntax];
-
-
-export const SavedQueryV1SchemaSyntax = {
-  simple: 'simple',
-  advanced: 'advanced',
-} as const;
-
-export type SavedQueryV1SchemaV = typeof SavedQueryV1SchemaV[keyof typeof SavedQueryV1SchemaV];
-
-
-export const SavedQueryV1SchemaV = {
-  NUMBER_1: 1,
-} as const;
-
-export interface SavedQueryV1Schema {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  filters?: SavedQueryFiltersSchema;
-  mode?: SavedQueryV1SchemaMode;
-  sort?: SavedQuerySortSchema;
-  syntax?: SavedQueryV1SchemaSyntax;
-  /** @maxLength 8192 */
-  text?: string;
-  v?: SavedQueryV1SchemaV;
-}
-
 export interface PhotoBrowseRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -4686,6 +4758,7 @@ export interface PhotoBrowseRequest {
      */
   page_size?: number;
   query: SavedQueryV1Schema;
+  set_id?: string;
 }
 
 export interface PhotoImportStartRequest {
@@ -6194,6 +6267,19 @@ export interface UnassignTagPathRequest {
   path: string;
 }
 
+export interface UpdatePhotoAlbumRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     * @nullable
+     */
+  name?: string | null;
+  /** @nullable */
+  starred?: boolean | null;
+}
+
 export interface UpdateSavedQueryRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -7048,6 +7134,30 @@ export type RetirePersonHeaders = {
 };
 
 export type SplitPersonHeaders = {
+'If-Match': string;
+};
+
+export type DeletePhotoAlbumHeaders = {
+'If-Match': string;
+};
+
+export type UpdatePhotoAlbumHeaders = {
+'If-Match': string;
+};
+
+export type SetPhotoAlbumCoverHeaders = {
+'If-Match': string;
+};
+
+export type DuplicatePhotoAlbumHeaders = {
+'If-Match': string;
+};
+
+export type AddPhotoAlbumMembersHeaders = {
+'If-Match': string;
+};
+
+export type RemovePhotoAlbumMembersHeaders = {
 'If-Match': string;
 };
 
@@ -13425,6 +13535,331 @@ export const getPeopleRebuild = async (operationId: string, options?: Parameters
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getListPhotoAlbumsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/albums`
+}
+
+/**
+ * @summary List albums with included counts and ready covers
+ */
+export const listPhotoAlbums = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbumSummary[]> => {
+
+  return sessionJSON<PhotoAlbumSummary[]>(getListPhotoAlbumsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getCreatePhotoAlbumUrl = () => {
+
+
+
+
+  return `/api/v1/photos/albums`
+}
+
+/**
+ * @summary Create an empty album
+ */
+export const createPhotoAlbum = async (photoAlbumNameRequest: NonReadonly<PhotoAlbumNameRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAlbum>(getCreatePhotoAlbumUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoAlbumNameRequest)
+  }
+);}
+
+
+
+export const getDeletePhotoAlbumUrl = (setId: string,) => {
+
+
+
+
+  return `/api/v1/photos/albums/${encodeURIComponent(String(setId))}`
+}
+
+/**
+ * @summary Delete an album and keep its photos
+ */
+export const deletePhotoAlbum = async (setId: string,
+    headers: DeletePhotoAlbumHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAlbum>(getDeletePhotoAlbumUrl(setId),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getGetPhotoAlbumUrl = (setId: string,) => {
+
+
+
+
+  return `/api/v1/photos/albums/${encodeURIComponent(String(setId))}`
+}
+
+/**
+ * @summary Inspect one album
+ */
+export const getPhotoAlbum = async (setId: string, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbumSummary> => {
+
+  return sessionJSON<PhotoAlbumSummary>(getGetPhotoAlbumUrl(setId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUpdatePhotoAlbumUrl = (setId: string,) => {
+
+
+
+
+  return `/api/v1/photos/albums/${encodeURIComponent(String(setId))}`
+}
+
+/**
+ * @summary Rename or star an album
+ */
+export const updatePhotoAlbum = async (setId: string,
+    updatePhotoAlbumRequest: NonReadonly<UpdatePhotoAlbumRequest>,
+    headers: UpdatePhotoAlbumHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAlbum>(getUpdatePhotoAlbumUrl(setId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(updatePhotoAlbumRequest)
+  }
+);}
+
+
+
+export const getSetPhotoAlbumCoverUrl = (setId: string,) => {
+
+
+
+
+  return `/api/v1/photos/albums/${encodeURIComponent(String(setId))}/cover`
+}
+
+/**
+ * @summary Choose or reset an album cover
+ */
+export const setPhotoAlbumCover = async (setId: string,
+    photoAlbumCoverRequest: NonReadonly<PhotoAlbumCoverRequest>,
+    headers: SetPhotoAlbumCoverHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAlbum>(getSetPhotoAlbumCoverUrl(setId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoAlbumCoverRequest)
+  }
+);}
+
+
+
+export const getDuplicatePhotoAlbumUrl = (setId: string,) => {
+
+
+
+
+  return `/api/v1/photos/albums/${encodeURIComponent(String(setId))}/duplicate`
+}
+
+/**
+ * @summary Duplicate an album and its member order
+ */
+export const duplicatePhotoAlbum = async (setId: string,
+    photoAlbumNameRequest: NonReadonly<PhotoAlbumNameRequest>,
+    headers: DuplicatePhotoAlbumHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAlbum>(getDuplicatePhotoAlbumUrl(setId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoAlbumNameRequest)
+  }
+);}
+
+
+
+export const getAddPhotoAlbumMembersUrl = (setId: string,) => {
+
+
+
+
+  return `/api/v1/photos/albums/${encodeURIComponent(String(setId))}/members/add`
+}
+
+/**
+ * @summary Add explicit photos or complete search results
+ */
+export const addPhotoAlbumMembers = async (setId: string,
+    photoAlbumMembersRequest: NonReadonly<PhotoAlbumMembersRequest>,
+    headers: AddPhotoAlbumMembersHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAlbum>(getAddPhotoAlbumMembersUrl(setId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoAlbumMembersRequest)
+  }
+);}
+
+
+
+export const getRemovePhotoAlbumMembersUrl = (setId: string,) => {
+
+
+
+
+  return `/api/v1/photos/albums/${encodeURIComponent(String(setId))}/members/remove`
+}
+
+/**
+ * @summary Remove explicit photos or complete search results
+ */
+export const removePhotoAlbumMembers = async (setId: string,
+    photoAlbumMembersRequest: NonReadonly<PhotoAlbumMembersRequest>,
+    headers: RemovePhotoAlbumMembersHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAlbum>(getRemovePhotoAlbumMembersUrl(setId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoAlbumMembersRequest)
   }
 );}
 

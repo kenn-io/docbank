@@ -68,6 +68,7 @@ type Filters struct {
 	CaptureBefore string     `json:"capture_before,omitzero"`
 	GPSBounds     *GPSBounds `json:"gps_bounds,omitzero"`
 	AssetIDs      []string   `json:"asset_ids,omitzero"`
+	SetIDs        []string   `json:"set_ids,omitzero"`
 
 	Paths                []string `json:"paths,omitempty"`
 	ExcludePaths         []string `json:"exclude_paths,omitempty"`
@@ -112,6 +113,7 @@ type filtersInput struct {
 	CaptureBefore *string    `json:"capture_before"`
 	GPSBounds     *GPSBounds `json:"gps_bounds"`
 	AssetIDs      *[]string  `json:"asset_ids"`
+	SetIDs        *[]string  `json:"set_ids"`
 
 	Paths                *[]string `json:"paths"`
 	ExcludePaths         *[]string `json:"exclude_paths"`
@@ -137,7 +139,7 @@ var optionalFilterFields = map[string]struct{}{
 	"tag_ids": {}, "exclude_tag_ids": {}, "no_tags": {}, "media_families": {},
 	"mime_types": {}, "extensions": {}, "modified_after": {}, "modified_before": {},
 	"size_min": {}, "size_max": {}, "text_coverage": {}, "has_duplicates": {},
-	"collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {},
+	"collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {}, "set_ids": {},
 }
 
 // Parse validates and normalizes one bounded QueryV1 JSON value.
@@ -248,6 +250,9 @@ func (input filtersInput) value() Filters {
 	if input.GPSBounds != nil {
 		value.GPSBounds = input.GPSBounds
 	}
+	if input.SetIDs != nil {
+		value.SetIDs = *input.SetIDs
+	}
 	if input.AssetIDs != nil {
 		value.AssetIDs = *input.AssetIDs
 	}
@@ -319,7 +324,7 @@ func normalizeQuery(value Query) (Query, error) {
 	if !oneOf(value.Mode, "lexical", "semantic", "hybrid") {
 		return Query{}, errors.New("query mode is unknown")
 	}
-	if !oneOf(value.Sort.Field, "name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time") ||
+	if !oneOf(value.Sort.Field, "name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time") ||
 		!oneOf(value.Sort.Direction, "asc", "desc") {
 		return Query{}, errors.New("query sort is invalid")
 	}

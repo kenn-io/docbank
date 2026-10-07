@@ -12,6 +12,13 @@ import {
 } from "./query.js";
 
 describe("query identity", () => {
+  it("normalizes album IDs and preserves album ordering", () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    const value = parseQuery(JSON.stringify({ filters: { set_ids: [id, id] }, sort: { field: "added_time", direction: "desc" } }));
+    expect(value.filters.set_ids).toEqual([id]);
+    expect(parseQuery(canonicalQuery(value))).toEqual(value);
+    expect(() => parseQuery('{"filters":{"set_ids":["Holiday"]}}')).toThrow();
+  });
   for (const vector of fixture.queries) {
     it(vector.name, async () => {
       const value = parseQuery(vector.input_json);

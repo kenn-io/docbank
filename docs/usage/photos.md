@@ -73,10 +73,40 @@ docbank photos settings set image [--revision REV]
 docbank photos settings reset [--revision REV]
 ```
 
-All commands emit bounded JSON. Exit code 4 means the revision is stale: the
+Asset and settings commands emit bounded JSON. Exit code 4 means the revision is stale: the
 `--revision` you passed no longer matched, or the one automatic retry lost to
 another write. Read the asset or settings again before retrying. The daemon
 performs role, ownership, sidecar, display, and audit checks.
+
+## Albums
+
+Albums group photo assets without moving their files. Create an album, add selected asset UUIDs or a complete query result, then browse its members:
+
+```text
+docbank photos albums create "Holiday"
+docbank photos albums list
+docbank photos albums show <album-id>
+docbank photos albums add <album-id> <asset-id> ...
+docbank photos albums add <album-id> --query "{\"filters\":{\"kinds\":[\"photo\"]}}"
+docbank photos albums members <album-id> --sort added_time --direction desc
+```
+
+`members` accepts `added_time`, `import_time`, or `capture_time`, plus `--page-size` and `--cursor`. Capture dates with missing evidence come last. Ties use ascending asset UUID. The cursor binds the album ID as well as the query and page options.
+
+```text
+docbank photos albums rename <album-id> "Trip"
+docbank photos albums star <album-id> [--starred=false]
+docbank photos albums cover <album-id> [asset-id]
+docbank photos albums duplicate <album-id> "Trip copy"
+docbank photos albums remove <album-id> <asset-id> ...
+docbank photos albums delete <album-id>
+```
+
+Existing-album writes accept `--revision` with the same automatic read and retry as asset writes. Repeating an unchanged decision preserves the revision. Deleting an album keeps every photo and file. Duplication preserves added dates and member order. Removing the chosen cover clears the override. A ready grid preview of the chosen member wins; otherwise the newest added included member with a ready grid preview supplies the cover.
+
+`add` and `remove` accept up to 1,000 explicit IDs or `--query` with strict QueryV1 JSON. A query selects its complete current photo result inside the membership transaction, including display metadata and duplicate collapse. Query scopes have no total member cap. Coverage-dependent queries accept `--coverage` and `--profile-fingerprint`. Each changed action advances the album revision once and records all changed IDs in bounded receipts. An invalid ID, query, coverage, or stale revision rolls back the complete action.
+
+Exclusion and ordinary trash keep album membership. Included counts and member browsing omit those photos until they become visible again. Album names can repeat. Use `set:` followed by an album UUID, or typed `filters.set_ids`, to filter by membership. Values within `set_ids` combine with OR.
 
 ## Import a camera folder
 

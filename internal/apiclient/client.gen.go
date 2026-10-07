@@ -8229,6 +8229,425 @@ func (c *Client) GetPeopleRebuild(ctx context.Context, options *GetPeopleRebuild
 	return responseParser(ctx, resp)
 }
 
+// ListPhotoAlbums List albums with included counts and ready covers
+func (c *Client) ListPhotoAlbums(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListPhotoAlbumsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/albums",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListPhotoAlbumsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListPhotoAlbumsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListPhotoAlbumsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ListPhotoAlbumsErrorResponse](resp, "ListPhotoAlbumsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/albums")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// CreatePhotoAlbum Create an empty album
+func (c *Client) CreatePhotoAlbum(ctx context.Context, options *CreatePhotoAlbumRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePhotoAlbumResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/albums",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*CreatePhotoAlbumResponse, error) {
+		switch resp.StatusCode {
+
+		case 201:
+
+			target := new(CreatePhotoAlbumResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "CreatePhotoAlbumResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[CreatePhotoAlbumErrorResponse](resp, "CreatePhotoAlbumErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/albums")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 201)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DeletePhotoAlbum Delete an album and keep its photos
+func (c *Client) DeletePhotoAlbum(ctx context.Context, options *DeletePhotoAlbumRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DeletePhotoAlbumResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/albums/{set_id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DeletePhotoAlbumResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DeletePhotoAlbumResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DeletePhotoAlbumResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DeletePhotoAlbumErrorResponse](resp, "DeletePhotoAlbumErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/albums/{set_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPhotoAlbum Inspect one album
+func (c *Client) GetPhotoAlbum(ctx context.Context, options *GetPhotoAlbumRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPhotoAlbumResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/albums/{set_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPhotoAlbumResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPhotoAlbumResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPhotoAlbumResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPhotoAlbumErrorResponse](resp, "GetPhotoAlbumErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/albums/{set_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UpdatePhotoAlbum Rename or star an album
+func (c *Client) UpdatePhotoAlbum(ctx context.Context, options *UpdatePhotoAlbumRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UpdatePhotoAlbumResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/albums/{set_id}",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UpdatePhotoAlbumResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UpdatePhotoAlbumResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UpdatePhotoAlbumResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UpdatePhotoAlbumErrorResponse](resp, "UpdatePhotoAlbumErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/albums/{set_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SetPhotoAlbumCover Choose or reset an album cover
+func (c *Client) SetPhotoAlbumCover(ctx context.Context, options *SetPhotoAlbumCoverRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetPhotoAlbumCoverResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/albums/{set_id}/cover",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SetPhotoAlbumCoverResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SetPhotoAlbumCoverResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SetPhotoAlbumCoverResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SetPhotoAlbumCoverErrorResponse](resp, "SetPhotoAlbumCoverErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/albums/{set_id}/cover")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DuplicatePhotoAlbum Duplicate an album and its member order
+func (c *Client) DuplicatePhotoAlbum(ctx context.Context, options *DuplicatePhotoAlbumRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DuplicatePhotoAlbumResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/albums/{set_id}/duplicate",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DuplicatePhotoAlbumResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DuplicatePhotoAlbumResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DuplicatePhotoAlbumResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DuplicatePhotoAlbumErrorResponse](resp, "DuplicatePhotoAlbumErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/albums/{set_id}/duplicate")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// AddPhotoAlbumMembers Add explicit photos or complete search results
+func (c *Client) AddPhotoAlbumMembers(ctx context.Context, options *AddPhotoAlbumMembersRequestOptions, reqEditors ...runtime.RequestEditorFn) (*AddPhotoAlbumMembersResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/albums/{set_id}/members/add",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*AddPhotoAlbumMembersResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(AddPhotoAlbumMembersResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "AddPhotoAlbumMembersResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[AddPhotoAlbumMembersErrorResponse](resp, "AddPhotoAlbumMembersErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/albums/{set_id}/members/add")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RemovePhotoAlbumMembers Remove explicit photos or complete search results
+func (c *Client) RemovePhotoAlbumMembers(ctx context.Context, options *RemovePhotoAlbumMembersRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RemovePhotoAlbumMembersResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/albums/{set_id}/members/remove",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*RemovePhotoAlbumMembersResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(RemovePhotoAlbumMembersResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "RemovePhotoAlbumMembersResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[RemovePhotoAlbumMembersErrorResponse](resp, "RemovePhotoAlbumMembersErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/albums/{set_id}/members/remove")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CreatePhotoAsset Create a photo asset for one file
 func (c *Client) CreatePhotoAsset(ctx context.Context, options *CreatePhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreatePhotoAssetResponse, error) {
 	var err error
@@ -17739,6 +18158,313 @@ func (o *GetPeopleRebuildRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// CreatePhotoAlbumRequestOptions is the options needed to make a request to CreatePhotoAlbum.
+type CreatePhotoAlbumRequestOptions struct {
+	Body *CreatePhotoAlbumBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *CreatePhotoAlbumRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *CreatePhotoAlbumRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *CreatePhotoAlbumRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *CreatePhotoAlbumRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DeletePhotoAlbumRequestOptions is the options needed to make a request to DeletePhotoAlbum.
+type DeletePhotoAlbumRequestOptions struct {
+	PathParams *DeletePhotoAlbumPath
+	Header     *DeletePhotoAlbumHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DeletePhotoAlbumRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DeletePhotoAlbumRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DeletePhotoAlbumRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *DeletePhotoAlbumRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// GetPhotoAlbumRequestOptions is the options needed to make a request to GetPhotoAlbum.
+type GetPhotoAlbumRequestOptions struct {
+	PathParams *GetPhotoAlbumPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPhotoAlbumRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPhotoAlbumRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPhotoAlbumRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPhotoAlbumRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UpdatePhotoAlbumRequestOptions is the options needed to make a request to UpdatePhotoAlbum.
+type UpdatePhotoAlbumRequestOptions struct {
+	PathParams *UpdatePhotoAlbumPath
+	Body       *UpdatePhotoAlbumBody
+	Header     *UpdatePhotoAlbumHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UpdatePhotoAlbumRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *UpdatePhotoAlbumRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UpdatePhotoAlbumRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UpdatePhotoAlbumRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// SetPhotoAlbumCoverRequestOptions is the options needed to make a request to SetPhotoAlbumCover.
+type SetPhotoAlbumCoverRequestOptions struct {
+	PathParams *SetPhotoAlbumCoverPath
+	Body       *SetPhotoAlbumCoverBody
+	Header     *SetPhotoAlbumCoverHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SetPhotoAlbumCoverRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *SetPhotoAlbumCoverRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SetPhotoAlbumCoverRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SetPhotoAlbumCoverRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// DuplicatePhotoAlbumRequestOptions is the options needed to make a request to DuplicatePhotoAlbum.
+type DuplicatePhotoAlbumRequestOptions struct {
+	PathParams *DuplicatePhotoAlbumPath
+	Body       *DuplicatePhotoAlbumBody
+	Header     *DuplicatePhotoAlbumHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DuplicatePhotoAlbumRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *DuplicatePhotoAlbumRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DuplicatePhotoAlbumRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *DuplicatePhotoAlbumRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// AddPhotoAlbumMembersRequestOptions is the options needed to make a request to AddPhotoAlbumMembers.
+type AddPhotoAlbumMembersRequestOptions struct {
+	PathParams *AddPhotoAlbumMembersPath
+	Body       *AddPhotoAlbumMembersBody
+	Header     *AddPhotoAlbumMembersHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *AddPhotoAlbumMembersRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *AddPhotoAlbumMembersRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *AddPhotoAlbumMembersRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *AddPhotoAlbumMembersRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+// RemovePhotoAlbumMembersRequestOptions is the options needed to make a request to RemovePhotoAlbumMembers.
+type RemovePhotoAlbumMembersRequestOptions struct {
+	PathParams *RemovePhotoAlbumMembersPath
+	Body       *RemovePhotoAlbumMembersBody
+	Header     *RemovePhotoAlbumMembersHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RemovePhotoAlbumMembersRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RemovePhotoAlbumMembersRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RemovePhotoAlbumMembersRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *RemovePhotoAlbumMembersRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // CreatePhotoAssetRequestOptions is the options needed to make a request to CreatePhotoAsset.
 type CreatePhotoAssetRequestOptions struct {
 	Body *CreatePhotoAssetBody
@@ -20403,6 +21129,7 @@ const (
 type SavedQuerySortSchemaField string
 
 const (
+	AddedTime   SavedQuerySortSchemaField = "added_time"
 	CaptureTime SavedQuerySortSchemaField = "capture_time"
 	ImportTime  SavedQuerySortSchemaField = "import_time"
 	MediaType   SavedQuerySortSchemaField = "media_type"
@@ -20571,6 +21298,30 @@ type RetirePersonHeaders struct {
 }
 
 type SplitPersonHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type DeletePhotoAlbumHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type UpdatePhotoAlbumHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type SetPhotoAlbumCoverHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type DuplicatePhotoAlbumHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type AddPhotoAlbumMembersHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+type RemovePhotoAlbumMembersHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
@@ -20996,6 +21747,34 @@ type GetPeopleRebuildPath struct {
 	OperationID uuid.UUID `json:"operation_id"`
 }
 
+type DeletePhotoAlbumPath struct {
+	SetID string `json:"set_id"`
+}
+
+type GetPhotoAlbumPath struct {
+	SetID string `json:"set_id"`
+}
+
+type UpdatePhotoAlbumPath struct {
+	SetID string `json:"set_id"`
+}
+
+type SetPhotoAlbumCoverPath struct {
+	SetID string `json:"set_id"`
+}
+
+type DuplicatePhotoAlbumPath struct {
+	SetID string `json:"set_id"`
+}
+
+type AddPhotoAlbumMembersPath struct {
+	SetID string `json:"set_id"`
+}
+
+type RemovePhotoAlbumMembersPath struct {
+	SetID string `json:"set_id"`
+}
+
 type GetPhotoAssetPath struct {
 	AssetID string `json:"asset_id"`
 }
@@ -21318,6 +22097,18 @@ type MergePersonBody = MergePersonRequest
 type SplitPersonBody = SplitPersonRequest
 
 type RebuildDocumentPeopleBody = PeopleRebuildRequest
+
+type CreatePhotoAlbumBody = PhotoAlbumNameRequest
+
+type UpdatePhotoAlbumBody = UpdatePhotoAlbumRequest
+
+type SetPhotoAlbumCoverBody = PhotoAlbumCoverRequest
+
+type DuplicatePhotoAlbumBody = PhotoAlbumNameRequest
+
+type AddPhotoAlbumMembersBody = PhotoAlbumMembersRequest
+
+type RemovePhotoAlbumMembersBody = PhotoAlbumMembersRequest
 
 type CreatePhotoAssetBody = CreatePhotoAssetRequest
 
@@ -22486,6 +23277,42 @@ type GetPeopleRebuildResponse = api.PeopleBuild
 
 type GetPeopleRebuildErrorResponse = Error
 
+type ListPhotoAlbumsResponse []PhotoAlbumSummary
+
+type ListPhotoAlbumsErrorResponse = Error
+
+type CreatePhotoAlbumResponse = api.PhotoAlbum
+
+type CreatePhotoAlbumErrorResponse = Error
+
+type DeletePhotoAlbumResponse = api.PhotoAlbum
+
+type DeletePhotoAlbumErrorResponse = Error
+
+type GetPhotoAlbumResponse = api.PhotoAlbumSummary
+
+type GetPhotoAlbumErrorResponse = Error
+
+type UpdatePhotoAlbumResponse = api.PhotoAlbum
+
+type UpdatePhotoAlbumErrorResponse = Error
+
+type SetPhotoAlbumCoverResponse = api.PhotoAlbum
+
+type SetPhotoAlbumCoverErrorResponse = Error
+
+type DuplicatePhotoAlbumResponse = api.PhotoAlbum
+
+type DuplicatePhotoAlbumErrorResponse = Error
+
+type AddPhotoAlbumMembersResponse = api.PhotoAlbum
+
+type AddPhotoAlbumMembersErrorResponse = Error
+
+type RemovePhotoAlbumMembersResponse = api.PhotoAlbum
+
+type RemovePhotoAlbumMembersErrorResponse = Error
+
 type CreatePhotoAssetResponse = api.PhotoAsset
 
 type CreatePhotoAssetErrorResponse = Error
@@ -23599,6 +24426,16 @@ type PersonSplitReceipt = api.PersonSplitReceipt
 
 type PersonSummary = api.PersonSummary
 
+type PhotoAlbum = api.PhotoAlbum
+
+type PhotoAlbumCoverRequest = api.PhotoAlbumCoverRequest
+
+type PhotoAlbumMembersRequest = api.PhotoAlbumMembersRequest
+
+type PhotoAlbumNameRequest = api.PhotoAlbumNameRequest
+
+type PhotoAlbumSummary = api.PhotoAlbumSummary
+
 type PhotoAsset = api.PhotoAsset
 
 type PhotoBrowsePage = api.PhotoBrowsePage
@@ -23903,6 +24740,7 @@ type SavedQueryFiltersSchema struct {
 	ModifiedBefore       *time.Time                             `json:"modified_before,omitempty"`
 	NoTags               *bool                                  `json:"no_tags,omitempty"`
 	Paths                []string                               `json:"paths,omitempty"`
+	SetIds               []uuid.UUID                            `json:"set_ids,omitempty"`
 	SizeMax              *int64                                 `json:"size_max,omitempty"`
 	SizeMin              *int64                                 `json:"size_min,omitempty"`
 	TagIds               []uuid.UUID                            `json:"tag_ids,omitempty"`
@@ -24085,6 +24923,8 @@ type UnassignTagPathRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Path   string  `json:"path"`
 }
+
+type UpdatePhotoAlbumRequest = api.UpdatePhotoAlbumRequest
 
 type UpdateSavedQueryRequest = api.SavedQueryPatch
 

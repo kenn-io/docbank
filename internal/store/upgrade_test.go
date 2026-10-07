@@ -255,7 +255,7 @@ func TestUpgradeReleasedSchemasCreateEmptyPhotoAuthority(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { require.NoError(t, s.Close()) }()
 			for _, table := range []string{
-				"photo_assets", "photo_files", "photo_library_settings", "photo_change_receipts",
+				"photo_assets", "photo_files", "photo_library_settings", "photo_sets", "photo_set_members", "photo_change_receipts",
 				"photo_technical_metadata",
 			} {
 				var count int

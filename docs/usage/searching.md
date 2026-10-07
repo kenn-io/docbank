@@ -137,7 +137,7 @@ keeps reusable requests. Named saved queries are a separate workflow.
 
 Saved QueryV1 definitions can include photo kind, case-insensitive complete
 camera/lens make or model, safe integer ISO bounds, capture dates,
-decimal-string GPS boxes, and asset UUID sets. See
+decimal-string GPS boxes, asset UUID sets, and album UUID sets through `set:` or `filters.set_ids`. See
 [Browse photo assets over HTTP](photos.md#browse-photo-assets-over-http) for the
 complete field and sort contract. Existing tag, text, and collection predicates
 combine through the same compiler.
@@ -145,8 +145,7 @@ combine through the same compiler.
 Photos evaluates photo metadata predicates against the selected display file.
 Ordinary file predicates can still match individual members. Document snapshots
 use each document's own metadata. They support these predicates, but
-`capture_time` and `import_time` sorting is available only in Photos. A snapshot
-request naming either field returns an error.
+`capture_time` and `import_time` sorting is available only in Photos. Album browsing also accepts `added_time` with an explicit album scope. A document snapshot request naming any of these fields returns an error.
 
 ## Save complete query intent over HTTP
 

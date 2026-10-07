@@ -2185,11 +2185,32 @@ CREATE TABLE IF NOT EXISTS photo_library_settings (
     updated_at   TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS photo_sets (
+    set_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    starred INTEGER NOT NULL DEFAULT 0,
+    revision INTEGER NOT NULL DEFAULT 1,
+    cover_asset_id TEXT REFERENCES photo_assets(asset_id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS photo_set_members (
+    set_id TEXT NOT NULL REFERENCES photo_sets(set_id),
+    asset_id TEXT NOT NULL REFERENCES photo_assets(asset_id) ON DELETE CASCADE,
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (set_id,asset_id)
+);
+CREATE INDEX IF NOT EXISTS photo_set_members_asset ON photo_set_members(asset_id,set_id);
+CREATE INDEX IF NOT EXISTS photo_set_members_added ON photo_set_members(set_id,added_at,asset_id);
+
 CREATE TABLE IF NOT EXISTS photo_change_receipts (
     receipt_id     TEXT PRIMARY KEY,
     operation      TEXT NOT NULL,
     asset_id       TEXT,
     settings_key   TEXT,
+    set_id         TEXT REFERENCES photo_sets(set_id),
     before_revision INTEGER NOT NULL,
     after_revision INTEGER NOT NULL,
     before_json    TEXT NOT NULL,
@@ -2199,6 +2220,7 @@ CREATE TABLE IF NOT EXISTS photo_change_receipts (
 
 CREATE INDEX IF NOT EXISTS photo_change_receipts_asset
     ON photo_change_receipts(asset_id, receipt_id);
+CREATE INDEX IF NOT EXISTS photo_change_receipts_set ON photo_change_receipts(set_id,receipt_id);
 
 CREATE TABLE IF NOT EXISTS persons (
     person_id TEXT PRIMARY KEY NOT NULL,
