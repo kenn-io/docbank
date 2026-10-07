@@ -11779,6 +11779,7 @@ components:
         state:
           enum:
             - pending
+            - unavailable
             - ready
           type: string
       required:

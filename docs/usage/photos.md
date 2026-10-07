@@ -68,10 +68,11 @@ are stored as terminal results. Temporary storage or read failures retry.
 ## Quality signals
 
 The daemon measures each ready grid preview locally. The photo query API
-returns `quality.state` as `pending` with `signals: null` until measurement
-finishes, then `ready` with numeric scores. A measured zero stays zero.
+returns `quality.state` as `ready` with numeric scores after measurement,
+or `pending` with `signals: null` while work can finish. A measured zero stays zero.
 Replacing content or changing the display file selects that version's signals.
-Videos have no quality object. Unsupported or failed previews remain pending.
+Videos have no quality object. Unsupported or failed grid previews report
+`unavailable` with `signals: null` because preview work has finished.
 
 All scores use the 0..1 scale. Focus measures adjacent luminance differences
 on a 16-by-16 sample, stretched by a 0.15 calibration ceiling. Higher focus
@@ -90,7 +91,7 @@ interpolation. Scores can differ despite identical formulas and the same
 Each scalar supports `_min` and `_max` query filters. JSON bounds are decimal
 strings, such as `"focus_min":"0.7"`, to preserve QueryV1's integer-only JSON
 number contract. Advanced search accepts `focus_min:0.7 blur_max:0.2`.
-`unevaluated:true` finds photos with missing current measurements. Missing
+`unevaluated:true` includes both pending and unavailable measurements. Missing
 measurements fail numeric comparisons. Photo queries use the selected display
 version; document queries use each document's own version. Saved queries keep
 these filters. Signals rebuild after restore and stay out of backups.

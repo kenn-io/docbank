@@ -826,11 +826,13 @@ fields, not additional parameters for `GET /search`:
 | `capture_after`, `capture_before` | Strict YYYY-MM-DD local capture dates; inclusive lower and exclusive upper bounds |
 | `gps_bounds` | Decimal-string `south`, `west`, `north`, `east`; each at most 64 characters, latitude within -90 through 90, longitude within -180 through 180, south <= north; west > east crosses the antimeridian |
 | `focus_min`, `focus_max`, `blur_min`, `blur_max`, `brightness_min`, `brightness_max`, `framing_min`, `framing_max`, `aesthetics_min`, `aesthetics_max`, `color_red_min`, `color_red_max`, `color_green_min`, `color_green_max`, `color_blue_min`, `color_blue_max` | Inclusive 0..1 decimal-string bounds, each at most 64 characters; each minimum must be <= its maximum. Numeric JSON bounds return 422. Missing measurements fail numeric comparisons |
-| `unevaluated` | `true` selects live, included photo display versions with missing current measurements, including missing or unsupported previews. Photo queries use the selected display; document queries require the document's own version to be the selected display |
+| `unevaluated` | `true` selects live, included photo display versions with pending or unavailable measurements. Photo queries use the selected display; document queries require the document's own version to be the selected display |
 | `asset_ids` | At most 64 canonical UUIDv4 values |
 | `set_ids` | At most 64 canonical album UUIDv4 values |
 
 Document numeric quality filters use retained scores for each document's own version; `unevaluated` applies only to current eligible photo displays.
+
+Photo browse returns quality `ready` with scores, `unavailable` with `signals: null` when the current grid preview is unsupported or failed, and `pending` with `signals: null` otherwise.
 
 Filter sets are sorted and deduplicated when saved. Query text is not trimmed
 or rewritten. Unknown fields and duplicate JSON object keys are rejected.

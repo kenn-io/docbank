@@ -32,7 +32,7 @@ type PhotoPreviewSlots struct {
 }
 
 type PhotoQuality struct {
-	State   string               `json:"state" enum:"pending,ready"`
+	State   string               `json:"state" enum:"pending,unavailable,ready"`
 	Signals *PhotoQualitySignals `json:"signals" nullable:"true"`
 }
 

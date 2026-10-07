@@ -4644,6 +4644,8 @@ export interface SavedQueryFiltersSchema {
   no_tags?: boolean | null;
   /** @maxItems 64 */
   paths?: string[];
+  /** @maxItems 64 */
+  set_ids?: string[];
   /**
      * @minimum 0
      * @maximum 9007199254740991
@@ -4656,8 +4658,6 @@ export interface SavedQueryFiltersSchema {
      * @nullable
      */
   size_min?: number | null;
-  /** @maxItems 64 */
-  set_ids?: string[];
   /** @maxItems 64 */
   tag_ids?: string[];
   /** @maxItems 6 */
@@ -4885,6 +4885,7 @@ export type PhotoQualityState = typeof PhotoQualityState[keyof typeof PhotoQuali
 
 export const PhotoQualityState = {
   pending: 'pending',
+  unavailable: 'unavailable',
   ready: 'ready',
 } as const;
 
