@@ -174,7 +174,9 @@ Key assumptions reviewers MUST account for:
    graph, role, and revision decisions inside its transaction. Clients
    check that a response is addressable and matches its ETag, and treat a
    malformed success as an unknown outcome; they do not re-derive the
-   store's decisions from the response.
+   store's decisions from the response. Internal client response checks
+   are judged against request options sent by production callers. External
+   consumers use HTTP or the public Vault API, which bypass daemonconn.
 
 19. SOURCE PROJECTIONS FOLLOW EXTRACTOR OUTPUT: the generic source codec
    retains typed claims without promising that every projection consumes
