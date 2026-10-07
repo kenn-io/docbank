@@ -36,6 +36,40 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault], { cwd: repository, env, timeout: 480_000 });
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
+    let releaseTransition!: () => void;
+    let enteredTransition!: () => void;
+    const transitionPending = new Promise<void>(resolve => enteredTransition = resolve);
+    const transitionHold = new Promise<void>(resolve => releaseTransition = resolve);
+    await page.route("**/api/v1/photos/assets/query", async route => {
+      const body = route.request().postDataJSON();
+      body.page_size = 100;
+      const url = new URL(route.request().url());
+      const host = url.host;
+      url.hostname = "127.0.0.1";
+      const response = await route.fetch({ url: url.href, headers: { ...await route.request().allHeaders(), host }, postData: JSON.stringify(body) });
+      if (body.cursor) { enteredTransition(); await transitionHold; }
+      await route.fulfill({ response });
+    });
+    await page.goto(webURL.href);
+    await expect(page.getByText("10,000 photos · 100 loaded", { exact: true })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Photo years" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Load more", exact: true }).click();
+    await transitionPending;
+    const transitionScroll = page.getByTestId("photo-scroll");
+    await transitionScroll.evaluate(element => element.scrollTop = 500);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const transitionAnchor = await transitionScroll.evaluate(element => {
+      const top = element.getBoundingClientRect().top;
+      const cell = [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(item => item.getBoundingClientRect().bottom > top + 56)!;
+      return { id: cell.dataset.asset!, offset: cell.getBoundingClientRect().top - top };
+    });
+    releaseTransition();
+    await expect(page.getByText("10,000 photos · 200 loaded", { exact: true })).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Photo years" }).getByRole("button")).toHaveCount(2);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    expect(await page.locator(`[data-asset="${transitionAnchor.id}"]`).evaluate(element => element.getBoundingClientRect().top - element.closest(".photo-scroll")!.getBoundingClientRect().top)).toBeCloseTo(transitionAnchor.offset, 0);
+    await page.unroute("**/api/v1/photos/assets/query");
+    await page.goto("about:blank");
     await page.goto(webURL.href);
     await expect(page.getByRole("main", { name: "Photo library" })).toBeVisible();
     await expect(page.getByText(/10,000 photos/)).toBeVisible();

@@ -39,8 +39,11 @@
     let current = true;
     const measure = () => {
       const style = getComputedStyle(grid);
-      width = Math.max(1, (Number.parseFloat(style.width) || grid.clientWidth) - Number.parseFloat(style.paddingRight) - (Number.parseFloat(style.borderRightWidth) || 0));
+      const nextWidth = Math.max(1, (Number.parseFloat(style.width) || grid.clientWidth) - Number.parseFloat(style.paddingRight) - (Number.parseFloat(style.borderRightWidth) || 0));
+      const restore = untrack(() => initialized && nextWidth !== width ? preservePosition() : undefined);
+      width = nextWidth;
       viewport = element.clientHeight;
+      void restore?.();
     };
     const resize = new ResizeObserver(measure);
     resize.observe(element);
