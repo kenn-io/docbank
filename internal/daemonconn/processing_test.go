@@ -510,7 +510,7 @@ func TestProcessingClientValidatesMediaSourceSelection(t *testing.T) {
 	sources := []api.DocumentMediaSource{{SourceID: "source-a", SourceVersionID: "version-a", ContentVersionID: versionID},
 		{SourceID: "source-b", SourceVersionID: "version-b", ContentVersionID: versionID}}
 	request := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Limit: 20, Profile: "private",
-		Fence: api.DocumentSourceFence{VaultUID: vaultID, ContentVersionIDs: []string{versionID}}, MediaSources: sources}
+		Fence: api.DocumentSourceFence{VaultUID: vaultID, ContentVersionIDs: []string{versionID}}, MediaSources: []api.DocumentMediaSourceSelector{{SourceID: sources[0].SourceID, SourceVersionID: sources[0].SourceVersionID, ContentVersionID: sources[0].ContentVersionID}, {SourceID: sources[1].SourceID, SourceVersionID: sources[1].SourceVersionID, ContentVersionID: sources[1].ContentVersionID}}}
 	secondResult := func(report *api.DocumentSearchReport, buildID string) {
 		second := report.Results[0]
 		second.Rank, second.LexicalRank = 2, 2

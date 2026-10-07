@@ -645,10 +645,10 @@ func fromProcessingCoverageClass(item processing.CoverageClass) CoverageClass {
 		PreviousGenerationServing: item.PreviousServing, Total: item.Total}
 }
 
-func toMediaSearchSources(sources []DocumentMediaSource) []retrieval.MediaSource {
-	result := make([]retrieval.MediaSource, len(sources))
+func toMediaSearchSources(sources []DocumentMediaSourceSelector) []retrieval.MediaSourceSelector {
+	result := make([]retrieval.MediaSourceSelector, len(sources))
 	for i, source := range sources {
-		result[i] = retrieval.MediaSource(source)
+		result[i] = retrieval.MediaSourceSelector{SourceID: source.SourceID, SourceVersionID: source.SourceVersionID, ContentVersionID: source.ContentVersionID, SuppliedInputIDs: source.SuppliedInputIDs}
 	}
 	return result
 }

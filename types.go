@@ -445,13 +445,13 @@ const (
 )
 
 type DocumentSearchRequest struct {
-	MediaSources []DocumentMediaSource `json:"media_sources,omitzero"`
-	Query        string                `json:"query"`
-	Mode         DocumentSearchMode    `json:"mode"`
-	Limit        int                   `json:"limit,omitzero"`
-	Profile      string                `json:"profile"`
-	BindingID    string                `json:"binding_id,omitzero"`
-	Fence        DocumentSourceFence   `json:"fence"`
+	MediaSources []DocumentMediaSourceSelector `json:"media_sources,omitzero"`
+	Query        string                        `json:"query"`
+	Mode         DocumentSearchMode            `json:"mode"`
+	Limit        int                           `json:"limit,omitzero"`
+	Profile      string                        `json:"profile"`
+	BindingID    string                        `json:"binding_id,omitzero"`
+	Fence        DocumentSourceFence           `json:"fence"`
 
 	Explain      bool `json:"explain,omitzero"`
 	ContentFirst bool `json:"content_first,omitzero"`
@@ -484,6 +484,13 @@ type DocumentMediaSource struct {
 	SourceID         string `json:"source_id"`
 	SourceVersionID  string `json:"source_version_id"`
 	ContentVersionID string `json:"content_version_id"`
+}
+
+type DocumentMediaSourceSelector struct {
+	SourceID         string   `json:"source_id"`
+	SourceVersionID  string   `json:"source_version_id"`
+	ContentVersionID string   `json:"content_version_id"`
+	SuppliedInputIDs []string `json:"supplied_input_ids,omitzero"`
 }
 
 type DocumentSearchTrace struct {

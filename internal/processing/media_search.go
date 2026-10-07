@@ -3,7 +3,9 @@ package processing
 import (
 	"context"
 	"errors"
+	"slices"
 
+	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -30,10 +32,16 @@ func (service *Service) searchMediaSources(ctx context.Context, request SearchRe
 		if len(source.SourceID) > 256 || len(source.SourceVersionID) > 256 || !fence[source.ContentVersionID] {
 			return retrieval.Report{}, ErrMediaSearchInvalid
 		}
-		if seen[source] {
+		for _, inputID := range source.SuppliedInputIDs {
+			if !canonical.IsSHA256Hex(inputID) {
+				return retrieval.Report{}, ErrMediaSearchInvalid
+			}
+		}
+		identity := source.Identity()
+		if seen[identity] {
 			return retrieval.Report{}, ErrMediaSearchInvalid
 		}
-		seen[source] = true
+		seen[identity] = true
 		requests = append(requests, MediaTranscriptRequest{source.SourceID, source.SourceVersionID, source.ContentVersionID})
 	}
 	selectedItems, err := service.selectMediaTranscripts(ctx, requests)
@@ -43,20 +51,22 @@ func (service *Service) searchMediaSources(ctx context.Context, request SearchRe
 	ready := make([]MediaTranscriptRequest, 0, len(requests))
 	for i, source := range request.MediaSources {
 		selected := selectedItems[requests[i]]
-		selections[source] = selected
+		identity := source.Identity()
 		if _, exists := completeVersions[source.ContentVersionID]; !exists {
 			completeVersions[source.ContentVersionID] = true
 		}
-		if selected.result.EvidenceState != mediaTranscriptEvidenceReady {
+		if selected.result.EvidenceState != mediaTranscriptEvidenceReady ||
+			(selected.origin == "supplied" && source.SuppliedInputIDs != nil && !slices.Contains(source.SuppliedInputIDs, selected.inputID)) {
 			completeVersions[source.ContentVersionID] = false
 			continue
 		}
+		selections[identity] = selected
 		key := store.SearchSelectedBuild{ContentVersionID: source.ContentVersionID, BuildID: selected.view.Build.ID}
 		ready = append(ready, requests[i])
 		if _, exists := associations[key]; !exists {
 			options.SelectedBuilds = append(options.SelectedBuilds, key)
 		}
-		associations[key] = append(associations[key], source)
+		associations[key] = append(associations[key], identity)
 	}
 	coverage.ScopedDocuments = len(completeVersions)
 	for _, complete := range completeVersions {

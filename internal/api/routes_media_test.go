@@ -166,7 +166,7 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	selectedSearch, err := c.SearchDocuments(t.Context(), api.DocumentSearchRequest{Query: "synthetic exact phrase",
 		Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Limit: 10,
 		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}},
-		MediaSources: []api.DocumentMediaSource{{SourceID: receipt.SourceID,
+		MediaSources: []api.DocumentMediaSourceSelector{{SourceID: receipt.SourceID,
 			SourceVersionID: receipt.SourceVersionID, ContentVersionID: version.ID}}})
 	require.NoError(t, err)
 	require.True(t, selectedSearch.MediaSourceSelection)
@@ -174,6 +174,41 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	require.Equal(t, artifact.SuppliedInputID, selectedSearch.Results[0].Evidence[0].SuppliedInputID)
 	require.Equal(t, "supplied", selectedSearch.Results[0].Evidence[0].Origin)
 	require.Equal(t, receipt.SourceID, selectedSearch.Results[0].Evidence[0].MediaSources[0].SourceID)
+
+	for _, tc := range []struct {
+		name    string
+		allowed []string
+		match   bool
+	}{{"omitted", nil, true}, {"empty", []string{}, false}, {"matching", []string{artifact.SuppliedInputID}, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := api.DocumentSearchRequest{Query: "synthetic exact phrase", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}}, MediaSources: []api.DocumentMediaSourceSelector{{SourceID: receipt.SourceID, SourceVersionID: receipt.SourceVersionID, ContentVersionID: version.ID, SuppliedInputIDs: tc.allowed}}}
+			encoded, err := json.Marshal(request)
+			require.NoError(t, err)
+			if tc.allowed == nil {
+				require.NotContains(t, string(encoded), "supplied_input_ids")
+			} else if len(tc.allowed) == 0 {
+				require.Contains(t, string(encoded), `"supplied_input_ids":[]`)
+			}
+			var decoded api.DocumentSearchRequest
+			require.NoError(t, json.Unmarshal(encoded, &decoded))
+			require.Equal(t, tc.allowed, []string(decoded.MediaSources[0].SuppliedInputIDs))
+			response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
+			require.Equal(t, http.StatusOK, response.StatusCode, body)
+			var report api.DocumentSearchReport
+			require.NoError(t, json.Unmarshal([]byte(body), &report))
+			if tc.match {
+				require.Len(t, report.Results, 1)
+			} else {
+				require.Empty(t, report.Results)
+				require.Equal(t, "incomplete", report.Coverage.State)
+			}
+			require.NotContains(t, body, "supplied_input_ids", "constraints are not echoed as source identity")
+		})
+	}
+	for _, invalid := range []any{nil, []string{"invalid-input"}} {
+		response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{"query": "synthetic", "mode": "lexical", "profile": processing.SuppliedMediaProfileName, "fence": api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}}, "media_sources": []map[string]any{{"source_id": receipt.SourceID, "source_version_id": receipt.SourceVersionID, "content_version_id": version.ID, "supplied_input_ids": invalid}}})
+		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	}
 	transcriptResult, err := c.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, "ready", transcriptResult.EvidenceState)
@@ -311,7 +346,7 @@ func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
 	for i := range 4096 {
 		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
 		request.Fence.ContentVersionIDs = append(request.Fence.ContentVersionIDs, id)
-		request.MediaSources = append(request.MediaSources, api.DocumentMediaSource{
+		request.MediaSources = append(request.MediaSources, api.DocumentMediaSourceSelector{
 			SourceID: strings.Repeat("\x01", 256), SourceVersionID: strings.Repeat("\x02", 256), ContentVersionID: id})
 	}
 	encoded, err := json.Marshal(request)
@@ -335,7 +370,7 @@ func TestMediaSearchRejectsIdentitiesBeyondUTF8ByteBound(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
 	id := "00000000-0000-4000-8000-000000000001"
-	request := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{id}}, MediaSources: []api.DocumentMediaSource{{SourceID: strings.Repeat("é", 129), SourceVersionID: "version", ContentVersionID: id}}}
+	request := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{id}}, MediaSources: []api.DocumentMediaSourceSelector{{SourceID: strings.Repeat("é", 129), SourceVersionID: "version", ContentVersionID: id}}}
 	response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	require.Contains(t, body, `"code":"invalid_media_search"`)

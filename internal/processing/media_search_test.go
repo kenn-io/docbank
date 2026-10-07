@@ -30,9 +30,10 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 		}})
 	require.NoError(t, err)
 	var ids []string
-	var sources []retrieval.MediaSource
+	var sources []retrieval.MediaSourceSelector
 	var selectedBuild string
-	var generatedSource retrieval.MediaSource
+	var generatedSource retrieval.MediaSourceSelector
+	var generatedCandidate, suppliedCandidate MediaReceipt
 	for i := range 101 {
 		version, selector := f.version, f.selector
 		if i != 0 {
@@ -55,7 +56,7 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 		require.NoError(t, err)
 		runLoomRenditionJob(t, service, retained.JobID)
 		if i == 100 {
-			generatedSource = retrieval.MediaSource{SourceID: retained.SourceID,
+			generatedSource = retrieval.MediaSourceSelector{SourceID: retained.SourceID,
 				SourceVersionID: retained.SourceVersionID, ContentVersionID: version.ID}
 			occurrence := "second-source-occurrence"
 			_, err := f.catalog.RecordMediaOccurrence(t.Context(), store.MediaOperation{ID: uuid.New().String(),
@@ -88,9 +89,13 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 		require.NoError(t, err)
 		runLoomRenditionJob(t, service, queued.JobID)
 		ids = append(ids, version.ID)
-		sources = append(sources, retrieval.MediaSource{SourceID: retained.SourceID,
+		sources = append(sources, retrieval.MediaSourceSelector{SourceID: retained.SourceID,
 			SourceVersionID: queued.SourceVersionID, ContentVersionID: version.ID})
+		if i == 0 {
+			generatedCandidate = retained
+		}
 		if i == 100 {
+			suppliedCandidate = retained
 			active, err := f.catalog.ActiveRendition(t.Context(), version.ID, service.profiles[name].record.Fingerprint)
 			require.NoError(t, err)
 			selectedBuild = active.Build.ID
@@ -125,7 +130,7 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 		MediaProcessingRequest{Profile: name, SuppliedInputID: input.SuppliedInputID})
 	require.NoError(t, err)
 	ids = append(ids, pendingVersion.ID)
-	sources = append(sources, retrieval.MediaSource{SourceID: pending.SourceID, SourceVersionID: pending.SourceVersionID,
+	sources = append(sources, retrieval.MediaSourceSelector{SourceID: pending.SourceID, SourceVersionID: pending.SourceVersionID,
 		ContentVersionID: pendingVersion.ID})
 	last, _, err := f.catalog.SearchExplainedLexicalCandidates(t.Context(), "Synthetic worker output", 1,
 		store.SearchOptions{ContentVersionIDs: ids[100:]}, true)
@@ -139,7 +144,7 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 	require.True(t, report.MediaSourceSelection)
 	require.Len(t, report.Results, 1)
 	require.Equal(t, selectedBuild, report.Results[0].Evidence[0].BuildID)
-	require.Equal(t, []retrieval.MediaSource{sources[100]}, report.Results[0].Evidence[0].MediaSources)
+	require.Equal(t, []retrieval.MediaSource{sources[100].Identity()}, report.Results[0].Evidence[0].MediaSources)
 	require.Equal(t, "supplied", report.Results[0].Evidence[0].Origin)
 	require.NotEmpty(t, report.Results[0].Evidence[0].SuppliedInputID)
 	require.Equal(t, retrieval.CoverageIncomplete, report.Coverage.State)
@@ -154,10 +159,51 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 	require.Equal(t, retrieval.CoverageComplete, empty.Coverage.State)
 	shared, err := service.Search(t.Context(), SearchRequest{Query: "Synthetic worker output", Mode: "auto", Profile: name,
 		Fence:        SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: ids[100:]},
-		MediaSources: []retrieval.MediaSource{generatedSource, sources[100]}})
+		MediaSources: []retrieval.MediaSourceSelector{generatedSource, sources[100]}})
 	require.NoError(t, err)
 	require.Len(t, shared.Results, 2, "distinct selected builds on one node survive retrieval")
 	require.NotEqual(t, shared.Results[0].Evidence[0].BuildID, shared.Results[1].Evidence[0].BuildID)
+
+	queueTranscript := func(receipt MediaReceipt, text string) MediaReceipt {
+		t.Helper()
+		input, err := service.ImportRecordingArtifact(t.Context(), MediaArtifactRequest{OperationID: uuid.New().String(), SourceID: receipt.SourceID, OccurrenceID: receipt.OccurrenceID, Kind: "transcript", Filename: "current.txt", MediaType: "text/plain", SHA256: processingSHA256([]byte(text)), ByteLength: int64(len(text)), Content: strings.NewReader(text)})
+		require.NoError(t, err)
+		queued, err := service.RetryMedia(t.Context(), uuid.New().String(), receipt.SourceID, MediaProcessingRequest{Profile: name, SuppliedInputID: input.SuppliedInputID})
+		require.NoError(t, err)
+		return queued
+	}
+	selectedA := queueTranscript(suppliedCandidate, "Synthetic")
+	runLoomRenditionJob(t, service, selectedA.JobID)
+	otherOccurrence := suppliedCandidate
+	otherOccurrence.OccurrenceID = "second-source-occurrence"
+	pendingB := queueTranscript(otherOccurrence, "replacement transcript")
+	_, err = service.RetryMedia(t.Context(), uuid.New().String(), generatedCandidate.SourceID, MediaProcessingRequest{Profile: "speech"})
+	require.NoError(t, err)
+	queueTranscript(generatedCandidate, "queued provider transcript")
+	for _, tc := range []struct {
+		name     string
+		allowed  []string
+		supplied bool
+	}{{"omitted", nil, true}, {"empty", []string{}, false}, {"pending_B", []string{pendingB.SuppliedInputID}, false}, {"shared_inputs", []string{pendingB.SuppliedInputID, selectedA.SuppliedInputID}, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			eligible := []retrieval.MediaSourceSelector{sources[0], sources[100]}
+			eligible[0].SuppliedInputIDs = []string{}
+			eligible[1].SuppliedInputIDs = tc.allowed
+			report, err := service.Search(t.Context(), SearchRequest{Query: "Synthetic", Mode: "lexical", Profile: name, Limit: 1, Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{ids[0], ids[100]}}, MediaSources: eligible})
+			require.NoError(t, err)
+			require.Len(t, report.Results, 1)
+			evidence := report.Results[0].Evidence[0]
+			if tc.supplied {
+				require.Equal(t, selectedA.SuppliedInputID, evidence.SuppliedInputID, "the stronger selected A wins when eligible")
+				require.Equal(t, retrieval.CoverageComplete, report.Coverage.State)
+			} else {
+				require.Equal(t, "generated", evidence.Origin, "queued supplied work preserves ASR and excluded A consumes no rank budget")
+				require.Equal(t, ids[0], report.Results[0].Document.ContentVersionID)
+				require.Equal(t, retrieval.CoverageIncomplete, report.Coverage.State)
+				require.Equal(t, 1, report.Coverage.CompleteDocuments)
+			}
+		})
+	}
 }
 
 type mediaSearchChangingBackend struct {
@@ -180,20 +226,21 @@ func TestMediaSearchRejectsChangedAndUnauthorizedSelections(t *testing.T) {
 	runLoomRenditionJob(t, f.captions, queued.JobID)
 	request := SearchRequest{Query: "selected", Mode: "lexical", Profile: f.profile,
 		Fence: SourceFence{VaultUID: f.fixture.catalog.VaultID(), ContentVersionIDs: []string{f.videoReceipt.ContentVersionID}},
-		MediaSources: []retrieval.MediaSource{{SourceID: f.remote.SourceID, SourceVersionID: queued.SourceVersionID,
+		MediaSources: []retrieval.MediaSourceSelector{{SourceID: f.remote.SourceID, SourceVersionID: queued.SourceVersionID,
 			ContentVersionID: f.videoReceipt.ContentVersionID}}}
 	bad := request
-	bad.MediaSources = []retrieval.MediaSource{{SourceID: f.remote.SourceID, SourceVersionID: queued.SourceVersionID,
+	bad.MediaSources = []retrieval.MediaSourceSelector{{SourceID: f.remote.SourceID, SourceVersionID: queued.SourceVersionID,
 		ContentVersionID: uuid.New().String()}}
 	_, err := f.captions.Search(t.Context(), bad)
 	require.ErrorIs(t, err, ErrMediaSearchInvalid)
-	bad.MediaSources = []retrieval.MediaSource{{SourceID: "hidden-source", SourceVersionID: queued.SourceVersionID,
+	bad.MediaSources = []retrieval.MediaSourceSelector{{SourceID: "hidden-source", SourceVersionID: queued.SourceVersionID,
 		ContentVersionID: f.videoReceipt.ContentVersionID}}
 	unavailable, err := f.captions.Search(t.Context(), bad)
 	require.NoError(t, err)
 	require.Empty(t, unavailable.Results)
 	require.Equal(t, retrieval.CoverageIncomplete, unavailable.Coverage.State)
 	bad.MediaSources = slices.Concat(request.MediaSources, request.MediaSources)
+	bad.MediaSources[1].SuppliedInputIDs = []string{processingHash("another-input")}
 	_, err = f.captions.Search(t.Context(), bad)
 	require.ErrorIs(t, err, ErrMediaSearchInvalid)
 	prepared, err := f.captions.prepareSearch(request, f.captions.profiles[f.profile])
@@ -237,7 +284,7 @@ func TestMediaSearchKeepsHealthyMatchesDuringSourceChanges(t *testing.T) {
 			if change != "pending_to_ready" {
 				require.NoError(t, f.run(t, changing.JobID))
 			}
-			request := SearchRequest{Query: "Synthetic worker output", Mode: "lexical", Profile: "speech", Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{healthy.ContentVersionID, changing.ContentVersionID}}, MediaSources: []retrieval.MediaSource{
+			request := SearchRequest{Query: "Synthetic worker output", Mode: "lexical", Profile: "speech", Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{healthy.ContentVersionID, changing.ContentVersionID}}, MediaSources: []retrieval.MediaSourceSelector{
 				{SourceID: healthy.SourceID, SourceVersionID: healthy.SourceVersionID, ContentVersionID: healthy.ContentVersionID},
 				{SourceID: changing.SourceID, SourceVersionID: changing.SourceVersionID, ContentVersionID: changing.ContentVersionID}}}
 			if change == "unknown" {
@@ -298,8 +345,8 @@ func TestMediaSearchRemovesOnlyRevokedSharedBuildAssociation(t *testing.T) {
 	op := store.MediaOperation{ID: uuid.New().String(), Principal: f.service.principal, Verb: "retry_media", RequestSHA256: identity, SourceID: sourceID}
 	_, err = f.catalog.QueueMediaRetry(t.Context(), op, store.MediaPublicationReceipt{VaultUID: f.catalog.VaultID(), SourceID: sourceID, SourceVersionID: "second-version", ContentVersionID: first.ContentVersionID, OccurrenceID: "second-occurrence", OperationID: op.ID, JobID: first.JobID, OperationState: "queued", CoverageState: "pending", ProcessingNodeID: f.version.NodeID, ProcessingProfile: "speech", ProcessingProfileFingerprint: f.service.profiles["speech"].record.Fingerprint})
 	require.NoError(t, err)
-	live := retrieval.MediaSource{SourceID: sourceID, SourceVersionID: "second-version", ContentVersionID: first.ContentVersionID}
-	request := SearchRequest{Query: "Synthetic worker output", Mode: "lexical", Profile: "speech", Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{first.ContentVersionID}}, MediaSources: []retrieval.MediaSource{{SourceID: first.SourceID, SourceVersionID: first.SourceVersionID, ContentVersionID: first.ContentVersionID}, live}}
+	live := retrieval.MediaSourceSelector{SourceID: sourceID, SourceVersionID: "second-version", ContentVersionID: first.ContentVersionID}
+	request := SearchRequest{Query: "Synthetic worker output", Mode: "lexical", Profile: "speech", Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{first.ContentVersionID}}, MediaSources: []retrieval.MediaSourceSelector{{SourceID: first.SourceID, SourceVersionID: first.SourceVersionID, ContentVersionID: first.ContentVersionID}, live}}
 	prepared, err := f.service.prepareSearch(request, f.service.profiles["speech"])
 	require.NoError(t, err)
 	prepared.searcher, err = retrieval.NewSearcher(retrieval.SearcherConfig{Owner: "shared-source", LeaseDuration: time.Minute, Backend: mediaSearchChangingBackend{Store: f.catalog, change: func() {
@@ -310,7 +357,7 @@ func TestMediaSearchRemovesOnlyRevokedSharedBuildAssociation(t *testing.T) {
 	report, err := f.service.searchMediaSources(t.Context(), request, request.Fence.ContentVersionIDs, prepared)
 	require.NoError(t, err)
 	require.Len(t, report.Results, 1)
-	require.Equal(t, []retrieval.MediaSource{live}, report.Results[0].Evidence[0].MediaSources)
+	require.Equal(t, []retrieval.MediaSource{live.Identity()}, report.Results[0].Evidence[0].MediaSources)
 	require.Equal(t, retrieval.CoverageIncomplete, report.Coverage.State)
 	require.Zero(t, report.Coverage.CompleteDocuments)
 }

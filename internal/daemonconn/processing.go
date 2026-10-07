@@ -653,7 +653,9 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 					return errors.New("media search evidence is incomplete")
 				}
 				for _, source := range evidence.MediaSources {
-					if source.ContentVersionID != result.ContentVersionID || !slices.Contains(request.MediaSources, source) {
+					if source.ContentVersionID != result.ContentVersionID || !slices.ContainsFunc(request.MediaSources, func(selector api.DocumentMediaSourceSelector) bool {
+						return selector.SourceID == source.SourceID && selector.SourceVersionID == source.SourceVersionID && selector.ContentVersionID == source.ContentVersionID
+					}) {
 						return errors.New("media search evidence escaped source selectors")
 					}
 				}

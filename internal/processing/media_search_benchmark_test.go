@@ -78,7 +78,7 @@ func mediaSearchSelectorWorkload(tb testing.TB, distinct bool) (mediaStateFixtur
 				ProcessingProfile: "speech", ProcessingProfileFingerprint: attachment.Profile.Fingerprint})
 		require.NoError(tb, err)
 		request.Fence.ContentVersionIDs = append(request.Fence.ContentVersionIDs, node.CurrentVersionID)
-		request.MediaSources = append(request.MediaSources, retrieval.MediaSource{SourceID: sourceID, SourceVersionID: sourceVersionID, ContentVersionID: node.CurrentVersionID})
+		request.MediaSources = append(request.MediaSources, retrieval.MediaSourceSelector{SourceID: sourceID, SourceVersionID: sourceVersionID, ContentVersionID: node.CurrentVersionID})
 		if i%1024 == 1023 {
 			tb.Logf("fixture ready nodes=%d", i+1)
 		}

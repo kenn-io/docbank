@@ -3848,6 +3848,34 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DocumentMediaSourceSelector:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          format: uuid
+          type: string
+        source_id:
+          maxLength: 256
+          minLength: 1
+          type: string
+        source_version_id:
+          maxLength: 256
+          minLength: 1
+          type: string
+        supplied_input_ids:
+          items:
+            pattern: ^[0-9a-f]{64}$
+            type: string
+          type: array
+      required:
+        - source_id
+        - source_version_id
+        - content_version_id
+      type: object
+      x-go-type: api.DocumentMediaSourceSelector
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentMissingCoverage:
       additionalProperties: false
       properties:
@@ -4044,7 +4072,7 @@ components:
           type: integer
         media_sources:
           items:
-            $ref: "#/components/schemas/DocumentMediaSource"
+            $ref: "#/components/schemas/DocumentMediaSourceSelector"
           maxItems: 4096
           type: array
         mode:

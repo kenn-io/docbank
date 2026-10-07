@@ -1735,6 +1735,22 @@ export interface DocumentIdentity {
   path: string;
 }
 
+export interface DocumentMediaSourceSelector {
+  content_version_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  source_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  source_version_id: string;
+  /** @items.pattern ^[0-9a-f]{64}$ */
+  supplied_input_ids?: string[];
+}
+
 export type DocumentMissingCoverageKind = typeof DocumentMissingCoverageKind[keyof typeof DocumentMissingCoverageKind];
 
 
@@ -1906,7 +1922,7 @@ export interface DocumentSearchRequest {
      */
   limit?: number;
   /** @maxItems 4096 */
-  media_sources?: DocumentMediaSource[];
+  media_sources?: DocumentMediaSourceSelector[];
   mode: DocumentSearchRequestMode;
   /**
      * @minLength 1

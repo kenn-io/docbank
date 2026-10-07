@@ -23929,6 +23929,8 @@ type DocumentIdentity = api.DocumentIdentity
 
 type DocumentMediaSource = api.DocumentMediaSource
 
+type DocumentMediaSourceSelector = api.DocumentMediaSourceSelector
+
 type DocumentMissingCoverage = api.DocumentMissingCoverage
 
 type DocumentPage = api.DocumentPage

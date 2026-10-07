@@ -338,7 +338,7 @@ type Coverage struct {
 }
 
 type SearchRequest struct {
-	MediaSources                    []retrieval.MediaSource
+	MediaSources                    []retrieval.MediaSourceSelector
 	Query, Mode, Profile, BindingID string
 	Limit                           int
 	Fence                           SourceFence

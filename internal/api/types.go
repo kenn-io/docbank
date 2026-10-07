@@ -1,6 +1,10 @@
 package api
 
 import (
+	"bytes"
+	"encoding/json/v2"
+	"errors"
+
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -230,13 +234,13 @@ type CoverageReport struct {
 }
 
 type DocumentSearchRequest struct {
-	MediaSources []DocumentMediaSource `json:"media_sources,omitzero" maxItems:"4096"`
-	Query        string                `json:"query" minLength:"1" maxLength:"8192"`
-	Mode         string                `json:"mode" enum:"auto,lexical,semantic,hybrid"`
-	Limit        int                   `json:"limit,omitzero" minimum:"1" maximum:"100"`
-	Profile      string                `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
-	BindingID    string                `json:"binding_id,omitzero" maxLength:"128"`
-	Fence        DocumentSourceFence   `json:"fence"`
+	MediaSources []DocumentMediaSourceSelector `json:"media_sources,omitzero" maxItems:"4096"`
+	Query        string                        `json:"query" minLength:"1" maxLength:"8192"`
+	Mode         string                        `json:"mode" enum:"auto,lexical,semantic,hybrid"`
+	Limit        int                           `json:"limit,omitzero" minimum:"1" maximum:"100"`
+	Profile      string                        `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
+	BindingID    string                        `json:"binding_id,omitzero" maxLength:"128"`
+	Fence        DocumentSourceFence           `json:"fence"`
 
 	Explain      bool `json:"explain,omitzero"`
 	Rerank       bool `json:"rerank,omitzero"`
@@ -329,6 +333,22 @@ type DocumentMediaSource struct {
 	SourceID         string `json:"source_id" minLength:"1" maxLength:"256"`
 	SourceVersionID  string `json:"source_version_id" minLength:"1" maxLength:"256"`
 	ContentVersionID string `json:"content_version_id" format:"uuid"`
+}
+
+type MediaSearchInputIDs []string
+
+func (ids *MediaSearchInputIDs) UnmarshalJSON(raw []byte) error {
+	if bytes.Equal(raw, []byte("null")) {
+		return errors.New("supplied input IDs must be an array")
+	}
+	return json.Unmarshal(raw, (*[]string)(ids))
+}
+
+type DocumentMediaSourceSelector struct {
+	SourceID         string              `json:"source_id" minLength:"1" maxLength:"256"`
+	SourceVersionID  string              `json:"source_version_id" minLength:"1" maxLength:"256"`
+	ContentVersionID string              `json:"content_version_id" format:"uuid"`
+	SuppliedInputIDs MediaSearchInputIDs `json:"supplied_input_ids,omitzero" nullable:"false" pattern:"^[0-9a-f]{64}$"`
 }
 
 type DocumentSearchTrace struct {
