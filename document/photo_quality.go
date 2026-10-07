@@ -32,6 +32,6 @@ func ValidatePhotoQualitySignals(s PhotoQualitySignals) error {
 func PhotoQualityEvaluatorFingerprint() string {
 	recipe, _ := BuiltInVisualPreviewRecipe("grid")
 	_, fingerprint, _ := MarshalVisualPreviewRecipeV1(recipe)
-	digest := sha256.Sum256([]byte("photo-quality:v2:16x16:catmull-rom:x-image-v0.44.0:focus-ceiling=0.15:" + fingerprint))
+	digest := sha256.Sum256([]byte("photo-quality:v2:16x16:catmull-rom:focus-ceiling=0.15:" + fingerprint))
 	return hex.EncodeToString(digest[:])
 }

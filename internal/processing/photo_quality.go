@@ -31,7 +31,7 @@ func EvaluatePhotoQuality(ctx context.Context, s *store.Store, blobs *blob.Store
 	if view.Generation.Preview.State != document.VisualPreviewReady || output == nil {
 		return errors.New("photo quality preview unavailable")
 	}
-	if output.Size <= 0 || output.Size > 4<<20 || output.MediaType != "image/jpeg" || output.Width <= 0 || output.Width > 512 || output.Height <= 0 || output.Height > 512 {
+	if output.Size > 4<<20 {
 		return errors.New("photo quality preview outside bounds")
 	}
 	stream, size, err := blobs.OpenStreamContext(ctx, output.BlobSHA256)

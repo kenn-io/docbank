@@ -182,7 +182,7 @@ func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compil
 		if value == "true" {
 			exists = `NOT ` + exists
 		}
-		eligible := `EXISTS (SELECT 1 FROM photo_files pf JOIN photo_assets pa ON pa.asset_id=pf.asset_id WHERE pf.node_id=n.id AND pa.kind='photo') AND cv.mime_type LIKE 'image/%'`
+		eligible := `EXISTS (SELECT 1 FROM content_versions v WHERE v.version_id=cv.version_id AND ` + liveIncludedPhotoDisplayPredicate + `)`
 		if c.photoDisplayMetadata {
 			eligible = `EXISTS (SELECT 1 FROM photo_files pf JOIN photo_assets pa ON pa.asset_id=pf.asset_id JOIN photo_files df ON df.file_id=pa.display_file_id JOIN nodes dn ON dn.id=df.node_id JOIN content_versions dv ON dv.version_id=dn.current_version_id WHERE pf.node_id=n.id AND pa.kind='photo' AND dv.mime_type LIKE 'image/%')`
 		}

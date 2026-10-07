@@ -79,3 +79,48 @@ func TestPhotoQualityUsesSelectedDisplayInSavedQueries(t *testing.T) {
 	require.Len(t, snapshot.Rows, 1)
 	require.Equal(t, raw.ID, snapshot.Rows[0].NodeID)
 }
+
+func TestPhotoQualityPendingDisplayOwnership(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	raw := browsePhotoNode(t, s, "pending-pair.raw", browseHash("pending-pair-raw"), "image/x-raw")
+	jpg := browsePhotoNode(t, s, "pending-pair.jpg", browseHash("pending-pair-jpg"), "image/jpeg")
+	asset, err := s.PhotoAssetForNode(ctx, jpg.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	asset, err = s.PhotoAssetForNode(ctx, raw.ID)
+	require.NoError(t, err)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpg.ID, PhotoRoleImage, nil)
+	require.NoError(t, err)
+	for _, file := range asset.Files {
+		if file.NodeID == jpg.ID {
+			_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &file.ID)
+			require.NoError(t, err)
+		}
+	}
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(jpg), document.PhotoQualitySignals{Focus: 0.8}))
+	excluded := browsePhotoNode(t, s, "excluded-quality.jpg", browseHash("excluded-quality"), "image/jpeg")
+	asset, err = s.PhotoAssetForNode(ctx, excluded.ID)
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	missing := browsePhotoNode(t, s, "missing-preview.jpg", browseHash("quality-missing-preview"), "image/jpeg")
+	unsupported := browsePhotoNode(t, s, "unsupported-preview.jpg", browseHash("quality-unsupported-preview"), "image/jpeg")
+	recipe, err := document.BuiltInVisualPreviewRecipe("grid")
+	require.NoError(t, err)
+	canonical := terminalVisualPreviewWithRecipe(t, unsupported.BlobHash, recipe, document.VisualPreviewUnsupported, "unsupported_format")
+	_, err = s.PublishVisualPreview(ctx, unsupported.CurrentVersionID, canonical, nil)
+	require.NoError(t, err)
+	for _, q := range []string{`{"filters":{"unevaluated":true}}`, `{"syntax":"advanced","text":"unevaluated:true"}`} {
+		value := snapshotTestQuery(t, q)
+		snapshot, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+		require.NoError(t, err)
+		require.Len(t, snapshot.Rows, 2)
+		require.ElementsMatch(t, []int64{missing.ID, unsupported.ID}, []int64{snapshot.Rows[0].NodeID, snapshot.Rows[1].NodeID})
+		page := browsePhotoPage(t, s, q)
+		require.Len(t, page.Items, 2)
+		require.ElementsMatch(t, []int64{missing.ID, unsupported.ID}, []int64{page.Items[0].NodeID, page.Items[1].NodeID})
+	}
+}
