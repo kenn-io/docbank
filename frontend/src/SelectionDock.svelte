@@ -40,8 +40,8 @@
   open={selectedCount > 0}
   onclose={onclear}
   ariaLabel={context === "photos" ? "Selected photos" : "Selected documents"}
-  initialHeight="126px"
-  minHeight="112px"
+  initialHeight={context === "photos" ? "auto" : "126px"}
+  minHeight={context === "photos" ? "min-content" : "112px"}
   maxHeight="var(--selection-dock-max-height)"
   closeTitle={context === "photos" ? "Clear selected photos" : "Clear selected documents"}
   closeAriaLabel={context === "photos" ? "Clear selected photos" : "Clear selected documents"}

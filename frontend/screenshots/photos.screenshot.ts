@@ -41,7 +41,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     await expect(page.getByText(/10,000 photos/)).toBeVisible();
     const scroll = page.getByTestId("photo-scroll");
     await expect(scroll.locator("img").first()).toBeVisible();
-    await expect(scroll.locator("h2")).toHaveCount(1);
+    await expect(page.getByRole("navigation", { name: "Photo years" }).getByRole("button")).toHaveCount(3);
     const firstAsset = await page.locator("[data-asset]").first().getAttribute("data-asset");
     await page.locator("[data-asset]").first().getByRole("button").first().click();
     await page.getByRole("combobox", { name: /^Group photos/ }).click();
@@ -55,7 +55,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     for (let count = 0; count < 50; count++) {
       if (await page.getByText("10,000 photos · 10,000 loaded").isVisible()) break;
       const loaded = await page.locator(".library-title span").innerText();
-      if (loaded.endsWith("· 750 loaded") || loaded.endsWith("· 1,750 loaded")) {
+      if (loaded.endsWith("· 1,750 loaded") || loaded.endsWith("· 2,750 loaded")) {
         let release!: () => void;
         let entered!: () => void;
         const held = new Promise<void>(resolve => entered = resolve);
@@ -67,7 +67,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
           const response = await route.fetch({ url: url.href, headers: { ...await route.request().allHeaders(), host } });
           entered(); await resumed; await route.fulfill({ response });
         }, { times: 1 });
-        if (loaded.includes("1,750 loaded")) {
+        if (loaded.includes("2,750 loaded")) {
           await page.route("**/api/v1/photos/assets/query", route => route.abort("failed"), { times: 1 });
           await requestNext(true);
           await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
@@ -77,10 +77,10 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
         await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
         const anchor = await scroll.evaluate(element => {
           const top = element.getBoundingClientRect().top;
-          const cell = [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(item => item.getBoundingClientRect().bottom > top + 44)!;
+          const cell = [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(item => item.getBoundingClientRect().bottom > top + 56)!;
           return { id: cell.dataset.asset!, offset: cell.getBoundingClientRect().top - top };
         });
-        if (loaded.endsWith("· 750 loaded")) {
+        if (loaded.endsWith("· 1,750 loaded")) {
           let resumePage!: () => void;
           let requested!: () => void;
           const continued = new Promise<void>(resolve => resumePage = resolve);
@@ -125,7 +125,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     await scroll.evaluate(element => element.scrollTop += 100);
     await expect.poll(() => scroll.evaluate(element => [...element.querySelectorAll("h2")].find(header => header.getBoundingClientRect().top <= element.getBoundingClientRect().top + 1 && header.getBoundingClientRect().bottom > element.getBoundingClientRect().top)?.textContent)).toContain("2024");
     const visibleID = await scroll.evaluate(element => {
-      const top = element.getBoundingClientRect().top + 44;
+      const top = element.getBoundingClientRect().top + 56;
       return [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(cell => cell.getBoundingClientRect().top >= top)?.dataset.asset;
     });
     await page.locator(`[data-asset="${visibleID}"]`).getByRole("checkbox").check();
@@ -169,7 +169,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       await page.waitForLoadState("networkidle");
       for (const theme of ["light", "dark"]) {
         await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
-        await page.screenshot({ path: path.join(output!, `web-photos-${width}-${theme}.png`), animations: "disabled", timeout: 15_000 });
+        await page.screenshot({ path: path.join(output!, `web-photos-${width}-${theme}-loaded.png`), animations: "disabled", timeout: 15_000 });
       }
     }
     const fresh = new URL(await run("web", "--no-browser"));
@@ -178,6 +178,15 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     await page.goto(fresh.href);
     await expect(page.getByRole("combobox", { name: /^Grid density/ })).toContainText("Compact");
     await expect(scroll.locator("img").first()).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Photo years" }).getByRole("button")).toHaveCount(3);
+    for (const width of [1440, 400]) {
+      await page.setViewportSize({ width, height: 960 });
+      await page.waitForLoadState("networkidle");
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
+        await page.screenshot({ path: path.join(output!, `web-photos-${width}-${theme}.png`), animations: "disabled" });
+      }
+    }
 
   } finally {
     if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {

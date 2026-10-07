@@ -14,7 +14,7 @@ it("bounds the mounted rows in one month with 10,000 photos", () => {
   expect(computeMonthLayout([], 800, 200).intrinsicHeight).toBe(0);
   const items = Array.from({ length: 10_000 }, (_, index) => photo(index));
   const layout = computeMonthLayout(items, 1200, 200);
-  expect(layout.intrinsicHeight).toBe(layout.totalHeight + 44);
+  expect(layout.intrinsicHeight).toBe(layout.totalHeight + 56);
   for (const top of [0, 10_000, 100_000, layout.totalHeight - 1000]) {
     const rows = visibleRows(layout.rows, top, top + 2000);
     expect(rows.flatMap(row => row.items).length).toBeLessThan(100);

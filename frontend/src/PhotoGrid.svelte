@@ -34,15 +34,18 @@
   $effect(() => {
     if (!container) return;
     const element = container;
+    const grid = element.querySelector<HTMLElement>(".grid")!;
     const savedTop = untrack(() => scrollTop);
     let current = true;
-    const resize = new ResizeObserver(() => {
-      width = Math.max(1, element.querySelector<HTMLElement>(".grid")!.clientWidth);
+    const measure = () => {
+      const style = getComputedStyle(grid);
+      width = Math.max(1, (Number.parseFloat(style.width) || grid.clientWidth) - Number.parseFloat(style.paddingRight) - (Number.parseFloat(style.borderRightWidth) || 0));
       viewport = element.clientHeight;
-    });
+    };
+    const resize = new ResizeObserver(measure);
     resize.observe(element);
-    width = Math.max(1, element.querySelector<HTMLElement>(".grid")!.clientWidth);
-    viewport = element.clientHeight;
+    resize.observe(grid);
+    measure();
     void tick().then(() => {
       if (!current) return;
       element.scrollTop = savedTop;
@@ -91,10 +94,12 @@
   }
 </script>
 
-<div class="photo-scroll" bind:this={container} onscroll={() => { if (initialized) scrollTop = container?.scrollTop ?? 0; }} data-testid="photo-scroll">
+<div class="photo-scroll" class:with-years={years.length > 1} bind:this={container} onscroll={() => { if (initialized) scrollTop = container?.scrollTop ?? 0; }} data-testid="photo-scroll">
+  {#if years.length > 1}
   <nav class="year-scrubber" aria-label="Photo years">
     {#each years as year}<Button size="sm" onclick={() => jump(year)}>{year}</Button>{/each}
   </nav>
+  {/if}
   <div class="grid" style:height={`${totalHeight}px`}>
     {#if initialized}
     {#each chunks as chunk (chunk.group.key)}
@@ -105,7 +110,9 @@
 </div>
 
 <style>
-  .photo-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; display: grid; grid-template-columns: minmax(0, 1fr) 64px; column-gap: 8px; align-content: start; padding: 0 8px 0 12px; }
-  .year-scrubber { position: sticky; top: 7px; grid-column: 2; grid-row: 1; height: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .grid { position: relative; grid-column: 1; grid-row: 1; border-right: 1px solid var(--border-default); }
+  .photo-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 12px; align-content: start; padding: 0 12px; }
+  .with-years { grid-template-columns: minmax(0, 1fr) max-content; }
+  .with-years .grid { padding-right: 12px; border-right: 1px solid var(--border-default); }
+  .year-scrubber { position: sticky; top: 7px; grid-column: 2; grid-row: 1; height: 0; z-index: 3; display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
+  .grid { position: relative; grid-column: 1; grid-row: 1; }
 </style>

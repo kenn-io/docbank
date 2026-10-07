@@ -63,7 +63,7 @@ export function computeJustified(items: LayoutItem[], opts: LayoutOptions): Layo
   return { rows, totalHeight: rows.length === 0 ? 0 : y - gap };
 }
 
-export const HEADER_HEIGHT = 44;
+export const HEADER_HEIGHT = 56;
 export const ROW_HEIGHTS = { compact: 140, comfortable: 200, large: 280 };
 export type Density = keyof typeof ROW_HEIGHTS;
 export type PhotoGroup = { key: string; label: string; year: string; items: PhotoBrowseRow[] };

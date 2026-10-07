@@ -82,9 +82,9 @@ func main() {
 		canonical, _, err := document.MarshalVisualPreviewV1(product.Preview)
 		check(err)
 		samples[index] = sample{hash: hash, size: size, canonical: canonical, physical: store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize}}
-		date := fmt.Sprintf("2025-06-15T%02d:00:00", index%10)
+		date := fmt.Sprintf("2022-06-15T%02d:00:00", index%10)
 		if index >= 10 {
-			date = fmt.Sprintf("%04d-%02d-15T12:00:00", 2024-(index-10)/12, 12-(index-10)%12)
+			date = fmt.Sprintf("%04d-%02d-15T12:00:00", 2026-(index-10)/4, 12-(index-10)%4)
 		}
 		metadata, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "created", Namespace: "image.exif", SourceField: "DateTimeOriginal", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{Raw: date, Normalized: date, Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneOmitted}}}}})
 		check(err)

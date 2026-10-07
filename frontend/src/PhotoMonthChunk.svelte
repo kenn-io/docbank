@@ -36,7 +36,7 @@
 
 <style>
   .photo-month { position: relative; }
-  h2 { position: sticky; top: 0; z-index: 2; background: var(--bg-surface); border-bottom: 1px solid var(--border-default); height: 44px; margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-primary); font-size: var(--font-size-sm); font-weight: 600; }
+  h2 { position: sticky; top: 0; z-index: 2; background: var(--bg-surface); border-bottom: 1px solid var(--border-default); height: 44px; margin: 0 0 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-primary); font-size: var(--font-size-sm); font-weight: 600; }
   h2 span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 400; }
   .cells { position: relative; }
   .cell { position: absolute; }
