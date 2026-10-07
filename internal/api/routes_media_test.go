@@ -178,6 +178,8 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	require.Equal(t, artifact.SuppliedInputID, selectedSearch.Results[0].Evidence[0].SuppliedInputID)
 	require.Equal(t, "supplied", selectedSearch.Results[0].Evidence[0].Origin)
 	require.Equal(t, receipt.SourceID, selectedSearch.Results[0].Evidence[0].MediaSources[0].SourceID)
+	require.Len(t, selectedSearch.MediaSelections, 1)
+	require.Equal(t, artifact.SuppliedInputID, selectedSearch.MediaSelections[0].SuppliedInputID)
 
 	emptyRequest := selectedRequest
 	emptyRequest.MediaSources[0].SuppliedInputIDs = []string{}
@@ -192,6 +194,9 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	var emptyReport api.DocumentSearchReport
 	require.NoError(t, json.Unmarshal([]byte(body), &emptyReport))
 	require.Empty(t, emptyReport.Results)
+	require.NotNil(t, emptyReport.MediaSelections)
+	require.Empty(t, emptyReport.MediaSelections)
+	require.Contains(t, body, `"media_selections":[]`)
 	require.NotContains(t, body, "supplied_input_ids", "constraints are not echoed as source identity")
 	transcriptResult, err := c.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
 	require.NoError(t, err)
@@ -297,6 +302,8 @@ func TestDocumentSearchContentFirstTranscript(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(controlBody), &controlReport))
 	require.Len(t, controlReport.Results, 1)
 	require.Equal(t, "node_name", controlReport.Results[0].Evidence[0].Kind)
+	require.Nil(t, controlReport.MediaSelections)
+	require.NotContains(t, controlBody, "media_selections")
 	require.True(t, controlReport.Truncated)
 	emptySelection := request
 	emptySelection.MediaSources = api.MediaSearchSources{}
@@ -368,6 +375,9 @@ func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
 				var report api.DocumentSearchReport
 				require.NoError(t, json.Unmarshal([]byte(body), &report))
 				require.True(t, report.MediaSourceSelection)
+				require.NotNil(t, report.MediaSelections)
+				require.Empty(t, report.MediaSelections)
+				require.Contains(t, body, `"media_selections":[]`)
 			} else if tc.errorText != "" {
 				require.Contains(t, body, tc.errorText)
 			}

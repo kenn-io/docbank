@@ -2823,6 +2823,7 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, control.Results, 1)
 	require.Equal(t, "node_name", control.Results[0].Evidence[0].Kind)
+	require.Nil(t, control.MediaSelections)
 	for _, tc := range []struct {
 		name    string
 		sources []docbank.DocumentMediaSourceSelector
@@ -2840,6 +2841,11 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 				require.True(t, report.MediaSourceSelection)
+				require.NotNil(t, report.MediaSelections)
+				require.Empty(t, report.MediaSelections)
+				encoded, err := json.Marshal(report)
+				require.NoError(t, err)
+				require.Contains(t, string(encoded), `"media_selections":[]`)
 			}
 			require.Empty(t, report.Results, "explicit selection never returns ordinary filename hits")
 		})

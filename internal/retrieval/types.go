@@ -143,7 +143,13 @@ type TraceEvent struct {
 	Count int
 }
 
+type MediaSelection struct {
+	SourceID, SourceVersionID, ContentVersionID string
+	Origin, SuppliedInputID, Completeness       string
+}
+
 type Report struct {
+	MediaSelections      []MediaSelection
 	MediaSourceSelection bool
 	RequestedMode        Mode
 	ActualMode           Mode

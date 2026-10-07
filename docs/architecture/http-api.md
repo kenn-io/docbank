@@ -585,6 +585,10 @@ Source and source-version IDs are bounded to 256 bytes. Use `lexical` or
 before ranking and limits, including while a retry is pending.
 
 These reports include `media_source_selection: true`, even without matches.
+`media_selections` lists each final-stable eligible source tuple with its actual
+`origin`, `supplied_input_id` when supplied, and `completeness`, independent of
+query matches. Unready or input-excluded sources are omitted; an empty selection
+summary is `[]`. Ordinary search omits the summary.
 Each selected content/build pair has its own result. Its evidence carries
 `media_sources`, `build_id`, `origin`, `completeness`, and `supplied_input_id`
 for supplied text, alongside the existing excerpt and timing. Coverage counts

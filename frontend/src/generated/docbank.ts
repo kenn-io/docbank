@@ -1735,6 +1735,15 @@ export interface DocumentIdentity {
   path: string;
 }
 
+export interface DocumentMediaSelection {
+  completeness: string;
+  content_version_id: string;
+  origin: string;
+  source_id: string;
+  source_version_id: string;
+  supplied_input_id?: string;
+}
+
 export interface DocumentMediaSourceSelector {
   content_version_id: string;
   /**
@@ -1881,6 +1890,8 @@ export interface DocumentSearchReport {
   actual_mode: string;
   coverage: DocumentSearchCoverage;
   degradations: string[];
+  /** @maxItems 4096 */
+  media_selections?: DocumentMediaSelection[];
   media_source_selection?: boolean;
   requested_mode: string;
   reranking?: DocumentSearchRerankingReceipt;

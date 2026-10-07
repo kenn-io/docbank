@@ -663,6 +663,12 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 			ScopedDocuments: report.Coverage.ScopedDocuments, CompleteDocuments: report.Coverage.CompleteDocuments,
 			State: string(report.Coverage.State)}, Truncated: report.Truncated,
 		Results: make([]DocumentSearchResult, len(report.Results)), Degradations: make([]string, len(report.Degradations))}
+	if report.MediaSelections != nil {
+		result.MediaSelections = make([]DocumentMediaSelection, len(report.MediaSelections))
+		for i, selection := range report.MediaSelections {
+			result.MediaSelections[i] = DocumentMediaSelection(selection)
+		}
+	}
 	for index, degradation := range report.Degradations {
 		result.Degradations[index] = string(degradation)
 	}

@@ -518,15 +518,25 @@ type DocumentSearchCoverage struct {
 	State             string `json:"state"`
 }
 
+type DocumentMediaSelection struct {
+	SourceID         string `json:"source_id"`
+	SourceVersionID  string `json:"source_version_id"`
+	ContentVersionID string `json:"content_version_id"`
+	Origin           string `json:"origin"`
+	SuppliedInputID  string `json:"supplied_input_id,omitzero"`
+	Completeness     string `json:"completeness"`
+}
+
 type DocumentSearchReport struct {
-	MediaSourceSelection bool                   `json:"media_source_selection,omitzero"`
-	RequestedMode        DocumentSearchMode     `json:"requested_mode"`
-	ActualMode           DocumentSearchMode     `json:"actual_mode"`
-	Coverage             DocumentSearchCoverage `json:"coverage"`
-	Degradations         []string               `json:"degradations"`
-	Results              []DocumentSearchResult `json:"results"`
-	Truncated            bool                   `json:"truncated"`
-	Trace                []DocumentSearchTrace  `json:"trace"`
+	MediaSelections      []DocumentMediaSelection `json:"media_selections,omitzero"`
+	MediaSourceSelection bool                     `json:"media_source_selection,omitzero"`
+	RequestedMode        DocumentSearchMode       `json:"requested_mode"`
+	ActualMode           DocumentSearchMode       `json:"actual_mode"`
+	Coverage             DocumentSearchCoverage   `json:"coverage"`
+	Degradations         []string                 `json:"degradations"`
+	Results              []DocumentSearchResult   `json:"results"`
+	Truncated            bool                     `json:"truncated"`
+	Trace                []DocumentSearchTrace    `json:"trace"`
 }
 
 // ContentIdentity is the canonical identity of uncompressed document bytes.

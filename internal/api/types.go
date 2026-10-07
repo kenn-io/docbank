@@ -391,7 +391,17 @@ type DocumentSearchRerankingReceipt struct {
 	CandidateCount int    `json:"candidate_count" minimum:"0" maximum:"1000"`
 }
 
+type DocumentMediaSelection struct {
+	SourceID         string `json:"source_id"`
+	SourceVersionID  string `json:"source_version_id"`
+	ContentVersionID string `json:"content_version_id"`
+	Origin           string `json:"origin"`
+	SuppliedInputID  string `json:"supplied_input_id,omitzero"`
+	Completeness     string `json:"completeness"`
+}
+
 type DocumentSearchReport struct {
+	MediaSelections      []DocumentMediaSelection        `json:"media_selections,omitzero" maxItems:"4096" nullable:"false"`
 	MediaSourceSelection bool                            `json:"media_source_selection,omitzero"`
 	RequestedMode        string                          `json:"requested_mode"`
 	ActualMode           string                          `json:"actual_mode"`

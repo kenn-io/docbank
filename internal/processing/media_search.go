@@ -132,6 +132,12 @@ func (service *Service) searchMediaSources(ctx context.Context, request SearchRe
 			kept = append(kept, *item)
 		}
 	}
+	report.MediaSelections = make([]retrieval.MediaSelection, 0, len(selections))
+	for _, source := range request.MediaSources {
+		if selected, ok := selections[source.Identity()]; ok {
+			report.MediaSelections = append(report.MediaSelections, retrieval.MediaSelection{SourceID: source.SourceID, SourceVersionID: source.SourceVersionID, ContentVersionID: source.ContentVersionID, Origin: selected.origin, SuppliedInputID: selected.inputID, Completeness: string(selected.view.Build.Completeness)})
+		}
+	}
 	report.Results = kept
 	report.MediaSourceSelection, report.Coverage = true, coverage
 	return report, nil

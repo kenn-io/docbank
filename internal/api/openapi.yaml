@@ -3825,6 +3825,32 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    DocumentMediaSelection:
+      additionalProperties: false
+      properties:
+        completeness:
+          type: string
+        content_version_id:
+          type: string
+        origin:
+          type: string
+        source_id:
+          type: string
+        source_version_id:
+          type: string
+        supplied_input_id:
+          type: string
+      required:
+        - source_id
+        - source_version_id
+        - content_version_id
+        - origin
+        - completeness
+      type: object
+      x-go-type: api.DocumentMediaSelection
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     DocumentMediaSource:
       additionalProperties: false
       properties:
@@ -4016,6 +4042,11 @@ components:
         degradations:
           items:
             type: string
+          type: array
+        media_selections:
+          items:
+            $ref: "#/components/schemas/DocumentMediaSelection"
+          maxItems: 4096
           type: array
         media_source_selection:
           type: boolean
