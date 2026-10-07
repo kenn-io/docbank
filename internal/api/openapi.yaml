@@ -22107,7 +22107,7 @@ paths:
       summary: Detach one file from a photo asset
   /api/v1/photos/assets/{asset_id}/previews/{generation_id}:
     get:
-      description: Returns 304 Not Modified without a body when If-None-Match matches an eligible generation. Private HTTP caches must revalidate before reuse. The Photos loaded view retains fetched preview bytes for the authenticated session. Every network request checks current preview eligibility.
+      description: Returns 304 Not Modified without a body when If-None-Match matches an eligible generation. Private HTTP caches must revalidate before reuse.
       operationId: readPhotoPreview
       parameters:
         - in: path
