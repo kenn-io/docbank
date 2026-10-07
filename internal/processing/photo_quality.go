@@ -8,7 +8,6 @@ import (
 	"image"
 	"image/draw"
 	"image/jpeg"
-	"io"
 	"math"
 
 	"go.kenn.io/docbank/document"
@@ -30,23 +29,9 @@ func EvaluatePhotoQuality(ctx context.Context, s *store.Store, blobs *blob.Store
 	if view.Generation.Preview.State != document.VisualPreviewReady || output == nil {
 		return errors.New("photo quality preview unavailable")
 	}
-	if output.Size > 4<<20 {
-		return errors.New("photo quality preview outside bounds")
-	}
-	stream, size, err := blobs.OpenStreamContext(ctx, output.BlobSHA256)
+	body, err := readExportBlob(ctx, blobs, output.BlobSHA256, output.Size, 4<<20)
 	if err != nil {
-		return err
-	}
-	defer func() { _ = stream.Close() }()
-	if size != output.Size {
-		return errors.New("photo quality preview size mismatch")
-	}
-	body, err := io.ReadAll(io.LimitReader(stream, size+1))
-	if err != nil {
-		return err
-	}
-	if int64(len(body)) != size || !stream.Verified() {
-		return errors.New("photo quality preview verification failed")
+		return fmt.Errorf("reading photo quality preview: %w", err)
 	}
 	config, err := jpeg.DecodeConfig(bytes.NewReader(body))
 	if err != nil {
