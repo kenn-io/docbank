@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -68,12 +67,7 @@ func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	request.Event = strings.TrimSpace(request.Event)
 	if request.Event == EventScreenViewed {
-		properties, err := h.reporter.SanitizeProperties(request.Event, request.Properties)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		request.Properties = properties
+		request.Properties, _ = h.reporter.SanitizeProperties(request.Event, request.Properties)
 	}
 	canonical, err := json.Marshal(request)
 	if err != nil {
@@ -81,7 +75,7 @@ func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = io.NopCloser(bytes.NewReader(canonical))
-	if request.Event != EventScreenViewed {
+	if request.Event != EventScreenViewed || !h.reporter.EventAllowed(request.Event) {
 		h.next.ServeHTTP(w, r)
 		return
 	}
@@ -114,7 +108,7 @@ func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	response := &screenResponse{header: make(http.Header)}
 	h.next.ServeHTTP(response, r)
-	if response.code != http.StatusAccepted || bytes.Contains(response.body.Bytes(), []byte("disabled")) {
+	if response.code != http.StatusAccepted {
 		delete(claims.Screens, screen)
 		if err := h.save(claims); err != nil {
 			h.storageError(w, err)
@@ -152,11 +146,6 @@ func (h *screenCapture) load() (screenClaims, error) {
 	if claims.InstallID != inst.ID || claims.Day != day {
 		claims = screenClaims{InstallID: inst.ID, Day: day}
 	}
-	for screen := range claims.Screens {
-		if !slices.Contains(screenNames, screen) {
-			delete(claims.Screens, screen)
-		}
-	}
 	if claims.Screens == nil {
 		claims.Screens = map[string]bool{}
 	}
@@ -178,7 +167,11 @@ func (h *screenCapture) save(claims screenClaims) error {
 	if err := stage.File.Close(); err != nil {
 		return err
 	}
-	_, err = filepublish.Publish(stage.Path(), filepath.Join(h.dir, screenClaimsFile), true)
+	committed, err := filepublish.Publish(stage.Path(), filepath.Join(h.dir, screenClaimsFile), true)
+	if committed && err != nil {
+		slog.Warn("telemetry screen claim durability failed", "error", err)
+		return nil
+	}
 	return err
 }
 

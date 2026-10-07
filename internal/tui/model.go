@@ -849,7 +849,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.requestID++
 				return m, tea.Batch(
 					m.startSpinner(),
-					m.reportScreen("browse"), m.loadDirectory(0, navigationInitial, m.requestID),
+					m.loadDirectory(0, navigationInitial, m.requestID),
 				)
 			}
 			if msg.action == mutationRestore {
@@ -879,7 +879,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.requestID++
 			return m, tea.Batch(
 				m.startSpinner(),
-				m.reportScreen("browse"), m.loadDirectory(0, navigationInitial, m.requestID),
+				m.loadDirectory(0, navigationInitial, m.requestID),
 			)
 		}
 		m.removeTrashedRows(target)
@@ -1143,7 +1143,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.requestID++
 		return m, tea.Batch(
 			m.startSpinner(),
-			m.reportScreen("browse"), m.loadDirectory(0, navigationInitial, m.requestID),
+			m.loadDirectory(0, navigationInitial, m.requestID),
 		)
 	case "up", "k":
 		m.moveCursor(-1)
@@ -1242,7 +1242,7 @@ func (m Model) updateTrashKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.requestID++
 			return m, tea.Batch(
 				m.startSpinner(),
-				m.reportScreen("browse"), m.loadDirectory(0, navigationInitial, m.requestID),
+				m.loadDirectory(0, navigationInitial, m.requestID),
 			)
 		}
 		return m, nil
@@ -3038,12 +3038,6 @@ func compareNames(left, right row) int {
 
 // Update reports visible navigation while idle polling remains local.
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
-	if result, ok := message.(screenReportedMsg); ok {
-		if result.err != nil && m.reportedScreen == result.screen && m.reportedDay == result.day {
-			m.reportedScreen, m.reportedDay = "", ""
-		}
-		return m, nil
-	}
 	model, cmd := m.update(message)
 	next, ok := model.(Model)
 	if !ok {
@@ -3051,28 +3045,19 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	screen, day := next.visibleScreen(), time.Now().UTC().Format(time.DateOnly)
 	_, input := message.(tea.KeyPressMsg)
-	initial := false
-	if _, ok := message.(tea.WindowSizeMsg); ok {
-		initial = m.width <= 0
-	}
-	if !next.quitting && (screen != m.visibleScreen() || initial || input) && (next.reportedScreen != screen || next.reportedDay != day) {
+	if !next.quitting && (screen != m.visibleScreen() || input && next.reportedDay != day) && (next.reportedScreen != screen || next.reportedDay != day) {
 		next.reportedScreen, next.reportedDay = screen, day
 		cmd = tea.Batch(cmd, next.reportScreen(screen))
 	}
 	return next, cmd
 }
 
-type screenReportedMsg struct {
-	screen, day string
-	err         error
-}
-
 func (m Model) reportScreen(screen string) tea.Cmd {
-	day := time.Now().UTC().Format(time.DateOnly)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.ctx, 3*time.Second)
 		defer cancel()
-		return screenReportedMsg{screen: screen, day: day, err: m.backend.ReportScreen(ctx, screen)}
+		_ = m.backend.ReportScreen(ctx, screen)
+		return nil
 	}
 }
 func (m Model) visibleScreen() string {

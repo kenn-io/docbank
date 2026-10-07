@@ -54,6 +54,7 @@ The directory layout is created on first use:
 ├── web-launch/          # owner-private browser authentication handoff
 ├── web-downloads/       # private, temporary verified browser downloads
 ├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created only while telemetry is on, kept if it is later turned off
+├── telemetry-screen-views.json # daily screen claims; created only while telemetry is on
 ├── config.toml          # optional; see below
 ├── vault.lock           # advisory lock, held by a daemon or target restore
 └── daemon.<pid>.json    # runtime record of a live daemon
@@ -703,7 +704,9 @@ Docbank sends these events:
   a later UTC day. The browser remembers the day for the daemon's address, so
   it sends about one per UTC day until the daemon restarts on a new address.
 
-- `screen_viewed` with a fixed `screen` name and `surface` of `web` or `tui`. Each screen counts once per vault per UTC day across interfaces and daemon restarts. Invalid names are dropped. The daemon keeps daily claims in `telemetry-screen-views.json` beside the install ID. Rejected enqueue attempts remain eligible; remote delivery is best effort.
+- `screen_viewed` with a fixed `screen` name and `surface` of `web` or `tui`. Each screen counts once per vault per UTC day across interfaces and daemon restarts. `surface` records the interface of the first accepted visit that day. Invalid names are dropped. The daemon keeps daily claims in `telemetry-screen-views.json` beside the install ID. Rejected enqueue attempts remain eligible; remote delivery is best effort.
+
+Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
 
 Each event carries these fields:
 
