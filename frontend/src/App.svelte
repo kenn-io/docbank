@@ -254,10 +254,11 @@
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const snapshotActive = $derived(snapshot.state.status !== "idle");
+  const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const visibleScreen = $derived(shortcutHelpOpen ? "help"
     : snapshot.actionsOpen ? "snapshot_actions"
     : activePanel && activePanel.kind !== "trashNode" ? activePanel.kind.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)
-    : snapshotActive ? "snapshot" : activeTagID ? "tags" : activeQuery || queryBarOpen ? "search" : "browse");
+    : snapshotActive ? "snapshot" : activeQuery || queryBarOpen ? "search" : tagBrowse ? "tags" : "browse");
   $effect(() => {
     if (webSession) return startScreenReporting(webSession, visibleScreen);
   });
@@ -319,7 +320,6 @@
         : "Browse or filter by tag",
   );
   const activeTag = $derived(tagCatalog.find((tag) => tag.id === activeTagID));
-  const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
   const naturalProfile = $derived(selectNaturalSearchProfile(naturalProfiles));
   const naturalModeOptions = $derived(naturalSearchModes(naturalProfile));
   const sortedRows = $derived(
