@@ -6,10 +6,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"maps"
 	"mime"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +44,7 @@ func CaptureHandler(r *Reporter, dir string) http.Handler {
 
 func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || media != "application/json" {
+	if r.Method != http.MethodPost || err != nil || media != "application/json" {
 		h.next.ServeHTTP(w, r)
 		return
 	}
@@ -83,17 +81,19 @@ func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		screenReceipt(w, "queued")
 		return
 	}
-	rec := httptest.NewRecorder()
-	h.next.ServeHTTP(rec, r)
-	if rec.Code == http.StatusAccepted && h.reporter.Enabled() {
-		h.claims.Screens[key] = true
-		if err := h.save(h.claims); err != nil {
-			slog.Warn("telemetry screen claims failed", "error", err)
-		}
+	if err := h.reporter.Capture(EventScreenViewed, properties); err != nil {
+		http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
+		return
 	}
-	maps.Copy(w.Header(), rec.Header())
-	w.WriteHeader(rec.Code)
-	_, _ = w.Write(rec.Body.Bytes())
+	if !h.reporter.Enabled() {
+		screenReceipt(w, "disabled")
+		return
+	}
+	h.claims.Screens[key] = true
+	if err := h.save(h.claims); err != nil {
+		slog.Warn("telemetry screen claims failed", "error", err)
+	}
+	screenReceipt(w, "queued")
 }
 
 func (h *screenCapture) load() screenClaims {

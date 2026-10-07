@@ -1,4 +1,4 @@
-import { sessionResponse } from "./api-transport.js";
+import { APIError, sessionResponse } from "./api-transport.js";
 import { getReportTelemetryEventUrl } from "./generated/docbank.js";
 
 const storageKey = "docbank.screen-views";
@@ -22,7 +22,9 @@ export function startScreenReporting(session: string, screen: string): () => voi
   const report = (): void => {
     const day = new Date().toISOString().slice(0, 10);
     const claims = screenClaims();
-    if (document.visibilityState !== "visible" || controller || claims.day === day && claims.screens.includes(screen)) return;
+    if (stopped || document.visibilityState !== "visible" || controller || claims.day === day && claims.screens.includes(screen)) return;
+    window.clearTimeout(timer);
+    let retry = false;
     controller = new AbortController();
     timer = window.setTimeout(() => controller?.abort(), 3000);
     void sessionResponse(getReportTelemetryEventUrl(), {
@@ -38,9 +40,12 @@ export function startScreenReporting(session: string, screen: string): () => voi
         if (current.day > day) return;
         memory = { day, screens: [...new Set([...(current.day === day ? current.screens : []), screen])] };
         try { localStorage.setItem(storageKey, JSON.stringify(memory)); } catch {}
-      }).catch(() => {}).finally(() => {
+      }).catch((error: unknown) => {
+        retry = !(error instanceof APIError) || [502, 503, 504].includes(error.status);
+      }).finally(() => {
         window.clearTimeout(timer);
         controller = undefined;
+        if (retry && !stopped) timer = window.setTimeout(report, 1000);
       });
   };
   report();

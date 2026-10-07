@@ -29,6 +29,19 @@ it("reports canonical names through the authenticated route and retries focus af
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
+it("retries a network failure after one second without focus", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue(new Response(null, { status: 202 }));
+  const stop = startScreenReporting("synthetic-session", "browse");
+  await vi.advanceTimersByTimeAsync(999);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  stop();
+});
+
 it("records answered screens across focus, visibility and remounts while allowing a new screen", async () => {
   vi.useFakeTimers();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");

@@ -161,6 +161,9 @@ func TestScreenClosedReporterKeepsNoClaim(t *testing.T) {
 	handler, ok := CaptureHandler(reporter, dir).(*screenCapture)
 	require.True(t, ok)
 	require.NoError(t, reporter.Close())
-	require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
+	response := postEvent(t, handler, screenBody("browse", "web"))
+	require.Equal(t, http.StatusAccepted, response.Code)
+	assert.JSONEq(t, `{"status":"disabled"}`, response.Body.String())
+	assert.Empty(t, handler.claims.Screens)
 	assert.Empty(t, handler.load().Screens)
 }
