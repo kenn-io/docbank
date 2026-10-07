@@ -58,7 +58,7 @@ func TestNewOptedOut(t *testing.T) {
 				assert.True(t, reporter.EventAllowed(event), event)
 			}
 			assert.False(t, reporter.EventAllowed("search_run"))
-			handler := CaptureHandler(reporter)
+			handler := CaptureHandler(reporter, dir)
 			rec := postEvent(t, handler, `{"event":"app_opened"}`)
 			assert.Equal(t, http.StatusAccepted, rec.Code)
 			assert.JSONEq(t, `{"status":"disabled"}`, rec.Body.String())
@@ -95,7 +95,7 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 	dir := t.TempDir()
 	r := New(Options{Dir: dir, Version: "test-version", Commit: "test-commit", Logger: discardLogger(), endpoint: srv.URL})
 	require.True(t, r.Enabled())
-	handler := CaptureHandler(r)
+	handler := CaptureHandler(r, dir)
 	rec := postEvent(t, handler, `{"event":"app_opened","properties":{"path":"/synthetic/report.pdf","query":"synthetic"}}`)
 	require.Equal(t, http.StatusAccepted, rec.Code)
 	assert.JSONEq(t, `{"status":"queued"}`, rec.Body.String())

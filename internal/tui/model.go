@@ -56,6 +56,7 @@ const (
 // Backend is the bounded daemon surface needed by the TUI.
 // The CLI adapter uses generated API operations and receipt validation.
 type Backend interface {
+	ReportScreen(ctx context.Context, screen string) error
 	Stat(ctx context.Context, path string) (api.Node, error)
 	Node(ctx context.Context, nodeID int64) (api.Node, error)
 	ChildrenPage(ctx context.Context, nodeID int64, limit, offset int) (api.NodePage, error)
@@ -346,8 +347,10 @@ const spinnerInterval = 80 * time.Millisecond
 //
 //nolint:recvcheck // intentional Bubble Tea value-model pattern
 type Model struct {
-	ctx     context.Context
-	backend Backend
+	reportedScreen string
+	reportedDay    string
+	ctx            context.Context
+	backend        Backend
 
 	mode      viewMode
 	directory api.Node
@@ -507,6 +510,7 @@ func New(ctx context.Context, backend Backend) (Model, error) {
 	input.SetWidth(48)
 	return Model{
 		ctx: ctx, backend: backend, loading: true,
+		reportedScreen: "browse", reportedDay: time.Now().UTC().Format(time.DateOnly),
 		searchInput: input, styles: newStyles(true), requestID: 1,
 		spinnerActive: true, sortField: sortByName, naturalMode: naturalNames,
 		naturalProfilesRequest: 1,
@@ -517,11 +521,11 @@ func New(ctx context.Context, backend Backend) (Model, error) {
 // background color so the palette stays legible in light and dark themes.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(tea.RequestBackgroundColor,
-		m.loadDirectory(0, navigationInitial, m.requestID), m.loadNaturalProfiles(m.naturalProfilesRequest), spinnerTick())
+		m.reportScreen("browse"), m.loadDirectory(0, navigationInitial, m.requestID), m.loadNaturalProfiles(m.naturalProfilesRequest), spinnerTick())
 }
 
 // Update implements tea.Model.
-func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -845,7 +849,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.requestID++
 				return m, tea.Batch(
 					m.startSpinner(),
-					m.loadDirectory(0, navigationInitial, m.requestID),
+					m.reportScreen("browse"), m.loadDirectory(0, navigationInitial, m.requestID),
 				)
 			}
 			if msg.action == mutationRestore {
@@ -875,7 +879,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.requestID++
 			return m, tea.Batch(
 				m.startSpinner(),
-				m.loadDirectory(0, navigationInitial, m.requestID),
+				m.reportScreen("browse"), m.loadDirectory(0, navigationInitial, m.requestID),
 			)
 		}
 		m.removeTrashedRows(target)
@@ -1139,7 +1143,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.requestID++
 		return m, tea.Batch(
 			m.startSpinner(),
-			m.loadDirectory(0, navigationInitial, m.requestID),
+			m.reportScreen("browse"), m.loadDirectory(0, navigationInitial, m.requestID),
 		)
 	case "up", "k":
 		m.moveCursor(-1)
@@ -1238,7 +1242,7 @@ func (m Model) updateTrashKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.requestID++
 			return m, tea.Batch(
 				m.startSpinner(),
-				m.loadDirectory(0, navigationInitial, m.requestID),
+				m.reportScreen("browse"), m.loadDirectory(0, navigationInitial, m.requestID),
 			)
 		}
 		return m, nil
@@ -3030,4 +3034,72 @@ func compareNames(left, right row) int {
 		return comparison
 	}
 	return cmp.Compare(left.path, right.path)
+}
+
+// Update reports visible navigation while idle polling remains local.
+func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if result, ok := message.(screenReportedMsg); ok {
+		if result.err != nil && m.reportedScreen == result.screen && m.reportedDay == result.day {
+			m.reportedScreen, m.reportedDay = "", ""
+		}
+		return m, nil
+	}
+	model, cmd := m.update(message)
+	next, ok := model.(Model)
+	if !ok {
+		return model, cmd
+	}
+	screen, day := next.visibleScreen(), time.Now().UTC().Format(time.DateOnly)
+	_, input := message.(tea.KeyPressMsg)
+	initial := false
+	if _, ok := message.(tea.WindowSizeMsg); ok {
+		initial = m.width <= 0
+	}
+	if !next.quitting && (screen != m.visibleScreen() || initial || input) && (next.reportedScreen != screen || next.reportedDay != day) {
+		next.reportedScreen, next.reportedDay = screen, day
+		cmd = tea.Batch(cmd, next.reportScreen(screen))
+	}
+	return next, cmd
+}
+
+type screenReportedMsg struct {
+	screen, day string
+	err         error
+}
+
+func (m Model) reportScreen(screen string) tea.Cmd {
+	day := time.Now().UTC().Format(time.DateOnly)
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(m.ctx, 3*time.Second)
+		defer cancel()
+		return screenReportedMsg{screen: screen, day: day, err: m.backend.ReportScreen(ctx, screen)}
+	}
+}
+func (m Model) visibleScreen() string {
+	switch {
+	case m.helpOpen:
+		return "help"
+	case m.jobDetail:
+		return "jobs"
+	case m.historyDetail:
+		return "history"
+	case m.detailOpen:
+		return "document"
+	case m.packagesOpen:
+		return "packages"
+	case m.jobsOpen:
+		return "jobs"
+	case m.operationsOpen:
+		return "operations"
+	case m.processingOpen:
+		return "processing"
+	case m.trashOpen:
+		return "trash"
+	case m.historyOpen:
+		return "history"
+	case m.searching || m.mode == modeSearch:
+		return "search"
+	default:
+		return "browse"
+	}
 }

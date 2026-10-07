@@ -32,7 +32,7 @@ func postTelemetryEvent(t *testing.T, client *http.Client, method, url, body str
 func TestTelemetryEventRoute(t *testing.T) {
 	t.Setenv(telemetry.EnabledEnv, "0")
 	reporter := telemetry.New(telemetry.Options{Dir: t.TempDir()})
-	ts, _ := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = telemetry.CaptureHandler(reporter) })
+	ts, _ := newTestServer(t, func(d *api.Deps) { d.TelemetryCapture = telemetry.CaptureHandler(reporter, t.TempDir()) })
 	session := issueWebSession(t, ts)
 	url := ts.URL + "/api/daemon/telemetry/events"
 	browser := map[string]string{"X-Api-Key": "", api.WebSessionHeader: session}
@@ -47,6 +47,8 @@ func TestTelemetryEventRoute(t *testing.T) {
 		want    string
 	}{
 		{"master key", http.MethodPost, url, `{"event":"app_opened"}`, nil, http.StatusAccepted, `"status":"disabled"`},
+		{"screen browser session", http.MethodPost, url, `{"event":"screen_viewed","properties":{"screen":"browse","surface":"web"}}`, browser, http.StatusAccepted, `"status":"disabled"`},
+		{"screen no credentials", http.MethodPost, url, `{"event":"screen_viewed","properties":{"screen":"browse","surface":"web"}}`, map[string]string{"X-Api-Key": ""}, http.StatusUnauthorized, ""},
 		{"browser session", http.MethodPost, url, `{"event":"app_opened"}`, browser, http.StatusAccepted, `"status":"disabled"`},
 		{"no credentials", http.MethodPost, url, `{"event":"app_opened"}`, map[string]string{"X-Api-Key": ""}, http.StatusUnauthorized, ""},
 		{"browser session with query", http.MethodPost, url + "?x=1", `{"event":"app_opened"}`, browser, http.StatusForbidden, `"code":"web_session_read_only"`},

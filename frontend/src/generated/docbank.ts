@@ -6367,16 +6367,23 @@ export type ShutdownDaemonHeaders = {
 'X-Docbank-Daemon-Token': string;
 };
 
+/**
+ * Optional allowlisted event properties. screen_viewed requires fixed screen and surface values.
+ */
+export type ReportTelemetryEventBodyProperties = {[key: string]: string};
+
 export type ReportTelemetryEventBody = {
   /**
      * An event the daemon's telemetry allowlist names. Other events return 400.
      * @minLength 1
      */
   event: string;
+  /** Optional allowlisted event properties. screen_viewed requires fixed screen and surface values. */
+  properties?: ReportTelemetryEventBodyProperties;
 };
 
 /**
- * queued when the event will be sent; disabled when telemetry is off and nothing is sent.
+ * queued when accepted, including daily duplicates and dropped screen names; disabled when telemetry is off and nothing is sent.
  */
 export type ReportTelemetryEvent202Status = typeof ReportTelemetryEvent202Status[keyof typeof ReportTelemetryEvent202Status];
 
@@ -6387,7 +6394,7 @@ export const ReportTelemetryEvent202Status = {
 } as const;
 
 export type ReportTelemetryEvent202 = {
-  /** queued when the event will be sent; disabled when telemetry is off and nothing is sent. */
+  /** queued when accepted, including daily duplicates and dropped screen names; disabled when telemetry is off and nothing is sent. */
   status: ReportTelemetryEvent202Status;
 };
 

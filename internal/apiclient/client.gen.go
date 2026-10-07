@@ -20434,7 +20434,7 @@ const (
 	SavedQueryV1SchemaVN1 SavedQueryV1SchemaV = 1
 )
 
-// ReportTelemetryEventResponseStatus queued when the event will be sent; disabled when telemetry is off and nothing is sent.
+// ReportTelemetryEventResponseStatus queued when accepted, including daily duplicates and dropped screen names; disabled when telemetry is off and nothing is sent.
 type ReportTelemetryEventResponseStatus string
 
 const (
@@ -21141,6 +21141,9 @@ type ReadWorkspaceQueryPagePath struct {
 type ReportTelemetryEventBody struct {
 	// Event An event the daemon's telemetry allowlist names. Other events return 400.
 	Event string `json:"event"`
+
+	// Properties Optional allowlisted event properties. screen_viewed requires fixed screen and surface values.
+	Properties map[string]string `json:"properties,omitempty"`
 }
 
 type PrepareWebDownloadBody struct {
@@ -21734,7 +21737,7 @@ type ChallengeDaemonResponse struct {
 }
 
 type ReportTelemetryEventResponse struct {
-	// Status queued when the event will be sent; disabled when telemetry is off and nothing is sent.
+	// Status queued when accepted, including daily duplicates and dropped screen names; disabled when telemetry is off and nothing is sent.
 	Status ReportTelemetryEventResponseStatus `json:"status"`
 }
 

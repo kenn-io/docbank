@@ -16457,6 +16457,11 @@ paths:
                   description: An event the daemon's telemetry allowlist names. Other events return 400.
                   minLength: 1
                   type: string
+                properties:
+                  additionalProperties:
+                    type: string
+                  description: Optional allowlisted event properties. screen_viewed requires fixed screen and surface values.
+                  type: object
               required:
                 - event
               type: object
@@ -16469,7 +16474,7 @@ paths:
                 additionalProperties: false
                 properties:
                   status:
-                    description: queued when the event will be sent; disabled when telemetry is off and nothing is sent.
+                    description: queued when accepted, including daily duplicates and dropped screen names; disabled when telemetry is off and nothing is sent.
                     enum:
                       - queued
                       - disabled

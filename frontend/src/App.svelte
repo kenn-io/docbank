@@ -96,6 +96,7 @@
   import { APIError } from "./api-transport.js";
   import { changeNodeTag, documentSearch, liveNodeTags, resolveDocumentSourceFence } from "./receipts.js";
   import { takeFragmentSession } from "./browser-session.js";
+  import { startScreenReporting } from "./screen-views.js";
   import { startAppOpenedReporting } from "./app-opened.js";
   import { type AuditStatus, type DocumentSearchReport, type Node, type ProcessingProfileSummary, type SearchHit, type Tag, type TagAssignmentReceipt } from "./generated/docbank.js";
   import { downloadVisiblePageCSV, selectedVisibleCSVRows } from "./csv.js";
@@ -253,6 +254,13 @@
 
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const snapshotActive = $derived(snapshot.state.status !== "idle");
+  const visibleScreen = $derived(shortcutHelpOpen ? "help"
+    : snapshot.actionsOpen ? "snapshot_actions"
+    : activePanel && activePanel.kind !== "trashNode" ? activePanel.kind.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)
+    : snapshotActive ? "snapshot" : activeTagID ? "tags" : activeQuery || queryBarOpen ? "search" : "browse");
+  $effect(() => {
+    if (webSession) return startScreenReporting(webSession, visibleScreen);
+  });
   const snapshotPage = $derived(snapshot.state.page);
   const snapshotQuery = $derived(snapshot.state.query);
   const selectedSnapshot = $derived(snapshotPage?.rows.find((row) => row.node_id === snapshot.selectedID));
@@ -2864,8 +2872,8 @@
       {#if panel.kind === "telemetry"}
         <Modal title="Anonymous usage" ariaLabel="Anonymous usage" tone="info" onclose={closePanel(panel)}>
           <div class="telemetry-note">
-            <p>Docbank reports when the daemon runs and the web app opens so the team can count vaults in use. Reporting is on by default.</p>
-            <p>Reports go to PostHog with a random ID for this vault, the app version, operating system, and install age. They never include document content, filenames, paths, tags, or searches.</p>
+            <p>Docbank reports when the daemon runs, the web app opens, and screens open in the browser or terminal. Each screen name counts once per vault per UTC day, across both interfaces and daemon restarts. Reporting is on by default.</p>
+            <p>Reports go to PostHog with a random ID for this vault, the app version, operating system, and install age. Reports include fixed screen names and the interface used. Document content, filenames, paths, tags, and search text stay private.</p>
             <p>To turn reporting off, set <code>DOCBANK_TELEMETRY_ENABLED=0</code> in the environment that starts the daemon, then run <code>docbank daemon restart</code>.</p>
           </div>
           {#snippet footer()}

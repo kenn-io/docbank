@@ -19,6 +19,7 @@ import (
 )
 
 type fakeBackend struct {
+	screens                   []string
 	nodes                     map[string]api.Node
 	children                  map[int64]api.NodePage
 	search                    api.SearchReport
@@ -612,7 +613,7 @@ func TestModelNavigatesSearchesAndReturnsToTree(t *testing.T) {
 	assert.Equal(t, "content", model.rows[0].match)
 
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))
-	require.Nil(t, cmd)
+	model = runModelCommand(t, model, cmd)
 	assert.Equal(t, modeBrowse, model.mode)
 	assert.Equal(t, "/", model.directory.Path)
 	require.Len(t, model.rows, 2)
@@ -958,7 +959,7 @@ func TestModelPreservesViewStateAcrossNavigation(t *testing.T) {
 	require.Equal(t, modeSearch, model.mode)
 
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))
-	require.Nil(t, cmd)
+	model = runModelCommand(t, model, cmd)
 	assert.Equal(t, modeBrowse, model.mode)
 	assert.Equal(t, 1, model.cursor)
 	assert.Equal(t, "README.txt", model.rows[model.cursor].node.Name)
@@ -1317,7 +1318,7 @@ func TestLeavingSearchIgnoresDelayedRefresh(t *testing.T) {
 	require.NotNil(t, delayedRefresh)
 	pendingRequestID := model.requestID
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))
-	require.Nil(t, cmd)
+	model = runModelCommand(t, model, cmd)
 	assert.Equal(t, modeBrowse, model.mode)
 	assert.Equal(t, "/", model.directory.Path)
 	assert.Greater(t, model.requestID, pendingRequestID)
@@ -1503,7 +1504,7 @@ func TestExpandedDetailExposesCompleteAuthority(t *testing.T) {
 	assert.Positive(t, model.detailOffset)
 
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))
-	require.Nil(t, cmd)
+	model = runModelCommand(t, model, cmd)
 	assert.False(t, model.detailOpen)
 }
 
@@ -1629,6 +1630,7 @@ func TestProcessingBuildWaitsForInitialCoverage(t *testing.T) {
 	model, err := New(t.Context(), backend)
 	require.NoError(t, err)
 	model.processingOpen, model.processingLoading = true, true
+	model.reportedScreen = "processing"
 	model.processingPlan = &backend.plan
 	model, cmd := updateModel(t, model, runeKey('b'))
 	assert.Nil(t, cmd)
@@ -2658,4 +2660,31 @@ func rowIDs(rows []row) []int64 {
 		ids = append(ids, item.node.ID)
 	}
 	return ids
+}
+
+func (f *fakeBackend) ReportScreen(_ context.Context, screen string) error {
+	f.screens = append(f.screens, screen)
+	return nil
+}
+
+func TestScreenReportingFollowsNavigationAndIgnoresPolling(t *testing.T) {
+	backend := newFakeBackend()
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.Init())
+	assert.Equal(t, []string{"browse"}, backend.screens)
+	model, _ = updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
+	model, cmd := updateModel(t, model, runeKey('?'))
+	model = runModelCommand(t, model, cmd)
+	assert.Equal(t, []string{"browse", "help"}, backend.screens)
+	assert.Contains(t, model.render(), "help")
+	model, cmd = updateModel(t, model, key(tea.KeyEscape))
+	model = runModelCommand(t, model, cmd)
+	assert.Equal(t, []string{"browse", "help", "browse"}, backend.screens)
+	model.reportedDay = "2000-01-01"
+	model, _ = updateModel(t, model, spinnerTickMsg{})
+	assert.Len(t, backend.screens, 3)
+	model, cmd = updateModel(t, model, runeKey('s'))
+	_ = runModelCommand(t, model, cmd)
+	assert.Equal(t, []string{"browse", "help", "browse", "browse"}, backend.screens)
 }

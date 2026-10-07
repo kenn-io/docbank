@@ -854,9 +854,10 @@ independent upload-proof secret, and the fresh loopback origin dedicated to
 that daemon lifetime. `DELETE /api/daemon/web-session` revokes the calling
 browser session.
 
-`POST /api/daemon/telemetry/events` takes one anonymous web application event,
+`POST /api/daemon/telemetry/events` takes one anonymous interface event with optional allowlisted `properties`,
 such as `app_opened`, from a browser session or the API key. The daemon answers
 400 for any event its allowlist omits and sends nothing when telemetry is off.
+`screen_viewed` requires a fixed `screen` name and `surface` of `web` or `tui`; daily duplicates and invalid names return the accepted receipt without capture. Claims persist per vault across interfaces and daemon restarts, resetting each UTC day.
 See [anonymous usage telemetry](../configuration.md#anonymous-usage-telemetry).
 
 Browser session tokens authenticate only the routes used by the built-in

@@ -691,7 +691,7 @@ daemon sends events in HTTPS batches to PostHog's US ingest endpoint (PostHog
 project 434713). The browser never contacts PostHog: the web app posts its
 event to its own daemon, which sends it.
 
-Docbank sends three events:
+Docbank sends these events:
 
 - `daemon_started` and `daemon_active` at each daemon start, then
   `daemon_active` on the first hourly check of each later UTC day. Days when
@@ -703,7 +703,9 @@ Docbank sends three events:
   a later UTC day. The browser remembers the day for the daemon's address, so
   it sends about one per UTC day until the daemon restarts on a new address.
 
-Each event carries exactly these fields:
+- `screen_viewed` with a fixed `screen` name and `surface` of `web` or `tui`. Each screen counts once per vault per UTC day across interfaces and daemon restarts. Invalid names are dropped. The daemon keeps daily claims in `telemetry-screen-views.json` beside the install ID. Rejected enqueue attempts remain eligible; remote delivery is best effort.
+
+Each event carries these fields:
 
 - the event name, a random event UUID, and a timestamp
 - `distinct_id`: a random install ID generated on this machine

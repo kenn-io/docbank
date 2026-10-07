@@ -442,3 +442,10 @@ func (b *tuiDaemonBackend) AuditHistory(
 func init() {
 	rootCmd.AddCommand(tuiCmd)
 }
+
+func (b *tuiDaemonBackend) ReportScreen(ctx context.Context, screen string) error {
+	_, err := withTUIClient(ctx, b, func(c *daemonconn.Connection) (*apiclient.ReportTelemetryEventResponse, error) {
+		return c.API().ReportTelemetryEvent(ctx, &apiclient.ReportTelemetryEventRequestOptions{Body: &apiclient.ReportTelemetryEventBody{Event: "screen_viewed", Properties: map[string]string{"screen": screen, "surface": "tui"}}})
+	})
+	return err
+}
