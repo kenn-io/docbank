@@ -113,6 +113,14 @@ func TestCollectionLabelNoOpClearAndRetainedEmptyAuthority(t *testing.T) {
 	assert.Zero(t, empty.FileCount)
 	assert.Equal(t, created.Revision, empty.LabelRevision)
 	other := createCollectionRun(t, s, "other.txt", "b2")
+	// An unrelated live collection must not supply members to this retained
+	// label when the summary's membership join is empty.
+	emptyPage, err := s.CollectionMembers(t.Context(), run.ID(), 10, 0)
+	require.NoError(t, err)
+	assert.Equal(t, run.ID(), emptyPage.Collection.ID)
+	assert.Equal(t, empty, emptyPage.Collection)
+	assert.Zero(t, emptyPage.Total)
+	assert.Empty(t, emptyPage.Items)
 	_, err = s.SetCollectionLabel(t.Context(), other.ID(), 1, &name)
 	require.ErrorIs(t, err, ErrExists,
 		"a retained empty collection keeps its non-null label unique")
