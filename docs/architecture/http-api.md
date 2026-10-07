@@ -570,8 +570,10 @@ that embeds query text.
 
 For exact recording attribution, add `media_sources`, up to 4,096 distinct
 objects with `source_id`, `source_version_id`, and `content_version_id`. Every
-content version must belong to the fence. Source and source-version IDs are
-bounded to 256 bytes. Search bodies are bounded to 16 MiB. Use `lexical` or
+content version must belong to the fence. Only selected transcripts contribute
+to results and coverage; fence members without a selector are excluded.
+Source and source-version IDs are bounded to 256 bytes. Search bodies are
+bounded to 16 MiB. Use `lexical` or
 `auto` without reranking. Docbank selects each source's covering transcript
 before ranking and limits, including while a retry is pending.
 

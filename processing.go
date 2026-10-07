@@ -3,10 +3,10 @@ package docbank
 import (
 	"context"
 	"errors"
-	"go.kenn.io/docbank/internal/retrieval"
 
 	"go.kenn.io/docbank/document"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/retrieval"
 )
 
 var (

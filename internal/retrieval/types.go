@@ -62,9 +62,9 @@ type EvidenceReference struct {
 }
 
 type MediaSource struct {
-	SourceID         string `json:"source_id"`
-	SourceVersionID  string `json:"source_version_id"`
-	ContentVersionID string `json:"content_version_id"`
+	SourceID         string
+	SourceVersionID  string
+	ContentVersionID string
 }
 
 type Candidate struct {
