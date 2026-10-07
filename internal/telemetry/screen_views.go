@@ -45,7 +45,7 @@ func CaptureHandler(r *Reporter, dir string) http.Handler {
 
 func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if r.Method != http.MethodPost || err != nil || media != "application/json" {
+	if r.Method != http.MethodPost || err != nil || media != "application/json" || !h.reporter.Enabled() {
 		h.next.ServeHTTP(w, r)
 		return
 	}
@@ -60,11 +60,11 @@ func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.next.ServeHTTP(w, r)
 		return
 	}
-	// Options follow kit's v1 decoder so both sides agree on which body names the event.
+	// Options follow kit's v1 decoder; reject peek errors here so v1 can't bypass daily claims.
 	decoder := jsontext.NewDecoder(bytes.NewReader(body), jsontext.AllowDuplicateNames(true), jsontext.AllowInvalidUTF8(true))
 	token, err := decoder.ReadToken()
 	if err != nil || token.Kind() != '{' {
-		h.next.ServeHTTP(w, r)
+		http.Error(w, "invalid telemetry request", http.StatusBadRequest)
 		return
 	}
 	for err == nil && decoder.PeekKind() != '}' {
@@ -88,7 +88,11 @@ func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		_, err = decoder.ReadToken()
 	}
-	if err != nil || !trailingEOF(decoder) || strings.TrimSpace(request.Event) != EventScreenViewed || !h.reporter.Enabled() {
+	if err != nil || !trailingEOF(decoder) {
+		http.Error(w, "invalid telemetry request", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(request.Event) != EventScreenViewed || !h.reporter.Enabled() {
 		h.next.ServeHTTP(w, r)
 		return
 	}

@@ -81,7 +81,7 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 
 	require.Equal(t, 202, postEvent(t, handler, screenBody("search", "tui")).Code)
 	// Malformed duplicates retain kit's transport validation.
-	for _, body := range []string{screenBody("browse", "web") + `{}`, `{"event":"screen_viewed","properties":[]}`, `{"event":"screen_viewed"`} {
+	for _, body := range []string{screenBody("browse", "web") + `{}`, `{"event":"screen_viewed","properties":[]}`, `{"event":"screen_viewed"`, `{"event":"screen_viewed","properties":{"screen":"browse","surface":"web","x":false,"x":""}}`} {
 		require.Equal(t, 400, postEvent(t, handler, body).Code)
 	}
 	for _, tc := range []struct {
