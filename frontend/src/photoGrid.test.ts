@@ -33,9 +33,8 @@ it("uses preview dimensions before technical dimensions and falls back to a squa
 });
 
 it("groups recorded months and capture sessions across appended pages", () => {
-  const months = groupPhotos([photo(3, "2024-12-31T23:30:00-12:00"), photo(2, null), photo(1, "2025-01-01T00:30:00+14:00")], "months");
-  expect(months.map(group => group.key)).toEqual(["2025-01", "2024-12", "undated"]);
-  expect(months[2].items[0].asset_id).toBe("photo-2");
+  const months = groupPhotos([photo(3, "2024-12-31T23:30:00-12:00"), photo(1, "2025-01-01T00:30:00+14:00")], "months");
+  expect(months.map(group => group.key)).toEqual(["2025-01", "2024-12"]);
   const firstPage = [photo(1, "2025-06-01T17:00:00"), photo(2, "2025-06-01T10:00:00")];
   const secondPage = [photo(3, "2025-06-01T09:00:00")];
   const groups = groupPhotos([...firstPage, ...secondPage], "sessions");
@@ -46,18 +45,14 @@ it("groups recorded months and capture sessions across appended pages", () => {
   const parsed = groupPhotos([
     photo(1, "2025-06-01T9"), photo(2, "2025-06-01T9:30Z"),
     photo(3, "2025-06-01T9:45+00:00"), photo(4, "2025-06-01T10:00:00,123456789Z"),
-    photo(5, "2025-06-01T10:00:00.123456789Z"), photo(6, "invalid"),
+    photo(5, "2025-06-01T10:00:00.123456789Z"),
   ], "sessions");
   expect(parsed[0].items).toHaveLength(5);
-  expect(parsed[1].key).toBe("undated");
-});
-
-it("keeps captures outside the civil or UTC year domain undated", () => {
-  const invalid = ["0000-01-02", "10000-01-02", "0001-01-01T00:00:00+01:00", "9999-12-31T23:00:00-02:00"];
-  const items = [...invalid.map((capture, index) => photo(index, capture)), photo(4, "0001-01-01T01:00:00+01:00"), photo(5, "9999-12-31T22:00:00-01:00")];
+  const invalid = [null, "invalid", "0000-01-02", "10000-01-02", "0001-01-01T00:00:00+01:00", "9999-12-31T23:00:00-02:00"];
+  const items = [...invalid.map((capture, index) => photo(index, capture)), photo(6, "0001-01-01T01:00:00+01:00"), photo(7, "9999-12-31T22:00:00-01:00")];
   for (const grouping of ["months", "sessions"] as const) {
     const groups = groupPhotos(items, grouping);
-    expect(groups.at(-1)).toMatchObject({ key: "undated", year: "", items: items.slice(0, 4) });
+    expect(groups.at(-1)).toMatchObject({ key: "undated", year: "", items: items.slice(0, invalid.length) });
     expect(groups.slice(0, -1).flatMap(group => group.items)).toHaveLength(2);
   }
 });

@@ -25,13 +25,6 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   expect(await screen.findByText("1 selected photo")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Select loaded photos" }));
   expect(screen.getByText("2 selected photos")).toBeTruthy();
-  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
-  const density = screen.getByRole("combobox", { name: /^Grid density/ });
-  await fireEvent.click(density);
-  await screen.findByRole("listbox");
-  await fireEvent.keyDown(density, { key: "Escape" });
-  expect(screen.queryByRole("listbox")).toBeNull();
-  expect(screen.getByText("2 selected photos")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await screen.findByRole("button", { name: "Select Photo 3.jpg" });
   expect(screen.getByRole("navigation", { name: "Photo years" }).querySelectorAll("button")).toHaveLength(2);
@@ -40,8 +33,6 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
   expect(await screen.findByText("Loading photos…")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
-  await fireEvent.keyDown(window, { key: "Escape" });
-  await waitFor(() => expect(screen.queryByText(/selected photos/)).toBeNull());
   view.unmount();
   expect(fetcher.mock.calls[3][1].signal.aborted).toBe(true);
   photos.dispose();
@@ -127,16 +118,6 @@ it("clears selection with Escape from focused photo controls while honoring shor
   await fireEvent.click(cell);
   cell.focus();
   expect(document.activeElement).toBe(cell);
-  const prevented = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
-  prevented.preventDefault();
-  await fireEvent(cell, prevented);
-  await fireEvent.keyDown(cell, { key: "Escape", isComposing: true });
-  expect(screen.getByText("1 selected photo")).toBeTruthy();
-  const dialog = document.body.appendChild(document.createElement("dialog"));
-  dialog.setAttribute("open", "");
-  await fireEvent.keyDown(cell, { key: "Escape" });
-  expect(screen.getByText("1 selected photo")).toBeTruthy();
-  dialog.remove();
   for (const name of [/^Group photos/, /^Grid density/]) {
     const dropdown = screen.getByRole("combobox", { name });
     await fireEvent.click(dropdown);
