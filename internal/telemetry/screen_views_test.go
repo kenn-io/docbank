@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -71,6 +72,19 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	// Malformed duplicates retain kit's transport validation.
 	for _, body := range []string{screenBody("browse", "web") + `{}`, `{"event":"screen_viewed","properties":[]}`, `{"event":"screen_viewed"`} {
 		require.Equal(t, 400, postEvent(t, handler, body).Code)
+	}
+	for _, tc := range []struct {
+		media, body string
+		status      int
+	}{
+		{"text/plain", screenBody("browse", "web"), http.StatusUnsupportedMediaType},
+		{"application/json", screenBody("browse", "web") + strings.Repeat(" ", 64<<10), http.StatusRequestEntityTooLarge},
+	} {
+		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://localhost/api/daemon/telemetry/events", strings.NewReader(tc.body))
+		request.Header.Set("Content-Type", tc.media)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		assert.Equal(t, tc.status, response.Code)
 	}
 	require.NoError(t, reporter.Close())
 	reporter, handler = makeHandler()
