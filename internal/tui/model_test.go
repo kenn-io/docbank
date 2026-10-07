@@ -2680,29 +2680,39 @@ func TestScreenReportingFollowsNavigationAndIgnoresPolling(t *testing.T) {
 			model, err := New(t.Context(), backend)
 			require.NoError(t, err)
 			model = runModelCommand(t, model, model.Init())
-			assert.Equal(t, []string{"browse"}, backend.screens)
+			expectedScreens := []string{"browse"}
+			assert.Equal(t, expectedScreens, backend.screens)
 			if tc.err != nil {
+				assert.Empty(t, model.reportedDay)
+				backend.screenErr = nil
+				var cmd tea.Cmd
+				model, cmd = updateModel(t, model, runeKey('j'))
+				model = runModelCommand(t, model, cmd)
+				expectedScreens = append(expectedScreens, "browse")
+				assert.Equal(t, expectedScreens, backend.screens)
 				for range 5 {
 					var cmd tea.Cmd
 					model, cmd = updateModel(t, model, runeKey('j'))
 					assert.Nil(t, cmd)
 				}
-				assert.Equal(t, []string{"browse"}, backend.screens)
+				assert.Equal(t, expectedScreens, backend.screens)
 			}
 			model, _ = updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
 			model, cmd := updateModel(t, model, runeKey('?'))
 			model = runModelCommand(t, model, cmd)
-			assert.Equal(t, []string{"browse", "help"}, backend.screens)
+			expectedScreens = append(expectedScreens, "help")
+			assert.Equal(t, expectedScreens, backend.screens)
 			assert.Contains(t, model.render(), "help")
 			model, cmd = updateModel(t, model, key(tea.KeyEscape))
 			model = runModelCommand(t, model, cmd)
-			assert.Equal(t, []string{"browse", "help", "browse"}, backend.screens)
+			expectedScreens = append(expectedScreens, "browse")
+			assert.Equal(t, expectedScreens, backend.screens)
 			model.reportedDay = "2000-01-01"
 			model, _ = updateModel(t, model, spinnerTickMsg{})
-			assert.Len(t, backend.screens, 3)
+			assert.Equal(t, expectedScreens, backend.screens)
 			model, cmd = updateModel(t, model, runeKey('s'))
 			_ = runModelCommand(t, model, cmd)
-			assert.Equal(t, []string{"browse", "help", "browse", "browse"}, backend.screens)
+			assert.Equal(t, append(expectedScreens, "browse"), backend.screens)
 		})
 	}
 }

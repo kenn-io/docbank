@@ -304,6 +304,8 @@ type mutationCompletedMsg struct {
 
 type spinnerTickMsg struct{}
 
+type screenReportFailedMsg struct{}
+
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 var errDetailNodeChanged = errors.New(
@@ -523,9 +525,11 @@ func (m Model) Init() tea.Cmd {
 		m.reportScreen("browse"), m.loadDirectory(0, navigationInitial, m.requestID), m.loadNaturalProfiles(m.naturalProfilesRequest), spinnerTick())
 }
 
-// Update implements tea.Model.
 func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
+	case screenReportFailedMsg:
+		m.reportedDay = ""
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.searchInput.SetWidth(max(msg.Width-4, 1))
@@ -3035,7 +3039,7 @@ func compareNames(left, right row) int {
 	return cmp.Compare(left.path, right.path)
 }
 
-// Update reports visible navigation while idle polling remains local.
+// Update implements tea.Model.
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(message)
 	next, ok := model.(Model)
@@ -3055,7 +3059,9 @@ func (m Model) reportScreen(screen string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.ctx, 3*time.Second)
 		defer cancel()
-		_ = m.backend.ReportScreen(ctx, screen)
+		if err := m.backend.ReportScreen(ctx, screen); err != nil {
+			return screenReportFailedMsg{}
+		}
 		return nil
 	}
 }
