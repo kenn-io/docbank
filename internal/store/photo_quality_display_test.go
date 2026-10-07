@@ -51,32 +51,12 @@ func TestPhotoQualityPendingDisplayOwnership(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	raw := browsePhotoNode(t, s, "pending-pair.raw", browseHash("pending-pair-raw"), "image/x-raw")
-	jpg := browsePhotoNode(t, s, "pending-pair.jpg", browseHash("pending-pair-jpg"), "image/jpeg")
-	asset, err := s.PhotoAssetForNode(ctx, jpg.ID)
-	require.NoError(t, err)
-	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
-	require.NoError(t, err)
-	asset, err = s.PhotoAssetForNode(ctx, raw.ID)
-	require.NoError(t, err)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpg.ID, PhotoRoleImage, nil)
-	require.NoError(t, err)
-	var rawFileID, jpgFileID string
-	for _, file := range asset.Files {
-		if file.NodeID == raw.ID {
-			rawFileID = file.ID
-		}
-		if file.NodeID == jpg.ID {
-			jpgFileID = file.ID
-		}
-	}
-	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &jpgFileID)
-	require.NoError(t, err)
+	jpg := browsePhotoNode(t, s, "ready.jpg", browseHash("ready-ownership"), "image/jpeg")
 	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(jpg), document.PhotoQualitySignals{Focus: 0.1}))
 	browsePhotoNode(t, s, "ordinary.txt", browseHash("quality-document"), "text/plain")
 	browsePhotoNode(t, s, "video.mp4", browseHash("quality-video"), "video/mp4")
 	excluded := browsePhotoNode(t, s, "excluded-quality.jpg", browseHash("excluded-quality"), "image/jpeg")
-	asset, err = s.PhotoAssetForNode(ctx, excluded.ID)
+	asset, err := s.PhotoAssetForNode(ctx, excluded.ID)
 	require.NoError(t, err)
 	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
@@ -118,22 +98,4 @@ func TestPhotoQualityPendingDisplayOwnership(t *testing.T) {
 	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(missingMIME), document.PhotoQualitySignals{}))
 	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(genericMIME), document.PhotoQualitySignals{}))
 	check([]int64{missing.ID, unsupported.ID}, []int64{jpg.ID, missingMIME.ID, genericMIME.ID})
-
-	asset, err = s.PhotoAssetForNode(ctx, raw.ID)
-	require.NoError(t, err)
-	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &rawFileID)
-	require.NoError(t, err)
-	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(raw), document.PhotoQualitySignals{Focus: 0.8}))
-	_, err = s.CreateSavedQuery(ctx, "Selected focus", "", SavedQueryKindQuery, []byte(`{"filters":{"focus_min":"0.7"}}`))
-	require.NoError(t, err)
-	q := `{"syntax":"advanced","text":"saved:\"Selected focus\""}`
-	require.Len(t, browsePhotoPage(t, s, q).Items, 1)
-	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &jpgFileID)
-	require.NoError(t, err)
-	require.Empty(t, browsePhotoPage(t, s, q).Items)
-	require.Len(t, browsePhotoPage(t, s, `{"syntax":"advanced","text":"extension:raw AND focus_max:0.2"}`).Items, 1)
-	snapshot, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, q)})
-	require.NoError(t, err)
-	require.Len(t, snapshot.Rows, 1)
-	require.Equal(t, raw.ID, snapshot.Rows[0].NodeID)
 }

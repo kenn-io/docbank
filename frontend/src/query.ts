@@ -13,7 +13,7 @@ const mediaFamilies = [
 const textCoverageValues = ["complete", "partial", "failed", "unprocessed", "none", "unavailable"] as const;
 const qualityFields = ["focus_min", "focus_max", "blur_min", "blur_max", "brightness_min", "brightness_max", "framing_min", "framing_max", "aesthetics_min", "aesthetics_max", "color_red_min", "color_red_max", "color_green_min", "color_green_max", "color_blue_min", "color_blue_max"] as const;
 const optionalFilterFields = new Set([
-...qualityFields, "unevaluated",
+  ...qualityFields, "unevaluated",
   "paths", "exclude_paths", "collection_ids", "exclude_collection_ids", "tag_ids",
   "exclude_tag_ids", "no_tags", "media_families", "mime_types", "extensions",
   "modified_after", "modified_before", "size_min", "size_max", "text_coverage",
@@ -35,23 +35,23 @@ export interface QuerySort {
 export interface GPSBounds { south: string; west: string; north: string; east: string }
 
 export interface QueryFilters {
- unevaluated?: boolean;
- focus_min?: string;
- focus_max?: string;
- blur_min?: string;
- blur_max?: string;
- brightness_min?: string;
- brightness_max?: string;
- framing_min?: string;
- framing_max?: string;
- aesthetics_min?: string;
- aesthetics_max?: string;
- color_red_min?: string;
- color_red_max?: string;
- color_green_min?: string;
- color_green_max?: string;
- color_blue_min?: string;
- color_blue_max?: string;
+  unevaluated?: boolean;
+  focus_min?: string;
+  focus_max?: string;
+  blur_min?: string;
+  blur_max?: string;
+  brightness_min?: string;
+  brightness_max?: string;
+  framing_min?: string;
+  framing_max?: string;
+  aesthetics_min?: string;
+  aesthetics_max?: string;
+  color_red_min?: string;
+  color_red_max?: string;
+  color_green_min?: string;
+  color_green_max?: string;
+  color_blue_min?: string;
+  color_blue_max?: string;
 
   kinds?: ("photo" | "video")[];
   cameras?: string[];
@@ -130,8 +130,8 @@ export function parseQuery(raw: string): Query {
 export function canonicalQuery(value: Query): string {
   const normalized = normalizeQuery(value);
   const filters: Record<string, unknown> = {};
- for (const field of qualityFields) { if (normalized.filters[field] !== undefined) filters[field] = normalized.filters[field]; }
- if (normalized.filters.unevaluated) filters.unevaluated = true;
+  for (const field of qualityFields) { if (normalized.filters[field] !== undefined) filters[field] = normalized.filters[field]; }
+  if (normalized.filters.unevaluated) filters.unevaluated = true;
   if (normalized.filters.collapse_duplicates) filters.collapse_duplicates = true;
   if (normalized.filters.collection_ids?.length) filters.collection_ids = normalized.filters.collection_ids;
   if (normalized.filters.exclude_collection_ids?.length) filters.exclude_collection_ids = normalized.filters.exclude_collection_ids;
@@ -696,9 +696,9 @@ function normalizeGPSBounds(value: unknown): GPSBounds {
 }
 
 function normalizeQualityScore(value: string | undefined): string | undefined {
- if (value === undefined) return undefined;
- if (typeof value !== "string" || value.startsWith("-")) throw new Error("quality score must be within 0..1");
- const normalized = normalizeCoordinate(value, 1);
- if (normalized !== "0" && normalized !== "1" && !normalized.startsWith("0.")) throw new Error("quality score must be within 0..1");
- return normalized;
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || value.startsWith("-")) throw new Error("quality score must be within 0..1");
+  const normalized = normalizeCoordinate(value, 1);
+  if (normalized !== "0" && normalized !== "1" && !normalized.startsWith("0.")) throw new Error("quality score must be within 0..1");
+  return normalized;
 }
