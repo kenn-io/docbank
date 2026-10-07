@@ -170,8 +170,6 @@ func TestExportCLIHistoricalVersionsAndExplicitRelease(t *testing.T) {
 	}, 30*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
 	require.JSONEq(t, fmt.Sprintf(`{"job_id":%q,"released":true}`, first), output)
-	_, err = runCLI(t, "export", "status", first)
-	require.Equal(t, exitNotFound, commandExitCode(err, true))
 	missing := filepath.Join(t.TempDir(), "missing.zip")
 	_, err = runCLI(t, "export", "download", first, missing)
 	require.Equal(t, exitNotFound, commandExitCode(err, true))

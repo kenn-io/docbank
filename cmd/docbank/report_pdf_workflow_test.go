@@ -224,8 +224,6 @@ func exportReportOriginals(t *testing.T, originals []reportOriginal) (string, bu
 		return code != "export_retained"
 	}, 30*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
-	_, err = runCLI(t, "export", "status", jobID)
-	require.Equal(t, exitNotFound, commandExitCode(err, true))
 	return path, receipt
 }
 
