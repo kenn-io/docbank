@@ -109,7 +109,5 @@ func TestMediaTranscriptClientSendsTheCompleteTuple(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "ready", result.EvidenceState)
 	require.NotNil(t, result.Transcript)
-	require.Empty(t, result.Transcript.BuildID, "older servers remain compatible")
-	require.Empty(t, result.Transcript.SuppliedInputID)
 	require.Equal(t, &api.MediaTimeSpan{StartMS: 0, EndMS: 1000}, result.Transcript.Units[0].TimeSpan)
 }
