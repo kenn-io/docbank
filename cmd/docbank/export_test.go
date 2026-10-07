@@ -162,7 +162,12 @@ func TestExportCLIHistoricalVersionsAndExplicitRelease(t *testing.T) {
 	require.Empty(t, stages)
 	_, err = runCLI(t, "export", "cancel", first)
 	require.ErrorContains(t, err, "export_conflict")
-	output, err = runCLI(t, "export", "release", first, "--json")
+	// The client can finish downloading before the server releases its lease.
+	require.Eventually(t, func() bool {
+		output, err = runCLI(t, "export", "release", first, "--json")
+		code, _ := daemonconn.ProblemCode(err)
+		return code != "export_retained"
+	}, 30*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
 	require.JSONEq(t, fmt.Sprintf(`{"job_id":%q,"released":true}`, first), output)
 	_, err = runCLI(t, "export", "status", first)
