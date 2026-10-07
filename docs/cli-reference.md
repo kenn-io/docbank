@@ -1524,7 +1524,9 @@ Both version flags are required so a newer recording cannot be accepted by
 accident. The JSON result keeps `evidence_state`, `coverage_state`, and
 `operation_state` separate. Only a `ready` evidence state includes transcript
 units. Units keep an optional `time_span` and speaker, and the origin
-identifies supplied versus generated evidence.
+identifies supplied versus generated evidence. Ready transcripts include
+`build_id`, and supplied transcripts also include `supplied_input_id`. See
+[how to verify search attribution](agents/integration.md#read-an-exact-media-transcript).
 
 Remote references submitted by the CLI are read from `--reference-file PATH`,
 or from stdin with `--reference-file -`. They are never accepted as a

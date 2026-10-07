@@ -102,6 +102,11 @@ docbank media transcript SOURCE_ID \
   --content-version-id CONTENT_VERSION_ID
 ```
 
+Before attributing a search excerpt, compare `transcript.build_id` with the
+search evidence's `build_id`. For supplied text, also compare
+`transcript.supplied_input_id` with your original import receipt's
+`supplied_input_id`.
+
 ## Recover a lost recording-link reply
 
 If a remote-recording submission's reply never arrived, read the saved receipt
