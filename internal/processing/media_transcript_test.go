@@ -44,10 +44,10 @@ func TestMediaTranscriptUsesCoverageProfileDuringRetry(t *testing.T) {
 	}
 	profile := func() string {
 		t.Helper()
-		item := store.MediaSourceProjection{ProcessingReceipts: []store.MediaPublicationReceipt{processing, coverage}}
-		fingerprint, err := (&Service{}).mediaTranscriptProfile(t.Context(), item)
+		service := &Service{}
+		_, receipt, err := service.mediaProcessingAttempts(t.Context(), []store.MediaPublicationReceipt{processing, coverage})
 		require.NoError(t, err)
-		return fingerprint
+		return service.mediaTranscriptProfileFromReceipt(receipt)
 	}
 	require.Equal(t, "generated-fingerprint", profile())
 	coverage.ProcessingProfile, coverage.ProcessingProfileFingerprint = "removed-profile", ""

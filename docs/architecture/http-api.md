@@ -593,11 +593,6 @@ Unknown, hidden, deleted or changed selections contribute incomplete coverage;
 their associations are removed while healthy matches remain usable.
 Consumers require the selection marker to distinguish older producers.
 
-`BenchmarkMediaSearchSelectors4096` measured 4.781 seconds with one shared build
-and 10.826 seconds with 4,096 distinct builds, using 4,096 distinct sources and
-content versions with matching synthetic text; fixture setup was excluded.
-Receipt selection runs in bulk; each source retains its metadata checks.
-
 Set optional `content_first: true` to prefer retained content matches, including
 transcripts, before filename-only matches. Selection applies the source fence
 before cutoff and keeps content evidence when a filename also matches.

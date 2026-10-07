@@ -115,9 +115,6 @@ func (service *Service) selectMediaTranscript(ctx context.Context, request Media
 func (service *Service) selectMediaTranscripts(ctx context.Context, requests []MediaTranscriptRequest) (map[MediaTranscriptRequest]mediaTranscriptSelection, error) {
 	keys := make([]store.MediaSourceVersionKey, len(requests))
 	for i, request := range requests {
-		if err := validateMediaTranscriptContentVersion(request.ContentVersionID); err != nil {
-			return nil, err
-		}
 		keys[i] = store.MediaSourceVersionKey{SourceID: request.SourceID, SourceVersionID: request.SourceVersionID}
 	}
 	items, err := service.catalog.MediaSourceVersions(ctx, service.principal, keys)
@@ -216,15 +213,6 @@ func (service *Service) selectMediaTranscriptItem(ctx context.Context, request M
 	}
 	result.EvidenceState = mediaTranscriptEvidenceReady
 	return mediaTranscriptSelection{result: result, view: view, inputID: inputBinding, origin: origin}, nil
-}
-
-// mediaTranscriptProfile names the profile of the receipt that covers the
-// source, so a pending retry under another profile does not hide it.
-func (service *Service) mediaTranscriptProfile(
-	ctx context.Context, item store.MediaSourceProjection,
-) (string, error) {
-	_, receipt, err := service.mediaProcessingAttempts(ctx, item.ProcessingReceipts)
-	return service.mediaTranscriptProfileFromReceipt(receipt), err
 }
 
 func (service *Service) mediaTranscriptProfileFromReceipt(receipt *store.MediaPublicationReceipt) string {

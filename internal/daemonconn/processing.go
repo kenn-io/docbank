@@ -577,14 +577,7 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	} else if report.Reranking != nil {
 		return errors.New("unrequested reranking receipt was returned")
 	}
-	coverageBound := len(versions)
-	if len(request.MediaSources) != 0 {
-		coverageBound = len(request.MediaSources)
-		if !report.MediaSourceSelection {
-			return errors.New("media source selection is unsupported")
-		}
-	}
-	if report.Coverage.ScopedDocuments < 0 || report.Coverage.ScopedDocuments > coverageBound ||
+	if report.Coverage.ScopedDocuments < 0 || report.Coverage.ScopedDocuments > len(versions) ||
 		report.Coverage.CompleteDocuments < 0 ||
 		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments ||
 		(report.Coverage.State != "unknown" && report.Coverage.State != "complete" &&
@@ -622,14 +615,10 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 		if !validDocumentSearchPath(result.Path) || !validDocumentSearchExcerpt(result.Excerpt) {
 			return fmt.Errorf("result %d has invalid path or excerpt", index)
 		}
-		resultKey := result.ContentVersionID
-		if len(request.MediaSources) != 0 && len(result.Evidence) == 1 {
-			resultKey += "/" + result.Evidence[0].BuildID
-		}
-		if _, duplicate := seenDocuments[resultKey]; duplicate {
+		if _, duplicate := seenDocuments[result.ContentVersionID]; duplicate {
 			return fmt.Errorf("result %d duplicates a document identity", index)
 		}
-		seenDocuments[resultKey] = struct{}{}
+		seenDocuments[result.ContentVersionID] = struct{}{}
 		if err := validateDocumentLaneRanks(report.ActualMode, result, seenLexicalRanks, seenSemanticRanks); err != nil {
 			return fmt.Errorf("result %d: %w", index, err)
 		}
@@ -646,20 +635,6 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 				return fmt.Errorf("result %d has duplicate evidence", index)
 			}
 			seenEvidence[string(encoded)] = struct{}{}
-			if len(request.MediaSources) != 0 {
-				if len(result.Evidence) != 1 || len(evidence.MediaSources) == 0 || evidence.BuildID == "" ||
-					!slices.Contains([]string{"supplied", "generated"}, evidence.Origin) || evidence.Completeness == "" ||
-					(evidence.Origin == "supplied") != (evidence.SuppliedInputID != "") {
-					return errors.New("media search evidence is incomplete")
-				}
-				for _, source := range evidence.MediaSources {
-					if source.ContentVersionID != result.ContentVersionID || !slices.ContainsFunc(request.MediaSources, func(selector api.DocumentMediaSourceSelector) bool {
-						return selector.SourceID == source.SourceID && selector.SourceVersionID == source.SourceVersionID && selector.ContentVersionID == source.ContentVersionID
-					}) {
-						return errors.New("media search evidence escaped source selectors")
-					}
-				}
-			}
 			if err := validateDocumentEvidenceIdentity(evidence); err != nil {
 				return fmt.Errorf("result %d evidence %d: %w", index, evidenceIndex, err)
 			}
