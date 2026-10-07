@@ -81,12 +81,46 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 			return fmt.Errorf("removing photo membership for purged node %d: %w", nodeID, err)
 		}
 	}
+	retiredBySet := make(map[string][]string)
 	for _, old := range before {
-		if _, err := commitPhotoAssetTx(ctx, tx, old, old, "purge"); err != nil {
+		asset, err := commitPhotoAssetTx(ctx, tx, old, old, "purge")
+		if err != nil {
 			return fmt.Errorf("repairing photo asset %s after purge: %w", old.ID, err)
 		}
 		if err := validatePhotoAssetGraph(ctx, tx, old.ID); err != nil {
 			return err
+		}
+		if len(asset.Files) != 0 {
+			continue
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT set_id FROM photo_set_members WHERE asset_id=?`, asset.ID)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var setID string
+			if err := rows.Scan(&setID); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			retiredBySet[setID] = append(retiredBySet[setID], asset.ID)
+		}
+		err = rows.Err()
+		closeErr := rows.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	for setID, ids := range retiredBySet {
+		set, err := photoSetByID(ctx, tx, setID)
+		if err != nil {
+			return err
+		}
+		if _, err := changePhotoSetMembersTx(ctx, tx, set, false, ids); err != nil {
+			return fmt.Errorf("removing purged photo members from album %s: %w", setID, err)
 		}
 	}
 	return nil

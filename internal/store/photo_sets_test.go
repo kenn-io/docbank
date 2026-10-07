@@ -41,7 +41,7 @@ func TestPhotoSetLifecycle(t *testing.T) {
 	set, err = s.UpdatePhotoSet(ctx, set.ID, set.Revision, new("Trip"), new(true), &cover)
 	require.NoError(t, err)
 	_, err = s.UpdatePhotoSet(ctx, set.ID, set.Revision, nil, nil, new(new("00000000-0000-4000-8000-000000000001")))
-	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+	require.ErrorIs(t, err, ErrInvalidPhotoAlbum)
 	noop, err = s.UpdatePhotoSet(ctx, set.ID, set.Revision, new("Trip"), new(true), &cover)
 	require.NoError(t, err)
 	require.Equal(t, set, noop)

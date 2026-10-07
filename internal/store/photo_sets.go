@@ -10,6 +10,8 @@ import (
 	"go.kenn.io/docbank/internal/query"
 )
 
+var ErrInvalidPhotoAlbum = errors.New("invalid photo album")
+
 // PhotoSet is an album. Its membership is independent of photo visibility.
 type PhotoSet struct {
 	ID           string  `json:"id" db:"set_id"`
@@ -62,7 +64,24 @@ func photoSetSummary(ctx context.Context, q metadataQuerier, set PhotoSet, recip
 		return out, err
 	}
 	var id, generation string
-	err := q.QueryRowContext(ctx, `SELECT a.asset_id,g.generation_id FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id JOIN visual_preview_generations g ON g.content_version_id=v.version_id AND g.source_sha256=v.blob_hash WHERE m.set_id=? AND `+photoBrowseLiveDisplay+` AND g.recipe_fingerprint=? AND g.state='ready' AND g.output_blob_hash IS NOT NULL ORDER BY CASE WHEN a.asset_id=? THEN 0 ELSE 1 END,m.added_at DESC,a.asset_id ASC LIMIT 1`, set.ID, recipe, nullablePhotoString(set.CoverAssetID)).Scan(&id, &generation)
+	coverSQL := `SELECT a.asset_id,g.generation_id FROM photo_set_members m
+ CROSS JOIN photo_assets a ON a.asset_id=m.asset_id
+ CROSS JOIN photo_files f ON f.file_id=a.display_file_id
+ CROSS JOIN nodes n ON n.id=f.node_id
+ CROSS JOIN content_versions v ON v.version_id=n.current_version_id
+ CROSS JOIN visual_preview_generations g ON g.content_version_id=v.version_id AND g.source_sha256=v.blob_hash
+ WHERE m.set_id=? AND ` + photoBrowseLiveDisplay + ` AND g.recipe_fingerprint=? AND g.state='ready' AND g.output_blob_hash IS NOT NULL`
+	if set.CoverAssetID != nil {
+		err := q.QueryRowContext(ctx, coverSQL+` AND m.asset_id=?`, set.ID, recipe, *set.CoverAssetID).Scan(&id, &generation)
+		if err == nil {
+			out.EffectiveCoverAssetID, out.CoverGenerationID = &id, &generation
+			return out, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return out, err
+		}
+	}
+	err := q.QueryRowContext(ctx, coverSQL+` ORDER BY m.added_at DESC,m.asset_id ASC LIMIT 1`, set.ID, recipe).Scan(&id, &generation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, nil
 	}
@@ -128,7 +147,7 @@ func (s *Store) ListPhotoSets(ctx context.Context, recipe string) ([]PhotoSetSum
 
 func insertPhotoSet(ctx context.Context, tx *sql.Tx, name string) (PhotoSet, error) {
 	if !validPhotoSetName(name) {
-		return PhotoSet{}, ErrInvalidPhotoAsset
+		return PhotoSet{}, ErrInvalidPhotoAlbum
 	}
 	id, err := newUUIDv4()
 	if err != nil {
@@ -194,7 +213,7 @@ func commitPhotoSet(ctx context.Context, tx *sql.Tx, before, after PhotoSet, ope
 // UpdatePhotoSet applies one album property decision at the expected revision.
 func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, name *string, starred *bool, cover **string) (PhotoSet, error) {
 	if name != nil && !validPhotoSetName(*name) {
-		return PhotoSet{}, ErrInvalidPhotoAsset
+		return PhotoSet{}, ErrInvalidPhotoAlbum
 	}
 	var out PhotoSet
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
@@ -212,14 +231,14 @@ func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, n
 		if cover != nil {
 			if *cover != nil {
 				if validateUUIDv4(**cover) != nil {
-					return ErrInvalidPhotoAsset
+					return ErrInvalidPhotoAlbum
 				}
 				var count int
 				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members WHERE set_id=? AND asset_id=?`, id, **cover).Scan(&count); err != nil {
 					return err
 				}
 				if count != 1 {
-					return ErrInvalidPhotoAsset
+					return ErrInvalidPhotoAlbum
 				}
 			}
 			out.CoverAssetID = *cover
@@ -301,9 +320,9 @@ func (s *Store) DuplicatePhotoSet(ctx context.Context, id string, revision int64
 	return out, err
 }
 
-func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSelection) ([]string, error) {
+func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, add bool, selection PhotoSetSelection) ([]string, error) {
 	if (selection.Query == nil) == (len(selection.AssetIDs) == 0) || len(selection.AssetIDs) > maxBatchTagTargets {
-		return nil, ErrInvalidPhotoQuery
+		return nil, ErrInvalidPhotoAlbum
 	}
 	if selection.Query == nil {
 		if selection.Coverage.Configuration != "" || selection.Coverage.ProfileFingerprint != "" {
@@ -313,7 +332,7 @@ func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSel
 		seen := map[string]bool{}
 		for _, id := range selection.AssetIDs {
 			if validateUUIDv4(id) != nil {
-				return nil, ErrInvalidPhotoAsset
+				return nil, ErrInvalidPhotoAlbum
 			}
 			var count int
 			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_assets WHERE asset_id=?`, id).Scan(&count); err != nil {
@@ -321,6 +340,14 @@ func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSel
 			}
 			if count != 1 {
 				return nil, ErrNotFound
+			}
+			if add {
+				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files WHERE asset_id=?`, id).Scan(&count); err != nil {
+					return nil, err
+				}
+				if count == 0 {
+					return nil, ErrInvalidPhotoAlbum
+				}
 			}
 			if !seen[id] {
 				ids = append(ids, id)
@@ -336,9 +363,6 @@ func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSel
 	compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(ctx, *selection.Query, queryResolver{q: tx})
 	if err != nil {
 		return nil, err
-	}
-	if compiled.Query.Sort.Field == "added_time" {
-		return nil, ErrInvalidPhotoQuery
 	}
 	if coverage.Configuration == photoBrowseConfiguredCoverage {
 		if err := validateSnapshotCoverageProfile(ctx, tx, coverage); err != nil {
@@ -381,42 +405,48 @@ func (s *Store) ChangePhotoSetMembers(ctx context.Context, id string, revision i
 			return err
 		}
 		out = before
-		ids, err := photoSetSelectionIDs(ctx, tx, selection)
+		ids, err := photoSetSelectionIDs(ctx, tx, add, selection)
 		if err != nil {
 			return err
 		}
-		changed := make([]string, 0, len(ids))
-		now := nowRFC3339()
-		for _, asset := range ids {
-			var result sql.Result
-			if add {
-				result, err = tx.ExecContext(ctx, `INSERT INTO photo_set_members(set_id,asset_id,added_at) VALUES(?,?,?) ON CONFLICT(set_id,asset_id) DO NOTHING`, id, asset, now)
-			} else {
-				result, err = tx.ExecContext(ctx, `DELETE FROM photo_set_members WHERE set_id=? AND asset_id=?`, id, asset)
-			}
-			if err != nil {
-				return err
-			}
-			count, err := result.RowsAffected()
-			if err != nil {
-				return err
-			}
-			if count > 0 {
-				changed = append(changed, asset)
-				if !add && out.CoverAssetID != nil && *out.CoverAssetID == asset {
-					out.CoverAssetID = nil
-				}
-			}
-		}
-		if len(changed) == 0 {
-			return nil
-		}
-		operation := "set_remove"
-		if add {
-			operation = "set_add"
-		}
-		out, err = commitPhotoSet(ctx, tx, before, out, operation, changed)
+		out, err = changePhotoSetMembersTx(ctx, tx, before, add, ids)
 		return err
 	})
 	return out, err
+}
+
+func changePhotoSetMembersTx(ctx context.Context, tx *sql.Tx, before PhotoSet, add bool, ids []string) (PhotoSet, error) {
+	out := before
+	changed := make([]string, 0, len(ids))
+	now := nowRFC3339()
+	for _, asset := range ids {
+		var result sql.Result
+		var err error
+		if add {
+			result, err = tx.ExecContext(ctx, `INSERT INTO photo_set_members(set_id,asset_id,added_at) VALUES(?,?,?) ON CONFLICT(set_id,asset_id) DO NOTHING`, before.ID, asset, now)
+		} else {
+			result, err = tx.ExecContext(ctx, `DELETE FROM photo_set_members WHERE set_id=? AND asset_id=?`, before.ID, asset)
+		}
+		if err != nil {
+			return PhotoSet{}, err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return PhotoSet{}, err
+		}
+		if count > 0 {
+			changed = append(changed, asset)
+			if !add && out.CoverAssetID != nil && *out.CoverAssetID == asset {
+				out.CoverAssetID = nil
+			}
+		}
+	}
+	if len(changed) == 0 {
+		return out, nil
+	}
+	operation := "set_remove"
+	if add {
+		operation = "set_add"
+	}
+	return commitPhotoSet(ctx, tx, before, out, operation, changed)
 }

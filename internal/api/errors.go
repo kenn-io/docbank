@@ -136,6 +136,7 @@ var storeErrCodes = []struct {
 	{store.ErrInvalidBatesCursor, http.StatusUnprocessableEntity, "invalid_bates_cursor"},
 	{store.ErrInvalidBatesSelector, http.StatusUnprocessableEntity, "invalid_bates_selector"},
 	{store.ErrInvalidPhotoAsset, http.StatusUnprocessableEntity, "invalid_photo_asset"},
+	{store.ErrInvalidPhotoAlbum, http.StatusUnprocessableEntity, "invalid_photo_album"},
 	{store.ErrPhotoNodeNotEligible, http.StatusUnprocessableEntity, "photo_node_not_eligible"},
 	{store.ErrPhotoNodeOwned, http.StatusConflict, "photo_node_owned"},
 	{store.ErrEmailNotSupported, http.StatusUnprocessableEntity, "email_not_supported"},

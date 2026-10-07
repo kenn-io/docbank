@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestPhotoAlbumRoutesAndClient(t *testing.T) {
@@ -24,12 +25,20 @@ func TestPhotoAlbumRoutesAndClient(t *testing.T) {
 	album, err := c.CreatePhotoAlbum(ctx, "Holiday")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), album.Revision)
+	resp, body := do(t, ts, http.MethodPost, "/api/v1/photos/albums", nil, map[string]string{"name": "   "})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	require.Equal(t, "invalid_photo_album", decodeProblem(t, body).Code)
+	_, err = c.CreatePhotoAlbum(ctx, "   ")
+	require.ErrorIs(t, err, store.ErrInvalidPhotoAlbum)
 	path := "/api/v1/photos/albums/" + album.ID
-	resp, body := do(t, ts, http.MethodPut, path, nil, map[string]string{"name": "Trip"})
+	resp, body = do(t, ts, http.MethodPut, path, nil, map[string]string{"name": "Trip"})
 	require.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
 	album, err = c.UpdatePhotoAlbum(ctx, album.ID, album.Revision, api.UpdatePhotoAlbumRequest{Name: new("Trip"), Starred: new(true)})
 	require.NoError(t, err)
 	require.True(t, album.Starred)
+	resp, body = do(t, ts, http.MethodPut, path+"/cover", map[string]string{"If-Match": `"2"`}, map[string]string{"asset_id": asset.ID})
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	require.Equal(t, "invalid_photo_album", decodeProblem(t, body).Code)
 	resp, body = do(t, ts, http.MethodPost, path+"/members/add", map[string]string{"If-Match": `"1"`}, map[string]any{"asset_ids": []string{asset.ID}})
 	require.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
 	for _, selection := range []map[string]any{{}, {"asset_ids": []string{asset.ID}, "query": map[string]any{}}, {"query": map[string]any{"syntax": "advanced", "text": "set:invalid"}}} {
@@ -53,7 +62,7 @@ func TestPhotoAlbumRoutesAndClient(t *testing.T) {
 	albums, err := c.PhotoAlbums(ctx)
 	require.NoError(t, err)
 	require.Len(t, albums, 2)
-	q := api.QueryPayload(`{}`)
+	q := api.QueryPayload(`{"filters":{"set_ids":["` + album.ID + `"]},"sort":{"field":"added_time","direction":"desc"}}`)
 	album, err = c.RemovePhotoAlbumMembers(ctx, album.ID, album.Revision, api.PhotoAlbumMembersRequest{Query: &q})
 	require.NoError(t, err)
 	require.Nil(t, album.CoverAssetID)

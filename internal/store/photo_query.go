@@ -98,6 +98,11 @@ func (s *Store) ListPhotoAssets(
 			if _, err := photoSetByID(ctx, q, request.SetID); err != nil {
 				return err
 			}
+			scope, err := (queryCompiler{}).compilePhotoScalarPredicate("set", request.SetID)
+			if err != nil {
+				return err
+			}
+			compiled.predicate = joinCompiledFragments([]compiledQueryFragment{compiled.predicate, scope}, ` AND `)
 		}
 		if sortField == "added_time" {
 			if request.SetID == "" {
@@ -139,10 +144,6 @@ func (s *Store) ListPhotoAssets(
 		match, err := photoBrowseMatch(compiled, generation.ID, coverage)
 		if err != nil {
 			return err
-		}
-		if request.SetID != "" {
-			match.sql += ` AND EXISTS (SELECT 1 FROM photo_set_members scope WHERE scope.asset_id=a.asset_id AND scope.set_id=?)`
-			match.args = append(match.args, request.SetID)
 		}
 		bind := func(sql string, args []any) (string, []any, error) {
 			return bindQueryPopulation(compiledQueryFragment{

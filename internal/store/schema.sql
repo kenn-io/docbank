@@ -2203,7 +2203,7 @@ CREATE TABLE IF NOT EXISTS photo_set_members (
     PRIMARY KEY (set_id,asset_id)
 );
 CREATE INDEX IF NOT EXISTS photo_set_members_asset ON photo_set_members(asset_id,set_id);
-CREATE INDEX IF NOT EXISTS photo_set_members_added ON photo_set_members(set_id,added_at,asset_id);
+CREATE INDEX IF NOT EXISTS photo_set_members_added ON photo_set_members(set_id,added_at DESC,asset_id);
 
 CREATE TABLE IF NOT EXISTS photo_change_receipts (
     receipt_id     TEXT PRIMARY KEY,
