@@ -35,8 +35,8 @@ func TestPhotoQualityCalibration(t *testing.T) {
 			require.NoError(t, document.ValidatePhotoQualitySignals(s))
 			require.InDelta(t, tc.brightness, s.Brightness, 1e-12)
 			require.Zero(t, s.Focus)
-			require.Equal(t, 1.0, s.Blur)
-			require.Equal(t, 0.5, s.Framing)
+			require.InDelta(t, 1.0, s.Blur, 1e-12)
+			require.InDelta(t, 0.5, s.Framing, 1e-12)
 		})
 	}
 	for _, level := range []uint8{20, 255} {

@@ -19,7 +19,7 @@ func TestPhotoQualityScalarBounds(t *testing.T) {
 	require.Len(t, page.Items, 1)
 	require.Equal(t, node.ID, page.Items[0].NodeID)
 	require.NotNil(t, page.Items[0].Quality)
-	require.Equal(t, scores.Focus, page.Items[0].Quality.Focus)
+	require.InDelta(t, scores.Focus, page.Items[0].Quality.Focus, 1e-12)
 	for _, text := range []string{"focus_min:0.5*", "unevaluated:yes", "blur_max:NaN"} {
 		_, err := s.CompileQuery(t.Context(), snapshotTestQuery(t, `{"syntax":"advanced","text":"`+text+`"}`))
 		require.Error(t, err)
@@ -70,7 +70,7 @@ func TestPhotoQualityPendingDisplayOwnership(t *testing.T) {
 			jpgFileID = file.ID
 		}
 	}
-	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &jpgFileID)
+	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &jpgFileID)
 	require.NoError(t, err)
 	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(jpg), document.PhotoQualitySignals{Focus: 0.1}))
 	browsePhotoNode(t, s, "ordinary.txt", browseHash("quality-document"), "text/plain")
@@ -128,7 +128,7 @@ func TestPhotoQualityPendingDisplayOwnership(t *testing.T) {
 	require.NoError(t, err)
 	q := `{"syntax":"advanced","text":"saved:\"Selected focus\""}`
 	require.Len(t, browsePhotoPage(t, s, q).Items, 1)
-	asset, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &jpgFileID)
+	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &jpgFileID)
 	require.NoError(t, err)
 	require.Empty(t, browsePhotoPage(t, s, q).Items)
 	require.Len(t, browsePhotoPage(t, s, `{"syntax":"advanced","text":"extension:raw AND focus_max:0.2"}`).Items, 1)

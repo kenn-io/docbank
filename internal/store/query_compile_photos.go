@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -177,7 +178,7 @@ func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compil
 	args := []any{document.PhotoQualityEvaluatorFingerprint()}
 	if field == "unevaluated" {
 		if value != "true" && value != "false" {
-			return compiledQueryFragment{}, fmt.Errorf("unevaluated must be true or false")
+			return compiledQueryFragment{}, errors.New("unevaluated must be true or false")
 		}
 		quality += `)`
 		if value == "true" {
@@ -191,8 +192,8 @@ func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compil
 	}
 	number, _ := strconv.ParseFloat(normalized, 64)
 	column, operator := strings.TrimSuffix(field, "_min"), ">="
-	if strings.HasSuffix(field, "_max") {
-		column = strings.TrimSuffix(field, "_max")
+	if maxColumn, ok := strings.CutSuffix(field, "_max"); ok {
+		column = maxColumn
 		operator = "<="
 	}
 	args = append(args, number)

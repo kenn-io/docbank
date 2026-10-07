@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/draw"
 	"image/jpeg"
@@ -49,14 +50,14 @@ func EvaluatePhotoQuality(ctx context.Context, s *store.Store, blobs *blob.Store
 	}
 	config, err := jpeg.DecodeConfig(bytes.NewReader(body))
 	if err != nil {
-		return err
+		return fmt.Errorf("reading photo quality preview dimensions: %w", err)
 	}
 	if config.Width != output.Width || config.Height != output.Height {
 		return errors.New("photo quality preview dimensions mismatch")
 	}
 	decoded, err := jpeg.Decode(bytes.NewReader(body))
 	if err != nil {
-		return err
+		return fmt.Errorf("decoding photo quality preview: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
