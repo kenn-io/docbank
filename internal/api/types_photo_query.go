@@ -2,7 +2,6 @@ package api
 
 // PhotoBrowseRequest carries strict QueryV1 JSON and live-page options.
 type PhotoBrowseRequest struct {
-	SetID    string                 `json:"set_id,omitzero" format:"uuid"`
 	Query    QueryPayload           `json:"query"`
 	Coverage WorkspaceQueryCoverage `json:"coverage,omitzero"`
 	PageSize int                    `json:"page_size,omitempty,omitzero" minimum:"1" maximum:"250" default:"50"`

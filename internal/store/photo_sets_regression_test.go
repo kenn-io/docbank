@@ -23,7 +23,6 @@ func TestPhotoSetScopePrecedesDuplicateCollapse(t *testing.T) {
 	set, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
 	require.NoError(t, err)
 	for _, request := range []PhotoBrowseRequest{
-		{SetID: set.ID, Query: snapshotTestQuery(t, `{"filters":{"collapse_duplicates":true}}`)},
 		{Query: snapshotTestQuery(t, `{"filters":{"set_ids":["`+set.ID+`"],"collapse_duplicates":true}}`)},
 		{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"set:`+set.ID+`","filters":{"collapse_duplicates":true}}`)},
 	} {
@@ -118,7 +117,9 @@ func TestPhotoSetMembershipSurvivesEmptyAssets(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, paired.Files, 1)
 	require.Equal(t, jpeg.ID, paired.Files[0].NodeID)
-	page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{SetID: set.ID, Query: snapshotTestQuery(t, sprintfPhotoSort("added_time", "asc"))}, nil)
+	value := snapshotTestQuery(t, sprintfPhotoSort("added_time", "asc"))
+	value.Filters.SetIDs = []string{set.ID}
+	page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: value}, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), page.Total)
 	noop, err := s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{second.ID}})

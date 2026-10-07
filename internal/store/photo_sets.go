@@ -230,9 +230,6 @@ func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, n
 		}
 		if cover != nil {
 			if *cover != nil {
-				if validateUUIDv4(**cover) != nil {
-					return ErrInvalidPhotoAlbum
-				}
 				var count int
 				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members WHERE set_id=? AND asset_id=?`, id, **cover).Scan(&count); err != nil {
 					return err

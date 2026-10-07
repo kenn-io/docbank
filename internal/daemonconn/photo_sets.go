@@ -130,9 +130,6 @@ func (c *Connection) RemovePhotoAlbumMembers(ctx context.Context, id string, rev
 }
 
 func (c *Connection) BrowsePhotoAlbum(ctx context.Context, request api.PhotoBrowseRequest) (api.PhotoBrowsePage, error) {
-	if !validUUIDv4(request.SetID) {
-		return api.PhotoBrowsePage{}, errors.New("invalid album ID")
-	}
 	page, err := c.API().ListPhotoAssets(ctx, &apiclient.ListPhotoAssetsRequestOptions{Body: &request})
 	if err != nil {
 		return api.PhotoBrowsePage{}, err

@@ -195,7 +195,7 @@ preexisting graph is preserved and becomes read-only when audit is enabled.
 
 `POST /api/v1/photos/assets/query` accepts a `query` object using
 [QueryV1](../architecture/http-api.md#saved-query-and-highlight-definitions),
-optional `set_id`, `coverage`, `page_size` from 1 through 250, and `cursor`. It returns
+optional `coverage`, `page_size` from 1 through 250, and `cursor`. It returns
 `items`, the matching asset `total` counted on the first page, and an optional
 `next_cursor`. Later pages keep that total. Start a new browse to refresh it.
 The default page size is 50. Send the same query and page options with each
@@ -232,7 +232,7 @@ using each document's own metadata. Excluded, trashed, and displayless assets
 stay out.
 
 Sort by `capture_time`, `import_time`, `name`, `modified_at`, `size`, or
-`media_type`, with `asc` or `desc`. Set `set_id` to an album UUID to browse its members; this scope also accepts `added_time`. Capture sorting converts recorded offsets
+`media_type`, with `asc` or `desc`. Set `filters.set_ids` to album UUIDs to browse their members. `added_time` requires exactly one album ID after normalization. Capture sorting converts recorded offsets
 to UTC. Omitted zones use civil calendar coordinates. Missing or unreadable
 capture times sort last in both directions and do not match capture-date
 filters. Asset UUID orders equal keys. Names and media types compare only their

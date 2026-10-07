@@ -129,7 +129,7 @@ func init() {
 		if sort != "added_time" && sort != "import_time" && sort != "capture_time" {
 			return usageError(errors.New("sort must be added_time, import_time, or capture_time"))
 		}
-		value := query.Query{V: 1, Syntax: "simple", Mode: "lexical", Sort: query.Sort{Field: sort, Direction: direction}}
+		value := query.Query{V: 1, Syntax: "simple", Mode: "lexical", Filters: query.Filters{SetIDs: []string{args[0]}}, Sort: query.Sort{Field: sort, Direction: direction}}
 		canonical, err := query.Canonical(value)
 		if err != nil {
 			return err
@@ -138,7 +138,7 @@ func init() {
 		if err != nil {
 			return err
 		}
-		out, err := c.BrowsePhotoAlbum(cmd.Context(), api.PhotoBrowseRequest{SetID: args[0], Query: api.QueryPayload(canonical), PageSize: pageSize, Cursor: cursor})
+		out, err := c.BrowsePhotoAlbum(cmd.Context(), api.PhotoBrowseRequest{Query: api.QueryPayload(canonical), PageSize: pageSize, Cursor: cursor})
 		if err != nil {
 			return err
 		}

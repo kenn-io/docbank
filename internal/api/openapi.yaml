@@ -11333,9 +11333,6 @@ components:
           type: integer
         query:
           $ref: "#/components/schemas/SavedQueryV1Schema"
-        set_id:
-          format: uuid
-          type: string
       required:
         - query
       type: object

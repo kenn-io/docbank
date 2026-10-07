@@ -53,7 +53,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			boundary = &position
 		}
 		page, err := d.Store.ListPhotoAssets(ctx, store.PhotoBrowseRequest{
-			Query: value, SetID: in.Body.SetID,
+			Query: value,
 			Coverage: store.CoverageSelection{
 				Configuration:      in.Body.Coverage.Configuration,
 				ProfileFingerprint: in.Body.Coverage.ProfileFingerprint,

@@ -2,6 +2,12 @@
   "format": "docbank-query-identity-v1",
   "queries": [
     {
+      "name": "query_album_ids_added_time",
+      "input_json": "{\"filters\":{\"set_ids\":[\"00000000-0000-4000-8000-000000000002\",\"00000000-0000-4000-8000-000000000001\",\"00000000-0000-4000-8000-000000000002\"]},\"sort\":{\"field\":\"added_time\",\"direction\":\"desc\"}}",
+      "canonical_utf8": "{\"filters\":{\"set_ids\":[\"00000000-0000-4000-8000-000000000001\",\"00000000-0000-4000-8000-000000000002\"]},\"mode\":\"lexical\",\"sort\":{\"direction\":\"desc\",\"field\":\"added_time\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:7b3b0ad84c91a8d11408e063e0e1b806a1c23a1eda8d4bc60f8c64b2679b45ac"
+    },
+    {
       "name": "query_zero_size_max",
       "input_json": "{\"filters\":{\"size_max\":0}}",
       "canonical_utf8": "{\"filters\":{\"size_max\":0},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
@@ -89,6 +95,10 @@
     }
   ],
   "invalid_queries": [
+    {
+      "name": "album_id_not_uuid",
+      "json_text": "{\"filters\":{\"set_ids\":[\"album\"]}}"
+    },
     {"name": "positive_minimum_with_zero_maximum", "json_text": "{\"filters\":{\"size_min\":5,\"size_max\":0}}"},
     {"name": "duplicate_object_keys", "json_text": "{\"v\":1,\"v\":1}"},
     {"name": "nested_duplicate_keys", "json_text": "{\"filters\":{\"extensions\":[\"txt\"],\"extensions\":[\"pdf\"]}}"},

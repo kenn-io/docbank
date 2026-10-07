@@ -4758,7 +4758,6 @@ export interface PhotoBrowseRequest {
      */
   page_size?: number;
   query: SavedQueryV1Schema;
-  set_id?: string;
 }
 
 export interface PhotoImportStartRequest {

@@ -53,7 +53,7 @@ func TestPhotoAlbumRoutesAndClient(t *testing.T) {
 	summary, err := c.PhotoAlbum(ctx, album.ID)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), summary.MemberCount)
-	page, err := c.BrowsePhotoAlbum(ctx, api.PhotoBrowseRequest{SetID: album.ID, Query: api.QueryPayload(`{"sort":{"field":"added_time","direction":"desc"}}`)})
+	page, err := c.BrowsePhotoAlbum(ctx, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"filters":{"set_ids":["` + album.ID + `"]},"sort":{"field":"added_time","direction":"desc"}}`)})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), page.Total)
 	require.Equal(t, asset.ID, page.Items[0].AssetID)

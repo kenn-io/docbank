@@ -17,7 +17,6 @@ const photoBrowseConfiguredCoverage = "configured"
 
 // PhotoBrowseRequest supplies query meaning and exact preview recipe identities.
 type PhotoBrowseRequest struct {
-	SetID    string
 	Query    query.Query
 	Coverage CoverageSelection
 	PageSize int
@@ -94,18 +93,8 @@ func (s *Store) ListPhotoAssets(
 		}
 		sortField := compiled.Query.Sort.Field
 		from, sortKey, ok := photoBrowseOrder(sortField)
-		if request.SetID != "" {
-			if _, err := photoSetByID(ctx, q, request.SetID); err != nil {
-				return err
-			}
-			scope, err := (queryCompiler{}).compilePhotoScalarPredicate("set", request.SetID)
-			if err != nil {
-				return err
-			}
-			compiled.predicate = joinCompiledFragments([]compiledQueryFragment{compiled.predicate, scope}, ` AND `)
-		}
 		if sortField == "added_time" {
-			if request.SetID == "" {
+			if len(compiled.Query.Filters.SetIDs) != 1 {
 				return ErrInvalidPhotoQuery
 			}
 			from = `photo_set_members sm CROSS JOIN photo_assets a ON a.asset_id=sm.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`)
@@ -128,8 +117,7 @@ func (s *Store) ListPhotoAssets(
 			Dependencies []query.Dependency
 			Coverage     CoverageSelection
 			PageSize     int
-			SetID        string
-		}{canonical, compiled.Dependencies, coverage, request.PageSize, request.SetID})
+		}{canonical, compiled.Dependencies, coverage, request.PageSize})
 		if err != nil {
 			return err
 		}
@@ -179,7 +167,7 @@ func (s *Store) ListPhotoAssets(
 			args := append([]any(nil), match.args...)
 			if sortField == "added_time" {
 				where = `sm.set_id=? AND ` + where
-				args = append(args, request.SetID)
+				args = append(args, compiled.Query.Filters.SetIDs[0])
 			}
 			if missing {
 				pageFrom = photoBrowseDisplayFrom

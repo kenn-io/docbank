@@ -189,7 +189,8 @@ func TestPhotoSetBrowseFiltersVisibilityAndCursor(t *testing.T) {
 	require.NoError(t, err)
 	for _, sort := range []string{"added_time", "import_time", "capture_time"} {
 		for _, direction := range []string{"asc", "desc"} {
-			request := PhotoBrowseRequest{SetID: set.ID, Query: snapshotTestQuery(t, sprintfPhotoSort(sort, direction)), PageSize: 2}
+			request := PhotoBrowseRequest{Query: snapshotTestQuery(t, sprintfPhotoSort(sort, direction)), PageSize: 2}
+			request.Query.Filters.SetIDs = []string{set.ID}
 			var boundary *PhotoBrowsePosition
 			var got []string
 			var keys []string
@@ -233,15 +234,32 @@ func TestPhotoSetBrowseFiltersVisibilityAndCursor(t *testing.T) {
 	}
 	_, err = s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: snapshotTestQuery(t, sprintfPhotoSort("added_time", "asc"))}, nil)
 	require.ErrorIs(t, err, ErrInvalidPhotoQuery)
-	request := PhotoBrowseRequest{SetID: set.ID, Query: snapshotTestQuery(t, sprintfPhotoSort("added_time", "asc")), PageSize: 2}
+	request := PhotoBrowseRequest{Query: snapshotTestQuery(t, sprintfPhotoSort("added_time", "asc")), PageSize: 2}
+	request.Query.Filters.SetIDs = []string{set.ID, set.ID}
 	page, err := s.ListPhotoAssets(ctx, request, nil)
 	require.NoError(t, err)
 	require.NotNil(t, page.Next)
 	other, err := s.CreatePhotoSet(ctx, "Other")
 	require.NoError(t, err)
-	request.SetID = other.ID
+	request.Query.Filters.SetIDs = []string{other.ID}
 	_, err = s.ListPhotoAssets(ctx, request, page.Next)
 	require.ErrorIs(t, err, ErrInvalidPhotoCursor)
+	request.Query.Filters.SetIDs = []string{set.ID, other.ID}
+	_, err = s.ListPhotoAssets(ctx, request, nil)
+	require.ErrorIs(t, err, ErrInvalidPhotoQuery)
+	for _, id := range []string{other.ID, "00000000-0000-4000-8000-000000000001"} {
+		request.Query.Filters.SetIDs = []string{id}
+		empty, err := s.ListPhotoAssets(ctx, request, nil)
+		require.NoError(t, err)
+		require.Zero(t, empty.Total)
+		require.Empty(t, empty.Items)
+	}
+	_, err = s.DeletePhotoSet(ctx, other.ID, other.Revision)
+	require.NoError(t, err)
+	request.Query.Filters.SetIDs = []string{other.ID}
+	empty, err := s.ListPhotoAssets(ctx, request, nil)
+	require.NoError(t, err)
+	require.Zero(t, empty.Total)
 	for _, raw := range []string{`{"filters":{"set_ids":["` + set.ID + `"]}}`, `{"syntax":"advanced","text":"set:` + set.ID + `"}`} {
 		require.Equal(t, int64(5), browsePhotoPage(t, s, raw).Total)
 	}
