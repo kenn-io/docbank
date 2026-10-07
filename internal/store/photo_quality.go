@@ -69,9 +69,6 @@ func photoQualityForVersions(ctx context.Context, q metadataQuerier, versions []
 		if err := rows.Scan(&id, &s.Focus, &s.Blur, &s.Brightness, &s.ColorRed, &s.ColorGreen, &s.ColorBlue, &s.Framing, &s.Aesthetics); err != nil {
 			return nil, err
 		}
-		if err := document.ValidatePhotoQualitySignals(s); err != nil {
-			return nil, err
-		}
 		result[id] = s
 	}
 	return result, rows.Err()

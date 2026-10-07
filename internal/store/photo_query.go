@@ -250,10 +250,8 @@ func (s *Store) ListPhotoAssets(
 		}
 		for i := range page.Items {
 			row := &page.Items[i]
-			if row.Kind == "photo" {
-				if signals, ok := qualities[row.ContentVersionID]; ok {
-					row.Quality = &signals
-				}
+			if signals, ok := qualities[row.ContentVersionID]; ok {
+				row.Quality = &signals
 			}
 			row.Previews = make(map[string]PhotoPreviewSlot, 3)
 			for _, size := range []string{"grid", "fit", "large"} {
