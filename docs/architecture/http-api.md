@@ -830,6 +830,8 @@ fields, not additional parameters for `GET /search`:
 | `asset_ids` | At most 64 canonical UUIDv4 values |
 | `set_ids` | At most 64 canonical album UUIDv4 values |
 
+Document numeric quality filters use retained scores for each document's own version; `unevaluated` applies only to current eligible photo displays.
+
 Filter sets are sorted and deduplicated when saved. Query text is not trimmed
 or rewritten. Unknown fields and duplicate JSON object keys are rejected.
 A raw payload may use at most 128 KiB; its normalized encoding may use at most

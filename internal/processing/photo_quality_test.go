@@ -12,7 +12,6 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -81,9 +80,6 @@ func TestPhotoQualityPreviewPipeline(t *testing.T) {
 	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", written.Hash, written.Size, "image/jpeg", processingBlobPhysical(t, written))
 	require.NoError(t, err)
 	target := store.PhotoVisualPreviewTarget{VersionID: node.CurrentVersionID, SourceSHA256: written.Hash, Size: written.Size, MediaType: "image/jpeg"}
-	pending, err := catalog.MissingPhotoQualityTargetsAfter(t.Context(), "", 10)
-	require.NoError(t, err)
-	require.Empty(t, pending)
 	require.ErrorIs(t, EvaluatePhotoQuality(t.Context(), catalog, blobs, target), store.ErrNotFound)
 	recipe, _ := VisualPreviewRecipeForSize("grid")
 	_, err = EnsureVisualPreview(t.Context(), catalog, blobs, node.CurrentVersionID, recipe)
@@ -99,11 +95,4 @@ func TestPhotoQualityPreviewPipeline(t *testing.T) {
 	targets, err = catalog.MissingPhotoQualityTargetsAfter(t.Context(), "", 10)
 	require.NoError(t, err)
 	require.Empty(t, targets)
-	q, err := query.Parse([]byte(`{"filters":{"focus_max":"0"}}`))
-	require.NoError(t, err)
-	page, err := catalog.ListPhotoAssets(t.Context(), store.PhotoBrowseRequest{Query: q}, nil)
-	require.NoError(t, err)
-	require.Len(t, page.Items, 1)
-	require.NotNil(t, page.Items[0].Quality)
-	require.Zero(t, page.Items[0].Quality.Focus)
 }

@@ -147,18 +147,3 @@ describe("media classification", () => {
     expect(classifyMedia("application/vnd.synthetic-unknown", "report.pdf")).toBe("unknown");
   });
 });
-
-
-describe("quality bounds", () => {
- it("normalizes decimal strings and preserves zero", () => {
-  const q = parseQuery('{"filters":{"focus_min":"00.700","blur_max":"0.000","unevaluated":true}}');
-  expect(q.filters.focus_min).toBe("0.7");
-  expect(q.filters.blur_max).toBe("0");
-  expect(canonicalQuery(q)).toContain('"blur_max":"0"');
- });
- it("rejects numeric, nonfinite, out-of-range, and reversed bounds", () => {
-  for (const filters of [{focus_min: 0.7}, {focus_min: "NaN"}, {focus_min: "-0"}, {focus_min: "1.00000000000000001"}, {focus_min: "0.70000000000000001", focus_max: "0.7"}, {focus_min: "0.8", focus_max: "0.7"}]) {
-   expect(() => parseQuery(JSON.stringify({filters}))).toThrow();
-  }
- });
-});

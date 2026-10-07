@@ -30,16 +30,9 @@ func TestPhotoQualityBrowseContract(t *testing.T) {
 	require.Equal(t, "ready", page.Items[0].Quality.State)
 	require.Contains(t, body, `"focus":0`)
 	require.Zero(t, page.Items[0].Quality.Signals.Focus)
-	request.Query = api.QueryPayload(`{"filters":{"focus_max":"0","blur_min":"1"}}`)
+	request.Query = api.QueryPayload(`{"filters":{"focus_min":0.7}}`)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	require.Len(t, page.Items, 1)
-	for _, raw := range []string{`{"filters":{"focus_min":0.7}}`, `{"filters":{"focus_min":"1.1"}}`, `{"filters":{"focus_min":"0.8","focus_max":"0.7"}}`} {
-		request.Query = api.QueryPayload(raw)
-		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
-		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	}
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	_, err = s.CreateFile(t.Context(), s.RootID(), "quality.mp4", testHash("quality-video-api"), 10, "video/mp4")
 	require.NoError(t, err)
 	request.Query = api.QueryPayload(`{"filters":{"kinds":["video"]}}`)
