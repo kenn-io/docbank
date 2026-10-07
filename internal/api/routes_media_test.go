@@ -163,6 +163,17 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}}})
 	require.NoError(t, err)
 	require.NotEmpty(t, search.Results)
+	selectedSearch, err := c.SearchDocuments(t.Context(), api.DocumentSearchRequest{Query: "synthetic exact phrase",
+		Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Limit: 10,
+		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}},
+		MediaSources: []api.DocumentMediaSource{{SourceID: receipt.SourceID,
+			SourceVersionID: receipt.SourceVersionID, ContentVersionID: version.ID}}})
+	require.NoError(t, err)
+	require.True(t, selectedSearch.MediaSourceSelection)
+	require.Len(t, selectedSearch.Results, 1)
+	require.Equal(t, artifact.SuppliedInputID, selectedSearch.Results[0].Evidence[0].SuppliedInputID)
+	require.Equal(t, "supplied", selectedSearch.Results[0].Evidence[0].Origin)
+	require.Equal(t, receipt.SourceID, selectedSearch.Results[0].Evidence[0].MediaSources[0].SourceID)
 	transcriptResult, err := c.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, "ready", transcriptResult.EvidenceState)
@@ -290,6 +301,27 @@ func TestDocumentSearchContentFirstTranscript(t *testing.T) {
 	typedReport, err := c.SearchDocuments(t.Context(), request)
 	require.NoError(t, err)
 	require.Equal(t, report.Results, typedReport.Results)
+}
+
+func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
+	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+	request := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName,
+		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID()}}
+	for i := 0; i < 4096; i++ {
+		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+		request.Fence.ContentVersionIDs = append(request.Fence.ContentVersionIDs, id)
+		request.MediaSources = append(request.MediaSources, api.DocumentMediaSource{
+			SourceID: strings.Repeat("\x01", 256), SourceVersionID: strings.Repeat("\x02", 256), ContentVersionID: id})
+	}
+	encoded, err := json.Marshal(request)
+	require.NoError(t, err)
+	require.Greater(t, len(encoded), 1<<20)
+	require.Less(t, len(encoded), 16<<20)
+	response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
+	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
+	request.MediaSources = append(request.MediaSources, request.MediaSources[0])
+	response, body = do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 }
 
 func TestMediaTranscriptHTTPReturnsUnavailableWithoutProcessing(t *testing.T) {

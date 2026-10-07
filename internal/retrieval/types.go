@@ -29,6 +29,7 @@ const (
 )
 
 type DocumentIdentity struct {
+	BuildID          string
 	VaultID          string
 	NodeID           int64
 	ContentVersionID string
@@ -41,21 +42,29 @@ type MediaTimeSpan struct {
 }
 
 type EvidenceReference struct {
-	Kind                   string
-	VaultID                string
-	NodeID                 int64
-	NodeRevision           int64
-	ContentVersionID       string
-	VectorSpaceID          string
-	EmbeddingSetID         string
-	InputGenerationID      string
-	InputID                string
-	InputKind              document.EmbeddingInputKind
-	BuildID                string
-	SegmentID              string
-	BlobHash               string
-	SourceManifestChecksum string
-	TimeSpan               *MediaTimeSpan
+	MediaSources                          []MediaSource
+	Origin, Completeness, SuppliedInputID string
+	Kind                                  string
+	VaultID                               string
+	NodeID                                int64
+	NodeRevision                          int64
+	ContentVersionID                      string
+	VectorSpaceID                         string
+	EmbeddingSetID                        string
+	InputGenerationID                     string
+	InputID                               string
+	InputKind                             document.EmbeddingInputKind
+	BuildID                               string
+	SegmentID                             string
+	BlobHash                              string
+	SourceManifestChecksum                string
+	TimeSpan                              *MediaTimeSpan
+}
+
+type MediaSource struct {
+	SourceID         string `json:"source_id"`
+	SourceVersionID  string `json:"source_version_id"`
+	ContentVersionID string `json:"content_version_id"`
 }
 
 type Candidate struct {
@@ -126,14 +135,15 @@ type TraceEvent struct {
 }
 
 type Report struct {
-	RequestedMode Mode
-	ActualMode    Mode
-	Coverage      Coverage
-	Results       []Result
-	Truncated     bool
-	Trace         []TraceEvent
-	Degradations  []Degradation
-	Receipts      []ProviderReceipt
+	MediaSourceSelection bool
+	RequestedMode        Mode
+	ActualMode           Mode
+	Coverage             Coverage
+	Results              []Result
+	Truncated            bool
+	Trace                []TraceEvent
+	Degradations         []Degradation
+	Receipts             []ProviderReceipt
 }
 
 type Query struct {

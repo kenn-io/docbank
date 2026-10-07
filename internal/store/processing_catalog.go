@@ -432,6 +432,15 @@ func validateRenditionArtifactRolesForProfile(
 func (s *Store) ActiveRendition(
 	ctx context.Context, contentVersionID, processingProfileFingerprint string,
 ) (RenditionView, error) {
+	return s.activeRenditionSnapshot(ctx, contentVersionID, processingProfileFingerprint, false)
+}
+
+// ActiveRenditionMetadata omits units and transcript text from source selection.
+func (s *Store) ActiveRenditionMetadata(ctx context.Context, contentVersionID, profile string) (RenditionView, error) {
+	return s.activeRenditionSnapshot(ctx, contentVersionID, profile, true)
+}
+
+func (s *Store) activeRenditionSnapshot(ctx context.Context, contentVersionID, processingProfileFingerprint string, metadataOnly bool) (RenditionView, error) {
 	if err := validateUUIDv4(contentVersionID); err != nil {
 		return RenditionView{}, fmt.Errorf("active rendition content version %q: %w", contentVersionID, ErrNotFound)
 	}
@@ -443,7 +452,7 @@ func (s *Store) ActiveRendition(
 		return RenditionView{}, fmt.Errorf("starting active rendition snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	view, err := activeRendition(ctx, tx, contentVersionID, processingProfileFingerprint)
+	view, err := activeRenditionView(ctx, tx, contentVersionID, processingProfileFingerprint, metadataOnly)
 	if err != nil {
 		return RenditionView{}, err
 	}
@@ -454,6 +463,10 @@ func (s *Store) ActiveRendition(
 }
 
 func activeRendition(ctx context.Context, tx metadataQuerier, contentVersionID, processingProfileFingerprint string) (RenditionView, error) {
+	return activeRenditionView(ctx, tx, contentVersionID, processingProfileFingerprint, false)
+}
+
+func activeRenditionView(ctx context.Context, tx metadataQuerier, contentVersionID, processingProfileFingerprint string, metadataOnly bool) (RenditionView, error) {
 	view := RenditionView{Head: RenditionHeadRecord{
 		ContentVersionID: contentVersionID, ProcessingProfileFingerprint: processingProfileFingerprint,
 	}}
@@ -472,7 +485,7 @@ func activeRendition(ctx context.Context, tx metadataQuerier, contentVersionID, 
 	if err != nil {
 		return RenditionView{}, fmt.Errorf("reading active rendition attachment: %w", err)
 	}
-	view.Build, err = loadRenditionBuild(ctx, tx, view.Attachment.BuildID)
+	view.Build, err = loadRenditionBuildView(ctx, tx, view.Attachment.BuildID, metadataOnly)
 	if err != nil {
 		return RenditionView{}, fmt.Errorf("reading active rendition build: %w", err)
 	}
@@ -1048,6 +1061,10 @@ func loadRenditionAttachment(ctx context.Context, tx metadataQuerier, attachment
 }
 
 func loadRenditionBuild(ctx context.Context, tx metadataQuerier, buildID string) (RenditionBuildRecord, error) {
+	return loadRenditionBuildView(ctx, tx, buildID, false)
+}
+
+func loadRenditionBuildView(ctx context.Context, tx metadataQuerier, buildID string, metadataOnly bool) (RenditionBuildRecord, error) {
 	record := RenditionBuildRecord{ID: buildID}
 	var policy, receipt, warnings string
 	var partialSuccess, truncated int
@@ -1113,6 +1130,9 @@ func loadRenditionBuild(ctx context.Context, tx metadataQuerier, buildID string)
 	}
 	if err := rows.Close(); err != nil {
 		return RenditionBuildRecord{}, err
+	}
+	if metadataOnly {
+		return record, nil
 	}
 	record.Units = make([]RenditionUnitRecord, 0, unitCount)
 	rows, err = tx.QueryContext(ctx, `

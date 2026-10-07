@@ -1690,6 +1690,20 @@ export interface DocumentEventCoverage {
   unbound_provenance: number;
 }
 
+export interface DocumentMediaSource {
+  content_version_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  source_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  source_version_id: string;
+}
+
 export interface MediaTimeSpan {
   /** @minimum 1 */
   end_ms: number;
@@ -1699,13 +1713,17 @@ export interface MediaTimeSpan {
 
 export interface DocumentEvidenceReference {
   build_id?: string;
+  completeness?: string;
   embedding_set_id?: string;
   input_generation_id?: string;
   input_id?: string;
   input_kind?: string;
   kind: string;
+  media_sources?: DocumentMediaSource[];
+  origin?: string;
   segment_id?: string;
   source_manifest_checksum?: string;
+  supplied_input_id?: string;
   time_span?: MediaTimeSpan;
   vector_space_id?: string;
 }
@@ -1847,6 +1865,7 @@ export interface DocumentSearchReport {
   actual_mode: string;
   coverage: DocumentSearchCoverage;
   degradations: string[];
+  media_source_selection?: boolean;
   requested_mode: string;
   reranking?: DocumentSearchRerankingReceipt;
   results: DocumentSearchResult[];
@@ -1886,6 +1905,8 @@ export interface DocumentSearchRequest {
      * @maximum 100
      */
   limit?: number;
+  /** @maxItems 4096 */
+  media_sources?: DocumentMediaSource[];
   mode: DocumentSearchRequestMode;
   /**
      * @minLength 1

@@ -3769,6 +3769,8 @@ components:
       properties:
         build_id:
           type: string
+        completeness:
+          type: string
         embedding_set_id:
           type: string
         input_generation_id:
@@ -3779,9 +3781,17 @@ components:
           type: string
         kind:
           type: string
+        media_sources:
+          items:
+            $ref: "#/components/schemas/DocumentMediaSource"
+          type: array
+        origin:
+          type: string
         segment_id:
           type: string
         source_manifest_checksum:
+          type: string
+        supplied_input_id:
           type: string
         time_span:
           $ref: "#/components/schemas/MediaTimeSpan"
@@ -3812,6 +3822,29 @@ components:
         - path
       type: object
       x-go-type: api.DocumentIdentity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentMediaSource:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          format: uuid
+          type: string
+        source_id:
+          maxLength: 256
+          minLength: 1
+          type: string
+        source_version_id:
+          maxLength: 256
+          minLength: 1
+          type: string
+      required:
+        - source_id
+        - source_version_id
+        - content_version_id
+      type: object
+      x-go-type: api.DocumentMediaSource
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -3956,6 +3989,8 @@ components:
           items:
             type: string
           type: array
+        media_source_selection:
+          type: boolean
         requested_mode:
           type: string
         reranking:
@@ -4007,6 +4042,11 @@ components:
           maximum: 100
           minimum: 1
           type: integer
+        media_sources:
+          items:
+            $ref: "#/components/schemas/DocumentMediaSource"
+          maxItems: 4096
+          type: array
         mode:
           enum:
             - auto

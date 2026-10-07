@@ -98,6 +98,17 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		return nil, false, nil
 	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
+	selectedSQL, selectedArgs := "", []any(nil)
+	if len(opts.SelectedBuilds) != 0 {
+		encoded, err := json.Marshal(opts.SelectedBuilds)
+		if err != nil {
+			return nil, false, err
+		}
+		selectedSQL = ` AND EXISTS (SELECT 1 FROM json_each(?) selected
+			WHERE json_extract(selected.value,'$.content_version_id')=cv.version_id
+			AND json_extract(selected.value,'$.build_id')=rendition_lexical_fts.build_id)`
+		selectedArgs = []any{string(encoded)}
+	}
 	names, err := nameSearchCandidates(fq)
 	if err != nil {
 		return nil, false, err
@@ -138,6 +149,9 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	}
 	var content []ExplainedLexicalCandidate
 	queryContent := func(queryer metadataQuerier, generationID string) (retErr error) {
+		if len(opts.SelectedBuilds) != 0 && generationID == "" {
+			return errors.New("selected media builds have no lexical generation")
+		}
 		args := []any{fq}
 		contentQuery := `SELECT ` + nodeCols + `,'' AS build_id,'' AS segment_id,
 			 snippet(content_fts,2,char(1),char(2),' … ',24) AS excerpt,'' AS locator_json
@@ -163,18 +177,23 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 				JOIN content_versions cv ON cv.version_id=a.content_version_id
 				JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
 				WHERE rendition_lexical_fts MATCH ? AND gb.generation_id=?
-				 AND n.trashed_at IS NULL ` + filterSQL + `
+				 AND n.trashed_at IS NULL ` + filterSQL + selectedSQL + `
 				ORDER BY rendition_lexical_fts.rank,n.name,n.id,
 				 rendition_lexical_fts.build_id,rendition_lexical_fts.segment_id`
 			args = append(args, generationID)
 		}
 		args = append(args, filterArgs...)
+		args = append(args, selectedArgs...)
 		rows, err := queryer.QueryContext(ctx, contentQuery, args...)
 		if err != nil {
 			return err
 		}
 		defer func() { retErr = errors.Join(retErr, rows.Close()) }()
-		seenContent := make(map[int64]struct{}, remaining+1)
+		type candidateKey struct {
+			nodeID  int64
+			buildID string
+		}
+		seenContent := make(map[candidateKey]struct{}, remaining+1)
 		for rows.Next() {
 			var candidate ExplainedLexicalCandidate
 			node, err := scanExplainedLexicalRow(rows, &candidate)
@@ -185,10 +204,14 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 			if _, duplicate := nameSeen[node.ID]; duplicate && !contentFirst {
 				continue
 			}
-			if _, duplicate := seenContent[node.ID]; duplicate {
+			key := candidateKey{nodeID: node.ID}
+			if len(opts.SelectedBuilds) != 0 {
+				key.buildID = candidate.BuildID
+			}
+			if _, duplicate := seenContent[key]; duplicate {
 				continue
 			}
-			seenContent[node.ID] = struct{}{}
+			seenContent[key] = struct{}{}
 			if generationID == "" {
 				candidate.EvidenceKind = "content_blob"
 				candidate.BlobHash = node.BlobHash
@@ -215,6 +238,9 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	truncated := len(content) > remaining
 	if truncated {
 		content = content[:remaining]
+	}
+	if len(opts.SelectedBuilds) != 0 {
+		return content, truncated, nil
 	}
 	if contentFirst {
 		result, namesTruncated := appendNameTail(content, nameHits, limit)
@@ -288,12 +314,18 @@ func boundedExplainedSearchExcerpt(value string) string {
 // descendants of one live directory. ModifiedSince is inclusive and
 // ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
 type SearchOptions struct {
+	SelectedBuilds    []SearchSelectedBuild
 	TagID             string
 	MIMEType          string
 	UnderNodeID       int64
 	ModifiedSince     string
 	ModifiedBefore    string
 	ContentVersionIDs []string
+}
+
+type SearchSelectedBuild struct {
+	ContentVersionID string `json:"content_version_id"`
+	BuildID          string `json:"build_id"`
 }
 
 // SearchNeedsQuery reports whether the normalized options leave an empty FTS

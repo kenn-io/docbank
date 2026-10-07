@@ -23927,6 +23927,8 @@ type DocumentEvidenceReference = api.DocumentEvidenceReference
 
 type DocumentIdentity = api.DocumentIdentity
 
+type DocumentMediaSource = api.DocumentMediaSource
+
 type DocumentMissingCoverage = api.DocumentMissingCoverage
 
 type DocumentPage = api.DocumentPage

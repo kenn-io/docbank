@@ -577,7 +577,14 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 	} else if report.Reranking != nil {
 		return errors.New("unrequested reranking receipt was returned")
 	}
-	if report.Coverage.ScopedDocuments < 0 || report.Coverage.ScopedDocuments > len(versions) ||
+	coverageBound := len(versions)
+	if len(request.MediaSources) != 0 {
+		coverageBound = len(request.MediaSources)
+		if !report.MediaSourceSelection {
+			return errors.New("media source selection is unsupported")
+		}
+	}
+	if report.Coverage.ScopedDocuments < 0 || report.Coverage.ScopedDocuments > coverageBound ||
 		report.Coverage.CompleteDocuments < 0 ||
 		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments ||
 		(report.Coverage.State != "unknown" && report.Coverage.State != "complete" &&
@@ -615,31 +622,42 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 		if !validDocumentSearchPath(result.Path) || !validDocumentSearchExcerpt(result.Excerpt) {
 			return fmt.Errorf("result %d has invalid path or excerpt", index)
 		}
-		if _, duplicate := seenDocuments[result.ContentVersionID]; duplicate {
+		resultKey := result.ContentVersionID
+		if len(request.MediaSources) != 0 && len(result.Evidence) == 1 {
+			resultKey += "/" + result.Evidence[0].BuildID
+		}
+		if _, duplicate := seenDocuments[resultKey]; duplicate {
 			return fmt.Errorf("result %d duplicates a document identity", index)
 		}
-		seenDocuments[result.ContentVersionID] = struct{}{}
+		seenDocuments[resultKey] = struct{}{}
 		if err := validateDocumentLaneRanks(report.ActualMode, result, seenLexicalRanks, seenSemanticRanks); err != nil {
 			return fmt.Errorf("result %d: %w", index, err)
 		}
 		if len(result.Evidence) < 1 || len(result.Evidence) > 32 {
 			return fmt.Errorf("result %d has invalid evidence count", index)
 		}
-		type evidenceIdentity struct {
-			reference api.DocumentEvidenceReference
-			span      api.MediaTimeSpan
-		}
-		seenEvidence := make(map[evidenceIdentity]struct{}, len(result.Evidence))
+		seenEvidence := make(map[string]struct{}, len(result.Evidence))
 		for evidenceIndex, evidence := range result.Evidence {
-			identity := evidenceIdentity{reference: evidence}
-			if evidence.TimeSpan != nil {
-				identity.span = *evidence.TimeSpan
-				identity.reference.TimeSpan = nil
+			encoded, err := json.Marshal(evidence)
+			if err != nil {
+				return err
 			}
-			if _, duplicate := seenEvidence[identity]; duplicate {
+			if _, duplicate := seenEvidence[string(encoded)]; duplicate {
 				return fmt.Errorf("result %d has duplicate evidence", index)
 			}
-			seenEvidence[identity] = struct{}{}
+			seenEvidence[string(encoded)] = struct{}{}
+			if len(request.MediaSources) != 0 {
+				if len(result.Evidence) != 1 || len(evidence.MediaSources) == 0 || evidence.BuildID == "" ||
+					!slices.Contains([]string{"supplied", "generated"}, evidence.Origin) || evidence.Completeness == "" ||
+					(evidence.Origin == "supplied") != (evidence.SuppliedInputID != "") {
+					return errors.New("media search evidence is incomplete")
+				}
+				for _, source := range evidence.MediaSources {
+					if source.ContentVersionID != result.ContentVersionID || !slices.Contains(request.MediaSources, source) {
+						return errors.New("media search evidence escaped source selectors")
+					}
+				}
+			}
 			if err := validateDocumentEvidenceIdentity(evidence); err != nil {
 				return fmt.Errorf("result %d evidence %d: %w", index, evidenceIndex, err)
 			}

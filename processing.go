@@ -3,6 +3,7 @@ package docbank
 import (
 	"context"
 	"errors"
+	"go.kenn.io/docbank/internal/retrieval"
 
 	"go.kenn.io/docbank/document"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
@@ -182,7 +183,12 @@ func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchReque
 		return DocumentSearchReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
+	sources := make([]retrieval.MediaSource, len(request.MediaSources))
+	for i, source := range request.MediaSources {
+		sources[i] = retrieval.MediaSource(source)
+	}
 	report, err := v.processing.Search(ctx, internalprocessing.SearchRequest{Query: request.Query,
+		MediaSources: sources,
 		ContentFirst: request.ContentFirst,
 		Mode:         string(request.Mode), Limit: request.Limit, Profile: request.Profile,
 		BindingID: request.BindingID, Explain: request.Explain,
@@ -250,7 +256,8 @@ func fromCoverageClass(item internalprocessing.CoverageClass) CoverageClass {
 
 func fromSearchReport(report internalprocessing.SearchReport, explain bool) DocumentSearchReport {
 	result := DocumentSearchReport{RequestedMode: DocumentSearchMode(report.RequestedMode),
-		ActualMode: DocumentSearchMode(report.ActualMode),
+		ActualMode:           DocumentSearchMode(report.ActualMode),
+		MediaSourceSelection: report.MediaSourceSelection,
 		Coverage: DocumentSearchCoverage{BindingRequired: report.Coverage.BindingRequired,
 			ScopedDocuments:   report.Coverage.ScopedDocuments,
 			CompleteDocuments: report.Coverage.CompleteDocuments, State: string(report.Coverage.State)},
@@ -266,10 +273,14 @@ func fromSearchReport(report internalprocessing.SearchReport, explain bool) Docu
 			SemanticRank: item.SemanticRank, Evidence: make([]DocumentEvidenceReference, len(item.Evidence))}
 		for evidenceIndex, evidence := range item.Evidence {
 			convertedEvidence := DocumentEvidenceReference{Kind: evidence.Kind,
+				Origin: evidence.Origin, Completeness: evidence.Completeness, SuppliedInputID: evidence.SuppliedInputID,
 				BuildID: evidence.BuildID, SegmentID: evidence.SegmentID,
 				VectorSpaceID: evidence.VectorSpaceID, EmbeddingSetID: evidence.EmbeddingSetID,
 				InputGenerationID: evidence.InputGenerationID, InputID: evidence.InputID,
 				InputKind: string(evidence.InputKind), SourceManifestChecksum: evidence.SourceManifestChecksum}
+			for _, source := range evidence.MediaSources {
+				convertedEvidence.MediaSources = append(convertedEvidence.MediaSources, DocumentMediaSource(source))
+			}
 			if evidence.TimeSpan != nil {
 				convertedEvidence.TimeSpan = &MediaTimeSpan{
 					StartMS: evidence.TimeSpan.StartMS, EndMS: evidence.TimeSpan.EndMS,

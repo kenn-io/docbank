@@ -568,6 +568,23 @@ several are configured. The CLI requires that choice. `auto` uses lexical
 retrieval. See [processing consent](#processing-consent) before choosing a mode
 that embeds query text.
 
+For exact recording attribution, add `media_sources`, up to 4,096 distinct
+objects with `source_id`, `source_version_id`, and `content_version_id`. Every
+content version must belong to the fence. Source and source-version IDs are
+bounded to 256 bytes. Search bodies are bounded to 16 MiB. Use `lexical` or
+`auto` without reranking. Docbank selects each source's covering transcript
+before ranking and limits, including while a retry is pending.
+
+These reports include `media_source_selection: true`, even without matches.
+Each selected content/build pair has its own result. Its evidence carries
+`media_sources`, `build_id`, `origin`, `completeness`, and `supplied_input_id`
+for supplied text, alongside the existing excerpt and timing. Coverage counts
+content versions and is incomplete while any requested selection lacks
+ready evidence. Pending or unavailable transcripts leave ready matches usable.
+Unknown or hidden sources fail the request; changed selections return
+`503 media_search_unavailable`.
+Consumers require the selection marker to distinguish older producers.
+
 Set optional `content_first: true` to prefer retained content matches, including
 transcripts, before filename-only matches. Selection applies the source fence
 before cutoff and keeps content evidence when a filename also matches.

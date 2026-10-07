@@ -438,6 +438,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "searchDocuments", Method: http.MethodPost,
 		Path: "/api/v1/search", Summary: "Search exact source-fenced document versions",
+		MaxBodyBytes: 16 << 20,
 	}, func(ctx context.Context, input *searchInput) (*searchOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
@@ -446,7 +447,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			ContentFirst: input.Body.ContentFirst,
 			Mode:         input.Body.Mode, Limit: input.Body.Limit, Profile: input.Body.Profile,
 			BindingID: input.Body.BindingID, Explain: input.Body.Explain,
-			Rerank: input.Body.Rerank,
+			Rerank: input.Body.Rerank, MediaSources: toMediaSearchSources(input.Body.MediaSources),
 			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID,
 				ContentVersionIDs: input.Body.Fence.ContentVersionIDs}})
 		if err != nil {
@@ -644,8 +645,17 @@ func fromProcessingCoverageClass(item processing.CoverageClass) CoverageClass {
 		PreviousGenerationServing: item.PreviousServing, Total: item.Total}
 }
 
+func toMediaSearchSources(sources []DocumentMediaSource) []retrieval.MediaSource {
+	result := make([]retrieval.MediaSource, len(sources))
+	for i, source := range sources {
+		result[i] = retrieval.MediaSource(source)
+	}
+	return result
+}
+
 func fromDocumentSearchReport(report processing.SearchReport, explain bool) DocumentSearchReport {
 	result := DocumentSearchReport{RequestedMode: string(report.RequestedMode), ActualMode: string(report.ActualMode),
+		MediaSourceSelection: report.MediaSourceSelection,
 		Coverage: DocumentSearchCoverage{BindingRequired: report.Coverage.BindingRequired,
 			ScopedDocuments: report.Coverage.ScopedDocuments, CompleteDocuments: report.Coverage.CompleteDocuments,
 			State: string(report.Coverage.State)}, Truncated: report.Truncated,
@@ -660,10 +670,14 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 			SemanticRank: item.SemanticRank, Evidence: make([]DocumentEvidenceReference, len(item.Evidence))}
 		for evidenceIndex, evidence := range item.Evidence {
 			convertedEvidence := DocumentEvidenceReference{Kind: evidence.Kind,
+				Origin: evidence.Origin, Completeness: evidence.Completeness, SuppliedInputID: evidence.SuppliedInputID,
 				BuildID: evidence.BuildID, SegmentID: evidence.SegmentID,
 				VectorSpaceID: evidence.VectorSpaceID, EmbeddingSetID: evidence.EmbeddingSetID,
 				InputGenerationID: evidence.InputGenerationID, InputID: evidence.InputID,
 				InputKind: string(evidence.InputKind), SourceManifestChecksum: evidence.SourceManifestChecksum}
+			for _, source := range evidence.MediaSources {
+				convertedEvidence.MediaSources = append(convertedEvidence.MediaSources, DocumentMediaSource(source))
+			}
 			if evidence.TimeSpan != nil {
 				convertedEvidence.TimeSpan = &MediaTimeSpan{
 					StartMS: evidence.TimeSpan.StartMS, EndMS: evidence.TimeSpan.EndMS,
@@ -755,6 +769,8 @@ func fromProcessingError(err error) error {
 		code   string
 		detail string
 	}{
+		{processing.ErrMediaSearchInvalid, http.StatusUnprocessableEntity, "invalid_media_search", "media search selectors or mode are invalid"},
+		{processing.ErrMediaSearchUnavailable, http.StatusServiceUnavailable, "media_search_unavailable", "selected media transcripts are unavailable or changed"},
 		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", "document rendition failed"},
 		{processing.ErrRenditionOperatorRequired, http.StatusConflict, "rendition_operator_required", "document rendition requires operator intervention"},
 		{processing.ErrForeignVault, http.StatusUnprocessableEntity, "foreign_vault", "source fence belongs to another vault"},
