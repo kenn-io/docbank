@@ -46,7 +46,8 @@ jobs:
       - name: Install browser test dependencies
         run: |
           npm ci --prefix frontend
-          node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium webkit
+          node frontend/node_modules/@playwright/test/cli.js install-deps --dry-run chromium webkit || node frontend/node_modules/@playwright/test/cli.js install-deps chromium webkit
+          node frontend/node_modules/@playwright/test/cli.js install chromium webkit
 
       - name: Verify documentation sources and assets
         run: |
@@ -108,7 +109,8 @@ jobs:
       - name: Install pinned Chromium
         run: |
           npm ci --prefix frontend
-          node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium
+          node frontend/node_modules/@playwright/test/cli.js install-deps --dry-run chromium || node frontend/node_modules/@playwright/test/cli.js install-deps chromium
+          node frontend/node_modules/@playwright/test/cli.js install chromium
 
       - name: Qualify browser workflow with both SQLite builds
         run: make report-export-browser-test
