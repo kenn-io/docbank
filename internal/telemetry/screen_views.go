@@ -53,8 +53,8 @@ func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
 
 	var request struct {
-		Event      eventName      `json:"event"`
-		Properties map[string]any `json:"properties"`
+		Event      string
+		Properties map[string]any
 	}
 	if err != nil || len(body) > 64<<10 {
 		h.next.ServeHTTP(w, r)
@@ -62,7 +62,33 @@ func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// Options follow kit's v1 decoder so both sides agree on which body names the event.
 	decoder := jsontext.NewDecoder(bytes.NewReader(body), jsontext.AllowDuplicateNames(true), jsontext.AllowInvalidUTF8(true))
-	if json.UnmarshalDecode(decoder, &request, json.MatchCaseInsensitiveNames(true)) != nil || !trailingEOF(decoder) || strings.TrimSpace(string(request.Event)) != EventScreenViewed || !h.reporter.Enabled() {
+	token, err := decoder.ReadToken()
+	if err != nil || token.Kind() != '{' {
+		h.next.ServeHTTP(w, r)
+		return
+	}
+	for err == nil && decoder.PeekKind() != '}' {
+		token, err = decoder.ReadToken()
+		if err != nil {
+			break
+		}
+		switch {
+		case strings.EqualFold(token.String(), "event"):
+			if decoder.PeekKind() == 'n' {
+				_, err = decoder.ReadToken()
+			} else {
+				err = json.UnmarshalDecode(decoder, &request.Event)
+			}
+		case strings.EqualFold(token.String(), "properties"):
+			err = json.UnmarshalDecode(decoder, &request.Properties)
+		default:
+			err = decoder.SkipValue()
+		}
+	}
+	if err == nil {
+		_, err = decoder.ReadToken()
+	}
+	if err != nil || !trailingEOF(decoder) || strings.TrimSpace(request.Event) != EventScreenViewed || !h.reporter.Enabled() {
 		h.next.ServeHTTP(w, r)
 		return
 	}
@@ -149,15 +175,4 @@ func screenReceipt(w http.ResponseWriter, status string) {
 func trailingEOF(decoder *jsontext.Decoder) bool {
 	_, err := decoder.ReadValue()
 	return errors.Is(err, io.EOF)
-}
-
-// eventName keeps an earlier value on null, as kit's v1 decoder does for a repeated event key.
-type eventName string
-
-func (e *eventName) UnmarshalJSONFrom(decoder *jsontext.Decoder) error {
-	if decoder.PeekKind() == 'n' {
-		_, err := decoder.ReadToken()
-		return err
-	}
-	return json.UnmarshalDecode(decoder, (*string)(e))
 }

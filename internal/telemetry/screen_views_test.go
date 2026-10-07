@@ -75,6 +75,7 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	}
 	wg.Wait()
 	require.Equal(t, 202, postEvent(t, handler, `{"Event":" screen_viewed ","properties":{"screen":"browse","surface":"web"}}`).Code)
+	require.Equal(t, 202, postEvent(t, handler, `{"event":"screen_viewed","e-vent":"app_opened","properties":{"screen":"browse","surface":"web"}}`).Code)
 	require.Equal(t, 202, postEvent(t, handler, `{"event":"screen_viewed","event":null,"properties":{"screen":"browse","surface":"web"}}`).Code)
 	require.Equal(t, 202, postEvent(t, handler, `{"event":"app_opened","Event":"screen_viewed","properties":{"screen":"browse","surface":"web"}}`).Code)
 
