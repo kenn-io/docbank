@@ -13,6 +13,17 @@ func TestPhotoQualityScalarBounds(t *testing.T) {
 	node := browsePhotoNode(t, s, "measured.jpg", browseHash("measured-bounds"), "image/jpeg")
 	scores := document.PhotoQualitySignals{Focus: 0.704, Blur: 0.296, Brightness: 0.5, ColorRed: 0.4, ColorGreen: 0.5, ColorBlue: 0.6, Framing: 0.7, Aesthetics: 0.8}
 	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), qualityTarget(node), scores))
+	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), qualityTarget(node), document.PhotoQualitySignals{Focus: 1}))
+	browsePhotoNode(t, s, "pending.jpg", browseHash("pending-bounds"), "image/jpeg")
+	page := browsePhotoPage(t, s, `{"filters":{"focus_max":"0.704"}}`)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, node.ID, page.Items[0].NodeID)
+	require.NotNil(t, page.Items[0].Quality)
+	require.Equal(t, scores.Focus, page.Items[0].Quality.Focus)
+	for _, text := range []string{"focus_min:0.5*", "unevaluated:yes", "blur_max:NaN"} {
+		_, err := s.CompileQuery(t.Context(), snapshotTestQuery(t, `{"syntax":"advanced","text":"`+text+`"}`))
+		require.Error(t, err)
+	}
 	for _, tc := range []struct {
 		name  string
 		value float64

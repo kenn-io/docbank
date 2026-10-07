@@ -52,16 +52,7 @@ func TestPhotoQualityBrowseContract(t *testing.T) {
 		}
 		require.Len(t, page.Items, i+1)
 		require.Contains(t, body, `"signals":null`)
-		request.Query = api.QueryPayload(`{"filters":{"focus_max":"1"}}`)
-		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
-		require.Equal(t, http.StatusOK, response.StatusCode, body)
-		require.NoError(t, json.Unmarshal([]byte(body), &page))
-		require.Len(t, page.Items, 1)
-		require.Equal(t, node.ID, page.Items[0].NodeID)
 	}
-	request.Query = api.QueryPayload(`{"filters":{"focus_min":0.7}}`)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	_, err = s.CreateFile(t.Context(), s.RootID(), "quality.mp4", testHash("quality-video-api"), 10, "video/mp4")
 	require.NoError(t, err)
 	request.Query = api.QueryPayload(`{"filters":{"kinds":["video"]}}`)
