@@ -2434,6 +2434,12 @@ func TestSearchContentFirstPriority(t *testing.T) {
 	}
 	require.Equal(t, "node_name", hits[2].EvidenceKind)
 	require.Equal(t, "mercury-tail.txt", hits[2].Node.Name)
+	for _, contentFirst := range []bool{false, true} {
+		selected, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 3, SearchOptions{SelectedBuilds: []SearchSelectedBuild{{ContentVersionID: versions[0], BuildID: build.ID}}}, contentFirst)
+		require.NoError(t, err)
+		require.False(t, truncated)
+		require.Equal(t, hits[:1], selected, "selected builds exclude filename matches in either ordering mode")
+	}
 }
 
 func TestSearchContentFirstGenerationSources(t *testing.T) {

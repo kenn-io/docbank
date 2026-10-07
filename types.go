@@ -465,9 +465,6 @@ type MediaTimeSpan struct {
 
 type DocumentEvidenceReference struct {
 	MediaSources           []DocumentMediaSource `json:"media_sources,omitzero"`
-	Origin                 string                `json:"origin,omitzero"`
-	Completeness           string                `json:"completeness,omitzero"`
-	SuppliedInputID        string                `json:"supplied_input_id,omitzero"`
 	Kind                   string                `json:"kind"`
 	BuildID                string                `json:"build_id,omitzero"`
 	SegmentID              string                `json:"segment_id,omitzero"`

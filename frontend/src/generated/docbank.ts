@@ -1713,17 +1713,14 @@ export interface MediaTimeSpan {
 
 export interface DocumentEvidenceReference {
   build_id?: string;
-  completeness?: string;
   embedding_set_id?: string;
   input_generation_id?: string;
   input_id?: string;
   input_kind?: string;
   kind: string;
   media_sources?: DocumentMediaSource[];
-  origin?: string;
   segment_id?: string;
   source_manifest_checksum?: string;
-  supplied_input_id?: string;
   time_span?: MediaTimeSpan;
   vector_space_id?: string;
 }

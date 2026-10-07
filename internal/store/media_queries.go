@@ -1,14 +1,11 @@
 package store
 
 import (
-	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"slices"
-	"strings"
 
 	"go.kenn.io/docbank/internal/canonical"
 )
@@ -172,81 +169,63 @@ func (s *Store) mediaSourceReceipts(ctx context.Context, query metadataQuerier, 
 		return nil
 	}
 	keys := make([]MediaSourceVersionKey, 0, len(result))
-	bySource := make(map[string][]MediaSourceVersionKey)
 	for key := range result {
 		keys = append(keys, key)
-		bySource[key.SourceID] = append(bySource[key.SourceID], key)
 	}
 	encoded, err := json.Marshal(keys)
 	if err != nil {
 		return err
 	}
-	type operation struct {
-		receipt           MediaPublicationReceipt
-		verb, updated, id string
-		processing        bool
-	}
-	ops := make(map[string][]operation)
-	rows, err := query.QueryContext(ctx, `SELECT source_id,verb,receipt_json,updated_at,operation_id FROM media_operations
-		WHERE principal=? AND source_id IN (SELECT json_extract(value,'$.source_id') FROM json_each(?))
-		AND (?=0 OR (source_id,COALESCE(json_extract(receipt_json,'$.source_version_id'),'')) IN
-		(SELECT json_extract(value,'$.source_id'),json_extract(value,'$.source_version_id') FROM json_each(?))
-		OR COALESCE(json_extract(receipt_json,'$.source_version_id'),'')='')
-		AND verb IN ('submit_supplied_media','submit_remote_recording','retry_media') ORDER BY created_at DESC,operation_id DESC`, principal, string(encoded), exactVersion, string(encoded))
+	rows, err := query.QueryContext(ctx, `WITH requested AS MATERIALIZED (
+  SELECT json_extract(value,'$.source_id') source_id,json_extract(value,'$.source_version_id') source_version_id FROM json_each(?)
+ ), retention AS (
+  SELECT r.source_id,r.source_version_id,o.receipt_json,
+   ROW_NUMBER() OVER (PARTITION BY r.source_id,r.source_version_id ORDER BY
+    CASE WHEN ? AND json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id THEN 0 ELSE 1 END,
+    o.updated_at DESC,o.operation_id DESC) selection_rank
+  FROM requested r JOIN media_operations o ON o.source_id=r.source_id
+  WHERE o.principal=? AND o.verb IN ('submit_supplied_media','submit_remote_recording')
+   AND (?=0 OR json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id
+    OR COALESCE(json_extract(o.receipt_json,'$.source_version_id'),'')='')
+ ), receipts AS (
+  SELECT source_id,source_version_id,receipt_json,0 processing,'' created_at,'' operation_id FROM retention WHERE selection_rank=1
+  UNION ALL
+  SELECT r.source_id,r.source_version_id,o.receipt_json,1,o.created_at,o.operation_id
+  FROM requested r JOIN media_operations o ON o.source_id=r.source_id
+  WHERE o.principal=? AND r.source_version_id<>'' AND o.verb IN ('submit_supplied_media','retry_media')
+   AND o.receipt_json LIKE '%"processing_profile"%' AND json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id
+ ) SELECT source_id,source_version_id,receipt_json,processing FROM receipts ORDER BY processing,created_at DESC,operation_id DESC`, string(encoded), exactVersion, principal, exactVersion, principal)
 	if err != nil {
 		return err
 	}
 	defer func(rows *sql.Rows) { _ = rows.Close() }(rows)
+	retained := make(map[MediaSourceVersionKey]bool, len(keys))
 	for rows.Next() {
-		var sourceID, raw string
-		var op operation
-		if err := rows.Scan(&sourceID, &op.verb, &raw, &op.updated, &op.id); err != nil {
+		var key MediaSourceVersionKey
+		var raw string
+		var processing bool
+		if err := rows.Scan(&key.SourceID, &key.SourceVersionID, &raw, &processing); err != nil {
 			return err
 		}
-		if len(bySource[sourceID]) == 0 {
-			continue
-		}
-		op.receipt, err = canonical.Decode[MediaPublicationReceipt]([]byte(raw))
-		op.processing = strings.Contains(raw, `"processing_profile"`)
+		receipt, err := canonical.Decode[MediaPublicationReceipt]([]byte(raw))
 		if err != nil {
 			return fmt.Errorf("decoding media receipt: %w", err)
 		}
-		ops[sourceID] = append(ops[sourceID], op)
+		item := result[key]
+		if processing {
+			item.ProcessingReceipts = append(item.ProcessingReceipts, receipt)
+		} else {
+			item.Receipt = receipt
+			retained[key] = true
+		}
+		result[key] = item
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	for sourceID, sourceKeys := range bySource {
-		for _, key := range sourceKeys {
-			item := result[key]
-			var retention []operation
-			for _, op := range ops[sourceID] {
-				version := op.receipt.SourceVersionID
-				if op.verb != "retry_media" && (!exactVersion || version == key.SourceVersionID || version == "") {
-					retention = append(retention, op)
-				}
-				if key.SourceVersionID != "" && op.verb != "submit_remote_recording" && version == key.SourceVersionID && op.processing {
-					item.ProcessingReceipts = append(item.ProcessingReceipts, op.receipt)
-				}
-			}
-			slices.SortFunc(retention, func(a, b operation) int {
-				if exactVersion && (a.receipt.SourceVersionID == key.SourceVersionID) != (b.receipt.SourceVersionID == key.SourceVersionID) {
-					if a.receipt.SourceVersionID == key.SourceVersionID {
-						return -1
-					}
-					return 1
-				}
-				if order := cmp.Compare(b.updated, a.updated); order != 0 {
-					return order
-				}
-				return cmp.Compare(b.id, a.id)
-			})
-			if len(retention) == 0 {
-				delete(result, key)
-				continue
-			}
-			item.Receipt = retention[0].receipt
-			result[key] = item
+	for _, key := range keys {
+		if !retained[key] {
+			delete(result, key)
 		}
 	}
 	return nil

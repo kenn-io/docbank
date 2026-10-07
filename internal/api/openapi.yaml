@@ -3769,8 +3769,6 @@ components:
       properties:
         build_id:
           type: string
-        completeness:
-          type: string
         embedding_set_id:
           type: string
         input_generation_id:
@@ -3785,13 +3783,9 @@ components:
           items:
             $ref: "#/components/schemas/DocumentMediaSource"
           type: array
-        origin:
-          type: string
         segment_id:
           type: string
         source_manifest_checksum:
-          type: string
-        supplied_input_id:
           type: string
         time_span:
           $ref: "#/components/schemas/MediaTimeSpan"

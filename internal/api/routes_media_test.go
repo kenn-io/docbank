@@ -175,8 +175,6 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, selectedSearch.MediaSourceSelection)
 	require.Len(t, selectedSearch.Results, 1)
-	require.Equal(t, artifact.SuppliedInputID, selectedSearch.Results[0].Evidence[0].SuppliedInputID)
-	require.Equal(t, "supplied", selectedSearch.Results[0].Evidence[0].Origin)
 	require.Equal(t, receipt.SourceID, selectedSearch.Results[0].Evidence[0].MediaSources[0].SourceID)
 	require.Len(t, selectedSearch.MediaSelections, 1)
 	require.Equal(t, artifact.SuppliedInputID, selectedSearch.MediaSelections[0].SuppliedInputID)

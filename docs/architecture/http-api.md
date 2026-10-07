@@ -590,8 +590,7 @@ These reports include `media_source_selection: true`, even without matches.
 query matches. Unready or input-excluded sources are omitted; an empty selection
 summary is `[]`. Ordinary search omits the summary.
 Each selected content/build pair has its own result. Its evidence carries
-`media_sources`, `build_id`, `origin`, `completeness`, and `supplied_input_id`
-for supplied text, alongside the existing excerpt and timing. Coverage counts
+`media_sources` and `build_id`, alongside the existing segment, excerpt and timing. Coverage counts
 content versions and is incomplete while any requested selection lacks
 ready evidence. Pending or unavailable transcripts leave ready matches usable.
 Unknown, hidden, deleted or changed selections contribute incomplete coverage;

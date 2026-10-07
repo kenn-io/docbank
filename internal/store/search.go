@@ -111,35 +111,38 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		attachmentSelection = ` AND a.content_version_id=selected.content_version_id `
 		selectedArgs = []any{string(encoded)}
 	}
-	names, err := nameSearchCandidates(fq)
-	if err != nil {
-		return nil, false, err
-	}
-	nameArgs := names.Args
-	nameArgs = append(nameArgs, filterArgs...)
-	nameArgs = append(nameArgs, limit+1)
-	rows, err := s.db.QueryContext(ctx, `WITH name_matches AS (`+names.SQL+`)
+	var nameHits []SearchHit
+	if len(opts.SelectedBuilds) == 0 {
+		names, err := nameSearchCandidates(fq)
+		if err != nil {
+			return nil, false, err
+		}
+		nameArgs := names.Args
+		nameArgs = append(nameArgs, filterArgs...)
+		nameArgs = append(nameArgs, limit+1)
+		rows, err := s.db.QueryContext(ctx, `WITH name_matches AS (`+names.SQL+`)
 		SELECT `+nodeCols+` FROM `+nodeFrom+`
 		JOIN name_matches ON name_matches.doc_key=n.id
 		WHERE n.kind='file' AND cv.version_id IS NOT NULL AND n.trashed_at IS NULL `+filterSQL+`
 		ORDER BY name_matches.score DESC,n.name,n.id
 		LIMIT ?`, nameArgs...)
-	if err != nil {
-		return nil, false, err
-	}
-	nameHits, err := scanSearchRows(rows, SearchMatchName, query)
-	if err != nil {
-		return nil, false, err
-	}
-	if !contentFirst && len(nameHits) > limit {
-		nameHits = nameHits[:limit]
+		if err != nil {
+			return nil, false, err
+		}
+		nameHits, err = scanSearchRows(rows, SearchMatchName, query)
+		if err != nil {
+			return nil, false, err
+		}
+		if !contentFirst && len(nameHits) > limit {
+			nameHits = nameHits[:limit]
+			if err := s.addSearchPaths(ctx, nameHits); err != nil {
+				return nil, false, err
+			}
+			return explainedNameCandidates(nameHits), true, nil
+		}
 		if err := s.addSearchPaths(ctx, nameHits); err != nil {
 			return nil, false, err
 		}
-		return explainedNameCandidates(nameHits), true, nil
-	}
-	if err := s.addSearchPaths(ctx, nameHits); err != nil {
-		return nil, false, err
 	}
 	remaining := limit - len(nameHits)
 	if contentFirst {
@@ -239,9 +242,6 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	truncated := len(content) > remaining
 	if truncated {
 		content = content[:remaining]
-	}
-	if len(opts.SelectedBuilds) != 0 {
-		return content, truncated, nil
 	}
 	if contentFirst {
 		result, namesTruncated := appendNameTail(content, nameHits, limit)

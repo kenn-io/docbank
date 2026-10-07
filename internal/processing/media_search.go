@@ -13,7 +13,7 @@ import (
 var ErrMediaSearchInvalid = errors.New("media search selectors are invalid")
 
 func (service *Service) searchMediaSources(ctx context.Context, request SearchRequest, ids []string, prepared preparedSearch) (retrieval.Report, error) {
-	if len(request.MediaSources) == 0 || (prepared.mode != retrieval.ModeLexical && prepared.mode != retrieval.ModeAuto) || request.Rerank {
+	if len(request.MediaSources) == 0 || len(request.MediaSources) > store.MaxSearchSourceFenceIDs || (prepared.mode != retrieval.ModeLexical && prepared.mode != retrieval.ModeAuto) || request.Rerank {
 		return retrieval.Report{}, ErrMediaSearchInvalid
 	}
 	fence := make(map[string]bool, len(ids))
@@ -22,7 +22,7 @@ func (service *Service) searchMediaSources(ctx context.Context, request SearchRe
 	}
 	selections := make(map[retrieval.MediaSource]mediaTranscriptSelection, len(request.MediaSources))
 	associations := make(map[store.SearchSelectedBuild][]retrieval.MediaSource)
-	options := store.SearchOptions{ContentVersionIDs: ids}
+	options := store.SearchOptions{}
 	coverage := retrieval.Coverage{State: retrieval.CoverageComplete}
 	completeVersions := make(map[string]bool)
 	requests := make([]MediaTranscriptRequest, 0, len(request.MediaSources))
@@ -122,10 +122,7 @@ func (service *Service) searchMediaSources(ctx context.Context, request SearchRe
 				item.Evidence = nil
 				break
 			}
-			sources = live
-			selected := selections[sources[0]]
-			evidence.MediaSources, evidence.SuppliedInputID = sources, selected.inputID
-			evidence.Origin, evidence.Completeness = selected.origin, string(selected.view.Build.Completeness)
+			evidence.MediaSources = live
 		}
 		if len(item.Evidence) != 0 {
 			item.Rank = len(kept) + 1

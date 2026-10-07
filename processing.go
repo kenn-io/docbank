@@ -282,7 +282,6 @@ func fromSearchReport(report internalprocessing.SearchReport, explain bool) Docu
 			SemanticRank: item.SemanticRank, Evidence: make([]DocumentEvidenceReference, len(item.Evidence))}
 		for evidenceIndex, evidence := range item.Evidence {
 			convertedEvidence := DocumentEvidenceReference{Kind: evidence.Kind,
-				Origin: evidence.Origin, Completeness: evidence.Completeness, SuppliedInputID: evidence.SuppliedInputID,
 				BuildID: evidence.BuildID, SegmentID: evidence.SegmentID,
 				VectorSpaceID: evidence.VectorSpaceID, EmbeddingSetID: evidence.EmbeddingSetID,
 				InputGenerationID: evidence.InputGenerationID, InputID: evidence.InputID,

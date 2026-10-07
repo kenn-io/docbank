@@ -145,8 +145,8 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 	require.Len(t, report.Results, 1)
 	require.Equal(t, selectedBuild, report.Results[0].Evidence[0].BuildID)
 	require.Equal(t, []retrieval.MediaSource{sources[100].Identity()}, report.Results[0].Evidence[0].MediaSources)
-	require.Equal(t, "supplied", report.Results[0].Evidence[0].Origin)
-	require.NotEmpty(t, report.Results[0].Evidence[0].SuppliedInputID)
+	require.Equal(t, "supplied", report.MediaSelections[len(report.MediaSelections)-1].Origin)
+	require.NotEmpty(t, report.MediaSelections[len(report.MediaSelections)-1].SuppliedInputID)
 	require.Equal(t, retrieval.CoverageIncomplete, report.Coverage.State)
 	require.Equal(t, 102, report.Coverage.ScopedDocuments)
 	require.Equal(t, 101, report.Coverage.CompleteDocuments)
@@ -204,13 +204,12 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 					require.Len(t, report.MediaSelections, 2)
 					require.Equal(t, selectedA.SuppliedInputID, report.MediaSelections[1].SuppliedInputID)
 					if query == "Synthetic" {
-						require.Equal(t, selectedA.SuppliedInputID, report.Results[0].Evidence[0].SuppliedInputID, "the stronger selected A wins when eligible")
+						require.Equal(t, []retrieval.MediaSource{sources[100].Identity()}, report.Results[0].Evidence[0].MediaSources, "the stronger selected A wins when eligible")
 					}
 					require.Equal(t, retrieval.CoverageComplete, report.Coverage.State)
 				} else {
 					require.Len(t, report.MediaSelections, 1)
 					if query == "Synthetic" {
-						require.Equal(t, "generated", report.Results[0].Evidence[0].Origin, "queued supplied work preserves ASR and excluded A consumes no rank budget")
 						require.Equal(t, ids[0], report.Results[0].Document.ContentVersionID)
 					}
 					require.Equal(t, retrieval.CoverageIncomplete, report.Coverage.State)
@@ -224,6 +223,12 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 	_, err = service.Search(t.Context(), bad)
 	require.ErrorIs(t, err, ErrMediaSearchInvalid)
 	bad.MediaSources = []retrieval.MediaSourceSelector{}
+	_, err = service.Search(t.Context(), bad)
+	require.ErrorIs(t, err, ErrMediaSearchInvalid)
+	bad.MediaSources = make([]retrieval.MediaSourceSelector, store.MaxSearchSourceFenceIDs+1)
+	for i := range bad.MediaSources {
+		bad.MediaSources[i] = retrieval.MediaSourceSelector{SourceID: processingHash(fmt.Sprintf("oversized-source-%d", i)), SourceVersionID: sources[0].SourceVersionID, ContentVersionID: ids[0]}
+	}
 	_, err = service.Search(t.Context(), bad)
 	require.ErrorIs(t, err, ErrMediaSearchInvalid)
 	bad.MediaSources = slices.Concat(sources[:1], sources[:1])

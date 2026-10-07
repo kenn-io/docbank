@@ -42,23 +42,22 @@ type MediaTimeSpan struct {
 }
 
 type EvidenceReference struct {
-	MediaSources                          []MediaSource
-	Origin, Completeness, SuppliedInputID string
-	Kind                                  string
-	VaultID                               string
-	NodeID                                int64
-	NodeRevision                          int64
-	ContentVersionID                      string
-	VectorSpaceID                         string
-	EmbeddingSetID                        string
-	InputGenerationID                     string
-	InputID                               string
-	InputKind                             document.EmbeddingInputKind
-	BuildID                               string
-	SegmentID                             string
-	BlobHash                              string
-	SourceManifestChecksum                string
-	TimeSpan                              *MediaTimeSpan
+	MediaSources           []MediaSource
+	Kind                   string
+	VaultID                string
+	NodeID                 int64
+	NodeRevision           int64
+	ContentVersionID       string
+	VectorSpaceID          string
+	EmbeddingSetID         string
+	InputGenerationID      string
+	InputID                string
+	InputKind              document.EmbeddingInputKind
+	BuildID                string
+	SegmentID              string
+	BlobHash               string
+	SourceManifestChecksum string
+	TimeSpan               *MediaTimeSpan
 }
 
 type MediaSource struct {
