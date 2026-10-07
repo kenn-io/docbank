@@ -557,6 +557,7 @@ func TestPublishRenditionExcludesDerivativePurgeAcrossEveryStagingBoundary(t *te
 
 type publicationFixture struct {
 	catalog         *store.Store
+	databasePath    string
 	blobs           *blob.Store
 	profile         store.ProcessingProfileRecord
 	evidencePolicy  document.EvidencePolicy
@@ -568,7 +569,7 @@ type publicationIDs struct {
 	build, attachment, generation string
 }
 
-func newPublicationFixture(t *testing.T) publicationFixture {
+func newPublicationFixture(t testing.TB) publicationFixture {
 	t.Helper()
 	root := t.TempDir()
 	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
@@ -594,7 +595,7 @@ func newPublicationFixture(t *testing.T) publicationFixture {
 	})
 	require.NoError(t, err)
 	return publicationFixture{
-		catalog: catalog, blobs: blobs, profile: processingProfile(t),
+		catalog: catalog, databasePath: filepath.Join(root, "docbank.db"), blobs: blobs, profile: processingProfile(t),
 		evidencePolicy: evidencePolicy, renditionPolicy: renditionPolicy,
 		versionID: node.CurrentVersionID,
 	}
@@ -718,7 +719,7 @@ func (f publicationFixture) mustSourceHash() string {
 	return node.BlobHash
 }
 
-func processingProfile(t *testing.T) store.ProcessingProfileRecord {
+func processingProfile(t testing.TB) store.ProcessingProfileRecord {
 	t.Helper()
 	profile := document.ProcessingProfileV1{
 		ContractVersion: document.ProcessingProfileContractV1,
@@ -783,7 +784,7 @@ func updateStagedProfile(
 	staged.Build.EvidenceLexicalFingerprint = fingerprints.EvidenceLexical
 }
 
-func processingBlobPhysical(t *testing.T, receipt blob.WriteReceipt) store.BlobPhysical {
+func processingBlobPhysical(t testing.TB, receipt blob.WriteReceipt) store.BlobPhysical {
 	t.Helper()
 	encoding, err := receipt.EncodingName()
 	require.NoError(t, err)

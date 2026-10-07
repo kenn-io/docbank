@@ -98,15 +98,17 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		return nil, false, nil
 	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
-	selectedSQL, selectedArgs := "", []any(nil)
+	selectedCTE, selectedJoin, attachmentSelection, selectedArgs := "", "", "", []any(nil)
 	if len(opts.SelectedBuilds) != 0 {
 		encoded, err := json.Marshal(opts.SelectedBuilds)
 		if err != nil {
 			return nil, false, err
 		}
-		selectedSQL = ` AND EXISTS (SELECT 1 FROM json_each(?) selected
-			WHERE json_extract(selected.value,'$.content_version_id')=cv.version_id
-			AND json_extract(selected.value,'$.build_id')=rendition_lexical_fts.build_id)`
+		selectedCTE = `WITH selected AS MATERIALIZED (SELECT json_extract(value,'$.content_version_id') content_version_id,
+			json_extract(value,'$.build_id') build_id FROM json_each(?)) `
+		// Check each build's pairs before catalog joins to avoid repeating the fence scan.
+		selectedJoin = ` CROSS JOIN selected ON selected.build_id=rendition_lexical_fts.build_id `
+		attachmentSelection = ` AND a.content_version_id=selected.content_version_id `
 		selectedArgs = []any{string(encoded)}
 	}
 	names, err := nameSearchCandidates(fq)
@@ -162,28 +164,27 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 			WHERE content_fts MATCH ? AND n.trashed_at IS NULL ` + filterSQL + `
 			ORDER BY content_fts.rank,n.name,n.id,content_fts.rowid`
 		if generationID != "" {
-			contentQuery = `SELECT ` + nodeCols + `,rendition_lexical_fts.build_id,
+			contentQuery = selectedCTE + `SELECT ` + nodeCols + `,rendition_lexical_fts.build_id,
 				 rendition_lexical_fts.segment_id,snippet(rendition_lexical_fts,2,char(1),char(2),' … ',24),
 				 ru.locator_json
-				FROM rendition_lexical_fts
+				FROM rendition_lexical_fts ` + selectedJoin + `
 				JOIN rendition_lexical_generation_builds gb
 				 ON gb.build_id=rendition_lexical_fts.build_id
 				JOIN rendition_lexical_segments ls ON ls.build_id=rendition_lexical_fts.build_id
 				 AND ls.segment_id=rendition_lexical_fts.segment_id
 				JOIN rendition_units ru ON ru.build_id=ls.build_id AND ru.unit_id=ls.unit_id
-				JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
+				JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id ` + attachmentSelection + `
 				JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id
 				 AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id
 				JOIN content_versions cv ON cv.version_id=a.content_version_id
 				JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id
 				WHERE rendition_lexical_fts MATCH ? AND gb.generation_id=?
-				 AND n.trashed_at IS NULL ` + filterSQL + selectedSQL + `
+				 AND n.trashed_at IS NULL ` + filterSQL + `
 				ORDER BY rendition_lexical_fts.rank,n.name,n.id,
 				 rendition_lexical_fts.build_id,rendition_lexical_fts.segment_id`
-			args = append(args, generationID)
+			args = append(selectedArgs, fq, generationID)
 		}
 		args = append(args, filterArgs...)
-		args = append(args, selectedArgs...)
 		rows, err := queryer.QueryContext(ctx, contentQuery, args...)
 		if err != nil {
 			return err

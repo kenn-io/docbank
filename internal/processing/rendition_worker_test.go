@@ -1585,7 +1585,7 @@ func (provider *workerProvider) Render(
 }
 
 func workerProcessingProfile(
-	t *testing.T, descriptor document.RenditionDescriptor,
+	t testing.TB, descriptor document.RenditionDescriptor,
 ) store.ProcessingProfileRecord {
 	t.Helper()
 	profile := document.ProcessingProfileV1{

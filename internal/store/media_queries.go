@@ -1,10 +1,14 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"go.kenn.io/docbank/internal/canonical"
 )
@@ -57,7 +61,7 @@ func (s *Store) MediaSources(
 			return nil, 0, false, err
 		}
 		item.Receipt, item.ProcessingReceipts, err = s.latestMediaReceipts(ctx, principal,
-			item.SourceID, item.SourceVersionID, false)
+			item.SourceID, item.SourceVersionID)
 		if err != nil {
 			return nil, 0, false, err
 		}
@@ -69,7 +73,7 @@ func (s *Store) MediaSources(
 func (s *Store) MediaSource(
 	ctx context.Context, principal, sourceID string,
 ) (MediaSourceProjection, error) {
-	return s.mediaSourceProjection(ctx, principal, sourceID, "")
+	return s.mediaSourceProjection(ctx, principal, sourceID)
 }
 
 // MediaSourceVersion returns the caller-visible projection for one exact
@@ -78,17 +82,146 @@ func (s *Store) MediaSource(
 func (s *Store) MediaSourceVersion(
 	ctx context.Context, principal, sourceID, sourceVersionID string,
 ) (MediaSourceProjection, error) {
-	if err := validateBoundedMediaText("media source", sourceID, 256, false); err != nil {
+	key := MediaSourceVersionKey{sourceID, sourceVersionID}
+	items, err := s.MediaSourceVersions(ctx, principal, []MediaSourceVersionKey{key})
+	if err != nil {
 		return MediaSourceProjection{}, err
 	}
-	if err := validateBoundedMediaText("media source version", sourceVersionID, 256, false); err != nil {
-		return MediaSourceProjection{}, err
+	item, ok := items[key]
+	if !ok {
+		return MediaSourceProjection{}, ErrNotFound
 	}
-	return s.mediaSourceProjection(ctx, principal, sourceID, sourceVersionID)
+	return item, nil
+}
+
+type MediaSourceVersionKey struct {
+	SourceID        string `json:"source_id"`
+	SourceVersionID string `json:"source_version_id"`
+}
+
+// MediaSourceVersions reads exact visible revisions and their receipts in one snapshot.
+func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys []MediaSourceVersionKey) (map[MediaSourceVersionKey]MediaSourceProjection, error) {
+	if len(keys) > MaxSearchSourceFenceIDs {
+		return nil, errors.New("too many media source versions")
+	}
+	if len(keys) == 0 {
+		return map[MediaSourceVersionKey]MediaSourceProjection{}, nil
+	}
+	for _, key := range keys {
+		if err := validateBoundedMediaText("media source", key.SourceID, 256, false); err != nil {
+			return nil, err
+		}
+		if err := validateBoundedMediaText("media source version", key.SourceVersionID, 256, false); err != nil {
+			return nil, err
+		}
+	}
+	encoded, err := json.Marshal(keys)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, `WITH visible AS (
+		SELECT o.source_id,s.kind,o.source_version_id,COALESCE(v.content_version_id,''),o.occurrence_id,o.caller_filename,o.message_json,
+		ROW_NUMBER() OVER (PARTITION BY o.source_id,o.source_version_id ORDER BY o.first_seen_at DESC,o.occurrence_id DESC) position
+		FROM media_occurrences o JOIN media_sources s ON s.source_id=o.source_id
+		LEFT JOIN media_source_versions v ON v.source_version_id=o.source_version_id
+		WHERE o.caller_principal=? AND o.visible=1 AND (o.source_id,o.source_version_id) IN
+		(SELECT json_extract(value,'$.source_id'),json_extract(value,'$.source_version_id') FROM json_each(?)))
+		SELECT * FROM visible WHERE position=1`, principal, string(encoded))
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[MediaSourceVersionKey]MediaSourceProjection, len(keys))
+	bySource := make(map[string][]MediaSourceVersionKey)
+	for rows.Next() {
+		var item MediaSourceProjection
+		var position int
+		if err := rows.Scan(&item.SourceID, &item.Kind, &item.SourceVersionID, &item.ContentVersionID, &item.OccurrenceID, &item.Filename, &item.CaptureJSON, &position); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		key := MediaSourceVersionKey{item.SourceID, item.SourceVersionID}
+		result[key] = item
+		bySource[item.SourceID] = append(bySource[item.SourceID], key)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	type operation struct {
+		receipt           MediaPublicationReceipt
+		verb, updated, id string
+		processing        bool
+	}
+	ops := make(map[string][]operation)
+	rows, err = tx.QueryContext(ctx, `SELECT source_id,verb,receipt_json,updated_at,operation_id FROM media_operations
+		WHERE principal=? AND source_id IN (SELECT json_extract(value,'$.source_id') FROM json_each(?))
+		AND verb IN ('submit_supplied_media','submit_remote_recording','retry_media') ORDER BY created_at DESC,operation_id DESC`, principal, string(encoded))
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var sourceID, raw string
+		var op operation
+		if err := rows.Scan(&sourceID, &op.verb, &raw, &op.updated, &op.id); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if len(bySource[sourceID]) == 0 {
+			continue
+		}
+		op.receipt, err = canonical.Decode[MediaPublicationReceipt]([]byte(raw))
+		op.processing = strings.Contains(raw, `"processing_profile"`)
+		if err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("decoding media receipt: %w", err)
+		}
+		ops[sourceID] = append(ops[sourceID], op)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	for sourceID, sourceKeys := range bySource {
+		for _, key := range sourceKeys {
+			item := result[key]
+			var retention []operation
+			for _, op := range ops[sourceID] {
+				version := op.receipt.SourceVersionID
+				if op.verb != "retry_media" && (version == key.SourceVersionID || version == "") {
+					retention = append(retention, op)
+				}
+				if op.verb != "submit_remote_recording" && version == key.SourceVersionID && op.processing {
+					item.ProcessingReceipts = append(item.ProcessingReceipts, op.receipt)
+				}
+			}
+			slices.SortFunc(retention, func(a, b operation) int {
+				if (a.receipt.SourceVersionID == key.SourceVersionID) != (b.receipt.SourceVersionID == key.SourceVersionID) {
+					if a.receipt.SourceVersionID == key.SourceVersionID {
+						return -1
+					}
+					return 1
+				}
+				if order := cmp.Compare(b.updated, a.updated); order != 0 {
+					return order
+				}
+				return cmp.Compare(b.id, a.id)
+			})
+			if len(retention) == 0 {
+				delete(result, key)
+				continue
+			}
+			item.Receipt = retention[0].receipt
+			result[key] = item
+		}
+	}
+	return result, tx.Commit()
 }
 
 func (s *Store) mediaSourceProjection(
-	ctx context.Context, principal, sourceID, sourceVersionID string,
+	ctx context.Context, principal, sourceID string,
 ) (MediaSourceProjection, error) {
 	var item MediaSourceProjection
 	query := `SELECT o.source_id,s.kind,COALESCE(o.source_version_id,''),
@@ -98,10 +231,6 @@ func (s *Store) mediaSourceProjection(
 		LEFT JOIN media_source_versions v ON v.source_version_id=o.source_version_id
 		WHERE o.caller_principal=? AND o.visible=1 AND o.source_id=?`
 	args := []any{principal, sourceID}
-	if sourceVersionID != "" {
-		query += ` AND o.source_version_id=?`
-		args = append(args, sourceVersionID)
-	}
 	query += ` ORDER BY o.first_seen_at DESC,o.occurrence_id DESC LIMIT 1`
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(
 		&item.SourceID, &item.Kind, &item.SourceVersionID, &item.ContentVersionID, &item.OccurrenceID,
@@ -113,7 +242,7 @@ func (s *Store) mediaSourceProjection(
 		return MediaSourceProjection{}, err
 	}
 	item.Receipt, item.ProcessingReceipts, err = s.latestMediaReceipts(ctx, principal,
-		sourceID, item.SourceVersionID, sourceVersionID != "")
+		sourceID, item.SourceVersionID)
 	return item, err
 }
 
@@ -160,23 +289,14 @@ func (s *Store) MediaSourceBindingForContentVersion(
 }
 
 func (s *Store) latestMediaReceipts(
-	ctx context.Context, principal, sourceID, sourceVersionID string, exactVersion bool,
+	ctx context.Context, principal, sourceID, sourceVersionID string,
 ) (MediaPublicationReceipt, []MediaPublicationReceipt, error) {
 	var raw string
 	query := `SELECT receipt_json FROM media_operations
 		WHERE principal=? AND source_id=?
 			AND verb IN ('submit_supplied_media','submit_remote_recording')`
 	args := []any{principal, sourceID}
-	if exactVersion {
-		query += ` AND (json_extract(receipt_json, '$.source_version_id')=?
-			OR COALESCE(json_extract(receipt_json, '$.source_version_id'), '')='')`
-		args = append(args, sourceVersionID)
-		query += ` ORDER BY CASE WHEN json_extract(receipt_json, '$.source_version_id')=? THEN 0 ELSE 1 END,
-			updated_at DESC,operation_id DESC LIMIT 1`
-		args = append(args, sourceVersionID)
-	} else {
-		query += ` ORDER BY updated_at DESC,operation_id DESC LIMIT 1`
-	}
+	query += ` ORDER BY updated_at DESC,operation_id DESC LIMIT 1`
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MediaPublicationReceipt{}, nil, ErrNotFound

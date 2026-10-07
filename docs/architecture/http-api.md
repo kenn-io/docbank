@@ -583,8 +583,8 @@ Each selected content/build pair has its own result. Its evidence carries
 for supplied text, alongside the existing excerpt and timing. Coverage counts
 content versions and is incomplete while any requested selection lacks
 ready evidence. Pending or unavailable transcripts leave ready matches usable.
-Unknown or hidden sources fail the request; changed selections return
-`503 media_search_unavailable`.
+Unknown, hidden, deleted or changed selections contribute incomplete coverage;
+their associations are removed while healthy matches remain usable.
 Consumers require the selection marker to distinguish older producers.
 
 Set optional `content_first: true` to prefer retained content matches, including

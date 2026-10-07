@@ -37,6 +37,7 @@ func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
 	for _, receipt := range []struct {
 		versionID, contentVersionID, occurrenceID, operationID, requestHash, createdAt string
 	}{
+		{"", first.CurrentVersionID, "occurrence-a", "operation-retention", strings.Repeat("c", 64), "2023-01-01T00:00:00Z"},
 		{"source-version-a", first.CurrentVersionID, "occurrence-a", "operation-a", strings.Repeat("a", 64), "2024-01-01T00:00:00Z"},
 		{"source-version-b", second.CurrentVersionID, "occurrence-b", "operation-b", strings.Repeat("b", 64), "2024-01-02T00:00:00Z"},
 	} {
@@ -56,6 +57,14 @@ func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
 	require.Equal(t, "source-version-a", exact.SourceVersionID)
 	require.Equal(t, first.CurrentVersionID, exact.ContentVersionID)
 	require.Equal(t, "source-version-a", exact.Receipt.SourceVersionID)
+	keys := []MediaSourceVersionKey{{sourceID, "source-version-a"}, {sourceID, "source-version-b"}, {sourceID, "hidden-version"}}
+	batch, err := s.MediaSourceVersions(ctx, "operator:test", keys)
+	require.NoError(t, err)
+	require.Len(t, batch, 2)
+	require.Equal(t, exact, batch[keys[0]])
+	secondExact, err := s.MediaSourceVersion(ctx, "operator:test", sourceID, "source-version-b")
+	require.NoError(t, err)
+	require.Equal(t, secondExact, batch[keys[1]])
 
 	latest, err := s.MediaSource(ctx, "operator:test", sourceID)
 	require.NoError(t, err)

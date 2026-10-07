@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"uuid"
 
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
@@ -26,19 +27,28 @@ func (service *Service) searchMediaSources(ctx context.Context, request SearchRe
 	options := store.SearchOptions{ContentVersionIDs: ids}
 	coverage := retrieval.Coverage{State: retrieval.CoverageComplete}
 	completeVersions := make(map[string]bool)
+	requests := make([]MediaTranscriptRequest, 0, len(request.MediaSources))
+	seen := make(map[retrieval.MediaSource]bool)
 	for _, source := range request.MediaSources {
+		parsed, parseErr := uuid.Parse(source.ContentVersionID)
 		if source.SourceID == "" || source.SourceVersionID == "" || len(source.SourceID) > 256 ||
-			len(source.SourceVersionID) > 256 || !fence[source.ContentVersionID] {
+			len(source.SourceVersionID) > 256 || !fence[source.ContentVersionID] || parseErr != nil ||
+			parsed[6]>>4 != 4 || parsed[8]>>6 != 2 || parsed.String() != source.ContentVersionID {
 			return retrieval.Report{}, ErrMediaSearchInvalid
 		}
-		if _, exists := selections[source]; exists {
+		if seen[source] {
 			return retrieval.Report{}, ErrMediaSearchInvalid
 		}
-		selected, err := service.selectMediaTranscript(ctx, MediaTranscriptRequest{
-			SourceID: source.SourceID, SourceVersionID: source.SourceVersionID, ContentVersionID: source.ContentVersionID}, true)
-		if err != nil {
-			return retrieval.Report{}, fmt.Errorf("select media source %s version %s: %w", source.SourceID, source.SourceVersionID, err)
-		}
+		seen[source] = true
+		requests = append(requests, MediaTranscriptRequest{source.SourceID, source.SourceVersionID, source.ContentVersionID})
+	}
+	selectedItems, err := service.selectMediaTranscripts(ctx, requests)
+	if err != nil {
+		return retrieval.Report{}, err
+	}
+	ready := make([]MediaTranscriptRequest, 0, len(requests))
+	for i, source := range request.MediaSources {
+		selected := selectedItems[requests[i]]
 		selections[source] = selected
 		if _, exists := completeVersions[source.ContentVersionID]; !exists {
 			completeVersions[source.ContentVersionID] = true
@@ -48,6 +58,7 @@ func (service *Service) searchMediaSources(ctx context.Context, request SearchRe
 			continue
 		}
 		key := store.SearchSelectedBuild{ContentVersionID: source.ContentVersionID, BuildID: selected.view.Build.ID}
+		ready = append(ready, requests[i])
 		if _, exists := associations[key]; !exists {
 			options.SelectedBuilds = append(options.SelectedBuilds, key)
 		}
@@ -72,20 +83,30 @@ func (service *Service) searchMediaSources(ctx context.Context, request SearchRe
 			return retrieval.Report{}, err
 		}
 	}
-	// Re-read every selected authority before returning evidence or coverage.
-	for source, previous := range selections {
-		current, err := service.selectMediaTranscript(ctx, MediaTranscriptRequest{
-			SourceID: source.SourceID, SourceVersionID: source.SourceVersionID, ContentVersionID: source.ContentVersionID}, true)
-		if err != nil {
-			return retrieval.Report{}, err
-		}
+	// Re-read authority for every source that could contribute evidence.
+	currentItems, err := service.selectMediaTranscripts(ctx, ready)
+	if err != nil {
+		return retrieval.Report{}, err
+	}
+	for _, request := range ready {
+		source := retrieval.MediaSource{SourceID: request.SourceID, SourceVersionID: request.SourceVersionID, ContentVersionID: request.ContentVersionID}
+		previous, current := selections[source], currentItems[request]
 		if current.result.EvidenceState != previous.result.EvidenceState || current.view.Head != previous.view.Head ||
 			current.inputID != previous.inputID {
-			return retrieval.Report{}, ErrMediaSearchUnavailable
+			if completeVersions[source.ContentVersionID] {
+				coverage.CompleteDocuments--
+				completeVersions[source.ContentVersionID] = false
+			}
+			coverage.State = retrieval.CoverageIncomplete
+			delete(selections, source)
 		}
 	}
+	kept := report.Results[:0]
 	for i := range report.Results {
 		item := &report.Results[i]
+		if len(item.Evidence) != 1 {
+			return retrieval.Report{}, fmt.Errorf("media search evidence cardinality: %w", ErrMediaSearchUnavailable)
+		}
 		for j := range item.Evidence {
 			evidence := &item.Evidence[j]
 			key := store.SearchSelectedBuild{ContentVersionID: item.Document.ContentVersionID, BuildID: evidence.BuildID}
@@ -93,11 +114,27 @@ func (service *Service) searchMediaSources(ctx context.Context, request SearchRe
 			if len(sources) == 0 {
 				return retrieval.Report{}, fmt.Errorf("media search evidence escaped selection: %w", ErrMediaSearchUnavailable)
 			}
+			live := make([]retrieval.MediaSource, 0, len(sources))
+			for _, source := range sources {
+				if _, ok := selections[source]; ok {
+					live = append(live, source)
+				}
+			}
+			if len(live) == 0 {
+				item.Evidence = nil
+				break
+			}
+			sources = live
 			selected := selections[sources[0]]
 			evidence.MediaSources, evidence.SuppliedInputID = sources, selected.inputID
 			evidence.Origin, evidence.Completeness = selected.origin, string(selected.view.Build.Completeness)
 		}
+		if len(item.Evidence) != 0 {
+			item.Rank = len(kept) + 1
+			kept = append(kept, *item)
+		}
 	}
+	report.Results = kept
 	report.MediaSourceSelection, report.Coverage = true, coverage
 	return report, nil
 }

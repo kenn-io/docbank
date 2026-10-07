@@ -384,7 +384,7 @@ type mediaStateFixture struct {
 	selector Selector
 }
 
-func newMediaStateFixture(t *testing.T) mediaStateFixture {
+func newMediaStateFixture(t testing.TB) mediaStateFixture {
 	t.Helper()
 	fixture := newPublicationFixture(t)
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
@@ -418,7 +418,7 @@ func newMediaStateFixture(t *testing.T) mediaStateFixture {
 	return f
 }
 
-func (f mediaStateFixture) addWAV(t *testing.T, name string, raw []byte) (store.ContentVersion, Selector) {
+func (f mediaStateFixture) addWAV(t testing.TB, name string, raw []byte) (store.ContentVersion, Selector) {
 	t.Helper()
 	written, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
 	require.NoError(t, err)
@@ -446,7 +446,7 @@ func (f mediaStateFixture) enqueue(t *testing.T, selector Selector) Job {
 	return job
 }
 
-func (f mediaStateFixture) run(t *testing.T, jobID string) error {
+func (f mediaStateFixture) run(t testing.TB, jobID string) error {
 	t.Helper()
 	waiter, err := f.catalog.RenditionJobWaiterByID(t.Context(), jobID)
 	require.NoError(t, err)
