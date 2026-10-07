@@ -192,3 +192,22 @@ func TestPhotoQualityPurgedVersionCascade(t *testing.T) {
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_quality_signals`).Scan(&count))
 	require.Zero(t, count)
 }
+
+func TestReleasedV28ValidatesFixtureTables(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		for _, mutation := range []string{`DROP TABLE visual_preview_heads`, `ALTER TABLE source_metadata_heads ADD COLUMN unexpected TEXT`} {
+			t.Run(driver.name+mutation, func(t *testing.T) {
+				db, err := driver.driver.Open(filepath.Join(t.TempDir(), "released.db"), docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Immediate})
+				require.NoError(t, err)
+				defer func() { require.NoError(t, db.Close()) }()
+				_, err = db.Exec(schemaV0150SQL)
+				require.NoError(t, err)
+				require.NoError(t, validateV28Schema(db, nil, nil))
+				_, err = db.Exec(mutation)
+				require.NoError(t, err)
+				require.Error(t, validateV28Schema(db, nil, nil))
+			})
+		}
+	}
+}

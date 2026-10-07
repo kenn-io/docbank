@@ -24,9 +24,7 @@ func EvaluatePhotoQuality(ctx context.Context, s *store.Store, blobs *blob.Store
 	if err != nil {
 		return err
 	}
-	if view.Version.BlobHash != target.SourceSHA256 || view.Version.Size != target.Size {
-		return errors.New("photo quality source binding mismatch")
-	}
+
 	output := view.Generation.Preview.Output
 	if view.Generation.Preview.State != document.VisualPreviewReady || output == nil {
 		return errors.New("photo quality preview unavailable")

@@ -108,19 +108,47 @@ func TestPhotoQualityPendingDisplayOwnership(t *testing.T) {
 	require.NoError(t, err)
 	missing := browsePhotoNode(t, s, "missing-preview.jpg", browseHash("quality-missing-preview"), "image/jpeg")
 	unsupported := browsePhotoNode(t, s, "unsupported-preview.jpg", browseHash("quality-unsupported-preview"), "image/jpeg")
+	missingMIME := browsePhotoNode(t, s, "missing-mime.jpg", browseHash("quality-missing-mime"), "")
+	genericMIME := browsePhotoNode(t, s, "generic-mime.jpg", browseHash("quality-generic-mime"), "application/octet-stream")
 	recipe, err := document.BuiltInVisualPreviewRecipe("grid")
 	require.NoError(t, err)
 	canonical := terminalVisualPreviewWithRecipe(t, unsupported.BlobHash, recipe, document.VisualPreviewUnsupported, "unsupported_format")
 	_, err = s.PublishVisualPreview(ctx, unsupported.CurrentVersionID, canonical, nil)
 	require.NoError(t, err)
-	for _, q := range []string{`{"filters":{"unevaluated":true}}`, `{"syntax":"advanced","text":"unevaluated:true"}`} {
-		value := snapshotTestQuery(t, q)
-		snapshot, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+	for _, state := range []string{"true", "false"} {
+		_, err = s.CreateSavedQuery(ctx, "Quality state "+state, "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"unevaluated:`+state+`"}`))
 		require.NoError(t, err)
-		require.Len(t, snapshot.Rows, 2)
-		require.ElementsMatch(t, []int64{missing.ID, unsupported.ID}, []int64{snapshot.Rows[0].NodeID, snapshot.Rows[1].NodeID})
-		page := browsePhotoPage(t, s, q)
-		require.Len(t, page.Items, 2)
-		require.ElementsMatch(t, []int64{missing.ID, unsupported.ID}, []int64{page.Items[0].NodeID, page.Items[1].NodeID})
 	}
+	check := func(pending, ready []int64) {
+		t.Helper()
+		for _, tc := range []struct {
+			query string
+			want  []int64
+		}{
+			{`{"filters":{"unevaluated":true}}`, pending},
+			{`{"syntax":"advanced","text":"unevaluated:true"}`, pending},
+			{`{"syntax":"advanced","text":"saved:\"Quality state true\""}`, pending},
+			{`{"syntax":"advanced","text":"unevaluated:false"}`, ready},
+			{`{"syntax":"advanced","text":"saved:\"Quality state false\""}`, ready},
+		} {
+			value := snapshotTestQuery(t, tc.query)
+			snapshot, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
+			require.NoError(t, err)
+			var documentIDs []int64
+			for _, row := range snapshot.Rows {
+				documentIDs = append(documentIDs, row.NodeID)
+			}
+			require.ElementsMatch(t, tc.want, documentIDs, tc.query)
+			page := browsePhotoPage(t, s, tc.query)
+			var photoIDs []int64
+			for _, row := range page.Items {
+				photoIDs = append(photoIDs, row.NodeID)
+			}
+			require.ElementsMatch(t, tc.want, photoIDs, tc.query)
+		}
+	}
+	check([]int64{missing.ID, unsupported.ID, missingMIME.ID, genericMIME.ID}, []int64{jpg.ID})
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(missingMIME), document.PhotoQualitySignals{}))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(genericMIME), document.PhotoQualitySignals{}))
+	check([]int64{missing.ID, unsupported.ID}, []int64{jpg.ID, missingMIME.ID, genericMIME.ID})
 }

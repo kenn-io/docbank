@@ -164,29 +164,26 @@ func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int
 }
 
 func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compiledQueryFragment, error) {
-	version := "cv.version_id"
-	from := `photo_quality_signals q WHERE q.content_version_id=` + version + ` AND q.evaluator_fingerprint=?`
+	from := `content_versions v`
+	binding := `v.version_id=cv.version_id`
 	if c.photoDisplayMetadata {
 		from = `photo_files member JOIN photo_assets asset ON asset.asset_id=member.asset_id
  JOIN photo_files display ON display.file_id=asset.display_file_id
  JOIN nodes display_node ON display_node.id=display.node_id
- JOIN photo_quality_signals q ON q.content_version_id=display_node.current_version_id
- WHERE member.node_id=n.id AND q.evaluator_fingerprint=?`
+ JOIN content_versions v ON v.version_id=display_node.current_version_id`
+		binding = `member.node_id=n.id`
 	}
+	quality := `EXISTS (SELECT 1 FROM photo_quality_signals q WHERE q.content_version_id=v.version_id AND q.evaluator_fingerprint=?`
 	args := []any{document.PhotoQualityEvaluatorFingerprint()}
 	if field == "unevaluated" {
 		if value != "true" && value != "false" {
 			return compiledQueryFragment{}, fmt.Errorf("unevaluated must be true or false")
 		}
-		exists := `EXISTS (SELECT 1 FROM ` + from + `)`
+		quality += `)`
 		if value == "true" {
-			exists = `NOT ` + exists
+			quality = `NOT ` + quality
 		}
-		eligible := `EXISTS (SELECT 1 FROM content_versions v WHERE v.version_id=cv.version_id AND ` + liveIncludedPhotoDisplayPredicate + `)`
-		if c.photoDisplayMetadata {
-			eligible = `EXISTS (SELECT 1 FROM photo_files pf JOIN photo_assets pa ON pa.asset_id=pf.asset_id JOIN photo_files df ON df.file_id=pa.display_file_id JOIN nodes dn ON dn.id=df.node_id JOIN content_versions dv ON dv.version_id=dn.current_version_id WHERE pf.node_id=n.id AND pa.kind='photo' AND dv.mime_type LIKE 'image/%')`
-		}
-		return compiledQueryFragment{sql: `(` + eligible + ` AND ` + exists + `)`, args: args}, nil
+		return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM ` + from + ` WHERE ` + binding + ` AND ` + liveIncludedPhotoDisplayPredicate + ` AND ` + quality + `)`, args: args}, nil
 	}
 	normalized, err := query.NormalizeQualityOperand(value)
 	if err != nil {
@@ -199,5 +196,5 @@ func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compil
 		operator = "<="
 	}
 	args = append(args, number)
-	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM ` + from + ` AND q.` + column + operator + ` ?)`, args: args}, nil
+	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM ` + from + ` WHERE ` + binding + ` AND ` + quality + ` AND q.` + column + operator + ` ?))`, args: args}, nil
 }
