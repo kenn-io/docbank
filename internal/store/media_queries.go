@@ -60,14 +60,26 @@ func (s *Store) MediaSources(
 			&item.OccurrenceID, &item.Filename, &item.CaptureJSON); err != nil {
 			return nil, 0, false, err
 		}
-		item.Receipt, item.ProcessingReceipts, err = s.latestMediaReceipts(ctx, principal,
-			item.SourceID, item.SourceVersionID)
-		if err != nil {
-			return nil, 0, false, err
-		}
 		result = append(result, item)
 	}
-	return result[:min(len(result), limit)], total, len(result) > limit, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, false, err
+	}
+	items := make(map[MediaSourceVersionKey]MediaSourceProjection, len(result))
+	for _, item := range result {
+		items[MediaSourceVersionKey{item.SourceID, item.SourceVersionID}] = item
+	}
+	if err := s.mediaSourceReceipts(ctx, s.db, principal, items, false); err != nil {
+		return nil, 0, false, err
+	}
+	for i, item := range result {
+		var ok bool
+		result[i], ok = items[MediaSourceVersionKey{item.SourceID, item.SourceVersionID}]
+		if !ok {
+			return nil, 0, false, ErrNotFound
+		}
+	}
+	return result[:min(len(result), limit)], total, len(result) > limit, nil
 }
 
 func (s *Store) MediaSource(
@@ -137,7 +149,6 @@ func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys 
 	}
 	result := make(map[MediaSourceVersionKey]MediaSourceProjection, len(keys))
 	defer func(rows *sql.Rows) { _ = rows.Close() }(rows)
-	bySource := make(map[string][]MediaSourceVersionKey)
 	for rows.Next() {
 		var item MediaSourceProjection
 		var position int
@@ -146,10 +157,29 @@ func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys 
 		}
 		key := MediaSourceVersionKey{item.SourceID, item.SourceVersionID}
 		result[key] = item
-		bySource[item.SourceID] = append(bySource[item.SourceID], key)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if err := s.mediaSourceReceipts(ctx, tx, principal, result, true); err != nil {
+		return nil, err
+	}
+	return result, tx.Commit()
+}
+
+func (s *Store) mediaSourceReceipts(ctx context.Context, query metadataQuerier, principal string, result map[MediaSourceVersionKey]MediaSourceProjection, exactVersion bool) error {
+	if len(result) == 0 {
+		return nil
+	}
+	keys := make([]MediaSourceVersionKey, 0, len(result))
+	bySource := make(map[string][]MediaSourceVersionKey)
+	for key := range result {
+		keys = append(keys, key)
+		bySource[key.SourceID] = append(bySource[key.SourceID], key)
+	}
+	encoded, err := json.Marshal(keys)
+	if err != nil {
+		return err
 	}
 	type operation struct {
 		receipt           MediaPublicationReceipt
@@ -157,18 +187,21 @@ func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys 
 		processing        bool
 	}
 	ops := make(map[string][]operation)
-	rows, err = tx.QueryContext(ctx, `SELECT source_id,verb,receipt_json,updated_at,operation_id FROM media_operations
+	rows, err := query.QueryContext(ctx, `SELECT source_id,verb,receipt_json,updated_at,operation_id FROM media_operations
 		WHERE principal=? AND source_id IN (SELECT json_extract(value,'$.source_id') FROM json_each(?))
-		AND verb IN ('submit_supplied_media','submit_remote_recording','retry_media') ORDER BY created_at DESC,operation_id DESC`, principal, string(encoded))
+		AND (?=0 OR (source_id,COALESCE(json_extract(receipt_json,'$.source_version_id'),'')) IN
+		(SELECT json_extract(value,'$.source_id'),json_extract(value,'$.source_version_id') FROM json_each(?))
+		OR COALESCE(json_extract(receipt_json,'$.source_version_id'),'')='')
+		AND verb IN ('submit_supplied_media','submit_remote_recording','retry_media') ORDER BY created_at DESC,operation_id DESC`, principal, string(encoded), exactVersion, string(encoded))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer func(rows *sql.Rows) { _ = rows.Close() }(rows)
 	for rows.Next() {
 		var sourceID, raw string
 		var op operation
 		if err := rows.Scan(&sourceID, &op.verb, &raw, &op.updated, &op.id); err != nil {
-			return nil, err
+			return err
 		}
 		if len(bySource[sourceID]) == 0 {
 			continue
@@ -176,12 +209,12 @@ func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys 
 		op.receipt, err = canonical.Decode[MediaPublicationReceipt]([]byte(raw))
 		op.processing = strings.Contains(raw, `"processing_profile"`)
 		if err != nil {
-			return nil, fmt.Errorf("decoding media receipt: %w", err)
+			return fmt.Errorf("decoding media receipt: %w", err)
 		}
 		ops[sourceID] = append(ops[sourceID], op)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return err
 	}
 	for sourceID, sourceKeys := range bySource {
 		for _, key := range sourceKeys {
@@ -189,15 +222,15 @@ func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys 
 			var retention []operation
 			for _, op := range ops[sourceID] {
 				version := op.receipt.SourceVersionID
-				if op.verb != "retry_media" && (version == key.SourceVersionID || version == "") {
+				if op.verb != "retry_media" && (!exactVersion || version == key.SourceVersionID || version == "") {
 					retention = append(retention, op)
 				}
-				if op.verb != "submit_remote_recording" && version == key.SourceVersionID && op.processing {
+				if key.SourceVersionID != "" && op.verb != "submit_remote_recording" && version == key.SourceVersionID && op.processing {
 					item.ProcessingReceipts = append(item.ProcessingReceipts, op.receipt)
 				}
 			}
 			slices.SortFunc(retention, func(a, b operation) int {
-				if (a.receipt.SourceVersionID == key.SourceVersionID) != (b.receipt.SourceVersionID == key.SourceVersionID) {
+				if exactVersion && (a.receipt.SourceVersionID == key.SourceVersionID) != (b.receipt.SourceVersionID == key.SourceVersionID) {
 					if a.receipt.SourceVersionID == key.SourceVersionID {
 						return -1
 					}
@@ -216,7 +249,7 @@ func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys 
 			result[key] = item
 		}
 	}
-	return result, tx.Commit()
+	return nil
 }
 
 func (s *Store) mediaSourceProjection(
@@ -240,9 +273,16 @@ func (s *Store) mediaSourceProjection(
 	if err != nil {
 		return MediaSourceProjection{}, err
 	}
-	item.Receipt, item.ProcessingReceipts, err = s.latestMediaReceipts(ctx, principal,
-		sourceID, item.SourceVersionID)
-	return item, err
+	key := MediaSourceVersionKey{item.SourceID, item.SourceVersionID}
+	items := map[MediaSourceVersionKey]MediaSourceProjection{key: item}
+	if err := s.mediaSourceReceipts(ctx, s.db, principal, items, false); err != nil {
+		return MediaSourceProjection{}, err
+	}
+	item, ok := items[key]
+	if !ok {
+		return MediaSourceProjection{}, ErrNotFound
+	}
+	return item, nil
 }
 
 func (s *Store) MediaOccurrence(
@@ -285,62 +325,6 @@ func (s *Store) MediaSourceBindingForContentVersion(
 		return "", "", ErrNotFound
 	}
 	return sourceID, sourceVersionID, err
-}
-
-func (s *Store) latestMediaReceipts(
-	ctx context.Context, principal, sourceID, sourceVersionID string,
-) (MediaPublicationReceipt, []MediaPublicationReceipt, error) {
-	var raw string
-	query := `SELECT receipt_json FROM media_operations
-		WHERE principal=? AND source_id=?
-			AND verb IN ('submit_supplied_media','submit_remote_recording')`
-	args := []any{principal, sourceID}
-	query += ` ORDER BY updated_at DESC,operation_id DESC LIMIT 1`
-	err := s.db.QueryRowContext(ctx, query, args...).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return MediaPublicationReceipt{}, nil, ErrNotFound
-	}
-	if err != nil {
-		return MediaPublicationReceipt{}, nil, err
-	}
-	retention, err := canonical.Decode[MediaPublicationReceipt]([]byte(raw))
-	if err != nil {
-		return MediaPublicationReceipt{}, nil, fmt.Errorf("decoding media retention receipt: %w", err)
-	}
-	if sourceVersionID == "" {
-		return retention, nil, nil
-	}
-	processing, err := s.mediaProcessingReceiptsForVersion(ctx, principal, sourceID, sourceVersionID)
-	return retention, processing, err
-}
-
-func (s *Store) mediaProcessingReceiptsForVersion(
-	ctx context.Context, principal, sourceID, sourceVersionID string,
-) (_ []MediaPublicationReceipt, retErr error) {
-	// Admission order defines the current attempt. An older worker finishing
-	// later must not hide a retry that was already admitted.
-	rows, err := s.db.QueryContext(ctx, `SELECT receipt_json FROM media_operations
-		WHERE principal=? AND source_id=? AND verb IN ('submit_supplied_media','retry_media')
-			AND receipt_json LIKE '%"processing_profile"%'
-			AND json_extract(receipt_json, '$.source_version_id') = ?
-		ORDER BY created_at DESC,operation_id DESC`, principal, sourceID, sourceVersionID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { retErr = errors.Join(retErr, rows.Close()) }()
-	var result []MediaPublicationReceipt
-	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		processing, err := canonical.Decode[MediaPublicationReceipt]([]byte(raw))
-		if err != nil {
-			return nil, fmt.Errorf("decoding media processing receipt: %w", err)
-		}
-		result = append(result, processing)
-	}
-	return result, rows.Err()
 }
 
 // MediaOccurrences returns the page of visible occurrences after the given

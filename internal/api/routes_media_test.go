@@ -331,6 +331,16 @@ func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 }
 
+func TestMediaSearchRejectsIdentitiesBeyondUTF8ByteBound(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+	id := "00000000-0000-4000-8000-000000000001"
+	request := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{id}}, MediaSources: []api.DocumentMediaSource{{SourceID: strings.Repeat("é", 129), SourceVersionID: "version", ContentVersionID: id}}}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, request)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Contains(t, body, `"code":"invalid_media_search"`)
+}
+
 func TestMediaTranscriptHTTPReturnsUnavailableWithoutProcessing(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)

@@ -770,7 +770,6 @@ func fromProcessingError(err error) error {
 		detail string
 	}{
 		{processing.ErrMediaSearchInvalid, http.StatusUnprocessableEntity, "invalid_media_search", "media search selectors or mode are invalid"},
-		{processing.ErrMediaSearchUnavailable, http.StatusServiceUnavailable, "media_search_unavailable", "selected media transcripts are unavailable or changed"},
 		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", "document rendition failed"},
 		{processing.ErrRenditionOperatorRequired, http.StatusConflict, "rendition_operator_required", "document rendition requires operator intervention"},
 		{processing.ErrForeignVault, http.StatusUnprocessableEntity, "foreign_vault", "source fence belongs to another vault"},

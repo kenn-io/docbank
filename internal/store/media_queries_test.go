@@ -70,6 +70,11 @@ func TestMediaSourceVersionSelectsTheExactVisibleRevision(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "source-version-b", latest.SourceVersionID)
 	require.Equal(t, "source-version-b", latest.Receipt.SourceVersionID)
+	page, total, more, err := s.MediaSources(ctx, "operator:test", "", 10)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.False(t, more)
+	require.Equal(t, []MediaSourceProjection{latest}, page)
 	_, err = s.MediaSourceVersion(ctx, "operator:test", sourceID, "hidden-version")
 	require.ErrorIs(t, err, ErrNotFound)
 }

@@ -559,7 +559,8 @@ does not grant consent or start provider work.
 The `fence` object is the source fence: the vault UUID and the content
 versions the request is authorized to read. Use the actual vault UUID and
 1–4,096 distinct canonical UUIDv4 versions for both coverage and search. A
-foreign vault or invalid source fence is rejected.
+foreign vault or invalid source fence is rejected. All search request bodies
+are bounded to 16 MiB.
 Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
 and accepts 1–100. `binding_id` selects the embedding binding. Omitting it uses
@@ -572,8 +573,7 @@ For exact recording attribution, add `media_sources`, up to 4,096 distinct
 objects with `source_id`, `source_version_id`, and `content_version_id`. Every
 content version must belong to the fence. Only selected transcripts contribute
 to results and coverage; fence members without a selector are excluded.
-Source and source-version IDs are bounded to 256 bytes. Search bodies are
-bounded to 16 MiB. Use `lexical` or
+Source and source-version IDs are bounded to 256 bytes. Use `lexical` or
 `auto` without reranking. Docbank selects each source's covering transcript
 before ranking and limits, including while a retry is pending.
 
@@ -586,6 +586,11 @@ ready evidence. Pending or unavailable transcripts leave ready matches usable.
 Unknown, hidden, deleted or changed selections contribute incomplete coverage;
 their associations are removed while healthy matches remain usable.
 Consumers require the selection marker to distinguish older producers.
+
+`BenchmarkMediaSearchSelectors4096` measured 4.781 seconds with one shared build
+and 10.826 seconds with 4,096 distinct builds, using 4,096 distinct sources and
+content versions with matching synthetic text; fixture setup was excluded.
+Receipt selection runs in bulk; each source retains its metadata checks.
 
 Set optional `content_first: true` to prefer retained content matches, including
 transcripts, before filename-only matches. Selection applies the source fence

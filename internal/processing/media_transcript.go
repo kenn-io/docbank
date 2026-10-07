@@ -102,9 +102,8 @@ func (service *Service) selectMediaTranscript(ctx context.Context, request Media
 		return mediaTranscriptSelection{result: result}, ErrMediaCapabilityUnavailable
 	}
 	result.VaultUID = service.catalog.VaultID()
-	parsed, err := uuid.Parse(request.ContentVersionID)
-	if err != nil || (parsed[6]>>4 != 4 || parsed[8]>>6 != 2) || parsed.String() != request.ContentVersionID {
-		return mediaTranscriptSelection{result: result}, ErrMediaTranscriptInvalid
+	if err := validateMediaTranscriptContentVersion(request.ContentVersionID); err != nil {
+		return mediaTranscriptSelection{result: result}, err
 	}
 	item, err := service.catalog.MediaSourceVersion(ctx, service.principal, request.SourceID, request.SourceVersionID)
 	if err != nil {
@@ -116,6 +115,9 @@ func (service *Service) selectMediaTranscript(ctx context.Context, request Media
 func (service *Service) selectMediaTranscripts(ctx context.Context, requests []MediaTranscriptRequest) (map[MediaTranscriptRequest]mediaTranscriptSelection, error) {
 	keys := make([]store.MediaSourceVersionKey, len(requests))
 	for i, request := range requests {
+		if err := validateMediaTranscriptContentVersion(request.ContentVersionID); err != nil {
+			return nil, err
+		}
 		keys[i] = store.MediaSourceVersionKey{SourceID: request.SourceID, SourceVersionID: request.SourceVersionID}
 	}
 	items, err := service.catalog.MediaSourceVersions(ctx, service.principal, keys)
@@ -138,6 +140,14 @@ func (service *Service) selectMediaTranscripts(ctx context.Context, requests []M
 		result[request] = selected
 	}
 	return result, nil
+}
+
+func validateMediaTranscriptContentVersion(id string) error {
+	parsed, err := uuid.Parse(id)
+	if err != nil || parsed[6]>>4 != 4 || parsed[8]>>6 != 2 || parsed.String() != id {
+		return ErrMediaTranscriptInvalid
+	}
+	return nil
 }
 
 func (service *Service) selectMediaTranscriptItem(ctx context.Context, request MediaTranscriptRequest, item store.MediaSourceProjection, result MediaTranscript, metadataOnly bool) (mediaTranscriptSelection, error) {

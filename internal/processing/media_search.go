@@ -3,19 +3,15 @@ package processing
 import (
 	"context"
 	"errors"
-	"fmt"
-	"uuid"
 
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
 )
 
-var ErrMediaSearchUnavailable = errors.New("selected media transcript is unavailable or changed")
 var ErrMediaSearchInvalid = errors.New("media search selectors are invalid")
 
 func (service *Service) searchMediaSources(ctx context.Context, request SearchRequest, ids []string, prepared preparedSearch) (retrieval.Report, error) {
-	if len(request.MediaSources) > store.MaxSearchSourceFenceIDs ||
-		(prepared.mode != retrieval.ModeLexical && prepared.mode != retrieval.ModeAuto) || request.Rerank {
+	if (prepared.mode != retrieval.ModeLexical && prepared.mode != retrieval.ModeAuto) || request.Rerank {
 		return retrieval.Report{}, ErrMediaSearchInvalid
 	}
 	fence := make(map[string]bool, len(ids))
@@ -30,10 +26,8 @@ func (service *Service) searchMediaSources(ctx context.Context, request SearchRe
 	requests := make([]MediaTranscriptRequest, 0, len(request.MediaSources))
 	seen := make(map[retrieval.MediaSource]bool)
 	for _, source := range request.MediaSources {
-		parsed, parseErr := uuid.Parse(source.ContentVersionID)
-		if source.SourceID == "" || source.SourceVersionID == "" || len(source.SourceID) > 256 ||
-			len(source.SourceVersionID) > 256 || !fence[source.ContentVersionID] || parseErr != nil ||
-			parsed[6]>>4 != 4 || parsed[8]>>6 != 2 || parsed.String() != source.ContentVersionID {
+		// Huma counts characters; these identities are bounded in UTF-8 bytes.
+		if len(source.SourceID) > 256 || len(source.SourceVersionID) > 256 || !fence[source.ContentVersionID] {
 			return retrieval.Report{}, ErrMediaSearchInvalid
 		}
 		if seen[source] {
@@ -104,16 +98,10 @@ func (service *Service) searchMediaSources(ctx context.Context, request SearchRe
 	kept := report.Results[:0]
 	for i := range report.Results {
 		item := &report.Results[i]
-		if len(item.Evidence) != 1 {
-			return retrieval.Report{}, fmt.Errorf("media search evidence cardinality: %w", ErrMediaSearchUnavailable)
-		}
 		for j := range item.Evidence {
 			evidence := &item.Evidence[j]
 			key := store.SearchSelectedBuild{ContentVersionID: item.Document.ContentVersionID, BuildID: evidence.BuildID}
 			sources := associations[key]
-			if len(sources) == 0 {
-				return retrieval.Report{}, fmt.Errorf("media search evidence escaped selection: %w", ErrMediaSearchUnavailable)
-			}
 			live := make([]retrieval.MediaSource, 0, len(sources))
 			for _, source := range sources {
 				if _, ok := selections[source]; ok {
