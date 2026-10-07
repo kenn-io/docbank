@@ -110,9 +110,6 @@ type MediaSourceVersionKey struct {
 
 // MediaSourceVersions reads exact visible revisions and their receipts in one snapshot.
 func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys []MediaSourceVersionKey) (map[MediaSourceVersionKey]MediaSourceProjection, error) {
-	if len(keys) > MaxSearchSourceFenceIDs {
-		return nil, errors.New("too many media source versions")
-	}
 	if len(keys) == 0 {
 		return map[MediaSourceVersionKey]MediaSourceProjection{}, nil
 	}
