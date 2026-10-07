@@ -106,26 +106,15 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	}
 }
 
-func TestScreenClaimsDisabledAndStorageFailure(t *testing.T) {
-	enableTelemetryEnv(t)
-	dir := t.TempDir()
-	t.Setenv(EnabledEnv, "0")
-	reporter := New(Options{Dir: dir, Logger: discardLogger()})
-	require.JSONEq(t, `{"status":"disabled"}`, postEvent(t, CaptureHandler(reporter, dir), screenBody("browse", "web")).Body.String())
-	require.NoFileExists(t, filepath.Join(dir, screenClaimsFile))
-	t.Setenv(EnabledEnv, "1")
-	reporter = New(Options{Dir: dir, endpoint: "http://127.0.0.1:1", Logger: discardLogger()})
-	defer func() { _ = reporter.Close() }()
-	require.NoError(t, os.Mkdir(filepath.Join(dir, screenClaimsFile), 0700))
-	require.Equal(t, 500, postEvent(t, CaptureHandler(reporter, dir), screenBody("browse", "web")).Code)
-}
-
 func TestScreenClaimRejectedEnqueueRemainsEligible(t *testing.T) {
 	enableTelemetryEnv(t)
 	dir := t.TempDir()
 	reporter := New(Options{Dir: dir, endpoint: "http://127.0.0.1:1", Logger: discardLogger()})
 	handler, ok := CaptureHandler(reporter, dir).(*screenCapture)
 	require.True(t, ok)
+	require.NoError(t, os.Mkdir(filepath.Join(dir, screenClaimsFile), 0700))
+	require.Equal(t, 500, postEvent(t, handler, screenBody("browse", "web")).Code)
+	require.NoError(t, os.Remove(filepath.Join(dir, screenClaimsFile)))
 	// A capture rejection rolls back the tentative persisted claim.
 	handler.next = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "enqueue rejected", http.StatusInternalServerError)

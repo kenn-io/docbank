@@ -2668,46 +2668,41 @@ func (f *fakeBackend) ReportScreen(_ context.Context, screen string) error {
 }
 
 func TestScreenReportingFollowsNavigationAndIgnoresPolling(t *testing.T) {
-	backend := newFakeBackend()
-	model, err := New(t.Context(), backend)
-	require.NoError(t, err)
-	model = runModelCommand(t, model, model.Init())
-	assert.Equal(t, []string{"browse"}, backend.screens)
-	model, _ = updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
-	model, cmd := updateModel(t, model, runeKey('?'))
-	model = runModelCommand(t, model, cmd)
-	assert.Equal(t, []string{"browse", "help"}, backend.screens)
-	assert.Contains(t, model.render(), "help")
-	model, cmd = updateModel(t, model, key(tea.KeyEscape))
-	model = runModelCommand(t, model, cmd)
-	assert.Equal(t, []string{"browse", "help", "browse"}, backend.screens)
-	model.reportedDay = "2000-01-01"
-	model, _ = updateModel(t, model, spinnerTickMsg{})
-	assert.Len(t, backend.screens, 3)
-	model, cmd = updateModel(t, model, runeKey('s'))
-	_ = runModelCommand(t, model, cmd)
-	assert.Equal(t, []string{"browse", "help", "browse", "browse"}, backend.screens)
-}
-
-func TestFailedScreenReportingRetriesOnlyOnNavigationOrNewDay(t *testing.T) {
-	backend := newFakeBackend()
-	backend.screenErr = errors.New("synthetic telemetry rejection")
-	model, err := New(t.Context(), backend)
-	require.NoError(t, err)
-	model = runModelCommand(t, model, model.Init())
-	for range 5 {
-		var cmd tea.Cmd
-		model, cmd = updateModel(t, model, runeKey('j'))
-		assert.Nil(t, cmd)
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"success", nil}, {"failure", errors.New("synthetic telemetry rejection")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := newFakeBackend()
+			backend.screenErr = tc.err
+			model, err := New(t.Context(), backend)
+			require.NoError(t, err)
+			model = runModelCommand(t, model, model.Init())
+			assert.Equal(t, []string{"browse"}, backend.screens)
+			if tc.err != nil {
+				for range 5 {
+					var cmd tea.Cmd
+					model, cmd = updateModel(t, model, runeKey('j'))
+					assert.Nil(t, cmd)
+				}
+				assert.Equal(t, []string{"browse"}, backend.screens)
+			}
+			model, _ = updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
+			model, cmd := updateModel(t, model, runeKey('?'))
+			model = runModelCommand(t, model, cmd)
+			assert.Equal(t, []string{"browse", "help"}, backend.screens)
+			assert.Contains(t, model.render(), "help")
+			model, cmd = updateModel(t, model, key(tea.KeyEscape))
+			model = runModelCommand(t, model, cmd)
+			assert.Equal(t, []string{"browse", "help", "browse"}, backend.screens)
+			model.reportedDay = "2000-01-01"
+			model, _ = updateModel(t, model, spinnerTickMsg{})
+			assert.Len(t, backend.screens, 3)
+			model, cmd = updateModel(t, model, runeKey('s'))
+			_ = runModelCommand(t, model, cmd)
+			assert.Equal(t, []string{"browse", "help", "browse", "browse"}, backend.screens)
+		})
 	}
-	assert.Equal(t, []string{"browse"}, backend.screens)
-	model.reportedDay = "2000-01-01"
-	model, _ = updateModel(t, model, spinnerTickMsg{})
-	assert.Len(t, backend.screens, 1)
-	model, cmd := updateModel(t, model, runeKey('s'))
-	model = runModelCommand(t, model, cmd)
-	assert.Equal(t, []string{"browse", "browse"}, backend.screens)
-	model, cmd = updateModel(t, model, runeKey('?'))
-	_ = runModelCommand(t, model, cmd)
-	assert.Equal(t, []string{"browse", "browse", "help"}, backend.screens)
 }
