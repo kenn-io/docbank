@@ -347,10 +347,9 @@ const spinnerInterval = 80 * time.Millisecond
 //
 //nolint:recvcheck // intentional Bubble Tea value-model pattern
 type Model struct {
-	reportedScreen string
-	reportedDay    string
-	ctx            context.Context
-	backend        Backend
+	reportedDay string
+	ctx         context.Context
+	backend     Backend
 
 	mode      viewMode
 	directory api.Node
@@ -510,7 +509,7 @@ func New(ctx context.Context, backend Backend) (Model, error) {
 	input.SetWidth(48)
 	return Model{
 		ctx: ctx, backend: backend, loading: true,
-		reportedScreen: "browse", reportedDay: time.Now().UTC().Format(time.DateOnly),
+		reportedDay: time.Now().UTC().Format(time.DateOnly),
 		searchInput: input, styles: newStyles(true), requestID: 1,
 		spinnerActive: true, sortField: sortByName, naturalMode: naturalNames,
 		naturalProfilesRequest: 1,
@@ -3045,8 +3044,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	screen, day := next.visibleScreen(), time.Now().UTC().Format(time.DateOnly)
 	_, input := message.(tea.KeyPressMsg)
-	if !next.quitting && (screen != m.visibleScreen() || input && next.reportedDay != day) && (next.reportedScreen != screen || next.reportedDay != day) {
-		next.reportedScreen, next.reportedDay = screen, day
+	if !next.quitting && (screen != m.visibleScreen() || input && next.reportedDay != day) {
+		next.reportedDay = day
 		cmd = tea.Batch(cmd, next.reportScreen(screen))
 	}
 	return next, cmd

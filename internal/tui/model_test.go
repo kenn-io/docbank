@@ -1631,7 +1631,6 @@ func TestProcessingBuildWaitsForInitialCoverage(t *testing.T) {
 	model, err := New(t.Context(), backend)
 	require.NoError(t, err)
 	model.processingOpen, model.processingLoading = true, true
-	model.reportedScreen = "processing"
 	model.processingPlan = &backend.plan
 	model, cmd := updateModel(t, model, runeKey('b'))
 	assert.Nil(t, cmd)

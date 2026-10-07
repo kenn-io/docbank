@@ -777,7 +777,6 @@ func TestNaturalSearchInactiveSettingsDoNotSubmit(t *testing.T) {
 	model.searching = true
 	model.searchInput.SetValue("unsubmitted")
 	model.mode, model.searchQuery = modeSearch, "accepted"
-	model.reportedScreen = "search"
 	for _, key := range []tea.KeyPressMsg{key(tea.KeyTab), {Code: 'r', Mod: tea.ModCtrl}} {
 		before := model.requestID
 		var cmd tea.Cmd

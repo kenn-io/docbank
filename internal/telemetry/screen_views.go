@@ -46,7 +46,7 @@ func CaptureHandler(r *Reporter, dir string) http.Handler {
 
 func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if r.Method != http.MethodPost || err != nil || media != "application/json" {
+	if err != nil || media != "application/json" {
 		h.next.ServeHTTP(w, r)
 		return
 	}
