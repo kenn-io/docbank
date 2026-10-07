@@ -31,11 +31,12 @@ export function isAppShortcutSuppressed(
   event: KeyboardEvent,
   unavailable: boolean,
   root: ParentNode = document,
+  allowedTargetSelector?: string,
 ): boolean {
   if (event.defaultPrevented || event.isComposing || unavailable) return true;
   if (root.querySelector(OPEN_DIALOGS)) return true;
   const target = event.target;
-  return target instanceof Element && target.closest(NATIVE_KEYBOARD_TARGETS) !== null;
+  return target instanceof Element && target.closest(NATIVE_KEYBOARD_TARGETS) !== null && !(allowedTargetSelector && target.closest(allowedTargetSelector));
 }
 
 export type InspectionBoundary = "first" | "last" | "empty";

@@ -29,7 +29,7 @@
     });
   });
   const totalHeight = $derived(chunks.reduce((sum, chunk) => sum + chunk.layout.intrinsicHeight, 0));
-  const years = $derived([...new Set(groups.map(group => group.year).filter(Boolean))]);
+  const years = $derived([...new Set(groups.filter(group => group.year).flatMap(group => group.items.map(item => item.capture_time!.slice(0, 4))))].sort().reverse());
 
   $effect(() => {
     if (!container) return;
@@ -62,7 +62,7 @@
   });
 
   function jump(year: string) {
-    const chunk = chunks.find(chunk => chunk.group.year === year);
+    const chunk = chunks.find(chunk => chunk.group.year && chunk.group.items.some(item => item.capture_time!.slice(0, 4) === year));
     if (chunk && container) {
       container.scrollTo({ top: Math.ceil(chunk.offset) });
       scrollTop = Math.ceil(chunk.offset);

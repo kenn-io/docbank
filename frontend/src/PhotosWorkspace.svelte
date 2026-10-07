@@ -22,7 +22,7 @@
     return () => photos.cancelPending();
   });
   function escape(event: KeyboardEvent) {
-    if (event.key === "Escape" && !isAppShortcutSuppressed(event, false)) photos.clearSelection();
+    if (event.key === "Escape" && !isAppShortcutSuppressed(event, false, document, ".photo-cell")) photos.clearSelection();
   }
 </script>
 

@@ -51,3 +51,13 @@ it("groups recorded months and capture sessions across appended pages", () => {
   expect(parsed[0].items).toHaveLength(5);
   expect(parsed[1].key).toBe("undated");
 });
+
+it("keeps captures outside the civil or UTC year domain undated", () => {
+  const invalid = ["0000-01-02", "10000-01-02", "0001-01-01T00:00:00+01:00", "9999-12-31T23:00:00-02:00"];
+  const items = [...invalid.map((capture, index) => photo(index, capture)), photo(4, "0001-01-01T01:00:00+01:00"), photo(5, "9999-12-31T22:00:00-01:00")];
+  for (const grouping of ["months", "sessions"] as const) {
+    const groups = groupPhotos(items, grouping);
+    expect(groups.at(-1)).toMatchObject({ key: "undated", year: "", items: items.slice(0, 4) });
+    expect(groups.slice(0, -1).flatMap(group => group.items)).toHaveLength(2);
+  }
+});

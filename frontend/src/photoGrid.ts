@@ -84,7 +84,10 @@ function captureClock(value: string): number {
   const match = /^(\d{4}-\d{2}-\d{2})(?:T(\d{1,2})(?::(\d{2}))?(?::(\d{2})([.,]\d+)?)?)?(Z|[+-]\d{2}:\d{2})?$/.exec(value);
   if (!match) return NaN;
   const [, date, hour = "00", minute = "00", second = "00", fraction = "", zone = "Z"] = match;
-  return Date.parse(`${date}T${hour.padStart(2, "0")}:${minute}:${second}${fraction.replace(",", ".")}${zone}`);
+  if (Number(date.slice(0, 4)) < 1) return NaN;
+  const clock = Date.parse(`${date}T${hour.padStart(2, "0")}:${minute}:${second}${fraction.replace(",", ".")}${zone}`);
+  const utcYear = new Date(clock).getUTCFullYear();
+  return utcYear >= 1 && utcYear <= 9999 ? clock : NaN;
 }
 
 export function groupPhotos(items: PhotoBrowseRow[], grouping: "months" | "sessions"): PhotoGroup[] {
