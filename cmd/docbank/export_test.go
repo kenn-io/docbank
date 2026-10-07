@@ -162,13 +162,7 @@ func TestExportCLIHistoricalVersionsAndExplicitRelease(t *testing.T) {
 	require.Empty(t, stages)
 	_, err = runCLI(t, "export", "cancel", first)
 	require.ErrorContains(t, err, "export_conflict")
-	// The client can finish downloading before the server releases its lease.
-	require.Eventually(t, func() bool {
-		output, err = runCLI(t, "export", "release", first, "--json")
-		code, _ := daemonconn.ProblemCode(err)
-		return code != "export_retained"
-	}, 30*time.Second, 25*time.Millisecond)
-	require.NoError(t, err)
+	output = releaseCLIExport(t, first)
 	require.JSONEq(t, fmt.Sprintf(`{"job_id":%q,"released":true}`, first), output)
 	missing := filepath.Join(t.TempDir(), "missing.zip")
 	_, err = runCLI(t, "export", "download", first, missing)
@@ -181,4 +175,18 @@ func TestExportCLIHistoricalVersionsAndExplicitRelease(t *testing.T) {
 	require.NoError(t, err)
 	waitCLIExport(t, third)
 	assertExportOriginals(t, destination, old, current)
+}
+
+func releaseCLIExport(t *testing.T, id string) string {
+	t.Helper()
+	var output string
+	var err error
+	// The client can finish downloading before the server releases its lease.
+	require.Eventually(t, func() bool {
+		output, err = runCLI(t, "export", "release", id, "--json")
+		code, _ := daemonconn.ProblemCode(err)
+		return code != "export_retained"
+	}, 30*time.Second, 25*time.Millisecond)
+	require.NoError(t, err)
+	return output
 }

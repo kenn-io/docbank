@@ -218,12 +218,7 @@ func exportReportOriginals(t *testing.T, originals []reportOriginal) (string, bu
 	require.Equal(t, plan.Fingerprint, receipt.PlanFingerprint)
 	require.NotNil(t, job.Receipt)
 	require.Equal(t, *job.Receipt, receipt)
-	require.Eventually(t, func() bool {
-		_, err = runCLI(t, "export", "release", jobID)
-		code, _ := daemonconn.ProblemCode(err)
-		return code != "export_retained"
-	}, 30*time.Second, 25*time.Millisecond)
-	require.NoError(t, err)
+	releaseCLIExport(t, jobID)
 	return path, receipt
 }
 
