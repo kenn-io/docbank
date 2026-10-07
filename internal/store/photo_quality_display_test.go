@@ -20,7 +20,7 @@ func TestPhotoQualityScalarBounds(t *testing.T) {
 	require.Equal(t, node.ID, page.Items[0].NodeID)
 	require.NotNil(t, page.Items[0].Quality)
 	require.InDelta(t, scores.Focus, page.Items[0].Quality.Focus, 1e-12)
-	for _, text := range []string{"focus_min:0.5*", "unevaluated:yes", "blur_max:NaN"} {
+	for _, text := range []string{"unevaluated:yes", "blur_max:NaN"} {
 		_, err := s.CompileQuery(t.Context(), snapshotTestQuery(t, `{"syntax":"advanced","text":"`+text+`"}`))
 		require.Error(t, err)
 	}

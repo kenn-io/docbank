@@ -23,13 +23,17 @@ import (
 func TestPhotoBrowseRouteContract(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
+	var qualityNode store.Node
 	for _, name := range []string{"a.jpg", "b.jpg", "c.mp4"} {
 		mime := "image/jpeg"
 		if strings.HasSuffix(name, "mp4") {
 			mime = "video/mp4"
 		}
-		_, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 10, mime)
+		node, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 10, mime)
 		require.NoError(t, err)
+		if name == "a.jpg" {
+			qualityNode = node
+		}
 	}
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"filters":{"kinds":["photo"]}}`), PageSize: 1})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -41,6 +45,8 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 	require.Equal(t, "missing", page.Items[0].Previews.Grid.State)
 	require.Empty(t, page.Items[0].Previews.Grid.URL)
 	require.Nil(t, page.Items[0].CaptureTime)
+	require.Equal(t, "pending", page.Items[0].Quality.State)
+	require.Contains(t, body, `"signals":null`)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"filters":{"kinds":["photo"]}}`), PageSize: 1, Cursor: page.NextCursor})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var second api.PhotoBrowsePage
@@ -51,6 +57,44 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"filters":{"kinds":["video"]}}`), PageSize: 1, Cursor: page.NextCursor})
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	require.Equal(t, "invalid_photo_cursor", decodeProblem(t, body).Code)
+	request := api.PhotoBrowseRequest{Query: api.QueryPayload(`{"filters":{"kinds":["photo"]},"sort":{"field":"name","direction":"asc"}}`)}
+	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), store.PhotoVisualPreviewTarget{VersionID: qualityNode.CurrentVersionID, SourceSHA256: qualityNode.BlobHash, Size: 10, MediaType: "image/jpeg"}, document.PhotoQualitySignals{Blur: 1}))
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Equal(t, "ready", page.Items[0].Quality.State)
+	require.Contains(t, body, `"focus":0`)
+	require.Zero(t, page.Items[0].Quality.Signals.Focus)
+	for _, state := range []document.VisualPreviewState{document.VisualPreviewUnsupported, document.VisualPreviewFailed} {
+		terminal, err := s.CreateFile(t.Context(), s.RootID(), string(state)+".jpg", testHash(string(state)), 10, "image/jpeg")
+		require.NoError(t, err)
+		recipe, err := document.BuiltInVisualPreviewRecipe("grid")
+		require.NoError(t, err)
+		canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{
+			ContractVersion: document.VisualPreviewContractV1, SourceSHA256: terminal.BlobHash, Recipe: recipe, State: state,
+			Failure: &document.VisualPreviewFailureV1{Code: "decode_failed", Detail: "synthetic terminal preview"},
+		})
+		require.NoError(t, err)
+		_, err = s.PublishVisualPreview(t.Context(), terminal.CurrentVersionID, canonical, nil)
+		require.NoError(t, err)
+		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		require.NoError(t, json.Unmarshal([]byte(body), &page))
+		found := false
+		for _, row := range page.Items {
+			if row.ContentVersionID == terminal.CurrentVersionID {
+				require.Equal(t, "unavailable", row.Quality.State)
+				require.Nil(t, row.Quality.Signals)
+				found = true
+			}
+		}
+		require.True(t, found)
+		require.Contains(t, body, `"signals":null`)
+	}
+	request.Query = api.QueryPayload(`{"filters":{"kinds":["video"]}}`)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NotContains(t, body, `"quality"`)
 	for _, raw := range []string{`{"filters":{"iso_min":1.0}}`, `{"filters":{"iso_min":1e1}}`, `{"filters":{"gps_bounds":{"south":"0","west":"0","north":"91","east":"0"}}}`} {
 		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(raw)})
 		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
