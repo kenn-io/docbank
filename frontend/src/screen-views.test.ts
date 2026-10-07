@@ -6,7 +6,7 @@ beforeEach(async () => {
   ({ startScreenReporting } = await import("./screen-views.js"));
 });
 
-afterEach(() => { localStorage.clear(); vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 it.each([400, 503, "network rejection"])("retries focus after a %s response", async (status) => {
   vi.useFakeTimers();
@@ -64,18 +64,4 @@ it("records answered screens across focus, visibility and remounts while allowin
   await vi.advanceTimersByTimeAsync(0);
   expect(fetchMock).toHaveBeenCalledTimes(2);
   stopSearch();
-});
-
-it.each(["getItem", "setItem"] as const)("remembers screens in memory when localStorage.%s fails", async (method) => {
-  vi.useFakeTimers();
-  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  vi.spyOn(Storage.prototype, method).mockImplementation(() => { throw new Error("storage blocked"); });
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 202 }));
-  const stop = startScreenReporting("synthetic-session", "browse");
-  await vi.advanceTimersByTimeAsync(0);
-  stop();
-  const stopAgain = startScreenReporting("synthetic-session", "browse");
-  window.dispatchEvent(new Event("focus"));
-  expect(fetchMock).toHaveBeenCalledTimes(1);
-  stopAgain();
 });

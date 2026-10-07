@@ -15,7 +15,6 @@ afterEach(() => {
   cleanup();
   history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
-  localStorage.clear();
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   vi.restoreAllMocks();
 });
