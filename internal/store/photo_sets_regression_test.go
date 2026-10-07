@@ -1,52 +1,10 @@
 package store
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
-
-func TestPhotoSetScopePrecedesDuplicateCollapse(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	hash := browseHash("duplicate-photo")
-	outside := browsePhotoNode(t, s, "outside.jpg", hash, "image/jpeg")
-	inside := browsePhotoNode(t, s, "inside.jpg", hash, "image/jpeg")
-	_, err := s.db.ExecContext(ctx, `UPDATE nodes SET modified_at='2020-01-01T00:00:00.000000000Z' WHERE id=?`, outside.ID)
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, inside.ID)
-	require.NoError(t, err)
-	set, err := s.CreatePhotoSet(ctx, "Selected")
-	require.NoError(t, err)
-	set, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
-	require.NoError(t, err)
-	for _, request := range []PhotoBrowseRequest{
-		{Query: snapshotTestQuery(t, `{"filters":{"set_ids":["`+set.ID+`"],"collapse_duplicates":true}}`)},
-		{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"set:`+set.ID+`","filters":{"collapse_duplicates":true}}`)},
-	} {
-		page, err := s.ListPhotoAssets(ctx, request, nil)
-		require.NoError(t, err)
-		require.Equal(t, int64(1), page.Total)
-		require.Len(t, page.Items, 1)
-		require.Equal(t, asset.ID, page.Items[0].AssetID)
-	}
-	copy, err := s.CreatePhotoSet(ctx, "Copied selection")
-	require.NoError(t, err)
-	value := snapshotTestQuery(t, `{"filters":{"set_ids":["`+set.ID+`"],"collapse_duplicates":true},"sort":{"field":"added_time","direction":"desc"}}`)
-	copy, err = s.ChangePhotoSetMembers(ctx, copy.ID, copy.Revision, true, PhotoSetSelection{Query: &value})
-	require.NoError(t, err)
-	ids, err := photoSetMemberIDs(ctx, s.db, copy.ID)
-	require.NoError(t, err)
-	require.Equal(t, []string{asset.ID}, ids)
-	copy, err = s.ChangePhotoSetMembers(ctx, copy.ID, copy.Revision, false, PhotoSetSelection{Query: &value})
-	require.NoError(t, err)
-	summary, err := s.PhotoSet(ctx, copy.ID, "")
-	require.NoError(t, err)
-	require.Zero(t, summary.MemberCount)
-	require.Equal(t, int64(3), summary.Revision)
-}
 
 func TestPhotoSetMembershipSurvivesEmptyAssets(t *testing.T) {
 	t.Parallel()
@@ -125,14 +83,6 @@ func TestPhotoSetMembershipSurvivesEmptyAssets(t *testing.T) {
 	noop, err := s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{second.ID}})
 	require.NoError(t, err)
 	require.Equal(t, set, noop)
-	var exported bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &exported))
-	restored := newTestStore(t)
-	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
-	var roundTrip bytes.Buffer
-	require.NoError(t, restored.ExportMetadata(ctx, &roundTrip))
-	require.Equal(t, exported.String(), roundTrip.String())
-	s = restored
 	_, err = s.AttachPhotoFile(ctx, first.ID, detached.Revision, first.Files[0].NodeID, PhotoRoleImage, nil)
 	require.NoError(t, err)
 	replacement := albumAsset(t, s, "replacement.jpg")

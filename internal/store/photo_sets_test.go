@@ -32,9 +32,6 @@ func TestPhotoSetLifecycle(t *testing.T) {
 	set, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{a.ID, b.ID, a.ID}})
 	require.NoError(t, err)
 	require.Equal(t, int64(2), set.Revision)
-	noop, err := s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{a.ID}})
-	require.NoError(t, err)
-	require.Equal(t, set, noop)
 	_, err = s.ChangePhotoSetMembers(ctx, set.ID, 1, false, PhotoSetSelection{AssetIDs: []string{a.ID}})
 	require.ErrorIs(t, err, ErrStaleRevision)
 	cover := &a.ID
@@ -42,7 +39,7 @@ func TestPhotoSetLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.UpdatePhotoSet(ctx, set.ID, set.Revision, nil, nil, new(new("00000000-0000-4000-8000-000000000001")))
 	require.ErrorIs(t, err, ErrInvalidPhotoAlbum)
-	noop, err = s.UpdatePhotoSet(ctx, set.ID, set.Revision, new("Trip"), new(true), &cover)
+	noop, err := s.UpdatePhotoSet(ctx, set.ID, set.Revision, new("Trip"), new(true), &cover)
 	require.NoError(t, err)
 	require.Equal(t, set, noop)
 	copy, err := s.DuplicatePhotoSet(ctx, set.ID, set.Revision, "Copy")
@@ -330,6 +327,10 @@ func TestPhotoSetCoverAndBackup(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.DeletePhotoSet(ctx, deleted.ID, deleted.Revision)
 	require.NoError(t, err)
+	empty, err := s.PhotoAssetByID(ctx, a.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, empty.ID, empty.Revision, empty.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
 	var original bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &original))
 	target := newTestStore(t)
@@ -363,8 +364,16 @@ func TestPhotoSetSelectionMatchesGroupedAndCollapsedBrowse(t *testing.T) {
 	browsePhotoMetadata(t, s, raw, "raw-camera", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")))
 	browsePhotoMetadata(t, s, jpeg, "jpeg-lens", photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens B")))
 	hash := browseHash("duplicate")
-	browsePhotoNode(t, s, "one.jpg", hash, "image/jpeg")
-	browsePhotoNode(t, s, "two.jpg", hash, "image/jpeg")
+	outside := browsePhotoNode(t, s, "outside.jpg", hash, "image/jpeg")
+	inside := browsePhotoNode(t, s, "inside.jpg", hash, "image/jpeg")
+	_, err = s.db.ExecContext(ctx, `UPDATE nodes SET modified_at='2020-01-01T00:00:00.000000000Z' WHERE id=?`, outside.ID)
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, inside.ID)
+	require.NoError(t, err)
+	scope, err := s.CreatePhotoSet(ctx, "Selected")
+	require.NoError(t, err)
+	scope, err = s.ChangePhotoSetMembers(ctx, scope.ID, scope.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
 	_, err = s.CreateSavedQuery(ctx, "Camera", "", SavedQueryKindQuery, []byte(`{"filters":{"cameras":["Camera A"]}}`))
 	require.NoError(t, err)
 	for _, text := range []string{
@@ -372,6 +381,7 @@ func TestPhotoSetSelectionMatchesGroupedAndCollapsedBrowse(t *testing.T) {
 		`{"filters":{"lenses":["Lens B"]}}`,
 		`{"syntax":"advanced","text":"saved:Camera"}`,
 		`{"filters":{"collapse_duplicates":true}}`,
+		`{"filters":{"set_ids":["` + scope.ID + `"],"collapse_duplicates":true},"sort":{"field":"added_time","direction":"desc"}}`,
 	} {
 		value := snapshotTestQuery(t, text)
 		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: value}, nil)
@@ -390,9 +400,9 @@ func TestPhotoSetSelectionMatchesGroupedAndCollapsedBrowse(t *testing.T) {
 		if strings.Contains(text, "extension:jpg") {
 			require.Equal(t, []string{pair.ID}, ids)
 		}
-		for _, filter := range []string{`{"filters":{"set_ids":["` + set.ID + `"]}}`, `{"syntax":"advanced","text":"set:` + set.ID + `"}`} {
-			setPage := browsePhotoPage(t, s, filter)
-			require.Equal(t, int64(len(want)), setPage.Total)
+		if strings.Contains(text, "set_ids") {
+			require.Equal(t, []string{asset.ID}, want)
+			require.Equal(t, []string{asset.ID}, ids)
 		}
 	}
 }

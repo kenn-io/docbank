@@ -95,7 +95,7 @@ func (s *Store) ListPhotoAssets(
 		from, sortKey, ok := photoBrowseOrder(sortField)
 		if sortField == "added_time" {
 			if len(compiled.Query.Filters.SetIDs) != 1 {
-				return ErrInvalidPhotoQuery
+				return fmt.Errorf("%w: added_time requires exactly one filters.set_ids album", ErrInvalidPhotoQuery)
 			}
 			from = `photo_set_members sm CROSS JOIN photo_assets a ON a.asset_id=sm.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`)
 			sortKey, ok = "sm.added_at", true
