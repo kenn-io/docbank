@@ -570,7 +570,8 @@ retrieval. See [processing consent](#processing-consent) before choosing a mode
 that embeds query text.
 
 For exact recording attribution, add `media_sources`, up to 4,096 distinct
-objects with `source_id`, `source_version_id`, and `content_version_id`. Every
+objects. Omission keeps ordinary search; empty arrays and `null` are rejected.
+Each object names `source_id`, `source_version_id`, and `content_version_id`. Every
 content version must belong to the fence. Optional `supplied_input_ids` permits
 the selected supplied transcript only when its exact input ID is in the set.
 Omitting the set permits any selected input; an empty array permits generated

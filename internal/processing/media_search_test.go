@@ -208,6 +208,9 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 	bad.MediaSources[0].ContentVersionID = uuid.New().String()
 	_, err = service.Search(t.Context(), bad)
 	require.ErrorIs(t, err, ErrMediaSearchInvalid)
+	bad.MediaSources = []retrieval.MediaSourceSelector{}
+	_, err = service.Search(t.Context(), bad)
+	require.ErrorIs(t, err, ErrMediaSearchInvalid)
 	bad.MediaSources = slices.Concat(sources[:1], sources[:1])
 	bad.MediaSources[1].SuppliedInputIDs = []string{processingHash("another-input")}
 	_, err = service.Search(t.Context(), bad)

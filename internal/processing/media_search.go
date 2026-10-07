@@ -13,7 +13,7 @@ import (
 var ErrMediaSearchInvalid = errors.New("media search selectors are invalid")
 
 func (service *Service) searchMediaSources(ctx context.Context, request SearchRequest, ids []string, prepared preparedSearch) (retrieval.Report, error) {
-	if (prepared.mode != retrieval.ModeLexical && prepared.mode != retrieval.ModeAuto) || request.Rerank {
+	if len(request.MediaSources) == 0 || (prepared.mode != retrieval.ModeLexical && prepared.mode != retrieval.ModeAuto) || request.Rerank {
 		return retrieval.Report{}, ErrMediaSearchInvalid
 	}
 	fence := make(map[string]bool, len(ids))

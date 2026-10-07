@@ -234,13 +234,13 @@ type CoverageReport struct {
 }
 
 type DocumentSearchRequest struct {
-	MediaSources []DocumentMediaSourceSelector `json:"media_sources,omitzero" maxItems:"4096"`
-	Query        string                        `json:"query" minLength:"1" maxLength:"8192"`
-	Mode         string                        `json:"mode" enum:"auto,lexical,semantic,hybrid"`
-	Limit        int                           `json:"limit,omitzero" minimum:"1" maximum:"100"`
-	Profile      string                        `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
-	BindingID    string                        `json:"binding_id,omitzero" maxLength:"128"`
-	Fence        DocumentSourceFence           `json:"fence"`
+	MediaSources MediaSearchSources  `json:"media_sources,omitzero" minItems:"1" maxItems:"4096" nullable:"false"`
+	Query        string              `json:"query" minLength:"1" maxLength:"8192"`
+	Mode         string              `json:"mode" enum:"auto,lexical,semantic,hybrid"`
+	Limit        int                 `json:"limit,omitzero" minimum:"1" maximum:"100"`
+	Profile      string              `json:"profile" minLength:"1" maxLength:"128" pattern:"^[a-z][a-z0-9_-]*$"`
+	BindingID    string              `json:"binding_id,omitzero" maxLength:"128"`
+	Fence        DocumentSourceFence `json:"fence"`
 
 	Explain      bool `json:"explain,omitzero"`
 	Rerank       bool `json:"rerank,omitzero"`
@@ -333,6 +333,15 @@ type DocumentMediaSource struct {
 	SourceID         string `json:"source_id" minLength:"1" maxLength:"256"`
 	SourceVersionID  string `json:"source_version_id" minLength:"1" maxLength:"256"`
 	ContentVersionID string `json:"content_version_id" format:"uuid"`
+}
+
+type MediaSearchSources []DocumentMediaSourceSelector
+
+func (sources *MediaSearchSources) UnmarshalJSON(raw []byte) error {
+	if bytes.Equal(raw, []byte("null")) {
+		return errors.New("media sources must be an array")
+	}
+	return json.Unmarshal(raw, (*[]DocumentMediaSourceSelector)(sources))
 }
 
 type MediaSearchInputIDs []string

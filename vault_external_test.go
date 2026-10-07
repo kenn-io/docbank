@@ -2823,6 +2823,28 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, control.Results, 1)
 	require.Equal(t, "node_name", control.Results[0].Evidence[0].Kind)
+	for _, tc := range []struct {
+		name    string
+		sources []docbank.DocumentMediaSourceSelector
+		invalid bool
+	}{
+		{"empty", []docbank.DocumentMediaSourceSelector{}, true},
+		{"selected", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			selected := request
+			selected.MediaSources = tc.sources
+			report, err := vault.SearchDocuments(t.Context(), selected)
+			if tc.invalid {
+				require.EqualError(t, err, "media search selectors are invalid")
+			} else {
+				require.NoError(t, err)
+				require.True(t, report.MediaSourceSelection)
+			}
+			require.Empty(t, report.Results, "explicit selection never returns ordinary filename hits")
+		})
+	}
+
 	request.ContentFirst = true
 	report, err := vault.SearchDocuments(t.Context(), request)
 	require.NoError(t, err)

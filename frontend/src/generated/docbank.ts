@@ -1921,7 +1921,10 @@ export interface DocumentSearchRequest {
      * @maximum 100
      */
   limit?: number;
-  /** @maxItems 4096 */
+  /**
+     * @minItems 1
+     * @maxItems 4096
+     */
   media_sources?: DocumentMediaSourceSelector[];
   mode: DocumentSearchRequestMode;
   /**

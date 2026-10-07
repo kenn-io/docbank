@@ -183,9 +183,12 @@ func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchReque
 		return DocumentSearchReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
-	sources := make([]retrieval.MediaSourceSelector, len(request.MediaSources))
-	for i, source := range request.MediaSources {
-		sources[i] = retrieval.MediaSourceSelector(source)
+	var sources []retrieval.MediaSourceSelector
+	if request.MediaSources != nil {
+		sources = make([]retrieval.MediaSourceSelector, len(request.MediaSources))
+		for i, source := range request.MediaSources {
+			sources[i] = retrieval.MediaSourceSelector(source)
+		}
 	}
 	report, err := v.processing.Search(ctx, internalprocessing.SearchRequest{Query: request.Query,
 		MediaSources: sources,

@@ -646,6 +646,9 @@ func fromProcessingCoverageClass(item processing.CoverageClass) CoverageClass {
 }
 
 func toMediaSearchSources(sources []DocumentMediaSourceSelector) []retrieval.MediaSourceSelector {
+	if sources == nil {
+		return nil
+	}
 	result := make([]retrieval.MediaSourceSelector, len(sources))
 	for i, source := range sources {
 		result[i] = retrieval.MediaSourceSelector{SourceID: source.SourceID, SourceVersionID: source.SourceVersionID, ContentVersionID: source.ContentVersionID, SuppliedInputIDs: source.SuppliedInputIDs}

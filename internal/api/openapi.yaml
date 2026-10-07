@@ -4074,6 +4074,7 @@ components:
           items:
             $ref: "#/components/schemas/DocumentMediaSourceSelector"
           maxItems: 4096
+          minItems: 1
           type: array
         mode:
           enum:

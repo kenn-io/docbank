@@ -1417,7 +1417,7 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if err != nil {
 		return retrieval.Report{}, err
 	}
-	if len(request.MediaSources) != 0 {
+	if request.MediaSources != nil {
 		return service.searchMediaSources(ctx, request, ids, prepared)
 	}
 	if len(profile.portable.Embeddings) != 0 && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
