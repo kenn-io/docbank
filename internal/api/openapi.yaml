@@ -8570,11 +8570,15 @@ components:
     MediaTranscriptEvidence:
       additionalProperties: false
       properties:
+        build_id:
+          type: string
         completeness:
           type: string
         has_omissions:
           type: boolean
         origin:
+          type: string
+        supplied_input_id:
           type: string
         truncated:
           type: boolean

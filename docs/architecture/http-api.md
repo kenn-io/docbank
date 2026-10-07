@@ -374,6 +374,12 @@ unit keeps its text, an optional `speaker`, and an optional `time_span` with
 omit `time_span`. `origin` is `supplied` when the build came from a supplied
 transcript or caption, and `generated` otherwise.
 
+`transcript.build_id` identifies that exact active build. Supplied evidence also
+includes `transcript.supplied_input_id`, the input bound to that build. A failed
+retry keeps the identities of the earlier covering build. Generated evidence
+omits `supplied_input_id`. Responses without ready evidence omit `transcript`.
+Older servers may omit both identity fields.
+
 A content version that no longer matches the source version or is no longer
 the file's current version, or a build whose supplied input this source
 version cannot see, returns `stale` with no text. Unknown or hidden sources

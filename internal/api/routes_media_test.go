@@ -168,6 +168,8 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	require.Equal(t, "ready", transcriptResult.EvidenceState)
 	require.NotNil(t, transcriptResult.Transcript)
 	require.Equal(t, "supplied", transcriptResult.Transcript.Origin)
+	require.Equal(t, search.Results[0].Evidence[0].BuildID, transcriptResult.Transcript.BuildID)
+	require.Equal(t, artifact.SuppliedInputID, transcriptResult.Transcript.SuppliedInputID)
 	require.Len(t, transcriptResult.Transcript.Units, 1)
 	require.Equal(t, "synthetic exact phrase\n", transcriptResult.Transcript.Units[0].Text)
 	staleTranscript, err := c.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID,

@@ -443,6 +443,13 @@ func TestMediaProcessingFreezesSelectedInputAndRevocation(t *testing.T) {
 		require.NoError(t, rendition.Reader.Verify())
 		require.NoError(t, rendition.Reader.Close())
 		require.Contains(t, string(body), phrase)
+		transcript, transcriptErr := vault.MediaTranscript(t.Context(), MediaTranscriptRequest{
+			SourceID: mediaReceipt.SourceID, SourceVersionID: queued.SourceVersionID,
+			ContentVersionID: mediaReceipt.ContentVersionID})
+		require.NoError(t, transcriptErr)
+		require.NotNil(t, transcript.Transcript)
+		require.Equal(t, rendition.BuildID, transcript.Transcript.BuildID)
+		require.Equal(t, inputID, transcript.Transcript.SuppliedInputID)
 		return queued
 	}
 	firstJob := process("00000000-0000-4000-8000-000000000425",

@@ -188,11 +188,13 @@ type MediaTranscriptUnit struct {
 }
 
 type MediaTranscriptEvidence struct {
-	Origin       string
-	Completeness string
-	Truncated    bool
-	HasOmissions bool
-	Units        []MediaTranscriptUnit
+	BuildID         string
+	SuppliedInputID string
+	Origin          string
+	Completeness    string
+	Truncated       bool
+	HasOmissions    bool
+	Units           []MediaTranscriptUnit
 }
 
 type MediaTranscript struct {

@@ -209,7 +209,8 @@ func fromInternalMediaTranscript(value internalprocessing.MediaTranscript) Media
 	if value.Transcript == nil {
 		return result
 	}
-	result.Transcript = &MediaTranscriptEvidence{Origin: value.Transcript.Origin,
+	result.Transcript = &MediaTranscriptEvidence{BuildID: value.Transcript.BuildID,
+		SuppliedInputID: value.Transcript.SuppliedInputID, Origin: value.Transcript.Origin,
 		Completeness: value.Transcript.Completeness, Truncated: value.Transcript.Truncated,
 		HasOmissions: value.Transcript.HasOmissions,
 		Units:        make([]MediaTranscriptUnit, len(value.Transcript.Units))}

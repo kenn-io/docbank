@@ -33,11 +33,13 @@ type MediaTranscriptUnit struct {
 }
 
 type MediaTranscriptEvidence struct {
-	Origin       string
-	Completeness string
-	Truncated    bool
-	HasOmissions bool
-	Units        []MediaTranscriptUnit
+	BuildID         string
+	SuppliedInputID string
+	Origin          string
+	Completeness    string
+	Truncated       bool
+	HasOmissions    bool
+	Units           []MediaTranscriptUnit
 }
 
 // MediaTranscript is the result of an exact retained-evidence read.
@@ -137,7 +139,8 @@ func (service *Service) MediaTranscript(
 	if evidence.Checksum != view.Build.EvidenceChecksum {
 		return result, errors.New("normalized evidence disagrees with its build checksum")
 	}
-	transcript := MediaTranscriptEvidence{Origin: origin, Completeness: string(view.Build.Completeness),
+	transcript := MediaTranscriptEvidence{BuildID: view.Build.ID, SuppliedInputID: inputBinding,
+		Origin: origin, Completeness: string(view.Build.Completeness),
 		Truncated: view.Build.Truncated, HasOmissions: len(evidence.Omissions) > 0,
 		Units: make([]MediaTranscriptUnit, len(evidence.Units))}
 	for i, unit := range evidence.Units {
