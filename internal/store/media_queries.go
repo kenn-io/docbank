@@ -136,19 +136,19 @@ func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys 
 		return nil, err
 	}
 	result := make(map[MediaSourceVersionKey]MediaSourceProjection, len(keys))
+	defer func(rows *sql.Rows) { _ = rows.Close() }(rows)
 	bySource := make(map[string][]MediaSourceVersionKey)
 	for rows.Next() {
 		var item MediaSourceProjection
 		var position int
 		if err := rows.Scan(&item.SourceID, &item.Kind, &item.SourceVersionID, &item.ContentVersionID, &item.OccurrenceID, &item.Filename, &item.CaptureJSON, &position); err != nil {
-			_ = rows.Close()
 			return nil, err
 		}
 		key := MediaSourceVersionKey{item.SourceID, item.SourceVersionID}
 		result[key] = item
 		bySource[item.SourceID] = append(bySource[item.SourceID], key)
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	type operation struct {
@@ -163,11 +163,11 @@ func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys 
 	if err != nil {
 		return nil, err
 	}
+	defer func(rows *sql.Rows) { _ = rows.Close() }(rows)
 	for rows.Next() {
 		var sourceID, raw string
 		var op operation
 		if err := rows.Scan(&sourceID, &op.verb, &raw, &op.updated, &op.id); err != nil {
-			_ = rows.Close()
 			return nil, err
 		}
 		if len(bySource[sourceID]) == 0 {
@@ -176,12 +176,11 @@ func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys 
 		op.receipt, err = canonical.Decode[MediaPublicationReceipt]([]byte(raw))
 		op.processing = strings.Contains(raw, `"processing_profile"`)
 		if err != nil {
-			_ = rows.Close()
 			return nil, fmt.Errorf("decoding media receipt: %w", err)
 		}
 		ops[sourceID] = append(ops[sourceID], op)
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	for sourceID, sourceKeys := range bySource {

@@ -182,7 +182,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 				 AND n.trashed_at IS NULL ` + filterSQL + `
 				ORDER BY rendition_lexical_fts.rank,n.name,n.id,
 				 rendition_lexical_fts.build_id,rendition_lexical_fts.segment_id`
-			args = append(selectedArgs, fq, generationID)
+			args = slices.Concat(selectedArgs, []any{fq, generationID})
 		}
 		args = append(args, filterArgs...)
 		rows, err := queryer.QueryContext(ctx, contentQuery, args...)

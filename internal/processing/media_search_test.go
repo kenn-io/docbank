@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 )
 
 func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
+	t.Parallel()
 	f := newMediaStateFixture(t)
 	name, supplied, err := NewSuppliedMediaProfile(f.catalog, f.blobs, f.service.principal)
 	require.NoError(t, err)
@@ -31,7 +33,7 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 	var sources []retrieval.MediaSource
 	var selectedBuild string
 	var generatedSource retrieval.MediaSource
-	for i := 0; i < 101; i++ {
+	for i := range 101 {
 		version, selector := f.version, f.selector
 		if i != 0 {
 			raw := mediatest.WAV()
@@ -160,6 +162,7 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 
 type mediaSearchChangingBackend struct {
 	*store.Store
+
 	change func()
 }
 
@@ -171,6 +174,7 @@ func (backend mediaSearchChangingBackend) SearchExplainedLexicalCandidates(ctx c
 }
 
 func TestMediaSearchRejectsChangedAndUnauthorizedSelections(t *testing.T) {
+	t.Parallel()
 	f := newCaptionFixture(t, "search-authority")
 	queued := f.caption(t, f.remote.OccurrenceID, "selected cue")
 	runLoomRenditionJob(t, f.captions, queued.JobID)
@@ -189,7 +193,7 @@ func TestMediaSearchRejectsChangedAndUnauthorizedSelections(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, unavailable.Results)
 	require.Equal(t, retrieval.CoverageIncomplete, unavailable.Coverage.State)
-	bad.MediaSources = append(request.MediaSources, request.MediaSources...)
+	bad.MediaSources = slices.Concat(request.MediaSources, request.MediaSources)
 	_, err = f.captions.Search(t.Context(), bad)
 	require.ErrorIs(t, err, ErrMediaSearchInvalid)
 	prepared, err := f.captions.prepareSearch(request, f.captions.profiles[f.profile])
@@ -214,6 +218,7 @@ func TestMediaSearchRejectsChangedAndUnauthorizedSelections(t *testing.T) {
 }
 
 func TestMediaSearchKeepsHealthyMatchesDuringSourceChanges(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"unknown", "hidden", "deleted", "pending_to_ready", "changed_head"} {
 		t.Run(change, func(t *testing.T) {
 			f := newMediaStateFixture(t)
@@ -279,6 +284,7 @@ func TestMediaSearchKeepsHealthyMatchesDuringSourceChanges(t *testing.T) {
 }
 
 func TestMediaSearchRemovesOnlyRevokedSharedBuildAssociation(t *testing.T) {
+	t.Parallel()
 	f := newMediaStateFixture(t)
 	first, err := f.service.SubmitSuppliedMedia(t.Context(), f.suppliedRequest(uuid.New().String(), &MediaProcessingRequest{Profile: "speech"}))
 	require.NoError(t, err)

@@ -304,10 +304,11 @@ func TestDocumentSearchContentFirstTranscript(t *testing.T) {
 }
 
 func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
+	t.Parallel()
 	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
 	request := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName,
 		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID()}}
-	for i := 0; i < 4096; i++ {
+	for i := range 4096 {
 		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
 		request.Fence.ContentVersionIDs = append(request.Fence.ContentVersionIDs, id)
 		request.MediaSources = append(request.MediaSources, api.DocumentMediaSource{

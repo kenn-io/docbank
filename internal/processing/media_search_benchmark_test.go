@@ -44,7 +44,7 @@ func mediaSearchSelectorWorkload(t testing.TB, distinct bool) (mediaStateFixture
 	require.NoError(t, err)
 	request := SearchRequest{Query: "Synthetic worker output", Mode: "lexical", Profile: "speech", Limit: 100, Fence: SourceFence{VaultUID: f.catalog.VaultID()}}
 	attachments := make([]store.RenditionAttachmentRecord, 0, 4096)
-	for i := 0; i < 4096; i++ {
+	for i := range 4096 {
 		label := fmt.Sprintf("cost-%04d", i)
 		node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), label+".wav", f.version.BlobHash, f.version.Size, "audio/wav")
 		require.NoError(t, err)
