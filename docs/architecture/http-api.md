@@ -559,8 +559,8 @@ does not grant consent or start provider work.
 The `fence` object is the source fence: the vault UUID and the content
 versions the request is authorized to read. Use the actual vault UUID and
 1–4,096 distinct canonical UUIDv4 versions for both coverage and search. A
-foreign vault or invalid source fence is rejected. All search request bodies
-are bounded to 16 MiB.
+foreign vault or invalid source fence is rejected. `/api/v1/search` request
+bodies are bounded to 16 MiB.
 Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
 and accepts 1–100. `binding_id` selects the embedding binding. Omitting it uses

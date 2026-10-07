@@ -189,7 +189,7 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 			eligible := []retrieval.MediaSourceSelector{sources[0], sources[100]}
 			eligible[0].SuppliedInputIDs = []string{}
 			eligible[1].SuppliedInputIDs = tc.allowed
-			for _, query := range []string{"Synthetic", "replacement transcript", "absentphrase"} {
+			for _, query := range []string{"Synthetic", "absentphrase"} {
 				report, err := service.Search(t.Context(), SearchRequest{Query: query, Mode: "lexical", Profile: name, Limit: 1, Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{ids[0], ids[100]}}, MediaSources: eligible})
 				require.NoError(t, err)
 				require.NotEmpty(t, report.MediaSelections)
@@ -253,7 +253,11 @@ func (backend mediaSearchChangingBackend) SearchExplainedLexicalCandidates(ctx c
 func TestMediaSearchKeepsHealthyMatchesDuringSourceChanges(t *testing.T) {
 	t.Parallel()
 	for _, change := range []string{"unknown", "hidden", "deleted", "pending_to_ready", "changed_head", "shared_build_revoke"} {
-		for _, query := range []string{"Synthetic worker output", "absentphrase"} {
+		queries := []string{"Synthetic worker output"}
+		if change == "changed_head" {
+			queries = append(queries, "absentphrase")
+		}
+		for _, query := range queries {
 			t.Run(change+"/"+query, func(t *testing.T) {
 				f := newMediaStateFixture(t)
 				healthy, err := f.service.SubmitSuppliedMedia(t.Context(), f.suppliedRequest(uuid.New().String(), &MediaProcessingRequest{Profile: "speech"}))

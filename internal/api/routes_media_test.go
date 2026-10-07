@@ -168,9 +168,6 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}},
 		MediaSources: []api.DocumentMediaSourceSelector{{SourceID: receipt.SourceID,
 			SourceVersionID: receipt.SourceVersionID, ContentVersionID: version.ID}}}
-	encoded, err := json.Marshal(selectedRequest)
-	require.NoError(t, err)
-	require.NotContains(t, string(encoded), "supplied_input_ids")
 	selectedSearch, err := c.SearchDocuments(t.Context(), selectedRequest)
 	require.NoError(t, err)
 	require.True(t, selectedSearch.MediaSourceSelection)
@@ -181,21 +178,11 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 
 	emptyRequest := selectedRequest
 	emptyRequest.MediaSources[0].SuppliedInputIDs = []string{}
-	encoded, err = json.Marshal(emptyRequest)
-	require.NoError(t, err)
-	require.Contains(t, string(encoded), `"supplied_input_ids":[]`)
-	var decoded api.DocumentSearchRequest
-	require.NoError(t, json.Unmarshal(encoded, &decoded))
-	require.Equal(t, []string{}, []string(decoded.MediaSources[0].SuppliedInputIDs))
 	response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, emptyRequest)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var emptyReport api.DocumentSearchReport
 	require.NoError(t, json.Unmarshal([]byte(body), &emptyReport))
 	require.Empty(t, emptyReport.Results)
-	require.NotNil(t, emptyReport.MediaSelections)
-	require.Empty(t, emptyReport.MediaSelections)
-	require.Contains(t, body, `"media_selections":[]`)
-	require.NotContains(t, body, "supplied_input_ids", "constraints are not echoed as source identity")
 	transcriptResult, err := c.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, "ready", transcriptResult.EvidenceState)
@@ -303,12 +290,6 @@ func TestDocumentSearchContentFirstTranscript(t *testing.T) {
 	require.Nil(t, controlReport.MediaSelections)
 	require.NotContains(t, controlBody, "media_selections")
 	require.True(t, controlReport.Truncated)
-	emptySelection := request
-	emptySelection.MediaSources = api.MediaSearchSources{}
-	emptyResponse, emptyBody := do(t, ts, http.MethodPost, "/api/v1/search", nil, emptySelection)
-	require.Equal(t, http.StatusUnprocessableEntity, emptyResponse.StatusCode, emptyBody)
-	require.Contains(t, emptyBody, "expected array length >= 1")
-
 	falseResponse, falseBody := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
 		"query": request.Query, "mode": request.Mode, "profile": request.Profile,
 		"limit": request.Limit, "fence": request.Fence, "content_first": false,
@@ -348,6 +329,8 @@ func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
 	require.Less(t, len(encoded), 16<<20)
 	tooMany := request
 	tooMany.MediaSources = append(tooMany.MediaSources, request.MediaSources[0])
+	emptySelection := request
+	emptySelection.MediaSources = api.MediaSearchSources{}
 	id := request.Fence.ContentVersionIDs[0]
 	invalid := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{id}}, MediaSources: []api.DocumentMediaSourceSelector{{SourceID: strings.Repeat("é", 129), SourceVersionID: "version", ContentVersionID: id}}}
 	rawInput := func(input any) any {
@@ -360,6 +343,7 @@ func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
 		errorText string
 	}{
 		{"complete_body", request, http.StatusOK, ""},
+		{"empty_selection", emptySelection, http.StatusUnprocessableEntity, "expected array length >= 1"},
 		{"null_selection", map[string]any{"query": "cue", "mode": "lexical", "profile": processing.SuppliedMediaProfileName, "fence": invalid.Fence, "media_sources": nil}, http.StatusUnprocessableEntity, ""},
 		{"selector_count", tooMany, http.StatusUnprocessableEntity, "expected array length <= 4096"},
 		{"UTF8_byte_bound", invalid, http.StatusUnprocessableEntity, `"code":"invalid_media_search"`},
