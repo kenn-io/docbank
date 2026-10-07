@@ -1,22 +1,7 @@
-import { Blob } from "node:buffer";
 import { afterEach, expect, it, vi } from "vitest";
+import { storage } from "./photo-test-fixtures.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 
-function storage() {
-  vi.stubGlobal("Blob", Blob);
-  const data = new Map<string, Map<string, Response>>();
-  const open = vi.fn(async (name: string) => {
-    const entries = data.get(name) ?? new Map<string, Response>();
-    data.set(name, entries);
-    return {
-      match: vi.fn(async (key: Request) => entries.get(key.url)?.clone()),
-      put: vi.fn(async (key: Request, response: Response) => { entries.set(key.url, response.clone()); }),
-    };
-  });
-  const remove = vi.fn(async (name: string) => data.delete(name));
-  vi.stubGlobal("caches", { open, delete: remove });
-  return { data, open, remove };
-}
 const instances: PhotoPreviewCache[] = [];
 function workspace() { const cache = new PhotoPreviewCache("scoped", vi.fn()); instances.push(cache); return cache; }
 afterEach(async () => { await Promise.all(instances.splice(0).map(cache => cache.dispose())); vi.unstubAllGlobals(); vi.restoreAllMocks(); });

@@ -1,4 +1,22 @@
+import { Blob } from "node:buffer";
+import { vi } from "vitest";
 import type { PhotoBrowseRow } from "./generated/docbank.js";
+
+export function storage() {
+  vi.stubGlobal("Blob", Blob);
+  const data = new Map<string, Map<string, Response>>();
+  const open = vi.fn(async (name: string) => {
+    const entries = data.get(name) ?? new Map<string, Response>();
+    data.set(name, entries);
+    return {
+      match: vi.fn(async (key: Request) => entries.get(key.url)?.clone()),
+      put: vi.fn(async (key: Request, response: Response) => { entries.set(key.url, response.clone()); }),
+    };
+  });
+  const remove = vi.fn(async (name: string) => data.delete(name));
+  vi.stubGlobal("caches", { open, delete: remove });
+  return { data, open, remove };
+}
 
 export function photo(id: number, capture: string | null = "2025-06-01T12:00:00"): PhotoBrowseRow {
   return {

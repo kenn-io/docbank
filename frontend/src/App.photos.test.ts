@@ -1,7 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { Blob } from "node:buffer";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import { photo } from "./photo-test-fixtures.js";
+import { photo, storage } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -11,11 +10,8 @@ it("retains photo state and previews across sidebar switches until lock", async 
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  vi.stubGlobal("Blob", Blob);
   vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL() {} });
-  const entries = new Map<string, Response>();
-  const remove = vi.fn(async () => true);
-  vi.stubGlobal("caches", { open: vi.fn(async () => ({ match: async (key: Request) => entries.get(key.url)?.clone(), put: async (key: Request, value: Response) => { entries.set(key.url, value.clone()); } })), delete: remove });
+  const stored = storage();
   const fetcher = vi.fn(async (url: string) => {
     if (url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: [{ ...photo(1), previews: { ...photo(1).previews, grid: { state: "ready", generation_id: "synthetic" } } }], total: 1 }));
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
@@ -26,7 +22,8 @@ it("retains photo state and previews across sidebar switches until lock", async 
   render(App);
   await screen.findByRole("main", { name: "Photo library" });
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
-  await waitFor(() => expect(entries.size).toBe(1));
+  const cacheName = stored.open.mock.calls[0][0];
+  await waitFor(() => expect(stored.data.get(cacheName)?.size).toBe(1));
   const listings = () => fetcher.mock.calls.filter(([url]) => url.includes("/photos/assets/query")).length;
   const previews = () => fetcher.mock.calls.filter(([url]) => url.includes("/previews/")).length;
   expect(listings()).toBe(1);
@@ -47,5 +44,5 @@ it("retains photo state and previews across sidebar switches until lock", async 
   await fireEvent(window, new PopStateEvent("popstate"));
   await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());
   await fireEvent.click(screen.getByRole("button", { name: /Lock/ }));
-  await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(stored.data.has(cacheName)).toBe(false));
 });
