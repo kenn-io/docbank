@@ -59,6 +59,24 @@ type Sort struct {
 // Filters contains the complete set of typed QueryV1 facets. Slice fields are
 // set-valued after normalization.
 type Filters struct {
+	Unevaluated   bool    `json:"unevaluated,omitzero"`
+	FocusMin      *string `json:"focus_min,omitzero"`
+	FocusMax      *string `json:"focus_max,omitzero"`
+	BlurMin       *string `json:"blur_min,omitzero"`
+	BlurMax       *string `json:"blur_max,omitzero"`
+	BrightnessMin *string `json:"brightness_min,omitzero"`
+	BrightnessMax *string `json:"brightness_max,omitzero"`
+	FramingMin    *string `json:"framing_min,omitzero"`
+	FramingMax    *string `json:"framing_max,omitzero"`
+	AestheticsMin *string `json:"aesthetics_min,omitzero"`
+	AestheticsMax *string `json:"aesthetics_max,omitzero"`
+	ColorRedMin   *string `json:"color_red_min,omitzero"`
+	ColorRedMax   *string `json:"color_red_max,omitzero"`
+	ColorGreenMin *string `json:"color_green_min,omitzero"`
+	ColorGreenMax *string `json:"color_green_max,omitzero"`
+	ColorBlueMin  *string `json:"color_blue_min,omitzero"`
+	ColorBlueMax  *string `json:"color_blue_max,omitzero"`
+
 	Kinds         []string   `json:"kinds,omitzero"`
 	Cameras       []string   `json:"cameras,omitzero"`
 	Lenses        []string   `json:"lenses,omitzero"`
@@ -104,6 +122,24 @@ type sortInput struct {
 }
 
 type filtersInput struct {
+	Unevaluated   *bool   `json:"unevaluated"`
+	FocusMin      *string `json:"focus_min"`
+	FocusMax      *string `json:"focus_max"`
+	BlurMin       *string `json:"blur_min"`
+	BlurMax       *string `json:"blur_max"`
+	BrightnessMin *string `json:"brightness_min"`
+	BrightnessMax *string `json:"brightness_max"`
+	FramingMin    *string `json:"framing_min"`
+	FramingMax    *string `json:"framing_max"`
+	AestheticsMin *string `json:"aesthetics_min"`
+	AestheticsMax *string `json:"aesthetics_max"`
+	ColorRedMin   *string `json:"color_red_min"`
+	ColorRedMax   *string `json:"color_red_max"`
+	ColorGreenMin *string `json:"color_green_min"`
+	ColorGreenMax *string `json:"color_green_max"`
+	ColorBlueMin  *string `json:"color_blue_min"`
+	ColorBlueMax  *string `json:"color_blue_max"`
+
 	Kinds         *[]string  `json:"kinds"`
 	Cameras       *[]string  `json:"cameras"`
 	Lenses        *[]string  `json:"lenses"`
@@ -135,6 +171,7 @@ type filtersInput struct {
 }
 
 var optionalFilterFields = map[string]struct{}{
+	"unevaluated": {}, "focus_min": {}, "focus_max": {}, "blur_min": {}, "blur_max": {}, "brightness_min": {}, "brightness_max": {}, "framing_min": {}, "framing_max": {}, "aesthetics_min": {}, "aesthetics_max": {}, "color_red_min": {}, "color_red_max": {}, "color_green_min": {}, "color_green_max": {}, "color_blue_min": {}, "color_blue_max": {},
 	"paths": {}, "exclude_paths": {}, "collection_ids": {}, "exclude_collection_ids": {},
 	"tag_ids": {}, "exclude_tag_ids": {}, "no_tags": {}, "media_families": {},
 	"mime_types": {}, "extensions": {}, "modified_after": {}, "modified_before": {},
@@ -226,6 +263,26 @@ func Fingerprint(value Query) (string, error) {
 
 func (input filtersInput) value() Filters {
 	value := Filters{}
+	if input.Unevaluated != nil {
+		value.Unevaluated = *input.Unevaluated
+	}
+	value.FocusMin = input.FocusMin
+	value.FocusMax = input.FocusMax
+	value.BlurMin = input.BlurMin
+	value.BlurMax = input.BlurMax
+	value.BrightnessMin = input.BrightnessMin
+	value.BrightnessMax = input.BrightnessMax
+	value.FramingMin = input.FramingMin
+	value.FramingMax = input.FramingMax
+	value.AestheticsMin = input.AestheticsMin
+	value.AestheticsMax = input.AestheticsMax
+	value.ColorRedMin = input.ColorRedMin
+	value.ColorRedMax = input.ColorRedMax
+	value.ColorGreenMin = input.ColorGreenMin
+	value.ColorGreenMax = input.ColorGreenMax
+	value.ColorBlueMin = input.ColorBlueMin
+	value.ColorBlueMax = input.ColorBlueMax
+
 	if input.Kinds != nil {
 		value.Kinds = *input.Kinds
 	}
@@ -338,6 +395,10 @@ func normalizeQuery(value Query) (Query, error) {
 
 func normalizeFilters(value Filters) (Filters, error) {
 	var err error
+	value, err = normalizeQualityFilters(value)
+	if err != nil {
+		return Filters{}, err
+	}
 	value, err = normalizePhotoFilters(value)
 	if err != nil {
 		return Filters{}, err

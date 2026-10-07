@@ -2904,16 +2904,48 @@ export interface GPSBounds {
 }
 
 export interface Filters {
+  /** @nullable */
+  aesthetics_max?: string | null;
+  /** @nullable */
+  aesthetics_min?: string | null;
   asset_ids?: string[];
+  /** @nullable */
+  blur_max?: string | null;
+  /** @nullable */
+  blur_min?: string | null;
+  /** @nullable */
+  brightness_max?: string | null;
+  /** @nullable */
+  brightness_min?: string | null;
   cameras?: string[];
   capture_after?: string;
   capture_before?: string;
   collapse_duplicates?: boolean;
   collection_ids?: string[];
+  /** @nullable */
+  color_blue_max?: string | null;
+  /** @nullable */
+  color_blue_min?: string | null;
+  /** @nullable */
+  color_green_max?: string | null;
+  /** @nullable */
+  color_green_min?: string | null;
+  /** @nullable */
+  color_red_max?: string | null;
+  /** @nullable */
+  color_red_min?: string | null;
   exclude_collection_ids?: string[];
   exclude_paths?: string[];
   exclude_tag_ids?: string[];
   extensions?: string[];
+  /** @nullable */
+  focus_max?: string | null;
+  /** @nullable */
+  focus_min?: string | null;
+  /** @nullable */
+  framing_max?: string | null;
+  /** @nullable */
+  framing_min?: string | null;
   gps_bounds?: GPSBounds;
   has_duplicates?: boolean;
   /** @nullable */
@@ -2934,6 +2966,7 @@ export interface Filters {
   size_min?: number;
   tag_ids?: string[];
   text_coverage?: string[];
+  unevaluated?: boolean;
 }
 
 export type FormatCapabilityV1Capabilities = {[key: string]: CapabilityStateV1};
@@ -4476,8 +4509,38 @@ export type SavedQueryFiltersSchemaGpsBounds = {
 } | null;
 
 export interface SavedQueryFiltersSchema {
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  aesthetics_max?: string | null;
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  aesthetics_min?: string | null;
   /** @maxItems 64 */
   asset_ids?: string[];
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  blur_max?: string | null;
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  blur_min?: string | null;
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  brightness_max?: string | null;
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  brightness_min?: string | null;
   /** @maxItems 64 */
   cameras?: string[];
   /** @nullable */
@@ -4488,6 +4551,36 @@ export interface SavedQueryFiltersSchema {
   collapse_duplicates?: boolean | null;
   /** @maxItems 64 */
   collection_ids?: string[];
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  color_blue_max?: string | null;
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  color_blue_min?: string | null;
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  color_green_max?: string | null;
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  color_green_min?: string | null;
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  color_red_max?: string | null;
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  color_red_min?: string | null;
   /** @maxItems 64 */
   exclude_collection_ids?: string[];
   /** @maxItems 64 */
@@ -4499,6 +4592,26 @@ export interface SavedQueryFiltersSchema {
      * @items.pattern ^[a-z0-9](?:[a-z0-9_-]{0,31})$
      */
   extensions?: string[];
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  focus_max?: string | null;
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  focus_min?: string | null;
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  framing_max?: string | null;
+  /**
+     * @maxLength 64
+     * @nullable
+     */
+  framing_min?: string | null;
   /** @nullable */
   gps_bounds?: SavedQueryFiltersSchemaGpsBounds;
   /** @nullable */
@@ -4531,8 +4644,6 @@ export interface SavedQueryFiltersSchema {
   no_tags?: boolean | null;
   /** @maxItems 64 */
   paths?: string[];
-  /** @maxItems 64 */
-  set_ids?: string[];
   /**
      * @minimum 0
      * @maximum 9007199254740991
@@ -4546,9 +4657,13 @@ export interface SavedQueryFiltersSchema {
      */
   size_min?: number | null;
   /** @maxItems 64 */
+  set_ids?: string[];
+  /** @maxItems 64 */
   tag_ids?: string[];
   /** @maxItems 6 */
   text_coverage?: SavedQueryFiltersSchemaTextCoverageItem[];
+  /** @nullable */
+  unevaluated?: boolean | null;
 }
 
 export type SavedQueryV1SchemaMode = typeof SavedQueryV1SchemaMode[keyof typeof SavedQueryV1SchemaMode];
@@ -4765,6 +4880,66 @@ export interface PhotoPreviewSlots {
   large: PhotoPreviewSlot;
 }
 
+export type PhotoQualityState = typeof PhotoQualityState[keyof typeof PhotoQualityState];
+
+
+export const PhotoQualityState = {
+  pending: 'pending',
+  ready: 'ready',
+} as const;
+
+/**
+ * @nullable
+ */
+export type PhotoQualitySignalsProperty = {
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  aesthetics: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  blur: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  brightness: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  color_blue: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  color_green: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  color_red: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  focus: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  framing: number;
+} | null;
+
+export interface PhotoQuality {
+  /** @nullable */
+  signals: PhotoQualitySignalsProperty;
+  state: PhotoQualityState;
+}
+
 export interface PhotoBrowseRow {
   asset_id: string;
   /** @nullable */
@@ -4786,6 +4961,7 @@ export interface PhotoBrowseRow {
   /** @minimum 1 */
   node_id: number;
   previews: PhotoPreviewSlots;
+  quality?: PhotoQuality;
   /** @minimum 1 */
   revision: number;
   /** @nullable */
@@ -4828,6 +5004,49 @@ export interface PhotoImportStartRequest {
      * @maxLength 4096
      */
   source_root: string;
+}
+
+export interface PhotoQualitySignals {
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  aesthetics: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  blur: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  brightness: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  color_blue: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  color_green: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  color_red: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  focus: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  framing: number;
 }
 
 /**

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"go.kenn.io/docbank/document"
 	"golang.org/x/text/cases"
 
 	"go.kenn.io/docbank/internal/query"
@@ -35,6 +36,8 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 			return compiledQueryFragment{}, err
 		}
 		return compilePhotoAssetPredicate(`EXISTS (SELECT 1 FROM photo_set_members sm JOIN photo_sets ps ON ps.set_id=sm.set_id WHERE sm.asset_id=pa.asset_id AND sm.set_id=? AND ps.deleted_at IS NULL)`, value), nil
+	case "focus_min", "focus_max", "blur_min", "blur_max", "brightness_min", "brightness_max", "framing_min", "framing_max", "aesthetics_min", "aesthetics_max", "color_red_min", "color_red_max", "color_green_min", "color_green_max", "color_blue_min", "color_blue_max", "unevaluated":
+		return c.compilePhotoQualityPredicate(field, value)
 	case "kind", "asset":
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
@@ -98,6 +101,22 @@ func (c queryCompiler) compilePhotoGPSPredicate(bounds query.GPSBounds) compiled
 
 func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
 	parts := []compiledQueryFragment{}
+	for _, bound := range query.QualityBounds(filters) {
+		if bound.Value != nil {
+			part, err := c.compileScalarPredicate(bound.Field, *bound.Value, start, end)
+			if err != nil {
+				return compiledQueryFragment{}, err
+			}
+			parts = append(parts, part)
+		}
+	}
+	if filters.Unevaluated {
+		part, err := c.compileScalarPredicate("unevaluated", "true", start, end)
+		if err != nil {
+			return compiledQueryFragment{}, err
+		}
+		parts = append(parts, part)
+	}
 	for _, set := range []struct {
 		field  string
 		values []string
@@ -142,4 +161,43 @@ func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int
 		parts = append(parts, part)
 	}
 	return joinCompiledFragments(parts, ` AND `), nil
+}
+
+func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compiledQueryFragment, error) {
+	version := "cv.version_id"
+	from := `photo_quality_signals q WHERE q.content_version_id=` + version + ` AND q.evaluator_fingerprint=?`
+	if c.photoDisplayMetadata {
+		from = `photo_files member JOIN photo_assets asset ON asset.asset_id=member.asset_id
+ JOIN photo_files display ON display.file_id=asset.display_file_id
+ JOIN nodes display_node ON display_node.id=display.node_id
+ JOIN photo_quality_signals q ON q.content_version_id=display_node.current_version_id
+ WHERE member.node_id=n.id AND q.evaluator_fingerprint=?`
+	}
+	args := []any{document.PhotoQualityEvaluatorFingerprint()}
+	if field == "unevaluated" {
+		if value != "true" && value != "false" {
+			return compiledQueryFragment{}, fmt.Errorf("unevaluated must be true or false")
+		}
+		exists := `EXISTS (SELECT 1 FROM ` + from + `)`
+		if value == "true" {
+			exists = `NOT ` + exists
+		}
+		eligible := `EXISTS (SELECT 1 FROM photo_files pf JOIN photo_assets pa ON pa.asset_id=pf.asset_id WHERE pf.node_id=n.id AND pa.kind='photo') AND cv.mime_type LIKE 'image/%'`
+		if c.photoDisplayMetadata {
+			eligible = `EXISTS (SELECT 1 FROM photo_files pf JOIN photo_assets pa ON pa.asset_id=pf.asset_id JOIN photo_files df ON df.file_id=pa.display_file_id JOIN nodes dn ON dn.id=df.node_id JOIN content_versions dv ON dv.version_id=dn.current_version_id WHERE pf.node_id=n.id AND pa.kind='photo' AND dv.mime_type LIKE 'image/%')`
+		}
+		return compiledQueryFragment{sql: `(` + eligible + ` AND ` + exists + `)`, args: args}, nil
+	}
+	normalized, err := query.NormalizeQualityOperand(value)
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	number, _ := strconv.ParseFloat(normalized, 64)
+	column, operator := strings.TrimSuffix(field, "_min"), ">="
+	if strings.HasSuffix(field, "_max") {
+		column = strings.TrimSuffix(field, "_max")
+		operator = "<="
+	}
+	args = append(args, number)
+	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM ` + from + ` AND q.` + column + operator + ` ?)`, args: args}, nil
 }

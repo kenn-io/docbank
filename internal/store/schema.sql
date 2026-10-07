@@ -2484,3 +2484,13 @@ CREATE TABLE IF NOT EXISTS mailbox_occurrences (
     occurrence_json TEXT NOT NULL,
     PRIMARY KEY(job_id,ordinal)
 );
+
+-- Derived pixels rebuild locally and are omitted from metadata backups.
+CREATE TABLE IF NOT EXISTS photo_quality_signals (
+ content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+ evaluator_fingerprint TEXT NOT NULL,
+ focus REAL NOT NULL, blur REAL NOT NULL, brightness REAL NOT NULL,
+ color_red REAL NOT NULL, color_green REAL NOT NULL, color_blue REAL NOT NULL,
+ framing REAL NOT NULL, aesthetics REAL NOT NULL,
+ PRIMARY KEY(content_version_id,evaluator_fingerprint)
+);

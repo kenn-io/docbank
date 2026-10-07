@@ -563,6 +563,7 @@ func expressionTokenStartsOperand(kind expressionTokenKind) bool {
 }
 
 var expressionFields = map[string]struct{}{
+	"focus_min": {}, "focus_max": {}, "blur_min": {}, "blur_max": {}, "brightness_min": {}, "brightness_max": {}, "framing_min": {}, "framing_max": {}, "aesthetics_min": {}, "aesthetics_max": {}, "color_red_min": {}, "color_red_max": {}, "color_green_min": {}, "color_green_max": {}, "color_blue_min": {}, "color_blue_max": {}, "unevaluated": {},
 	"name": {}, "path": {}, "tag": {}, "collection": {}, "saved": {},
 	"mime": {}, "extension": {}, "media_family": {},
 	"modified_after": {}, "modified_before": {}, "size_min": {}, "size_max": {},

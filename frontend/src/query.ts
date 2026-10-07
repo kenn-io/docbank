@@ -11,7 +11,9 @@ const mediaFamilies = [
   "text", "source_code", "web", "calendar", "archive", "cad", "unknown",
 ] as const;
 const textCoverageValues = ["complete", "partial", "failed", "unprocessed", "none", "unavailable"] as const;
+const qualityFields = ["focus_min", "focus_max", "blur_min", "blur_max", "brightness_min", "brightness_max", "framing_min", "framing_max", "aesthetics_min", "aesthetics_max", "color_red_min", "color_red_max", "color_green_min", "color_green_max", "color_blue_min", "color_blue_max"] as const;
 const optionalFilterFields = new Set([
+...qualityFields, "unevaluated",
   "paths", "exclude_paths", "collection_ids", "exclude_collection_ids", "tag_ids",
   "exclude_tag_ids", "no_tags", "media_families", "mime_types", "extensions",
   "modified_after", "modified_before", "size_min", "size_max", "text_coverage",
@@ -33,6 +35,24 @@ export interface QuerySort {
 export interface GPSBounds { south: string; west: string; north: string; east: string }
 
 export interface QueryFilters {
+ unevaluated?: boolean;
+ focus_min?: string;
+ focus_max?: string;
+ blur_min?: string;
+ blur_max?: string;
+ brightness_min?: string;
+ brightness_max?: string;
+ framing_min?: string;
+ framing_max?: string;
+ aesthetics_min?: string;
+ aesthetics_max?: string;
+ color_red_min?: string;
+ color_red_max?: string;
+ color_green_min?: string;
+ color_green_max?: string;
+ color_blue_min?: string;
+ color_blue_max?: string;
+
   kinds?: ("photo" | "video")[];
   cameras?: string[];
   lenses?: string[];
@@ -110,6 +130,8 @@ export function parseQuery(raw: string): Query {
 export function canonicalQuery(value: Query): string {
   const normalized = normalizeQuery(value);
   const filters: Record<string, unknown> = {};
+ for (const field of qualityFields) { if (normalized.filters[field] !== undefined) filters[field] = normalized.filters[field]; }
+ if (normalized.filters.unevaluated) filters.unevaluated = true;
   if (normalized.filters.collapse_duplicates) filters.collapse_duplicates = true;
   if (normalized.filters.collection_ids?.length) filters.collection_ids = normalized.filters.collection_ids;
   if (normalized.filters.exclude_collection_ids?.length) filters.exclude_collection_ids = normalized.filters.exclude_collection_ids;
@@ -190,6 +212,8 @@ function parseFilters(input: Record<string, unknown>): QueryFilters {
     lenses: optionalStringArray(input.lenses, "filters.lenses"),
     set_ids: optionalStringArray(input.set_ids, "filters.set_ids"),
     asset_ids: optionalStringArray(input.asset_ids, "filters.asset_ids"),
+    ...Object.fromEntries(qualityFields.map((field) => [field, optionalNullableString(input[field], `filters.${field}`)])),
+    unevaluated: optionalBoolean(input.unevaluated, "filters.unevaluated"),
     iso_min: optionalNullableInteger(input.iso_min, "filters.iso_min"),
     iso_max: optionalNullableInteger(input.iso_max, "filters.iso_max"),
     capture_after: optionalNullableString(input.capture_after, "filters.capture_after"),
@@ -237,6 +261,8 @@ function normalizeFilters(value: QueryFilters): QueryFilters {
     lenses: normalizeSet(value.lenses, 64, validPhotoLabel, "lenses"),
     set_ids: normalizeSet(value.set_ids, 64, (v) => uuidV4Pattern.test(v), "set_ids"),
     asset_ids: normalizeSet(value.asset_ids, 64, (v) => uuidV4Pattern.test(v), "asset_ids"),
+    ...Object.fromEntries(qualityFields.map((field) => [field, normalizeQualityScore(value[field])])),
+    unevaluated: Boolean(value.unevaluated) || undefined,
     iso_min: normalizeSize(value.iso_min, "iso_min"),
     iso_max: normalizeSize(value.iso_max, "iso_max"),
     capture_after: normalizeCaptureDate(value.capture_after),
@@ -260,6 +286,10 @@ function normalizeFilters(value: QueryFilters): QueryFilters {
     has_duplicates: Boolean(value.has_duplicates) || undefined,
     collapse_duplicates: Boolean(value.collapse_duplicates) || undefined,
   };
+  for (let i = 0; i < qualityFields.length; i += 2) {
+    const lo = result[qualityFields[i]], hi = result[qualityFields[i + 1]];
+    if (lo !== undefined && hi !== undefined && lo > hi) throw new Error("quality minimum exceeds maximum");
+  }
   if (result.iso_min !== undefined && result.iso_max !== undefined && result.iso_min > result.iso_max) throw new Error("iso_min exceeds iso_max");
   if (result.capture_after && result.capture_before && result.capture_after >= result.capture_before) throw new Error("capture_after must precede capture_before");
   if (result.no_tags && result.tag_ids?.length) throw new Error("no_tags conflicts with tag_ids");
@@ -663,4 +693,12 @@ function normalizeGPSBounds(value: unknown): GPSBounds {
   const result = { east: normalizeCoordinate(input.east, 180), north: normalizeCoordinate(input.north, 90), south: normalizeCoordinate(input.south, 90), west: normalizeCoordinate(input.west, 180) };
   if (Number(result.south) > Number(result.north)) throw new Error("south exceeds north");
   return result;
+}
+
+function normalizeQualityScore(value: string | undefined): string | undefined {
+ if (value === undefined) return undefined;
+ if (typeof value !== "string" || value.startsWith("-")) throw new Error("quality score must be within 0..1");
+ const normalized = normalizeCoordinate(value, 1);
+ if (normalized !== "0" && normalized !== "1" && !normalized.startsWith("0.")) throw new Error("quality score must be within 0..1");
+ return normalized;
 }

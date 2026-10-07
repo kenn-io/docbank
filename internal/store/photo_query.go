@@ -38,6 +38,7 @@ type PhotoPreviewSlot struct {
 }
 
 type PhotoBrowseRow struct {
+	Quality          *document.PhotoQualitySignals
 	AssetID          string
 	Kind             string
 	Revision         int64
@@ -243,8 +244,17 @@ func (s *Store) ListPhotoAssets(
 		if err != nil {
 			return err
 		}
+		qualities, err := photoQualityForVersions(ctx, q, versions)
+		if err != nil {
+			return err
+		}
 		for i := range page.Items {
 			row := &page.Items[i]
+			if row.Kind == "photo" {
+				if signals, ok := qualities[row.ContentVersionID]; ok {
+					row.Quality = &signals
+				}
+			}
 			row.Previews = make(map[string]PhotoPreviewSlot, 3)
 			for _, size := range []string{"grid", "fit", "large"} {
 				slot := PhotoPreviewSlot{State: "missing"}

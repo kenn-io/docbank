@@ -65,6 +65,32 @@ NEF, and RAF files have decoder paths. Format support does not guarantee that
 every individual file decodes. Unsupported and deterministic decode failures
 are stored as terminal results. Temporary storage or read failures retry.
 
+## Quality signals
+
+The daemon measures each ready grid preview locally. The photo query API
+returns `quality.state` as `pending` with `signals: null` until measurement
+finishes, then `ready` with numeric scores. A measured zero stays zero.
+Replacing content or changing the display file selects that version's signals.
+Videos have no quality object. Unsupported or failed previews remain pending.
+
+All scores use the 0..1 scale. Focus measures adjacent luminance differences
+on a 16-by-16 sample, stretched by a 0.15 calibration ceiling. Higher focus
+means more detail. Blur is `1 - focus`, so lower is better. Brightness uses
+RGB luminance weights, with black at 0 and white at 1. `color_red`,
+`color_green`, and `color_blue` are mean channel values. Framing scores the
+contrast-weighted center against the rule-of-thirds intersections. Flat
+images receive framing 0.5. Aesthetics combines focus, balanced exposure,
+channel spread, and framing. These pixel heuristics do not judge subject
+intent, distinguish motion blur from soft focus, or detect faces.
+
+Each scalar supports `_min` and `_max` query filters. JSON bounds are decimal
+strings, such as `"focus_min":"0.7"`, to preserve QueryV1's integer-only JSON
+number contract. Advanced search accepts `focus_min:0.7 blur_max:0.2`.
+`unevaluated:true` finds photos with missing current measurements. Missing
+measurements fail numeric comparisons. Photo queries use the selected display
+version; document queries use each document's own version. Saved queries keep
+these filters. Signals rebuild after restore and stay out of backups.
+
 ## CLI
 
 Inspect the asset created for a node or use a stable asset UUID:

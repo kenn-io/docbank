@@ -29,6 +29,10 @@ id:231     name     /taxes/2026/insurance-renewal.pdf
 id:198     content  /taxes/2026/car-insurance-notes.md
 ```
 
+QueryV1 and saved queries also support [photo quality filters](photos.md#quality-signals).
+For example, advanced search `focus_min:0.7 blur_max:0.2` selects measured
+photos, while `unevaluated:true` selects photos awaiting measurement.
+
 ## How do words match?
 
 Each whitespace-separated term matches the start of a word. For example,

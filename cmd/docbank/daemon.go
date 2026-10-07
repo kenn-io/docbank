@@ -654,6 +654,19 @@ func startProcessingJobs(
 	if err := supervisor.Start("derive:visual-previews", previews.Run); err != nil {
 		return fmt.Errorf("starting visual preview backfill: %w", err)
 	}
+
+	quality := &processing.Backfill[store.PhotoVisualPreviewTarget]{
+		Name: "photo-quality", Page: 10, IdleDelay: time.Second,
+		List:   s.MissingPhotoQualityTargetsAfter,
+		Key:    func(target store.PhotoVisualPreviewTarget) string { return target.VersionID },
+		Mutate: gate.MutateContext, Logger: logger,
+		Process: func(ctx context.Context, target store.PhotoVisualPreviewTarget) error {
+			return processing.EvaluatePhotoQuality(ctx, s, blobs, target)
+		},
+	}
+	if err := supervisor.Start("derive:photo-quality", quality.Run); err != nil {
+		return fmt.Errorf("starting photo quality backfill: %w", err)
+	}
 	emailFingerprint, err := processing.EmailDecoderFingerprint()
 	if err != nil {
 		return fmt.Errorf("fingerprinting email decoder: %w", err)
