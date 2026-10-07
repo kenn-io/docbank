@@ -4,7 +4,7 @@
   interface Props {
     selectedCount: number;
     visibleDocumentCount: number;
-    truncated: boolean;
+    truncated?: boolean;
     onclear: () => void;
     onselectvisible: () => void;
     ontags?: () => void;
@@ -21,7 +21,7 @@
   let {
     selectedCount,
     visibleDocumentCount,
-    truncated,
+    truncated = false,
     onclear,
     onselectvisible,
     ontags,

@@ -6,6 +6,28 @@ description: Group ordinary files into photo assets that carry their own revisio
 
 # Photo assets
 
+Docbank groups ordinary file nodes into photo assets. Each file node and its
+content versions still hold the bytes. An asset stores only membership, roles,
+display selection, exclusion, and bounded decision receipts.
+
+Image files and files with a concrete `video/*` MIME type are enrolled when
+they are created. Audio, generic video, and generic RAW files stay ordinary
+files until an operator promotes or creates an asset explicitly. Enrollment
+applies only to new files. Adding this feature does not scan older files.
+
+Replacing or reverting a file's content keeps the file in its asset with the
+same role, even when the new media type would not qualify. A file whose new
+content qualifies is not enrolled either. Membership changes only through
+explicit asset operations or permanent node deletion.
+
+An asset can contain `raw`, `image`, `video`, and `sidecar` members. The
+default display order is RAW, image, then video. A vault preference can select
+image before RAW, and an asset override wins over the vault preference.
+Sidecars never display and must point at a RAW or image member in the same
+asset. Removing the selected member chooses another displayable member
+atomically, or stores a null display when none remains. Assets are limited to
+256 files.
+
 ## Browse in the web app
 
 Open `docbank web` and choose **Photos** in the sidebar. Library opens at
@@ -29,28 +51,6 @@ Pending, unsupported, and failed previews have separate placeholders. Choose
 Refresh previews to reload the listing after background preview work finishes.
 If a page fails to load, the earlier photos remain visible. Retry requests the
 failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Selection retains photos in that range; imports or deletions may move the visible photo outside it. Failed attempts keep the earlier view available for Retry. Recovery stops after one minute and offers Retry if it needs more time.
-
-Docbank groups ordinary file nodes into photo assets. Each file node and its
-content versions still hold the bytes. An asset stores only membership, roles,
-display selection, exclusion, and bounded decision receipts.
-
-Image files and files with a concrete `video/*` MIME type are enrolled when
-they are created. Audio, generic video, and generic RAW files stay ordinary
-files until an operator promotes or creates an asset explicitly. Enrollment
-applies only to new files. Adding this feature does not scan older files.
-
-Replacing or reverting a file's content keeps the file in its asset with the
-same role, even when the new media type would not qualify. A file whose new
-content qualifies is not enrolled either. Membership changes only through
-explicit asset operations or permanent node deletion.
-
-An asset can contain `raw`, `image`, `video`, and `sidecar` members. The
-default display order is RAW, image, then video. A vault preference can select
-image before RAW, and an asset override wins over the vault preference.
-Sidecars never display and must point at a RAW or image member in the same
-asset. Removing the selected member chooses another displayable member
-atomically, or stores a null display when none remains. Assets are limited to
-256 files.
 
 ## Previews
 

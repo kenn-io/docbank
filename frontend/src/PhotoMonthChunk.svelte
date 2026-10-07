@@ -22,7 +22,7 @@
 
 <section class="photo-month" data-month={group.key} style:height={`${layout.intrinsicHeight}px`} aria-label={group.label}>
   {#if inWindow}
-    <h2>{group.label}<span>{group.items.length} photos</span></h2>
+    <h2>{group.label}<span>{group.items.length} loaded</span></h2>
     <div class="cells" style:height={`${layout.totalHeight}px`}>
       {#each cells as cell (cell.photo.asset_id)}
         {@const photo = cell.photo}
@@ -36,7 +36,7 @@
 
 <style>
   .photo-month { position: relative; }
-  h2 { height: 44px; margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-primary); font-size: var(--font-size-sm); font-weight: 600; }
+  h2 { position: sticky; top: 0; z-index: 2; background: var(--bg-surface); border-bottom: 1px solid var(--border-default); height: 44px; margin: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-primary); font-size: var(--font-size-sm); font-weight: 600; }
   h2 span { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 400; }
   .cells { position: relative; }
   .cell { position: absolute; }

@@ -5,7 +5,7 @@ import { Photos } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photo } from "./photo-test-fixtures.js";
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
 
 it("keeps loaded photos visible on paging failure and selects with touch checkboxes", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -23,6 +23,13 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   expect(await screen.findByText("1 selected photo")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Select loaded photos" }));
+  expect(screen.getByText("2 selected photos")).toBeTruthy();
+  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  const density = screen.getByRole("combobox", { name: /^Grid density/ });
+  await fireEvent.click(density);
+  await screen.findByRole("listbox");
+  await fireEvent.keyDown(density, { key: "Escape" });
+  expect(screen.queryByRole("listbox")).toBeNull();
   expect(screen.getByText("2 selected photos")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await screen.findByRole("button", { name: "Select Photo 3.jpg" });
