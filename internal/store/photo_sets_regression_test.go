@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"encoding/json/v2"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -50,7 +49,7 @@ func TestPhotoSetScopePrecedesDuplicateCollapse(t *testing.T) {
 	require.Equal(t, int64(3), summary.Revision)
 }
 
-func TestPhotoSetPurgeRemovesOnlyRetiredMembersOnce(t *testing.T) {
+func TestPhotoSetMembershipSurvivesEmptyAssets(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -67,55 +66,64 @@ func TestPhotoSetPurgeRemovesOnlyRetiredMembersOnce(t *testing.T) {
 	require.NoError(t, err)
 	pair, err = s.AttachPhotoFile(ctx, pair.ID, pair.Revision, jpeg.ID, PhotoRoleImage, nil)
 	require.NoError(t, err)
+	var recipe string
+	for _, asset := range []PhotoAsset{live, first} {
+		node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+		require.NoError(t, err)
+		grid := visualPreviewRecipe()
+		grid.MaxEdgePixels = 512
+		generation, err := s.PublishVisualPreviewGeneration(ctx, node.CurrentVersionID, readyVisualPreviewWithRecipe(t, node.BlobHash, browseHash("preview-"+asset.ID), 9, grid), &BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 9})
+		require.NoError(t, err)
+		recipe = generation.RecipeFingerprint
+	}
 	set, err := s.CreatePhotoSet(ctx, "Shared")
 	require.NoError(t, err)
-	set, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{live.ID, first.ID, second.ID, pair.ID}})
+	members := []string{live.ID, first.ID, second.ID, pair.ID}
+	set, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: members})
 	require.NoError(t, err)
 	cover := &first.ID
-	set, err = s.UpdatePhotoSet(ctx, set.ID, set.Revision, nil, nil, &cover)
+	set, err = s.UpdatePhotoSet(ctx, set.ID, set.Revision, nil, new(true), &cover)
 	require.NoError(t, err)
-	copy, err := s.DuplicatePhotoSet(ctx, set.ID, set.Revision, "Shared copy")
+	var firstAdded, secondAdded string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT added_at FROM photo_set_members WHERE set_id=? AND asset_id=?`, set.ID, first.ID).Scan(&firstAdded))
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT added_at FROM photo_set_members WHERE set_id=? AND asset_id=?`, set.ID, second.ID).Scan(&secondAdded))
+	var receiptsBefore int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts WHERE set_id=?`, set.ID).Scan(&receiptsBefore))
+	detached, err := s.DetachPhotoFile(ctx, first.ID, first.Revision, first.Files[0].ID, PhotoDetachOptions{})
 	require.NoError(t, err)
-	for _, nodeID := range []int64{first.Files[0].NodeID, second.Files[0].NodeID, raw.ID} {
+	summary, err := s.PhotoSet(ctx, set.ID, recipe)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), summary.MemberCount)
+	require.Equal(t, int64(3), summary.IncludedCount)
+	require.Equal(t, live.ID, *summary.EffectiveCoverAssetID)
+	require.Equal(t, set, summary.PhotoSet)
+	for _, nodeID := range []int64{second.Files[0].NodeID, raw.ID} {
 		node, err := s.NodeByID(ctx, nodeID)
 		require.NoError(t, err)
 		_, _, err = s.Trash(ctx, node.ID, node.Revision)
 		require.NoError(t, err)
 	}
-	beforePurge, err := s.PhotoSet(ctx, set.ID, "")
-	require.NoError(t, err)
-	require.Equal(t, int64(4), beforePurge.MemberCount)
 	_, err = s.TrashEmpty(ctx, 0, true)
 	require.NoError(t, err)
-	for _, album := range []PhotoSet{set, copy} {
-		summary, err := s.PhotoSet(ctx, album.ID, "")
-		require.NoError(t, err)
-		require.Equal(t, int64(2), summary.MemberCount)
-		require.Equal(t, album.Revision+1, summary.Revision)
-		require.Nil(t, summary.CoverAssetID)
-		var before, after int64
-		var receipt string
-		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT before_revision,after_revision,after_json FROM photo_change_receipts WHERE set_id=? AND operation='set_remove'`, album.ID).Scan(&before, &after, &receipt))
-		require.Equal(t, album.Revision, before)
-		require.Equal(t, album.Revision+1, after)
-		var state struct {
-			AssetIDs []string `json:"asset_ids"`
-		}
-		require.NoError(t, json.Unmarshal([]byte(receipt), &state))
-		require.ElementsMatch(t, []string{first.ID, second.ID}, state.AssetIDs)
-	}
+	summary, err = s.PhotoSet(ctx, set.ID, recipe)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), summary.MemberCount)
+	require.Equal(t, int64(2), summary.IncludedCount)
+	require.Equal(t, live.ID, *summary.EffectiveCoverAssetID)
+	require.Equal(t, set, summary.PhotoSet)
+	ids, err := photoSetMemberIDs(ctx, s.db, set.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, members, ids)
 	paired, err := s.PhotoAssetByID(ctx, pair.ID)
 	require.NoError(t, err)
 	require.Len(t, paired.Files, 1)
 	require.Equal(t, jpeg.ID, paired.Files[0].NodeID)
-	destination, err := s.CreatePhotoSet(ctx, "Destination")
+	page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{SetID: set.ID, Query: snapshotTestQuery(t, sprintfPhotoSort("added_time", "asc"))}, nil)
 	require.NoError(t, err)
-	_, err = s.ChangePhotoSetMembers(ctx, destination.ID, destination.Revision, true, PhotoSetSelection{AssetIDs: []string{live.ID, first.ID}})
-	require.ErrorIs(t, err, ErrInvalidPhotoAlbum)
-	summary, err := s.PhotoSet(ctx, destination.ID, "")
+	require.Equal(t, int64(2), page.Total)
+	noop, err := s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{second.ID}})
 	require.NoError(t, err)
-	require.Zero(t, summary.MemberCount)
-	require.Equal(t, destination.Revision, summary.Revision)
+	require.Equal(t, set, noop)
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	restored := newTestStore(t)
@@ -123,4 +131,28 @@ func TestPhotoSetPurgeRemovesOnlyRetiredMembersOnce(t *testing.T) {
 	var roundTrip bytes.Buffer
 	require.NoError(t, restored.ExportMetadata(ctx, &roundTrip))
 	require.Equal(t, exported.String(), roundTrip.String())
+	s = restored
+	_, err = s.AttachPhotoFile(ctx, first.ID, detached.Revision, first.Files[0].NodeID, PhotoRoleImage, nil)
+	require.NoError(t, err)
+	replacement := albumAsset(t, s, "replacement.jpg")
+	_, err = s.DetachPhotoFile(ctx, replacement.ID, replacement.Revision, replacement.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	emptied, err := s.PhotoAssetByID(ctx, second.ID)
+	require.NoError(t, err)
+	_, err = s.AttachPhotoFile(ctx, second.ID, emptied.Revision, replacement.Files[0].NodeID, PhotoRoleImage, nil)
+	require.NoError(t, err)
+	summary, err = s.PhotoSet(ctx, set.ID, recipe)
+	require.NoError(t, err)
+	require.Equal(t, int64(4), summary.MemberCount)
+	require.Equal(t, int64(4), summary.IncludedCount)
+	require.Equal(t, first.ID, *summary.EffectiveCoverAssetID)
+	require.Equal(t, set, summary.PhotoSet)
+	var firstAfter, secondAfter string
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT added_at FROM photo_set_members WHERE set_id=? AND asset_id=?`, set.ID, first.ID).Scan(&firstAfter))
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT added_at FROM photo_set_members WHERE set_id=? AND asset_id=?`, set.ID, second.ID).Scan(&secondAfter))
+	require.Equal(t, firstAdded, firstAfter)
+	require.Equal(t, secondAdded, secondAfter)
+	var receiptsAfter int
+	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts WHERE set_id=?`, set.ID).Scan(&receiptsAfter))
+	require.Equal(t, receiptsBefore, receiptsAfter)
 }

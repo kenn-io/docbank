@@ -57,7 +57,7 @@ func photoSetByID(ctx context.Context, q metadataQuerier, id string) (PhotoSet, 
 
 func photoSetSummary(ctx context.Context, q metadataQuerier, set PhotoSet, recipe string) (PhotoSetSummary, error) {
 	out := PhotoSetSummary{PhotoSet: set}
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members WHERE set_id=?`, set.ID).Scan(&out.MemberCount); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m WHERE m.set_id=? AND EXISTS (SELECT 1 FROM photo_files f WHERE f.asset_id=m.asset_id)`, set.ID).Scan(&out.MemberCount); err != nil {
 		return out, err
 	}
 	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE m.set_id=? AND `+photoBrowseLiveDisplay, set.ID).Scan(&out.IncludedCount); err != nil {
@@ -320,7 +320,7 @@ func (s *Store) DuplicatePhotoSet(ctx context.Context, id string, revision int64
 	return out, err
 }
 
-func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, add bool, selection PhotoSetSelection) ([]string, error) {
+func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSelection) ([]string, error) {
 	if (selection.Query == nil) == (len(selection.AssetIDs) == 0) || len(selection.AssetIDs) > maxBatchTagTargets {
 		return nil, ErrInvalidPhotoAlbum
 	}
@@ -340,14 +340,6 @@ func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, add bool, selection P
 			}
 			if count != 1 {
 				return nil, ErrNotFound
-			}
-			if add {
-				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files WHERE asset_id=?`, id).Scan(&count); err != nil {
-					return nil, err
-				}
-				if count == 0 {
-					return nil, ErrInvalidPhotoAlbum
-				}
 			}
 			if !seen[id] {
 				ids = append(ids, id)
@@ -405,7 +397,7 @@ func (s *Store) ChangePhotoSetMembers(ctx context.Context, id string, revision i
 			return err
 		}
 		out = before
-		ids, err := photoSetSelectionIDs(ctx, tx, add, selection)
+		ids, err := photoSetSelectionIDs(ctx, tx, selection)
 		if err != nil {
 			return err
 		}

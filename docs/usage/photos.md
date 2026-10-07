@@ -104,9 +104,9 @@ docbank photos albums delete <album-id>
 
 Existing-album writes accept `--revision` with the same automatic read and retry as asset writes. Repeating an unchanged decision preserves the revision. Deleting an album keeps every photo and file. Duplication preserves added dates and member order. Removing the chosen cover clears the override. A ready grid preview of the chosen member wins; otherwise the newest added included member with a ready grid preview supplies the cover.
 
-`add` and `remove` accept up to 1,000 explicit IDs or `--query` with strict QueryV1 JSON. A query selects its complete current photo result inside the membership transaction, including display metadata and duplicate collapse. Query scopes have no total member cap. Their sort field, including `added_time`, does not change the selected IDs. Adding an explicit asset requires at least one remaining file. Coverage-dependent queries accept `--coverage` and `--profile-fingerprint`. Each changed action advances the album revision once and records all changed IDs in bounded receipts. An invalid ID, query, coverage, or stale revision rolls back the complete action.
+`add` and `remove` accept up to 1,000 explicit IDs or `--query` with strict QueryV1 JSON. A query selects its complete current photo result inside the membership transaction, including display metadata and duplicate collapse. Query scopes have no total member cap. Their sort field, including `added_time`, does not change the selected IDs. Coverage-dependent queries accept `--coverage` and `--profile-fingerprint`. Each changed action advances the album revision once and records all changed IDs in bounded receipts. An invalid ID, query, coverage, or stale revision rolls back the complete action.
 
-Exclusion and ordinary trash keep album membership. Permanently deleting a photo's last file removes it from every album, clears its cover override, and advances each affected album once with removal receipts. Included counts and member browsing omit those photos until they become visible again. Album names can repeat. Use `set:` followed by an album UUID, or typed `filters.set_ids`, to filter by membership. Values within `set_ids` combine with OR.
+Exclusion, ordinary trash, detach, and permanent file deletion keep album membership and its added date. `member_count` counts members with at least one file. Empty members disappear from counts, browsing, and the effective cover until a file is attached again. These file changes preserve the album revision and chosen cover. Included counts and member browsing also omit excluded and trashed photos until they become visible again. Album names can repeat. Use `set:` followed by an album UUID, or typed `filters.set_ids`, to filter by membership. Values within `set_ids` combine with OR.
 
 ## Import a camera folder
 
@@ -184,7 +184,7 @@ supported metadata streams restore an empty photo authority.
 Email children are identified by `email_document_relations.child_version_id`.
 An image produced by processing remains eligible when it is not an email
 child. Existing graphs survive ordinary trash and restore. Permanent node
-deletion removes memberships and repairs the affected asset while preserving
+deletion removes file memberships and repairs the affected asset while preserving
 an empty asset identity.
 
 Automatic enrollment and explicit graph writes are skipped or refused when
@@ -195,7 +195,7 @@ preexisting graph is preserved and becomes read-only when audit is enabled.
 
 `POST /api/v1/photos/assets/query` accepts a `query` object using
 [QueryV1](../architecture/http-api.md#saved-query-and-highlight-definitions),
-optional `coverage`, `page_size` from 1 through 250, and `cursor`. It returns
+optional `set_id`, `coverage`, `page_size` from 1 through 250, and `cursor`. It returns
 `items`, the matching asset `total` counted on the first page, and an optional
 `next_cursor`. Later pages keep that total. Start a new browse to refresh it.
 The default page size is 50. Send the same query and page options with each
@@ -232,13 +232,13 @@ using each document's own metadata. Excluded, trashed, and displayless assets
 stay out.
 
 Sort by `capture_time`, `import_time`, `name`, `modified_at`, `size`, or
-`media_type`, with `asc` or `desc`. Capture sorting converts recorded offsets
+`media_type`, with `asc` or `desc`. Set `set_id` to an album UUID to browse its members; this scope also accepts `added_time`. Capture sorting converts recorded offsets
 to UTC. Omitted zones use civil calendar coordinates. Missing or unreadable
 capture times sort last in both directions and do not match capture-date
 filters. Asset UUID orders equal keys. Names and media types compare only their
 first 1,024 characters, so longer values that share that prefix also fall back
 to UUID order. `path` and `relevance` are unsupported by this route. Document
-snapshots reject `capture_time` and `import_time` with an error naming Photos
+snapshots reject `capture_time`, `import_time`, and `added_time` with an error naming Photos
 as the supported view.
 
 Each row has grid, fit, and large preview slots. `missing` means no result is

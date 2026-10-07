@@ -2190,7 +2190,7 @@ CREATE TABLE IF NOT EXISTS photo_sets (
     name TEXT NOT NULL,
     starred INTEGER NOT NULL DEFAULT 0,
     revision INTEGER NOT NULL DEFAULT 1,
-    cover_asset_id TEXT REFERENCES photo_assets(asset_id) ON DELETE SET NULL,
+    cover_asset_id TEXT REFERENCES photo_assets(asset_id),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     deleted_at TEXT
@@ -2198,7 +2198,7 @@ CREATE TABLE IF NOT EXISTS photo_sets (
 
 CREATE TABLE IF NOT EXISTS photo_set_members (
     set_id TEXT NOT NULL REFERENCES photo_sets(set_id),
-    asset_id TEXT NOT NULL REFERENCES photo_assets(asset_id) ON DELETE CASCADE,
+    asset_id TEXT NOT NULL REFERENCES photo_assets(asset_id),
     added_at TEXT NOT NULL,
     PRIMARY KEY (set_id,asset_id)
 );

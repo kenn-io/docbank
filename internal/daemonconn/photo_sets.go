@@ -8,12 +8,22 @@ import (
 	"net/http"
 )
 
-func validatePhotoAlbumResponse(album api.PhotoAlbum, etag, id string) error {
-	if !validUUIDv4(album.ID) || album.Revision < 1 || id != "" && album.ID != id || etag != revisionIfMatch(album.Revision) {
+func validatePhotoAlbumIdentity(album api.PhotoAlbum, id string) error {
+	if !validUUIDv4(album.ID) || album.Revision < 1 || id != "" && album.ID != id {
 		return errors.New("album response identity or revision mismatch")
 	}
 	if album.CoverAssetID != nil && !validUUIDv4(*album.CoverAssetID) {
 		return errors.New("album response has invalid cover identity")
+	}
+	return nil
+}
+
+func validatePhotoAlbumResponse(album api.PhotoAlbum, etag, id string) error {
+	if err := validatePhotoAlbumIdentity(album, id); err != nil {
+		return err
+	}
+	if etag != revisionIfMatch(album.Revision) {
+		return errors.New("album response ETag mismatch")
 	}
 	return nil
 }
@@ -37,7 +47,7 @@ func (c *Connection) PhotoAlbums(ctx context.Context) ([]api.PhotoAlbumSummary, 
 		return nil, err
 	}
 	for _, album := range *albums {
-		if err := validatePhotoAlbumResponse(album.PhotoAlbum, revisionIfMatch(album.Revision), ""); err != nil {
+		if err := validatePhotoAlbumIdentity(album.PhotoAlbum, ""); err != nil {
 			return nil, err
 		}
 	}

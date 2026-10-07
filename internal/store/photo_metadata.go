@@ -165,8 +165,7 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier) error {
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM photo_change_receipts r
 		LEFT JOIN photo_assets a ON a.asset_id=r.asset_id
- LEFT JOIN photo_sets ps ON ps.set_id=r.set_id
-		WHERE (r.set_id IS NOT NULL AND ps.set_id IS NULL) OR (r.asset_id IS NOT NULL AND a.asset_id IS NULL)
+		WHERE (r.asset_id IS NOT NULL AND a.asset_id IS NULL)
 		   OR (r.settings_key IS NOT NULL AND NOT EXISTS (SELECT 1 FROM photo_library_settings))`).Scan(&orphans); err != nil {
 		return fmt.Errorf("checking photo receipt references: %w", err)
 	}
@@ -219,13 +218,6 @@ func validatePhotoSetGraph(ctx context.Context, q metadataQuerier) error {
 	}
 	if invalid > 0 {
 		return errors.New("invalid photo set membership or cover")
-	}
-	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m LEFT JOIN photo_sets s ON s.set_id=m.set_id LEFT JOIN photo_assets a ON a.asset_id=m.asset_id WHERE s.set_id IS NULL OR a.asset_id IS NULL`).Scan(&invalid)
-	if err != nil {
-		return err
-	}
-	if invalid > 0 {
-		return errors.New("dangling photo set membership")
 	}
 	return nil
 }
