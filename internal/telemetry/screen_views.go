@@ -2,7 +2,8 @@ package telemetry
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"log/slog"
@@ -52,15 +53,16 @@ func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
 
 	var request struct {
-		Event      string         `json:"event"`
+		Event      eventName      `json:"event"`
 		Properties map[string]any `json:"properties"`
 	}
 	if err != nil || len(body) > 64<<10 {
 		h.next.ServeHTTP(w, r)
 		return
 	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	if decoder.Decode(&request) != nil || decoder.Decode(new(any)) != io.EOF || strings.TrimSpace(request.Event) != EventScreenViewed || !h.reporter.Enabled() {
+	// Options follow kit's v1 decoder so both sides agree on which body names the event.
+	decoder := jsontext.NewDecoder(bytes.NewReader(body), jsontext.AllowDuplicateNames(true), jsontext.AllowInvalidUTF8(true))
+	if json.UnmarshalDecode(decoder, &request, json.MatchCaseInsensitiveNames(true)) != nil || !trailingEOF(decoder) || strings.TrimSpace(string(request.Event)) != EventScreenViewed || !h.reporter.Enabled() {
 		h.next.ServeHTTP(w, r)
 		return
 	}
@@ -142,4 +144,20 @@ func screenReceipt(w http.ResponseWriter, status string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = io.WriteString(w, `{"status":"`+status+`"}`)
+}
+
+func trailingEOF(decoder *jsontext.Decoder) bool {
+	_, err := decoder.ReadValue()
+	return errors.Is(err, io.EOF)
+}
+
+// eventName keeps an earlier value on null, as kit's v1 decoder does for a repeated event key.
+type eventName string
+
+func (e *eventName) UnmarshalJSONFrom(decoder *jsontext.Decoder) error {
+	if decoder.PeekKind() == 'n' {
+		_, err := decoder.ReadToken()
+		return err
+	}
+	return json.UnmarshalDecode(decoder, (*string)(e))
 }
