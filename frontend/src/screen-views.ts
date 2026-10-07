@@ -1,4 +1,4 @@
-import { APIError, sessionResponse } from "./api-transport.js";
+import { sessionResponse } from "./api-transport.js";
 import { getReportTelemetryEventUrl } from "./generated/docbank.js";
 
 const storageKey = "docbank.screen-views";
@@ -31,14 +31,14 @@ export function startScreenReporting(session: string, screen: string): () => voi
       body: JSON.stringify({ event: "screen_viewed", properties: { screen, surface: "web" } }),
       session,
       signal: controller.signal,
-    }).then(() => true, (error: unknown) => error instanceof APIError && ![502, 503, 504].includes(error.status))
-      .then((answered) => {
-        if (!answered || stopped) return;
+    })
+      .then(() => {
+        if (stopped) return;
         const current = screenClaims();
         if (current.day > day) return;
         memory = { day, screens: [...new Set([...(current.day === day ? current.screens : []), screen])] };
         try { localStorage.setItem(storageKey, JSON.stringify(memory)); } catch {}
-      }).finally(() => {
+      }).catch(() => {}).finally(() => {
         window.clearTimeout(timer);
         controller = undefined;
       });

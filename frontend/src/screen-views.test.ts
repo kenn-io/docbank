@@ -48,7 +48,7 @@ it("records answered screens across focus, visibility and remounts while allowin
   stopSearch();
 });
 
-it.each([502, 503, 504])("retries focus after a %s response", async (status) => {
+it.each([400, 500, 502, 503, 504])("retries focus after a %s response", async (status) => {
   vi.useFakeTimers();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status }));
@@ -59,18 +59,6 @@ it.each([502, 503, 504])("retries focus after a %s response", async (status) => 
   expect(fetchMock).toHaveBeenCalledTimes(2);
   stop();
 });
-
-it("records a daemon rejection", async () => {
-  vi.useFakeTimers();
-  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 400 }));
-  const stop = startScreenReporting("synthetic-session", "browse");
-  await vi.advanceTimersByTimeAsync(0);
-  window.dispatchEvent(new Event("focus"));
-  expect(fetchMock).toHaveBeenCalledTimes(1);
-  stop();
-});
-
 
 it.each(["getItem", "setItem"] as const)("remembers screens in memory when localStorage.%s fails", async (method) => {
   vi.useFakeTimers();

@@ -36,9 +36,10 @@ type screenCapture struct {
 	dir      string
 	mu       sync.Mutex
 	now      func() time.Time
+	claims   screenClaims
 }
 
-// CaptureHandler shares daily claims across interfaces under the daemon's vault lock.
+// CaptureHandler tracks daily claims for each interface under the daemon's vault lock.
 func CaptureHandler(r *Reporter, dir string) http.Handler {
 	return &screenCapture{reporter: r, next: posthog.NewCaptureHandler(r), dir: dir, now: time.Now}
 }
@@ -67,23 +68,26 @@ func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	properties, _ := h.reporter.SanitizeProperties(EventScreenViewed, request.Properties)
 	screen, validScreen := properties["screen"].(string)
-	_, validSurface := properties["surface"].(string)
+	surface, validSurface := properties["surface"].(string)
 	if !validScreen || !validSurface {
 		screenReceipt(w, "queued")
 		return
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	claims := h.load()
-	if claims.Screens[screen] {
+	if h.claims.Day != h.now().UTC().Format(time.DateOnly) {
+		h.claims = h.load()
+	}
+	key := screen + "|" + surface
+	if h.claims.Screens[key] {
 		screenReceipt(w, "queued")
 		return
 	}
 	rec := httptest.NewRecorder()
 	h.next.ServeHTTP(rec, r)
 	if rec.Code == http.StatusAccepted && h.reporter.Enabled() {
-		claims.Screens[screen] = true
-		if err := h.save(claims); err != nil {
+		h.claims.Screens[key] = true
+		if err := h.save(h.claims); err != nil {
 			slog.Warn("telemetry screen claims failed", "error", err)
 		}
 	}

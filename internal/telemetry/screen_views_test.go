@@ -23,22 +23,27 @@ func screenBody(screen, surface string) string {
 	return fmt.Sprintf(`{"event":"screen_viewed","properties":{"screen":%q,"surface":%q,"query":"private synthetic text"}}`, screen, surface)
 }
 
-func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
-	enableTelemetryEnv(t)
-	var mu sync.Mutex
-	var events []map[string]any
-	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func screenCollector(t *testing.T, mu *sync.Mutex, events *[]map[string]any) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		assert.NoError(t, err)
 		var batch postHogBatch
 		assert.NoError(t, json.Unmarshal(body, &batch))
 		mu.Lock()
 		for _, event := range batch.Batch {
-			events = append(events, event.Properties)
+			*events = append(*events, event.Properties)
 		}
 		mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
+}
+
+func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
+	enableTelemetryEnv(t)
+	var mu sync.Mutex
+	var events []map[string]any
+	collector := screenCollector(t, &mu, &events)
 	defer collector.Close()
 	dir := t.TempDir()
 	makeHandler := func() (*Reporter, *screenCapture) {
@@ -54,6 +59,11 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 		require.Equal(t, 202, postEvent(t, handler, body).Code)
 	}
 	require.NoFileExists(t, filepath.Join(dir, screenClaimsFile))
+	for range 2 {
+		for _, surface := range []string{"web", "tui"} {
+			require.Equal(t, 202, postEvent(t, handler, screenBody("browse", surface)).Code)
+		}
+	}
 	var wg sync.WaitGroup
 	for i := range 12 {
 		wg.Go(func() {
@@ -101,7 +111,11 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	require.NoError(t, reporter.Close())
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, events, 4)
+	require.Len(t, events, 5)
+	assert.Equal(t, "browse", events[0]["screen"])
+	assert.Equal(t, "web", events[0]["surface"])
+	assert.Equal(t, "browse", events[1]["screen"])
+	assert.Equal(t, "tui", events[1]["surface"])
 	for _, props := range events {
 		assert.NotContains(t, props, "query")
 	}
@@ -112,17 +126,8 @@ func TestScreenCorruptClaimsStillCount(t *testing.T) {
 		t.Run(strconv.FormatBool(directory), func(t *testing.T) {
 			enableTelemetryEnv(t)
 			var mu sync.Mutex
-			var events []postHogBatch
-			collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				body, err := io.ReadAll(r.Body)
-				assert.NoError(t, err)
-				var batch postHogBatch
-				assert.NoError(t, json.Unmarshal(body, &batch))
-				mu.Lock()
-				events = append(events, batch)
-				mu.Unlock()
-				w.WriteHeader(http.StatusOK)
-			}))
+			var events []map[string]any
+			collector := screenCollector(t, &mu, &events)
 			defer collector.Close()
 			dir := t.TempDir()
 			reporter := New(Options{Dir: dir, endpoint: collector.URL, Logger: discardLogger()})
@@ -135,15 +140,16 @@ func TestScreenCorruptClaimsStillCount(t *testing.T) {
 				require.NoError(t, os.WriteFile(path, []byte("garbage"), 0600))
 			}
 			require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
+			require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
 			if !directory {
-				assert.True(t, handler.load().Screens["browse"])
+				assert.True(t, handler.load().Screens["browse|web"])
 			}
 			require.NoError(t, reporter.Close())
 			mu.Lock()
 			defer mu.Unlock()
 			require.Len(t, events, 1)
-			require.Len(t, events[0].Batch, 1)
-			assert.Equal(t, EventScreenViewed, events[0].Batch[0].Event)
+			assert.Equal(t, "browse", events[0]["screen"])
+			assert.Equal(t, "web", events[0]["surface"])
 		})
 	}
 }

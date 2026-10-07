@@ -2872,7 +2872,7 @@
       {#if panel.kind === "telemetry"}
         <Modal title="Anonymous usage" ariaLabel="Anonymous usage" tone="info" onclose={closePanel(panel)}>
           <div class="telemetry-note">
-            <p>Docbank reports when the daemon runs, the web app opens, and screens open in the browser or terminal. Each screen name counts once per vault per UTC day, across both interfaces and daemon restarts. Reporting is on by default.</p>
+            <p>Docbank reports when the daemon runs, the web app opens, and screens open in the browser or terminal. Each screen name counts once per vault per UTC day for each interface, browser and terminal, across daemon restarts. Reporting is on by default.</p>
             <p>Reports go to PostHog with a random ID for this vault, the app version, operating system, and install age. Reports include fixed screen names and the interface used. Document content, filenames, paths, tags, and search text stay private.</p>
             <p>To turn reporting off, set <code>DOCBANK_TELEMETRY_ENABLED=0</code> in the environment that starts the daemon, then run <code>docbank daemon restart</code>.</p>
           </div>
