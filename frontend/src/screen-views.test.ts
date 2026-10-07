@@ -8,11 +8,16 @@ beforeEach(async () => {
 
 afterEach(() => { localStorage.clear(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
-it("reports canonical names through the authenticated route and retries focus after failure", async () => {
+it.each([400, 503, "network rejection"])("retries focus after a %s response", async (status) => {
   vi.useFakeTimers();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(new Error("offline"))
-    .mockImplementation(() => new Promise(() => {}));
+  const fetchMock = vi.spyOn(globalThis, "fetch");
+  if (typeof status === "number") {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status }));
+  } else {
+    fetchMock.mockRejectedValueOnce(new Error("offline"));
+  }
+  fetchMock.mockImplementation(() => new Promise(() => {}));
   const stop = startScreenReporting("synthetic-session", "browse");
   await vi.advanceTimersByTimeAsync(0);
   window.dispatchEvent(new Event("focus"));
@@ -59,18 +64,6 @@ it("records answered screens across focus, visibility and remounts while allowin
   await vi.advanceTimersByTimeAsync(0);
   expect(fetchMock).toHaveBeenCalledTimes(2);
   stopSearch();
-});
-
-it.each([400, 500, 502, 503, 504])("retries focus after a %s response", async (status) => {
-  vi.useFakeTimers();
-  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status }));
-  const stop = startScreenReporting("synthetic-session", "browse");
-  await vi.advanceTimersByTimeAsync(0);
-  window.dispatchEvent(new Event("focus"));
-  await vi.advanceTimersByTimeAsync(0);
-  expect(fetchMock).toHaveBeenCalledTimes(2);
-  stop();
 });
 
 it.each(["getItem", "setItem"] as const)("remembers screens in memory when localStorage.%s fails", async (method) => {

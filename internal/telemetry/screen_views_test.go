@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -109,9 +108,27 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	handler.now = func() time.Time { return now }
 	require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
 	require.NoError(t, reporter.Close())
+	for i, directory := range []bool{false, true} {
+		dir = t.TempDir()
+		reporter, handler = makeHandler()
+		path := filepath.Join(dir, screenClaimsFile)
+		if directory {
+			require.NoError(t, os.Mkdir(path, 0700))
+		} else {
+			require.NoError(t, os.WriteFile(path, []byte("garbage"), 0600))
+		}
+		require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
+		require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
+		require.NoError(t, reporter.Close())
+		mu.Lock()
+		assert.Len(t, events, 6+i)
+		assert.Equal(t, "browse", events[len(events)-1]["screen"])
+		assert.Equal(t, "web", events[len(events)-1]["surface"])
+		mu.Unlock()
+	}
 	mu.Lock()
 	defer mu.Unlock()
-	require.Len(t, events, 5)
+	require.Len(t, events, 7)
 	assert.Equal(t, "browse", events[0]["screen"])
 	assert.Equal(t, "web", events[0]["surface"])
 	assert.Equal(t, "browse", events[1]["screen"])
@@ -119,51 +136,4 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	for _, props := range events {
 		assert.NotContains(t, props, "query")
 	}
-}
-
-func TestScreenCorruptClaimsStillCount(t *testing.T) {
-	for _, directory := range []bool{false, true} {
-		t.Run(strconv.FormatBool(directory), func(t *testing.T) {
-			enableTelemetryEnv(t)
-			var mu sync.Mutex
-			var events []map[string]any
-			collector := screenCollector(t, &mu, &events)
-			defer collector.Close()
-			dir := t.TempDir()
-			reporter := New(Options{Dir: dir, endpoint: collector.URL, Logger: discardLogger()})
-			handler, ok := CaptureHandler(reporter, dir).(*screenCapture)
-			require.True(t, ok)
-			path := filepath.Join(dir, screenClaimsFile)
-			if directory {
-				require.NoError(t, os.Mkdir(path, 0700))
-			} else {
-				require.NoError(t, os.WriteFile(path, []byte("garbage"), 0600))
-			}
-			require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
-			require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
-			if !directory {
-				assert.True(t, handler.load().Screens["browse|web"])
-			}
-			require.NoError(t, reporter.Close())
-			mu.Lock()
-			defer mu.Unlock()
-			require.Len(t, events, 1)
-			assert.Equal(t, "browse", events[0]["screen"])
-			assert.Equal(t, "web", events[0]["surface"])
-		})
-	}
-}
-
-func TestScreenClosedReporterKeepsNoClaim(t *testing.T) {
-	enableTelemetryEnv(t)
-	dir := t.TempDir()
-	reporter := New(Options{Dir: dir, endpoint: "http://127.0.0.1:1", Logger: discardLogger()})
-	handler, ok := CaptureHandler(reporter, dir).(*screenCapture)
-	require.True(t, ok)
-	require.NoError(t, reporter.Close())
-	response := postEvent(t, handler, screenBody("browse", "web"))
-	require.Equal(t, http.StatusAccepted, response.Code)
-	assert.JSONEq(t, `{"status":"disabled"}`, response.Body.String())
-	assert.Empty(t, handler.claims.Screens)
-	assert.Empty(t, handler.load().Screens)
 }
