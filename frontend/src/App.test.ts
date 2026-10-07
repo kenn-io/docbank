@@ -15,6 +15,7 @@ afterEach(() => {
   cleanup();
   history.replaceState(null, "", "/");
   vi.unstubAllGlobals();
+  localStorage.clear();
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   vi.restoreAllMocks();
 });
@@ -1518,12 +1519,12 @@ it("clears the tag filter when All files opens and restores it on Back", async (
   await screen.findByRole("region", { name: "Query editor" });
   await waitFor(() => expect(reportedScreens.at(-1)).toBe("search"));
   await fireEvent.click(screen.getByRole("button", { name: "Close query editor" }));
-  await waitFor(() => expect(reportedScreens.at(-1)).toBe("tags"));
+  expect(reportedScreens.filter((name) => name === "tags")).toHaveLength(1);
   const search = screen.getByRole("searchbox", { name: "Search documents" });
   await fireEvent.input(search, { target: { value: "alpha" } });
   await fireEvent.submit(search.closest("form")!);
   await screen.findByText("Search results");
-  await waitFor(() => expect(reportedScreens.at(-1)).toBe("search"));
+  expect(reportedScreens.filter((name) => name === "search")).toHaveLength(1);
 });
 
 it("ignores a folder lookup that finishes after a newer navigation", async () => {

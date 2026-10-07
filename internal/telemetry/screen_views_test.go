@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -65,7 +66,7 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	}
 	wg.Wait()
 	require.Equal(t, 202, postEvent(t, handler, `{"Event":" screen_viewed ","properties":{"screen":"browse","surface":"web"}}`).Code)
-	require.Equal(t, 400, postEvent(t, handler, `{"event":"screen_viewed","event":null,"properties":{"screen":"browse","surface":"web"}}`).Code)
+	require.Equal(t, 202, postEvent(t, handler, `{"event":"screen_viewed","event":null,"properties":{"screen":"browse","surface":"web"}}`).Code)
 	require.Equal(t, 202, postEvent(t, handler, `{"event":"app_opened","Event":"screen_viewed","properties":{"screen":"browse","surface":"web"}}`).Code)
 
 	require.Equal(t, 202, postEvent(t, handler, screenBody("search", "tui")).Code)
@@ -106,27 +107,54 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	}
 }
 
-func TestScreenClaimRejectedEnqueueRemainsEligible(t *testing.T) {
+func TestScreenCorruptClaimsStillCount(t *testing.T) {
+	for _, directory := range []bool{false, true} {
+		t.Run(strconv.FormatBool(directory), func(t *testing.T) {
+			enableTelemetryEnv(t)
+			var mu sync.Mutex
+			var events []postHogBatch
+			collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				assert.NoError(t, err)
+				var batch postHogBatch
+				assert.NoError(t, json.Unmarshal(body, &batch))
+				mu.Lock()
+				events = append(events, batch)
+				mu.Unlock()
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer collector.Close()
+			dir := t.TempDir()
+			reporter := New(Options{Dir: dir, endpoint: collector.URL, Logger: discardLogger()})
+			handler, ok := CaptureHandler(reporter, dir).(*screenCapture)
+			require.True(t, ok)
+			path := filepath.Join(dir, screenClaimsFile)
+			if directory {
+				require.NoError(t, os.Mkdir(path, 0700))
+			} else {
+				require.NoError(t, os.WriteFile(path, []byte("garbage"), 0600))
+			}
+			require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
+			if !directory {
+				assert.True(t, handler.load().Screens["browse"])
+			}
+			require.NoError(t, reporter.Close())
+			mu.Lock()
+			defer mu.Unlock()
+			require.Len(t, events, 1)
+			require.Len(t, events[0].Batch, 1)
+			assert.Equal(t, EventScreenViewed, events[0].Batch[0].Event)
+		})
+	}
+}
+
+func TestScreenClosedReporterKeepsNoClaim(t *testing.T) {
 	enableTelemetryEnv(t)
 	dir := t.TempDir()
 	reporter := New(Options{Dir: dir, endpoint: "http://127.0.0.1:1", Logger: discardLogger()})
 	handler, ok := CaptureHandler(reporter, dir).(*screenCapture)
 	require.True(t, ok)
-	require.NoError(t, os.Mkdir(filepath.Join(dir, screenClaimsFile), 0700))
-	require.Equal(t, 500, postEvent(t, handler, screenBody("browse", "web")).Code)
-	require.NoError(t, os.Remove(filepath.Join(dir, screenClaimsFile)))
-	// A capture rejection rolls back the tentative persisted claim.
-	handler.next = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "enqueue rejected", http.StatusInternalServerError)
-	})
-	require.Equal(t, 500, postEvent(t, handler, screenBody("browse", "web")).Code)
-	claims, err := handler.load()
-	require.NoError(t, err)
-	assert.Empty(t, claims.Screens)
-	handler.next = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { screenReceipt(w, "queued") })
-	require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "tui")).Code)
-	claims, err = handler.load()
-	require.NoError(t, err)
-	assert.True(t, claims.Screens["browse"])
 	require.NoError(t, reporter.Close())
+	require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
+	assert.Empty(t, handler.load().Screens)
 }

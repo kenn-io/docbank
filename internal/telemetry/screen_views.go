@@ -2,22 +2,21 @@ package telemetry
 
 import (
 	"bytes"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
+	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"maps"
 	"mime"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"go.kenn.io/docbank/internal/filepublish"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/telemetry/posthog"
 )
 
@@ -61,143 +60,82 @@ func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.next.ServeHTTP(w, r)
 		return
 	}
-	if err := json.Unmarshal(body, &request, jsontext.AllowDuplicateNames(true), jsontext.AllowInvalidUTF8(true), json.MatchCaseInsensitiveNames(true)); err != nil {
-		http.Error(w, "invalid telemetry request", http.StatusBadRequest)
-		return
-	}
-	request.Event = strings.TrimSpace(request.Event)
-	if request.Event == EventScreenViewed {
-		request.Properties, _ = h.reporter.SanitizeProperties(request.Event, request.Properties)
-	}
-	canonical, err := json.Marshal(request)
-	if err != nil {
-		http.Error(w, "invalid telemetry properties", http.StatusBadRequest)
-		return
-	}
-	r.Body = io.NopCloser(bytes.NewReader(canonical))
-	if request.Event != EventScreenViewed || !h.reporter.EventAllowed(request.Event) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if decoder.Decode(&request) != nil || decoder.Decode(new(any)) != io.EOF || strings.TrimSpace(request.Event) != EventScreenViewed || !h.reporter.Enabled() {
 		h.next.ServeHTTP(w, r)
 		return
 	}
-	properties := request.Properties
-	status := "queued"
-	if !h.reporter.Enabled() {
-		status = "disabled"
-	}
+	properties, _ := h.reporter.SanitizeProperties(EventScreenViewed, request.Properties)
 	screen, validScreen := properties["screen"].(string)
 	_, validSurface := properties["surface"].(string)
-	if !validScreen || !validSurface || status == "disabled" {
-		screenReceipt(w, status)
+	if !validScreen || !validSurface {
+		screenReceipt(w, "queued")
 		return
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	claims, err := h.load()
-	if err != nil {
-		h.storageError(w, err)
-		return
-	}
+	claims := h.load()
 	if claims.Screens[screen] {
 		screenReceipt(w, "queued")
 		return
 	}
-	claims.Screens[screen] = true
-	if err := h.save(claims); err != nil {
-		h.storageError(w, err)
-		return
-	}
-	response := &screenResponse{header: make(http.Header)}
-	h.next.ServeHTTP(response, r)
-	if response.code != http.StatusAccepted {
-		delete(claims.Screens, screen)
+	rec := httptest.NewRecorder()
+	h.next.ServeHTTP(rec, r)
+	if rec.Code == http.StatusAccepted && h.reporter.Enabled() {
+		claims.Screens[screen] = true
 		if err := h.save(claims); err != nil {
-			h.storageError(w, err)
-			return
+			slog.Warn("telemetry screen claims failed", "error", err)
 		}
 	}
-	maps.Copy(w.Header(), response.header)
-	w.WriteHeader(response.code)
-	_, _ = w.Write(response.body.Bytes())
+	maps.Copy(w.Header(), rec.Header())
+	w.WriteHeader(rec.Code)
+	_, _ = w.Write(rec.Body.Bytes())
 }
 
-func (h *screenCapture) load() (screenClaims, error) {
+func (h *screenCapture) load() screenClaims {
+	claims := screenClaims{Day: h.now().UTC().Format(time.DateOnly), Screens: map[string]bool{}}
 	inst, err := posthog.LoadOrCreateInstall(h.dir)
 	if err != nil {
-		return screenClaims{}, fmt.Errorf("load telemetry identity: %w", err)
+		slog.Warn("load telemetry identity failed", "error", err)
+		return claims
 	}
-	claims := screenClaims{}
+	claims.InstallID = inst.ID
 	file, err := os.Open(filepath.Join(h.dir, screenClaimsFile))
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("load telemetry screen claims failed", "error", err)
+		}
+		return claims
+	}
+	defer func() { _ = file.Close() }()
+	body, err := io.ReadAll(io.LimitReader(file, 8193))
+	if err == nil && len(body) > 8192 {
+		err = errors.New("telemetry screen claims too large")
+	}
+	var stored screenClaims
 	if err == nil {
-		defer func() { _ = file.Close() }()
-		body, readErr := io.ReadAll(io.LimitReader(file, 8193))
-		if readErr != nil {
-			return claims, readErr
-		}
-		if len(body) > 8192 {
-			return claims, errors.New("telemetry screen claims too large")
-		}
-		if err := json.Unmarshal(body, &claims); err != nil {
-			return claims, err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return claims, err
+		err = json.Unmarshal(body, &stored)
 	}
-	day := h.now().UTC().Format(time.DateOnly)
-	if claims.InstallID != inst.ID || claims.Day != day {
-		claims = screenClaims{InstallID: inst.ID, Day: day}
+	if err != nil {
+		slog.Warn("load telemetry screen claims failed", "error", err)
+		return claims
 	}
-	if claims.Screens == nil {
-		claims.Screens = map[string]bool{}
+	if stored.InstallID == claims.InstallID && stored.Day == claims.Day && stored.Screens != nil {
+		return stored
 	}
-	return claims, nil
+	return claims
 }
 
 func (h *screenCapture) save(claims screenClaims) error {
-	stage, err := filepublish.CreateStage(h.dir, ".telemetry-screens-")
+	data, err := json.Marshal(claims)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = stage.Cleanup() }()
-	if err := json.MarshalWrite(stage.File, claims); err != nil {
-		return err
-	}
-	if err := stage.File.Sync(); err != nil {
-		return err
-	}
-	if err := stage.File.Close(); err != nil {
-		return err
-	}
-	committed, err := filepublish.Publish(stage.Path(), filepath.Join(h.dir, screenClaimsFile), true)
-	if committed && err != nil {
-		slog.Warn("telemetry screen claim durability failed", "error", err)
-		return nil
-	}
-	return err
-}
-
-func (h *screenCapture) storageError(w http.ResponseWriter, err error) {
-	slog.Warn("telemetry screen claims failed", "error", err)
-	http.Error(w, "persist telemetry screen claim failed", http.StatusInternalServerError)
+	return atomicfile.WriteFile(filepath.Join(h.dir, screenClaimsFile), data, atomicfile.WithPrivate())
 }
 
 func screenReceipt(w http.ResponseWriter, status string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = io.WriteString(w, `{"status":"`+status+`"}`)
-}
-
-type screenResponse struct {
-	header http.Header
-	code   int
-	body   bytes.Buffer
-}
-
-func (w *screenResponse) Header() http.Header  { return w.header }
-func (w *screenResponse) WriteHeader(code int) { w.code = code }
-func (w *screenResponse) Write(body []byte) (int, error) {
-	if w.code == 0 {
-		w.code = http.StatusOK
-	}
-	n, _ := w.body.Write(body)
-	return n, nil
 }
