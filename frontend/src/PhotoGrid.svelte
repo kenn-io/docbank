@@ -100,7 +100,9 @@
 <div class="photo-scroll" class:with-years={years.length > 1} bind:this={container} onscroll={() => { if (initialized) scrollTop = container?.scrollTop ?? 0; }} data-testid="photo-scroll">
   {#if years.length > 1}
   <nav class="year-scrubber" aria-label="Photo years">
-    {#each years as year}<Button size="sm" onclick={() => jump(year)}>{year}</Button>{/each}
+    <div class="year-buttons" style:max-height={`${Math.max(0, viewport - 7)}px`}>
+      {#each years as year}<Button size="sm" onclick={() => jump(year)}>{year}</Button>{/each}
+    </div>
   </nav>
   {/if}
   <div class="grid" style:height={`${totalHeight}px`}>
@@ -116,6 +118,7 @@
   .photo-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 12px; align-content: start; padding: 0 12px; }
   .with-years { grid-template-columns: minmax(0, 1fr) max-content; }
   .with-years .grid { padding-right: 12px; border-right: 1px solid var(--border-default); }
-  .year-scrubber { position: sticky; top: 7px; grid-column: 2; grid-row: 1; height: 0; z-index: 3; display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
+  .year-scrubber { position: sticky; top: 7px; grid-column: 2; grid-row: 1; height: 0; z-index: 3; }
+  .year-buttons { display: flex; flex-direction: column; align-items: stretch; gap: 2px; overflow-y: auto; }
   .grid { position: relative; grid-column: 1; grid-row: 1; }
 </style>
