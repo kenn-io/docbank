@@ -5,6 +5,42 @@ import App from "./App.svelte";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it.each([false, true])("retains Hide errors through polling and clears them after successful retry, mixed=%s", async mixed => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  let items = mixed ? [photo(1), photo(2)] : [photo(2)];
+  let stale = true;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden")) return new Response(JSON.stringify({ change_id: String(items.length), configured: true }));
+    if (url.includes("/assets/query")) return new Response(JSON.stringify({ items, total: items.length }));
+    if (url.endsWith("/hide")) {
+      if (url.includes("/photo-2/") && stale) return new Response(JSON.stringify({ detail: "Synthetic stale photo revision" }), { status: 412 });
+      items = items.filter(item => !url.includes(`/${item.asset_id}/`));
+      return new Response("{}");
+    }
+    return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
+  }));
+  render(App);
+  if (mixed) await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 2.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 2.jpg" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name: "Hide" }));
+  const failure = "1 photo failed: Synthetic stale photo revision";
+  await screen.findAllByText(failure);
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(screen.getAllByText(failure).length).toBeGreaterThan(0);
+  expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
+  expect(screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" })).not.toBeNull();
+  stale = false;
+  await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 2.jpg" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name: "Hide" }));
+  await waitFor(() => expect(screen.queryAllByText(failure)).toHaveLength(0));
+});
+
 it("retains photo state and previews across sidebar switches until lock", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });

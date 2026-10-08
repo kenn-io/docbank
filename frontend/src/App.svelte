@@ -186,6 +186,7 @@
   let photoMode = $state(location.pathname.startsWith("/photos"));
   let hiddenMode = $state(location.pathname === "/photos/hidden");
   let photoPrivacyError = $state("");
+  let photoActionError = $state("");
   let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
 
   $effect(() => {
@@ -198,7 +199,7 @@
       state.cache = new PhotoPreviewCache(webSession, photoFailure);
       photoState = { ...state };
       const detail = (event as CustomEvent<unknown>).detail;
-      photoPrivacyError = typeof detail === "string" ? detail : "";
+      if (typeof detail === "string") photoActionError = detail;
     };
     window.addEventListener(photoPrivacyEvent, privacy);
     const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(photoPrivacyEvent) : undefined;
@@ -2112,6 +2113,7 @@
     {#if photoMode && photoState}
       {#if hiddenMode}<HiddenPhotos session={webSession} onauthfailure={handleFailure} />{:else}
       {#if photoPrivacyError}<p role="alert">{photoPrivacyError}</p>{/if}
+      {#if photoActionError}<p role="alert">{photoActionError}</p>{/if}
       {#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} ontrashed={() => handleTrashed()} />{/key}
       {/if}
     {:else}

@@ -95,7 +95,6 @@ export class Photos {
     }
     if (failures) failure = `${failures} photo${failures === 1 ? "" : "s"} failed: ${failure}`;
     notifyPhotoPrivacy(failure);
-    this.error = failure;
   }
 
   cancelPending() {
