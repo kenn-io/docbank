@@ -18,10 +18,10 @@ func photoAssetByIDQuery(ctx context.Context, q metadataQuerier, id string) (Pho
 	var asset PhotoAsset
 	var display, override sql.NullString
 	if err := q.QueryRowContext(ctx, `
-		SELECT asset_id, kind, revision, excluded_at, display_file_id,
+		SELECT asset_id, kind, revision, hidden_at, excluded_at, display_file_id,
 		       display_override_file_id, created_at, updated_at
 		FROM photo_assets WHERE asset_id=?`, id).Scan(
-		&asset.ID, &asset.Kind, &asset.Revision, &asset.ExcludedAt, &display,
+		&asset.ID, &asset.Kind, &asset.Revision, &asset.HiddenAt, &asset.ExcludedAt, &display,
 		&override, &asset.CreatedAt, &asset.UpdatedAt,
 	); errors.Is(err, sql.ErrNoRows) {
 		return PhotoAsset{}, ErrNotFound
@@ -159,6 +159,7 @@ type photoReceiptAssetState struct {
 	ID                    string                     `json:"id"`
 	Kind                  string                     `json:"kind"`
 	Revision              int64                      `json:"revision"`
+	HiddenAt              *string                    `json:"hidden_at"`
 	ExcludedAt            *string                    `json:"excluded_at"`
 	DisplayFileID         *string                    `json:"display_file_id"`
 	DisplayOverrideFileID *string                    `json:"display_override_file_id"`
@@ -211,7 +212,7 @@ func photoAssetMemberChanges(before, after PhotoAsset) []photoReceiptMemberChang
 func photoAssetState(asset PhotoAsset, changes []photoReceiptMemberChange) any {
 	state := photoReceiptAssetState{
 		ID: asset.ID, Kind: asset.Kind, Revision: asset.Revision,
-		ExcludedAt: asset.ExcludedAt, DisplayFileID: asset.DisplayFileID,
+		HiddenAt: asset.HiddenAt, ExcludedAt: asset.ExcludedAt, DisplayFileID: asset.DisplayFileID,
 		DisplayOverrideFileID: asset.DisplayOverrideFileID, FileCount: len(asset.Files),
 		ChangedMemberCount: len(changes),
 	}
@@ -572,9 +573,9 @@ func commitPhotoAssetTx(ctx context.Context, tx *sql.Tx, before, asset PhotoAsse
 	asset.DisplayFileID, asset.DisplaySource = choice.FileID, choice.Source
 	asset.Revision++
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE photo_assets SET excluded_at=?, display_file_id=?, display_override_file_id=?,
+		UPDATE photo_assets SET hidden_at=?, excluded_at=?, display_file_id=?, display_override_file_id=?,
 			revision=?, updated_at=? WHERE asset_id=?`,
-		nullablePhotoString(asset.ExcludedAt), nullablePhotoString(asset.DisplayFileID),
+		nullablePhotoString(asset.HiddenAt), nullablePhotoString(asset.ExcludedAt), nullablePhotoString(asset.DisplayFileID),
 		nullablePhotoString(asset.DisplayOverrideFileID), asset.Revision, nowRFC3339(), asset.ID); err != nil {
 		return PhotoAsset{}, fmt.Errorf("updating photo asset %s: %w", asset.ID, err)
 	}

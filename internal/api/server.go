@@ -231,6 +231,7 @@ func NewServer(d Deps) *Server {
 	registerPackageRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
 	registerPhotoRoutes(humaAPI, d, g)
+	registerPhotoHiddenRoutes(humaAPI, d, g, s.snapshots)
 	registerPhotoSetRoutes(humaAPI, d, g)
 	registerPhotoQueryRoutes(humaAPI, d, cursorService)
 	registerPeopleRoutes(humaAPI, d, g)
@@ -250,7 +251,7 @@ func NewServer(d Deps) *Server {
 	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 
-	h := http.Handler(mux)
+	h := photoHiddenMiddleware(http.Handler(mux))
 	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
 	h = loopbackMiddleware(h)
 	h = timeoutMiddleware(h)

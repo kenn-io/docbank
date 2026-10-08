@@ -1,16 +1,19 @@
 <script lang="ts">
-  import { Checkbox } from "@kenn-io/kit-ui";
+  import { Checkbox, Menu, MenuTrigger, MenuContent, MenuItem } from "@kenn-io/kit-ui";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
 
-  let { photo, cache, selected, onclick, oncheck }: {
+  let { photo, cache, selected, onclick, oncheck, onhidden, hidden = false }: {
     photo: PhotoBrowseRow;
     cache: PhotoPreviewCache;
     selected: boolean;
+    onhidden?: () => void;
+    hidden?: boolean;
     onclick: (event: MouseEvent) => void;
     oncheck: (checked: boolean, range: boolean) => void;
   } = $props();
+  let menuOpen = $state(false);
   let url = $state("");
   let failed = $state(false);
   let errorMessage = $state("");
@@ -34,7 +37,7 @@
 </script>
 
 <div class="photo-cell" class:selected data-asset={photo.asset_id}>
-  <button type="button" class="photo-image" aria-label={`Select ${photo.name}`} aria-pressed={selected} {onclick}>
+  <button type="button" class="photo-image" aria-label={`Select ${photo.name}`} aria-pressed={selected} {onclick} oncontextmenu={event => { if (onhidden) { event.preventDefault(); menuOpen = true; } }}>
     {#if url}
       <img src={url} alt={photo.name} onerror={() => { url = ""; failed = true; }} />
     {:else}
@@ -47,6 +50,9 @@
   <div class="photo-check">
     <Checkbox checked={selected} ariaLabel={`Select photo ${photo.name}`} onchange={(checked) => oncheck(checked, false)} />
   </div>
+  {#if onhidden}
+    <div class="photo-menu"><Menu bind:open={menuOpen} align="end"><MenuTrigger ariaLabel={`Actions for ${photo.name}`}>•••</MenuTrigger><MenuContent ariaLabel="Photo actions"><MenuItem onselect={onhidden}>{hidden ? "Unhide" : "Hide"}</MenuItem></MenuContent></Menu></div>
+  {/if}
   {#if failed}<button type="button" class="retry-preview" onclick={() => retry++}>Retry preview</button>{/if}
 </div>
 
@@ -58,6 +64,7 @@
   img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 100%; font-size: var(--font-size-xs); }
   .pending { background: var(--bg-surface-hover); }
+  .photo-menu { position: absolute; top: 8px; right: 8px; }
   .photo-check { position: absolute; top: 8px; left: 8px; display: flex; }
   .retry-preview { position: absolute; bottom: 8px; left: 8px; background: var(--bg-surface); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 4px 8px; font-size: var(--font-size-xs); }
 </style>

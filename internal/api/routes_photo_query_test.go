@@ -171,7 +171,7 @@ func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
 	require.Equal(t, "nosniff", response.Header.Get("X-Content-Type-Options"))
 	etag := `"` + generation.GenerationID + `"`
 	require.Equal(t, etag, response.Header.Get("ETag"))
-	require.Equal(t, "X-Api-Key, Authorization, "+api.WebSessionHeader, response.Header.Get("Vary"))
+	require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, response.Header.Get("Vary"))
 	digest := sha256.Sum256(data)
 	require.Equal(t, "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":", response.Header.Get("Content-Digest"))
 	for _, condition := range []string{etag, `"another-generation", W/` + etag, "*"} {
@@ -180,7 +180,7 @@ func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
 		require.Empty(t, body)
 		require.Equal(t, etag, response.Header.Get("ETag"))
 		require.Equal(t, "private, no-cache", response.Header.Get("Cache-Control"))
-		require.Equal(t, "X-Api-Key, Authorization, "+api.WebSessionHeader, response.Header.Get("Vary"))
+		require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, response.Header.Get("Vary"))
 	}
 	response, body = get(t, ts, path, map[string]string{"If-None-Match": `"another-generation"`})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)

@@ -8,7 +8,7 @@ description: Group camera files, browse photos in the web app, and organize albu
 
 Docbank groups ordinary file nodes into photo assets. Each file node and its
 content versions still hold the bytes. An asset stores only membership, roles,
-display selection, exclusion, and bounded decision receipts.
+display selection, visibility, exclusion, and bounded decision receipts.
 
 Image files and files with a concrete `video/*` MIME type are enrolled when
 they are created. Audio, generic video, and generic RAW files stay ordinary
@@ -52,7 +52,31 @@ Refresh previews to reload the listing after background preview work finishes.
 If a page fails to load, the earlier photos remain visible. Retry requests the
 failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Selection retains photos in that range; imports or deletions may move the visible photo outside it. Failed attempts keep the earlier view available for Retry. Recovery stops after one minute and offers Retry if it needs more time.
 
-## Previews
+## Hidden photos
+
+Choose Hidden in the Photos sidebar and set a passcode. Open a photo's actions menu or right-click it and choose Hide. If the photo belongs to the selection, the action applies to each selected photo. A stale photo reports an error while successful changes remain saved.
+
+Hidden photos disappear from Library, photo queries, and album contents. Albums retain their membership and report hidden members separately. Documents, document tools, original bytes, and exports still expose the underlying files. Hidden is a Photos privacy control.
+
+Enter the passcode in Hidden to unlock for five minutes. Lock closes every active Hidden session. Locking, expiry, and visibility changes clear the grid, selection, and browser preview cache. Hidden previews stay in the current view's memory and carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
+
+Five incorrect passcodes within sixty seconds lock access for five minutes. Failed attempts and lockout survive restart and backup. Unlock sessions expire on restart and are excluded from backup. Changing the passcode revokes sessions. Disable Hidden verifies the passcode and returns every hidden photo to Library in one transaction. Operator reset removes credentials and sessions while preserving hidden flags, so a new setup can recover access.
+
+```text
+docbank photos hidden setup
+docbank photos hide <asset-id> [--revision REV]
+docbank photos hidden unlock
+docbank photos unhide <asset-id> [--revision REV]
+docbank photos hidden change
+docbank photos hidden disable
+docbank photos hidden lock
+docbank photos hidden state
+docbank photos hidden reset
+```
+
+Passcodes use protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks and forwards the cookie within that invocation. Unlock emits the expiry, and saves no client credential file. HTTP operations live under `/api/v1/photos/hidden`; hide and unhide use `/api/v1/photos/assets/{asset_id}/hide` and `/unhide` with `If-Match`. Browser sessions can use the interactive operations. Reset requires the daemon API key.
+
+## Preview sizes
 
 The daemon produces a grid preview with a 512-pixel maximum edge for each
 included photo's selected display file. It discovers new imports continuously

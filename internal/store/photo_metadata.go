@@ -12,6 +12,19 @@ type metadataPhotoAsset struct {
 	AssetID               string  `json:"asset_id" db:"asset_id"`
 	Kind                  string  `json:"kind" db:"kind"`
 	Revision              int64   `json:"revision" db:"revision"`
+	HiddenAt              *string `json:"hidden_at,omitempty" db:"hidden_at"`
+	ExcludedAt            *string `json:"excluded_at" db:"excluded_at"`
+	DisplayFileID         *string `json:"display_file_id" db:"display_file_id"`
+	DisplayOverrideFileID *string `json:"display_override_file_id" db:"display_override_file_id"`
+	CreatedAt             string  `json:"created_at" db:"created_at"`
+	UpdatedAt             string  `json:"updated_at" db:"updated_at"`
+}
+
+type metadataPhotoAssetV29 struct {
+	Type                  string  `json:"type"`
+	AssetID               string  `json:"asset_id" db:"asset_id"`
+	Kind                  string  `json:"kind" db:"kind"`
+	Revision              int64   `json:"revision" db:"revision"`
 	ExcludedAt            *string `json:"excluded_at" db:"excluded_at"`
 	DisplayFileID         *string `json:"display_file_id" db:"display_file_id"`
 	DisplayOverrideFileID *string `json:"display_override_file_id" db:"display_override_file_id"`
@@ -136,6 +149,11 @@ func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
 	if v.Type != metadataPhotoAssetType || validateUUIDv4(v.AssetID) != nil || !photoKindValid(v.Kind) || v.Revision < 1 {
 		return errors.New("invalid photo asset metadata")
 	}
+	if v.HiddenAt != nil {
+		if err := validateMetadataTime("photo asset hidden_at", *v.HiddenAt); err != nil {
+			return err
+		}
+	}
 	if v.ExcludedAt != nil {
 		if err := validateMetadataTime("photo asset excluded_at", *v.ExcludedAt); err != nil {
 			return err
@@ -179,7 +197,7 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 		if v.SetID == nil || validateUUIDv4(*v.SetID) != nil || v.AssetID != nil || v.SettingsKey != nil {
 			return errors.New("invalid photo set receipt identity")
 		}
-	case "create", "promote", "attach", "detach", "exclude", "display", "purge", "settings_recompute", "import", "trash", "restore":
+	case "create", "promote", "attach", "detach", "hide", "unhide", "exclude", "display", "purge", "settings_recompute", "import", "trash", "restore":
 		if v.AssetID == nil || v.SettingsKey != nil || v.SetID != nil {
 			return errors.New("invalid photo receipt asset/settings identity")
 		}
@@ -268,4 +286,42 @@ func validatePhotoSetGraph(ctx context.Context, q metadataQuerier) error {
 		return errors.New("invalid photo set membership or cover")
 	}
 	return nil
+}
+
+func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
+	if version >= 30 {
+		return append(append([]metadataRecordCodec(nil), photoMetadataTables...), photoHiddenMetadataTables...)
+	}
+	tables := append([]metadataRecordCodec(nil), photoMetadataTables...)
+	tables[0] = newMetadataTable(metadataTable[metadataPhotoAssetV29]{record: metadataPhotoAssetV29{Type: metadataPhotoAssetType}, table: "photo_assets", suffix: "ORDER BY asset_id", validate: func(v metadataPhotoAssetV29) error {
+		return validatePhotoAssetMetadataRecord(metadataPhotoAsset{Type: v.Type, AssetID: v.AssetID, Kind: v.Kind, Revision: v.Revision, ExcludedAt: v.ExcludedAt, DisplayFileID: v.DisplayFileID, DisplayOverrideFileID: v.DisplayOverrideFileID, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
+	}, checkExport: true})
+	return tables
+}
+
+type metadataHiddenCredential struct {
+	Type      string `json:"type"`
+	Singleton int    `json:"-" db:"singleton"`
+	Hash      string `json:"passcode_hash" db:"passcode_hash"`
+}
+type metadataHiddenLockout struct {
+	Type      string `json:"type"`
+	Singleton int    `json:"-" db:"singleton"`
+	Until     string `json:"locked_until" db:"locked_until"`
+}
+type metadataHiddenFailure struct {
+	Type string `json:"type"`
+	ID   int64  `json:"failure_id" db:"failure_id"`
+	At   string `json:"occurred_at" db:"occurred_at"`
+}
+
+var photoHiddenMetadataTables = []metadataRecordCodec{
+	newMetadataTable(metadataTable[metadataHiddenCredential]{record: metadataHiddenCredential{Type: "photo_hidden_credential", Singleton: 1}, table: "photo_hidden_credentials", suffix: "WHERE singleton=1", validate: func(v metadataHiddenCredential) error { _, _, err := hiddenHashParts(v.Hash); return err }, checkExport: true}),
+	newMetadataTable(metadataTable[metadataHiddenLockout]{record: metadataHiddenLockout{Type: "photo_hidden_lockout", Singleton: 1}, table: "photo_hidden_lockout", suffix: "WHERE singleton=1", validate: func(v metadataHiddenLockout) error { return validateMetadataTime("hidden lockout", v.Until) }, checkExport: true}),
+	newMetadataTable(metadataTable[metadataHiddenFailure]{record: metadataHiddenFailure{Type: "photo_hidden_failure"}, table: "photo_hidden_failures", suffix: "ORDER BY failure_id", validate: func(v metadataHiddenFailure) error {
+		if v.ID < 1 {
+			return errors.New("invalid failure identity")
+		}
+		return validateMetadataTime("hidden failure", v.At)
+	}, checkExport: true}),
 }

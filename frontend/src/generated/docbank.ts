@@ -292,8 +292,6 @@ export interface Node {
   name: string;
   parent_id?: number;
   path?: string;
-  photo_asset_id?: string;
-  photo_file_count?: number;
   revision: number;
   size: number;
   source_metadata?: SourceMetadata;
@@ -1692,20 +1690,6 @@ export interface DocumentEventCoverage {
   unbound_provenance: number;
 }
 
-export interface DocumentMediaSource {
-  content_version_id: string;
-  /**
-     * @minLength 1
-     * @maxLength 256
-     */
-  source_id: string;
-  /**
-     * @minLength 1
-     * @maxLength 256
-     */
-  source_version_id: string;
-}
-
 export interface MediaTimeSpan {
   /** @minimum 1 */
   end_ms: number;
@@ -1720,7 +1704,6 @@ export interface DocumentEvidenceReference {
   input_id?: string;
   input_kind?: string;
   kind: string;
-  media_sources?: DocumentMediaSource[];
   segment_id?: string;
   source_manifest_checksum?: string;
   time_span?: MediaTimeSpan;
@@ -1732,34 +1715,6 @@ export interface DocumentIdentity {
   /** @minimum 1 */
   node_id: number;
   path: string;
-}
-
-export interface DocumentMediaSelection {
-  completeness: string;
-  content_version_id: string;
-  origin: string;
-  source_id: string;
-  source_version_id: string;
-  supplied_input_id?: string;
-}
-
-export interface DocumentMediaSourceSelector {
-  content_version_id: string;
-  /**
-     * @minLength 1
-     * @maxLength 256
-     */
-  source_id: string;
-  /**
-     * @minLength 1
-     * @maxLength 256
-     */
-  source_version_id: string;
-  /**
-     * @maxItems 64
-     * @items.pattern ^[0-9a-f]{64}$
-     */
-  supplied_input_ids?: string[];
 }
 
 export type DocumentMissingCoverageKind = typeof DocumentMissingCoverageKind[keyof typeof DocumentMissingCoverageKind];
@@ -1892,9 +1847,6 @@ export interface DocumentSearchReport {
   actual_mode: string;
   coverage: DocumentSearchCoverage;
   degradations: string[];
-  /** @maxItems 4096 */
-  media_selections?: DocumentMediaSelection[];
-  media_source_selection?: boolean;
   requested_mode: string;
   reranking?: DocumentSearchRerankingReceipt;
   results: DocumentSearchResult[];
@@ -1934,11 +1886,6 @@ export interface DocumentSearchRequest {
      * @maximum 100
      */
   limit?: number;
-  /**
-     * @minItems 1
-     * @maxItems 4096
-     */
-  media_sources?: DocumentMediaSourceSelector[];
   mode: DocumentSearchRequestMode;
   /**
      * @minLength 1
@@ -4761,6 +4708,8 @@ export interface PhotoAlbumSummary {
   deleted_at?: string | null;
   /** @nullable */
   effective_cover_asset_id?: string | null;
+  /** @minimum 0 */
+  hidden_count: number;
   id: string;
   /** @minimum 0 */
   included_count: number;
@@ -4826,6 +4775,8 @@ export interface PhotoAsset {
   excluded_at?: string | null;
   /** @maxItems 256 */
   files: PhotoFile[];
+  /** @nullable */
+  hidden_at?: string | null;
   id: string;
   kind: PhotoAssetKind;
   /** @minimum 1 */
@@ -4980,12 +4931,32 @@ export interface PhotoBrowseRequest {
   coverage?: WorkspaceQueryCoverage;
   /** @maxLength 32768 */
   cursor?: string;
+  hidden?: boolean;
   /**
      * @minimum 1
      * @maximum 250
      */
   page_size?: number;
   query: SavedQueryV1Schema;
+}
+
+export interface PhotoHiddenPasscodeRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @maxLength 1024 */
+  new_passcode?: string;
+  /** @maxLength 1024 */
+  passcode?: string;
+}
+
+export interface PhotoHiddenState {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  configured: boolean;
+  /** @nullable */
+  expires_at?: string | null;
+  /** @nullable */
+  locked_until?: string | null;
 }
 
 export interface PhotoImportStartRequest {
@@ -6538,7 +6509,6 @@ export interface TrashEmptyReport {
   readonly $schema?: string;
   candidate_roots: number;
   deleted: number;
-  held_roots: number;
   retained_roots: number;
   run: boolean;
 }
@@ -7482,12 +7452,16 @@ export type DetachPhotoFileHeaders = {
 'If-Match': string;
 };
 
+export type HidePhotoAssetHeaders = {
+'If-Match'?: string;
+};
+
 export type ReadPhotoPreviewHeaders = {
 'If-None-Match'?: string;
 };
 
-export type TrashPhotoAssetHeaders = {
-'If-Match': string;
+export type UnhidePhotoAssetHeaders = {
+'If-Match'?: string;
 };
 
 export type PromotePhotoNodeHeaders = {
@@ -12018,7 +11992,7 @@ export const getRestoreNodeUrl = (id: number,) => {
 }
 
 /**
- * @summary Restore a trash root or photo member, recovering its photo group and containing trash folders
+ * @summary Restore a trash root to its original location (root fallback, suffix on collision)
  */
 export const restoreNode = async (id: number,
     headers: RestoreNodeHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
@@ -14440,6 +14414,45 @@ return sessionJSON<PhotoAsset>(getDetachPhotoFileUrl(assetId,fileId,params),
 
 
 
+export const getHidePhotoAssetUrl = (assetId: string,) => {
+
+
+
+
+  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/hide`
+}
+
+/**
+ * @summary hide a revisioned photo asset
+ */
+export const hidePhotoAsset = async (assetId: string,
+    headers?: HidePhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAsset>(getHidePhotoAssetUrl(assetId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
 export const getReadPhotoPreviewUrl = (assetId: string,
     generationId: string,) => {
 
@@ -14482,19 +14495,19 @@ return sessionPhotoPreview<Blob>(getReadPhotoPreviewUrl(assetId,generationId),
 
 
 
-export const getTrashPhotoAssetUrl = (assetId: string,) => {
+export const getUnhidePhotoAssetUrl = (assetId: string,) => {
 
 
 
 
-  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/trash`
+  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/unhide`
 }
 
 /**
- * @summary Move every photo asset member to recoverable trash
+ * @summary unhide a revisioned photo asset
  */
-export const trashPhotoAsset = async (assetId: string,
-    headers: TrashPhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+export const unhidePhotoAsset = async (assetId: string,
+    headers?: UnhidePhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -14510,12 +14523,264 @@ export const trashPhotoAsset = async (assetId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoAsset>(getTrashPhotoAssetUrl(assetId),
+return sessionJSON<PhotoAsset>(getUnhidePhotoAssetUrl(assetId),
   {
     ...options,
     method: 'POST',
     headers: { ...headers, ...getHeaders(options?.headers) }
 
+  }
+);}
+
+
+
+export const getGetPhotoHiddenStateUrl = () => {
+
+
+
+
+  return `/api/v1/photos/hidden`
+}
+
+/**
+ * @summary Read hidden photos configuration and current unlock expiry
+ */
+export const getPhotoHiddenState = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoHiddenState> => {
+
+  return sessionJSON<PhotoHiddenState>(getGetPhotoHiddenStateUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getChangePhotoHiddenUrl = () => {
+
+
+
+
+  return `/api/v1/photos/hidden/change`
+}
+
+/**
+ * @summary change hidden photos access
+ */
+export const changePhotoHidden = async (photoHiddenPasscodeRequest: NonReadonly<PhotoHiddenPasscodeRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoHiddenState> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoHiddenState>(getChangePhotoHiddenUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoHiddenPasscodeRequest)
+  }
+);}
+
+
+
+export const getDisablePhotoHiddenUrl = () => {
+
+
+
+
+  return `/api/v1/photos/hidden/disable`
+}
+
+/**
+ * @summary disable hidden photos access
+ */
+export const disablePhotoHidden = async (photoHiddenPasscodeRequest: NonReadonly<PhotoHiddenPasscodeRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoHiddenState> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoHiddenState>(getDisablePhotoHiddenUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoHiddenPasscodeRequest)
+  }
+);}
+
+
+
+export const getLockPhotoHiddenUrl = () => {
+
+
+
+
+  return `/api/v1/photos/hidden/lock`
+}
+
+/**
+ * @summary lock hidden photos access
+ */
+export const lockPhotoHidden = async (photoHiddenPasscodeRequest: NonReadonly<PhotoHiddenPasscodeRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoHiddenState> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoHiddenState>(getLockPhotoHiddenUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoHiddenPasscodeRequest)
+  }
+);}
+
+
+
+export const getResetPhotoHiddenUrl = () => {
+
+
+
+
+  return `/api/v1/photos/hidden/reset`
+}
+
+/**
+ * @summary reset hidden photos access
+ */
+export const resetPhotoHidden = async (photoHiddenPasscodeRequest: NonReadonly<PhotoHiddenPasscodeRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoHiddenState> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoHiddenState>(getResetPhotoHiddenUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoHiddenPasscodeRequest)
+  }
+);}
+
+
+
+export const getSetupPhotoHiddenUrl = () => {
+
+
+
+
+  return `/api/v1/photos/hidden/setup`
+}
+
+/**
+ * @summary setup hidden photos access
+ */
+export const setupPhotoHidden = async (photoHiddenPasscodeRequest: NonReadonly<PhotoHiddenPasscodeRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoHiddenState> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoHiddenState>(getSetupPhotoHiddenUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoHiddenPasscodeRequest)
+  }
+);}
+
+
+
+export const getUnlockPhotoHiddenUrl = () => {
+
+
+
+
+  return `/api/v1/photos/hidden/unlock`
+}
+
+/**
+ * @summary unlock hidden photos access
+ */
+export const unlockPhotoHidden = async (photoHiddenPasscodeRequest: NonReadonly<PhotoHiddenPasscodeRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoHiddenState> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoHiddenState>(getUnlockPhotoHiddenUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoHiddenPasscodeRequest)
   }
 );}
 
@@ -16803,7 +17068,7 @@ export const getListTrashUrl = (params?: ListTrashParams,) => {
 }
 
 /**
- * @summary List restorable trash roots, newest first; paginated results group photo members
+ * @summary List restorable trash roots, newest first, optionally paginated
  */
 export const listTrash = async (params?: ListTrashParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TrashPage> => {
 
@@ -17217,3 +17482,46 @@ export const health = async ( options?: Parameters<typeof sessionJSON>[1]): Prom
 
   }
 );}
+
+export type TrashPhotoAssetHeaders = {
+'If-Match': string;
+};
+
+
+export const getTrashPhotoAssetUrl = (assetId: string,) => {
+
+
+
+
+  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/trash`
+}
+
+
+export const trashPhotoAsset = async (assetId: string,
+    headers: TrashPhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAsset>(getTrashPhotoAssetUrl(assetId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+

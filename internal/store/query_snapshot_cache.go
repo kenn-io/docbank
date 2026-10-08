@@ -473,12 +473,12 @@ func (s *QuerySnapshotService) Revoke(owner string) {
 	var cancels []context.CancelFunc
 	s.mu.Lock()
 	for id, cached := range s.snapshots {
-		if cached.owner == owner {
+		if owner == "" || cached.owner == owner {
 			s.removeSnapshotLocked(id)
 		}
 	}
 	for _, build := range s.builds {
-		if build.owner == owner {
+		if owner == "" || build.owner == owner {
 			build.invalidated = true
 			cancels = append(cancels, build.cancel)
 		}

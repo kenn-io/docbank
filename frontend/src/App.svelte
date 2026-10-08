@@ -71,8 +71,9 @@
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
+  import HiddenPhotos from "./HiddenPhotos.svelte";
   import { localPreferenceStorage } from "./browser-storage.js";
-  import { Photos } from "./photos.svelte.js";
+  import { Photos, photoPrivacyEvent } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { SelectionTarget } from "./selection.js";
@@ -181,21 +182,34 @@
 
   let webSession = $state("");
   let stopSessionReporting: (() => Promise<void>) | undefined;
-  let photoMode = $state(location.pathname === "/photos");
+  let photoMode = $state(location.pathname.startsWith("/photos"));
+  let hiddenMode = $state(location.pathname === "/photos/hidden");
+  let photoPrivacyError = $state("");
   let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
 
   $effect(() => {
     if (!webSession) return;
     const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
     photoState = state;
-    return () => { state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
+    const privacy = (event: Event) => {
+      state.photos.clearForPrivacy();
+      void state.cache.dispose();
+      state.cache = new PhotoPreviewCache(webSession, handleFailure);
+      photoState = { ...state };
+      photoPrivacyError = (event as CustomEvent<string>).detail ?? "";
+    };
+    window.addEventListener(photoPrivacyEvent, privacy);
+    const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(photoPrivacyEvent) : undefined;
+    if (channel) channel.onmessage = () => window.dispatchEvent(new Event(photoPrivacyEvent));
+    return () => { window.removeEventListener(photoPrivacyEvent, privacy); channel?.close(); state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
   });
 
-  function switchWorkspace(photos: boolean) {
+  function switchWorkspace(photos: boolean, hidden = false) {
     navOpen = false;
-    if (photoMode === photos) return;
+    if (photoMode === photos && hiddenMode === hidden) return;
     photoMode = photos;
-    history.pushState(null, "", `${photos ? "/photos" : "/"}${location.search}${location.hash}`);
+    hiddenMode = hidden;
+    history.pushState(null, "", `${photos ? hidden ? "/photos/hidden" : "/photos" : "/"}${location.search}${location.hash}`);
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
@@ -1909,7 +1923,7 @@
   }
 </script>
 
-<svelte:window onpopstate={() => { photoMode = location.pathname === "/photos"; }} />
+<svelte:window onpopstate={() => { photoMode = location.pathname.startsWith("/photos"); hiddenMode = location.pathname === "/photos/hidden"; }} />
 {#if !webSession}
   <main class="unlock-shell">
     <Card level="raised" title="Open your Docbank">
@@ -1935,7 +1949,7 @@
         <button type="button" class="nav-item" aria-current={photoMode ? "page" : undefined} onclick={() => switchWorkspace(true)}><ImageIcon size="16" aria-hidden="true" />Photos</button>
       </div>
       {#if photoMode}
-        <div class="nav-group"><button type="button" class="nav-item" aria-current="page" onclick={() => navOpen = false}><LibraryIcon size="16" aria-hidden="true" />Library</button><button type="button" class="nav-item" aria-label="Recoverable trash" onclick={() => openPanel({ kind: "trash" })}><Trash2Icon size="16" aria-hidden="true" />Trash</button></div>
+        <div class="nav-group"><button type="button" class="nav-item" aria-current={!hiddenMode ? "page" : undefined} onclick={() => switchWorkspace(true)}><LibraryIcon size="16" aria-hidden="true" />Library</button><button type="button" class="nav-item" aria-current={hiddenMode ? "page" : undefined} onclick={() => switchWorkspace(true, true)}>Hidden</button><button type="button" class="nav-item" aria-label="Recoverable trash" onclick={() => openPanel({ kind: "trash" })}><Trash2Icon size="16" aria-hidden="true" />Trash</button></div>
       {:else}
       <div class="nav-group">
         <button type="button" class="nav-item"
@@ -2061,7 +2075,10 @@
     </TopBar>
 
     {#if photoMode && photoState}
+      {#if hiddenMode}<HiddenPhotos session={webSession} onauthfailure={handleFailure} />{:else}
+      {#if photoPrivacyError}<p role="alert">{photoPrivacyError}</p>{/if}
       {#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} ontrashed={() => handleTrashed()} />{/key}
+      {/if}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
     {#if savedQueryDraft}
