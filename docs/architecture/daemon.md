@@ -129,7 +129,8 @@ belongs to the recorded PID. Discovery therefore checks the connection:
    fail instead of redirecting or reconnecting.
 
 Acquisition finishes proof on the socket before handing it to the authenticated
-client, within a two-second budget. After handoff, connection loss fails the request.
+client, within a two-second budget. After handoff, connection loss fails the
+request.
 
 The starter sends no secrets to a forged or pingless endpoint. It requests
 graceful process termination only after verifying the PID's create-time, waits

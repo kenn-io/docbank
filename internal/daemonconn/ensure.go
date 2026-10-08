@@ -37,8 +37,9 @@ const (
 	daemonStartProblemVaultLocked = "vault_locked"
 )
 
-// ErrTransientDaemonAcquisition marks a daemon that disappeared after discovery
-// but before its proven client was ready. Callers may safely repeat acquisition.
+// ErrTransientDaemonAcquisition marks a daemon that disappeared after
+// discovery but before its ownership-proven client was ready. A caller may
+// safely repeat the complete discovery/start/proof sequence.
 var ErrTransientDaemonAcquisition = errors.New("daemon acquisition was interrupted")
 
 type daemonStartError struct {
@@ -574,12 +575,14 @@ func discoverWithOptions(
 // without transmitting its API key or shutdown token. A listener that captured
 // the port during teardown can copy ping fields but cannot forge this response.
 func proveEndpointOwnership(ctx context.Context, rec kitdaemon.RuntimeRecord) (bool, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, probeOptions().Timeout)
+	defer cancel()
 	challengeClient := &http.Client{
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return errors.New("daemon ownership challenge must not redirect")
 		},
 	}
-	return proveOwnershipWithClient(ctx, rec, challengeClient)
+	return proveOwnershipWithClient(probeCtx, rec, challengeClient)
 }
 
 func proveOwnershipWithClient(
@@ -593,12 +596,10 @@ func proveOwnershipWithClient(
 	if _, err := rand.Read(nonce); err != nil {
 		return false, fmt.Errorf("generating daemon ownership challenge: %w", err)
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, probeOptions().Timeout)
-	defer cancel()
 	connection := New("http://"+rec.Address, "")
 	connection.hc = challengeClient
 	var responseHTTP *http.Response
-	_, err := connection.apiWithResponse(&responseHTTP).ChallengeDaemon(clientruntime.WithStreamingResponse(probeCtx), &apiclient.ChallengeDaemonRequestOptions{Query: &apiclient.ChallengeDaemonQuery{Nonce: hex.EncodeToString(nonce)}})
+	_, err := connection.apiWithResponse(&responseHTTP).ChallengeDaemon(clientruntime.WithStreamingResponse(ctx), &apiclient.ChallengeDaemonRequestOptions{Query: &apiclient.ChallengeDaemonQuery{Nonce: hex.EncodeToString(nonce)}})
 	if err != nil {
 		return false, nil
 	}
