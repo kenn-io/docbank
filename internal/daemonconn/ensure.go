@@ -10,11 +10,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -112,37 +114,54 @@ func Find(ctx context.Context, root string) (kitdaemon.RuntimeRecord, kitdaemon.
 // config.toml. Before the key can cross the socket, the endpoint must prove it
 // owns that private record, and every later request stays on the proven socket.
 func newProvenClientFor(ctx context.Context, rec kitdaemon.RuntimeRecord) (*Connection, error) {
+	return newProvenClientForDial(ctx, rec, (&net.Dialer{}).DialContext)
+}
+
+func newProvenClientForDial(ctx context.Context, rec kitdaemon.RuntimeRecord, dial func(context.Context, string, string) (net.Conn, error)) (*Connection, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, probeOptions().Timeout)
 	defer cancel()
-	conn, err := (&net.Dialer{}).DialContext(probeCtx, kitdaemon.NetworkTCP, rec.Address)
-	if err != nil {
-		return nil, fmt.Errorf("dialing daemon for ownership proof: %w", err)
-	}
-	dialer := &singleConnDialer{conn: conn}
-	transport := &http.Transport{
-		Proxy:               nil,
-		DialContext:         dialer.DialContext,
-		MaxConnsPerHost:     1,
-		MaxIdleConnsPerHost: 1,
-	}
-	hc := &http.Client{
-		Transport: transport,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return errors.New("daemon requests must not redirect")
-		},
-	}
-	owned, proofErr := proveOwnershipWithClient(ctx, rec, hc)
-	if proofErr != nil || !owned {
-		transport.CloseIdleConnections()
-		_ = conn.Close()
-		if proofErr != nil {
-			return nil, proofErr
+	for range 2 {
+		conn, err := dial(probeCtx, kitdaemon.NetworkTCP, rec.Address)
+		if err != nil {
+			return nil, fmt.Errorf("dialing daemon for ownership proof: %w", err)
 		}
-		return nil, errors.New("daemon endpoint failed ownership proof")
+		dialer := &singleConnDialer{conn: conn}
+		transport := &http.Transport{
+			Proxy:               nil,
+			DialContext:         dialer.DialContext,
+			MaxConnsPerHost:     1,
+			MaxIdleConnsPerHost: 1,
+		}
+		hc := &http.Client{
+			Transport: transport,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return errors.New("daemon requests must not redirect")
+			},
+		}
+		var reusable atomic.Bool
+		proofCtx := httptrace.WithClientTrace(probeCtx, &httptrace.ClientTrace{
+			PutIdleConn: func(err error) { reusable.Store(err == nil) },
+		})
+		owned, proofErr := proveOwnershipWithClient(proofCtx, rec, hc)
+		if proofErr != nil || !owned || !reusable.Load() || probeCtx.Err() != nil {
+			transport.CloseIdleConnections()
+			_ = conn.Close()
+			if err := probeCtx.Err(); err != nil {
+				return nil, err
+			}
+			if proofErr != nil {
+				return nil, proofErr
+			}
+			if !owned {
+				return nil, errors.New("daemon endpoint failed ownership proof")
+			}
+			continue
+		}
+		c := New("http://"+rec.Address, rec.Metadata[metaAPIKey])
+		c.hc = hc
+		return c, nil
 	}
-	c := New("http://"+rec.Address, rec.Metadata[metaAPIKey])
-	c.hc = hc
-	return c, nil
+	return nil, fmt.Errorf("%w: proven daemon connection was discarded during ownership proof", ErrTransientDaemonAcquisition)
 }
 
 // singleConnDialer gives the HTTP transport exactly the socket that completed
@@ -546,7 +565,9 @@ func proveOwnershipWithClient(
 	if err := json.UnmarshalRead(limited, &result); err != nil {
 		return false, nil
 	}
-	_, _ = io.Copy(io.Discard, limited)
+	if _, err := io.Copy(io.Discard, limited); err != nil {
+		return false, fmt.Errorf("draining daemon ownership proof: %w", err)
+	}
 	return daemonauth.Verify(token, nonce, result.Proof), nil
 }
 

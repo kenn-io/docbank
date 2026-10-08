@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -247,12 +250,148 @@ func TestProvenClientRefusesRedialAfterChallengeConnectionCloses(t *testing.T) {
 	t.Cleanup(ts.Close)
 	rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "private-api-key", token, "")
 
+	_, err := newProvenClientFor(t.Context(), rec)
+	require.ErrorIs(t, err, ErrTransientDaemonAcquisition)
+	assert.False(t, leaked.Load(), "redial target must receive no runtime secret")
+}
+
+type delayedProofWriteConn struct {
+	net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (c *delayedProofWriteConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	// Hold write completion until the transport discards the valid proof socket.
+	<-c.closed
+	return n, err
+}
+
+func (c *delayedProofWriteConn) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return c.Conn.Close()
+}
+
+func TestProvenClientRecoversDiscardedChallengeConnection(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		discardBoth  bool
+		invalidProof int
+		cancelRetry  bool
+		wantDials    int64
+		wantErr      error
+	}{
+		{name: "recover", wantDials: 2},
+		{name: "exhausted", discardBoth: true, wantDials: 2, wantErr: ErrTransientDaemonAcquisition},
+		{name: "invalid second proof", invalidProof: 2, wantDials: 2},
+		{name: "invalid first proof", invalidProof: 1, wantDials: 1},
+		{name: "canceled retry", cancelRetry: true, wantDials: 2, wantErr: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const token = "synthetic-proof-token"
+			var challenges, requests, dials atomic.Int64
+			var leaked atomic.Bool
+			var nonces sync.Map
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == daemonauth.ChallengePath {
+					if r.Header.Get("X-Api-Key") != "" || r.Header.Get("X-Docbank-Daemon-Token") != "" {
+						leaked.Store(true)
+					}
+					nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+					if err != nil {
+						http.Error(w, "bad nonce", http.StatusBadRequest)
+						return
+					}
+					_, duplicate := nonces.LoadOrStore(string(nonce), true)
+					assert.False(t, duplicate, "each acquisition attempt needs a fresh nonce")
+					proof := daemonauth.Proof(token, nonce)
+					if challenges.Add(1) == int64(tc.invalidProof) {
+						proof = "forged"
+					}
+					_ = json.MarshalWrite(w, map[string]string{"proof": proof})
+					return
+				}
+				requests.Add(1)
+				assert.Equal(t, "synthetic-api-key", r.Header.Get("X-Api-Key"))
+				_ = json.MarshalWrite(w, map[string]string{"status": "ok"})
+			}))
+			t.Cleanup(ts.Close)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "synthetic-api-key", token, "")
+			var deadline time.Time
+			c, err := newProvenClientForDial(ctx, rec, func(ctx context.Context, network, address string) (net.Conn, error) {
+				attempt := dials.Add(1)
+				current, ok := ctx.Deadline()
+				require.True(t, ok)
+				if attempt == 1 {
+					deadline = current
+				} else {
+					assert.Equal(t, deadline, current, "retry shares the original probe budget")
+				}
+				if attempt == 2 && tc.cancelRetry {
+					cancel()
+					return nil, ctx.Err()
+				}
+				conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+				if err == nil && (attempt == 1 || tc.discardBoth) {
+					conn = &delayedProofWriteConn{Conn: conn, closed: make(chan struct{})}
+				}
+				return conn, err
+			})
+			if tc.wantErr != nil || tc.invalidProof != 0 {
+				require.Error(t, err)
+				if tc.wantErr != nil {
+					require.ErrorIs(t, err, tc.wantErr)
+				} else {
+					assert.False(t, errors.Is(err, ErrTransientDaemonAcquisition))
+				}
+				require.Nil(t, c)
+				assert.Zero(t, requests.Load())
+			} else {
+				require.NoError(t, err)
+				defer c.Close()
+				_, err = c.API().Health(t.Context())
+				require.NoError(t, err)
+				assert.Equal(t, int64(1), requests.Load())
+			}
+			assert.Equal(t, tc.wantDials, dials.Load())
+			assert.False(t, leaked.Load(), "challenge requests must carry no credentials")
+		})
+	}
+}
+
+func TestProvenClientRefusesRedialAfterHandoff(t *testing.T) {
+	const token = "synthetic-proof-token"
+	var challenges, requests atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == daemonauth.ChallengePath {
+			challenges.Add(1)
+			assert.Empty(t, r.Header.Get("X-Api-Key"))
+			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+			if err != nil {
+				http.Error(w, "bad nonce", http.StatusBadRequest)
+				return
+			}
+			_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)})
+			return
+		}
+		requests.Add(1)
+		w.Header().Set("Connection", "close")
+		_ = json.MarshalWrite(w, map[string]string{"status": "ok"})
+	}))
+	t.Cleanup(ts.Close)
+	rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "synthetic-api-key", token, "")
 	c, err := newProvenClientFor(t.Context(), rec)
 	require.NoError(t, err)
-	_, healthErr := c.API().Health(t.Context())
-	require.Error(t, healthErr,
-		"a closed proven connection must fail instead of redialing")
-	assert.False(t, leaked.Load(), "redial target must receive no runtime secret")
+	defer c.Close()
+	_, err = c.API().Health(t.Context())
+	require.NoError(t, err)
+	_, err = c.API().Health(t.Context())
+	require.ErrorContains(t, err, "proven daemon connection is closed; refusing to redial")
+	assert.Equal(t, int64(1), challenges.Load())
+	assert.Equal(t, int64(1), requests.Load(), "requests must not replay after handoff")
 }
 
 func TestStopSignalsPinglessDaemonWithoutSendingSecrets(t *testing.T) {
