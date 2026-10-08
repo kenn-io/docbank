@@ -108,6 +108,7 @@ func TestPhotoTrashAndRestoreMember(t *testing.T) {
 }
 
 func TestPhotoRestoreOriginalParentOrder(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"parent", "nested parent", "folder member"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
@@ -194,6 +195,7 @@ func TestPhotoTrashCompletesPartialGroup(t *testing.T) {
 }
 
 func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"bounded", "live peer", "new peer", "retained peer", "folder"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)

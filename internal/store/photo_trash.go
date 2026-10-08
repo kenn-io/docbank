@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
-	"sort"
+	"slices"
 )
 
 // TrashPhotoAsset moves every live member to recoverable trash atomically.
@@ -85,26 +85,28 @@ func photoTrashGroupTx(ctx context.Context, tx *sql.Tx, root Node) (photoTrashGr
 	pending := []Node{root}
 	for i := 0; i < len(pending); i++ {
 		node := pending[i]
-		rows, err := tx.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
-   SELECT id FROM nodes WHERE id=?
-   UNION ALL SELECT child.id FROM nodes child JOIN tree ON child.parent_id=tree.id)
-   SELECT DISTINCT file.asset_id FROM tree JOIN photo_files file ON file.node_id=tree.id`, node.ID)
-		if err != nil {
-			return group, err
-		}
-		var ids []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				_ = rows.Close()
-				return group, err
+		ids, err := func() (ids []string, err error) {
+			rows, err := tx.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
+ SELECT id FROM nodes WHERE id=?
+ UNION ALL SELECT child.id FROM nodes child JOIN tree ON child.parent_id=tree.id)
+ SELECT DISTINCT file.asset_id FROM tree JOIN photo_files file ON file.node_id=tree.id`, node.ID)
+			if err != nil {
+				return nil, err
 			}
-			ids = append(ids, id)
-		}
-		err = rows.Err()
-		if closeErr := rows.Close(); err == nil {
-			err = closeErr
-		}
+			defer func() {
+				if closeErr := rows.Close(); err == nil {
+					err = closeErr
+				}
+			}()
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err != nil {
+					return nil, err
+				}
+				ids = append(ids, id)
+			}
+			return ids, rows.Err()
+		}()
 		if err != nil {
 			return group, err
 		}
@@ -223,7 +225,7 @@ func photoRestoreOrderTx(ctx context.Context, tx *sql.Tx, roots map[int64]Node) 
 			}
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	var order []int64
 	state := map[int64]int{}
 	var visit func(int64) error
@@ -258,28 +260,30 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string
 	var selected []int64
 	more := false
 	for offset := 0; ; offset += 100 {
-		rows, err := tx.QueryContext(ctx, eligibleSelection+` LIMIT 100 OFFSET ?`, append(append([]any{}, args...), offset)...)
-		if err != nil {
-			return "", nil, false, err
-		}
 		type candidate struct {
 			id    int64
 			kind  string
 			photo bool
 		}
-		var candidates []candidate
-		for rows.Next() {
-			var item candidate
-			if err := rows.Scan(&item.id, &item.kind, &item.photo); err != nil {
-				_ = rows.Close()
-				return "", nil, false, err
+		candidates, err := func() (candidates []candidate, err error) {
+			rows, err := tx.QueryContext(ctx, eligibleSelection+` LIMIT 100 OFFSET ?`, append(append([]any{}, args...), offset)...)
+			if err != nil {
+				return nil, err
 			}
-			candidates = append(candidates, item)
-		}
-		err = rows.Err()
-		if closeErr := rows.Close(); err == nil {
-			err = closeErr
-		}
+			defer func() {
+				if closeErr := rows.Close(); err == nil {
+					err = closeErr
+				}
+			}()
+			for rows.Next() {
+				var item candidate
+				if err := rows.Scan(&item.id, &item.kind, &item.photo); err != nil {
+					return nil, err
+				}
+				candidates = append(candidates, item)
+			}
+			return candidates, rows.Err()
+		}()
 		if err != nil {
 			return "", nil, false, err
 		}
