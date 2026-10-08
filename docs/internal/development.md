@@ -134,6 +134,20 @@ JSONL cutover from an exact released-schema fixture, not an in-place migration
 ladder. Preserve the source database until the rebuilt current database has
 imported and validated logical authority and restored its physical pack catalog.
 
+Every release's storage schema version belongs in
+`releasedStorageSchemaVersions` in `internal/store/upgrade.go`, with its exact
+`schema.sql` saved as `internal/store/testdata/schema-<tag>.sql` and registered
+in `releasedSchemaFixtures`. Three checks enforce this:
+
+- `scripts/check-released-schemas.sh` runs in CI against every release tag. It
+  fails when a tag's schema version is unlisted or its `schema.sql` has no
+  exact fixture.
+- `TestReleasedSchemaFixturesMatchVersions` fails when `schema.sql` changes
+  without a schema version bump after that version shipped.
+- `TestEveryReleasedSchemaFixtureUpgrades` opens each fixture with the current
+  binary, so bumping the schema fails until the released version has a cutover
+  adapter.
+
 ### Change daemon lifecycle
 
 Exercise foreground, detached, auto-start, restart, mismatch replacement,

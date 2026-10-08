@@ -614,7 +614,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 		}
 	}
 	if layout.schemaVersion >= 25 {
-		if err := exportMetadataTables(ctx, tx, write, photoMetadataTables); err != nil {
+		if err := exportMetadataTables(ctx, tx, write, photoMetadataTablesForSchema(layout.schemaVersion)); err != nil {
 			return err
 		}
 	}
@@ -936,10 +936,16 @@ func stringPtr(v sql.NullString) *string {
 // bytes: a restore must call VerifyRenditionBlobBytes after every loose or
 // packed blob is available and before publishing the target.
 func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
-	return s.importMetadata(ctx, r)
+	return s.importMetadata(ctx, r, false)
 }
 
-func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
+type upgradeMetadataImportKey struct{}
+type upgradeMetadataImport struct{ incarnationImported bool }
+
+func (s *Store) importMetadata(ctx context.Context, r io.Reader, upgrade bool) error {
+	if upgrade {
+		ctx = context.WithValue(ctx, upgradeMetadataImportKey{}, &upgradeMetadataImport{})
+	}
 	rootID := int64(0)
 	vaultID := ""
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -1553,7 +1559,7 @@ func validateMetadataStateWithVaultIdentity(
 			}
 		}
 		if layout.schemaVersion >= 25 {
-			if err := validatePhotoMetadataState(ctx, tx); err != nil {
+			if err := validatePhotoMetadataState(ctx, tx, layout.schemaVersion); err != nil {
 				return err
 			}
 		}

@@ -70,6 +70,21 @@ type metadataPhotoReceipt struct {
 	CreatedAt      string  `json:"created_at" db:"created_at"`
 }
 
+// metadataPhotoReceiptV28 reads v0.15.0 receipts, which predate photo sets.
+// Its JSON matches a current receipt whose set_id is absent.
+type metadataPhotoReceiptV28 struct {
+	Type           string  `json:"type"`
+	ReceiptID      string  `json:"receipt_id" db:"receipt_id"`
+	Operation      string  `json:"operation" db:"operation"`
+	AssetID        *string `json:"asset_id" db:"asset_id"`
+	SettingsKey    *string `json:"settings_key" db:"settings_key"`
+	BeforeRevision int64   `json:"before_revision" db:"before_revision"`
+	AfterRevision  int64   `json:"after_revision" db:"after_revision"`
+	BeforeJSON     string  `json:"before_json" db:"before_json"`
+	AfterJSON      string  `json:"after_json" db:"after_json"`
+	CreatedAt      string  `json:"created_at" db:"created_at"`
+}
+
 // photoMetadataTables exports the photo records in dependency order.
 var photoMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataPhotoAsset]{record: metadataPhotoAsset{Type: metadataPhotoAssetType},
@@ -84,6 +99,27 @@ var photoMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataPhotoReceipt]{record: metadataPhotoReceipt{Type: metadataPhotoReceiptType},
 		table: "photo_change_receipts", suffix: "ORDER BY receipt_id", validate: validatePhotoReceiptMetadataRecord,
 		checkExport: true}),
+}
+
+// photoSetsStorageSchemaVersion is the first schema with photo sets (v0.15.1).
+const photoSetsStorageSchemaVersion = 29
+
+// photoMetadataTablesForSchema returns the photo records a released schema stores.
+func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
+	if version >= photoSetsStorageSchemaVersion {
+		return photoMetadataTables
+	}
+	return []metadataRecordCodec{
+		photoMetadataTables[0], photoMetadataTables[1], photoMetadataTables[2],
+		newMetadataTable(metadataTable[metadataPhotoReceiptV28]{record: metadataPhotoReceiptV28{Type: metadataPhotoReceiptType},
+			table: "photo_change_receipts", suffix: "ORDER BY receipt_id", validate: func(v metadataPhotoReceiptV28) error {
+				return validatePhotoReceiptMetadataRecord(metadataPhotoReceipt{
+					Type: v.Type, ReceiptID: v.ReceiptID, Operation: v.Operation, AssetID: v.AssetID,
+					SettingsKey: v.SettingsKey, BeforeRevision: v.BeforeRevision, AfterRevision: v.AfterRevision,
+					BeforeJSON: v.BeforeJSON, AfterJSON: v.AfterJSON, CreatedAt: v.CreatedAt,
+				})
+			}, checkExport: true}),
+	}
 }
 
 func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
@@ -157,7 +193,7 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 	return validateMetadataTime("photo receipt created_at", v.CreatedAt)
 }
 
-func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier) error {
+func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version int) error {
 	if err := validatePhotoGraph(ctx, tx); err != nil {
 		return err
 	}
@@ -172,10 +208,12 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier) error {
 	if orphans > 0 {
 		return fmt.Errorf("%w: %d photo receipts reference missing assets or settings", ErrInvalidPhotoAsset, orphans)
 	}
-	if err := validatePhotoSetGraph(ctx, tx); err != nil {
-		return err
+	if version >= photoSetsStorageSchemaVersion {
+		if err := validatePhotoSetGraph(ctx, tx); err != nil {
+			return err
+		}
 	}
-	for _, table := range photoMetadataTables {
+	for _, table := range photoMetadataTablesForSchema(version) {
 		if err := table.validateRows(ctx, tx); err != nil {
 			return fmt.Errorf("validating photo metadata: %w", err)
 		}

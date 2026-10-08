@@ -202,7 +202,9 @@ Do not infer fork eligibility or network/cache isolation from this setting.
   accumulate in-place `ALTER TABLE` migration ladders or compatibility logic
   for layouts that never shipped. Every released-format cutover needs an exact
   released-schema fixture and direct oldest-supported-to-current coverage in
-  both SQLite modes. Every post-v0.9 layout records an explicit monotonically
+  both SQLite modes. Register each release's schema version and fixture as
+  described in the development guide's "Change schema" section; CI fails
+  otherwise. Every post-v0.9 layout records an explicit monotonically
   increasing storage schema version; v0.9 is the only layout recognized by an
   inferred structural fingerprint. Keep source-version readers available for
   every supported release, and keep metadata JSONL at format v1 until a

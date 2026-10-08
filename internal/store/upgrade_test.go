@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -275,8 +276,11 @@ func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
 			require.NoError(t, err)
 			_, err = s.db.Exec(`DROP TABLE provenance_version_bindings`)
 			require.NoError(t, err)
-			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=? WHERE singleton=1`,
-				currentStorageSchemaVersion-1)
+			unreleased := currentStorageSchemaVersion - 1
+			for slices.Contains(releasedStorageSchemaVersions, unreleased) {
+				unreleased--
+			}
+			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=? WHERE singleton=1`, unreleased)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
 			reopened, err := Open(path, test.driver)

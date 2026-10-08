@@ -260,7 +260,22 @@ var processingMetadataTables = []metadataRecordCodec{
 		suffix: `i WHERE EXISTS(SELECT 1 FROM processing_consent_grants g WHERE g.incarnation_id=i.incarnation_id)
 			OR EXISTS(SELECT 1 FROM processing_consent_revocations r WHERE r.incarnation_id=i.incarnation_id)
 			ORDER BY i.incarnation_id`,
-		validate: validateMetadataProcessingIncarnation}),
+		validate: validateMetadataProcessingIncarnation,
+		insert: func(ctx context.Context, tx *sql.Tx, value metadataProcessingIncarnation) error {
+			if upgrade, _ := ctx.Value(upgradeMetadataImportKey{}).(*upgradeMetadataImport); upgrade != nil && !upgrade.incarnationImported {
+				var createdAt string
+				err := tx.QueryRowContext(ctx, `SELECT created_at FROM processing_incarnations WHERE incarnation_id=? AND incarnation_id=(SELECT incarnation_id FROM current_processing_incarnation WHERE singleton=1)`, value.ID).Scan(&createdAt)
+				if err == nil && createdAt == value.CreatedAt {
+					upgrade.incarnationImported = true
+					return nil
+				}
+				if err != nil && !errors.Is(err, sql.ErrNoRows) {
+					return err
+				}
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO processing_incarnations(incarnation_id,created_at) VALUES(?,?)`, value.ID, value.CreatedAt)
+			return err
+		}}),
 	processingConsentRevocationMetadata, processingConsentGrantMetadata,
 	newMetadataTable(metadataTable[metadataProcessingProfile]{
 		record: metadataProcessingProfile{Type: metadataProcessingProfileType}, table: "processing_profiles",
@@ -546,8 +561,9 @@ func importMetadataRenditionJob(ctx context.Context, tx *sql.Tx, value metadataR
 	authorizationGrantID := value.AuthorizationGrantID
 	authorizationIncarnationID := value.AuthorizationIncarnationID
 	authorizationRevocationFence := value.AuthorizationRevocationFence
-	if value.State == RenditionJobQueued || value.State == RenditionJobRunning ||
-		value.State == RenditionJobRetryWait {
+	upgrade, _ := ctx.Value(upgradeMetadataImportKey{}).(*upgradeMetadataImport)
+	if upgrade == nil && (value.State == RenditionJobQueued || value.State == RenditionJobRunning ||
+		value.State == RenditionJobRetryWait) {
 		// A restore keeps sealed provider and staged local work, but imported
 		// consent belongs to the old processing incarnation. Force selection
 		// and authorization through fresh consent before any resumed provider

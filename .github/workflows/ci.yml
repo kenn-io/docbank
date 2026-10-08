@@ -83,6 +83,19 @@ jobs:
       - name: Check and build web application
         run: make frontend-test
 
+  released-schemas:
+    name: Released storage schemas
+    runs-on: namespace-profile-linux-4cpu
+    steps:
+      - name: Check out full repository history
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require an upgrade path and exact fixture for every release
+        run: bash scripts/check-released-schemas.sh
+
   report-export-browser:
     name: Browser reports and original exports
     runs-on: namespace-profile-linux-8cpu
