@@ -12,7 +12,10 @@ it("retains photo state and previews across sidebar switches until lock", async 
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL() {} });
   const stored = storage();
+  let serverChanged = false;
   const fetcher = vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden")) return new Response(JSON.stringify({ change_id: serverChanged ? "changed" : "initial", configured: true }));
+    if (serverChanged && url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: [], total: 0 }));
     if (url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: [{ ...photo(1), previews: { ...photo(1).previews, grid: { state: "ready", generation_id: "synthetic" } } }], total: 1 }));
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
     if (url.includes("/nodes/1")) return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", revision: 1, path: "/" }));
@@ -40,6 +43,9 @@ it("retains photo state and previews across sidebar switches until lock", async 
   await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
   expect(listings()).toBe(1);
   expect(previews()).toBe(1);
+  serverChanged = true;
+  await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull(), { timeout: 4500 });
+  await waitFor(() => expect(stored.data.has(cacheName)).toBe(false));
   history.replaceState(null, "", "/");
   await fireEvent(window, new PopStateEvent("popstate"));
   await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());

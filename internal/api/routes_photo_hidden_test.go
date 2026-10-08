@@ -39,10 +39,18 @@ func TestPhotoHiddenHTTPAndClient(t *testing.T) {
 	require.Empty(t, page.Items)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{}`), Hidden: true})
 	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	for _, path := range []string{"/api/v1/photos/assets/" + asset.ID, "/api/v1/photos/nodes/" + strconv.FormatInt(node.ID, 10) + "/asset"} {
+		response, body = get(t, ts, path, nil)
+		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+	}
+	response, body = get(t, ts, "/api/v1/nodes/"+strconv.FormatInt(node.ID, 10), nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	state, cookie, err := connection.PhotoHidden(ctx, "unlock", "correct", "")
 	require.NoError(t, err)
 	require.NotNil(t, state.ExpiresAt)
 	require.NotEmpty(t, cookie)
+	_, err = connection.PhotoAsset(ctx, asset.ID, cookie)
+	require.NoError(t, err)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", map[string]string{"Cookie": cookie}, api.PhotoBrowseRequest{Query: api.QueryPayload(`{}`), Hidden: true})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.Equal(t, "no-store", response.Header.Get("Cache-Control"))

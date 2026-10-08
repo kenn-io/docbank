@@ -285,3 +285,27 @@ it("times each replacement page separately", async () => {
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-2"]);
   photos.dispose();
 });
+
+it("clears private rows and cancels late reads while preserving unaffected selection and scroll", async () => {
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1), photo(2)]))
+    .mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockResolvedValueOnce(response([photo(2)]));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadMore();
+  photos.check("photo-2", true, false, ["photo-1", "photo-2"]);
+  photos.scrollTop = 480;
+  const pending = photos.refresh();
+  photos.clearForPrivacy(true);
+  expect(photos.items).toEqual([]);
+  expect(photos.scrollTop).toBe(480);
+  finish(response([photo(1), photo(2)]));
+  await pending;
+  expect(photos.items).toEqual([]);
+  await photos.resume();
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
+  expect(photos.scrollTop).toBe(480);
+  photos.dispose();
+});

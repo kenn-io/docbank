@@ -40,6 +40,7 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await page.getByRole("button", { name: "Lock", exact: true }).click();
     await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
     await expect(page.locator("[data-asset]")).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Passcode", exact: true })).toBeEnabled();
     for (const theme of ["light", "dark"]) {
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-hidden-locked-${theme}.png`), animations: "disabled" });
@@ -60,6 +61,12 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
     await page.getByRole("button", { name: "Hidden", exact: true }).click();
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await run("photos", "hidden", "lock");
+    await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
+    await page.getByRole("textbox", { name: "Passcode", exact: true }).fill("synthetic-passcode");
+    await page.getByRole("button", { name: "Unlock", exact: true }).click();
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     await page.clock.install();
     await page.clock.fastForward(301_000);
     await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
@@ -75,7 +82,7 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
     await expect(page.locator("[data-asset]")).toHaveCount(0);
     await tab.close();
-    await writeFile(path.join(output!, "hidden-proof.json"), JSON.stringify({ workspace, id, passcode: "synthetic-passcode", states: ["hide", "unlock", "lock", "unhide", "expiry", "tab-lock"] }, null, 2));
+    await writeFile(path.join(output!, "hidden-proof.json"), JSON.stringify({ workspace, id, passcode: "synthetic-passcode", states: ["hide", "unlock", "lock", "unhide", "cli-lock", "expiry", "tab-lock"] }, null, 2));
   } finally {
     if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {
       const previewURL = new URL(await run("web", "--no-browser"));

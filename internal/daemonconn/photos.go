@@ -105,12 +105,17 @@ func photoMutationAddressed(asset api.PhotoAsset, err error, check func(api.Phot
 	return asset, nil
 }
 
-func (c *Connection) PhotoAsset(ctx context.Context, id string) (api.PhotoAsset, error) {
+func (c *Connection) PhotoAsset(ctx context.Context, id string, cookies ...string) (api.PhotoAsset, error) {
 	if !validUUIDv4(id) {
 		return api.PhotoAsset{}, errors.New("photo asset ID must be a canonical UUIDv4")
 	}
 	var response *http.Response
-	asset, err := c.apiWithResponse(&response).GetPhotoAsset(ctx, &apiclient.GetPhotoAssetRequestOptions{PathParams: &apiclient.GetPhotoAssetPath{AssetID: id}})
+	asset, err := c.apiWithResponse(&response).GetPhotoAsset(ctx, &apiclient.GetPhotoAssetRequestOptions{PathParams: &apiclient.GetPhotoAssetPath{AssetID: id}}, func(_ context.Context, request *http.Request) error {
+		if len(cookies) > 0 {
+			request.Header.Set("Cookie", cookies[0])
+		}
+		return nil
+	})
 	if err != nil {
 		return api.PhotoAsset{}, err
 	}

@@ -332,7 +332,7 @@ func (s *Store) DuplicatePhotoSet(ctx context.Context, id string, revision int64
 	return out, err
 }
 
-func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSelection) ([]string, error) {
+func (s *Store) photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSelection) ([]string, error) {
 	if (selection.Query == nil) == (len(selection.AssetIDs) == 0) || len(selection.AssetIDs) > maxBatchTagTargets {
 		return nil, ErrInvalidPhotoAlbum
 	}
@@ -346,12 +346,14 @@ func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSel
 			if validateUUIDv4(id) != nil {
 				return nil, ErrInvalidPhotoAlbum
 			}
-			var count int
-			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_assets WHERE asset_id=?`, id).Scan(&count); err != nil {
+			asset, err := photoAssetByIDQuery(ctx, tx, id)
+			if err != nil {
 				return nil, err
 			}
-			if count != 1 {
-				return nil, ErrNotFound
+			if asset.HiddenAt != nil {
+				if _, err := s.hiddenSession(ctx, tx); err != nil {
+					return nil, err
+				}
 			}
 			if !seen[id] {
 				ids = append(ids, id)
@@ -412,7 +414,7 @@ func (s *Store) ChangePhotoSetMembers(ctx context.Context, id string, revision i
 			return err
 		}
 		out = before
-		ids, err := photoSetSelectionIDs(ctx, tx, selection)
+		ids, err := s.photoSetSelectionIDs(ctx, tx, selection)
 		if err != nil {
 			return err
 		}

@@ -11,7 +11,7 @@
 
   let { photos, cache, title = "Library", ontrashed }: { photos: Photos; cache: PhotoPreviewCache; title?: string; ontrashed?: () => void } = $props();
   let trashOpen = $state(false);
-  let grid = $state<{ preservePosition: () => (() => Promise<void>) }>();
+  let grid = $state<{ preservePosition: () => (() => Promise<void>); restoreScrollTop: (top: number) => Promise<void> }>();
   const preserve = () => grid?.preservePosition();
   const groups = $derived(groupPhotos(photos.items, photos.grouping));
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));
@@ -19,7 +19,8 @@
   const groupingOptions = [{ value: "months", label: "Months" }, { value: "sessions", label: "Capture sessions" }];
 
   onMount(() => {
-    void photos.resume(preserve);
+    const top = photos.scrollTop;
+    void Promise.resolve(photos.resume(preserve)).then(() => grid?.restoreScrollTop(top));
     return () => photos.cancelPending();
   });
   function relayout(change: () => void) {

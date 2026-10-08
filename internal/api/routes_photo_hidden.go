@@ -52,7 +52,7 @@ func photoHiddenMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func registerPhotoHiddenRoutes(api huma.API, d Deps, g *gate, snapshots *store.QuerySnapshotService) {
+func registerPhotoHiddenRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{OperationID: "getPhotoHiddenState", Method: http.MethodGet, Path: "/api/v1/photos/hidden", Summary: "Read hidden photos configuration and current unlock expiry"}, func(ctx context.Context, _ *struct{}) (*photoHiddenOutput, error) {
 		state, err := d.Store.PhotoHiddenState(ctx)
 		return &photoHiddenOutput{Body: state}, hiddenError(err)
@@ -83,9 +83,6 @@ func registerPhotoHiddenRoutes(api huma.API, d Deps, g *gate, snapshots *store.Q
 			if err != nil {
 				return nil, hiddenError(err)
 			}
-			if action != "unlock" {
-				snapshots.Revoke("")
-			}
 			state, err := d.Store.PhotoHiddenState(store.WithPhotoHiddenToken(ctx, token))
 			if err != nil {
 				return nil, hiddenError(err)
@@ -115,7 +112,6 @@ func registerPhotoHiddenRoutes(api huma.API, d Deps, g *gate, snapshots *store.Q
 			if err != nil {
 				return nil, hiddenError(err)
 			}
-			snapshots.Revoke("")
 			return &photoAssetOutput{ETag: revisionETag(asset.Revision), Body: fromStorePhotoAsset(asset)}, nil
 		})
 	}
