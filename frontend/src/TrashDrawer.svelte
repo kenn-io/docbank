@@ -300,6 +300,7 @@
 
   dl {
     display: flex;
+    align-items: baseline;
     flex-wrap: wrap;
     gap: var(--space-2) var(--space-4);
     margin: 0;
@@ -307,7 +308,7 @@
 
   dl > div {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: var(--space-2);
   }
 
@@ -318,7 +319,7 @@
 
   dd {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: var(--space-1);
     margin: 0;
     color: var(--text-secondary);
