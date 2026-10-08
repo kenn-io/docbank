@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Button, EmptyState, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import { Button, EmptyState, Modal, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { Photos } from "./photos.svelte.js";
   import { groupPhotos, ROW_HEIGHTS, type Density } from "./photoGrid.js";
@@ -10,6 +10,7 @@
   import SelectionDock from "./SelectionDock.svelte";
 
   let { photos, cache }: { photos: Photos; cache: PhotoPreviewCache } = $props();
+  let trashOpen = $state(false);
   let grid = $state<{ preservePosition: () => (() => Promise<void>) }>();
   const preserve = () => grid?.preservePosition();
   const groups = $derived(groupPhotos(photos.items, photos.grouping));
@@ -54,8 +55,19 @@
     </EmptyState>
   {/if}
   <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
-  <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} />
+  <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.loading} />
 </main>
+
+{#if trashOpen}
+  <Modal title="Move selected photos to trash?" tone="danger" ariaLabel="Move selected photos to trash" onclose={() => { if (!photos.trashing) trashOpen = false; }} closeOnOverlayClick={!photos.trashing}>
+    <p>Move {photos.selection.selectedIDs.size} selected photos and every RAW, image, video, and sidecar member to recoverable trash. Stored files and album membership stay intact.</p>
+    {#if photos.trashError}<p role="alert">{photos.trashError} Failed photos remain selected for retry.</p>{/if}
+    {#snippet footer()}
+      <Button disabled={photos.trashing} onclick={() => trashOpen = false}>Keep in Docbank</Button>
+      <Button tone="danger" disabled={photos.trashing || photos.selection.selectedIDs.size === 0} onclick={async () => { if (await photos.trashSelected(preserve)) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
+    {/snippet}
+  </Modal>
+{/if}
 
 <style>
   .photos-workspace { max-height: calc(100dvh - var(--header-height)); display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; background: var(--bg-surface); }

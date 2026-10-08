@@ -5,6 +5,24 @@ import { photo } from "./photo-test-fixtures.js";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
 
+it("trashes selected assets at displayed revisions and retains failures for retry", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
+    .mockResolvedValueOnce(response([photo(2)]));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2)];
+  photos.started = true;
+  photos.selectLoaded();
+  expect(await photos.trashSelected()).toBe(false);
+  expect(fetcher.mock.calls[0][0]).toBe("/api/v1/photos/assets/photo-1/trash");
+  expect(new Headers(fetcher.mock.calls[0][1].headers).get("If-Match")).toBe("1");
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
+  expect(photos.trashError).toBe("Photo changed");
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
+  photos.dispose();
+});
+
 it("keeps earlier pages on failure, waits for Retry, and reuses the failed cursor", async () => {
   const fetcher = vi.fn();
   vi.stubGlobal("fetch", fetcher);

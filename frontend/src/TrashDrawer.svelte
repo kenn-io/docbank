@@ -69,13 +69,7 @@
   function handleRestored(receipt: Node): void {
     restoreTarget = null;
     restored = receipt;
-    if (page) {
-      page = {
-        ...page,
-        items: page.items.filter((item) => item.id !== receipt.id),
-        total: Math.max(0, page.total - 1),
-      };
-    }
+    void refresh();
     onrestored(receipt);
   }
 </script>
@@ -85,7 +79,7 @@
     <div class="drawer-heading">
       <div>
         <span>Recoverable trash</span>
-        <strong>Trashed documents</strong>
+        <strong>Trashed items</strong>
         <small>
           {#if page}
             {page.total} restorable root{page.total === 1 ? "" : "s"}
@@ -152,7 +146,7 @@
                   <div>
                     <strong>{node.name}</strong>
                     <Chip size="xs" tone="muted">
-                      {node.kind === "dir" ? "Folder" : "Document"}
+                      {node.photo_asset_id ? `Photo · ${node.photo_file_count} files` : node.kind === "dir" ? "Folder" : "Document"}
                     </Chip>
                   </div>
                   <span>Trashed {formatDate(node.trashed_at ?? "")}</span>

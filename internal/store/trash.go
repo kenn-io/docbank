@@ -176,22 +176,7 @@ func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, string, err
 		if err != nil {
 			return err
 		}
-		if active {
-			restored, err = s.restoreAuditedTx(ctx, tx, n, ifRev)
-		} else {
-			if n.TrashedAt == nil {
-				return fmt.Errorf("node %d: %w", id, ErrNotTrashed)
-			}
-			if ifRev != UnconditionalRev && n.Revision != ifRev {
-				return fmt.Errorf("node %d at revision %d, expected %d: %w",
-					id, n.Revision, ifRev, ErrStaleRevision)
-			}
-			target, targetErr := s.restoreTargetTx(tx, n)
-			if targetErr != nil {
-				return targetErr
-			}
-			restored, err = s.restoreNodeTx(tx, n, target, nowRFC3339())
-		}
+		restored, err = s.restorePhotoGroupTx(ctx, tx, n, ifRev, active)
 		if err == nil {
 			restoredPath, err = pathOf(ctx, tx, restored.ID)
 		}
@@ -317,15 +302,19 @@ func (s *Store) TrashedRootsPage(
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	const grouped = `WITH groups AS (
+        SELECT n.id, file.asset_id,
+        ROW_NUMBER() OVER (PARTITION BY COALESCE(file.asset_id, CAST(n.id AS TEXT)) ORDER BY n.trashed_at DESC, n.id DESC) AS representative
+        FROM nodes n LEFT JOIN photo_files file ON file.node_id=n.id
+        WHERE n.trash_name IS NOT NULL
+    ) `
 	var total int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM nodes WHERE trash_name IS NOT NULL`,
-	).Scan(&total); err != nil {
+	if err := tx.QueryRowContext(ctx, grouped+`SELECT COUNT(*) FROM groups WHERE representative=1`).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("counting trash: %w", err)
 	}
 	rows, err := tx.QueryContext(ctx,
-		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.trash_name IS NOT NULL
+		grouped+`SELECT `+nodeCols+` FROM `+nodeFrom+`
+		 WHERE n.id IN (SELECT id FROM groups WHERE representative=1)
 		 ORDER BY n.trashed_at DESC, n.id DESC LIMIT ? OFFSET ?`,
 		limit, offset)
 	if err != nil {
@@ -346,6 +335,16 @@ func (s *Store) TrashedRootsPage(
 	}
 	if err := rows.Close(); err != nil {
 		return nil, 0, fmt.Errorf("closing trash page: %w", err)
+	}
+	for i := range roots {
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT asset_id FROM photo_files WHERE node_id=?), '')`, roots[i].ID).Scan(&roots[i].PhotoAssetID); err != nil {
+			return nil, 0, err
+		}
+		if roots[i].PhotoAssetID != "" {
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files WHERE asset_id=?`, roots[i].PhotoAssetID).Scan(&roots[i].PhotoFileCount); err != nil {
+				return nil, 0, err
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, 0, fmt.Errorf("closing trash snapshot: %w", err)
@@ -430,12 +429,7 @@ func (s *Store) trashEmpty(
 		SELECT n.parent_id FROM nodes n JOIN retained r ON n.id=r.id WHERE n.parent_id IS NOT NULL
 	) SELECT id FROM retained`
 	deletable += ` AND id NOT IN (` + emailRetainedNodes + `)`
-	selection := `SELECT id FROM nodes WHERE ` + deletable + ` ORDER BY trashed_at ASC, id ASC`
-	selectionArgs := append([]any(nil), args...)
-	if maxRoots > 0 {
-		selection += ` LIMIT ?`
-		selectionArgs = append(selectionArgs, maxRoots)
-	}
+	eligibleSelection := `SELECT id FROM nodes WHERE ` + deletable + ` ORDER BY trashed_at ASC, id ASC`
 	runTx := s.withStorageTx
 	if run {
 		runTx = s.withLogicalTx
@@ -444,17 +438,13 @@ func (s *Store) trashEmpty(
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes WHERE `+where+` AND id IN (`+emailRetainedNodes+`)`, args...).Scan(&rep.Retained); err != nil {
 			return fmt.Errorf("counting retained trash roots: %w", err)
 		}
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM (`+selection+`)`, selectionArgs...).Scan(&rep.Candidates); err != nil {
-			return fmt.Errorf("counting trash-empty candidates: %w", err)
+		selection, selectionArgs, more, err := photoTrashSelectionTx(ctx, tx, eligibleSelection, args, maxRoots)
+		if err != nil {
+			return err
 		}
-		if maxRoots > 0 {
-			moreArgs := append(append([]any(nil), args...), maxRoots)
-			if err := tx.QueryRow(
-				`SELECT EXISTS(SELECT 1 FROM nodes WHERE `+deletable+` ORDER BY trashed_at ASC, id ASC LIMIT 1 OFFSET ?)`,
-				moreArgs...,
-			).Scan(&rep.More); err != nil {
-				return fmt.Errorf("checking for more trash-empty candidates: %w", err)
-			}
+		rep.More = more
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+selection+`)`, selectionArgs...).Scan(&rep.Candidates); err != nil {
+			return err
 		}
 		if !run {
 			return nil

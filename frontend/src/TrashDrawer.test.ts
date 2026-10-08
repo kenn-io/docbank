@@ -14,7 +14,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("shows recoverable roots and reports the authoritative restore path", async () => {
+it("shows a recoverable photo group and refreshes after restoring it", async () => {
   const trashed = {
     id: 42,
     parent_id: 1,
@@ -28,6 +28,8 @@ it("shows recoverable roots and reports the authoritative restore path", async (
     created_at: "2026-07-28T12:00:00Z",
     modified_at: "2026-07-28T12:00:00Z",
     trashed_at: "2026-07-28T12:01:00Z",
+    photo_asset_id: "11111111-1111-4111-8111-111111111112",
+    photo_file_count: 3,
   };
   const restored = {
     ...trashed,
@@ -37,12 +39,13 @@ it("shows recoverable roots and reports the authoritative restore path", async (
     trashed_at: undefined,
     path: "/Reports/quarterly-report (2).txt",
   };
+  let restoredOnServer = false;
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
     new Response(
       JSON.stringify(
         String(input).startsWith("/api/v1/trash?")
-          ? { items: [trashed], total: 1, limit: 1000, offset: 0 }
-          : restored,
+          ? { items: restoredOnServer ? [] : [trashed], total: restoredOnServer ? 0 : 1, limit: 1000, offset: 0 }
+          : (restoredOnServer = true, restored),
       ),
       { status: 200, headers: { "Content-Type": "application/json" } },
     ),
@@ -57,11 +60,13 @@ it("shows recoverable roots and reports the authoritative restore path", async (
   });
 
   expect(await screen.findByText("quarterly-report.txt")).toBeTruthy();
+  expect(screen.getByText("Photo · 3 files")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Restore" }));
   const dialog = screen.getByRole("dialog", {
     name: "Restore quarterly-report.txt from trash",
   });
   expect(dialog).toBeTruthy();
+  expect(within(dialog).getByText(/recovers all 3 member files together/)).toBeTruthy();
   expect(
     screen.getByText(
       "Restore keeps the same stable node and retained content. It does not roll back versions or alter permanent audited history.",
@@ -73,7 +78,7 @@ it("shows recoverable roots and reports the authoritative restore path", async (
   expect(
     await screen.findByText("/Reports/quarterly-report (2).txt"),
   ).toBeTruthy();
-  expect(screen.getByText("Trash is empty")).toBeTruthy();
+  expect(await screen.findByText("Trash is empty")).toBeTruthy();
   const [, request] = fetchMock.mock.calls[1] ?? [];
   expect(new Headers(request?.headers).get("If-Match")).toBe("3");
 });

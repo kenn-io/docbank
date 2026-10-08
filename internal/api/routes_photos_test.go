@@ -46,6 +46,35 @@ func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 	assert.Equal(t, "stale_revision", decodeProblem(t, staleBody).Code)
 }
 
+func TestPhotoTrashRouteRevisionAndRestore(t *testing.T) {
+	t.Parallel()
+	ts, fixture := newTestServer(t, nil)
+	hash, size, err := fixture.Blobs.Write(strings.NewReader("synthetic jpeg"))
+	require.NoError(t, err)
+	node, err := fixture.CreateFile(t.Context(), fixture.RootID(), "photo.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := fixture.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	path := "/api/v1/photos/assets/" + asset.ID + "/trash"
+	resp, body := do(t, ts, http.MethodPost, path, nil, nil)
+	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": "999"}, nil)
+	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": strconv.FormatInt(asset.Revision, 10)}, nil)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var receipt api.PhotoAsset
+	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
+	assert.Equal(t, asset.Revision+1, receipt.Revision)
+	resp, body = do(t, ts, http.MethodGet, "/api/v1/trash?limit=1", nil, nil)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var page api.TrashPage
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, asset.ID, page.Items[0].PhotoAssetID)
+	resp, body = do(t, ts, http.MethodPost, "/api/v1/nodes/"+strconv.FormatInt(node.ID, 10)+"/restore", map[string]string{"If-Match": strconv.FormatInt(page.Items[0].Revision, 10)}, nil)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
+}
+
 func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)

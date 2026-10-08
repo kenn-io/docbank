@@ -10,6 +10,29 @@ import (
 
 func registerPhotoRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{
+		OperationID: "trashPhotoAsset", Method: http.MethodPost,
+		Path: "/api/v1/photos/assets/{asset_id}/trash", Summary: "Move every photo asset member to recoverable trash",
+	}, func(ctx context.Context, in *struct {
+		AssetID string `path:"asset_id"`
+		IfMatch string `header:"If-Match"`
+	}) (*photoAssetOutput, error) {
+		revision, err := parseIfMatch(in.IfMatch)
+		if err != nil {
+			return nil, err
+		}
+		var out *photoAssetOutput
+		err = g.mutate(func() error {
+			asset, err := d.Store.TrashPhotoAsset(ctx, in.AssetID, revision)
+			if err != nil {
+				return FromStoreError(err)
+			}
+			out = &photoAssetOutput{ETag: revisionETag(asset.Revision), Body: fromStorePhotoAsset(asset)}
+			return nil
+		})
+		return out, err
+	})
+
+	huma.Register(api, huma.Operation{
 		OperationID: "createPhotoAsset", Method: http.MethodPost,
 		Path: "/api/v1/photos/assets", Summary: "Create a photo asset for one file",
 		DefaultStatus: http.StatusCreated,

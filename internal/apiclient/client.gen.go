@@ -9023,6 +9023,52 @@ func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreview
 	return responseParser(ctx, resp)
 }
 
+// TrashPhotoAsset Move every photo asset member to recoverable trash
+func (c *Client) TrashPhotoAsset(ctx context.Context, options *TrashPhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashPhotoAssetResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/trash",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*TrashPhotoAssetResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(TrashPhotoAssetResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "TrashPhotoAssetResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[TrashPhotoAssetErrorResponse](resp, "TrashPhotoAssetErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/trash")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // StartPhotoImport Import grouped camera files from a daemon-host folder
 func (c *Client) StartPhotoImport(ctx context.Context, options *StartPhotoImportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*StartPhotoImportResponse, error) {
 	var err error
@@ -18761,6 +18807,44 @@ func (o *ReadPhotoPreviewRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
+// TrashPhotoAssetRequestOptions is the options needed to make a request to TrashPhotoAsset.
+type TrashPhotoAssetRequestOptions struct {
+	PathParams *TrashPhotoAssetPath
+	Header     *TrashPhotoAssetHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *TrashPhotoAssetRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *TrashPhotoAssetRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *TrashPhotoAssetRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *TrashPhotoAssetRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // StartPhotoImportRequestOptions is the options needed to make a request to StartPhotoImport.
 type StartPhotoImportRequestOptions struct {
 	Body *StartPhotoImportBody
@@ -21345,6 +21429,10 @@ type ReadPhotoPreviewHeaders struct {
 	IfNoneMatch *string `json:"If-None-Match,omitempty"`
 }
 
+type TrashPhotoAssetHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type PromotePhotoNodeHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
@@ -21799,6 +21887,10 @@ type DetachPhotoFilePath struct {
 type ReadPhotoPreviewPath struct {
 	AssetID      string `json:"asset_id"`
 	GenerationID string `json:"generation_id"`
+}
+
+type TrashPhotoAssetPath struct {
+	AssetID string `json:"asset_id"`
 }
 
 type GetPhotoAssetByNodePath struct {
@@ -23343,6 +23435,10 @@ type DetachPhotoFileResponse = api.PhotoAsset
 type DetachPhotoFileErrorResponse = Error
 
 type ReadPhotoPreviewResponse = []byte
+
+type TrashPhotoAssetResponse = api.PhotoAsset
+
+type TrashPhotoAssetErrorResponse = Error
 
 type StartPhotoImportResponse = api.StorageOperation
 

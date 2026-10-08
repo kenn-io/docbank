@@ -8854,6 +8854,11 @@ components:
           type: integer
         path:
           type: string
+        photo_asset_id:
+          type: string
+        photo_file_count:
+          format: int64
+          type: integer
         revision:
           format: int64
           type: integer
@@ -22718,6 +22723,37 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read verified bytes of an eligible exact photo preview
+  /api/v1/photos/assets/{asset_id}/trash:
+    post:
+      operationId: trashPhotoAsset
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Move every photo asset member to recoverable trash
   /api/v1/photos/imports:
     post:
       operationId: startPhotoImport

@@ -15,6 +15,8 @@ const (
 
 // Node is a row of the virtual tree. IDs are canonical; paths are display.
 type Node struct {
+	PhotoAssetID     string
+	PhotoFileCount   int
 	ID               int64
 	ParentID         *int64
 	Name             string

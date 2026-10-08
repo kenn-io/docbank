@@ -1609,6 +1609,7 @@
   }
 
   function handleRestored(_receipt: Node): void {
+    void photoState?.photos.refresh();
     selectNode(undefined);
 
     // Restore can advance an arbitrary destination parent and make every
@@ -1934,7 +1935,7 @@
         <button type="button" class="nav-item" aria-current={photoMode ? "page" : undefined} onclick={() => switchWorkspace(true)}><ImageIcon size="16" aria-hidden="true" />Photos</button>
       </div>
       {#if photoMode}
-        <div class="nav-group"><button type="button" class="nav-item" aria-current="page" onclick={() => navOpen = false}><LibraryIcon size="16" aria-hidden="true" />Library</button></div>
+        <div class="nav-group"><button type="button" class="nav-item" aria-current="page" onclick={() => navOpen = false}><LibraryIcon size="16" aria-hidden="true" />Library</button><button type="button" class="nav-item" aria-label="Recoverable trash" onclick={() => openPanel({ kind: "trash" })}><Trash2Icon size="16" aria-hidden="true" />Trash</button></div>
       {:else}
       <div class="nav-group">
         <button type="button" class="nav-item"

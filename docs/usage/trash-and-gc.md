@@ -55,6 +55,8 @@ Trashing a subtree stamps every node with the same trash time, so a nested
 directory trashed *before* its parent keeps its own trash entry. Restoring the
 parent doesn't restore things you trashed separately.
 
+Photos' **Move to trash** action and `docbank photos assets trash <asset-id>` move all asset members together with an asset revision check. The browser trash drawer groups independently trashed photo members into one row. The CLI keeps its ordinary node listing. Restoring any photo member restores its whole group, including companions in other folders. If that member belongs to a trashed folder, restore also recovers the folder's original subtree.
+
 `trash list --json` returns the roots under `items`. For maintenance
 automation, `trash empty --json` returns `candidate_roots`, `deleted`, and
 `run`. It remains a dry run unless `--run` is present.
@@ -71,6 +73,8 @@ The command is a dry run unless `--run` is present. An executed run permanently
 deletes the selected tree entries. The document bytes are still on disk and may
 still be referenced by another node or version. Only content with no remaining
 reference becomes a GC candidate.
+
+Photo groups are deleted together. A live, too-new, or retained member protects every connected trash root, including folders containing members. Bounded maintenance finishes a complete group even when it exceeds the root budget. Photo and album relationships remain recoverable until permanent deletion; file bytes stay in place throughout trash and restore.
 
 ### Release email attachment references
 

@@ -1,4 +1,4 @@
-import { listPhotoAssets, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
@@ -20,6 +20,8 @@ export class Photos {
   total = $state(0);
   cursor = $state<string | undefined>();
   loading = $state(false);
+  trashing = $state(false);
+  trashError = $state("");
   error = $state("");
   scrollTop = $state(0);
   grouping = $state<"months" | "sessions">("months");
@@ -134,6 +136,29 @@ export class Photos {
     } finally {
       if (!controller.signal.aborted) this.loading = false;
     }
+  }
+
+  async trashSelected(preserve?: () => (() => Promise<void>) | undefined) {
+    if (this.trashing || this.disposed) return false;
+    const selected = this.items.filter(item => this.selection.selectedIDs.has(item.asset_id));
+    this.trashing = true;
+    this.trashError = "";
+    try {
+      for (const item of selected) {
+        try {
+          const receipt = await trashPhotoAsset(item.asset_id, { "If-Match": String(item.revision) }, { session: this.session, signal: AbortSignal.timeout(60_000) });
+          if (receipt.id !== item.asset_id || receipt.revision <= item.revision) throw new Error("Photo trash response did not confirm the selected photo. Refresh and retry.");
+          const ids = new Set(this.selection.selectedIDs);
+          ids.delete(item.asset_id);
+          this.selection = { selectedIDs: ids, anchorID: undefined };
+        } catch (cause) {
+          if (cause instanceof APIError && cause.status === 401) { this.onauthfailure(cause); break; }
+          this.trashError = cause instanceof Error ? cause.message : String(cause);
+        }
+      }
+      await this.refresh(preserve);
+      return this.selection.selectedIDs.size === 0;
+    } finally { this.trashing = false; }
   }
 
   select(id: string, event: MouseEvent, orderedIDs: string[]) {

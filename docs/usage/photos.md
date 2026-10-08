@@ -282,3 +282,13 @@ never creates previews.
 The initial count evaluates the whole query. Later pages seek from the last
 sort key. Queries that collapse duplicate content still evaluate the complete
 matching population to choose representatives before returning a page.
+
+## Move photos to trash
+
+Select photos in Library and choose **Move to trash**. Confirming moves every member of each selected photo, including RAW files, images, videos, and sidecars, to recoverable trash together. A changed photo revision refuses the action; failed photos remain selected for retry.
+
+Use `docbank photos assets trash <asset-id>` for the same operation from the CLI. `--revision` binds the action to an inspected asset revision. Ordinary Documents deletion and `docbank rm` still remove the selected file or folder.
+
+Open **Trash** in either workspace to restore a photo group. One row represents its independently trashed members and shows the file count. Restoring any member recovers the complete group. A member inside a trashed folder restores that folder's subtree and the photo's companions elsewhere. Separately trashed unrelated items stay in trash.
+
+Trash keeps file bytes, content versions, photo relationships, and album membership intact. Permanent deletion waits until every member is trashed, old enough, and free of retention references. See [Trash and garbage collection](trash-and-gc.md).
