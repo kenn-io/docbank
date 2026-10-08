@@ -97,10 +97,7 @@ func (s *Store) PhotoAssetByID(ctx context.Context, id string) (PhotoAsset, erro
 	var asset PhotoAsset
 	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		asset, err = photoAssetByIDQuery(ctx, tx, id)
-		if err == nil && asset.HiddenAt != nil {
-			_, err = s.hiddenSession(ctx, tx)
-		}
+		asset, err = s.photoAssetReadQuery(ctx, tx, id)
 		return err
 	}); err != nil {
 		return PhotoAsset{}, err
@@ -122,10 +119,7 @@ func (s *Store) PhotoAssetForNode(ctx context.Context, nodeID int64) (PhotoAsset
 			return fmt.Errorf("finding photo asset for node %d: %w", nodeID, err)
 		}
 		var err error
-		asset, err = photoAssetByIDQuery(ctx, tx, id)
-		if err == nil && asset.HiddenAt != nil {
-			_, err = s.hiddenSession(ctx, tx)
-		}
+		asset, err = s.photoAssetReadQuery(ctx, tx, id)
 		return err
 	}); err != nil {
 		return PhotoAsset{}, err
@@ -379,15 +373,23 @@ func (s *Store) classifyPhotoFileInsertError(err error) error {
 	return fmt.Errorf("creating photo file: %w", err)
 }
 
-func (s *Store) photoAssetForMutationTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64) (PhotoAsset, error) {
-	asset, err := photoAssetByIDQuery(ctx, tx, assetID)
+func (s *Store) photoAssetReadQuery(ctx context.Context, q metadataQuerier, assetID string) (PhotoAsset, error) {
+	asset, err := photoAssetByIDQuery(ctx, q, assetID)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
 	if asset.HiddenAt != nil {
-		if _, err := s.hiddenSession(ctx, tx); err != nil {
+		if _, err := s.hiddenSession(ctx, q); err != nil {
 			return PhotoAsset{}, err
 		}
+	}
+	return asset, nil
+}
+
+func (s *Store) photoAssetForMutationTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64) (PhotoAsset, error) {
+	asset, err := s.photoAssetReadQuery(ctx, tx, assetID)
+	if err != nil {
+		return PhotoAsset{}, err
 	}
 	if revision < 1 || asset.Revision != revision {
 		return PhotoAsset{}, fmt.Errorf("asset %s at revision %d, expected %d: %w", assetID, asset.Revision, revision, ErrStaleRevision)
@@ -641,8 +643,10 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 			return err
 		}
 		if expectedRevision == nil {
-			_, err := s.photoAssetForMutationTx(ctx, tx, ownedID, 0)
-			return err
+			if _, err := s.photoAssetReadQuery(ctx, tx, ownedID); err != nil {
+				return err
+			}
+			return fmt.Errorf("node %d already belongs to asset %s and needs its revision: %w", nodeID, ownedID, ErrStaleRevision)
 		}
 		result, err = s.mutatePhotoAssetTx(ctx, tx, ownedID, *expectedRevision, "promote", func(tx *sql.Tx, asset *PhotoAsset) (bool, error) {
 			for _, file := range asset.Files {

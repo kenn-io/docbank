@@ -19,6 +19,7 @@ import (
 )
 
 func TestPhotoHiddenHTTPAndClient(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
 	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic JPEG"))
@@ -88,6 +89,7 @@ func TestPhotoHiddenHTTPAndClient(t *testing.T) {
 }
 
 func TestPhotoHiddenPreviewChecksBeforeETag(t *testing.T) {
+	t.Parallel()
 	ts, s := newTestServer(t, nil)
 	ctx := t.Context()
 	hash, size, err := s.Blobs.Write(strings.NewReader("synthetic source JPEG"))
@@ -132,6 +134,7 @@ func TestPhotoHiddenPreviewChecksBeforeETag(t *testing.T) {
 }
 
 func TestPhotoHiddenBrowserAllowlistAndCookie(t *testing.T) {
+	t.Parallel()
 	ts, _ := newTestServer(t, nil)
 	response, body := get(t, ts, "/photos/hidden", map[string]string{"X-Api-Key": ""})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)

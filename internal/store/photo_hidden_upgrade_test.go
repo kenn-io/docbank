@@ -16,6 +16,7 @@ import (
 var schemaV0151SQL string
 
 func TestPhotoHiddenUpgradeReleasedV0151(t *testing.T) {
+	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "docbank.db")
@@ -59,6 +60,24 @@ func TestPhotoHiddenUpgradeReleasedV0151(t *testing.T) {
 			assert.Equal(t, node.ID, asset.Files[0].NodeID)
 			require.FileExists(t, path+".schema-v29.bak")
 			require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic"))
+		})
+	}
+}
+
+func TestPhotoHiddenUpgradeRejectsChangedReleasedColumns(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			t.Parallel()
+			db, err := driver.driver.Open(filepath.Join(t.TempDir(), "released.db"), docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Immediate})
+			require.NoError(t, err)
+			defer func() { require.NoError(t, db.Close()) }()
+			_, err = db.Exec(schemaV0151SQL)
+			require.NoError(t, err)
+			require.NoError(t, validateV29Schema(db, nil, nil))
+			_, err = db.Exec(`ALTER TABLE photo_files RENAME COLUMN role TO unsupported_role`)
+			require.NoError(t, err)
+			require.ErrorContains(t, validateV29Schema(db, nil, nil), "photo_files")
 		})
 	}
 }

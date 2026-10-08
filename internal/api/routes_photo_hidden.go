@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -24,7 +25,7 @@ type photoHiddenOutput struct {
 }
 
 func hiddenCookie(token string, expires time.Time) string {
-	cookie := &http.Cookie{Name: photoHiddenCookie, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 300, Expires: expires}
+	cookie := &http.Cookie{Name: photoHiddenCookie, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 300, Expires: expires} //nolint:gosec // The daemon serves loopback HTTP, which cannot deliver Secure cookies.
 	if token == "" {
 		cookie.MaxAge = -1
 	}
@@ -32,9 +33,8 @@ func hiddenCookie(token string, expires time.Time) string {
 }
 
 func hiddenError(err error) error {
-	var lockout *store.HiddenLockoutError
-	if errors.As(err, &lockout) {
-		return huma.ErrorWithHeaders(NewError(http.StatusTooManyRequests, "hidden_lockout", lockout.Error()), http.Header{"Retry-After": {strconv.Itoa(max(1, int(time.Until(lockout.Until).Seconds())))}})
+	if lockout, ok := errors.AsType[*store.HiddenLockoutError](err); ok {
+		return fmt.Errorf("hidden photos access: %w", huma.ErrorWithHeaders(NewError(http.StatusTooManyRequests, "hidden_lockout", lockout.Error()), http.Header{"Retry-After": {strconv.Itoa(max(1, int(time.Until(lockout.Until).Seconds())))}}))
 	}
 	return FromStoreError(err)
 }

@@ -10,6 +10,7 @@ import (
 )
 
 func TestPhotoHiddenPasscodeInput(t *testing.T) {
+	t.Parallel()
 	cmd := &cobra.Command{}
 	cmd.SetIn(strings.NewReader(" current passcode \r\nnew passcode\n"))
 	input := bufio.NewReaderSize(cmd.InOrStdin(), 2048)

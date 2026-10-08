@@ -9,11 +9,17 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/argon2"
 )
+
+const photoHiddenChangeSQL = `SELECT COALESCE((SELECT receipt_id FROM (SELECT rowid,receipt_id FROM (SELECT rowid,receipt_id FROM photo_change_receipts WHERE operation='hide' ORDER BY rowid DESC LIMIT 1) UNION ALL SELECT rowid,receipt_id FROM (SELECT rowid,receipt_id FROM photo_change_receipts WHERE operation='unhide' ORDER BY rowid DESC LIMIT 1)) ORDER BY rowid DESC LIMIT 1),'')`
+
+const hiddenArgonParameters = "m=19456,t=2,p=1"
+const hiddenArgonMemory, hiddenArgonTime, hiddenArgonThreads = 19456, 2, 1
 
 var (
 	ErrHiddenLocked          = errors.New("hidden photos are locked")
@@ -51,7 +57,7 @@ func validHiddenPasscode(passcode string) error {
 
 func hiddenHashParts(encoded string) ([]byte, []byte, error) {
 	parts := strings.Split(encoded, "$")
-	if len(parts) != 4 || parts[0] != "argon2id" || parts[1] != "m=19456,t=2,p=1" {
+	if len(parts) != 4 || parts[0] != "argon2id" || parts[1] != hiddenArgonParameters {
 		return nil, nil, errors.New("invalid hidden credential hash")
 	}
 	salt, err := base64.RawURLEncoding.DecodeString(parts[2])
@@ -68,10 +74,10 @@ func hiddenHashParts(encoded string) ([]byte, []byte, error) {
 func hashHiddenPasscode(passcode string) (string, error) {
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
-		return "", err
+		return "", fmt.Errorf("creating hidden passcode salt: %w", err)
 	}
-	hash := argon2.IDKey([]byte(passcode), salt, 2, 19456, 1, 32)
-	return "argon2id$m=19456,t=2,p=1$" + base64.RawURLEncoding.EncodeToString(salt) + "$" + base64.RawURLEncoding.EncodeToString(hash), nil
+	hash := argon2.IDKey([]byte(passcode), salt, hiddenArgonTime, hiddenArgonMemory, hiddenArgonThreads, 32)
+	return "argon2id$" + hiddenArgonParameters + "$" + base64.RawURLEncoding.EncodeToString(salt) + "$" + base64.RawURLEncoding.EncodeToString(hash), nil
 }
 
 func hiddenTokenDigest(token string) string {
@@ -109,7 +115,7 @@ func (s *Store) hiddenSession(ctx context.Context, q metadataQuerier) (string, e
 	}
 	until, err := time.Parse(time.RFC3339Nano, expiry)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("reading hidden session expiry: %w", err)
 	}
 	if !until.After(s.hiddenNow()) {
 		return "", ErrHiddenLocked
@@ -123,7 +129,7 @@ func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) 
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_hidden_credentials)`).Scan(&state.Configured); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT receipt_id FROM photo_change_receipts WHERE operation IN ('hide','unhide') ORDER BY rowid DESC LIMIT 1),'')`).Scan(&state.ChangeID); err != nil {
+		if err := tx.QueryRowContext(ctx, photoHiddenChangeSQL).Scan(&state.ChangeID); err != nil {
 			return err
 		}
 		var until string
@@ -134,7 +140,7 @@ func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) 
 		if err == nil {
 			t, err := time.Parse(time.RFC3339Nano, until)
 			if err != nil {
-				return err
+				return fmt.Errorf("reading hidden lockout expiry: %w", err)
 			}
 			if t.After(s.hiddenNow()) {
 				state.LockedUntil = &until
@@ -175,7 +181,7 @@ func (s *Store) consumeHiddenPasscodeTx(ctx context.Context, tx *sql.Tx, passcod
 	if err == nil {
 		t, err := time.Parse(time.RFC3339Nano, until)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reading hidden lockout expiry: %w", err)
 		}
 		if t.After(now) {
 			return &HiddenLockoutError{Until: t}, nil
@@ -193,14 +199,14 @@ func (s *Store) consumeHiddenPasscodeTx(ctx context.Context, tx *sql.Tx, passcod
 	if err != nil {
 		return nil, err
 	}
-	hash := argon2.IDKey([]byte(passcode), salt, 2, 19456, 1, 32)
+	hash := argon2.IDKey([]byte(passcode), salt, hiddenArgonTime, hiddenArgonMemory, hiddenArgonThreads, 32)
 	if subtle.ConstantTimeCompare(hash, expected) == 1 {
 		for _, table := range []string{"photo_hidden_failures", "photo_hidden_lockout"} {
 			if _, err := tx.ExecContext(ctx, `DELETE FROM `+table); err != nil {
 				return nil, err
 			}
 		}
-		return nil, nil
+		return nil, nil //nolint:nilnil // The first error is a committed denial; the second aborts the transaction.
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM photo_hidden_failures WHERE occurred_at<?`, now.Add(-time.Minute).Format(timestampLayout)); err != nil {
 		return nil, err
@@ -256,7 +262,7 @@ func (s *Store) UnlockPhotoHidden(ctx context.Context, passcode string) (string,
 		}
 		bytes := make([]byte, 32)
 		if _, err := rand.Read(bytes); err != nil {
-			return err
+			return fmt.Errorf("creating hidden session token: %w", err)
 		}
 		token = base64.RawURLEncoding.EncodeToString(bytes)
 		expiry = s.hiddenNow().Add(5 * time.Minute)
@@ -298,17 +304,16 @@ func (s *Store) editPhotoHidden(ctx context.Context, passcode, operation, next s
 			if err != nil {
 				return err
 			}
+			defer func() { _ = rows.Close() }()
 			var ids []string
 			for rows.Next() {
 				var id string
 				if err := rows.Scan(&id); err != nil {
-					_ = rows.Close()
 					return err
 				}
 				ids = append(ids, id)
 			}
 			if err := rows.Err(); err != nil {
-				_ = rows.Close()
 				return err
 			}
 			if err := rows.Close(); err != nil {
@@ -365,8 +370,10 @@ func (s *Store) SetPhotoAssetHidden(ctx context.Context, id string, revision int
 			if !exists {
 				return false, ErrHiddenNotConfigured
 			}
-		} else if _, err := s.hiddenSession(ctx, tx); err != nil {
-			return false, err
+		} else if asset.HiddenAt == nil {
+			if _, err := s.hiddenSession(ctx, tx); err != nil {
+				return false, err
+			}
 		}
 		if (asset.HiddenAt != nil) == hidden {
 			return false, nil
