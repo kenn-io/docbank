@@ -35,6 +35,7 @@ func TestPhotoImportJobReceiptUsesCurrentHiddenAccess(t *testing.T) {
 		Files: []store.PhotoImportAmbiguousFile{
 			{SourcePath: "/camera/hidden.jpg", NodeID: node.ID, AssetID: hidden.ID, Role: store.PhotoRoleImage},
 			{SourcePath: "/camera/visible.jpg", NodeID: visibleNode.ID, AssetID: visible.ID, Role: store.PhotoRoleImage},
+			{SourcePath: "/camera/hidden.xmp", NodeID: node.ID, AssetID: hidden.ID, Role: store.PhotoRoleSidecar},
 		},
 	}}}
 	encoded, err := json.Marshal(receipt)
@@ -64,6 +65,7 @@ func TestPhotoImportJobReceiptUsesCurrentHiddenAccess(t *testing.T) {
 		want := receipt
 		want.Ambiguities = []store.PhotoImportAmbiguity{{Reason: receipt.Ambiguities[0].Reason, Files: append([]store.PhotoImportAmbiguousFile(nil), receipt.Ambiguities[0].Files...)}}
 		want.Ambiguities[0].Files[0].AssetID = wantID
+		want.Ambiguities[0].Files[2].AssetID = wantID
 		require.Equal(t, want, got.Receipt)
 	}
 	path := "/api/v1/jobs/" + completed.ID

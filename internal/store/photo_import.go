@@ -88,16 +88,34 @@ func (s *Store) PhotoImportReceiptResponse(ctx context.Context, receiptJSON stri
 		return "", err
 	}
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		visible := make(map[string]bool)
+		sessionChecked, unlocked := false, false
 		for i := range receipt.Ambiguities {
 			for j := range receipt.Ambiguities[i].Files {
 				file := &receipt.Ambiguities[i].Files[j]
 				if file.AssetID == "" {
 					continue
 				}
-				if _, err := s.photoAssetReadQuery(ctx, tx, file.AssetID); errors.Is(err, ErrHiddenLocked) || errors.Is(err, ErrNotFound) {
+				if _, checked := visible[file.AssetID]; !checked {
+					var hidden bool
+					err := tx.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=?`, file.AssetID).Scan(&hidden)
+					if errors.Is(err, sql.ErrNoRows) {
+						visible[file.AssetID] = false
+					} else if err != nil {
+						return err
+					} else {
+						if hidden && !sessionChecked {
+							_, err := s.hiddenSession(ctx, tx)
+							if err != nil && !errors.Is(err, ErrHiddenLocked) {
+								return err
+							}
+							sessionChecked, unlocked = true, err == nil
+						}
+						visible[file.AssetID] = !hidden || unlocked
+					}
+				}
+				if !visible[file.AssetID] {
 					file.AssetID = ""
-				} else if err != nil {
-					return err
 				}
 			}
 		}

@@ -232,11 +232,12 @@ export class Photos {
 
 export const photoRevalidationErrorEvent = "docbank-photo-revalidation-error";
 export const photoPrivacyEvent = "docbank-photo-privacy";
+export const photoPrivacyOrigin = crypto.randomUUID();
 export function notifyPhotoPrivacy(error = "") {
   window.dispatchEvent(new CustomEvent(photoPrivacyEvent, { detail: error }));
   if (typeof BroadcastChannel !== "undefined") {
     const channel = new BroadcastChannel(photoPrivacyEvent);
-    channel.postMessage("changed");
+    channel.postMessage({ origin: photoPrivacyOrigin });
     channel.close();
   }
 }
