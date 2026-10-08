@@ -25,6 +25,9 @@ explains how.
   families, and custodian claims.
 - Group matching RAW, JPEG, and XMP files as one photo. Ambiguous groups are
   left for you to pair by hand.
+- Organize photos into albums through the CLI and HTTP API. Add selected photos
+  or a complete query result, choose covers, and star albums. Removing members
+  or deleting an album keeps the files.
 - Upload a single document with a declared hash and size, which Docbank
   verifies.
 - Arrange documents in folders. The folder tree is virtual, so moving a
@@ -39,7 +42,8 @@ explains how.
 - Watch local inbox folders and import files once they stop changing.
 
 Start with [Importing documents](usage/importing.md) and
-[Organizing and tagging](usage/organizing.md).
+[Organizing and tagging](usage/organizing.md). For photos, see
+[Photo assets and albums](usage/photos.md).
 
 ## Find and retrieve
 
@@ -58,9 +62,12 @@ Start with [Importing documents](usage/importing.md) and
   find similar documents locally from stored embeddings.
 - Read archived email with decoded or raw headers, and follow each attachment
   to the version that was attached.
-- Read imported or generated transcripts with speaker labels and timing.
+- Read imported or generated transcripts with speaker labels and timing, and
+  match search evidence to the exact retained transcript build.
+- Browse photos in the web app, grouped by month or capture session. Adjust
+  grid density and keep your selection and place when switching workspaces.
 - Browse photo assets over HTTP and filter by camera, lens, ISO, capture date,
-  GPS, and asset type. A RAW/JPEG pair appears once.
+  GPS, asset type, or album. A RAW/JPEG pair appears once.
 - Given a SHA-256 hash, find every node and version that still refers to it.
 - Download current or earlier content and check its size, hash, and final
   verification result.
