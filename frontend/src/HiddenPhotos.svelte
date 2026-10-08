@@ -8,7 +8,7 @@
   import { APIError } from "./api-transport.js";
 
   let { session, onauthfailure }: { session: string; onauthfailure: (cause: unknown) => void } = $props();
-  let hiddenState = $state<PhotoHiddenState>({ configured: false });
+  let hiddenState = $state<PhotoHiddenState>({ change_id: "", configured: false });
   let workspace = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
   let passcode = $state("");
   let nextPasscode = $state("");

@@ -180,6 +180,8 @@ docbank photos assets display <asset-id> [file-id] [--revision REV]
 docbank photos settings show
 docbank photos settings set raw|image [--revision REV]
 docbank photos settings reset [--revision REV]
+docbank photos hidden setup|change|disable|lock|state|reset
+docbank photos hide|unhide <asset-id> [--revision REV]
 docbank photos import <source-root> [destination] [--json]
 ```
 
@@ -223,6 +225,8 @@ Removing a photo from an album or deleting the album keeps every file. See
 filters.
 
 ### Photo imports
+
+Hidden passcodes use protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks within that invocation. Disable returns all hidden photos to Library; reset preserves hidden flags while removing credentials. Locked Photos inspection refuses hidden assets. Documents still expose their ordinary file nodes.
 
 `photos import` queues a background import of a folder on the daemon host and
 prints the operation ID. It creates one photo per same-folder, same-name group

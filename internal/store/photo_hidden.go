@@ -36,6 +36,7 @@ func WithPhotoHiddenToken(ctx context.Context, token string) context.Context {
 }
 
 type PhotoHiddenState struct {
+	ChangeID    string  `json:"change_id"`
 	Configured  bool    `json:"configured"`
 	ExpiresAt   *string `json:"expires_at,omitzero"`
 	LockedUntil *string `json:"locked_until,omitzero"`
@@ -120,6 +121,9 @@ func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) 
 	var state PhotoHiddenState
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_hidden_credentials)`).Scan(&state.Configured); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT receipt_id FROM photo_change_receipts ORDER BY rowid DESC LIMIT 1),'')`).Scan(&state.ChangeID); err != nil {
 			return err
 		}
 		var until string
@@ -290,13 +294,30 @@ func (s *Store) editPhotoHidden(ctx context.Context, passcode, operation, next s
 			return err
 		}
 		if operation == "disable" {
-			assets, err := allPhotoAssetsTx(ctx, tx)
+			rows, err := tx.QueryContext(ctx, `SELECT asset_id FROM photo_assets WHERE hidden_at IS NOT NULL ORDER BY asset_id`)
 			if err != nil {
 				return err
 			}
-			for _, asset := range assets {
-				if asset.HiddenAt == nil {
-					continue
+			var ids []string
+			for rows.Next() {
+				var id string
+				if err := rows.Scan(&id); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				ids = append(ids, id)
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if err := rows.Close(); err != nil {
+				return err
+			}
+			for _, id := range ids {
+				asset, err := photoAssetByIDQuery(ctx, tx, id)
+				if err != nil {
+					return err
 				}
 				next := asset
 				next.HiddenAt = nil

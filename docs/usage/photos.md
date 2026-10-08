@@ -58,14 +58,13 @@ Choose Hidden in the Photos sidebar and set a passcode. Open a photo's actions m
 
 Hidden photos disappear from Library, photo queries, and album contents. Albums retain their membership and report hidden members separately. Documents, document tools, original bytes, and exports still expose the underlying files. Hidden is a Photos privacy control.
 
-Enter the passcode in Hidden to unlock for five minutes. Lock closes every active Hidden session. Locking, expiry, and visibility changes clear the grid, selection, and browser preview cache. Hidden previews stay in the current view's memory and carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
+Enter the passcode in Hidden to unlock for five minutes. Lock closes every active Hidden session. Locking and expiry clear the Hidden grid, selection, and browser preview cache. Other browser contexts and CLI writes reach open views through a state check every two seconds with a two-second timeout. Library reloads retain scroll position and the selection of unaffected photos. Hidden previews stay in the current view's memory and carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
 
 Five incorrect passcodes within sixty seconds lock access for five minutes. Failed attempts and lockout survive restart and backup. Unlock sessions expire on restart and are excluded from backup. Changing the passcode revokes sessions. Disable Hidden verifies the passcode and returns every hidden photo to Library in one transaction. Operator reset removes credentials and sessions while preserving hidden flags, so a new setup can recover access.
 
 ```text
 docbank photos hidden setup
 docbank photos hide <asset-id> [--revision REV]
-docbank photos hidden unlock
 docbank photos unhide <asset-id> [--revision REV]
 docbank photos hidden change
 docbank photos hidden disable
@@ -74,7 +73,7 @@ docbank photos hidden state
 docbank photos hidden reset
 ```
 
-Passcodes use protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks and forwards the cookie within that invocation. Unlock emits the expiry, and saves no client credential file. HTTP operations live under `/api/v1/photos/hidden`; hide and unhide use `/api/v1/photos/assets/{asset_id}/hide` and `/unhide` with `If-Match`. Browser sessions can use the interactive operations. Reset requires the daemon API key.
+Passcodes use protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks and forwards the cookie within that invocation. Unhide saves no client credential file. HTTP operations live under `/api/v1/photos/hidden`; hide and unhide use `/api/v1/photos/assets/{asset_id}/hide` and `/unhide` with `If-Match`. Browser sessions can use the interactive operations. Reset requires the daemon API key.
 
 ## Preview sizes
 

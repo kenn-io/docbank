@@ -324,7 +324,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		}
 		if after, ok := strings.CutPrefix(path, "/api/v1/photos/assets/"); ok {
 			parts := strings.Split(after, "/")
-			if len(parts) == 2 && validPhotoBrowserUUID(parts[0]) && (parts[1] == "hide" || parts[1] == "unhide") {
+			if len(parts) == 2 && query.ValidateTextOperand("asset", parts[0]) == nil && (parts[1] == "hide" || parts[1] == "unhide") {
 				return method == http.MethodPost
 			}
 		}
@@ -610,9 +610,4 @@ func validPhotoPreviewPath(assetID, generationID string) bool {
 	}
 	_, err := hex.DecodeString(generationID)
 	return err == nil && strings.ToLower(generationID) == generationID
-}
-
-func validPhotoBrowserUUID(id string) bool {
-	bytes, err := hex.DecodeString(strings.ReplaceAll(id, "-", ""))
-	return err == nil && len(id) == 36 && len(bytes) == 16 && bytes[6]>>4 == 4 && bytes[8]>>6 == 2
 }

@@ -95,7 +95,7 @@ func (s *Store) ListPhotoAssets(
 				return err
 			}
 		}
-		compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(
+		compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(
 			ctx, request.Query, queryResolver{q: q})
 		if err != nil {
 			return err
@@ -298,10 +298,12 @@ const photoBrowseDisplayFrom = `photo_assets a
 
 const photoBrowseLiveDisplay = liveIncludedDisplayPredicate + ` AND n.kind='file'`
 
-const photoBrowseEligibleMemberPredicate = `EXISTS (
+func photoBrowseEligibleMemberPredicate(hidden bool) string {
+	return `EXISTS (
  SELECT 1 FROM photo_files member JOIN photo_assets a ON a.asset_id=member.asset_id
  JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id
- WHERE member.node_id=cv.node_id AND ` + photoBrowseLiveDisplay + `)`
+ WHERE member.node_id=cv.node_id AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(hidden) + `)`
+}
 
 const photoBrowseNodeJoins = `
  CROSS JOIN photo_files f ON f.node_id=n.id
@@ -373,7 +375,7 @@ func photoBrowseMatch(
 	// Duplicate representatives are selected from the complete matching photo
 	// population, as for document queries, before projecting assets.
 	compiled.predicate = joinCompiledFragments([]compiledQueryFragment{
-		compiled.predicate, {sql: strings.Replace(photoBrowseEligibleMemberPredicate, photoBrowseLiveDisplay, photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(hidden), 1)},
+		compiled.predicate, {sql: photoBrowseEligibleMemberPredicate(hidden)},
 	}, ` AND `)
 	population, err := matchedPopulation(compiled, generation, profile)
 	if err != nil {

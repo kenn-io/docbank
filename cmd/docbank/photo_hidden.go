@@ -39,9 +39,9 @@ func readPhotoPasscode(cmd *cobra.Command, input *bufio.Reader, prompt string) (
 }
 
 func init() {
-	hidden := &cobra.Command{Use: "hidden", Short: "Configure and unlock Hidden photos", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	hidden := &cobra.Command{Use: "hidden", Short: "Configure Hidden photos access", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	photosCmd.AddCommand(hidden)
-	for _, action := range []string{"setup", "change", "disable", "unlock", "lock", "reset", "state"} {
+	for _, action := range []string{"setup", "change", "disable", "lock", "reset", "state"} {
 		command := &cobra.Command{Use: action, Short: action + " Hidden photos access", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 			connection, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
@@ -100,7 +100,13 @@ func init() {
 					return err
 				}
 			}
-			asset, err := withPhotoRevision(cmd, photoAssetRevision(cmd, connection, args[0]), func(revision *int64) (api.PhotoAsset, error) {
+			asset, err := withPhotoRevision(cmd, func() (*int64, error) {
+				asset, err := connection.PhotoAsset(cmd.Context(), args[0], cookie)
+				if err != nil {
+					return nil, err
+				}
+				return &asset.Revision, nil
+			}, func(revision *int64) (api.PhotoAsset, error) {
 				return connection.SetPhotoAssetHidden(cmd.Context(), args[0], *revision, hide, cookie)
 			})
 			if err != nil {

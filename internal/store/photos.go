@@ -98,6 +98,9 @@ func (s *Store) PhotoAssetByID(ctx context.Context, id string) (PhotoAsset, erro
 	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		asset, err = photoAssetByIDQuery(ctx, tx, id)
+		if err == nil && asset.HiddenAt != nil {
+			_, err = s.hiddenSession(ctx, tx)
+		}
 		return err
 	}); err != nil {
 		return PhotoAsset{}, err
@@ -120,6 +123,9 @@ func (s *Store) PhotoAssetForNode(ctx context.Context, nodeID int64) (PhotoAsset
 		}
 		var err error
 		asset, err = photoAssetByIDQuery(ctx, tx, id)
+		if err == nil && asset.HiddenAt != nil {
+			_, err = s.hiddenSession(ctx, tx)
+		}
 		return err
 	}); err != nil {
 		return PhotoAsset{}, err

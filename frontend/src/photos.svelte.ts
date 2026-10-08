@@ -30,6 +30,7 @@ export class Photos {
   selection = $state<SelectionState<string>>(clearSelection<string>());
   started = false;
   private expired = false;
+  private privacyCount = 0;
   private replacement: "refresh" | "expiry" | undefined;
   private controller = new AbortController();
   private disposed = false;
@@ -69,13 +70,15 @@ export class Photos {
     }
   }
 
-  clearForPrivacy() {
+  clearForPrivacy(preserve = false) {
+    const selection = this.selection;
+    if (preserve) this.privacyCount = Math.max(this.privacyCount, this.items.length);
     this.cancelPending();
     this.items = [];
     this.total = 0;
     this.cursor = undefined;
     this.started = false;
-    this.clearSelection();
+    if (preserve) { this.selection = selection; this.replacement = "refresh"; } else this.clearSelection();
     this.error = "";
   }
 
@@ -85,6 +88,8 @@ export class Photos {
     for (const member of members) {
       try {
         await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(member.asset_id, { "If-Match": JSON.stringify(String(member.revision)) }, { session: this.session });
+        this.items = this.items.filter(item => item.asset_id !== member.asset_id);
+        this.selection = reconcileIDSelection(this.selection, new Set(this.items.map(item => item.asset_id)));
       } catch (cause) { failure = cause instanceof Error ? cause.message : String(cause); }
     }
     notifyPhotoPrivacy(failure);
@@ -124,7 +129,7 @@ export class Photos {
     this.replacement = mode;
     this.loading = true;
     this.error = "";
-    const count = this.items.length;
+    const count = this.privacyCount || this.items.length;
     const tail = this.items.at(-1)?.asset_id;
     const candidate = new Map<string, PhotoBrowseRow>();
     let cursor: string | undefined;
@@ -148,6 +153,7 @@ export class Photos {
       this.total = total;
       this.cursor = cursor;
       this.started = true;
+      this.privacyCount = 0;
       this.selection = reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...this.trashTargets.map(item => item.asset_id)]));
       this.expired = false;
       this.replacement = undefined;
