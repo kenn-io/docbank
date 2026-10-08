@@ -5,7 +5,7 @@ import { photo } from "./photo-test-fixtures.js";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
 
-it("trashes selected assets at displayed revisions and retains off-prefix failures for retry and invalidates Documents after partial success", async () => {
+it("binds retries to captured or displayed revisions", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
     .mockResolvedValueOnce(response([photo(3)]))
@@ -30,7 +30,23 @@ it("trashes selected assets at displayed revisions and retains off-prefix failur
   expect(new Headers(fetcher.mock.calls[3][1].headers).get("If-Match")).toBe("1");
   expect(photos.trashTargets).toEqual([]);
   expect(invalidateDocuments).toHaveBeenCalledTimes(2);
+  photos.selection.selectedIDs.add("unloaded");
+  expect(await photos.trashSelected()).toBe(false);
   photos.dispose();
+
+  const updated = { ...photo(1), revision: 2 };
+  const loadedFetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
+    .mockResolvedValueOnce(response([updated]))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed again" }), { status: 412 }))
+    .mockResolvedValueOnce(response([{ ...updated, revision: 3 }]));
+  vi.stubGlobal("fetch", loadedFetcher);
+  const loaded = new Photos("scoped", vi.fn()); loaded.items = [photo(1)]; loaded.started = true; loaded.selectLoaded();
+  expect(await loaded.trashSelected()).toBe(false);
+  expect(await loaded.trashSelected()).toBe(false);
+  expect(loadedFetcher.mock.calls[2][0]).toBe("/api/v1/photos/assets/photo-1/trash");
+  expect(new Headers(loadedFetcher.mock.calls[2][1].headers).get("If-Match")).toBe("2");
+  expect(loaded.selection.selectedIDs.has("photo-1")).toBe(true);
+  loaded.dispose();
 });
 
 it.each(["replace", "checkbox", "loaded", "add"])("uses current selection after a failure: %s", async mode => {
@@ -51,24 +67,6 @@ it.each(["replace", "checkbox", "loaded", "add"])("uses current selection after 
   expect(await photos.trashSelected()).toBe(true);
   expect(fetcher.mock.calls.slice(2, -1).map(call => call[0])).toEqual(expected.map(id => `/api/v1/photos/assets/${id}/trash`));
   expect(photos.trashTargets).toEqual([]);
-  photos.selection.selectedIDs.add("unloaded");
-  expect(await photos.trashSelected()).toBe(false);
-  photos.dispose();
-});
-
-it("retries a loaded photo at its displayed revision without accepting unseen changes", async () => {
-  const updated = { ...photo(1), revision: 2 };
-  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
-    .mockResolvedValueOnce(response([updated]))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed again" }), { status: 412 }))
-    .mockResolvedValueOnce(response([{ ...updated, revision: 3 }]));
-  vi.stubGlobal("fetch", fetcher);
-  const photos = new Photos("scoped", vi.fn()); photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
-  expect(await photos.trashSelected()).toBe(false);
-  expect(await photos.trashSelected()).toBe(false);
-  expect(fetcher.mock.calls[2][0]).toBe("/api/v1/photos/assets/photo-1/trash");
-  expect(new Headers(fetcher.mock.calls[2][1].headers).get("If-Match")).toBe("2");
-  expect(photos.selection.selectedIDs.has("photo-1")).toBe(true);
   photos.dispose();
 });
 

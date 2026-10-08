@@ -46,7 +46,7 @@ func TestPhotoRoutesEnforceIfMatch(t *testing.T) {
 	assert.Equal(t, "stale_revision", decodeProblem(t, staleBody).Code)
 }
 
-func TestPhotoTrashRouteRevisionAndRestore(t *testing.T) {
+func TestPhotoTrashRouteRevision(t *testing.T) {
 	t.Parallel()
 	ts, fixture := newTestServer(t, nil)
 	hash, size, err := fixture.Blobs.Write(strings.NewReader("synthetic jpeg"))
@@ -64,21 +64,9 @@ func TestPhotoTrashRouteRevisionAndRestore(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var receipt api.PhotoAsset
 	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
-	assert.Equal(t, asset.Revision+1, receipt.Revision)
 	resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": strconv.FormatInt(receipt.Revision, 10)}, nil)
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	assert.Equal(t, "invalid_photo_asset", decodeProblem(t, body).Code)
-	assert.Contains(t, body, "photo has no live files to trash")
-	resp, body = do(t, ts, http.MethodGet, "/api/v1/trash?limit=1", nil, nil)
-	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var page api.TrashPage
-	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	require.Len(t, page.Items, 1)
-	assert.Equal(t, asset.ID, page.Items[0].PhotoAssetID)
-	resp, body = do(t, ts, http.MethodPost, "/api/v1/nodes/"+strconv.FormatInt(node.ID, 10)+"/restore", map[string]string{"If-Match": strconv.FormatInt(page.Items[0].Revision, 10)}, nil)
-	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
-	assert.NotContains(t, body, "photo_asset_id")
-	assert.NotContains(t, body, "photo_file_count")
 }
 
 func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {

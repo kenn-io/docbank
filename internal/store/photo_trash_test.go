@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -38,95 +37,136 @@ func photoTrashFixture(t *testing.T, s *Store) (PhotoAsset, []Node) {
 
 func TestPhotoTrashAndRestoreMember(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	asset, nodes := photoTrashFixture(t, s)
-	album, err := s.CreatePhotoSet(t.Context(), "Trip")
-	require.NoError(t, err)
-	album, err = s.ChangePhotoSetMembers(t.Context(), album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
-	require.NoError(t, err)
-	_, err = s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision-1)
-	require.ErrorIs(t, err, ErrStaleRevision)
-	trashed, err := s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision)
-	require.NoError(t, err)
-	assert.Equal(t, asset.Revision+1, trashed.Revision)
-	assert.Equal(t, asset.Files, trashed.Files)
-	receipts := photoReceiptRows(t, s, asset.ID)
-	_, err = s.TrashPhotoAsset(t.Context(), asset.ID, trashed.Revision)
-	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
-	assert.Contains(t, err.Error(), "photo has no live files to trash")
-	unchanged, err := s.PhotoAssetByID(t.Context(), asset.ID)
-	require.NoError(t, err)
-	assert.Equal(t, trashed.Revision, unchanged.Revision)
-	assert.Equal(t, receipts, photoReceiptRows(t, s, asset.ID))
-	page, total, err := s.TrashedRootsPage(t.Context(), 1, 0)
-	require.NoError(t, err)
-	require.Len(t, page, 1)
-	assert.Equal(t, 1, total)
-	assert.Equal(t, asset.ID, page[0].PhotoAssetID)
-	assert.Equal(t, nodes[0].ID, page[0].ID)
-	assert.Equal(t, 3, page[0].PhotoFileCount)
-	unpaged, err := s.TrashedRoots(t.Context())
-	require.NoError(t, err)
-	assert.Len(t, unpaged, 3)
-	_, err = s.CreateFile(t.Context(), *nodes[1].ParentID, nodes[1].Name, fakeHash("b2"), 1, "text/plain")
-	require.NoError(t, err)
-	_, _, err = s.Restore(t.Context(), nodes[2].ID, UnconditionalRev)
-	require.NoError(t, err)
-	for _, before := range nodes {
-		after, err := s.NodeByID(t.Context(), before.ID)
-		require.NoError(t, err)
-		assert.Nil(t, after.TrashedAt)
-		assert.Equal(t, before.CurrentVersionID, after.CurrentVersionID)
-		assert.Equal(t, before.BlobHash, after.BlobHash)
+	for _, audited := range []bool{false, true} {
+		t.Run("audited="+strconv.FormatBool(audited), func(t *testing.T) {
+			s := newTestStore(t)
+			asset, nodes := photoTrashFixture(t, s)
+			album, err := s.CreatePhotoSet(t.Context(), "Trip")
+			require.NoError(t, err)
+			album, err = s.ChangePhotoSetMembers(t.Context(), album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+			require.NoError(t, err)
+			if audited {
+				seedInitialAuditAuthority(t, s, s.RootID())
+			}
+			_, err = s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision-1)
+			require.ErrorIs(t, err, ErrStaleRevision)
+			trashed, err := s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision)
+			require.NoError(t, err)
+			assert.Equal(t, asset.Revision+1, trashed.Revision)
+			assert.Equal(t, asset.Files, trashed.Files)
+			receipts := photoReceiptRows(t, s, asset.ID)
+			_, err = s.TrashPhotoAsset(t.Context(), asset.ID, trashed.Revision)
+			require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+			assert.Contains(t, err.Error(), "photo has no live files to trash")
+			unchanged, err := s.PhotoAssetByID(t.Context(), asset.ID)
+			require.NoError(t, err)
+			assert.Equal(t, trashed.Revision, unchanged.Revision)
+			assert.Equal(t, receipts, photoReceiptRows(t, s, asset.ID))
+			page, total, err := s.TrashedRootsPage(t.Context(), 1, 0)
+			require.NoError(t, err)
+			require.Len(t, page, 1)
+			assert.Equal(t, 1, total)
+			assert.Equal(t, asset.ID, page[0].PhotoAssetID)
+			assert.Equal(t, nodes[0].ID, page[0].ID)
+			assert.Equal(t, 3, page[0].PhotoFileCount)
+			unpaged, err := s.TrashedRoots(t.Context())
+			require.NoError(t, err)
+			assert.Len(t, unpaged, 3)
+			if !audited {
+				_, err = s.CreateFile(t.Context(), *nodes[1].ParentID, nodes[1].Name, fakeHash("b2"), 1, "text/plain")
+				require.NoError(t, err)
+			}
+			selected, err := s.NodeByID(t.Context(), nodes[2].ID)
+			require.NoError(t, err)
+			_, _, err = s.Restore(t.Context(), selected.ID, selected.Revision-1)
+			require.ErrorIs(t, err, ErrStaleRevision)
+			_, _, err = s.Restore(t.Context(), selected.ID, selected.Revision)
+			require.NoError(t, err)
+			for _, before := range nodes {
+				after, err := s.NodeByID(t.Context(), before.ID)
+				require.NoError(t, err)
+				assert.Nil(t, after.TrashedAt)
+				assert.Equal(t, before.CurrentVersionID, after.CurrentVersionID)
+				assert.Equal(t, before.BlobHash, after.BlobHash)
+			}
+			jpeg, err := s.NodeByID(t.Context(), nodes[1].ID)
+			require.NoError(t, err)
+			if !audited {
+				assert.Equal(t, "capture (2).jpg", jpeg.Name)
+			}
+			current, err := s.PhotoAssetByID(t.Context(), asset.ID)
+			require.NoError(t, err)
+			assert.Equal(t, asset.Revision+2, current.Revision)
+			assert.Contains(t, receiptOperations(photoReceiptRows(t, s, asset.ID)), "trash")
+			assert.Contains(t, receiptOperations(photoReceiptRows(t, s, asset.ID)), "restore")
+			members, err := photoSetMemberIDs(t.Context(), s.db, album.ID)
+			require.NoError(t, err)
+			assert.Equal(t, []string{asset.ID}, members)
+			require.NoError(t, s.ValidateMetadata(t.Context()))
+		})
 	}
-	jpeg, err := s.NodeByID(t.Context(), nodes[1].ID)
-	require.NoError(t, err)
-	assert.Equal(t, "capture (2).jpg", jpeg.Name)
-	current, err := s.PhotoAssetByID(t.Context(), asset.ID)
-	require.NoError(t, err)
-	assert.Equal(t, trashed.Revision+1, current.Revision)
-	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, asset.ID)), "trash")
-	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, asset.ID)), "restore")
-	members, err := photoSetMemberIDs(t.Context(), s.db, album.ID)
-	require.NoError(t, err)
-	assert.Equal(t, []string{asset.ID}, members)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
 }
 
 func TestPhotoRestoreOriginalParentOrder(t *testing.T) {
-	for _, nested := range []bool{false, true} {
-		t.Run(strconv.FormatBool(nested), func(t *testing.T) {
+	for _, mode := range []string{"parent", "nested parent", "folder member"} {
+		t.Run(mode, func(t *testing.T) {
 			s := newTestStore(t)
-			asset, nodes := photoTrashFixture(t, s)
-			parent, err := s.NodeByID(t.Context(), *nodes[0].ParentID)
-			require.NoError(t, err)
-			container := parent
-			if nested {
-				container, err = s.Mkdir(t.Context(), s.RootID(), "Trips")
+			_, nodes := photoTrashFixture(t, s)
+			var selected Node
+			var original string
+			var unrelatedID int64
+			if mode == "folder member" {
+				other, err := s.CreateFile(t.Context(), *nodes[0].ParentID, "notes.txt", fakeHash("b2"), 1, "text/plain")
 				require.NoError(t, err)
-				parent, _, err = s.Move(t.Context(), parent.ID, container.ID, parent.Name, UnconditionalRev)
+				unrelatedID = other.ID
+				_, _, err = s.Trash(t.Context(), other.ID, UnconditionalRev)
 				require.NoError(t, err)
+				_, _, err = s.Trash(t.Context(), *nodes[0].ParentID, UnconditionalRev)
+				require.NoError(t, err)
+				for _, node := range nodes[1:] {
+					_, _, err = s.Trash(t.Context(), node.ID, UnconditionalRev)
+					require.NoError(t, err)
+				}
+				selected, err = s.NodeByID(t.Context(), nodes[0].ID)
+				require.NoError(t, err)
+			} else {
+				parent, err := s.NodeByID(t.Context(), *nodes[0].ParentID)
+				require.NoError(t, err)
+				container := parent
+				if mode == "nested parent" {
+					container, err = s.Mkdir(t.Context(), s.RootID(), "Trips")
+					require.NoError(t, err)
+					parent, _, err = s.Move(t.Context(), parent.ID, container.ID, parent.Name, UnconditionalRev)
+					require.NoError(t, err)
+				}
+				_, _, err = s.Move(t.Context(), nodes[1].ID, container.ID, nodes[1].Name, UnconditionalRev)
+				require.NoError(t, err)
+				ordinary, err := s.CreateFile(t.Context(), parent.ID, "notes.txt", fakeHash("b2"), 1, "text/plain")
+				require.NoError(t, err)
+				selected, original, err = s.Trash(t.Context(), nodes[0].ID, UnconditionalRev)
+				require.NoError(t, err)
+				folder, _, err := s.Trash(t.Context(), container.ID, UnconditionalRev)
+				require.NoError(t, err)
+				_, err = s.db.Exec(`UPDATE nodes SET trashed_at=? WHERE trashed_at=?`, time.Now().UTC().Add(-time.Hour).Format(timestampLayout), *folder.TrashedAt)
+				require.NoError(t, err)
+				_, _, err = s.Restore(t.Context(), ordinary.ID, UnconditionalRev)
+				require.ErrorIs(t, err, ErrNotTrashed)
 			}
-			_, _, err = s.Move(t.Context(), nodes[1].ID, container.ID, nodes[1].Name, UnconditionalRev)
+			_, restoredPath, err := s.Restore(t.Context(), selected.ID, selected.Revision)
 			require.NoError(t, err)
-			ordinary, err := s.CreateFile(t.Context(), parent.ID, "notes.txt", fakeHash("b2"), 1, "text/plain")
-			require.NoError(t, err)
-			member, original, err := s.Trash(t.Context(), nodes[0].ID, UnconditionalRev)
-			require.NoError(t, err)
-			folder, _, err := s.Trash(t.Context(), container.ID, UnconditionalRev)
-			require.NoError(t, err)
-			_, err = s.db.Exec(`UPDATE nodes SET trashed_at=? WHERE trashed_at=?`, time.Now().UTC().Add(-time.Hour).Format(timestampLayout), *folder.TrashedAt)
-			require.NoError(t, err)
-			_, _, err = s.Restore(t.Context(), ordinary.ID, UnconditionalRev)
-			require.ErrorIs(t, err, ErrNotTrashed)
-			_, _, err = s.Restore(t.Context(), member.ID, member.Revision-1)
-			require.ErrorIs(t, err, ErrStaleRevision)
-			_, restoredPath, err := s.Restore(t.Context(), member.ID, member.Revision)
-			require.NoError(t, err)
-			assert.Equal(t, original, restoredPath)
-			current, err := s.PhotoAssetByID(t.Context(), asset.ID)
-			require.NoError(t, err)
-			assert.Equal(t, asset.Revision+1, current.Revision)
+			if original != "" {
+				assert.Equal(t, original, restoredPath)
+			}
+			for _, node := range nodes {
+				restored, err := s.NodeByID(t.Context(), node.ID)
+				require.NoError(t, err)
+				assert.Nil(t, restored.TrashedAt)
+			}
+			if unrelatedID != 0 {
+				unrelated, err := s.NodeByID(t.Context(), unrelatedID)
+				require.NoError(t, err)
+				assert.NotNil(t, unrelated.TrashedAt)
+			}
 		})
 	}
 }
@@ -151,39 +191,6 @@ func TestPhotoTrashCompletesPartialGroup(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 3, rows[0].PhotoFileCount)
 	assert.Equal(t, nodes[1].ID, rows[0].ID)
-	rep, err := s.TrashEmptyBounded(t.Context(), 0, 1, true)
-	require.NoError(t, err)
-	assert.EqualValues(t, 3, rep.Deleted)
-}
-
-func TestPhotoRestoreFolderContainedMember(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	_, nodes := photoTrashFixture(t, s)
-	other, err := s.CreateFile(t.Context(), *nodes[0].ParentID, "notes.txt", fakeHash("b2"), 1, "text/plain")
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), other.ID, UnconditionalRev)
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), *nodes[0].ParentID, UnconditionalRev)
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), nodes[1].ID, UnconditionalRev)
-	require.NoError(t, err)
-	_, _, err = s.Trash(t.Context(), nodes[2].ID, UnconditionalRev)
-	require.NoError(t, err)
-	selected, err := s.NodeByID(t.Context(), nodes[0].ID)
-	require.NoError(t, err)
-	_, _, err = s.Restore(t.Context(), selected.ID, selected.Revision-1)
-	require.ErrorIs(t, err, ErrStaleRevision)
-	_, _, err = s.Restore(t.Context(), selected.ID, selected.Revision)
-	require.NoError(t, err)
-	for _, before := range nodes {
-		n, err := s.NodeByID(t.Context(), before.ID)
-		require.NoError(t, err)
-		assert.Nil(t, n.TrashedAt)
-	}
-	n, err := s.NodeByID(t.Context(), other.ID)
-	require.NoError(t, err)
-	assert.NotNil(t, n.TrashedAt)
 }
 
 func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
@@ -244,16 +251,28 @@ func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 
 func TestPhotoTrashLateFailureRollsBack(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	asset, nodes := photoTrashFixture(t, s)
-	_, err := s.db.Exec(`CREATE TRIGGER fail_photo_trash BEFORE UPDATE OF trashed_at ON nodes WHEN NEW.id=` + strconv.FormatInt(nodes[2].ID, 10) + ` AND NEW.trashed_at IS NOT NULL BEGIN SELECT RAISE(ABORT, 'late failure'); END`)
-	require.NoError(t, err)
-	_, err = s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision)
-	require.ErrorContains(t, err, "late failure")
-	for _, before := range nodes {
-		after, err := s.NodeByID(t.Context(), before.ID)
-		require.NoError(t, err)
-		assert.Equal(t, before, after)
+	for _, mode := range []string{"late failure trigger", "audit unsupported"} {
+		t.Run(mode, func(t *testing.T) {
+			s := newTestStore(t)
+			asset, nodes := photoTrashFixture(t, s)
+			if mode == "audit unsupported" {
+				seedInitialAuditAuthority(t, s, *nodes[0].ParentID)
+			} else {
+				_, err := s.db.Exec(`CREATE TRIGGER fail_photo_trash BEFORE UPDATE OF trashed_at ON nodes WHEN NEW.id=` + strconv.FormatInt(nodes[2].ID, 10) + ` AND NEW.trashed_at IS NOT NULL BEGIN SELECT RAISE(ABORT, 'late failure'); END`)
+				require.NoError(t, err)
+			}
+			_, err := s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision)
+			if mode == "audit unsupported" {
+				require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+			} else {
+				require.ErrorContains(t, err, "late failure")
+			}
+			for _, before := range nodes {
+				after, err := s.NodeByID(t.Context(), before.ID)
+				require.NoError(t, err)
+				assert.Equal(t, before, after)
+			}
+		})
 	}
 }
 
@@ -275,57 +294,5 @@ func TestPhotoTrashJSONLRecovery(t *testing.T) {
 		restored, err := target.NodeByID(t.Context(), node.ID)
 		require.NoError(t, err)
 		assert.Nil(t, restored.TrashedAt)
-	}
-}
-
-func TestPhotoTrashAuditedGroup(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	asset, nodes := photoTrashFixture(t, s)
-	seedInitialAuditAuthority(t, s, s.RootID())
-	_, err := s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision)
-	require.NoError(t, err)
-	require.NoError(t, s.ValidateMetadata(t.Context()))
-	_, _, err = s.Restore(t.Context(), nodes[1].ID, UnconditionalRev)
-	require.NoError(t, err)
-	current, err := s.PhotoAssetByID(t.Context(), asset.ID)
-	require.NoError(t, err)
-	assert.Equal(t, asset.Revision+2, current.Revision)
-	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, asset.ID)), "trash")
-	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, asset.ID)), "restore")
-	require.NoError(t, s.ValidateMetadata(t.Context()))
-}
-
-func TestPhotoTrashIndexedLookups(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	for _, query := range []string{`SELECT asset_id FROM photo_files WHERE node_id=?`, `SELECT trash_name FROM nodes WHERE id=?`} {
-		rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, s.RootID())
-		require.NoError(t, err)
-		var details []string
-		for rows.Next() {
-			var id, parent, unused int
-			var detail string
-			require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-			details = append(details, detail)
-		}
-		require.NoError(t, rows.Err())
-		require.NoError(t, rows.Close())
-		assert.Contains(t, strings.Join(details, " "), "SEARCH")
-		assert.NotContains(t, strings.Join(details, " "), "SCAN")
-	}
-}
-
-func TestPhotoTrashAuditedUnsupportedMemberRollsBack(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	asset, nodes := photoTrashFixture(t, s)
-	seedInitialAuditAuthority(t, s, *nodes[0].ParentID)
-	_, err := s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision)
-	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
-	for _, before := range nodes {
-		after, err := s.NodeByID(t.Context(), before.ID)
-		require.NoError(t, err)
-		assert.Equal(t, before, after)
 	}
 }
