@@ -187,7 +187,7 @@ facet or changing the query creates a new snapshot. It never splices live
 results into the accepted one. An unavailable facet says why instead of
 presenting a zero count.
 
-Photos' Timeline uses the `capture_day` snapshot facet to count each included
+Photos' Timeline uses the `capture_day` counts-only facet to count each included
 photo asset once. Its snapshot admits photo assets rather than unrelated
 documents. Year and month buttons and a day scrubber open older dates directly.
 

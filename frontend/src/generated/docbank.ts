@@ -5770,14 +5770,6 @@ export const WorkspaceQueryResponsePageSize = {
   NUMBER_250: 250,
 } as const;
 
-export type WorkspaceQueryResponsePopulation = typeof WorkspaceQueryResponsePopulation[keyof typeof WorkspaceQueryResponsePopulation];
-
-
-export const WorkspaceQueryResponsePopulation = {
-  documents: 'documents',
-  photos: 'photos',
-} as const;
-
 export interface WorkspaceQueryTag {
   id: string;
   name: string;
@@ -5848,7 +5840,6 @@ export interface WorkspaceQueryResponse {
   next_cursor?: string;
   observed_at: string;
   page_size: WorkspaceQueryResponsePageSize;
-  population?: WorkspaceQueryResponsePopulation;
   /** @maxLength 2048 */
   previous_cursor?: string;
   query: SavedQueryV1Schema;
@@ -6488,6 +6479,39 @@ export interface WatchedInboxList {
   items: WatchedInbox[];
 }
 
+export type WorkspaceFacetResponseFacetsItem = {
+  available: boolean;
+  dimension: 'collections' | 'tags' | 'media_family' | 'extension' | 'modified' | 'size' | 'text_coverage' | 'duplicates';
+  missing?: number | null;
+  other?: number | null;
+  reason?: string;
+  total?: number | null;
+  /** @maxItems 114 */
+  values: WorkspaceFacetValue[];
+} | {
+  available: boolean;
+  dimension: 'capture_day';
+  missing?: number | null;
+  other?: number | null;
+  reason?: string;
+  total?: number | null;
+  /** @maxItems 250000 */
+  values: WorkspaceFacetValue[];
+};
+
+export interface WorkspaceFacetResponse {
+  coverage: WorkspaceQueryCoverage;
+  dependencies: WorkspaceQueryDependency[];
+  /** @maxItems 1 */
+  facets: WorkspaceFacetResponseFacetsItem[];
+  facets_only: boolean;
+  generation: WorkspaceQueryGeneration;
+  observed_at: string;
+  query: SavedQueryV1Schema;
+}
+
+export type WorkspaceCreateResponse = WorkspaceQueryResponse | WorkspaceFacetResponse;
+
 export type WorkspaceQueryCreateRequestFacetsItem = typeof WorkspaceQueryCreateRequestFacetsItem[keyof typeof WorkspaceQueryCreateRequestFacetsItem];
 
 
@@ -6512,21 +6536,13 @@ export const WorkspaceQueryCreateRequestPageSize = {
   NUMBER_250: 250,
 } as const;
 
-export type WorkspaceQueryCreateRequestPopulation = typeof WorkspaceQueryCreateRequestPopulation[keyof typeof WorkspaceQueryCreateRequestPopulation];
-
-
-export const WorkspaceQueryCreateRequestPopulation = {
-  documents: 'documents',
-  photos: 'photos',
-} as const;
-
 export interface WorkspaceQueryCreateRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   /** @maxItems 9 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
+  facets_only?: boolean;
   page_size?: WorkspaceQueryCreateRequestPageSize;
-  population?: WorkspaceQueryCreateRequestPopulation;
   /** @maxLength 128 */
   profile?: string;
   query: SavedQueryV1Schema;
@@ -16884,7 +16900,7 @@ export const createWorkspaceQuery = (workspaceQueryCreateRequest: NonReadonly<Wo
     }
     return headers;
   };
-return sessionResponse<WorkspaceQueryResponse>(getCreateWorkspaceQueryUrl(),
+return sessionResponse<WorkspaceCreateResponse>(getCreateWorkspaceQueryUrl(),
   {
     ...options,
     method: 'POST',

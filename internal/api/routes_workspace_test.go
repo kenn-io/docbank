@@ -35,10 +35,14 @@ func TestWorkspaceQueryCaptureDayDelivery(t *testing.T) {
 	}
 	_, err := s.CreateFile(t.Context(), s.RootID(), "undated.jpg", testHash("undated"), 10, "image/jpeg")
 	require.NoError(t, err)
-	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"population":"photos","query":{},"page_size":50,"facets":["capture_day"]}`)
+	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"facets_only":true,"query":{},"page_size":50,"facets":["capture_day"]}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var page api.WorkspaceQueryResponse
+	var page api.WorkspaceFacetResponse
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.True(t, page.FacetsOnly)
+	for _, field := range []string{"snapshot_id", "member_hash", "rows", "next_cursor", "snapshot_fingerprint"} {
+		assert.NotContains(t, body, `"`+field+`"`)
+	}
 	require.Len(t, page.Facets, 1)
 	facet := page.Facets[0]
 	require.True(t, facet.Available)
@@ -46,14 +50,7 @@ func TestWorkspaceQueryCaptureDayDelivery(t *testing.T) {
 	require.Equal(t, int64(121), *facet.Total)
 	require.Equal(t, int64(1), *facet.Missing)
 	require.Zero(t, *facet.Other)
-	require.Equal(t, "photos", page.Population)
-	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries/"+page.SnapshotID+"/pages", map[string]string{"X-Api-Key": testAPIKey}, fmt.Sprintf(`{"cursor":%q}`, page.NextCursor))
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var next api.WorkspaceQueryResponse
-	require.NoError(t, json.Unmarshal([]byte(body), &next))
-	require.Equal(t, page.Population, next.Population)
-	require.Equal(t, page.SnapshotFingerprint, next.SnapshotFingerprint)
-	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"population":"photos","query":{},"facets":["tags"]}`)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"facets_only":true,"query":{},"facets":["tags"]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 }
 

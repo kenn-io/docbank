@@ -174,3 +174,27 @@ it("keeps loading pages that add no rows and keeps the top photo across density 
   photos.dispose();
   await cache.dispose();
 });
+it("switches Grid and Timeline, seeks an empty day and clears its date", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true; photos.items = [photo(1)]; photos.total = 1;
+  photos.timeline = { dimension: "capture_day", available: true, total: 1, missing: 0, other: 0, values: [{ key: "2024-02-29", label: "2024-02-29", count: 1, selected: false }] };
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(1)], total: 1 })));
+  vi.stubGlobal("fetch", fetcher);
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const view = render(PhotosWorkspace, { photos, cache });
+  await fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Choose capture day 2024-02-29" }));
+  expect(await screen.findByText("No photos on this day")).toBeTruthy();
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters).toEqual({ capture_after: "2024-02-29", capture_before: "2024-03-01" });
+  await fireEvent.click(screen.getByRole("button", { name: "Clear date" }));
+  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  expect(screen.queryByRole("button", { name: "Clear date" })).toBeNull();
+  expect(JSON.parse(fetcher.mock.calls[1][1].body).query.filters).toEqual({});
+  await fireEvent.click(screen.getByRole("button", { name: "Grid" }));
+  expect(screen.queryByRole("region", { name: "Photo timeline" })).toBeNull();
+  view.unmount(); photos.dispose(); await cache.dispose();
+});

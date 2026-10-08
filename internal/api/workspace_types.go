@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json/v2"
 	"maps"
 	"reflect"
 	"time"
@@ -15,7 +16,7 @@ const maxWorkspaceQueryRequestBytes = query.MaxInputBytes + (32 << 10)
 
 // WorkspaceQueryCreateRequest opens one exact, daemon-lifetime query snapshot.
 type WorkspaceQueryCreateRequest struct {
-	Population string       `json:"population,omitempty" enum:"documents,photos"`
+	FacetsOnly bool         `json:"facets_only,omitempty"`
 	Query      QueryPayload `json:"query"`
 	Profile    string       `json:"profile,omitempty" maxLength:"128"`
 	PageSize   int          `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
@@ -124,7 +125,6 @@ func (WorkspaceFacet) Schema(r huma.Registry) *huma.Schema {
 
 // WorkspaceQueryResponse carries complete frozen metadata and one row page.
 type WorkspaceQueryResponse struct {
-	Population          string                     `json:"population,omitempty" enum:"documents,photos"`
 	Query               QueryPayload               `json:"query"`
 	Dependencies        []WorkspaceQueryDependency `json:"dependencies"`
 	QueryFingerprint    string                     `json:"query_fingerprint" pattern:"^sha256:[0-9a-f]{64}$"`
@@ -181,8 +181,7 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 		return WorkspaceQueryResponse{}, err
 	}
 	out := WorkspaceQueryResponse{
-		Population: page.Population,
-		Query:      QueryPayload(canonical), Dependencies: []WorkspaceQueryDependency{},
+		Query: QueryPayload(canonical), Dependencies: []WorkspaceQueryDependency{},
 		QueryFingerprint: page.QueryFingerprint, MemberHash: page.MemberHash,
 		SnapshotFingerprint: page.SnapshotFingerprint,
 		Generation:          WorkspaceQueryGeneration{Kind: page.Generation.Kind, GenerationID: page.Generation.GenerationID},
@@ -224,6 +223,49 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 		out.Facets = append(out.Facets, wire)
 	}
 	return out, nil
+}
+
+type WorkspaceFacetResponse struct {
+	FacetsOnly   bool                       `json:"facets_only"`
+	Query        QueryPayload               `json:"query"`
+	Dependencies []WorkspaceQueryDependency `json:"dependencies"`
+	Generation   WorkspaceQueryGeneration   `json:"generation"`
+	Coverage     WorkspaceQueryCoverage     `json:"coverage"`
+	ObservedAt   time.Time                  `json:"observed_at" format:"date-time"`
+	Facets       []WorkspaceFacet           `json:"facets" maxItems:"1"`
+}
+
+type WorkspaceCreateResponse struct {
+	Snapshot *WorkspaceQueryResponse `json:"-"`
+	Counts   *WorkspaceFacetResponse `json:"-"`
+}
+
+func (response WorkspaceCreateResponse) MarshalJSON() ([]byte, error) {
+	if response.Counts != nil {
+		return json.Marshal(response.Counts)
+	}
+	return json.Marshal(response.Snapshot)
+}
+
+func (response *WorkspaceCreateResponse) UnmarshalJSON(raw []byte) error {
+	var mode struct {
+		FacetsOnly bool `json:"facets_only"`
+	}
+	if err := json.Unmarshal(raw, &mode); err != nil {
+		return err
+	}
+	if mode.FacetsOnly {
+		return json.Unmarshal(raw, &response.Counts)
+	}
+	return json.Unmarshal(raw, &response.Snapshot)
+}
+
+func (WorkspaceCreateResponse) Schema(r huma.Registry) *huma.Schema {
+	r.Map()["WorkspaceCreateResponse"] = &huma.Schema{Extensions: map[string]any{"x-go-type": "api.WorkspaceCreateResponse", "x-go-type-import": map[string]string{"name": "api", "path": "go.kenn.io/docbank/internal/api"}}, OneOf: []*huma.Schema{
+		r.Schema(reflect.TypeFor[WorkspaceQueryResponse](), true, ""),
+		r.Schema(reflect.TypeFor[WorkspaceFacetResponse](), true, ""),
+	}}
+	return &huma.Schema{Ref: "#/components/schemas/WorkspaceCreateResponse"}
 }
 
 func fromStoreSavedQueryRun(run store.SavedQueryRun) SavedQueryRun {

@@ -85,7 +85,7 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 	for i := range 5 {
 		browsePhotoNode(t, s, fmt.Sprintf("unrelated-%d.txt", i), browseHash(fmt.Sprintf("unrelated-%d", i)), "text/plain")
 	}
-	photoRequest := SnapshotRequest{Population: "photos", Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"}}
+	photoRequest := SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"}}
 	photos, err := s.materializeQuerySnapshot(ctx, photoRequest, snapshotMaterializeOptions{MaxRows: 1})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), photos.Total)
@@ -100,9 +100,8 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 	ordinary, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: photoRequest.Query, Facets: photoRequest.Facets})
 	require.NoError(t, err)
 	require.Equal(t, matched.QueryFingerprint, ordinary.QueryFingerprint)
-	require.NotEqual(t, matched.SnapshotFingerprint, ordinary.SnapshotFingerprint)
 	outside := snapshotTestQuery(t, `{"syntax":"advanced","text":"saved:Sidecars AND capture_after:2025-01-01 AND capture_before:2025-01-02"}`)
-	photos, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Population: "photos", Query: outside, Facets: []string{"capture_day"}})
+	photos, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: outside, Facets: []string{"capture_day"}})
 	require.NoError(t, err)
 	require.Zero(t, photos.Total)
 	require.Zero(t, *facetByDimension(t, photos, "capture_day").Total)
@@ -136,23 +135,6 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 	projection, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"}})
 	require.NoError(t, err)
 	require.Zero(t, *facetByDimension(t, projection, "capture_day").Total)
-}
-
-func TestCaptureDayFacetSerializationBudget(t *testing.T) {
-	t.Parallel()
-	count := int64(1)
-	facet := SnapshotFacet{Dimension: "capture_day", Available: true, Total: &count, Missing: new(int64(0)), Other: new(int64(0))}
-	for i := range 120 {
-		facet.Values = append(facet.Values, SnapshotFacetValue{Key: fmt.Sprintf("2024-%03d", i), Label: "Synthetic day", Count: 1})
-	}
-	var result []SnapshotFacet
-	used := int64(0)
-	err := appendChargedSnapshotFacet(&result, facet, snapshotMaterializeOptions{MaxSerializedBytes: 500}.withDefaults(), &used)
-	require.NoError(t, err)
-	require.Len(t, result, 1)
-	require.False(t, result[0].Available)
-	require.Equal(t, "byte_budget_exceeded", result[0].Reason)
-	require.Nil(t, result[0].Total)
 }
 
 type snapshotFacetFixture struct {

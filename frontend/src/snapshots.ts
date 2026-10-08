@@ -3,7 +3,6 @@ import { canonicalQuery, parseQuery, queryFingerprint as fingerprintQuery, type 
 import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
 
 export type SnapshotOptions = {
-	population?: "documents" | "photos";
   profile?: string;
   page_size?: 50 | 100 | 250;
   facets?: string[];
@@ -33,7 +32,6 @@ export interface SnapshotRow {
 }
 
 export interface WorkspaceQueryResponse {
-	population?: "documents" | "photos";
   query: Query;
   dependencies: { kind: "tag" | "collection" | "saved"; id: string; revision: number }[];
   query_fingerprint: string;
@@ -286,16 +284,7 @@ function parseFacet(value: unknown, index: number): WorkspaceQueryResponse["face
   };
 }
 
-async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<SnapshotPage> {
-  const raw = record(value, "receipt");
-  keys(raw, [
-    "query", "dependencies", "query_fingerprint", "member_hash", "snapshot_fingerprint", "generation",
-    "coverage", "observed_at", "page_size", "total", "total_bytes", "rows", "facets", "snapshot",
-    "snapshot_id", "created_at", "expires_at",
-  ], ["$schema", "previous_cursor", "next_cursor", "population"], "receipt");
-  const population = optionalString(raw.population, "population");
-  if (population !== undefined && population !== "documents" && population !== "photos") malformed("population is unknown");
-  if (raw.$schema !== undefined && string(raw.$schema, "receipt.$schema").length === 0) malformed("receipt.$schema is invalid");
+function parseQueryEvidence(raw: Record<string, unknown>, expectedQuery?: Query) {
   const queryRaw = record(raw.query, "query");
   let decodedQuery: Query;
   try {
@@ -305,10 +294,6 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
   }
   if (expectedQuery !== undefined && canonicalQuery(decodedQuery) !== canonicalQuery(expectedQuery)) {
     malformed("query does not match the request");
-  }
-  const queryFingerprint = string(raw.query_fingerprint, "query_fingerprint");
-  if (!prefixedSHA256.test(queryFingerprint) || queryFingerprint !== await fingerprintQuery(decodedQuery)) {
-    malformed("query fingerprint is inconsistent");
   }
   if (!Array.isArray(raw.dependencies) || raw.dependencies.length > 256) malformed("dependencies exceeds its bound");
   const identities = new Set<string>();
@@ -339,6 +324,23 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
   if (!["configured", "unconfigured", "profile_required"].includes(configuration)) malformed("coverage.configuration is unknown");
   if ((configuration === "configured" && (profileFingerprint === undefined || !sha256.test(profileFingerprint))) ||
       (configuration !== "configured" && profileFingerprint !== undefined)) malformed("coverage authority is inconsistent");
+  return { query: decodedQuery, dependencies, generation: generationKind === "native" ? { kind: "native" as const } : { kind: "rendition" as const, generation_id: generationID! }, coverage: configuration === "configured" ? { configuration: "configured" as const, profile_fingerprint: profileFingerprint! } : { configuration: configuration as "unconfigured" | "profile_required" }, observed_at: dateTime(raw.observed_at, "observed_at") };
+}
+
+async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<SnapshotPage> {
+  const raw = record(value, "receipt");
+  keys(raw, [
+    "query", "dependencies", "query_fingerprint", "member_hash", "snapshot_fingerprint", "generation",
+    "coverage", "observed_at", "page_size", "total", "total_bytes", "rows", "facets", "snapshot",
+    "snapshot_id", "created_at", "expires_at",
+  ], ["$schema", "previous_cursor", "next_cursor"], "receipt");
+  if (raw.$schema !== undefined && string(raw.$schema, "receipt.$schema").length === 0) malformed("receipt.$schema is invalid");
+  const evidence = parseQueryEvidence(raw, expectedQuery);
+  const decodedQuery = evidence.query;
+  const queryFingerprint = string(raw.query_fingerprint, "query_fingerprint");
+  if (!prefixedSHA256.test(queryFingerprint) || queryFingerprint !== await fingerprintQuery(decodedQuery)) {
+    malformed("query fingerprint is inconsistent");
+  }
   const pageSize = integer(raw.page_size, "page_size", 1);
   if (pageSize !== 50 && pageSize !== 100 && pageSize !== 250) malformed("page_size is unsupported");
   const total = integer(raw.total, "total");
@@ -362,17 +364,10 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
   const lifetime = Date.parse(expiresAt) - Date.parse(createdAt);
   if (lifetime < 0 || lifetime > snapshotAbsoluteLifetimeMilliseconds) malformed("expiry exceeds the snapshot lifetime");
   return {
-    query: decodedQuery,
-    ...(population === undefined ? {} : { population }),
-    dependencies,
+    ...evidence,
     query_fingerprint: queryFingerprint,
     member_hash: memberHash,
     snapshot_fingerprint: snapshotFingerprint,
-    generation: generationKind === "native" ? { kind: "native" } : { kind: "rendition", generation_id: generationID! },
-    coverage: configuration === "configured"
-      ? { configuration, profile_fingerprint: profileFingerprint! }
-      : { configuration: configuration as "unconfigured" | "profile_required" },
-    observed_at: dateTime(raw.observed_at, "observed_at"),
     page_size: pageSize,
     total,
     total_bytes: totalBytes,
@@ -427,8 +422,6 @@ async function boundedJSON(response: Response): Promise<unknown> {
 
 function normalizedOptions(options: SnapshotOptions): SnapshotOptions & { facets?: WorkspaceQueryCreateRequestFacetsItem[] } {
   if (typeof options !== "object" || options === null || Array.isArray(options)) throw new Error("Snapshot options are invalid.");
-  if (options.population !== undefined && options.population !== "documents" && options.population !== "photos") throw new Error("Snapshot population is invalid.");
-  if (options.population === "photos" && options.facets?.some(facet => facet !== "capture_day")) throw new Error("Photo snapshots support only capture_day facets.");
   const profile = options.profile;
   if (profile !== undefined && (typeof profile !== "string" || !validUnicode(profile) || encoder.encode(profile).length > 128)) {
     throw new Error("Snapshot profile exceeds its bound.");
@@ -445,7 +438,6 @@ function normalizedOptions(options: SnapshotOptions): SnapshotOptions & { facets
   });
   if (facets !== undefined && new Set(facets).size !== facets.length) throw new Error("Snapshot facets repeat a dimension.");
   return {
-    ...(options.population === undefined ? {} : { population: options.population }),
     ...(profile === undefined ? {} : { profile }),
     ...(options.page_size === undefined ? {} : { page_size: options.page_size }),
     ...(facets === undefined ? {} : { facets }),
@@ -453,7 +445,6 @@ function normalizedOptions(options: SnapshotOptions): SnapshotOptions & { facets
 }
 
 function validateFirstPage(page: SnapshotPage, options: SnapshotOptions): void {
-  if (page.population !== options.population) malformed("population does not match the request");
   if (page.previous_cursor !== undefined) malformed("first page has a previous cursor");
   const expectedRows = Math.min(page.page_size, page.total);
   if (page.rows.length !== expectedRows || (page.next_cursor !== undefined) !== (expectedRows < page.total)) {
@@ -478,8 +469,20 @@ export async function createSnapshot(
   return result;
 }
 
+export type FacetCounts = Pick<WorkspaceQueryResponse, "query" | "dependencies" | "generation" | "coverage" | "observed_at" | "facets"> & { facets_only: true };
+
+export async function createFacetCounts(session: string, query: Query, signal: AbortSignal): Promise<FacetCounts> {
+  const response = await createWorkspaceQuery({ query: JSON.parse(canonicalQuery(query)), facets_only: true, facets: ["capture_day"] }, { session, signal });
+  const raw = record(await boundedJSON(response), "counts");
+  keys(raw, ["facets_only", "query", "dependencies", "generation", "coverage", "observed_at", "facets"], ["$schema"], "counts");
+  if (raw.facets_only !== true || !Array.isArray(raw.facets) || raw.facets.length !== 1) malformed("counts response is inconsistent");
+  const facet = parseFacet(raw.facets[0], 0);
+  if (facet.dimension !== "capture_day") malformed("facets do not match the request");
+  return { ...parseQueryEvidence(raw, query), facets_only: true, facets: [facet] };
+}
+
 function sameAuthority(left: SnapshotPage, right: SnapshotPage): boolean {
-  return left.population === right.population && canonicalQuery(left.query) === canonicalQuery(right.query) &&
+  return canonicalQuery(left.query) === canonicalQuery(right.query) &&
     JSON.stringify(left.dependencies) === JSON.stringify(right.dependencies) &&
     left.query_fingerprint === right.query_fingerprint && left.member_hash === right.member_hash &&
     left.snapshot_fingerprint === right.snapshot_fingerprint &&

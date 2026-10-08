@@ -103,17 +103,6 @@ func appendChargedSnapshotFacet(
 	if len(*result) != 0 {
 		bytes++ // JSON array separator; container brackets are charged by the caller.
 	}
-	if facet.Dimension == "capture_day" && facet.Available && *used > options.MaxSerializedBytes-bytes {
-		facet = unavailableSnapshotFacet(facet.Dimension, "byte_budget_exceeded")
-		encoded, err = json.Marshal(facet)
-		if err != nil {
-			return err
-		}
-		bytes = int64(len(encoded))
-		if len(*result) != 0 {
-			bytes++
-		}
-	}
 	if err := chargeSnapshotMaterialization(options, used, 0, bytes); err != nil {
 		return err
 	}

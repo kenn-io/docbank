@@ -29,11 +29,6 @@ export function nextCaptureDay(day: string): string | undefined {
 }
 
 export function captureDayQuery(base: Query, day?: string): Query {
-  if (!day) return { ...base, filters: { ...base.filters } };
-  const before = nextCaptureDay(day);
-  return { ...base, filters: {
-    ...base.filters,
-    capture_after: base.filters.capture_after && base.filters.capture_after > day ? base.filters.capture_after : day,
-    ...(before ? { capture_before: base.filters.capture_before && base.filters.capture_before < before ? base.filters.capture_before : before } : {}),
-  } };
+  const before = day ? nextCaptureDay(day) : undefined;
+  return { ...base, filters: day ? { capture_after: day, ...(before ? { capture_before: before } : {}) } : {} };
 }

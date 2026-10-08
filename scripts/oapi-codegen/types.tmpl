@@ -19,7 +19,12 @@ limitations under the License.
 {{- define "typeDef" -}}
 {{ $td := .type }}
 {{ if not .config.Generate.OmitDescription}}{{ toGoComment $td.Schema.Description $td.Name }}{{ end }}
+{{/* Union generation ignores x-go-type; preserve the API decoder for this response. */}}
+{{if or (eq $td.Name "CreateWorkspaceQueryResponse") (eq $td.Name "WorkspaceCreateResponse")}}
+type {{$td.Name}} = api.WorkspaceCreateResponse
+{{else}}
 type {{$td.Name}} {{if $td.IsAlias}}={{end}} {{$td.Schema.TypeDecl}}
+{{end}}
 {{ end }}
 
 {{- range .Types}}

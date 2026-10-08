@@ -46,9 +46,10 @@ and starts at the top. Counts stay tied to the full scope until you refresh.
 Dates use the selected display file's recorded calendar day, so a capture near
 midnight keeps its date regardless of the browser's timezone. A RAW/JPEG pair
 counts once. The Undated total includes photos without a readable capture date.
-Timeline admits one row per included photo asset under snapshot limits, even in
+Timeline counts each included photo asset under build limits, even in
 a vault with many ordinary documents. When the photos exceed those limits, it shows
-an unavailable message and offers Retry instead of a partial calendar.
+a limit message and offers Retry. Busy or occupied capacity asks you to retry
+after other work finishes. Counts builds leave Documents snapshots pageable.
 
 Choose Months or Capture sessions to group the grid. A session joins captures
 with gaps of four hours or less. Compact, Comfortable, and Large change the

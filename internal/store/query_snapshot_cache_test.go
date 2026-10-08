@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json/v2"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -398,4 +399,87 @@ func TestQuerySnapshotCacheRejectsNilStoreAtOperationTime(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	_, err := service.Create(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
 	require.Error(t, err)
+}
+func TestCaptureDayCountsPreservePageableSnapshots(t *testing.T) {
+	for _, driverCase := range walkTestDrivers() {
+		t.Run(driverCase.name, func(t *testing.T) {
+			s := newTestStoreWithDriver(t, driverCase.driver)
+			for i := range 51 {
+				_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("doc-%02d.txt", i), fakeHash(fmt.Sprintf("counts-doc-%d", i)), 1, "text/plain")
+				require.NoError(t, err)
+			}
+			_, err := s.CreateFile(t.Context(), s.RootID(), "photo.jpg", fakeHash("counts-photo"), 1, "image/jpeg")
+			require.NoError(t, err)
+			service := newQuerySnapshotService(s, querySnapshotServiceOptions{Limits: snapshotCacheLimits{MaxHandles: 1}})
+			t.Cleanup(func() { require.NoError(t, service.Close()) })
+			first, err := service.Create(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50})
+			require.NoError(t, err)
+			baseline := service.stats()
+			request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), FacetsOnly: true, Facets: []string{"capture_day"}}
+			for range 10 {
+				counts, err := service.CreateFacets(t.Context(), "owner", request)
+				require.NoError(t, err)
+				require.Equal(t, int64(1), *counts.Facets[0].Total)
+				assert.Empty(t, counts.Rows)
+				assert.Equal(t, baseline, service.stats())
+			}
+			for _, budget := range []string{"rows", "bytes"} {
+				t.Run(budget, func(t *testing.T) {
+					original := service.limits
+					if budget == "rows" {
+						service.limits.MaxRows = baseline.CachedRows
+					} else {
+						service.limits.MaxBytes = baseline.CachedBytes
+					}
+					_, err := service.CreateFacets(t.Context(), "owner", request)
+					require.ErrorIs(t, err, ErrSnapshotAdmission)
+					assert.Equal(t, baseline, service.stats())
+					service.limits = original
+					page, err := service.Page(t.Context(), "owner", first.SnapshotID, first.NextCursor)
+					require.NoError(t, err)
+					require.Len(t, page.Rows, 2)
+				})
+			}
+		})
+	}
+}
+
+func TestCaptureDayCountsCancellationKeepsReservationsUntilStopped(t *testing.T) {
+	for _, revoke := range []bool{false, true} {
+		t.Run(fmt.Sprint(revoke), func(t *testing.T) {
+			s := newTestStore(t)
+			_, err := s.CreateFile(t.Context(), s.RootID(), "photo.jpg", fakeHash("counts-cancel"), 1, "image/jpeg")
+			require.NoError(t, err)
+			entered := make(chan struct{})
+			release := make(chan struct{})
+			service := newQuerySnapshotService(s, querySnapshotServiceOptions{Limits: snapshotCacheLimits{MaxBuilders: 1}, ChargeHook: func(ctx context.Context, _ string, rows, _ int64) error {
+				if rows > 0 {
+					close(entered)
+					<-release
+					return ctx.Err()
+				}
+				return nil
+			}})
+			t.Cleanup(func() { require.NoError(t, service.Close()) })
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), FacetsOnly: true, Facets: []string{"capture_day"}}
+			done := make(chan error, 1)
+			go func() { _, err := service.CreateFacets(ctx, "owner", request); done <- err }()
+			<-entered
+			_, err = service.CreateFacets(t.Context(), "other", request)
+			require.ErrorIs(t, err, ErrSnapshotBusy)
+			if revoke {
+				service.Revoke("owner")
+			} else {
+				cancel()
+			}
+			assert.Equal(t, int64(1), service.stats().ActiveBuilders)
+			assert.Zero(t, service.stats().ReservedHandles)
+			assert.Positive(t, service.stats().ReservedRows)
+			close(release)
+			require.ErrorIs(t, <-done, context.Canceled)
+			assert.Equal(t, snapshotCacheStats{}, service.stats())
+		})
+	}
 }

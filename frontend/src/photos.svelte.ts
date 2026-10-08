@@ -3,7 +3,7 @@ import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
 import { clearSelection, reconcileIDSelection, toggleIDSelection, type SelectionState } from "./selection.js";
-import { createSnapshot } from "./snapshots.js";
+import { createFacetCounts } from "./snapshots.js";
 import type { Query } from "./query.js";
 import { captureDayQuery, type CaptureDayFacet } from "./photoTimeline.js";
 
@@ -121,11 +121,11 @@ export class Photos {
     this.timelineLoading = true;
     this.timelineError = "";
     try {
-      const page = await createSnapshot(this.session, { ...this.baseQuery, sort: { field: "name", direction: "asc" } }, { population: "photos", facets: ["capture_day"], page_size: 50 }, controller.signal);
+      const page = await createFacetCounts(this.session, { ...this.baseQuery, sort: { field: "name", direction: "asc" } }, controller.signal);
       if (!controller.signal.aborted) this.timeline = page.facets[0];
     } catch (cause) {
       if (controller.signal.aborted) return;
-      if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      if (cause instanceof APIError && cause.status === 401) { this.onauthfailure(cause); return; }
       if (cause instanceof APIError && ["snapshot_too_large", "snapshot_capacity", "snapshot_busy", "snapshot_unavailable"].includes(cause.code)) {
         this.timeline = { dimension: "capture_day", available: false, reason: cause.code, values: [] };
       } else this.timelineError = cause instanceof Error ? cause.message : String(cause);

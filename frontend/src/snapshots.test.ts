@@ -4,6 +4,7 @@ import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import {
   captureSnapshotTargets,
   createSnapshot,
+  createFacetCounts,
   readSnapshotPage,
   snapshotMemberHash,
   type SnapshotPage,
@@ -18,17 +19,6 @@ const blob10 = "a".repeat(64);
 const tagID = "11111111-1111-4111-8111-111111111111";
 const query = parseQuery("{}");
 
-it("binds photo population to creation and subsequent page authority", async () => {
-  const receipt = await page({ population: "photos", facets: [], total: 51, next_cursor: "next", rows: Array.from({ length: 50 }, (_, index) => row(index + 1, version2, blob2, 20)) });
-  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(receipt));
-  const first = await createSnapshot("session", query, { population: "photos", page_size: 50 }, new AbortController().signal);
-  expect(first.population).toBe("photos");
-  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).population).toBe("photos");
-  fetcher.mockResolvedValue(jsonResponse({ ...receipt, population: "documents", previous_cursor: "previous", next_cursor: undefined, rows: [row(51, version2, blob2, 20)] }));
-  await expect(readSnapshotPage("session", first, "next", new AbortController().signal)).rejects.toThrow("immutable snapshot authority");
-  fetcher.mockResolvedValue(jsonResponse({ ...receipt, population: "documents" }));
-  await expect(createSnapshot("session", query, { population: "photos", page_size: 50 }, new AbortController().signal)).rejects.toThrow("population does not match");
-});
 
 it("preserves a capture-day calendar beyond the ordinary facet bound", async () => {
   const values = Array.from({ length: 120 }, (_, index) => {
@@ -311,4 +301,16 @@ describe("exact snapshot target capture", () => {
     )).rejects.toThrow(/250,000/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+});
+it("decodes counts without accepting snapshot authority", async () => {
+  const full = await page();
+  const counts = { facets_only: true, query: full.query, dependencies: full.dependencies, generation: full.generation, coverage: full.coverage, observed_at: full.observed_at, facets: [{ dimension: "capture_day", available: true, total: 1, missing: 1, other: 0, values: [] }] };
+  const fetcher = vi.fn().mockResolvedValue(jsonResponse(counts)); vi.stubGlobal("fetch", fetcher);
+  const result = await createFacetCounts("session", query, new AbortController().signal);
+  expect(result.facets[0].total).toBe(1);
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).facets_only).toBe(true);
+  fetcher.mockResolvedValue(jsonResponse({ ...counts, snapshot_id: "123" }));
+  await expect(createFacetCounts("session", query, new AbortController().signal)).rejects.toThrow("unknown fields");
+  fetcher.mockResolvedValue(jsonResponse(counts));
+  await expect(createSnapshot("session", query, {}, new AbortController().signal)).rejects.toThrow("unknown fields");
 });

@@ -8,9 +8,9 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clea
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
 
 it("invalidates cached calendar counts when the grid refreshes", async () => {
-  const first = { facets: [{ dimension: "capture_day", available: true, total: 1, missing: 0, other: 0, values: [] }] } as unknown as snapshots.SnapshotPage;
-  const second = { facets: [{ dimension: "capture_day", available: true, total: 2, missing: 0, other: 0, values: [] }] } as unknown as snapshots.SnapshotPage;
-  const create = vi.spyOn(snapshots, "createSnapshot").mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+  const first = { facets: [{ dimension: "capture_day", available: true, total: 1, missing: 0, other: 0, values: [] }] } as unknown as snapshots.FacetCounts;
+  const second = { facets: [{ dimension: "capture_day", available: true, total: 2, missing: 0, other: 0, values: [] }] } as unknown as snapshots.FacetCounts;
+  const create = vi.spyOn(snapshots, "createFacetCounts").mockResolvedValueOnce(first).mockResolvedValueOnce(second);
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response([photo(1), photo(2)])));
   const photos = new Photos("scoped", vi.fn());
   await photos.loadTimeline(); photos.setView("timeline"); photos.setView("grid");
@@ -19,19 +19,19 @@ it("invalidates cached calendar counts when the grid refreshes", async () => {
   expect(create).toHaveBeenCalledTimes(1);
   photos.setView("timeline");
   await vi.waitFor(() => expect(photos.timeline?.total).toBe(2));
-  expect(create.mock.calls[1][2].population).toBe("photos");
+  expect(create.mock.calls[1][1].filters).toEqual({});
   photos.dispose();
 });
 
 it("keeps base counts across day changes and rejects a pre-refresh calendar reply", async () => {
-  const first = { facets: [{ dimension: "capture_day", available: true, total: 9000, missing: 4, other: 0, values: [] }] } as unknown as snapshots.SnapshotPage;
-  const second = { facets: [{ dimension: "capture_day", available: true, total: 20, missing: 0, other: 0, values: [] }] } as unknown as snapshots.SnapshotPage;
-  let finish!: (page: snapshots.SnapshotPage) => void;
-  const create = vi.spyOn(snapshots, "createSnapshot").mockImplementationOnce(() => new Promise(resolve => finish = resolve)).mockResolvedValueOnce(second);
+  const first = { facets: [{ dimension: "capture_day", available: true, total: 9000, missing: 4, other: 0, values: [] }] } as unknown as snapshots.FacetCounts;
+  const second = { facets: [{ dimension: "capture_day", available: true, total: 20, missing: 0, other: 0, values: [] }] } as unknown as snapshots.FacetCounts;
+  let finish!: (page: snapshots.FacetCounts) => void;
+  const create = vi.spyOn(snapshots, "createFacetCounts").mockImplementationOnce(() => new Promise(resolve => finish = resolve)).mockResolvedValueOnce(second);
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response([photo(1)])));
   const photos = new Photos("scoped", vi.fn());
   photos.setView("timeline");
-  const oldSignal = create.mock.calls[0][3];
+  const oldSignal = create.mock.calls[0][2];
   photos.setView("grid");
   await photos.refresh();
   photos.setView("timeline");
@@ -46,7 +46,7 @@ it("keeps base counts across day changes and rejects a pre-refresh calendar repl
 });
 
 it("maps bounded snapshot failures to an unavailable calendar", async () => {
-  vi.spyOn(snapshots, "createSnapshot").mockRejectedValue(new APIError("Too many photos", 413, "snapshot_too_large"));
+  vi.spyOn(snapshots, "createFacetCounts").mockRejectedValue(new APIError("Too many photos", 413, "snapshot_too_large"));
   const photos = new Photos("scoped", vi.fn());
   await photos.loadTimeline();
   expect(photos.timeline?.available).toBe(false);
@@ -55,8 +55,8 @@ it("maps bounded snapshot failures to an unavailable calendar", async () => {
 });
 
 it("retries a failed timeline and resumes an interrupted timeline request", async () => {
-  const receipt = { facets: [{ dimension: "capture_day", available: false, reason: "member_budget_exceeded", values: [] }] } as unknown as snapshots.SnapshotPage;
-  const create = vi.spyOn(snapshots, "createSnapshot").mockRejectedValueOnce(new Error("Scope unavailable"))
+  const receipt = { facets: [{ dimension: "capture_day", available: false, reason: "member_budget_exceeded", values: [] }] } as unknown as snapshots.FacetCounts;
+  const create = vi.spyOn(snapshots, "createFacetCounts").mockRejectedValueOnce(new Error("Scope unavailable"))
     .mockImplementationOnce(() => new Promise(() => {})).mockResolvedValueOnce(receipt);
   const photos = new Photos("scoped", vi.fn());
   await photos.loadTimeline();
@@ -310,5 +310,12 @@ it("times each replacement page separately", async () => {
   expect(timers).toHaveLength(2);
   expect(photos.error).toBe("");
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-2"]);
+  photos.dispose();
+});
+it("hands timeline authentication failure to the session owner once", async () => {
+  vi.spyOn(snapshots, "createFacetCounts").mockRejectedValue(new APIError("Expired", 401, "unauthorized"));
+  const failure = vi.fn(); const photos = new Photos("scoped", failure);
+  await photos.loadTimeline();
+  expect(failure).toHaveBeenCalledTimes(1); expect(photos.timelineError).toBe(""); expect(photos.timeline).toBeUndefined();
   photos.dispose();
 });

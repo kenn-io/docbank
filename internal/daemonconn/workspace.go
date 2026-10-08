@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/query"
+	"go.kenn.io/docbank/internal/store"
 )
 
 // CreateWorkspaceQuery opens one exact daemon-owned query snapshot and
@@ -19,8 +20,8 @@ func (c *Connection) CreateWorkspaceQuery(
 	ctx context.Context, request api.WorkspaceQueryCreateRequest,
 ) (api.WorkspaceQueryResponse, error) {
 	var response api.WorkspaceQueryResponse
-	if err := validateWorkspacePopulation(request.Population, request.Facets); err != nil {
-		return response, err
+	if request.FacetsOnly {
+		return response, errors.New("counts requests do not return snapshots")
 	}
 	if _, err := validateWorkspaceRequest(request.Query, request.PageSize, request.Facets); err != nil {
 		return response, err
@@ -29,10 +30,10 @@ func (c *Connection) CreateWorkspaceQuery(
 	if err != nil {
 		return api.WorkspaceQueryResponse{}, err
 	}
-	response = *apiResponse
-	if response.Population != request.Population {
-		return api.WorkspaceQueryResponse{}, errors.New("workspace response population differs from request")
+	if apiResponse.Snapshot == nil {
+		return response, errors.New("workspace response lacks snapshot authority")
 	}
+	response = *apiResponse.Snapshot
 	if err := validateWorkspaceQueryResponse(response); err != nil {
 		return api.WorkspaceQueryResponse{}, err
 	}
@@ -106,27 +107,10 @@ func validateWorkspaceRequest(raw api.QueryPayload, pageSize int, facets []strin
 }
 
 func validateWorkspaceOptions(pageSize int, facets []string) error {
-	if pageSize != 0 && pageSize != 50 && pageSize != 100 && pageSize != 250 {
-		return errors.New("workspace page size must be 50, 100, or 250")
-	}
-	known := map[string]bool{
-		"collections": true, "tags": true, "media_family": true, "extension": true,
-		"modified": true, "size": true, "text_coverage": true, "duplicates": true, "capture_day": true,
-	}
-	seen := make(map[string]bool, len(facets))
-	for _, facet := range facets {
-		if !known[facet] || seen[facet] {
-			return errors.New("workspace facets contain an unknown or duplicate dimension")
-		}
-		seen[facet] = true
-	}
-	return nil
+	return store.ValidateSnapshotRequest(store.SnapshotRequest{PageSize: pageSize, Facets: facets})
 }
 
 func validateWorkspaceQueryResponse(response api.WorkspaceQueryResponse) error {
-	if err := validateWorkspacePopulation(response.Population, nil); err != nil {
-		return err
-	}
 	if !response.Snapshot || !validSnapshotID(response.SnapshotID) ||
 		!validPrefixedSHA256(response.QueryFingerprint) || !validSHA256Hex(response.MemberHash) ||
 		!validPrefixedSHA256(response.SnapshotFingerprint) {
@@ -171,20 +155,6 @@ func validateWorkspaceQueryResponse(response api.WorkspaceQueryResponse) error {
 			}
 		} else if facet.Reason == "" || facet.Total != nil || facet.Missing != nil || facet.Other != nil || len(facet.Values) != 0 {
 			return fmt.Errorf("workspace response facet %d fabricates unavailable counts", index)
-		}
-	}
-	return nil
-}
-
-func validateWorkspacePopulation(population string, facets []string) error {
-	if population != "" && population != "documents" && population != "photos" {
-		return errors.New("unknown workspace population")
-	}
-	if population == "photos" {
-		for _, facet := range facets {
-			if facet != "capture_day" {
-				return errors.New("photo snapshots support only capture_day facets")
-			}
 		}
 	}
 	return nil

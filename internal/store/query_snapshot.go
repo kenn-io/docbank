@@ -33,7 +33,7 @@ var ErrQuerySnapshotTooLarge = errors.New("query snapshot exceeds its materializ
 
 // SnapshotRequest selects one frozen QueryV1 projection and its optional facets.
 type SnapshotRequest struct {
-	Population string            `json:"population,omitempty"`
+	FacetsOnly bool              `json:"facets_only,omitempty"`
 	Query      query.Query       `json:"query"`
 	Coverage   CoverageSelection `json:"coverage"`
 	PageSize   int               `json:"page_size"`
@@ -103,7 +103,6 @@ type SnapshotFacet struct {
 
 // SnapshotProjection is a complete immutable materialization without cache ownership.
 type SnapshotProjection struct {
-	Population          string             `json:"population,omitempty"`
 	Query               query.Query        `json:"query"`
 	Dependencies        []query.Dependency `json:"dependencies"`
 	QueryFingerprint    string             `json:"query_fingerprint"`
@@ -121,6 +120,7 @@ type SnapshotProjection struct {
 }
 
 type snapshotMaterializeOptions struct {
+	FacetsOnly         bool
 	MaxRows            int64
 	MaxRowBytes        int64
 	MaxSerializedBytes int64
@@ -195,16 +195,10 @@ func (s *Store) materializeQuerySnapshot(
 	if err != nil {
 		return SnapshotProjection{}, err
 	}
-	if request.Population != "" && request.Population != "documents" && request.Population != "photos" {
-		return SnapshotProjection{}, errors.New("unknown snapshot population")
+	if err := ValidateSnapshotRequest(request); err != nil {
+		return SnapshotProjection{}, err
 	}
-	if request.Population == "photos" {
-		for _, facet := range facets {
-			if facet != "capture_day" {
-				return SnapshotProjection{}, errors.New("photo snapshots support only capture_day facets")
-			}
-		}
-	}
+	options.FacetsOnly = request.FacetsOnly
 	coverage, err := normalizeCoverageSelection(request.Coverage)
 	if err != nil {
 		return SnapshotProjection{}, err
@@ -232,7 +226,7 @@ func (s *Store) materializeQuerySnapshot(
 			}
 			value = *resolved.Query
 		}
-		compiled, err := (queryCompiler{photoDisplayMetadata: request.Population == "photos"}).compile(ctx, value, queryResolver{q: q})
+		compiled, err := (queryCompiler{photoDisplayMetadata: request.FacetsOnly}).compile(ctx, value, queryResolver{q: q})
 		if err != nil {
 			return err
 		}
@@ -249,8 +243,7 @@ func (s *Store) materializeQuerySnapshot(
 			return err
 		}
 		projection = SnapshotProjection{
-			Population: request.Population,
-			Query:      compiled.Query, Dependencies: slices.Clone(compiled.Dependencies),
+			Query: compiled.Query, Dependencies: slices.Clone(compiled.Dependencies),
 			QueryFingerprint: queryFingerprint, Coverage: coverage, PageSize: pageSize,
 			ObservedAt: options.Now().UTC(), Rows: make([]SnapshotRow, 0), Facets: make([]SnapshotFacet, 0, len(facets)),
 			Generation: SnapshotGeneration{Kind: "native"},
@@ -261,14 +254,18 @@ func (s *Store) materializeQuerySnapshot(
 		if err := materializeSnapshotRows(ctx, q, compiled, generation.ID, coverage, options, &projection); err != nil {
 			return err
 		}
-		projection.MemberHash = snapshotMemberHash(snapshotMembers(projection.Rows))
+		if !request.FacetsOnly {
+			projection.MemberHash = snapshotMemberHash(snapshotMembers(projection.Rows))
+		}
 		projection.Facets, err = materializeSnapshotFacets(ctx, q, compiled, generation.ID, coverage, facets, projection.Rows, options, &projection.SerializedBytes)
 		if err != nil {
 			return err
 		}
-		projection.SnapshotFingerprint, err = snapshotProjectionFingerprint(projection)
-		if err != nil {
-			return err
+		if !request.FacetsOnly {
+			projection.SnapshotFingerprint, err = snapshotProjectionFingerprint(projection)
+			if err != nil {
+				return err
+			}
 		}
 		metadataBytes, err := snapshotProjectionMetadataBytes(projection)
 		if err != nil {
@@ -283,6 +280,19 @@ func (s *Store) materializeQuerySnapshot(
 		return SnapshotProjection{}, err
 	}
 	return projection, nil
+}
+
+func ValidateSnapshotRequest(request SnapshotRequest) error {
+	if _, err := normalizeSnapshotPageSize(request.PageSize); err != nil {
+		return err
+	}
+	if _, err := normalizeSnapshotFacets(request.Facets); err != nil {
+		return err
+	}
+	if request.FacetsOnly && (len(request.Facets) != 1 || request.Facets[0] != "capture_day") {
+		return errors.New("facets_only requires the capture_day facet")
+	}
+	return nil
 }
 
 func normalizeSnapshotPageSize(value int) (int, error) {
@@ -316,7 +326,7 @@ func materializeSnapshotRows(
 	}
 	var population compiledQueryFragment
 	var err error
-	if projection.Population == "photos" {
+	if options.FacetsOnly {
 		match, matchErr := photoBrowseMatch(compiled, generationID, coverage)
 		if matchErr != nil {
 			return matchErr
@@ -496,7 +506,6 @@ func snapshotMemberHash(members []SnapshotMember) string {
 }
 
 type snapshotFingerprintPayload struct {
-	Population   string             `json:"population,omitempty"`
 	Query        query.Query        `json:"query"`
 	Dependencies []query.Dependency `json:"dependencies"`
 	Generation   SnapshotGeneration `json:"generation"`
@@ -508,8 +517,7 @@ type snapshotFingerprintPayload struct {
 func snapshotProjectionFingerprint(projection SnapshotProjection) (string, error) {
 	digest := sha256.New()
 	err := json.MarshalWrite(digest, snapshotFingerprintPayload{
-		Population: projection.Population,
-		Query:      projection.Query, Dependencies: projection.Dependencies, Generation: projection.Generation,
+		Query: projection.Query, Dependencies: projection.Dependencies, Generation: projection.Generation,
 		Coverage: projection.Coverage, Rows: projection.Rows, Facets: projection.Facets,
 	}, json.Deterministic(true))
 	if err != nil {

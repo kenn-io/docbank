@@ -23648,7 +23648,7 @@ type ListWatchedInboxesResponse = api.WatchedInboxList
 
 type ListWatchedInboxesErrorResponse = Error
 
-type CreateWorkspaceQueryResponse = api.WorkspaceQueryResponse
+type CreateWorkspaceQueryResponse = api.WorkspaceCreateResponse
 
 type CreateWorkspaceQueryErrorResponse = Error
 
@@ -24949,6 +24949,10 @@ type WatchedInbox = api.WatchedInbox
 
 type WatchedInboxList = api.WatchedInboxList
 
+type WorkspaceCreateResponse = api.WorkspaceCreateResponse
+
+type WorkspaceFacetResponse = api.WorkspaceFacetResponse
+
 type WorkspaceFacetValue = api.WorkspaceFacetValue
 
 type WorkspaceQueryCoverage = api.WorkspaceQueryCoverage
@@ -24966,3 +24970,39 @@ type WorkspaceQueryResponse = api.WorkspaceQueryResponse
 type WorkspaceQueryRow = api.WorkspaceQueryRow
 
 type WorkspaceQueryTag = api.WorkspaceQueryTag
+
+type WorkspaceCreateResponse_OneOf struct {
+	runtime.Either[WorkspaceQueryResponse, WorkspaceFacetResponse]
+}
+
+func (w *WorkspaceCreateResponse_OneOf) Validate() error {
+	if w.IsA() {
+		if v, ok := any(w.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if w.IsB() {
+		if v, ok := any(w.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}
+
+type CreateWorkspaceQuery_Response_OneOf struct {
+	runtime.Either[WorkspaceQueryResponse, WorkspaceFacetResponse]
+}
+
+func (c *CreateWorkspaceQuery_Response_OneOf) Validate() error {
+	if c.IsA() {
+		if v, ok := any(c.A).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	if c.IsB() {
+		if v, ok := any(c.B).(runtime.Validator); ok {
+			return v.Validate()
+		}
+	}
+	return nil
+}

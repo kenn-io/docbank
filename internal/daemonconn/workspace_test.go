@@ -42,10 +42,9 @@ func TestWorkspaceClientRoundTripsExactPagesAndSavedRuns(t *testing.T) {
 
 	_, err = c.ReadWorkspaceQueryPage(t.Context(), strings.Repeat("0", 32), "opaque")
 	require.ErrorIs(t, err, store.ErrSnapshotGone)
-	photos, err := c.CreateWorkspaceQuery(t.Context(), api.WorkspaceQueryCreateRequest{Query: api.QueryPayload(`{}`), Population: "photos", PageSize: 50, Facets: []string{"capture_day"}})
+	photos, err := c.CreateWorkspaceQuery(t.Context(), api.WorkspaceQueryCreateRequest{Query: api.QueryPayload(`{}`), PageSize: 50, Facets: []string{"capture_day"}})
 	require.NoError(t, err)
-	require.Equal(t, "photos", photos.Population)
-	require.Zero(t, photos.Total)
+	require.Equal(t, int64(2), photos.Total)
 	require.Len(t, photos.Facets, 1)
 }
 
@@ -54,7 +53,7 @@ func TestWorkspaceClientRejectsInvalidRequestsBeforeTransport(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
 	t.Cleanup(ts.Close)
 	c := daemonconn.New(ts.URL, "key")
-	for _, request := range []api.WorkspaceQueryCreateRequest{{Query: api.QueryPayload(`{}`), Population: "unknown"}, {Query: api.QueryPayload(`{}`), Population: "photos", Facets: []string{"tags"}}} {
+	for _, request := range []api.WorkspaceQueryCreateRequest{{Query: api.QueryPayload(`{}`), FacetsOnly: true}, {Query: api.QueryPayload(`{}`), FacetsOnly: true, Facets: []string{"tags"}}} {
 		_, err := c.CreateWorkspaceQuery(t.Context(), request)
 		require.Error(t, err)
 	}

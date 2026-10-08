@@ -27,7 +27,7 @@
   {:else if error}
     <div role="alert">{error} <Button size="sm" onclick={onretry}>Retry timeline</Button></div>
   {:else if facet && !facet.available}
-    <div role="status">Timeline counts are unavailable. <Button size="sm" onclick={onretry}>Retry timeline</Button></div>
+    <div role="status">{facet.reason === "snapshot_busy" || facet.reason === "snapshot_capacity" ? "Timeline is busy. Retry in a moment." : facet.reason === "snapshot_too_large" || facet.reason?.includes("budget") ? "Timeline exceeds its limits." : "Timeline counts are unavailable."} ({facet.reason?.replaceAll("_", " ")}) <Button size="sm" onclick={onretry}>Retry timeline</Button></div>
   {:else if facet?.available}
     <div class="timeline-summary">{facet.total?.toLocaleString()} photos in scope · {facet.missing?.toLocaleString()} undated</div>
     {#if years.length}
