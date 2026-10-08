@@ -99,3 +99,18 @@ func TestPhotoQualityPendingDisplayOwnership(t *testing.T) {
 	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(genericMIME), document.PhotoQualitySignals{}))
 	check([]int64{missing.ID, unsupported.ID}, []int64{jpg.ID, missingMIME.ID, genericMIME.ID})
 }
+
+func TestPhotoQualityUnavailableIsTerminal(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node := browsePhotoNode(t, s, "undecodable.jpg", browseHash("undecodable-quality"), "image/jpeg")
+	require.NoError(t, s.PublishPhotoQualityUnavailable(t.Context(), qualityTarget(node)))
+	require.NoError(t, s.PublishPhotoQualitySignals(t.Context(), qualityTarget(node), document.PhotoQualitySignals{Focus: 1}))
+	page := browsePhotoPage(t, s, `{}`)
+	require.Len(t, page.Items, 1)
+	require.Nil(t, page.Items[0].Quality)
+	require.True(t, page.Items[0].QualityUnavailable)
+	require.Len(t, browsePhotoPage(t, s, `{"filters":{"unevaluated":true}}`).Items, 1)
+	require.Empty(t, browsePhotoPage(t, s, `{"filters":{"focus_min":"0"}}`).Items)
+	require.Empty(t, browsePhotoPage(t, s, `{"filters":{"focus_max":"1"}}`).Items)
+}

@@ -174,8 +174,13 @@ func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compil
  JOIN content_versions v ON v.version_id=display_node.current_version_id`
 		binding = `member.node_id=n.id`
 	}
-	quality := `EXISTS (SELECT 1 FROM photo_quality_signals q WHERE q.content_version_id=v.version_id AND q.evaluator_fingerprint=?`
-	args := []any{document.PhotoQualityEvaluatorFingerprint()}
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	quality := `EXISTS (SELECT 1 FROM photo_quality_signals q WHERE q.content_version_id=v.version_id
+ AND q.evaluator_fingerprint=? AND q.state='ready'`
+	args := []any{fingerprints.Evaluator}
 	if field == "unevaluated" {
 		if value != "true" && value != "false" {
 			return compiledQueryFragment{}, errors.New("unevaluated must be true or false")
@@ -190,7 +195,10 @@ func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compil
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
-	number, _ := strconv.ParseFloat(normalized, 64)
+	number, err := strconv.ParseFloat(normalized, 64)
+	if err != nil {
+		return compiledQueryFragment{}, fmt.Errorf("parsing quality bound %s: %w", field, err)
+	}
 	column, operator := strings.TrimSuffix(field, "_min"), ">="
 	if maxColumn, ok := strings.CutSuffix(field, "_max"); ok {
 		column = maxColumn

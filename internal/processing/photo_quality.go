@@ -16,15 +16,19 @@ import (
 	xdraw "golang.org/x/image/draw"
 )
 
-// EvaluatePhotoQuality reads only the verified, oriented grid preview.
-func EvaluatePhotoQuality(ctx context.Context, s *store.Store, blobs *blob.Store, target store.PhotoVisualPreviewTarget) error {
-	recipe, _ := VisualPreviewRecipeForSize("grid")
-	_, fingerprint, _ := document.MarshalVisualPreviewRecipeV1(recipe)
-	view, err := s.ContentVersionVisualPreviewByRecipe(ctx, target.VersionID, fingerprint)
+// EvaluatePhotoQuality reads only the verified, oriented grid preview. Verified
+// bytes that cannot be measured are recorded as unavailable; read failures retry.
+func EvaluatePhotoQuality(
+	ctx context.Context, s *store.Store, blobs *blob.Store, target store.PhotoVisualPreviewTarget,
+) error {
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	if err != nil {
 		return err
 	}
-
+	view, err := s.ContentVersionVisualPreviewByRecipe(ctx, target.VersionID, fingerprints.GridRecipe)
+	if err != nil {
+		return err
+	}
 	output := view.Generation.Preview.Output
 	if view.Generation.Preview.State != document.VisualPreviewReady || output == nil {
 		return errors.New("photo quality preview unavailable")
@@ -33,21 +37,26 @@ func EvaluatePhotoQuality(ctx context.Context, s *store.Store, blobs *blob.Store
 	if err != nil {
 		return fmt.Errorf("reading photo quality preview: %w", err)
 	}
-	config, err := jpeg.DecodeConfig(bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("reading photo quality preview dimensions: %w", err)
-	}
-	if config.Width != output.Width || config.Height != output.Height {
-		return errors.New("photo quality preview dimensions mismatch")
-	}
-	decoded, err := jpeg.Decode(bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("decoding photo quality preview: %w", err)
+	decoded, ok := decodePhotoQualityPreview(body, output)
+	if !ok {
+		return s.PublishPhotoQualityUnavailable(ctx, target)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return s.PublishPhotoQualitySignals(ctx, target, measurePhotoQuality(decoded))
+}
+
+func decodePhotoQualityPreview(body []byte, output *document.VisualPreviewOutputV1) (image.Image, bool) {
+	config, err := jpeg.DecodeConfig(bytes.NewReader(body))
+	if err != nil || config.Width != output.Width || config.Height != output.Height {
+		return nil, false
+	}
+	decoded, err := jpeg.Decode(bytes.NewReader(body))
+	if err != nil {
+		return nil, false
+	}
+	return decoded, true
 }
 
 func measurePhotoQuality(source image.Image) document.PhotoQualitySignals {

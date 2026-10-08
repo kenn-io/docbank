@@ -697,8 +697,14 @@ function normalizeGPSBounds(value: unknown): GPSBounds {
 
 function normalizeQualityScore(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string" || value.startsWith("-")) throw new Error("quality score must be within 0..1");
-  const normalized = normalizeCoordinate(value, 1);
-  if (normalized !== "0" && normalized !== "1" && !normalized.startsWith("0.")) throw new Error("quality score must be within 0..1");
+  const invalid = new Error("quality score must be a decimal string within 0..1");
+  if (typeof value !== "string" || value.startsWith("-")) throw invalid;
+  let normalized: string;
+  try {
+    normalized = normalizeCoordinate(value, 1);
+  } catch {
+    throw invalid;
+  }
+  if (normalized !== "0" && normalized !== "1" && !normalized.startsWith("0.")) throw invalid;
   return normalized;
 }

@@ -832,7 +832,7 @@ fields, not additional parameters for `GET /search`:
 
 Document numeric quality filters use retained scores for each document's own version; `unevaluated` applies only to current eligible photo displays.
 
-Photo browse returns quality `ready` with scores, `unavailable` with `signals: null` when the current grid preview is unsupported or failed, and `pending` with `signals: null` otherwise.
+Photo browse returns quality `ready` with scores, `unavailable` with `signals: null` when the current grid preview is unsupported or failed or its verified bytes do not decode, and `pending` with `signals: null` otherwise.
 
 Filter sets are sorted and deduplicated when saved. Query text is not trimmed
 or rewritten. Unknown fields and duplicate JSON object keys are rejected.

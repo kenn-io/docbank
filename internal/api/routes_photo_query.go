@@ -234,7 +234,8 @@ func photoQualityWire(row store.PhotoBrowseRow) *PhotoQuality {
 	state := "pending"
 	if row.Quality != nil {
 		state = "ready"
-	} else if preview := row.Previews["grid"]; preview.State == "unsupported" || preview.State == "failed" {
+	} else if preview := row.Previews["grid"]; row.QualityUnavailable ||
+		preview.State == "unsupported" || preview.State == "failed" {
 		state = "unavailable"
 	}
 	return &PhotoQuality{State: state, Signals: (*PhotoQualitySignals)(row.Quality)}

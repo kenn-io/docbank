@@ -36,6 +36,13 @@ describe("query identity", () => {
     expect(parseQuery('{"text":"\\ud83d\\ude00"}').text).toBe("😀");
   });
 
+  it("rejects quality bounds outside 0..1 with a quality error", () => {
+    for (const value of ["abc", "1.5", "-0", ".5"]) {
+      expect(() => parseQuery(`{"filters":{"focus_min":"${value}"}}`)).toThrow("quality score must be a decimal string within 0..1");
+    }
+    expect(canonicalQuery(parseQuery('{"filters":{"focus_min":"0.70"}}'))).toContain('"focus_min":"0.7"');
+  });
+
   it("rejects invalid values and bounds", () => {
     const invalid = [
       '{"filters":{"paths":["relative"]}}',

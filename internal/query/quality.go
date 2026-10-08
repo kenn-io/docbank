@@ -5,17 +5,16 @@ import (
 	"strings"
 )
 
+var errQualityScore = errors.New("quality score must be a decimal string within 0..1")
+
 // NormalizeQualityOperand retains exact decimal identity on the 0..1 scale.
 func NormalizeQualityOperand(value string) (string, error) {
 	if strings.HasPrefix(value, "-") {
-		return "", errors.New("quality score must be within 0..1")
+		return "", errQualityScore
 	}
 	normalized, err := normalizeCoordinate(value, 1)
-	if err != nil {
-		return "", err
-	}
-	if normalized != "0" && normalized != "1" && !strings.HasPrefix(normalized, "0.") {
-		return "", errors.New("quality score must be within 0..1")
+	if err != nil || normalized != "0" && normalized != "1" && !strings.HasPrefix(normalized, "0.") {
+		return "", errQualityScore
 	}
 	return normalized, nil
 }

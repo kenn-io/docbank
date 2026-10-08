@@ -91,6 +91,19 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 		require.True(t, found)
 		require.Contains(t, body, `"signals":null`)
 	}
+	unmeasurable, err := s.CreateFile(t.Context(), s.RootID(), "unmeasurable.jpg", testHash("unmeasurable"), 10, "image/jpeg")
+	require.NoError(t, err)
+	require.NoError(t, s.PublishPhotoQualityUnavailable(t.Context(), store.PhotoVisualPreviewTarget{
+		VersionID: unmeasurable.CurrentVersionID, SourceSHA256: unmeasurable.BlobHash, Size: 10, MediaType: "image/jpeg",
+	}))
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	states := map[string]string{}
+	for _, row := range page.Items {
+		states[row.ContentVersionID] = row.Quality.State
+	}
+	require.Equal(t, "unavailable", states[unmeasurable.CurrentVersionID])
 	request.Query = api.QueryPayload(`{"filters":{"kinds":["video"]}}`)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)

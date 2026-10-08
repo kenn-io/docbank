@@ -92,3 +92,40 @@ func TestPhotoQualityPreviewPipeline(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, targets)
 }
+
+func TestPhotoQualityUndecodablePreviewIsUnavailable(t *testing.T) {
+	t.Parallel()
+	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(t.TempDir(), "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	source, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.JPEG(32, 24, color.White)))
+	require.NoError(t, err)
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", source.Hash, source.Size, "image/jpeg", processingBlobPhysical(t, source))
+	require.NoError(t, err)
+	garbage, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader([]byte("verified bytes that are not a JPEG")))
+	require.NoError(t, err)
+	recipe, err := VisualPreviewRecipeForSize("grid")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{
+		ContractVersion: document.VisualPreviewContractV1, Recipe: recipe, SourceSHA256: source.Hash,
+		State: document.VisualPreviewReady,
+		Output: &document.VisualPreviewOutputV1{
+			BlobSHA256: garbage.Hash, Size: garbage.Size, MediaType: "image/jpeg", Width: 32, Height: 24,
+		},
+	})
+	require.NoError(t, err)
+	_, err = catalog.PublishVisualPreview(t.Context(), node.CurrentVersionID, canonical, new(processingBlobPhysical(t, garbage)))
+	require.NoError(t, err)
+	targets, err := catalog.MissingPhotoQualityTargetsAfter(t.Context(), "", 10)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+
+	require.NoError(t, EvaluatePhotoQuality(t.Context(), catalog, blobs, targets[0]))
+
+	targets, err = catalog.MissingPhotoQualityTargetsAfter(t.Context(), "", 10)
+	require.NoError(t, err)
+	require.Empty(t, targets)
+}
