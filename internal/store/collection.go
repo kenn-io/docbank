@@ -62,17 +62,20 @@ func scanCollection(row interface{ Scan(args ...any) error }) (Collection, error
 func collectionSummaryByID(
 	ctx context.Context, q rowQuerier, id string,
 ) (Collection, error) {
+	// Bind the membership filter directly so SQLite can apply it before
+	// materializing the DISTINCT CTE. Joining through i.id first computes
+	// every collection's membership, including unrelated imports.
 	collection, err := scanCollection(q.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
 		SELECT `+collectionColumns+`
 		FROM ingests i
-		LEFT JOIN collection_members cm ON cm.ingest_id=i.id
+		LEFT JOIN collection_members cm ON cm.ingest_id=?
 		LEFT JOIN nodes n ON n.id=cm.node_id
 		LEFT JOIN content_versions cv ON cv.version_id=n.current_version_id
 		LEFT JOIN collection_labels l ON l.ingest_id=i.id
 		WHERE i.id=? AND i.source_kind NOT LIKE 'embedded:%'
 		GROUP BY i.id, i.source_kind, i.source_desc, i.started_at,
 			l.ingest_id, l.label, l.revision, l.updated_at
-		HAVING COUNT(cm.node_id)>0 OR l.ingest_id IS NOT NULL`, id))
+		HAVING COUNT(cm.node_id)>0 OR l.ingest_id IS NOT NULL`, id, id))
 	if err != nil {
 		return Collection{}, fmt.Errorf("collection %q: %w", id, err)
 	}
