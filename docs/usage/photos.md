@@ -283,7 +283,9 @@ Hidden unlock and lock remain available. Setup, change, disable, reset, hide, an
 
 `POST /api/v1/photos/assets/query` accepts a `query` object using
 [QueryV1](../architecture/http-api.md#saved-query-and-highlight-definitions),
-optional `coverage`, `page_size` from 1 through 250, and `cursor`. It returns
+optional `coverage`, `page_size` from 1 through 250, `cursor`, and `hidden`.
+Omit `hidden` or set it to `false` for visible photos. `hidden: true` selects
+only hidden photos and requires an active unlock on every page. It returns
 `items`, the matching asset `total` counted on the first page, and an optional
 `next_cursor`. Later pages keep that total. Start a new browse to refresh it.
 The default page size is 50. Send the same query and page options with each
@@ -335,10 +337,11 @@ keep their generation identity. Only ready slots include a generation URL and
 JPEG output metadata. Read that URL with the browser session header.
 Credentials stay out of URLs.
 
-Preview responses use `Cache-Control: private, no-cache`: the browser may keep
-bytes but must check with the server before reusing them. A matching
+Visible preview responses use `Cache-Control: private, no-cache`: the browser may keep
+bytes but must check with the server before reusing them. Hidden previews require
+an active unlock and use `Cache-Control: no-store`, including `304` responses. A matching
 `If-None-Match` returns `304` after the server checks the session, current
-display, and exclusion state. This avoids reading the preview blob again.
+display, exclusion state, and any required Hidden unlock. This avoids reading the preview blob again.
 An excluded asset or replaced display returns `404`, even with a matching
 validator. A response with new bytes verifies the complete image. Listing
 never creates previews.
