@@ -49,7 +49,7 @@ export interface WorkspaceQueryResponse {
   rows: SnapshotRow[];
   facets: {
     dimension: "collections" | "tags" | "media_family" | "extension" | "modified" |
-      "size" | "text_coverage" | "duplicates";
+      "size" | "text_coverage" | "duplicates" | "capture_day";
     available: boolean;
     reason?: string;
     total?: number | null;
@@ -89,7 +89,7 @@ const coverageStates = new Set<NonNullable<SnapshotRow["coverage_state"]>>([
 ]);
 const dependencyKinds = new Set(["tag", "collection", "saved"]);
 const facetDimensions = new Set<WorkspaceQueryResponse["facets"][number]["dimension"]>([
-  "collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates",
+  "collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates", "capture_day",
 ]);
 const encoder = new TextEncoder();
 
@@ -248,7 +248,7 @@ function parseFacet(value: unknown, index: number): WorkspaceQueryResponse["face
   const dimension = string(raw.dimension, `facets[${index}].dimension`) as WorkspaceQueryResponse["facets"][number]["dimension"];
   if (!facetDimensions.has(dimension)) malformed(`facets[${index}].dimension is unknown`);
   if (typeof raw.available !== "boolean") malformed(`facets[${index}].available must be boolean`);
-  if (!Array.isArray(raw.values) || raw.values.length > 114) malformed(`facets[${index}].values exceeds its bound`);
+  if (!Array.isArray(raw.values) || raw.values.length > (dimension === "capture_day" ? maxSnapshotMembers : 114)) malformed(`facets[${index}].values exceeds its bound`);
   const values = raw.values.map((value, valueIndex) => {
     const facetValue = record(value, `facets[${index}].values[${valueIndex}]`);
     keys(facetValue, ["key", "label", "count", "selected"], [], `facets[${index}].values[${valueIndex}]`);
@@ -343,7 +343,7 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
   if (!Array.isArray(raw.rows) || raw.rows.length > pageSize || raw.rows.length > total) malformed("rows exceeds its page bounds");
   if (total === 0 ? raw.rows.length !== 0 : raw.rows.length === 0) malformed("rows is inconsistent with total");
   const rows = raw.rows.map((value, index) => parseRow(value, index));
-  if (!Array.isArray(raw.facets) || raw.facets.length > 8) malformed("facets exceeds its bound");
+  if (!Array.isArray(raw.facets) || raw.facets.length > 9) malformed("facets exceeds its bound");
   const facets = raw.facets.map((value, index) => parseFacet(value, index));
   if (new Set(facets.map((facet) => facet.dimension)).size !== facets.length) malformed("facets repeat a dimension");
   if (raw.snapshot !== true) malformed("snapshot authority is absent");
@@ -427,7 +427,7 @@ function normalizedOptions(options: SnapshotOptions): SnapshotOptions & { facets
     throw new Error("Snapshot profile exceeds its bound.");
   }
   if (options.page_size !== undefined && ![50, 100, 250].includes(options.page_size)) throw new Error("Snapshot page size is invalid.");
-  if (options.facets !== undefined && (!Array.isArray(options.facets) || options.facets.length > 8)) {
+  if (options.facets !== undefined && (!Array.isArray(options.facets) || options.facets.length > 9)) {
     throw new Error("Snapshot facets exceed their bound.");
   }
   const facets = options.facets?.map((value) => {

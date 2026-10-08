@@ -7,6 +7,7 @@
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoGrid from "./PhotoGrid.svelte";
+  import PhotoTimeline from "./PhotoTimeline.svelte";
   import SelectionDock from "./SelectionDock.svelte";
 
   let { photos, cache }: { photos: Photos; cache: PhotoPreviewCache } = $props();
@@ -36,6 +37,7 @@
   <div class="photo-toolbar browser-toolbar">
     <div class="library-title"><h1>Library</h1><span>{photos.total.toLocaleString()} photos · {photos.items.length.toLocaleString()} loaded</span></div>
     <div class="toolbar-actions">
+      <nav aria-label="Photo views"><Button size="sm" tone={photos.view === "grid" ? "info" : "neutral"} onclick={() => photos.setView("grid")}>Grid</Button><Button size="sm" tone={photos.view === "timeline" ? "info" : "neutral"} onclick={() => photos.setView("timeline")}>Timeline</Button></nav>
       <div class="photo-options">
         <SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => relayout(() => photos.grouping = value as "months" | "sessions")} />
         <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => relayout(() => photos.setDensity(value as Density))} />
@@ -43,13 +45,19 @@
       <Button size="sm" disabled={photos.loading} onclick={() => void photos.refresh(preserve)}>Refresh previews</Button>
     </div>
   </div>
+  {#if photos.day}
+    <div class="photo-date-selection">Capture day {photos.day}<Button size="sm" onclick={() => void photos.selectDay()}>Clear date</Button></div>
+  {/if}
+  {#if photos.view === "timeline"}
+    <PhotoTimeline facet={photos.timeline} loading={photos.timelineLoading} error={photos.timelineError} selected={photos.day} onselect={day => void photos.selectDay(day)} onretry={() => void photos.loadTimeline()} />
+  {/if}
   {#if photos.error}
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
   {/if}
   {#if photos.items.length}
     <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} />
   {:else if !photos.loading && !photos.error}
-    <EmptyState title="Your photo library is empty" description="Import photos with docbank photos import to browse them here.">
+    <EmptyState title={photos.day ? "No photos on this day" : "Your photo library is empty"} description={photos.day ? "Clear the date to browse the full scope." : "Import photos with docbank photos import to browse them here."}>
       {#snippet icon()}<ImageIcon size="24" />{/snippet}
     </EmptyState>
   {/if}
@@ -60,6 +68,7 @@
 <style>
   .photos-workspace { max-height: calc(100dvh - var(--header-height)); display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; background: var(--bg-surface); }
   .photo-toolbar { border-bottom: 1px solid var(--border-default); }
+  .photo-date-selection { display: flex; gap: var(--space-3); align-items: center; padding: var(--space-2) var(--space-5); font-size: var(--font-size-sm); color: var(--text-primary); }
   .library-title h1 { margin: 0 0 4px; font-size: var(--font-size-lg); color: var(--text-primary); }
   .library-title span { font-size: var(--font-size-xs); color: var(--text-muted); }
   .photo-options { display: flex; flex-wrap: wrap; gap: var(--space-2); }

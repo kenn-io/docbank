@@ -11,6 +11,60 @@ const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "b
 const output = process.env.DOCBANK_PHOTOS_SCREENSHOT_DIR;
 test.skip(!output, "DOCBANK_PHOTOS_SCREENSHOT_DIR enables synthetic photo proof");
 
+test("timeline seeks an unloaded leap day and preserves full-scope counts", async ({ page }) => {
+  test.setTimeout(600_000);
+  const workspace = await mkdtemp(path.join(repository, ".superpowers", "timeline-proof-"));
+  const vault = path.join(workspace, "vault");
+  const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0" };
+  const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
+  try {
+    await mkdir(output!, { recursive: true });
+    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault], { cwd: repository, env, timeout: 480_000 });
+    const webURL = new URL(await run("web", "--no-browser"));
+    webURL.pathname = "/photos";
+    await page.goto(webURL.href);
+    await expect(page.getByText(/10,000 photos/)).toBeVisible();
+    await page.getByRole("button", { name: "Timeline", exact: true }).click();
+    await expect(page.getByText(/10,000 photos in scope/)).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Timeline years" }).getByRole("button", { name: /^2018/ })).toBeVisible();
+    await page.getByRole("navigation", { name: "Timeline years" }).getByRole("button", { name: /^2024/ }).click();
+    await page.getByRole("button", { name: "February 2024", exact: false }).click();
+    await expect(page.getByRole("button", { name: /^2024-02-29 ·/ })).toBeVisible();
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
+      await page.screenshot({ path: path.join(output!, `web-timeline-${theme}.png`), clip: { x: 0, y: 0, width: 1440, height: 640 }, animations: "disabled" });
+    }
+    await page.getByRole("button", { name: /^2024-02-29 ·/ }).click();
+    await expect(page.getByText("Capture day 2024-02-29", { exact: false })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Refresh previews" })).toBeEnabled();
+    await expect(page.getByText(/10,000 photos in scope/)).toBeVisible();
+    await expect(page.getByTestId("photo-scroll").locator("img").first()).toBeVisible();
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
+      await page.screenshot({ path: path.join(output!, `web-timeline-day-${theme}.png`), clip: { x: 0, y: 0, width: 1440, height: 640 }, animations: "disabled" });
+    }
+    await page.getByRole("button", { name: "Clear date", exact: true }).click();
+    await expect(page.getByText(/10,000 photos ·/)).toBeVisible();
+    await page.getByRole("navigation", { name: "Timeline years" }).getByRole("button", { name: /^2022/ }).click();
+    await page.getByRole("button", { name: "June 2022", exact: false }).click();
+    await page.getByRole("button", { name: /^2022-06-15 ·/ }).click();
+    await expect(page.getByText(/9,0\d\d photos ·/)).toBeVisible();
+    await page.getByRole("button", { name: "Load more", exact: true }).click();
+    await expect.poll(() => page.locator(".library-title span").innerText()).toContain("500 loaded");
+    await page.getByRole("button", { name: "Clear date", exact: true }).click();
+    await expect(page.getByText(/10,000 photos ·/)).toBeVisible();
+  } finally {
+    if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {
+      const previewURL = new URL(await run("web", "--no-browser"));
+      previewURL.pathname = "/photos";
+      await writeFile(path.join(output!, "timeline-preview.json"), JSON.stringify({ url: previewURL.href, workspace }, null, 2));
+    } else {
+      await run("daemon", "stop");
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }
+});
+
 test("10,000 photos stay windowed, retain previews and selection, and remember density", async ({ page }) => {
   test.setTimeout(900_000);
   const workspace = await mkdtemp(path.join(repository, ".superpowers", "photos-proof-"));

@@ -16,7 +16,7 @@ import (
 )
 
 var snapshotFacetDimensions = [...]string{
-	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, "duplicates",
+	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, "duplicates", "capture_day",
 }
 
 const (
@@ -103,6 +103,17 @@ func appendChargedSnapshotFacet(
 	if len(*result) != 0 {
 		bytes++ // JSON array separator; container brackets are charged by the caller.
 	}
+	if facet.Dimension == "capture_day" && facet.Available && *used > options.MaxSerializedBytes-bytes {
+		facet = unavailableSnapshotFacet(facet.Dimension, "byte_budget_exceeded")
+		encoded, err = json.Marshal(facet)
+		if err != nil {
+			return err
+		}
+		bytes = int64(len(encoded))
+		if len(*result) != 0 {
+			bytes++
+		}
+	}
 	if err := chargeSnapshotMaterialization(options, used, 0, bytes); err != nil {
 		return err
 	}
@@ -121,6 +132,9 @@ func materializeSnapshotFacet(
 	ctx context.Context, q metadataQuerier, compiled CompiledQuery, generationID string,
 	coverage CoverageSelection, dimension string, snapshotRows []SnapshotRow, memberLimit int64,
 ) (SnapshotFacet, error) {
+	if dimension == "capture_day" {
+		return materializeCaptureDayFacet(ctx, q, compiled.Query, generationID, coverage, memberLimit)
+	}
 	facetQuery := queryWithoutSnapshotFacet(compiled.Query, dimension)
 	if dimension != "duplicates" && reflect.DeepEqual(facetQuery.Filters, compiled.Query.Filters) {
 		return materializeSnapshotFacetFromRows(ctx, q, compiled.Query, dimension, snapshotRows, memberLimit)
@@ -204,6 +218,59 @@ func materializeSnapshotFacet(
 		return SnapshotFacet{}, fmt.Errorf("closing %s facet: %w", dimension, err)
 	}
 	return finishSnapshotFacet(ctx, q, compiled.Query, dimension, observation)
+}
+
+func materializeCaptureDayFacet(ctx context.Context, q metadataQuerier, value query.Query, generation string, coverage CoverageSelection, limit int64) (SnapshotFacet, error) {
+	compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(ctx, value, queryResolver{q: q})
+	if err != nil {
+		return SnapshotFacet{}, err
+	}
+	match, err := photoBrowseMatch(compiled, generation, coverage)
+	if err != nil {
+		return SnapshotFacet{}, err
+	}
+	statement, args, err := bindQueryPopulation(compiledQueryFragment{
+		sql:  `SELECT COALESCE(p.capture_date,'') FROM ` + photoBrowseDisplayFrom + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + match.sql,
+		args: match.args, relations: match.relations,
+	}, coverage, generation)
+	if err != nil {
+		return SnapshotFacet{}, err
+	}
+	rows, err := q.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return SnapshotFacet{}, err
+	}
+	defer func() { _ = rows.Close() }()
+	counts := make(map[string]int64)
+	var total, missing int64
+	for rows.Next() {
+		var day string
+		if err := rows.Scan(&day); err != nil {
+			return SnapshotFacet{}, err
+		}
+		total++
+		if total > limit {
+			return unavailableSnapshotFacet("capture_day", "member_budget_exceeded"), nil
+		}
+		if _, err := time.Parse("2006-01-02", day); err != nil {
+			missing++
+		} else {
+			counts[day]++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return SnapshotFacet{}, err
+	}
+	values := make([]SnapshotFacetValue, 0, len(counts))
+	for day, count := range counts {
+		values = append(values, SnapshotFacetValue{Key: day, Label: day, Count: count})
+	}
+	slices.SortFunc(values, func(a, b SnapshotFacetValue) int { return strings.Compare(b.Key, a.Key) })
+	if err := ctx.Err(); err != nil {
+		return SnapshotFacet{}, err
+	}
+	other := int64(0)
+	return SnapshotFacet{Dimension: "capture_day", Available: true, Total: &total, Missing: &missing, Other: &other, Values: values}, nil
 }
 
 func materializeSnapshotFacetFromRows(

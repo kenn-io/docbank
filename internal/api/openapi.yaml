@@ -14212,8 +14212,9 @@ components:
               - size
               - text_coverage
               - duplicates
+              - capture_day
             type: string
-          maxItems: 8
+          maxItems: 9
           type: array
           uniqueItems: true
         page_size:
@@ -16370,8 +16371,9 @@ components:
               - size
               - text_coverage
               - duplicates
+              - capture_day
             type: string
-          maxItems: 8
+          maxItems: 9
           type: array
           uniqueItems: true
         page_size:
@@ -16502,14 +16504,14 @@ components:
               values:
                 items:
                   $ref: "#/components/schemas/WorkspaceFacetValue"
-                maxItems: 114
+                maxItems: 250000
                 type: array
             required:
               - dimension
               - available
               - values
             type: object
-          maxItems: 8
+          maxItems: 9
           type: array
         generation:
           $ref: "#/components/schemas/WorkspaceQueryGeneration"

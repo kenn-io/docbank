@@ -5711,6 +5711,7 @@ export const SavedQueryRunRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
+  capture_day: 'capture_day',
 } as const;
 
 export type SavedQueryRunRequestPageSize = typeof SavedQueryRunRequestPageSize[keyof typeof SavedQueryRunRequestPageSize];
@@ -5725,7 +5726,7 @@ export const SavedQueryRunRequestPageSize = {
 export interface SavedQueryRunRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @maxItems 8 */
+  /** @maxItems 9 */
   facets?: SavedQueryRunRequestFacetsItem[];
   page_size?: SavedQueryRunRequestPageSize;
   /** @maxLength 128 */
@@ -5810,7 +5811,7 @@ export type WorkspaceQueryResponseFacetsItem = {
   other?: number | null;
   reason?: string;
   total?: number | null;
-  /** @maxItems 114 */
+  /** @maxItems 250000 */
   values: WorkspaceFacetValue[];
 };
 
@@ -5821,7 +5822,7 @@ export interface WorkspaceQueryResponse {
   created_at: string;
   dependencies: WorkspaceQueryDependency[];
   expires_at: string;
-  /** @maxItems 8 */
+  /** @maxItems 9 */
   facets: WorkspaceQueryResponseFacetsItem[];
   generation: WorkspaceQueryGeneration;
   /** @pattern ^[0-9a-f]{64}$ */
@@ -6481,6 +6482,7 @@ export const WorkspaceQueryCreateRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
+  capture_day: 'capture_day',
 } as const;
 
 export type WorkspaceQueryCreateRequestPageSize = typeof WorkspaceQueryCreateRequestPageSize[keyof typeof WorkspaceQueryCreateRequestPageSize];
@@ -6495,7 +6497,7 @@ export const WorkspaceQueryCreateRequestPageSize = {
 export interface WorkspaceQueryCreateRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @maxItems 8 */
+  /** @maxItems 9 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
   page_size?: WorkspaceQueryCreateRequestPageSize;
   /** @maxLength 128 */

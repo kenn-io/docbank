@@ -16,7 +16,7 @@
 
   const names: Record<Facet["dimension"], string> = {
     collections: "Collections", tags: "Tags", media_family: "Media family", extension: "Extension",
-    modified: "Modified", size: "Size", text_coverage: "Text coverage", duplicates: "Duplicates",
+    modified: "Modified", size: "Size", text_coverage: "Text coverage", duplicates: "Duplicates", capture_day: "Capture day",
   };
   const arrayFields = {
     collections: "collection_ids", tags: "tag_ids", media_family: "media_families",
