@@ -189,8 +189,8 @@ presenting a zero count.
 
 Photos' Timeline uses the `capture_day` counts-only facet to count each included
 photo asset once. Counts use the scoped-asset member limit and output bytes,
-reserve zero cached rows, and leave Documents snapshots pageable. The year ribbon and month scrubber reveal dated day rows
-that open older photos.
+reserve zero cached rows, and leave Documents snapshots pageable. The year
+ribbon and month scrubber reveal dated day rows that open older photos.
 
 Snapshot handles last for one daemon lifetime, up to 15 minutes idle and 30
 minutes total. Locking the browser session or stopping the daemon revokes them.

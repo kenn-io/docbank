@@ -1,7 +1,7 @@
 import type { Query } from "./query.js";
-import type { WorkspaceQueryResponse } from "./snapshots.js";
+import type { CaptureDayFacet } from "./snapshots.js";
 
-export type CaptureDayFacet = WorkspaceQueryResponse["facets"][number];
+export type { CaptureDayFacet } from "./snapshots.js";
 export interface TimelineMonth { key: string; count: number; days: { key: string; count: number }[] }
 export interface TimelineYear { key: string; count: number; months: TimelineMonth[] }
 

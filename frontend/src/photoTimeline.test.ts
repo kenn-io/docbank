@@ -50,10 +50,10 @@ it("shows undated and unavailable scopes honestly", async () => {
   const view = render(PhotoTimeline, { loading: false, error: "", onselect: vi.fn(), onretry: vi.fn(), facet: { dimension: "capture_day", available: true, total: 10, missing: 10, other: 0, values: [] } });
   expect(screen.getByText("These photos have no recorded capture dates.")).toBeTruthy();
   await view.rerender({ loading: false, error: "", onselect: vi.fn(), onretry: vi.fn(), facet: { dimension: "capture_day", available: false, reason: "time_budget_exceeded", values: [] } });
-  expect(screen.getByText(/Timeline exceeds its limits.*time budget exceeded/)).toBeTruthy();
+  expect(screen.getByText(/Timeline took too long.*time budget exceeded/)).toBeTruthy();
   expect(screen.queryByRole("navigation", { name: "Timeline years" })).toBeNull();
 });
-it.each([ ["snapshot_busy", /Timeline is busy.*snapshot busy/], ["snapshot_capacity", /Timeline is busy.*snapshot capacity/], ["snapshot_too_large", /Timeline exceeds its limits.*snapshot too large/] ])("shows %s with its retry reason", async (reason, message) => {
+it.each([ ["snapshot_busy", /Timeline is busy.*snapshot busy/], ["snapshot_capacity", /Timeline is busy.*snapshot capacity/], ["snapshot_too_large", /Timeline exceeds its limits.*snapshot too large/], ["member_budget_exceeded", /Too many photos.*member budget exceeded/] ])("shows %s with its retry reason", async (reason, message) => {
   const retry = vi.fn();
   render(PhotoTimeline, { loading: false, error: "", onselect: vi.fn(), onretry: retry, facet: { dimension: "capture_day", available: false, reason: String(reason), values: [] } });
   expect(screen.getByText(message)).toBeTruthy();

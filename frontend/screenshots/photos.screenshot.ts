@@ -62,7 +62,7 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
     await page.getByRole("navigation", { name: "Timeline years" }).getByRole("button", { name: /^2022/ }).click();
     await page.getByRole("button", { name: "June 2022", exact: false }).click();
     await page.getByRole("button", { name: /^2022-06-15 ·/ }).click();
-    await expect(page.getByText(/9,0\d\d photos ·/)).toBeVisible();
+    await expect(page.getByText(/9,0\d\d photos on 2022-06-15 ·/)).toBeVisible();
     await page.getByRole("button", { name: "Load more", exact: true }).click();
     await expect.poll(() => page.locator(".library-title span").innerText()).toContain("500 loaded");
     await page.getByRole("button", { name: "Clear date", exact: true }).click();

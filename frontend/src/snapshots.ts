@@ -49,7 +49,7 @@ export interface WorkspaceQueryResponse {
   rows: SnapshotRow[];
   facets: {
     dimension: "collections" | "tags" | "media_family" | "extension" | "modified" |
-      "size" | "text_coverage" | "duplicates" | "capture_day";
+      "size" | "text_coverage" | "duplicates";
     available: boolean;
     reason?: string;
     total?: number | null;
@@ -242,11 +242,15 @@ function optionalMappedString(
   return value === undefined ? {} : { [key]: value };
 }
 
-function parseFacet(value: unknown, index: number, counts = false): WorkspaceQueryResponse["facets"][number] {
+export type CaptureDayFacet = Omit<WorkspaceQueryResponse["facets"][number], "dimension"> & { dimension: "capture_day" };
+
+function parseFacet(value: unknown, index: number): WorkspaceQueryResponse["facets"][number];
+function parseFacet(value: unknown, index: number, counts: true): CaptureDayFacet;
+function parseFacet(value: unknown, index: number, counts = false): WorkspaceQueryResponse["facets"][number] | CaptureDayFacet {
   const raw = record(value, `facets[${index}]`);
   keys(raw, ["dimension", "available", "values"], ["reason", "total", "missing", "other"], `facets[${index}]`);
-  const dimension = string(raw.dimension, `facets[${index}].dimension`) as WorkspaceQueryResponse["facets"][number]["dimension"];
-  if (counts ? dimension !== "capture_day" : !facetDimensions.has(dimension)) malformed(`facets[${index}].dimension is unknown`);
+  const dimension = string(raw.dimension, `facets[${index}].dimension`) as WorkspaceQueryResponse["facets"][number]["dimension"] | "capture_day";
+  if (counts ? dimension !== "capture_day" : dimension === "capture_day" || !facetDimensions.has(dimension)) malformed(`facets[${index}].dimension is unknown`);
   if (typeof raw.available !== "boolean") malformed(`facets[${index}].available must be boolean`);
   if (!Array.isArray(raw.values) || raw.values.length > (counts ? maxSnapshotMembers : 114)) malformed(`facets[${index}].values exceeds its bound`);
   const values = raw.values.map((value, valueIndex) => {
@@ -469,7 +473,7 @@ export async function createSnapshot(
   return result;
 }
 
-export type FacetCounts = Pick<WorkspaceQueryResponse, "query" | "dependencies" | "generation" | "coverage" | "observed_at" | "facets"> & { facets_only: true };
+export type FacetCounts = Pick<WorkspaceQueryResponse, "query" | "dependencies" | "generation" | "coverage" | "observed_at"> & { facets_only: true; facets: CaptureDayFacet[] };
 
 export async function createFacetCounts(session: string, query: Query, signal: AbortSignal): Promise<FacetCounts> {
   const response = await createWorkspaceQuery({ query: JSON.parse(canonicalQuery(query)), facets_only: true, facets: ["capture_day"] }, { session, signal });
@@ -477,7 +481,6 @@ export async function createFacetCounts(session: string, query: Query, signal: A
   keys(raw, ["facets_only", "query", "dependencies", "generation", "coverage", "observed_at", "facets"], ["$schema"], "counts");
   if (raw.facets_only !== true || !Array.isArray(raw.facets) || raw.facets.length !== 1) malformed("counts response is inconsistent");
   const facet = parseFacet(raw.facets[0], 0, true);
-  if (facet.dimension !== "capture_day") malformed("facets do not match the request");
   return { ...parseQueryEvidence(raw, query), facets_only: true, facets: [facet] };
 }
 

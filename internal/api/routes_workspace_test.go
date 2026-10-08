@@ -72,7 +72,6 @@ func TestWorkspaceQueryCaptureDayDelivery(t *testing.T) {
 	saved, _ := createSavedQuery(t, ts.URL, "Calendar rejected for saved runs", `{}`)
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}, `{"facets":["capture_day"]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-
 }
 
 func TestWorkspaceQueryRoutesCreateAndPageFrozenResults(t *testing.T) {
