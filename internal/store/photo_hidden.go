@@ -16,7 +16,8 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-const photoHiddenChangeSQL = `SELECT COALESCE((SELECT receipt_id FROM (SELECT rowid,receipt_id FROM (SELECT rowid,receipt_id FROM photo_change_receipts WHERE operation='hide' ORDER BY rowid DESC LIMIT 1) UNION ALL SELECT rowid,receipt_id FROM (SELECT rowid,receipt_id FROM photo_change_receipts WHERE operation='unhide' ORDER BY rowid DESC LIMIT 1)) ORDER BY rowid DESC LIMIT 1),'')`
+// SQLite's single MAX selects the receipt from the same unique rowid.
+const photoHiddenChangeSQL = `SELECT COALESCE((SELECT receipt_id FROM (SELECT MAX(rowid) AS latest,receipt_id FROM photo_change_receipts WHERE operation='hide' UNION ALL SELECT MAX(rowid) AS latest,receipt_id FROM photo_change_receipts WHERE operation='unhide') WHERE latest IS NOT NULL ORDER BY latest DESC LIMIT 1),'')`
 
 const hiddenArgonParameters = "m=19456,t=2,p=1"
 const hiddenArgonMemory, hiddenArgonTime, hiddenArgonThreads = 19456, 2, 1

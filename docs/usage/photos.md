@@ -73,7 +73,7 @@ docbank photos hidden state
 docbank photos hidden reset
 ```
 
-Passcodes use protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks and forwards the cookie within that invocation. Unhide saves no client credential file. HTTP operations live under `/api/v1/photos/hidden`; hide and unhide use `/api/v1/photos/assets/{asset_id}/hide` and `/unhide` with `If-Match`. Browser sessions can use the interactive operations. Reset requires the daemon API key.
+Passcodes use protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks and forwards the cookie within that invocation. Unhide saves no client credential file. Unhide first to use other CLI or MCP photo commands on a hidden asset; ordinary Documents and MCP document tools retain file access. HTTP operations live under `/api/v1/photos/hidden`; hide and unhide use `/api/v1/photos/assets/{asset_id}/hide` and `/unhide` with `If-Match`. Browser sessions can use the interactive operations. Reset requires the daemon API key.
 
 ## Previews
 
