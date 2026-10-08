@@ -228,6 +228,7 @@ export class Photos {
   dispose() { this.disposed = true; this.controller.abort(); }
 }
 
+export const photoRevalidationErrorEvent = "docbank-photo-revalidation-error";
 export const photoPrivacyEvent = "docbank-photo-privacy";
 export function notifyPhotoPrivacy(error = "") {
   window.dispatchEvent(new CustomEvent(photoPrivacyEvent, { detail: error }));

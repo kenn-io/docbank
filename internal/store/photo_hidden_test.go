@@ -29,7 +29,7 @@ func TestPhotoHiddenLifecycleAndBackup(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, asset.HiddenAt)
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision-1, true)
-	require.ErrorIs(t, err, ErrStaleRevision)
+	require.ErrorIs(t, err, ErrHiddenLocked)
 	value, err := query.Parse([]byte(`{"v":1,"syntax":"advanced","mode":"lexical","text":"","sort":{"field":"name","direction":"asc"}}`))
 	require.NoError(t, err)
 	page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: value}, nil)
@@ -81,7 +81,7 @@ func TestPhotoHiddenLifecycleAndBackup(t *testing.T) {
 	asset, err = s.PhotoAssetByID(ctx, asset.ID)
 	require.NoError(t, err)
 	assert.Nil(t, asset.HiddenAt)
-	require.NoError(t, validatePhotoMetadataState(ctx, s.db))
+	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
 }
 
 func TestPhotoHiddenFailuresSurviveBackupAndRestart(t *testing.T) {
@@ -218,4 +218,127 @@ func TestPhotoHiddenConcurrentResetCannotResurrectSession(t *testing.T) {
 	var count int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_hidden_sessions`).Scan(&count))
 	require.Zero(t, count)
+}
+
+func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "private.jpg", fakeHash("a1"), 4, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	_, err = s.initializeAuditAuthority(ctx, s.RootID(), "api", nil)
+	require.NoError(t, err)
+	reopen := func() {
+		path, driver := s.path, s.driver
+		require.NoError(t, s.Close())
+		s, err = Open(path, driver)
+		require.NoError(t, err)
+	}
+	reopen()
+	defer func() { require.NoError(t, s.Close()) }()
+	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
+	require.NoError(t, err)
+	_, err = s.PhotoAssetByID(WithPhotoHiddenToken(ctx, token), asset.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.LockPhotoHidden(ctx))
+	_, err = s.PhotoAssetByID(WithPhotoHiddenToken(ctx, token), asset.ID)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	for range 4 {
+		_, _, err = s.UnlockPhotoHidden(ctx, "wrong")
+		require.ErrorIs(t, err, ErrHiddenPasscode)
+	}
+	reopen()
+	_, _, err = s.UnlockPhotoHidden(ctx, "wrong")
+	var lockout *HiddenLockoutError
+	require.ErrorAs(t, err, &lockout)
+	var backup bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &backup))
+	require.Contains(t, backup.String(), "photo_hidden_lockout")
+	_, err = s.VerifyAudit(ctx, nil)
+	require.NoError(t, err)
+	target := newTestStore(t)
+	require.NoError(t, target.ImportMetadata(ctx, &backup))
+	_, _, err = target.UnlockPhotoHidden(ctx, "correct")
+	require.ErrorAs(t, err, &lockout)
+}
+
+func TestPhotoHiddenMutationGateAndPrivacyStamp(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "private.jpg")
+	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
+	asset, err := s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	state, err := s.PhotoHiddenState(ctx)
+	require.NoError(t, err)
+	var receipts int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_change_receipts`).Scan(&receipts))
+	mutations := []func() (PhotoAsset, error){
+		func() (PhotoAsset, error) { return s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false) },
+		func() (PhotoAsset, error) { return s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true) },
+		func() (PhotoAsset, error) { return s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true) },
+		func() (PhotoAsset, error) {
+			return s.PromotePhotoNode(ctx, asset.Files[0].NodeID, &asset.Revision, "", "")
+		},
+	}
+	for _, mutate := range mutations {
+		_, err := mutate()
+		require.ErrorIs(t, err, ErrHiddenLocked)
+	}
+	var afterReceipts int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_change_receipts`).Scan(&afterReceipts))
+	require.Equal(t, receipts, afterReceipts)
+	stored, err := photoAssetByIDQuery(ctx, s.db, asset.ID)
+	require.NoError(t, err)
+	require.Equal(t, asset, stored)
+	_, err = s.CreatePhotoSet(ctx, "Ordinary album edit")
+	require.NoError(t, err)
+	after, err := s.PhotoHiddenState(ctx)
+	require.NoError(t, err)
+	require.Equal(t, state.ChangeID, after.ChangeID)
+}
+
+func TestPhotoHiddenCoverResponseProjection(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	a := albumAsset(t, s, "private.jpg")
+	b := albumAsset(t, s, "visible.jpg")
+	album, err := s.CreatePhotoSet(ctx, "Synthetic")
+	require.NoError(t, err)
+	album, err = s.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: []string{a.ID, b.ID}})
+	require.NoError(t, err)
+	cover := &a.ID
+	album, err = s.UpdatePhotoSet(ctx, album.ID, album.Revision, nil, nil, &cover)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
+	_, err = s.SetPhotoAssetHidden(ctx, a.ID, a.Revision, true)
+	require.NoError(t, err)
+	summary, err := s.PhotoSet(ctx, album.ID, "")
+	require.NoError(t, err)
+	require.Nil(t, summary.CoverAssetID)
+	list, err := s.ListPhotoSets(ctx, "")
+	require.NoError(t, err)
+	require.Nil(t, list[0].CoverAssetID)
+	album, err = s.UpdatePhotoSet(ctx, album.ID, album.Revision, nil, nil, nil)
+	require.NoError(t, err)
+	require.Nil(t, album.CoverAssetID)
+	star := true
+	album, err = s.UpdatePhotoSet(ctx, album.ID, album.Revision, nil, &star, nil)
+	require.NoError(t, err)
+	require.Nil(t, album.CoverAssetID)
+	copy, err := s.DuplicatePhotoSet(ctx, album.ID, album.Revision, "Copy")
+	require.NoError(t, err)
+	require.Nil(t, copy.CoverAssetID)
+	album, err = s.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: []string{b.ID}})
+	require.NoError(t, err)
+	require.Nil(t, album.CoverAssetID)
+	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
+	require.NoError(t, err)
+	summary, err = s.PhotoSet(WithPhotoHiddenToken(ctx, token), album.ID, "")
+	require.NoError(t, err)
+	require.Equal(t, &a.ID, summary.CoverAssetID)
 }

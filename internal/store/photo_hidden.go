@@ -123,7 +123,7 @@ func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) 
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_hidden_credentials)`).Scan(&state.Configured); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT receipt_id FROM photo_change_receipts ORDER BY rowid DESC LIMIT 1),'')`).Scan(&state.ChangeID); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT receipt_id FROM photo_change_receipts WHERE operation IN ('hide','unhide') ORDER BY rowid DESC LIMIT 1),'')`).Scan(&state.ChangeID); err != nil {
 			return err
 		}
 		var until string
@@ -248,7 +248,7 @@ func (s *Store) UnlockPhotoHidden(ctx context.Context, passcode string) (string,
 	var token string
 	var expiry time.Time
 	var denial error
-	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		denial, err = s.consumeHiddenPasscodeTx(ctx, tx, passcode)
 		if err != nil || denial != nil {
@@ -348,7 +348,7 @@ func (s *Store) ResetPhotoHidden(ctx context.Context) error {
 
 func (s *Store) LockPhotoHidden(ctx context.Context) error {
 	// Lock every tab in the same browser and revoke other active views too.
-	return s.withLogicalTx(ctx, func(tx *sql.Tx) error { _, err := tx.ExecContext(ctx, `DELETE FROM photo_hidden_sessions`); return err })
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error { _, err := tx.ExecContext(ctx, `DELETE FROM photo_hidden_sessions`); return err })
 }
 
 func (s *Store) SetPhotoAssetHidden(ctx context.Context, id string, revision int64, hidden bool) (PhotoAsset, error) {

@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { Button, TextInput, Spinner } from "@kenn-io/kit-ui";
   import { getPhotoHiddenState, setupPhotoHidden, unlockPhotoHidden, lockPhotoHidden, changePhotoHidden, disablePhotoHidden, type PhotoHiddenState } from "./generated/docbank.js";
-  import { Photos, notifyPhotoPrivacy, photoPrivacyEvent } from "./photos.svelte.js";
+  import { Photos, notifyPhotoPrivacy, photoPrivacyEvent, photoRevalidationErrorEvent } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import { APIError } from "./api-transport.js";
@@ -70,21 +70,21 @@
   onMount(() => {
     void refresh();
     const privacy = (event: Event) => { error = (event as CustomEvent<string>).detail ?? ""; void refresh(); };
-    const foreground = () => { if (document.visibilityState === "visible") void refresh(); };
+    const failed = (event: Event) => { refreshController.abort(); clear(); hiddenState.expires_at = undefined; busy = false; error = (event as CustomEvent<string>).detail; };
     window.addEventListener(photoPrivacyEvent, privacy);
-    document.addEventListener("visibilitychange", foreground);
+    window.addEventListener(photoRevalidationErrorEvent, failed);
     const timer = setInterval(() => {
       if (!hiddenState.expires_at) return;
       remaining = Math.max(0, Math.ceil((Date.parse(hiddenState.expires_at) - Date.now()) / 1000));
       if (!remaining) { clear(); hiddenState.expires_at = undefined; notifyPhotoPrivacy(); }
     }, 250);
-    return () => { disposed = true; refreshController.abort(); clear(); clearInterval(timer); window.removeEventListener(photoPrivacyEvent, privacy); document.removeEventListener("visibilitychange", foreground); passcode = ""; nextPasscode = ""; };
+    return () => { disposed = true; refreshController.abort(); clear(); clearInterval(timer); window.removeEventListener(photoPrivacyEvent, privacy); window.removeEventListener(photoRevalidationErrorEvent, failed); passcode = ""; nextPasscode = ""; };
   });
 </script>
 
 <section class="hidden-photos" aria-label="Hidden photos">
   <div class="hidden-boundary">Hidden photos stay out of Photos. Documents and document tools can still read the underlying files.</div>
-  {#if error}<p role="alert">{error}</p>{/if}
+  {#if error}<p role="alert">{error}</p><Button size="sm" onclick={() => void refresh()}>Retry</Button>{/if}
   {#if workspace && remaining}
     <div class="hidden-controls"><span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span><Button size="sm" disabled={busy} onclick={() => void action("lock")}>Lock</Button></div>
     {#key workspace}<PhotosWorkspace photos={workspace.photos} cache={workspace.cache} title="Hidden" />{/key}

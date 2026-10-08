@@ -379,12 +379,17 @@ func (s *Store) classifyPhotoFileInsertError(err error) error {
 	return fmt.Errorf("creating photo file: %w", err)
 }
 
-func photoAssetForMutationTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64) (PhotoAsset, error) {
+func (s *Store) photoAssetForMutationTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64) (PhotoAsset, error) {
 	asset, err := photoAssetByIDQuery(ctx, tx, assetID)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
-	if asset.Revision != revision {
+	if asset.HiddenAt != nil {
+		if _, err := s.hiddenSession(ctx, tx); err != nil {
+			return PhotoAsset{}, err
+		}
+	}
+	if revision < 1 || asset.Revision != revision {
 		return PhotoAsset{}, fmt.Errorf("asset %s at revision %d, expected %d: %w", assetID, asset.Revision, revision, ErrStaleRevision)
 	}
 	return asset, nil
@@ -522,10 +527,7 @@ type photoMutation func(tx *sql.Tx, asset *PhotoAsset) (bool, error)
 // check the revision, run the edit, recompute display, advance the revision
 // once, write the receipt, and validate the asset's graph.
 func (s *Store) mutatePhotoAssetTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64, operation string, edit photoMutation) (PhotoAsset, error) {
-	if revision < 1 {
-		return PhotoAsset{}, fmt.Errorf("%w: revision must be positive", ErrStaleRevision)
-	}
-	asset, err := photoAssetForMutationTx(ctx, tx, assetID, revision)
+	asset, err := s.photoAssetForMutationTx(ctx, tx, assetID, revision)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
@@ -639,7 +641,8 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 			return err
 		}
 		if expectedRevision == nil {
-			return fmt.Errorf("node %d already belongs to asset %s and needs its revision: %w", nodeID, ownedID, ErrStaleRevision)
+			_, err := s.photoAssetForMutationTx(ctx, tx, ownedID, 0)
+			return err
 		}
 		result, err = s.mutatePhotoAssetTx(ctx, tx, ownedID, *expectedRevision, "promote", func(tx *sql.Tx, asset *PhotoAsset) (bool, error) {
 			for _, file := range asset.Files {
