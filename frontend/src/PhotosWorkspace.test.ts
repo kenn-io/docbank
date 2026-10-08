@@ -7,16 +7,15 @@ import { photo } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
 
-it("keeps failed off-prefix targets in the confirmation and invalidates Documents after partial success", async () => {
+it("keeps a failed confirmation open and trashes the new selection after closing it", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3)], total: 3 })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-2", revision: 7 })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-2", revision: 8 })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3)], total: 3 })));
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-3", revision: 2 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(2)], total: 1 })));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();
@@ -30,9 +29,13 @@ it("keeps failed off-prefix targets in the confirmation and invalidates Document
   await waitFor(() => expect(photos.items.map(item => item.asset_id)).toEqual(["photo-3"]));
   expect(ontrashed).toHaveBeenCalledTimes(1);
   expect(photos.selection.selectedIDs.has("photo-2")).toBe(true);
-  await fireEvent.click(await within(dialog).findByRole("button", { name: "Move to trash" }));
+  await fireEvent.click(await within(dialog).findByRole("button", { name: "Keep in Docbank" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Select Photo 3.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+  await fireEvent.click(within(screen.getByRole("dialog", { name: "Move selected photos to trash" })).getByRole("button", { name: "Move to trash" }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Move selected photos to trash" })).toBeNull());
   expect(ontrashed).toHaveBeenCalledTimes(2);
+  expect(fetcher.mock.calls[3][0]).toBe("/api/v1/photos/assets/photo-3/trash");
   photos.dispose(); await cache.dispose();
 });
 

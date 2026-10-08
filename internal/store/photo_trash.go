@@ -42,7 +42,7 @@ func (s *Store) TrashPhotoAsset(ctx context.Context, assetID string, revision in
 			changed = true
 		}
 		if !changed {
-			return ErrNotFound
+			return fmt.Errorf("%w: photo is already in trash", ErrInvalidPhotoAsset)
 		}
 		asset, err = commitPhotoAssetTx(ctx, tx, asset, asset, "trash")
 		return err
@@ -144,15 +144,9 @@ func photoTrashGroupTx(ctx context.Context, tx *sql.Tx, root Node, restore bool)
 	return group, nil
 }
 
-func restoreRootTx(ctx context.Context, s *Store, tx *sql.Tx, node Node, ifRev int64, active bool) (Node, error) {
-	if node.TrashedAt == nil {
-		return Node{}, ErrNotTrashed
-	}
-	if ifRev != UnconditionalRev && node.Revision != ifRev {
-		return Node{}, ErrStaleRevision
-	}
+func restoreRootTx(ctx context.Context, s *Store, tx *sql.Tx, node Node, active bool) (Node, error) {
 	if active {
-		return s.restoreAuditedTx(ctx, tx, node, ifRev)
+		return s.restoreAuditedTx(ctx, tx, node, node.Revision)
 	}
 	target, err := s.restoreTargetTx(tx, node)
 	if err != nil {
@@ -173,7 +167,7 @@ func (s *Store) restorePhotoGroupTx(ctx context.Context, tx *sql.Tx, node Node, 
 		return Node{}, err
 	}
 	if !owned && !node.IsDir() {
-		return restoreRootTx(ctx, s, tx, node, ifRev, active)
+		return restoreRootTx(ctx, s, tx, node, active)
 	}
 	root := node
 	if owned {
@@ -186,6 +180,9 @@ func (s *Store) restorePhotoGroupTx(ctx context.Context, tx *sql.Tx, node Node, 
 	if err != nil {
 		return Node{}, err
 	}
+	if len(group.assets) == 0 {
+		return restoreRootTx(ctx, s, tx, root, active)
+	}
 	order, err := photoRestoreOrderTx(ctx, tx, group.roots)
 	if err != nil {
 		return Node{}, err
@@ -195,7 +192,7 @@ func (s *Store) restorePhotoGroupTx(ctx context.Context, tx *sql.Tx, node Node, 
 		if err != nil {
 			return Node{}, err
 		}
-		if _, err = restoreRootTx(ctx, s, tx, current, current.Revision, active); err != nil {
+		if _, err = restoreRootTx(ctx, s, tx, current, active); err != nil {
 			return Node{}, err
 		}
 	}
@@ -300,6 +297,9 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string
 			allowed := !group.live
 			for peer := range group.roots {
 				seen[peer] = true
+				if peer == id {
+					continue
+				}
 				var eligible bool
 				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE `+eligibleWhere+` AND id=?)`, append(append([]any{}, args...), peer)...).Scan(&eligible); err != nil {
 					return "", nil, false, err

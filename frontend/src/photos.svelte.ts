@@ -1,4 +1,4 @@
-import { listPhotoAssets, trashPhotoAsset, getPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
@@ -141,8 +141,14 @@ export class Photos {
 
   async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
     if (this.trashing || this.disposed) return false;
-    const retry = this.trashTargets.length > 0;
-    const selected = retry ? [...this.trashTargets] : this.items.filter(item => this.selection.selectedIDs.has(item.asset_id));
+    this.pruneTrashTargets();
+    const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
+    const resolved = [...this.selection.selectedIDs].map(id => rows.get(id));
+    if (!resolved.length || resolved.some(item => !item)) {
+      this.trashError = "Load and select the photos again before moving them to trash.";
+      return false;
+    }
+    const selected = resolved.filter((item): item is PhotoBrowseRow => !!item).map(item => ({ ...item }));
     this.trashTargets = selected;
     this.trashing = true;
     this.trashError = "";
@@ -151,7 +157,7 @@ export class Photos {
       for (const item of selected) {
         try {
           const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
-          const revision = retry ? (await getPhotoAsset(item.asset_id, options)).revision : item.revision;
+          const revision = item.revision;
           const receipt = await trashPhotoAsset(item.asset_id, { "If-Match": String(revision) }, options);
           if (receipt.id !== item.asset_id || receipt.revision <= revision) throw new Error("Photo trash response did not confirm the selected photo. Refresh and retry.");
           successes++;
@@ -175,13 +181,17 @@ export class Photos {
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
       this.selection = toggleIDSelection(this.selection, orderedIDs, id, event.shiftKey || !this.selection.selectedIDs.has(id), event.shiftKey);
     } else this.selection = { selectedIDs: new Set([id]), anchorID: id };
+    this.pruneTrashTargets();
   }
 
   check(id: string, checked: boolean, range: boolean, orderedIDs: string[]) {
     this.selection = toggleIDSelection(this.selection, orderedIDs, id, checked, range);
+    this.pruneTrashTargets();
   }
 
+  private pruneTrashTargets() { this.trashTargets = this.trashTargets.filter(item => this.selection.selectedIDs.has(item.asset_id)); }
+
   clearSelection() { this.selection = clearSelection<string>(); this.trashTargets = []; }
-  selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; }
+  selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
   dispose() { this.disposed = true; this.controller.abort(); }
 }

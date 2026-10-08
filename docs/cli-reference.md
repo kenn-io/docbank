@@ -171,6 +171,7 @@ that returns it to the live tree.
 ```text
 docbank photos assets create <node-selector> [--kind photo|video] [--role ROLE]
 docbank photos assets inspect <asset-id|node-selector>
+docbank photos assets trash <asset-id> [--revision REV]
 docbank photos assets attach <asset-id> <node-selector> [--revision REV] [--role ROLE] [--sidecar-of-file-id ID]
 docbank photos assets detach <asset-id> <file-id> [--revision REV]
 docbank photos assets exclude <asset-id> [--revision REV] [--excluded=true]

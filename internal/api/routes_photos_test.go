@@ -65,6 +65,10 @@ func TestPhotoTrashRouteRevisionAndRestore(t *testing.T) {
 	var receipt api.PhotoAsset
 	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
 	assert.Equal(t, asset.Revision+1, receipt.Revision)
+	resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": strconv.FormatInt(receipt.Revision, 10)}, nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	assert.Equal(t, "invalid_photo_asset", decodeProblem(t, body).Code)
+	assert.Contains(t, body, "photo is already in trash")
 	resp, body = do(t, ts, http.MethodGet, "/api/v1/trash?limit=1", nil, nil)
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var page api.TrashPage
