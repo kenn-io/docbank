@@ -129,10 +129,6 @@ func newProvenClientForDial(ctx context.Context, rec kitdaemon.RuntimeRecord, di
 			_ = conn.Close()
 		}
 	}()
-	deadline, _ := probeCtx.Deadline()
-	if err := conn.SetDeadline(deadline); err != nil {
-		return nil, fmt.Errorf("setting daemon proof deadline: %w", err)
-	}
 	stop := context.AfterFunc(probeCtx, func() { _ = conn.Close() })
 	defer stop()
 	hc := &http.Client{
@@ -151,14 +147,15 @@ func newProvenClientForDial(ctx context.Context, rec kitdaemon.RuntimeRecord, di
 	if !owned {
 		return nil, errors.New("daemon endpoint failed ownership proof")
 	}
-	if err := conn.SetDeadline(time.Time{}); err != nil {
-		return nil, fmt.Errorf("clearing daemon proof deadline: %w", err)
-	}
-	hc.Transport = &http.Transport{
-		Proxy:               nil,
-		DialContext:         (&singleConnDialer{conn: conn}).DialContext,
-		MaxConnsPerHost:     1,
-		MaxIdleConnsPerHost: 1,
+	dialer := &singleConnDialer{conn: conn}
+	hc.Transport = &provenTransport{
+		Transport: &http.Transport{
+			Proxy:               nil,
+			DialContext:         dialer.DialContext,
+			MaxConnsPerHost:     1,
+			MaxIdleConnsPerHost: 1,
+		},
+		dialer: dialer,
 	}
 	c := New("http://"+rec.Address, rec.Metadata[metaAPIKey])
 	c.hc = hc
@@ -173,7 +170,7 @@ func (t proofTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err := req.Write(t.conn); err != nil {
 		return nil, fmt.Errorf("writing daemon ownership challenge: %w", err)
 	}
-	// Bound the complete proof exchange to the standard transport's 10 MiB header limit.
+	// Bound the whole proof response to 10 MiB.
 	reader := bufio.NewReader(io.LimitReader(t.conn, 10<<20))
 	resp, err := http.ReadResponse(reader, req)
 	if err != nil {
@@ -202,6 +199,27 @@ func (t proofTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 type singleConnDialer struct {
 	mu   sync.Mutex
 	conn net.Conn
+}
+
+func (d *singleConnDialer) close() {
+	d.mu.Lock()
+	conn := d.conn
+	d.conn = nil
+	d.mu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
+	}
+}
+
+type provenTransport struct {
+	*http.Transport
+
+	dialer *singleConnDialer
+}
+
+func (t *provenTransport) CloseIdleConnections() {
+	t.dialer.close()
+	t.Transport.CloseIdleConnections()
 }
 
 func (d *singleConnDialer) DialContext(

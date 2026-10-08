@@ -225,13 +225,28 @@ func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
 	assert.False(t, leaked.Load(), "forged endpoint must receive no runtime secret")
 }
 
+func challengeResponse(t *testing.T, r *http.Request, token string) []byte {
+	t.Helper()
+	assert.Empty(t, r.Header.Get("X-Api-Key"))
+	assert.Empty(t, r.Header.Get("X-Docbank-Daemon-Token"))
+	nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+	if err != nil {
+		t.Errorf("decoding challenge nonce: %v", err)
+		return nil
+	}
+	body, err := json.Marshal(map[string]string{"proof": daemonauth.Proof(token, nonce)})
+	if err != nil {
+		t.Errorf("encoding challenge response: %v", err)
+		return nil
+	}
+	return body
+}
+
 type delayedProofWriteConn struct {
 	net.Conn
 
-	response      <-chan struct{}
-	first         atomic.Bool
-	deadline      time.Time
-	proofDeadline time.Time
+	response <-chan struct{}
+	first    atomic.Bool
 }
 
 func (c *delayedProofWriteConn) Write(p []byte) (int, error) {
@@ -252,17 +267,6 @@ func (c *delayedProofWriteConn) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-func (c *delayedProofWriteConn) SetDeadline(deadline time.Time) error {
-	c.deadline = deadline
-	if !deadline.IsZero() {
-		c.proofDeadline = deadline
-	}
-	if err := c.Conn.SetDeadline(deadline); err != nil {
-		return fmt.Errorf("setting proof deadline: %w", err)
-	}
-	return nil
-}
-
 func TestProvenClientDelayedChallengeWrite(t *testing.T) {
 	const token = "synthetic-proof-token"
 	var challenges, requests, dials atomic.Int64
@@ -270,14 +274,7 @@ func TestProvenClientDelayedChallengeWrite(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == daemonauth.ChallengePath {
 			challenges.Add(1)
-			assert.Empty(t, r.Header.Get("X-Api-Key"))
-			assert.Empty(t, r.Header.Get("X-Docbank-Daemon-Token"))
-			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-			if err != nil {
-				http.Error(w, "bad nonce", http.StatusBadRequest)
-				return
-			}
-			_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)})
+			_, _ = w.Write(challengeResponse(t, r, token))
 			flusher, ok := w.(http.Flusher)
 			if !assert.True(t, ok) {
 				return
@@ -295,20 +292,16 @@ func TestProvenClientDelayedChallengeWrite(t *testing.T) {
 	}))
 	t.Cleanup(ts.Close)
 	rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "synthetic-api-key", token, "")
-	var delayed *delayedProofWriteConn
 	c, err := newProvenClientForDial(t.Context(), rec, func(ctx context.Context, network, address string) (net.Conn, error) {
 		dials.Add(1)
 		conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
 		if err != nil {
 			return nil, fmt.Errorf("dialing proof connection: %w", err)
 		}
-		delayed = &delayedProofWriteConn{Conn: conn, response: response}
-		return delayed, nil
+		return &delayedProofWriteConn{Conn: conn, response: response}, nil
 	})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, c.Close()) }()
-	require.False(t, delayed.proofDeadline.IsZero(), "proof has a socket deadline")
-	require.True(t, delayed.deadline.IsZero(), "handoff clears the proof deadline")
 	_, err = c.API().Health(t.Context())
 	require.NoError(t, err)
 	_, err = c.API().Health(t.Context())
@@ -316,6 +309,39 @@ func TestProvenClientDelayedChallengeWrite(t *testing.T) {
 	assert.Equal(t, int64(1), dials.Load())
 	assert.Equal(t, int64(1), requests.Load())
 	assert.Equal(t, int64(1), challenges.Load())
+}
+
+func TestProvenClientCloseBeforeFirstRequest(t *testing.T) {
+	const token = "synthetic-proof-token"
+	var requests atomic.Int64
+	closed := make(chan struct{}, 1)
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != daemonauth.ChallengePath {
+			requests.Add(1)
+			return
+		}
+		_, _ = w.Write(challengeResponse(t, r, token))
+	}))
+	ts.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateClosed {
+			closed <- struct{}{}
+		}
+	}
+	ts.Start()
+	t.Cleanup(ts.Close)
+	rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "synthetic-api-key", token, "")
+	c, err := newProvenClientFor(t.Context(), rec)
+	require.NoError(t, err)
+	require.NoError(t, c.Close())
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not release the pending proven socket")
+	}
+	require.NoError(t, c.Close())
+	_, err = c.API().Health(t.Context())
+	require.ErrorContains(t, err, "proven daemon connection is closed; refusing to redial")
+	assert.Zero(t, requests.Load())
 }
 
 func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
@@ -331,17 +357,7 @@ func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
 			defer cancel()
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
-				assert.Empty(t, r.Header.Get("X-Api-Key"))
-				assert.Empty(t, r.Header.Get("X-Docbank-Daemon-Token"))
-				nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-				if err != nil {
-					http.Error(w, "bad nonce", http.StatusBadRequest)
-					return
-				}
-				body, err := json.Marshal(map[string]string{"proof": daemonauth.Proof(token, nonce)})
-				if !assert.NoError(t, err) {
-					return
-				}
+				body := challengeResponse(t, r, token)
 				switch scenario {
 				case "forged":
 					body = []byte(`{"proof":"forged"}`)
