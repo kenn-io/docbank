@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -16,9 +17,12 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/telemetry"
 )
 
 type fakeBackend struct {
+	screenErr                 error
+	screens                   []string
 	nodes                     map[string]api.Node
 	children                  map[int64]api.NodePage
 	search                    api.SearchReport
@@ -612,7 +616,7 @@ func TestModelNavigatesSearchesAndReturnsToTree(t *testing.T) {
 	assert.Equal(t, "content", model.rows[0].match)
 
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))
-	require.Nil(t, cmd)
+	requireBrowseReportOnly(t, backend, cmd)
 	assert.Equal(t, modeBrowse, model.mode)
 	assert.Equal(t, "/", model.directory.Path)
 	require.Len(t, model.rows, 2)
@@ -958,7 +962,7 @@ func TestModelPreservesViewStateAcrossNavigation(t *testing.T) {
 	require.Equal(t, modeSearch, model.mode)
 
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))
-	require.Nil(t, cmd)
+	requireBrowseReportOnly(t, backend, cmd)
 	assert.Equal(t, modeBrowse, model.mode)
 	assert.Equal(t, 1, model.cursor)
 	assert.Equal(t, "README.txt", model.rows[model.cursor].node.Name)
@@ -1317,7 +1321,7 @@ func TestLeavingSearchIgnoresDelayedRefresh(t *testing.T) {
 	require.NotNil(t, delayedRefresh)
 	pendingRequestID := model.requestID
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))
-	require.Nil(t, cmd)
+	requireBrowseReportOnly(t, backend, cmd)
 	assert.Equal(t, modeBrowse, model.mode)
 	assert.Equal(t, "/", model.directory.Path)
 	assert.Greater(t, model.requestID, pendingRequestID)
@@ -1503,7 +1507,7 @@ func TestExpandedDetailExposesCompleteAuthority(t *testing.T) {
 	assert.Positive(t, model.detailOffset)
 
 	model, cmd = updateModel(t, model, key(tea.KeyEscape))
-	require.Nil(t, cmd)
+	requireBrowseReportOnly(t, backend, cmd)
 	assert.False(t, model.detailOpen)
 }
 
@@ -2658,4 +2662,88 @@ func rowIDs(rows []row) []int64 {
 		ids = append(ids, item.node.ID)
 	}
 	return ids
+}
+
+func (f *fakeBackend) ReportScreen(_ context.Context, screen string) error {
+	f.screens = append(f.screens, screen)
+	return f.screenErr
+}
+
+// requireBrowseReportOnly runs cmd and fails unless it did nothing but report the browse screen.
+func requireBrowseReportOnly(t *testing.T, backend *fakeBackend, cmd tea.Cmd) {
+	t.Helper()
+	require.NotNil(t, cmd)
+	reported := len(backend.screens)
+	assert.Nil(t, cmd())
+	require.Len(t, backend.screens, reported+1)
+	assert.Equal(t, "browse", backend.screens[reported])
+}
+
+func TestScreenReportingFollowsNavigationAndIgnoresPolling(t *testing.T) {
+	backend := newFakeBackend()
+	backend.screenErr = errors.New("synthetic telemetry rejection")
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model = runModelCommand(t, model, model.Init())
+	expectedScreens := []string{"browse"}
+	assert.Equal(t, expectedScreens, backend.screens)
+	assert.Empty(t, model.reportedDay)
+	backend.screenErr = nil
+	model, cmd := updateModel(t, model, runeKey('j'))
+	assert.Nil(t, cmd, "a key press within the retry delay must not resend")
+	assert.Equal(t, expectedScreens, backend.screens)
+	model.screenRetryAt = time.Now().Add(-time.Second)
+	model, cmd = updateModel(t, model, runeKey('j'))
+	model = runModelCommand(t, model, cmd)
+	expectedScreens = append(expectedScreens, "browse")
+	assert.Equal(t, expectedScreens, backend.screens)
+	for range 5 {
+		var cmd tea.Cmd
+		model, cmd = updateModel(t, model, runeKey('j'))
+		assert.Nil(t, cmd)
+	}
+	assert.Equal(t, expectedScreens, backend.screens)
+	model, _ = updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 30})
+	model, cmd = updateModel(t, model, runeKey('?'))
+	model = runModelCommand(t, model, cmd)
+	expectedScreens = append(expectedScreens, "help")
+	assert.Equal(t, expectedScreens, backend.screens)
+	assert.Contains(t, model.render(), "help")
+	model, cmd = updateModel(t, model, key(tea.KeyEscape))
+	model = runModelCommand(t, model, cmd)
+	expectedScreens = append(expectedScreens, "browse")
+	assert.Equal(t, expectedScreens, backend.screens)
+	model.reportedDay = "2000-01-01"
+	model, _ = updateModel(t, model, spinnerTickMsg{})
+	assert.Equal(t, expectedScreens, backend.screens)
+	model, cmd = updateModel(t, model, runeKey('s'))
+	_ = runModelCommand(t, model, cmd)
+	assert.Equal(t, append(expectedScreens, "browse"), backend.screens)
+}
+
+func TestVisibleScreensAreAllowlisted(t *testing.T) {
+	states := []func(*Model){
+		func(*Model) {},
+		func(m *Model) { m.helpOpen = true },
+		func(m *Model) { m.jobDetail = true },
+		func(m *Model) { m.historyDetail = true },
+		func(m *Model) { m.detailOpen = true },
+		func(m *Model) { m.packagesOpen = true },
+		func(m *Model) { m.jobsOpen = true },
+		func(m *Model) { m.operationsOpen = true },
+		func(m *Model) { m.processingOpen = true },
+		func(m *Model) { m.trashOpen = true },
+		func(m *Model) { m.historyOpen = true },
+		func(m *Model) { m.searching = true },
+		func(m *Model) { m.mode = modeSearch },
+	}
+	seen := map[string]bool{}
+	for _, set := range states {
+		var model Model
+		set(&model)
+		screen := model.visibleScreen()
+		assert.Contains(t, telemetry.ScreenNames(), screen)
+		seen[screen] = true
+	}
+	assert.Len(t, seen, 10)
 }

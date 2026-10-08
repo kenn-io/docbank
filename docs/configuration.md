@@ -54,6 +54,7 @@ The directory layout is created on first use:
 ├── web-launch/          # owner-private browser authentication handoff
 ├── web-downloads/       # private, temporary verified browser downloads
 ├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created only while telemetry is on, kept if it is later turned off
+├── telemetry-screen-views.json # daily screen claims; created only while telemetry is on
 ├── config.toml          # optional; see below
 ├── vault.lock           # advisory lock, held by a daemon or target restore
 └── daemon.<pid>.json    # runtime record of a live daemon
@@ -691,7 +692,7 @@ daemon sends events in HTTPS batches to PostHog's US ingest endpoint (PostHog
 project 434713). The browser never contacts PostHog: the web app posts its
 event to its own daemon, which sends it.
 
-Docbank sends three events:
+Docbank sends these events:
 
 - `daemon_started` and `daemon_active` at each daemon start, then
   `daemon_active` on the first hourly check of each later UTC day. Days when
@@ -703,7 +704,11 @@ Docbank sends three events:
   a later UTC day. The browser remembers the day for the daemon's address, so
   it sends about one per UTC day until the daemon restarts on a new address.
 
-Each event carries exactly these fields:
+- `screen_viewed` with a fixed `screen` name and `surface` of `web` or `tui`. Each screen counts once per vault per UTC day for each interface, browser and terminal, across daemon restarts. `surface` records the interface of the visit. The daemon rejects other names with 400. The daemon keeps daily claims in memory and saves them in `telemetry-screen-views.json` beside the install ID for daemon restarts. Rejected enqueue attempts remain eligible; remote delivery is best effort.
+
+Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
+
+Each event carries these fields:
 
 - the event name, a random event UUID, and a timestamp
 - `distinct_id`: a random install ID generated on this machine

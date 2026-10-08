@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/telemetry"
 	doctui "go.kenn.io/docbank/internal/tui"
 )
 
@@ -437,6 +438,17 @@ func (b *tuiDaemonBackend) AuditHistory(
 	return withTUIClient(ctx, b, func(c *daemonconn.Connection) (api.AuditEventPage, error) {
 		return c.AuditHistory(ctx, path, nodeID, limit, cursor)
 	})
+}
+
+func (b *tuiDaemonBackend) ReportScreen(ctx context.Context, screen string) error {
+	_, err := withTUIClient(ctx, b, func(c *daemonconn.Connection) (*apiclient.ReportTelemetryEventResponse, error) {
+		body := &apiclient.ReportTelemetryEventBody{
+			Event:      telemetry.EventScreenViewed,
+			Properties: &apiclient.TelemetryEventProperties{Screen: screen, Surface: "tui"},
+		}
+		return c.API().ReportTelemetryEvent(ctx, &apiclient.ReportTelemetryEventRequestOptions{Body: body})
+	})
+	return err
 }
 
 func init() {

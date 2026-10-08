@@ -56,6 +56,7 @@ const (
 // Backend is the bounded daemon surface needed by the TUI.
 // The CLI adapter uses generated API operations and receipt validation.
 type Backend interface {
+	ReportScreen(ctx context.Context, screen string) error
 	Stat(ctx context.Context, path string) (api.Node, error)
 	Node(ctx context.Context, nodeID int64) (api.Node, error)
 	ChildrenPage(ctx context.Context, nodeID int64, limit, offset int) (api.NodePage, error)
@@ -303,6 +304,8 @@ type mutationCompletedMsg struct {
 
 type spinnerTickMsg struct{}
 
+type screenReportFailedMsg struct{}
+
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 var errDetailNodeChanged = errors.New(
@@ -339,6 +342,9 @@ func NewMutationUnconfirmedError(action string, cause error) error {
 
 const spinnerInterval = 80 * time.Millisecond
 
+// screenRetryDelay spaces key-press retries of a failed screen report.
+const screenRetryDelay = 30 * time.Second
+
 // Model is a virtual-tree, search, audited-history, and recoverable-trash
 // browser. Update uses a value receiver because Bubble Tea treats models as
 // immutable values; small helper methods mutate only the copied value before
@@ -346,8 +352,10 @@ const spinnerInterval = 80 * time.Millisecond
 //
 //nolint:recvcheck // intentional Bubble Tea value-model pattern
 type Model struct {
-	ctx     context.Context
-	backend Backend
+	reportedDay   string
+	screenRetryAt time.Time
+	ctx           context.Context
+	backend       Backend
 
 	mode      viewMode
 	directory api.Node
@@ -507,6 +515,7 @@ func New(ctx context.Context, backend Backend) (Model, error) {
 	input.SetWidth(48)
 	return Model{
 		ctx: ctx, backend: backend, loading: true,
+		reportedDay: time.Now().UTC().Format(time.DateOnly),
 		searchInput: input, styles: newStyles(true), requestID: 1,
 		spinnerActive: true, sortField: sortByName, naturalMode: naturalNames,
 		naturalProfilesRequest: 1,
@@ -517,12 +526,35 @@ func New(ctx context.Context, backend Backend) (Model, error) {
 // background color so the palette stays legible in light and dark themes.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(tea.RequestBackgroundColor,
-		m.loadDirectory(0, navigationInitial, m.requestID), m.loadNaturalProfiles(m.naturalProfilesRequest), spinnerTick())
+		m.reportScreen("browse"), m.loadDirectory(0, navigationInitial, m.requestID), m.loadNaturalProfiles(m.naturalProfilesRequest), spinnerTick())
 }
 
-// Update implements tea.Model.
+// Update implements tea.Model. After each update it reports the visible screen
+// when it changed, and on a key press when today's report hasn't succeeded and
+// the retry delay after a failed report has passed.
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(message)
+	next, ok := model.(Model)
+	if !ok {
+		return model, cmd
+	}
+	now := time.Now()
+	screen, day := next.visibleScreen(), now.UTC().Format(time.DateOnly)
+	_, input := message.(tea.KeyPressMsg)
+	retry := input && next.reportedDay != day && !now.Before(next.screenRetryAt)
+	if !next.quitting && (screen != m.visibleScreen() || retry) {
+		next.reportedDay = day
+		cmd = tea.Batch(cmd, next.reportScreen(screen))
+	}
+	return next, cmd
+}
+
+func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
+	case screenReportFailedMsg:
+		m.reportedDay = ""
+		m.screenRetryAt = time.Now().Add(screenRetryDelay)
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.searchInput.SetWidth(max(msg.Width-4, 1))
@@ -3030,4 +3062,44 @@ func compareNames(left, right row) int {
 		return comparison
 	}
 	return cmp.Compare(left.path, right.path)
+}
+
+func (m Model) reportScreen(screen string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(m.ctx, 3*time.Second)
+		defer cancel()
+		if err := m.backend.ReportScreen(ctx, screen); err != nil {
+			return screenReportFailedMsg{}
+		}
+		return nil
+	}
+}
+
+func (m Model) visibleScreen() string {
+	switch {
+	case m.helpOpen:
+		return "help"
+	case m.jobDetail:
+		return "jobs"
+	case m.historyDetail:
+		return "history"
+	case m.detailOpen:
+		return "document"
+	case m.packagesOpen:
+		return "packages"
+	case m.jobsOpen:
+		return "jobs"
+	case m.operationsOpen:
+		return "operations"
+	case m.processingOpen:
+		return "processing"
+	case m.trashOpen:
+		return "trash"
+	case m.historyOpen:
+		return "history"
+	case m.searching || m.mode == modeSearch:
+		return "search"
+	default:
+		return "browse"
+	}
 }

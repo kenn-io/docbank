@@ -17,6 +17,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 it("supersedes an in-flight search when its tag filter changes", async () => {
@@ -1487,7 +1488,18 @@ it("returns to search results after opening All files", async () => {
 
 it("clears the tag filter when All files opens and restores it on Back", async () => {
   prepareSelectionApp();
-  installSelectionBackend();
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  const { fetchMock } = installSelectionBackend();
+  const backend = fetchMock.getMockImplementation()!;
+  const reportedScreens: string[] = [];
+  fetchMock.mockImplementation(async (input, init) => {
+    if (String(input) === "/api/daemon/telemetry/events") {
+      const payload = JSON.parse(String(init?.body));
+      if (payload.event === "screen_viewed") reportedScreens.push(payload.properties.screen);
+      return new Response(null, { status: 202 });
+    }
+    return backend(input, init);
+  });
   render(App);
   await screen.findByRole("cell", { name: "Reports" });
   await fireEvent.click(screen.getByRole("combobox", { name: "Browse or filter by tag: All tags" }));
@@ -1502,6 +1514,20 @@ it("clears the tag filter when All files opens and restores it on Back", async (
   await fireEvent.click(screen.getByRole("button", { name: "Back to previous directory" }));
   await screen.findByRole("cell", { name: "/Reports/alpha.txt" });
   expect(screen.queryByRole("combobox", { name: "Browse or filter by tag: All tags" })).toBeNull();
+  await waitFor(() => expect(reportedScreens.at(-1)).toBe("tags"));
+  await fireEvent.click(screen.getByRole("button", { name: "Edit query" }));
+  await screen.findByRole("region", { name: "Query editor" });
+  await waitFor(() => expect(reportedScreens.at(-1)).toBe("search"));
+  await fireEvent.click(screen.getByRole("button", { name: "Close query editor" }));
+  // A new UTC day clears the page's reported screens, so the retained-tag search must report again.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.now() + 86_400_000);
+  reportedScreens.length = 0;
+  const search = screen.getByRole("searchbox", { name: "Search documents" });
+  await fireEvent.input(search, { target: { value: "alpha" } });
+  await fireEvent.submit(search.closest("form")!);
+  await screen.findByText("Search results");
+  await waitFor(() => expect(reportedScreens).toEqual(["search"]));
 });
 
 it("ignores a folder lookup that finishes after a newer navigation", async () => {

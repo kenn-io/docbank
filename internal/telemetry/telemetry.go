@@ -4,7 +4,6 @@ package telemetry
 import (
 	"context"
 	"log/slog"
-	"net/http"
 
 	"go.kenn.io/kit/telemetry/posthog"
 )
@@ -15,6 +14,7 @@ const (
 	EventDaemonStarted = "daemon_started"
 	EventDaemonActive  = posthog.EventDaemonActive
 	EventAppOpened     = "app_opened"
+	EventScreenViewed  = "screen_viewed"
 	// HeartbeatJobName is the supervised job that sends daemon_started and daemon_active.
 	HeartbeatJobName = "telemetry:heartbeat"
 
@@ -67,6 +67,9 @@ func New(opts Options) *Reporter {
 		posthog.WithAllowedEvent(EventDaemonStarted),
 		posthog.WithAllowedEvent(EventDaemonActive),
 		posthog.WithAllowedEvent(EventAppOpened),
+		posthog.WithAllowedEvent(EventScreenViewed,
+			posthog.AllowProperty("screen", posthog.AllowStringValues(screenNames...)),
+			posthog.AllowProperty("surface", posthog.AllowStringValues("web", "tui"))),
 	)
 	if err != nil {
 		logger.Warn("telemetry disabled", "error", err)
@@ -74,9 +77,6 @@ func New(opts Options) *Reporter {
 	}
 	return reporter
 }
-
-// CaptureHandler serves the web app's usage-event posts through r.
-func CaptureHandler(r *Reporter) http.Handler { return posthog.NewCaptureHandler(r) }
 
 // RunHeartbeat sends daemon_started, then kit's daemon_active heartbeat until ctx ends.
 func RunHeartbeat(ctx context.Context, r posthog.Client, logger *slog.Logger) {
