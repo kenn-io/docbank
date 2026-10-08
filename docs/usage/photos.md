@@ -49,7 +49,8 @@ counts once. The Undated total includes photos without a readable capture date.
 Timeline counts each included photo asset under build limits, even in
 a vault with many ordinary documents. When the photos exceed those limits, it shows
 a limit message and offers Retry. Busy or occupied capacity asks you to retry
-after other work finishes. Counts builds leave Documents snapshots pageable.
+after other work finishes. You can keep paging through Documents while the
+timeline loads.
 
 Choose Months or Capture sessions to group the grid. A session joins captures
 with gaps of four hours or less. Compact, Comfortable, and Large change the
