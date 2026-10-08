@@ -66,8 +66,12 @@ func photoSetByID(ctx context.Context, q metadataQuerier, id string) (PhotoSet, 
 	return set, err
 }
 
-func photoSetSummary(ctx context.Context, q metadataQuerier, set PhotoSet, recipe string) (PhotoSetSummary, error) {
-	out := PhotoSetSummary{PhotoSet: set}
+func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set PhotoSet, recipe string) (PhotoSetSummary, error) {
+	visible, err := s.photoSetResponse(ctx, q, set)
+	if err != nil {
+		return PhotoSetSummary{}, err
+	}
+	out := PhotoSetSummary{PhotoSet: visible}
 	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m WHERE m.set_id=? AND EXISTS (SELECT 1 FROM photo_files f WHERE f.asset_id=m.asset_id)`, set.ID).Scan(&out.MemberCount); err != nil {
 		return out, err
 	}
@@ -95,7 +99,7 @@ func photoSetSummary(ctx context.Context, q metadataQuerier, set PhotoSet, recip
 			return out, err
 		}
 	}
-	err := q.QueryRowContext(ctx, coverSQL+` ORDER BY m.added_at DESC,m.asset_id ASC LIMIT 1`, set.ID, recipe).Scan(&id, &generation)
+	err = q.QueryRowContext(ctx, coverSQL+` ORDER BY m.added_at DESC,m.asset_id ASC LIMIT 1`, set.ID, recipe).Scan(&id, &generation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, nil
 	}
@@ -114,7 +118,7 @@ func (s *Store) PhotoSet(ctx context.Context, id, recipe string) (PhotoSetSummar
 		if err != nil {
 			return err
 		}
-		out, err = photoSetSummary(ctx, tx, set, recipe)
+		out, err = s.photoSetSummary(ctx, tx, set, recipe)
 		return err
 	})
 	return out, err
@@ -146,7 +150,7 @@ func (s *Store) ListPhotoSets(ctx context.Context, recipe string) ([]PhotoSetSum
 			return closeErr
 		}
 		for _, set := range sets {
-			summary, err := photoSetSummary(ctx, tx, set, recipe)
+			summary, err := s.photoSetSummary(ctx, tx, set, recipe)
 			if err != nil {
 				return err
 			}
@@ -200,6 +204,9 @@ func (s *Store) CreatePhotoSet(ctx context.Context, name string) (PhotoSet, erro
 		}
 		return writePhotoSetReceipts(ctx, tx, "set_create", PhotoSet{}, out, nil)
 	})
+	if err == nil {
+		err = s.photoReadTx(ctx, func(tx *sql.Tx) error { var e error; out, e = s.photoSetResponse(ctx, tx, out); return e })
+	}
 	return out, err
 }
 
@@ -259,6 +266,9 @@ func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, n
 		out, err = commitPhotoSet(ctx, tx, before, out, "set_update", nil)
 		return err
 	})
+	if err == nil {
+		err = s.photoReadTx(ctx, func(tx *sql.Tx) error { var e error; out, e = s.photoSetResponse(ctx, tx, out); return e })
+	}
 	return out, err
 }
 
@@ -283,6 +293,9 @@ func (s *Store) DeletePhotoSet(ctx context.Context, id string, revision int64) (
 		out, err = commitPhotoSet(ctx, tx, before, out, "set_delete", ids)
 		return err
 	})
+	if err == nil {
+		err = s.photoReadTx(ctx, func(tx *sql.Tx) error { var e error; out, e = s.photoSetResponse(ctx, tx, out); return e })
+	}
 	return out, err
 }
 
@@ -329,6 +342,9 @@ func (s *Store) DuplicatePhotoSet(ctx context.Context, id string, revision int64
 		}
 		return writePhotoSetReceipts(ctx, tx, "set_duplicate", PhotoSet{}, out, ids)
 	})
+	if err == nil {
+		err = s.photoReadTx(ctx, func(tx *sql.Tx) error { var e error; out, e = s.photoSetResponse(ctx, tx, out); return e })
+	}
 	return out, err
 }
 
@@ -421,6 +437,9 @@ func (s *Store) ChangePhotoSetMembers(ctx context.Context, id string, revision i
 		out, err = changePhotoSetMembersTx(ctx, tx, before, add, ids)
 		return err
 	})
+	if err == nil {
+		err = s.photoReadTx(ctx, func(tx *sql.Tx) error { var e error; out, e = s.photoSetResponse(ctx, tx, out); return e })
+	}
 	return out, err
 }
 
@@ -458,4 +477,22 @@ func changePhotoSetMembersTx(ctx context.Context, tx *sql.Tx, before PhotoSet, a
 		operation = "set_add"
 	}
 	return commitPhotoSet(ctx, tx, before, out, operation, changed)
+}
+
+func (s *Store) photoSetResponse(ctx context.Context, q metadataQuerier, set PhotoSet) (PhotoSet, error) {
+	if set.CoverAssetID == nil {
+		return set, nil
+	}
+	var hidden bool
+	if err := q.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=?`, *set.CoverAssetID).Scan(&hidden); err != nil {
+		return PhotoSet{}, err
+	}
+	if hidden {
+		if _, err := s.hiddenSession(ctx, q); errors.Is(err, ErrHiddenLocked) {
+			set.CoverAssetID = nil
+		} else if err != nil {
+			return PhotoSet{}, err
+		}
+	}
+	return set, nil
 }

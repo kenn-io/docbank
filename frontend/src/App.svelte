@@ -74,7 +74,7 @@
   import HiddenPhotos from "./HiddenPhotos.svelte";
   import { localPreferenceStorage } from "./browser-storage.js";
   import { getPhotoHiddenState } from "./generated/docbank.js";
-  import { Photos, photoPrivacyEvent } from "./photos.svelte.js";
+  import { Photos, photoPrivacyEvent, photoRevalidationErrorEvent } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { SelectionTarget } from "./selection.js";
@@ -190,39 +190,49 @@
 
   $effect(() => {
     if (!webSession) return;
-    const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
+    const state = { photos: new Photos(webSession, photoFailure), cache: new PhotoPreviewCache(webSession, photoFailure) };
     photoState = state;
-    let stamp: string | undefined;
-    const pollController = new AbortController();
-    let polling = false;
     const privacy = (event: Event) => {
       state.photos.clearForPrivacy(true);
       void state.cache.dispose();
-      state.cache = new PhotoPreviewCache(webSession, handleFailure);
+      state.cache = new PhotoPreviewCache(webSession, photoFailure);
       photoState = { ...state };
       photoPrivacyError = (event as CustomEvent<string>).detail ?? "";
     };
+    window.addEventListener(photoPrivacyEvent, privacy);
+    const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(photoPrivacyEvent) : undefined;
+    if (channel) channel.onmessage = () => window.dispatchEvent(new Event(photoPrivacyEvent));
+    return () => { window.removeEventListener(photoPrivacyEvent, privacy); channel?.close(); state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
+  });
+
+  let photoPrivacyStamp: string | undefined;
+  function photoFailure(cause: unknown) {
+    if (cause instanceof APIError && cause.status === 403) window.dispatchEvent(new Event(photoPrivacyEvent));
+    else handleFailure(cause);
+  }
+  $effect(() => {
+    if (!webSession || !photoMode) return;
+    const pollController = new AbortController();
+    let polling = false;
     const revalidate = async () => {
       if (polling || pollController.signal.aborted) return;
       polling = true;
       try {
         const hidden = await getPhotoHiddenState({ session: webSession, signal: AbortSignal.any([pollController.signal, AbortSignal.timeout(2000)]) });
         if (pollController.signal.aborted) return;
+        photoPrivacyError = "";
         const next = JSON.stringify([hidden.change_id, hidden.configured, hidden.expires_at]);
-        if ((stamp !== undefined && next !== stamp) || (stamp === undefined && hiddenMode)) window.dispatchEvent(new Event(photoPrivacyEvent));
-        stamp = next;
+        if (photoPrivacyStamp !== undefined && next !== photoPrivacyStamp) window.dispatchEvent(new Event(photoPrivacyEvent));
+        photoPrivacyStamp = next;
       } catch {
-        if (!pollController.signal.aborted) window.dispatchEvent(new Event(photoPrivacyEvent));
+        if (!pollController.signal.aborted) { photoPrivacyError = "Could not check Hidden access. Retry or wait for the next check."; window.dispatchEvent(new CustomEvent(photoRevalidationErrorEvent, { detail: photoPrivacyError })); }
       } finally { polling = false; }
     };
     void revalidate();
     const poll = setInterval(() => void revalidate(), 2000);
-    const foreground = () => { if (document.visibilityState === "visible") { window.dispatchEvent(new Event(photoPrivacyEvent)); void revalidate(); } };
+    const foreground = () => { if (document.visibilityState === "visible") void revalidate(); };
     document.addEventListener("visibilitychange", foreground);
-    window.addEventListener(photoPrivacyEvent, privacy);
-    const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(photoPrivacyEvent) : undefined;
-    if (channel) channel.onmessage = () => window.dispatchEvent(new Event(photoPrivacyEvent));
-    return () => { pollController.abort(); clearInterval(poll); document.removeEventListener("visibilitychange", foreground); window.removeEventListener(photoPrivacyEvent, privacy); channel?.close(); state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
+    return () => { pollController.abort(); clearInterval(poll); document.removeEventListener("visibilitychange", foreground); };
   });
 
   function switchWorkspace(photos: boolean, hidden = false) {

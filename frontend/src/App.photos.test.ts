@@ -13,10 +13,14 @@ it("retains photo state and previews across sidebar switches until lock", async 
   vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL() {} });
   const stored = storage();
   let serverChanged = false;
+  let pollFailed = false;
+  let previewDenied = false;
   const fetcher = vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden") && pollFailed) throw new Error("Temporary state failure");
     if (url.endsWith("/photos/hidden")) return new Response(JSON.stringify({ change_id: serverChanged ? "changed" : "initial", configured: true }));
     if (serverChanged && url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: [], total: 0 }));
     if (url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: [{ ...photo(1), previews: { ...photo(1).previews, grid: { state: "ready", generation_id: "synthetic" } } }], total: 1 }));
+    if (url.includes("/previews/") && previewDenied) { previewDenied = false; return new Response(JSON.stringify({ detail: "Hidden photos are locked" }), { status: 403 }); }
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
     if (url.includes("/nodes/1")) return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", revision: 1, path: "/" }));
     return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
@@ -43,6 +47,25 @@ it("retains photo state and previews across sidebar switches until lock", async 
   await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
   expect(listings()).toBe(1);
   expect(previews()).toBe(1);
+  const states = () => fetcher.mock.calls.filter(([url]) => url.endsWith("/photos/hidden")).length;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const beforeForeground = states();
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  await waitFor(() => expect(states()).toBe(beforeForeground + 1));
+  expect(listings()).toBe(1);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  pollFailed = true;
+  await fireEvent(document, new Event("visibilitychange"));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" })).not.toBeNull();
+  expect(stored.data.get(cacheName)?.size).toBe(1);
+  expect(listings()).toBe(1);
+  pollFailed = false;
+  previewDenied = true;
+  window.dispatchEvent(new Event("docbank-photo-privacy"));
+  await waitFor(() => expect(previews()).toBeGreaterThan(2));
+  expect(screen.getByRole("main", { name: "Photo library" })).not.toBeNull();
   serverChanged = true;
   await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull(), { timeout: 4500 });
   await waitFor(() => expect(stored.data.has(cacheName)).toBe(false));

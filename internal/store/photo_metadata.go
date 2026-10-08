@@ -293,9 +293,14 @@ func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
 		return append(append([]metadataRecordCodec(nil), photoMetadataTables...), photoHiddenMetadataTables...)
 	}
 	tables := append([]metadataRecordCodec(nil), photoMetadataTables...)
-	tables[0] = newMetadataTable(metadataTable[metadataPhotoAssetV29]{record: metadataPhotoAssetV29{Type: metadataPhotoAssetType}, table: "photo_assets", suffix: "ORDER BY asset_id", validate: func(v metadataPhotoAssetV29) error {
+	legacy := newMetadataTable(metadataTable[metadataPhotoAssetV29]{record: metadataPhotoAssetV29{Type: metadataPhotoAssetType}, table: "photo_assets", suffix: "ORDER BY asset_id", validate: func(v metadataPhotoAssetV29) error {
 		return validatePhotoAssetMetadataRecord(metadataPhotoAsset{Type: v.Type, AssetID: v.AssetID, Kind: v.Kind, Revision: v.Revision, ExcludedAt: v.ExcludedAt, DisplayFileID: v.DisplayFileID, DisplayOverrideFileID: v.DisplayOverrideFileID, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
 	}, checkExport: true})
+	for i, table := range tables {
+		if table.kind() == metadataPhotoAssetType {
+			tables[i] = legacy
+		}
+	}
 	return tables
 }
 
