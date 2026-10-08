@@ -58,6 +58,15 @@ func TestPhotoHiddenHTTPAndClient(t *testing.T) {
 		response, body = do(t, ts, request.method, request.path, map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(asset.Revision, 10))}, request.body)
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 	}
+	targetNode, err := s.CreateFile(ctx, s.RootID(), "target.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	target, err := s.PhotoAssetForNode(ctx, targetNode.ID)
+	require.NoError(t, err)
+	for _, path := range []string{"/api/v1/photos/assets", "/api/v1/photos/assets/" + target.ID + "/files"} {
+		response, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(target.Revision, 10))}, map[string]any{"node_id": node.ID})
+		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+		require.NotContains(t, body, asset.ID)
+	}
 	state, cookie, err := connection.PhotoHidden(ctx, "unlock", "correct", "")
 	require.NoError(t, err)
 	require.NotNil(t, state.ExpiresAt)

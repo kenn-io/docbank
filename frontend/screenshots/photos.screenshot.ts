@@ -65,10 +65,11 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await page.route(`**/api/v1/photos/assets/${id}/unhide`, route => route.fulfill({ status: 412, contentType: "application/problem+json", body: JSON.stringify({ detail: "Synthetic stale photo revision", code: "stale_revision" }) }), { times: 1 });
     await page.locator(`[data-asset="${id}"]`).getByRole("button", { name: /^Actions for / }).click();
     await page.getByRole("menuitem", { name: "Unhide", exact: true }).click();
-    await expect(page.getByRole("alert")).toHaveText("Synthetic stale photo revision");
+    await expect(page.getByRole("alert")).toHaveText("1 photo failed: Synthetic stale photo revision");
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     await page.waitForResponse(response => response.url().endsWith("/api/v1/photos/hidden") && response.request().method() === "GET");
-    await expect(page.getByRole("alert")).toHaveText("Synthetic stale photo revision");
+    await expect(page.getByRole("alert")).toHaveText("1 photo failed: Synthetic stale photo revision");
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     await page.screenshot({ path: path.join(output!, "web-hidden-unhide-failure-dark.png"), animations: "disabled" });
     await page.locator(`[data-asset="${id}"]`).getByRole("button", { name: /^Actions for / }).click();
     await page.getByRole("menuitem", { name: "Unhide", exact: true }).click();

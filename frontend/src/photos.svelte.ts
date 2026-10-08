@@ -85,13 +85,15 @@ export class Photos {
   async setHidden(id: string) {
     const members = this.selection.selectedIDs.has(id) ? this.items.filter(item => this.selection.selectedIDs.has(item.asset_id)) : this.items.filter(item => item.asset_id === id);
     let failure = "";
+    let failures = 0;
     for (const member of members) {
       try {
         await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(member.asset_id, { "If-Match": JSON.stringify(String(member.revision)) }, { session: this.session });
         this.items = this.items.filter(item => item.asset_id !== member.asset_id);
         this.selection = reconcileIDSelection(this.selection, new Set(this.items.map(item => item.asset_id)));
-      } catch (cause) { failure = cause instanceof Error ? cause.message : String(cause); }
+      } catch (cause) { failures++; failure = cause instanceof Error ? cause.message : String(cause); }
     }
+    if (failures) failure = `${failures} photo${failures === 1 ? "" : "s"} failed: ${failure}`;
     notifyPhotoPrivacy(failure);
     this.error = failure;
   }
