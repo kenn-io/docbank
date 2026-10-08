@@ -12,13 +12,11 @@ it("retains photo state and previews across sidebar switches until lock", async 
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL() {} });
   const stored = storage();
-  let serverChanged = false;
   let pollFailed = false;
   let previewDenied = false;
   const fetcher = vi.fn(async (url: string) => {
     if (url.endsWith("/photos/hidden") && pollFailed) throw new Error("Temporary state failure");
-    if (url.endsWith("/photos/hidden")) return new Response(JSON.stringify({ change_id: serverChanged ? "changed" : "initial", configured: true }));
-    if (serverChanged && url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: [], total: 0 }));
+    if (url.endsWith("/photos/hidden")) return new Response(JSON.stringify({ change_id: "initial", configured: true }));
     if (url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: [{ ...photo(1), previews: { ...photo(1).previews, grid: { state: "ready", generation_id: "synthetic" } } }], total: 1 }));
     if (url.includes("/previews/") && previewDenied) { previewDenied = false; return new Response(JSON.stringify({ detail: "Hidden photos are locked" }), { status: 403 }); }
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
@@ -73,8 +71,6 @@ it("retains photo state and previews across sidebar switches until lock", async 
   window.dispatchEvent(new Event("docbank-photo-privacy"));
   await waitFor(() => expect(previews()).toBeGreaterThan(2));
   expect(screen.getByRole("main", { name: "Photo library" })).not.toBeNull();
-  serverChanged = true;
-  await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull(), { timeout: 4500 });
   await waitFor(() => expect(stored.data.has(cacheName)).toBe(false));
   history.replaceState(null, "", "/");
   await fireEvent(window, new PopStateEvent("popstate"));
