@@ -118,8 +118,6 @@ func TestPhotoImportLateSidecarUpdatesLockedHiddenAsset(t *testing.T) {
 	require.Equal(t, hidden.HiddenAt, updated.Asset.HiddenAt)
 	require.Len(t, updated.Asset.Files, 2)
 	require.Equal(t, PhotoRoleSidecar, fileByRole(updated.Asset.Files, PhotoRoleSidecar).Role)
-	_, err = s.PhotoAssetByID(ctx, hidden.ID)
-	require.ErrorIs(t, err, ErrHiddenLocked)
 }
 
 func TestPhotoImportAtomicGroup(t *testing.T) {

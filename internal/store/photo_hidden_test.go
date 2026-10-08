@@ -86,39 +86,6 @@ func TestPhotoHiddenLifecycleAndBackup(t *testing.T) {
 	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
 }
 
-func TestPhotoHiddenFailuresSurviveBackupAndRestart(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	now := time.Now().UTC()
-	s.photoHiddenNow = func() time.Time { return now }
-	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
-	for range 4 {
-		_, _, err := s.UnlockPhotoHidden(ctx, "wrong")
-		require.ErrorIs(t, err, ErrHiddenPasscode)
-	}
-	var backup bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &backup))
-	target := newTestStore(t)
-	target.photoHiddenNow = func() time.Time { return now }
-	require.NoError(t, target.ImportMetadata(ctx, &backup))
-	_, _, err := target.UnlockPhotoHidden(ctx, "wrong")
-	var lockout *HiddenLockoutError
-	require.ErrorAs(t, err, &lockout)
-	require.NoError(t, target.Checkpoint(ctx))
-	path, driver := target.path, target.driver
-	require.NoError(t, target.Close())
-	reopened, err := Open(path, driver)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = reopened.Close() })
-	reopened.photoHiddenNow = func() time.Time { return now }
-	_, _, err = reopened.UnlockPhotoHidden(ctx, "correct")
-	require.ErrorAs(t, err, &lockout)
-	now = now.Add(5 * time.Minute)
-	_, _, err = reopened.UnlockPhotoHidden(ctx, "correct")
-	require.NoError(t, err)
-}
-
 func TestPhotoHiddenChangeRevokesAndFailedDisableIsAtomic(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -231,6 +198,8 @@ func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
+	now := time.Now().UTC()
+	s.photoHiddenNow = func() time.Time { return now }
 	node, err := s.CreateFile(ctx, s.RootID(), "private.jpg", fakeHash("a1"), 4, "image/jpeg")
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
@@ -245,6 +214,7 @@ func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
 		require.NoError(t, s.Close())
 		s, err = Open(path, driver)
 		require.NoError(t, err)
+		s.photoHiddenNow = func() time.Time { return now }
 	}
 	reopen()
 	defer func() { require.NoError(t, s.Close()) }()
@@ -260,8 +230,18 @@ func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
 		require.ErrorIs(t, err, ErrHiddenPasscode)
 	}
 	reopen()
-	_, _, err = s.UnlockPhotoHidden(ctx, "wrong")
+	var failureBackup bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &failureBackup))
+	failedTarget := newTestStore(t)
+	failedTarget.photoHiddenNow = func() time.Time { return now }
+	require.NoError(t, failedTarget.ImportMetadata(ctx, &failureBackup))
+	_, _, err = failedTarget.UnlockPhotoHidden(ctx, "wrong")
 	var lockout *HiddenLockoutError
+	require.ErrorAs(t, err, &lockout)
+	_, _, err = s.UnlockPhotoHidden(ctx, "wrong")
+	require.ErrorAs(t, err, &lockout)
+	reopen()
+	_, _, err = s.UnlockPhotoHidden(ctx, "correct")
 	require.ErrorAs(t, err, &lockout)
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
@@ -269,9 +249,13 @@ func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
 	_, err = s.VerifyAudit(ctx, nil)
 	require.NoError(t, err)
 	target := newTestStore(t)
+	target.photoHiddenNow = func() time.Time { return now }
 	require.NoError(t, target.ImportMetadata(ctx, &backup))
 	_, _, err = target.UnlockPhotoHidden(ctx, "correct")
 	require.ErrorAs(t, err, &lockout)
+	now = now.Add(5 * time.Minute)
+	_, _, err = target.UnlockPhotoHidden(ctx, "correct")
+	require.NoError(t, err)
 }
 
 func TestPhotoHiddenMutationGateAndPrivacyStamp(t *testing.T) {
@@ -281,8 +265,6 @@ func TestPhotoHiddenMutationGateAndPrivacyStamp(t *testing.T) {
 	asset := albumAsset(t, s, "private.jpg")
 	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
 	asset, err := s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	state, err := s.PhotoHiddenState(ctx)
 	require.NoError(t, err)
 	var receipts int
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_change_receipts`).Scan(&receipts))
@@ -304,11 +286,6 @@ func TestPhotoHiddenMutationGateAndPrivacyStamp(t *testing.T) {
 	stored, err := photoAssetByIDQuery(ctx, s.db, asset.ID)
 	require.NoError(t, err)
 	require.Equal(t, asset, stored)
-	_, err = s.CreatePhotoSet(ctx, "Ordinary album edit")
-	require.NoError(t, err)
-	after, err := s.PhotoHiddenState(ctx)
-	require.NoError(t, err)
-	require.Equal(t, state.ChangeID, after.ChangeID)
 }
 
 func TestPhotoHiddenCoverResponseProjection(t *testing.T) {

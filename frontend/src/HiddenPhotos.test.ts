@@ -51,42 +51,29 @@ it("preserves an unlocked selection when polling observes the same state", async
   expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
 });
 
-it.each([false, true])("Retry clears a resolved read error when unlocked=%s", async unlocked => {
+it.each([false, true])("Retry clears a resolved read error and preserves action errors when unlocked=%s", async unlocked => {
   prepare();
-  let failing = true;
+  let failing = unlocked;
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/unlock")) return problem(403, "Wrong passcode");
     if (url.endsWith("/photos/hidden")) return failing ? problem(503, "Temporary read failure") : new Response(JSON.stringify(state(unlocked)));
     return new Response(JSON.stringify({ items: [], total: 0 }));
   }));
   render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
-  await screen.findByRole("alert");
-  failing = false;
-  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-  if (unlocked) await screen.findByRole("main", { name: "Photo library" });
-  else await screen.findByRole("button", { name: "Unlock" });
-});
-
-it("successful recovery preserves a failed passcode action", async () => {
-  prepare();
-  let failing = false;
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    if (url.endsWith("/unlock")) return problem(403, "Wrong passcode");
-    if (url.endsWith("/photos/hidden")) return failing ? problem(503, "Temporary read failure") : new Response(JSON.stringify(state(false)));
-    return new Response("{}");
-  }));
-  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
-  await waitFor(() => expect((screen.getByLabelText("Passcode", { exact: true }) as HTMLInputElement).disabled).toBe(false));
-  await fireEvent.input(screen.getByLabelText("Passcode", { exact: true }), { target: { value: "wrong" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
-  await screen.findByText("Wrong passcode");
-  failing = true;
-  window.dispatchEvent(new Event(photoPrivacyEvent));
+  if (!unlocked) {
+    await waitFor(() => expect((screen.getByLabelText("Passcode", { exact: true }) as HTMLInputElement).disabled).toBe(false));
+    await fireEvent.input(screen.getByLabelText("Passcode", { exact: true }), { target: { value: "wrong" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+    await screen.findByText("Wrong passcode");
+    failing = true;
+    window.dispatchEvent(new Event(photoPrivacyEvent));
+  }
   await screen.findByText("Temporary read failure");
   failing = false;
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await waitFor(() => expect(screen.queryByText("Temporary read failure")).toBeNull());
-  expect(screen.getByText("Wrong passcode")).not.toBeNull();
+  if (unlocked) await screen.findByRole("main", { name: "Photo library" });
+  else expect(screen.getByText("Wrong passcode")).not.toBeNull();
 });
 
 it.each(["read", "action"])("routes Hidden %s HTTP 401 to the session owner", async source => {

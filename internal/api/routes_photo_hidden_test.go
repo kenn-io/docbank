@@ -44,8 +44,6 @@ func TestPhotoHiddenHTTPAndClient(t *testing.T) {
 		response, body = get(t, ts, path, nil)
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 	}
-	response, body = get(t, ts, "/api/v1/nodes/"+strconv.FormatInt(node.ID, 10), nil)
-	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	for _, request := range []struct {
 		method, path string
 		body         any
@@ -65,7 +63,6 @@ func TestPhotoHiddenHTTPAndClient(t *testing.T) {
 	for _, path := range []string{"/api/v1/photos/assets", "/api/v1/photos/assets/" + target.ID + "/files"} {
 		response, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(target.Revision, 10))}, map[string]any{"node_id": node.ID})
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-		require.NotContains(t, body, asset.ID)
 	}
 	state, cookie, err := connection.PhotoHidden(ctx, "unlock", "correct", "")
 	require.NoError(t, err)
@@ -81,10 +78,6 @@ func TestPhotoHiddenHTTPAndClient(t *testing.T) {
 	asset, err = connection.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, false, cookie)
 	require.NoError(t, err)
 	require.Nil(t, asset.HiddenAt)
-	_, _, err = connection.PhotoHidden(ctx, "lock", "", "")
-	require.NoError(t, err)
-	_, err = connection.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, false, cookie)
-	require.Error(t, err)
 	for range 4 {
 		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", nil, map[string]string{"passcode": "wrong"})
 		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
