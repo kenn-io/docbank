@@ -91,8 +91,9 @@ function captureClock(value: string): number {
 }
 
 export function groupPhotos(items: PhotoBrowseRow[], grouping: "months" | "sessions"): PhotoGroup[] {
-  const undated = items.filter(item => !item.capture_time || !Number.isFinite(captureClock(item.capture_time)));
-  const dated = items.filter(item => item.capture_time && Number.isFinite(captureClock(item.capture_time)));
+  const clocks = new Map(items.map(item => [item, item.capture_time ? captureClock(item.capture_time) : NaN]));
+  const undated = items.filter(item => !Number.isFinite(clocks.get(item)));
+  const dated = items.filter(item => Number.isFinite(clocks.get(item)));
   const groups: PhotoGroup[] = [];
   if (grouping === "months") {
     const byMonth = new Map<string, PhotoGroup>();
@@ -108,10 +109,10 @@ export function groupPhotos(items: PhotoBrowseRow[], grouping: "months" | "sessi
     }
     groups.sort((a, b) => b.key.localeCompare(a.key));
   } else {
-    const sorted = [...dated].sort((a, b) => captureClock(a.capture_time!) - captureClock(b.capture_time!));
+    const sorted = [...dated].sort((a, b) => clocks.get(a)! - clocks.get(b)!);
     let previous = -Infinity;
     for (const item of sorted) {
-      const clock = captureClock(item.capture_time!);
+      const clock = clocks.get(item)!;
       if (clock - previous > 4 * 3600 * 1000) {
         groups.push({ key: item.asset_id, label: `${item.capture_time!.slice(0, 10)} · Capture session`, year: item.capture_time!.slice(0, 4), items: [] });
       }
@@ -120,6 +121,7 @@ export function groupPhotos(items: PhotoBrowseRow[], grouping: "months" | "sessi
       group.items.push(item);
       previous = clock;
     }
+    for (const group of groups) group.items.reverse();
     groups.reverse();
   }
   if (undated.length) groups.push({ key: "undated", label: "Undated", year: "", items: undated });

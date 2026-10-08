@@ -95,7 +95,7 @@ export class Photos {
     this.controller.abort();
     this.controller = new AbortController();
     const controller = this.controller;
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
+    let signal = controller.signal;
     this.replacement = mode;
     this.loading = true;
     this.error = "";
@@ -107,6 +107,7 @@ export class Photos {
     let reachedPrefix = !count;
     try {
       do {
+        signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
         const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
         if (signal.aborted) throw signal.reason;
         const reachedPreviously = reachedPrefix;

@@ -185,3 +185,20 @@ it("remembers density with safe defaults for unknown or unavailable storage", ()
   expect(photos.density).toBe("large");
   photos.dispose();
 });
+
+it("times each replacement page separately", async () => {
+  const timers: AbortController[] = [];
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(() => { const timer = new AbortController(); timers.push(timer); return timer.signal; });
+  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1)], "second")).mockResolvedValueOnce(response([photo(2)], "third"))
+    .mockResolvedValueOnce(response([photo(1)], "refresh-second"))
+    .mockImplementationOnce(async () => { timers[0].abort(new DOMException("Timed out", "TimeoutError")); return response([photo(2)], "third"); });
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadMore();
+  await photos.loadMore();
+  await photos.refresh();
+  expect(timers).toHaveLength(2);
+  expect(photos.error).toBe("");
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-2"]);
+  photos.dispose();
+});

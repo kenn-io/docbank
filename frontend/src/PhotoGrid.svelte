@@ -5,9 +5,10 @@
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoMonthChunk from "./PhotoMonthChunk.svelte";
 
-  let { groups, targetRowHeight, cache, selectedIDs, onselect, oncheck, onloadmore, scrollTop = $bindable(0) }: {
+  let { groups, targetRowHeight, loading, cache, selectedIDs, onselect, oncheck, onloadmore, scrollTop = $bindable(0) }: {
     groups: PhotoGroup[];
     targetRowHeight: number;
+    loading: boolean;
     cache: PhotoPreviewCache;
     selectedIDs: ReadonlySet<string>;
     onselect: (id: string, event: MouseEvent) => void;
@@ -58,7 +59,7 @@
     return () => { current = false; resize.disconnect(); };
   });
   $effect(() => {
-    if (initialized && totalHeight < scrollTop + viewport + 800) untrack(onloadmore);
+    if (initialized && !loading && totalHeight < scrollTop + viewport + 800) untrack(onloadmore);
   });
 
   function jump(year: string) {

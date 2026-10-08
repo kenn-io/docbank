@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import PhotoCell from "./PhotoCell.svelte";
 import { photo } from "./photo-test-fixtures.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -26,4 +26,17 @@ it("revokes mounted URLs and ignores previews that complete after unmount", asyn
   finish(new Blob(["late-jpeg"]));
   await new Promise(resolve => setTimeout(resolve, 0));
   expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+});
+
+it("reloads a preview from the network after the image fails to decode", async () => {
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:synthetic") });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+  const item = photo(1);
+  item.previews.grid = { state: "ready", generation_id: "generation" };
+  const get = vi.fn(async (_id: string, _generation: string, _signal: AbortSignal, _reload: boolean) => new Blob(["synthetic-jpeg"]));
+  render(PhotoCell, { photo: item, cache: { get } as unknown as PhotoPreviewCache, selected: false, onclick: vi.fn(), oncheck: vi.fn() });
+  await fireEvent.error(await screen.findByRole("img"));
+  await fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
+  await screen.findByRole("img");
+  expect(get.mock.calls.map(call => call[3])).toEqual([false, true]);
 });

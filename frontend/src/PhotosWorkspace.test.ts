@@ -28,6 +28,7 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   await screen.findByRole("button", { name: "Select Photo 3.jpg" });
   expect(screen.getByRole("navigation", { name: "Photo years" }).querySelectorAll("button")).toHaveLength(2);
+  await waitFor(() => expect(photos.loading).toBe(false));
   fetcher.mockImplementationOnce(() => new Promise(() => {}));
   photos.cursor = "manual-page";
   await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
@@ -90,7 +91,7 @@ it("shows both years of a New Year session and jumps to the newest containing gr
   const newerGroup = scroll.querySelector<HTMLElement>('[data-month="photo-1"]')!;
   const session = scroll.querySelector<HTMLElement>('[data-month="photo-2"]')!;
   expect(session.getAttribute("aria-label")).toBe("2024-12-31 · Capture session");
-  expect([...session.querySelectorAll("[data-asset]")].map(cell => cell.getAttribute("data-asset"))).toEqual(["photo-3", "photo-2"]);
+  expect([...session.querySelectorAll("[data-asset]")].map(cell => cell.getAttribute("data-asset"))).toEqual(["photo-2", "photo-3"]);
   await fireEvent.click(screen.getByRole("button", { name: "2024" }));
   expect(scrollTo).toHaveBeenLastCalledWith({ top: Math.ceil(Number.parseFloat(newerGroup.style.height)) });
   await fireEvent.click(screen.getByRole("button", { name: "2025" }));
@@ -135,6 +136,41 @@ it("clears selection with Escape from focused photo controls while honoring shor
   expect(screen.getByText("1 selected photo")).toBeTruthy();
   await fireEvent.keyDown(document.activeElement!, { key: "Escape" });
   expect(screen.queryByText("1 selected photo")).toBeNull();
+  photos.dispose();
+  await cache.dispose();
+});
+
+it("keeps loading pages that add no rows and keeps the top photo across density changes", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const cell = this.closest<HTMLElement>(".cell");
+    const scroll = this.closest<HTMLElement>(".photo-scroll");
+    return cell && scroll ? new DOMRect(0, Number.parseFloat(cell.style.top) + 56 - scroll.scrollTop, Number.parseFloat(cell.style.width), Number.parseFloat(cell.style.height)) : new DOMRect(0, 0, 1000, 400);
+  });
+  const items = Array.from({ length: 60 }, (_, index) => photo(index + 1));
+  const page = (rows: typeof items, cursor?: string) => new Response(JSON.stringify({ items: rows, total: 60, next_cursor: cursor }));
+  const fetcher = vi.fn().mockResolvedValueOnce(page(items.slice(0, 2), "repeat")).mockResolvedValueOnce(page(items.slice(0, 2), "rest"))
+    .mockResolvedValueOnce(page(items.slice(2)));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  await screen.findByText("60 photos · 60 loaded");
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  await waitFor(() => expect(photos.loading).toBe(false));
+  const scroll = screen.getByTestId("photo-scroll");
+  scroll.scrollTop = 1000;
+  await fireEvent.scroll(scroll);
+  const anchor = [...scroll.querySelectorAll<HTMLElement>("[data-asset]")].find(cell => cell.getBoundingClientRect().bottom > 56)!;
+  const offset = anchor.getBoundingClientRect().top;
+  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  await fireEvent.click(screen.getByRole("combobox", { name: "Grid density: Comfortable" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Compact" }));
+  await waitFor(() => expect(scroll.scrollTop).not.toBe(1000));
+  const moved = scroll.querySelector<HTMLElement>(`[data-asset="${anchor.dataset.asset}"]`)!;
+  expect(moved.getBoundingClientRect().top).toBeCloseTo(offset);
   photos.dispose();
   await cache.dispose();
 });

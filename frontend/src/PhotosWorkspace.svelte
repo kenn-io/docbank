@@ -21,6 +21,11 @@
     void photos.resume(preserve);
     return () => photos.cancelPending();
   });
+  function relayout(change: () => void) {
+    const restore = preserve();
+    change();
+    void restore?.();
+  }
   function escape(event: KeyboardEvent) {
     if (event.key === "Escape" && !isAppShortcutSuppressed(event, false, document, ".photo-cell")) photos.clearSelection();
   }
@@ -32,8 +37,8 @@
     <div class="library-title"><h1>Library</h1><span>{photos.total.toLocaleString()} photos · {photos.items.length.toLocaleString()} loaded</span></div>
     <div class="toolbar-actions">
       <div class="photo-options">
-        <SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => photos.grouping = value as "months" | "sessions"} />
-        <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => photos.setDensity(value as Density)} />
+        <SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => relayout(() => photos.grouping = value as "months" | "sessions")} />
+        <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => relayout(() => photos.setDensity(value as Density))} />
       </div>
       <Button size="sm" disabled={photos.loading} onclick={() => void photos.refresh(preserve)}>Refresh previews</Button>
     </div>
@@ -42,7 +47,7 @@
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
   {/if}
   {#if photos.items.length}
-    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} />
+    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} />
   {:else if !photos.loading && !photos.error}
     <EmptyState title="Your photo library is empty" description="Import photos with docbank photos import to browse them here.">
       {#snippet icon()}<ImageIcon size="24" />{/snippet}

@@ -25,7 +25,7 @@
     const controller = new AbortController();
     let current = true;
     let objectURL = "";
-    void cache.get(photo.asset_id, slot.generation_id, controller.signal).then(blob => {
+    void cache.get(photo.asset_id, slot.generation_id, controller.signal, retry > 0).then(blob => {
       if (current) { objectURL = URL.createObjectURL(blob); url = objectURL; }
     }).catch(cause => { if (current) { failed = true; errorMessage = cause instanceof Error ? cause.message : String(cause); } });
     return () => { current = false; controller.abort(); if (objectURL) URL.revokeObjectURL(objectURL); };

@@ -132,3 +132,60 @@ it("deletes its cache when disposal races opening and rejects the late request",
   await writeRejected;
   expect(stored.data.size).toBe(0);
 });
+
+it("sends at most six network reads and times each read from when it is sent", async () => {
+  storage();
+  const finishers: ((response: Response) => void)[] = [];
+  const fetcher = vi.fn((_url: string | URL | Request, _init: RequestInit) => new Promise<Response>(resolve => finishers.push(resolve)));
+  vi.stubGlobal("fetch", fetcher);
+  const timeout = vi.spyOn(AbortSignal, "timeout");
+  const cache = workspace();
+  const reads = Array.from({ length: 6 }, (_, index) => cache.get("asset", `generation-${index}`));
+  const caller = new AbortController();
+  const canceled = cache.get("asset", "canceled", caller.signal);
+  const queued = cache.get("asset", "queued");
+  await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(6));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(fetcher).toHaveBeenCalledTimes(6);
+  expect(timeout).toHaveBeenCalledTimes(6);
+  caller.abort();
+  await expect(canceled).rejects.toThrow();
+  finishers[0](new Response("first"));
+  await reads[0];
+  await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(7));
+  expect(String(fetcher.mock.calls[6][0])).toContain("queued");
+  expect(timeout).toHaveBeenCalledTimes(7);
+  for (const finish of finishers.slice(1)) finish(new Response("later"));
+  expect(await (await queued).text()).toBe("later");
+  await Promise.all(reads);
+});
+
+it("reloads cached bytes from the network on request", async () => {
+  storage();
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response("undecodable")).mockResolvedValueOnce(new Response("repaired")));
+  const cache = workspace();
+  await cache.get("asset", "generation");
+  expect(await (await cache.get("asset", "generation", undefined, true)).text()).toBe("repaired");
+  expect(await (await cache.get("asset", "generation")).text()).toBe("repaired");
+});
+
+it("removes caches left by closed pages and releases its lock after disposal", async () => {
+  const stored = storage();
+  for (const name of ["docbank-photo-previews-closed", "docbank-photo-previews-open", "unrelated"]) stored.data.set(name, new Map());
+  const request = vi.fn((_name: string, callback: () => Promise<void>) => callback());
+  const query = vi.fn(async () => ({ held: [{ name: "docbank-photo-previews-open" }], pending: [] }));
+  Object.defineProperty(navigator, "locks", { configurable: true, value: { request, query } });
+  try {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const cache = workspace();
+    await vi.waitFor(() => expect([...stored.data.keys()]).toEqual(["docbank-photo-previews-open", "unrelated"]));
+    let released = false;
+    void request.mock.results[0].value.then(() => released = true);
+    stored.remove.mockRejectedValueOnce(new Error("Storage broken"));
+    await cache.dispose();
+    await vi.waitFor(() => expect(released).toBe(true));
+    expect(warn).toHaveBeenCalledWith("Could not delete photo preview cache", expect.any(Error));
+  } finally {
+    Reflect.deleteProperty(navigator, "locks");
+  }
+});

@@ -14,7 +14,7 @@ export function storage() {
     };
   });
   const remove = vi.fn(async (name: string) => data.delete(name));
-  vi.stubGlobal("caches", { open, delete: remove });
+  vi.stubGlobal("caches", { open, delete: remove, keys: vi.fn(async () => [...data.keys()]) });
   return { data, open, remove };
 }
 
