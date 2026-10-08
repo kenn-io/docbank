@@ -73,7 +73,7 @@ body .app-shell .kit-button--sm {
 
 .photo-toggle {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  font-family: inherit; font-size: var(--font-size-sm); font-weight: var(--font-weight-medium);
+  font-family: inherit; font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); line-height: normal;
   border: var(--border-width) solid var(--border-default); border-radius: var(--kit-control-radius, var(--radius-md));
   background: var(--bg-surface); color: var(--text-primary); cursor: pointer; white-space: nowrap;
 }
