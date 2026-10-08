@@ -97,10 +97,40 @@ docbank photos settings set image [--revision REV]
 docbank photos settings reset [--revision REV]
 ```
 
-All commands emit bounded JSON. Exit code 4 means the revision is stale: the
+Asset and settings commands emit bounded JSON. Exit code 4 means the revision is stale: the
 `--revision` you passed no longer matched, or the one automatic retry lost to
 another write. Read the asset or settings again before retrying. The daemon
 performs role, ownership, sidecar, display, and audit checks.
+
+## Albums
+
+Albums group photo assets without moving their files. Create an album, add selected asset UUIDs or a complete query result, then browse its members:
+
+```text
+docbank photos albums create "Holiday"
+docbank photos albums list
+docbank photos albums show <album-id>
+docbank photos albums add <album-id> <asset-id> ...
+docbank photos albums add <album-id> --query "{\"filters\":{\"kinds\":[\"photo\"]}}"
+docbank photos albums members <album-id> --sort added_time --direction desc
+```
+
+`members` accepts `added_time`, `import_time`, or `capture_time`, plus `--page-size` and `--cursor`. Capture dates with missing evidence come last. Ties use ascending asset UUID. The cursor binds the album ID as well as the query and page options.
+
+```text
+docbank photos albums rename <album-id> "Trip"
+docbank photos albums star <album-id> [--starred=false]
+docbank photos albums cover <album-id> [asset-id]
+docbank photos albums duplicate <album-id> "Trip copy"
+docbank photos albums remove <album-id> <asset-id> ...
+docbank photos albums delete <album-id>
+```
+
+Existing-album writes accept `--revision` with the same automatic read and retry as asset writes. Repeating an unchanged decision preserves the revision. Deleting an album keeps every photo and file. Duplication preserves added dates and member order. Removing the chosen cover clears the override. A ready grid preview of the chosen member wins; otherwise the newest added included member with a ready grid preview supplies the cover.
+
+`add` and `remove` accept up to 1,000 explicit IDs or `--query` with strict QueryV1 JSON. A query selects its complete current photo result inside the membership transaction, including display metadata and duplicate collapse. Query scopes have no total member cap. Their sort field, including `added_time`, does not change the selected IDs. A query selects only visible photos, so `remove --query` keeps excluded, trashed, and empty members; remove those by asset ID or delete the album. Coverage-dependent queries accept `--coverage` and `--profile-fingerprint`. Each changed action advances the album revision once and records all changed IDs in bounded receipts. An invalid ID, query, coverage, or stale revision rolls back the complete action.
+
+Exclusion, ordinary trash, detach, and permanent file deletion keep album membership and its added date. `member_count` counts members with at least one file. Empty members disappear from counts, browsing, and the effective cover until a file is attached again. These file changes preserve the album revision and chosen cover. Included counts and member browsing also omit excluded and trashed photos until they become visible again. Album names can repeat. Use `set:` followed by an album UUID, or typed `filters.set_ids`, to filter by membership. Values within `set_ids` combine with OR.
 
 ## Import a camera folder
 
@@ -178,7 +208,7 @@ supported metadata streams restore an empty photo authority.
 Email children are identified by `email_document_relations.child_version_id`.
 An image produced by processing remains eligible when it is not an email
 child. Existing graphs survive ordinary trash and restore. Permanent node
-deletion removes memberships and repairs the affected asset while preserving
+deletion removes file memberships and repairs the affected asset while preserving
 an empty asset identity.
 
 Automatic enrollment and explicit graph writes are skipped or refused when
@@ -199,8 +229,8 @@ the previous page boundary.
 
 Use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`,
 `iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`,
-`capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, or `asset:` followed by a
-canonical UUIDv4. Existing `collection:`, tag, and text predicates combine
+`capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, or `asset:` or `set:`
+followed by a canonical asset or album UUIDv4. Existing `collection:`, tag, and text predicates combine
 with these fields. Camera and lens match the complete make or model, ignoring
 case using Unicode case folding. Values in one typed filter array combine with
 OR. Separate filters combine with AND.
@@ -226,13 +256,13 @@ using each document's own metadata. Excluded, trashed, and displayless assets
 stay out.
 
 Sort by `capture_time`, `import_time`, `name`, `modified_at`, `size`, or
-`media_type`, with `asc` or `desc`. Capture sorting converts recorded offsets
+`media_type`, with `asc` or `desc`. Set `filters.set_ids` to album UUIDs to browse their members. `added_time` requires exactly one album ID after normalization. Capture sorting converts recorded offsets
 to UTC. Omitted zones use civil calendar coordinates. Missing or unreadable
 capture times sort last in both directions and do not match capture-date
 filters. Asset UUID orders equal keys. Names and media types compare only their
 first 1,024 characters, so longer values that share that prefix also fall back
 to UUID order. `path` and `relevance` are unsupported by this route. Document
-snapshots reject `capture_time` and `import_time` with an error naming Photos
+snapshots reject `capture_time`, `import_time`, and `added_time` with an error naming Photos
 as the supported view.
 
 Each row has grid, fit, and large preview slots. `missing` means no result is

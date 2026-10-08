@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
@@ -92,6 +93,13 @@ func (s *Store) ListPhotoAssets(
 		}
 		sortField := compiled.Query.Sort.Field
 		from, sortKey, ok := photoBrowseOrder(sortField)
+		if sortField == "added_time" {
+			if len(compiled.Query.Filters.SetIDs) != 1 {
+				return fmt.Errorf("%w: added_time requires exactly one filters.set_ids album", ErrInvalidPhotoQuery)
+			}
+			from = `photo_set_members sm CROSS JOIN photo_assets a ON a.asset_id=sm.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`)
+			sortKey, ok = "sm.added_at", true
+		}
 		if !ok {
 			return fmt.Errorf("%w: unsupported sort", ErrInvalidPhotoQuery)
 		}
@@ -157,8 +165,15 @@ func (s *Store) ListPhotoAssets(
 			order := key + ` ` + primary + `,a.asset_id ASC`
 			where := key + `>''`
 			args := append([]any(nil), match.args...)
+			if sortField == "added_time" {
+				where = `sm.set_id=? AND ` + where
+				args = append(args, compiled.Query.Filters.SetIDs[0])
+			}
 			if missing {
 				pageFrom = photoBrowseDisplayFrom
+				if sortField == "added_time" {
+					continue
+				}
 				key = photoBrowseMissingKey(sortField)
 				where = key + `=''`
 				order = `a.asset_id ASC`

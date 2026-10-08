@@ -6683,6 +6683,10 @@ components:
           items:
             type: string
           type: array
+        set_ids:
+          items:
+            type: string
+          type: array
         size_max:
           format: int64
           type:
@@ -11030,6 +11034,191 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoAlbum:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoAlbum.json
+          format: uri
+          readOnly: true
+          type: string
+        cover_asset_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+        created_at:
+          format: date-time
+          type: string
+        deleted_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        id:
+          format: uuid
+          type: string
+        name:
+          maxLength: 256
+          type: string
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        starred:
+          type: boolean
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - name
+        - starred
+        - revision
+        - created_at
+        - updated_at
+      type: object
+      x-go-type: api.PhotoAlbum
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoAlbumCoverRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoAlbumCoverRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        asset_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+      type: object
+      x-go-type: api.PhotoAlbumCoverRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoAlbumMembersRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoAlbumMembersRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        asset_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 1000
+          type: array
+        coverage:
+          $ref: "#/components/schemas/WorkspaceQueryCoverage"
+        query:
+          $ref: "#/components/schemas/SavedQueryV1Schema"
+      type: object
+      x-go-type: api.PhotoAlbumMembersRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoAlbumNameRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoAlbumNameRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        name:
+          maxLength: 256
+          minLength: 1
+          type: string
+      required:
+        - name
+      type: object
+      x-go-type: api.PhotoAlbumNameRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoAlbumSummary:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoAlbumSummary.json
+          format: uri
+          readOnly: true
+          type: string
+        cover_asset_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+        cover_generation_id:
+          type:
+            - string
+            - "null"
+        created_at:
+          format: date-time
+          type: string
+        deleted_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        effective_cover_asset_id:
+          format: uuid
+          type:
+            - string
+            - "null"
+        id:
+          format: uuid
+          type: string
+        included_count:
+          format: int64
+          minimum: 0
+          type: integer
+        member_count:
+          format: int64
+          minimum: 0
+          type: integer
+        name:
+          maxLength: 256
+          type: string
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        starred:
+          type: boolean
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - member_count
+        - included_count
+        - id
+        - name
+        - starred
+        - revision
+        - created_at
+        - updated_at
+      type: object
+      x-go-type: api.PhotoAlbumSummary
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PhotoAsset:
       additionalProperties: false
       properties:
@@ -13816,6 +14005,12 @@ components:
             type: string
           maxItems: 64
           type: array
+        set_ids:
+          items:
+            format: uuid
+            type: string
+          maxItems: 64
+          type: array
         size_max:
           format: int64
           maximum: 9007199254740991
@@ -14079,6 +14274,7 @@ components:
             - relevance
             - capture_time
             - import_time
+            - added_time
           type: string
       type: object
     SavedQueryV1Schema:
@@ -15665,6 +15861,31 @@ components:
       required:
         - path
       type: object
+    UpdatePhotoAlbumRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/UpdatePhotoAlbumRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        name:
+          maxLength: 256
+          minLength: 1
+          type:
+            - string
+            - "null"
+        starred:
+          type:
+            - boolean
+            - "null"
+      type: object
+      x-go-type: api.UpdatePhotoAlbumRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     UpdateSavedQueryRequest:
       additionalProperties: false
       properties:
@@ -21877,6 +22098,298 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read person attribution rebuild progress
+  /api/v1/photos/albums:
+    get:
+      operationId: listPhotoAlbums
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/PhotoAlbumSummary"
+                type: array
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: List albums with included counts and ready covers
+    post:
+      operationId: createPhotoAlbum
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoAlbumNameRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAlbum"
+          description: Created
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Create an empty album
+  /api/v1/photos/albums/{set_id}:
+    delete:
+      operationId: deletePhotoAlbum
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAlbum"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Delete an album and keep its photos
+    get:
+      operationId: getPhotoAlbum
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAlbumSummary"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Inspect one album
+    put:
+      operationId: updatePhotoAlbum
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePhotoAlbumRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAlbum"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Rename or star an album
+  /api/v1/photos/albums/{set_id}/cover:
+    put:
+      operationId: setPhotoAlbumCover
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoAlbumCoverRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAlbum"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Choose or reset an album cover
+  /api/v1/photos/albums/{set_id}/duplicate:
+    post:
+      operationId: duplicatePhotoAlbum
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoAlbumNameRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAlbum"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Duplicate an album and its member order
+  /api/v1/photos/albums/{set_id}/members/add:
+    post:
+      operationId: addPhotoAlbumMembers
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoAlbumMembersRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAlbum"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Add explicit photos or complete search results
+  /api/v1/photos/albums/{set_id}/members/remove:
+    post:
+      operationId: removePhotoAlbumMembers
+      parameters:
+        - in: path
+          name: set_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoAlbumMembersRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAlbum"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Remove explicit photos or complete search results
   /api/v1/photos/assets:
     post:
       operationId: createPhotoAsset

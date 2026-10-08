@@ -773,7 +773,7 @@ QueryV1 stores these fields. Defaults apply when a field is omitted:
 | `syntax` | `simple` or `advanced` | `simple` |
 | `mode` | `lexical`, `semantic`, or `hybrid` | `lexical` |
 | `filters` | Object described below | `{}` |
-| `sort.field` | `name`, `path`, `modified_at`, `size`, `media_type`, `relevance`, `capture_time`, or `import_time` | `name` |
+| `sort.field` | `name`, `path`, `modified_at`, `size`, `media_type`, `relevance`, `capture_time`, `import_time`, or `added_time` | `name` |
 | `sort.direction` | `asc` or `desc` | `asc` |
 
 The `filters` object accepts the following saved choices. These are storage
@@ -796,6 +796,7 @@ fields, not additional parameters for `GET /search`:
 | `capture_after`, `capture_before` | Strict YYYY-MM-DD local capture dates; inclusive lower and exclusive upper bounds |
 | `gps_bounds` | Decimal-string `south`, `west`, `north`, `east`; each at most 64 characters, latitude within -90 through 90, longitude within -180 through 180, south <= north; west > east crosses the antimeridian |
 | `asset_ids` | At most 64 canonical UUIDv4 values |
+| `set_ids` | At most 64 canonical album UUIDv4 values |
 
 Filter sets are sorted and deduplicated when saved. Query text is not trimmed
 or rewritten. Unknown fields and duplicate JSON object keys are rejected.
@@ -1079,6 +1080,10 @@ preserving any graph that existed before audit was enabled. Display and
 settings writes are available through HTTP and the CLI. MCP exposes them only
 as reads in this slice.
 
+`GET /photos/albums` lists albums with counts of members that still have a file and of included members and current ready grid covers. `POST /photos/albums` creates one; `GET /photos/albums/{set_id}` inspects it. `PUT /photos/albums/{set_id}` changes optional `name` or `starred`. `PUT /photos/albums/{set_id}/cover` chooses a member through `asset_id`, or clears the override when omitted. `POST /photos/albums/{set_id}/duplicate` supplies a new `name`. `DELETE /photos/albums/{set_id}` deletes the album while retaining its photos. Existing-album writes require `If-Match` and return the album with its ETag.
+
+`POST /photos/albums/{set_id}/members/add` and `/members/remove` accept either `asset_ids` with at most 1,000 entries or a strict `query`, with optional `coverage`. The full query scope resolves within the atomic write and, like photo browsing, covers only visible photos; removing hidden members requires their `asset_ids`. Changes advance the album revision once and record every changed asset ID across bounded receipts. No-ops preserve the revision. Album routes require daemon API-key access. Browser sessions can browse members through the existing photo query route with `filters.set_ids`, but cannot mutate or list albums. See [Albums](../usage/photos.md#albums) for member ordering, visibility, and cover selection.
+
 `POST /photos/imports` starts a folder import from a daemon-host path and
 returns `202` with the queued `StorageOperation`, or `422` when the path is not
 an existing folder. The import is a durable job of kind `photo_import`.
@@ -1087,7 +1092,7 @@ skipped, changed, failed, ambiguous and unsupported counts, plus the groups
 left unpaired. `POST /jobs/{operation_id}/cancel` stops it before the next
 group. Starting an import requires the API key on a loopback connection.
 
-`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` and `cursor`, returning one item per eligible matching asset, `total` counted on the first page and optional forward `next_cursor`. The supported sort fields are `capture_time`, `import_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Capture keys sort missing or unreadable evidence last, then use ascending asset UUID for ties. Text keys compare their first 1,024 characters, so names or media types that share that prefix fall back to the UUID order. Document snapshots reject `capture_time` and `import_time` with a field-specific error that directs callers to Photos. Later pages reuse the first page's total while rows remain live; a new browse refreshes the count. Cursors expire after 15 minutes and bind resolved saved-query revisions, effective coverage and page size. Invalid options return `invalid_photo_query`; invalid or changed bindings return `invalid_photo_cursor`; expiry returns `cursor_expired`. Invalid expressions retain their operand positions.
+`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` and `cursor`, returning one item per eligible matching asset, `total` counted on the first page and optional forward `next_cursor`. The supported sort fields are `capture_time`, `import_time`, `added_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Capture keys sort missing or unreadable evidence last, then use ascending asset UUID for ties. Text keys compare their first 1,024 characters, so names or media types that share that prefix fall back to the UUID order. Album filters constrain the matching population before choosing duplicate representatives. `added_time` requires exactly one normalized `filters.set_ids` value and uses that album's added dates. Document snapshots reject `capture_time`, `import_time`, and `added_time` with a field-specific error that directs callers to Photos. Later pages reuse the first page's total while rows remain live; a new browse refreshes the count. Cursors expire after 15 minutes and bind resolved saved-query revisions, effective coverage, canonical query, and page size. Invalid options return `invalid_photo_query`; invalid or changed bindings return `invalid_photo_cursor`; expiry returns `cursor_expired`. Invalid expressions retain their operand positions.
 
 `GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag, `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-cache`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses vary by API-key, authorization and browser-session headers. Browser sessions permit the exact list POST and preview GET with empty query strings. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
 
@@ -1762,6 +1767,7 @@ include a `position` span:
 | `invalid_provenance_time` | 422 | optional `original_mtime` parses as RFC3339 but is not canonical UTC RFC3339Nano (a value that is not a date-time at all fails schema validation as `validation` instead) |
 | `invalid_saved_query` | 422 | saved name, description, kind, payload, or patch violates the saved-definition contract |
 | `invalid_photo_asset` | 422 | asset kind, role, display pointer, sidecar target, or graph state is invalid |
+| `invalid_photo_album` | 422 | album name, member cover, explicit asset selection, or mutually exclusive selection fields are invalid |
 | `photo_node_not_eligible` | 422 | the selected node is not a live eligible file |
 | `photo_node_owned` | 409 | the selected node already belongs to another photo asset |
 | `invalid_query` | 422 | invalid or unsupported expression, missing reference, or query compilation bound exceeded |

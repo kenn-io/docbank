@@ -16,7 +16,7 @@ func ValidateTextOperand(field, value string) error {
 		valid = oneOf(value, "photo", "video")
 	case "camera", "lens":
 		valid = validPhotoLabel(value)
-	case "asset":
+	case "asset", "set":
 		valid = validUUIDv4(value)
 	case "path":
 		valid = validVirtualPath(value)

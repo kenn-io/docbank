@@ -390,6 +390,7 @@ var codeToTypedErr = map[string]error{
 	"version_already_current":       store.ErrVersionAlreadyCurrent,
 	"invalid_version_prune":         store.ErrInvalidVersionPrune,
 	"invalid_photo_asset":           store.ErrInvalidPhotoAsset,
+	"invalid_photo_album":           store.ErrInvalidPhotoAlbum,
 	"photo_node_not_eligible":       store.ErrPhotoNodeNotEligible,
 	"photo_node_owned":              store.ErrPhotoNodeOwned,
 	"audit_already_enabled":         store.ErrAuditAlreadyEnabled,

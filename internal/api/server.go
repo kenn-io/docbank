@@ -231,6 +231,7 @@ func NewServer(d Deps) *Server {
 	registerPackageRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
 	registerPhotoRoutes(humaAPI, d, g)
+	registerPhotoSetRoutes(humaAPI, d, g)
 	registerPhotoQueryRoutes(humaAPI, d, cursorService)
 	registerPeopleRoutes(humaAPI, d, g)
 	registerPhotoImportRoutes(humaAPI, d, g)
@@ -351,6 +352,12 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/photos/assets/{asset_id}/files/{file_id}", http.MethodDelete},
 		{"/api/v1/photos/assets/{asset_id}/exclude", http.MethodPost},
 		{"/api/v1/photos/assets/{asset_id}/display", http.MethodPut},
+		{"/api/v1/photos/albums/{set_id}", http.MethodPut},
+		{"/api/v1/photos/albums/{set_id}", http.MethodDelete},
+		{"/api/v1/photos/albums/{set_id}/cover", http.MethodPut},
+		{"/api/v1/photos/albums/{set_id}/duplicate", http.MethodPost},
+		{"/api/v1/photos/albums/{set_id}/members/add", http.MethodPost},
+		{"/api/v1/photos/albums/{set_id}/members/remove", http.MethodPost},
 		{"/api/v1/photos/settings", http.MethodPut},
 		{"/api/v1/people/by-id/{person_id}", http.MethodPatch},
 		{"/api/v1/people/by-id/{person_id}/retire", http.MethodPost},

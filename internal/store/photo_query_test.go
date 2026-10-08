@@ -359,7 +359,7 @@ func TestSnapshotRejectsPhotoSorts(t *testing.T) {
 		if populated {
 			browsePhotoNode(t, s, "sort.jpg", browseHash("sort-rejection"), "image/jpeg")
 		}
-		for _, field := range []string{"capture_time", "import_time"} {
+		for _, field := range []string{"capture_time", "import_time", "added_time"} {
 			value := snapshotTestQuery(t, sprintfPhotoSort(field, "asc"))
 			_, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value})
 			require.ErrorContains(t, err, fmt.Sprintf("sort %q is only supported in Photos", field))

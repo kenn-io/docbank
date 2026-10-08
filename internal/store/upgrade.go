@@ -78,7 +78,7 @@ var currentSchemaTables = [...]string{
 	"mailbox_archives", "mailbox_transfer_receipts",
 	"mailbox_jobs", "mailbox_occurrences",
 	"email_document_publications", "email_document_relations",
-	"photo_assets", "photo_files", "photo_library_settings", "photo_change_receipts",
+	"photo_assets", "photo_files", "photo_library_settings", "photo_sets", "photo_set_members", "photo_change_receipts",
 	"photo_technical_metadata", "photo_technical_metadata_state",
 	"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
 	"blob_stores", "blob_locations", "blob_pack_entries",

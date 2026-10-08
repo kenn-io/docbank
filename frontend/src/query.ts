@@ -15,7 +15,7 @@ const optionalFilterFields = new Set([
   "paths", "exclude_paths", "collection_ids", "exclude_collection_ids", "tag_ids",
   "exclude_tag_ids", "no_tags", "media_families", "mime_types", "extensions",
   "modified_after", "modified_before", "size_min", "size_max", "text_coverage",
-  "has_duplicates", "collapse_duplicates", "kinds", "cameras", "lenses", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds", "asset_ids",
+  "has_duplicates", "collapse_duplicates", "kinds", "cameras", "lenses", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds", "asset_ids", "set_ids",
 ]);
 const uuidV4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const extensionPattern = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -26,7 +26,7 @@ export type MediaFamily = typeof mediaFamilies[number];
 export type TextCoverage = typeof textCoverageValues[number];
 
 export interface QuerySort {
-  field: "name" | "path" | "modified_at" | "size" | "media_type" | "relevance" | "capture_time" | "import_time";
+  field: "name" | "path" | "modified_at" | "size" | "media_type" | "relevance" | "capture_time" | "import_time" | "added_time";
   direction: "asc" | "desc";
 }
 
@@ -42,6 +42,7 @@ export interface QueryFilters {
   capture_before?: string;
   gps_bounds?: GPSBounds;
   asset_ids?: string[];
+  set_ids?: string[];
   paths?: string[];
   exclude_paths?: string[];
   collection_ids?: string[];
@@ -126,7 +127,7 @@ export function canonicalQuery(value: Query): string {
   if (normalized.filters.size_min) filters.size_min = normalized.filters.size_min;
   if (normalized.filters.tag_ids?.length) filters.tag_ids = normalized.filters.tag_ids;
   if (normalized.filters.text_coverage?.length) filters.text_coverage = normalized.filters.text_coverage;
-  for (const field of ["kinds", "cameras", "lenses", "asset_ids"] as const) {
+  for (const field of ["kinds", "cameras", "lenses", "asset_ids", "set_ids"] as const) {
     const values = normalized.filters[field];
     if (values?.length) filters[field] = values;
   }
@@ -187,6 +188,7 @@ function parseFilters(input: Record<string, unknown>): QueryFilters {
     kinds: optionalStringArray(input.kinds, "filters.kinds") as QueryFilters["kinds"],
     cameras: optionalStringArray(input.cameras, "filters.cameras"),
     lenses: optionalStringArray(input.lenses, "filters.lenses"),
+    set_ids: optionalStringArray(input.set_ids, "filters.set_ids"),
     asset_ids: optionalStringArray(input.asset_ids, "filters.asset_ids"),
     iso_min: optionalNullableInteger(input.iso_min, "filters.iso_min"),
     iso_max: optionalNullableInteger(input.iso_max, "filters.iso_max"),
@@ -223,7 +225,7 @@ function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
   if (scalarLength(value.text) > 8192) throw new Error("query text exceeds 8192 Unicode scalars");
   if (!(["simple", "advanced"] as string[]).includes(syntax)) throw new Error("query syntax is unknown");
   if (!(["lexical", "semantic", "hybrid"] as string[]).includes(mode)) throw new Error("query mode is unknown");
-  if (!(["name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time"] as string[]).includes(sort.field) ||
+  if (!(["name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time"] as string[]).includes(sort.field) ||
       !(["asc", "desc"] as string[]).includes(sort.direction)) throw new Error("query sort is invalid");
   return { v, text: value.text, syntax, mode, filters: normalizeFilters(value.filters ?? {}), sort };
 }
@@ -233,6 +235,7 @@ function normalizeFilters(value: QueryFilters): QueryFilters {
     kinds: normalizeSet(value.kinds, 64, (v) => v === "photo" || v === "video", "kinds") as QueryFilters["kinds"],
     cameras: normalizeSet(value.cameras, 64, validPhotoLabel, "cameras"),
     lenses: normalizeSet(value.lenses, 64, validPhotoLabel, "lenses"),
+    set_ids: normalizeSet(value.set_ids, 64, (v) => uuidV4Pattern.test(v), "set_ids"),
     asset_ids: normalizeSet(value.asset_ids, 64, (v) => uuidV4Pattern.test(v), "asset_ids"),
     iso_min: normalizeSize(value.iso_min, "iso_min"),
     iso_max: normalizeSize(value.iso_max, "iso_max"),

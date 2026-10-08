@@ -30,6 +30,11 @@ func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...a
 
 func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compiledQueryFragment, error) {
 	switch field {
+	case "set":
+		if err := query.ValidateTextOperand(field, value); err != nil {
+			return compiledQueryFragment{}, err
+		}
+		return compilePhotoAssetPredicate(`EXISTS (SELECT 1 FROM photo_set_members sm JOIN photo_sets ps ON ps.set_id=sm.set_id WHERE sm.asset_id=pa.asset_id AND sm.set_id=? AND ps.deleted_at IS NULL)`, value), nil
 	case "kind", "asset":
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
@@ -96,7 +101,7 @@ func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int
 	for _, set := range []struct {
 		field  string
 		values []string
-	}{{"kind", filters.Kinds}, {"camera", filters.Cameras}, {"lens", filters.Lenses}, {"asset", filters.AssetIDs}} {
+	}{{"kind", filters.Kinds}, {"camera", filters.Cameras}, {"lens", filters.Lenses}, {"asset", filters.AssetIDs}, {"set", filters.SetIDs}} {
 		matches := []compiledQueryFragment{}
 		for _, v := range set.values {
 			part, err := c.compileScalarPredicate(set.field, v, start, end)

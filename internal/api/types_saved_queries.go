@@ -55,7 +55,7 @@ type savedQueryV1Schema struct {
 }
 
 type savedQuerySortSchema struct {
-	Field     string `json:"field,omitempty" enum:"name,path,modified_at,size,media_type,relevance,capture_time,import_time" default:"name"`
+	Field     string `json:"field,omitempty" enum:"name,path,modified_at,size,media_type,relevance,capture_time,import_time,added_time" default:"name"`
 	Direction string `json:"direction,omitempty" enum:"asc,desc" default:"asc"`
 }
 
@@ -70,6 +70,7 @@ type savedQueryFiltersSchema struct {
 	Kinds                []string                           `json:"kinds,omitempty" maxItems:"64" enum:"photo,video"`
 	Cameras              []string                           `json:"cameras,omitempty" maxItems:"64"`
 	Lenses               []string                           `json:"lenses,omitempty" maxItems:"64"`
+	SetIDs               []string                           `json:"set_ids,omitempty" maxItems:"64" format:"uuid"`
 	AssetIDs             []string                           `json:"asset_ids,omitempty" maxItems:"64" format:"uuid"`
 	ISOMin               *int64                             `json:"iso_min,omitempty" nullable:"true" minimum:"0" maximum:"9007199254740991"`
 	ISOMax               *int64                             `json:"iso_max,omitempty" nullable:"true" minimum:"0" maximum:"9007199254740991"`

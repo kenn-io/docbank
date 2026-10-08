@@ -37,12 +37,32 @@ type metadataPhotoSettings struct {
 	Singleton  int     `json:"-" db:"singleton"`
 }
 
+type metadataPhotoSet struct {
+	Type         string  `json:"type"`
+	ID           string  `json:"set_id" db:"set_id"`
+	Name         string  `json:"name" db:"name"`
+	Starred      bool    `json:"starred" db:"starred"`
+	Revision     int64   `json:"revision" db:"revision"`
+	CoverAssetID *string `json:"cover_asset_id" db:"cover_asset_id"`
+	CreatedAt    string  `json:"created_at" db:"created_at"`
+	UpdatedAt    string  `json:"updated_at" db:"updated_at"`
+	DeletedAt    *string `json:"deleted_at" db:"deleted_at"`
+}
+
+type metadataPhotoSetMember struct {
+	Type    string `json:"type"`
+	SetID   string `json:"set_id" db:"set_id"`
+	AssetID string `json:"asset_id" db:"asset_id"`
+	AddedAt string `json:"added_at" db:"added_at"`
+}
+
 type metadataPhotoReceipt struct {
 	Type           string  `json:"type"`
 	ReceiptID      string  `json:"receipt_id" db:"receipt_id"`
 	Operation      string  `json:"operation" db:"operation"`
 	AssetID        *string `json:"asset_id" db:"asset_id"`
 	SettingsKey    *string `json:"settings_key" db:"settings_key"`
+	SetID          *string `json:"set_id,omitempty" db:"set_id"`
 	BeforeRevision int64   `json:"before_revision" db:"before_revision"`
 	AfterRevision  int64   `json:"after_revision" db:"after_revision"`
 	BeforeJSON     string  `json:"before_json" db:"before_json"`
@@ -59,6 +79,8 @@ var photoMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataPhotoSettings]{
 		record: metadataPhotoSettings{Type: metadataPhotoSettingsType, Singleton: 1}, table: "photo_library_settings",
 		suffix: "WHERE singleton=1", validate: validatePhotoSettingsMetadataRecord, checkExport: true}),
+	newMetadataTable(metadataTable[metadataPhotoSet]{record: metadataPhotoSet{Type: "photo_set"}, table: "photo_sets", suffix: "ORDER BY set_id", validate: validatePhotoSetRecord, checkExport: true}),
+	newMetadataTable(metadataTable[metadataPhotoSetMember]{record: metadataPhotoSetMember{Type: "photo_set_member"}, table: "photo_set_members", suffix: "ORDER BY set_id,added_at,asset_id", validate: validatePhotoSetMemberRecord, checkExport: true}),
 	newMetadataTable(metadataTable[metadataPhotoReceipt]{record: metadataPhotoReceipt{Type: metadataPhotoReceiptType},
 		table: "photo_change_receipts", suffix: "ORDER BY receipt_id", validate: validatePhotoReceiptMetadataRecord,
 		checkExport: true}),
@@ -107,19 +129,23 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 		return errors.New("invalid photo receipt metadata")
 	}
 	switch v.Operation {
+	case "set_create", "set_duplicate", "set_update", "set_add", "set_remove", "set_delete":
+		if v.SetID == nil || validateUUIDv4(*v.SetID) != nil || v.AssetID != nil || v.SettingsKey != nil {
+			return errors.New("invalid photo set receipt identity")
+		}
 	case "create", "promote", "attach", "detach", "exclude", "display", "purge", "settings_recompute", "import":
-		if v.AssetID == nil || v.SettingsKey != nil {
+		if v.AssetID == nil || v.SettingsKey != nil || v.SetID != nil {
 			return errors.New("invalid photo receipt asset/settings identity")
 		}
 	case "settings":
-		if v.AssetID != nil || v.SettingsKey == nil || *v.SettingsKey != "library" {
+		if v.AssetID != nil || v.SetID != nil || v.SettingsKey == nil || *v.SettingsKey != "library" {
 			return errors.New("invalid photo settings receipt identity")
 		}
 	default:
 		return fmt.Errorf("invalid photo receipt operation %q", v.Operation)
 	}
-	if v.AfterRevision != v.BeforeRevision+1 || v.Operation == "create" && v.BeforeRevision != 0 ||
-		v.Operation != "create" && v.Operation != "promote" && v.BeforeRevision < 1 {
+	if v.AfterRevision != v.BeforeRevision+1 || (v.Operation == "create" || v.Operation == "set_create" || v.Operation == "set_duplicate") && v.BeforeRevision != 0 ||
+		v.Operation != "create" && v.Operation != "promote" && v.Operation != "set_create" && v.Operation != "set_duplicate" && v.BeforeRevision < 1 {
 		return errors.New("invalid photo receipt revision transition")
 	}
 	if v.AssetID != nil && validateUUIDv4(*v.AssetID) != nil {
@@ -146,10 +172,52 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier) error {
 	if orphans > 0 {
 		return fmt.Errorf("%w: %d photo receipts reference missing assets or settings", ErrInvalidPhotoAsset, orphans)
 	}
+	if err := validatePhotoSetGraph(ctx, tx); err != nil {
+		return err
+	}
 	for _, table := range photoMetadataTables {
 		if err := table.validateRows(ctx, tx); err != nil {
 			return fmt.Errorf("validating photo metadata: %w", err)
 		}
+	}
+	return nil
+}
+
+func validatePhotoSetRecord(v metadataPhotoSet) error {
+	if v.Type != "photo_set" || validateUUIDv4(v.ID) != nil || !validPhotoSetName(v.Name) || v.Revision < 1 {
+		return errors.New("invalid photo set metadata")
+	}
+	if v.CoverAssetID != nil && validateUUIDv4(*v.CoverAssetID) != nil {
+		return errors.New("invalid photo set cover")
+	}
+	if v.DeletedAt != nil {
+		if err := validateMetadataTime("photo set deleted_at", *v.DeletedAt); err != nil {
+			return err
+		}
+	}
+	if err := validateMetadataTime("photo set created_at", v.CreatedAt); err != nil {
+		return err
+	}
+	return validateMetadataTime("photo set updated_at", v.UpdatedAt)
+}
+
+func validatePhotoSetMemberRecord(v metadataPhotoSetMember) error {
+	if v.Type != "photo_set_member" || validateUUIDv4(v.SetID) != nil || validateUUIDv4(v.AssetID) != nil {
+		return errors.New("invalid photo set member")
+	}
+	return validateMetadataTime("photo set member added_at", v.AddedAt)
+}
+
+func validatePhotoSetGraph(ctx context.Context, q metadataQuerier) error {
+	var invalid int
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_sets s WHERE
+ (s.deleted_at IS NOT NULL AND (s.cover_asset_id IS NOT NULL OR EXISTS(SELECT 1 FROM photo_set_members m WHERE m.set_id=s.set_id)))
+ OR (s.cover_asset_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM photo_set_members m WHERE m.set_id=s.set_id AND m.asset_id=s.cover_asset_id))`).Scan(&invalid)
+	if err != nil {
+		return err
+	}
+	if invalid > 0 {
+		return errors.New("invalid photo set membership or cover")
 	}
 	return nil
 }
