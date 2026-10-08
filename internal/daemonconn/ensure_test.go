@@ -308,6 +308,17 @@ func TestStopMissingDaemonDoesNotCreateVault(t *testing.T) {
 	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
+func TestRunningMissingDaemonDoesNotCreateVault(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing")
+	t.Setenv("DOCBANK_HOME", root)
+	c, ok, err := Running(t.Context())
+	require.NoError(t, err)
+	assert.Nil(t, c)
+	assert.False(t, ok)
+	_, err = os.Stat(root)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
 func startUnresponsiveRuntime(t *testing.T) (string, kitdaemon.RuntimeRecord) {
 	t.Helper()
 	// The exact current test executable is intentional: the selected helper

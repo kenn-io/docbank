@@ -6185,6 +6185,19 @@ export interface TaggedNodePage {
 }
 
 /**
+ * How long a session_ended session lasted.
+ */
+export type TelemetryEventPropertiesDurationBucket = typeof TelemetryEventPropertiesDurationBucket[keyof typeof TelemetryEventPropertiesDurationBucket];
+
+
+export const TelemetryEventPropertiesDurationBucket = {
+  under_1m: 'under_1m',
+  '1_to_5m': '1_to_5m',
+  '5_to_30m': '5_to_30m',
+  over_30m: 'over_30m',
+} as const;
+
+/**
  * The screen shown. Other values return 400 for screen_viewed.
  */
 export type TelemetryEventPropertiesScreen = typeof TelemetryEventPropertiesScreen[keyof typeof TelemetryEventPropertiesScreen];
@@ -6223,7 +6236,7 @@ export const TelemetryEventPropertiesScreen = {
 } as const;
 
 /**
- * The interface that showed the screen.
+ * The interface that sent the event.
  */
 export type TelemetryEventPropertiesSurface = typeof TelemetryEventPropertiesSurface[keyof typeof TelemetryEventPropertiesSurface];
 
@@ -6234,9 +6247,11 @@ export const TelemetryEventPropertiesSurface = {
 } as const;
 
 export interface TelemetryEventProperties {
+  /** How long a session_ended session lasted. */
+  duration_bucket?: TelemetryEventPropertiesDurationBucket;
   /** The screen shown. Other values return 400 for screen_viewed. */
   screen?: TelemetryEventPropertiesScreen;
-  /** The interface that showed the screen. */
+  /** The interface that sent the event. */
   surface?: TelemetryEventPropertiesSurface;
 }
 
@@ -6516,7 +6531,7 @@ export type ReportTelemetryEventBody = {
      * @minLength 1
      */
   event: string;
-  /** Event properties. screen_viewed requires screen and surface. */
+  /** Event properties. screen_viewed requires screen and surface; session_ended takes surface and duration_bucket. */
   properties?: TelemetryEventProperties;
 };
 

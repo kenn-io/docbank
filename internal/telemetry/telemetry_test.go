@@ -42,6 +42,32 @@ func postEvent(t *testing.T, handler http.Handler, body string) *httptest.Respon
 
 func discardLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
+func TestSessionEndedPropertiesAndBuckets(t *testing.T) {
+	t.Setenv(EnabledEnv, "0")
+	reporter := New(Options{Dir: t.TempDir(), Logger: discardLogger()})
+	for _, tc := range []struct {
+		elapsed time.Duration
+		bucket  string
+	}{
+		{time.Minute - time.Nanosecond, "under_1m"}, {time.Minute, "1_to_5m"},
+		{2 * time.Minute, "1_to_5m"}, {5 * time.Minute, "5_to_30m"},
+		{30 * time.Minute, "5_to_30m"}, {30*time.Minute + time.Nanosecond, "over_30m"},
+	} {
+		assert.Equal(t, tc.bucket, DurationBucket(tc.elapsed))
+		props, err := reporter.SanitizeProperties(EventSessionEnded, map[string]any{"surface": "tui", "duration_bucket": tc.bucket, "seconds": 120})
+		require.NoError(t, err)
+		assert.Equal(t, tc.bucket, props["duration_bucket"])
+		assert.Equal(t, "tui", props["surface"])
+		assert.NotContains(t, props, "seconds")
+	}
+	for _, value := range []any{"invalid", 120} {
+		props, err := reporter.SanitizeProperties(EventSessionEnded, map[string]any{"surface": "cli", "duration_bucket": value})
+		require.NoError(t, err)
+		assert.NotContains(t, props, "surface")
+		assert.NotContains(t, props, "duration_bucket")
+	}
+}
+
 func TestNewOptedOut(t *testing.T) {
 	for _, tc := range []struct{ name, env, value string }{
 		{"docbank variable", EnabledEnv, "0"},

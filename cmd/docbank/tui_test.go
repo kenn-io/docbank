@@ -5,12 +5,15 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -19,6 +22,44 @@ import (
 	"go.kenn.io/docbank/internal/store"
 	doctui "go.kenn.io/docbank/internal/tui"
 )
+
+func TestSendTUISessionEnded(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/daemon/telemetry/events", r.URL.Path)
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		assert.JSONEq(t, `{"event":"session_ended","properties":{"surface":"tui","duration_bucket":"1_to_5m"}}`, string(body))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, err = w.Write([]byte(`{}`))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	c := daemonconn.New(server.URL, "synthetic-api-key")
+	t.Cleanup(func() { require.NoError(t, c.Close()) })
+	require.NoError(t, sendTUISessionEnded(t.Context(), c, 2*time.Minute))
+	assert.Equal(t, int32(1), requests.Load())
+}
+
+func TestTUIProgramRan(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"normal exit", nil, true},
+		{"interrupted", tea.ErrInterrupted, true},
+		{"killed", tea.ErrProgramKilled, true},
+		{"other error", errors.New("synthetic startup failure"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tuiProgramRan(tc.err))
+		})
+	}
+}
 
 func TestTUIBackendForwardsPackagePageCursors(t *testing.T) {
 	const packageID = "11111111-1111-4111-8111-111111111111"
@@ -85,7 +126,7 @@ func TestTUIProcessingRetainsJobAfterInterruptedResponse(t *testing.T) {
 func TestTUIHelpDefinesRecoverableMutationBoundary(t *testing.T) {
 	out, err := runCLI(t, "tui", "--help")
 	require.NoError(t, err)
-	assert.Contains(t, out, "Open a terminal interface")
+	assert.Contains(t, out, "Open a terminal browser")
 	assert.Contains(t, out, "authenticated daemon API")
 	assert.Contains(t, out, "explicit revision-bound confirmation")
 	assert.Contains(t, out, "outside the TUI")
