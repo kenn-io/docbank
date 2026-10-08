@@ -13710,7 +13710,7 @@ export const getReadPhotoPreviewUrl = (assetId: string,
 }
 
 /**
- * Returns 304 Not Modified without a body when If-None-Match matches an eligible generation. Private caches must revalidate before reuse.
+ * Returns 304 Not Modified without a body when If-None-Match matches an eligible generation. Private HTTP caches must revalidate before reuse.
  * @summary Read verified bytes of an eligible exact photo preview
  */
 export const readPhotoPreview = (assetId: string,

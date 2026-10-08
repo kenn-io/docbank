@@ -4,13 +4,13 @@
   interface Props {
     selectedCount: number;
     visibleDocumentCount: number;
-    truncated: boolean;
+    truncated?: boolean;
     onclear: () => void;
     onselectvisible: () => void;
     ontags?: () => void;
     tagsDisabled?: boolean;
     oncsv?: () => void;
-    context?: "live" | "snapshot";
+    context?: "live" | "snapshot" | "photos";
     wholeQueryCount?: number;
     onwholequerytags?: () => void;
     onexport?: () => void;
@@ -21,7 +21,7 @@
   let {
     selectedCount,
     visibleDocumentCount,
-    truncated,
+    truncated = false,
     onclear,
     onselectvisible,
     ontags,
@@ -39,20 +39,20 @@
 <BottomDock
   open={selectedCount > 0}
   onclose={onclear}
-  ariaLabel="Selected documents"
-  initialHeight="126px"
-  minHeight="112px"
+  ariaLabel={context === "photos" ? "Selected photos" : "Selected documents"}
+  initialHeight={context === "photos" ? "auto" : "126px"}
+  minHeight={context === "photos" ? "min-content" : "112px"}
   maxHeight="var(--selection-dock-max-height)"
-  closeTitle="Clear selected documents"
-  closeAriaLabel="Clear selected documents"
+  closeTitle={context === "photos" ? "Clear selected photos" : "Clear selected documents"}
+  closeAriaLabel={context === "photos" ? "Clear selected photos" : "Clear selected documents"}
   class="selection-dock"
 >
   {#snippet header()}
     <div class="selection-summary">
-      <strong>{selectedCount} selected on this {context === "snapshot" ? "frozen page" : "page"}</strong>
+      <strong>{selectedCount} selected {context === "photos" ? (selectedCount === 1 ? "photo" : "photos") : `on this ${context === "snapshot" ? "frozen page" : "page"}`}</strong>
       {#if context === "snapshot"}
         <span>Visible selection only · whole query has {wholeQueryCount} documents</span>
-      {:else if truncated}<span>More results exist beyond this page</span>{/if}
+      {:else if truncated && context !== "photos"}<span>More results exist beyond this page</span>{/if}
     </div>
   {/snippet}
 
@@ -61,7 +61,7 @@
       size="sm"
       disabled={selectedCount === visibleDocumentCount}
       onclick={onselectvisible}
-    >Select visible documents</Button>
+    >{context === "photos" ? "Select loaded photos" : "Select visible documents"}</Button>
     <Button size="sm" onclick={onclear}>Clear selection</Button>
     {#if ontags}
       <Button size="sm" disabled={tagsDisabled} onclick={ontags}>{context === "snapshot" ? "Tag visible selection" : "Edit tags"}</Button>

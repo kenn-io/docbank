@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-06
 title: Photo assets
 description: Group ordinary files into photo assets that carry their own revision.
 ---
@@ -27,6 +27,30 @@ Sidecars never display and must point at a RAW or image member in the same
 asset. Removing the selected member chooses another displayable member
 atomically, or stores a null display when none remains. Assets are limited to
 256 files.
+
+## Browse in the web app
+
+Open `docbank web` and choose **Photos** in the sidebar. Library opens at
+`/photos`, newest captures first. Photos without a capture date appear under
+Undated. The year buttons jump to the years loaded so far; scrolling loads
+more photos and reveals older years. Choose **Load more** to continue from
+the same position when further results remain.
+
+Choose Months or Capture sessions to group the grid. A session joins captures
+with gaps of four hours or less. Compact, Comfortable, and Large change the
+grid density. The browser remembers the density across reloads and fresh
+`docbank web` links until the daemon restarts on a new address.
+
+Click a photo to select it. Shift-click adds the range from the previous
+selection, including loaded photos outside the screen. Ctrl-click or
+Command-click toggles a photo. Each photo also has a checkbox for touch.
+The selection dock can select all loaded photos or clear the selection.
+
+Photos, selection, and scroll position stay in place across Documents/Photos switches until the session locks or ends. Switching workspaces stops unfinished photo reads while retaining loaded photos. Previews already seen stay in a private browser cache for that signed-in session. Only mounted photos keep image URLs. Docbank deletes the cache when the session locks or ends, or the page closes. If a page closes without that cleanup, for example after a browser crash, the next signed-in session at the same `docbank web` address deletes the leftover cache. Caches from earlier addresses stay in browser storage until site data is cleared. Previews still display when browser storage is unavailable, but revisiting them may download them again.
+Pending, unsupported, and failed previews have separate placeholders. Choose
+Refresh previews to reload the listing after background preview work finishes.
+If a page fails to load, the earlier photos remain visible. Retry requests the
+failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Selection retains photos in that range; imports or deletions may move the visible photo outside it. Failed attempts keep the earlier view available for Retry. Recovery stops after one minute and offers Retry if it needs more time.
 
 ## Previews
 

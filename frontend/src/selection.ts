@@ -2,9 +2,9 @@ import type { Node } from "./generated/docbank.js";
 
 export type SelectableRow = { node: Node; path: string };
 
-export type SelectionState = {
-  selectedIDs: Set<number>;
-  anchorID: number | undefined;
+export type SelectionState<ID = number> = {
+  selectedIDs: Set<ID>;
+  anchorID: ID | undefined;
 };
 
 export type SelectionTarget = {
@@ -16,8 +16,8 @@ function eligibleIDs(rows: readonly SelectableRow[]): number[] {
   return rows.filter((row) => row.node.kind === "file").map((row) => row.node.id);
 }
 
-export function clearSelection(): SelectionState {
-  return { selectedIDs: new Set<number>(), anchorID: undefined };
+export function clearSelection<ID = number>(): SelectionState<ID> {
+  return { selectedIDs: new Set<ID>(), anchorID: undefined };
 }
 
 export function selectVisibleDocuments(rows: readonly SelectableRow[]): SelectionState {
@@ -31,7 +31,16 @@ export function toggleDocumentSelection(
   checked: boolean,
   range: boolean,
 ): SelectionState {
-  const displayedIDs = eligibleIDs(displayedRows);
+  return toggleIDSelection(state, eligibleIDs(displayedRows), targetID, checked, range);
+}
+
+export function toggleIDSelection<ID>(
+  state: SelectionState<ID>,
+  displayedIDs: readonly ID[],
+  targetID: ID,
+  checked: boolean,
+  range: boolean,
+): SelectionState<ID> {
   const targetIndex = displayedIDs.indexOf(targetID);
   const anchorIndex =
     state.anchorID === undefined ? -1 : displayedIDs.indexOf(state.anchorID);
@@ -57,7 +66,10 @@ export function reconcileSelection(
   state: SelectionState,
   rows: readonly SelectableRow[],
 ): SelectionState {
-  const eligible = new Set(eligibleIDs(rows));
+  return reconcileIDSelection(state, new Set(eligibleIDs(rows)));
+}
+
+export function reconcileIDSelection<ID>(state: SelectionState<ID>, eligible: ReadonlySet<ID>): SelectionState<ID> {
   const selectedIDs = new Set(
     [...state.selectedIDs].filter((id) => eligible.has(id)),
   );

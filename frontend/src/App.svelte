@@ -70,6 +70,11 @@
   import ScanSearchIcon from "@lucide/svelte/icons/scan-search";
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
+  import PhotosWorkspace from "./PhotosWorkspace.svelte";
+  import { localPreferenceStorage } from "./browser-storage.js";
+  import { Photos } from "./photos.svelte.js";
+  import { PhotoPreviewCache } from "./photoPreviewCache.js";
+  import ImageIcon from "@lucide/svelte/icons/image";
   import type { SelectionTarget } from "./selection.js";
   import ShortcutHelpModal from "./ShortcutHelpModal.svelte";
   import RenditionDrawer from "./RenditionDrawer.svelte";
@@ -165,6 +170,22 @@
     | { kind: "trashNode"; target: Row };
 
   let webSession = $state("");
+  let photoMode = $state(location.pathname === "/photos");
+  let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
+
+  $effect(() => {
+    if (!webSession) return;
+    const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
+    photoState = state;
+    return () => { state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
+  });
+
+  function switchWorkspace(photos: boolean) {
+    navOpen = false;
+    if (photoMode === photos) return;
+    photoMode = photos;
+    history.pushState(null, "", `${photos ? "/photos" : "/"}${location.search}${location.hash}`);
+  }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
   let directory = $state<Node | null>(null);
@@ -419,7 +440,7 @@
       if (
         isAppShortcutSuppressed(
           event,
-          !webSession || loading || searchPending || snapshotActive,
+          !webSession || loading || searchPending || snapshotActive || photoMode,
         )
       ) {
         return;
@@ -511,14 +532,6 @@
   function invalidateTagHotkeyMutation(): void {
     tagHotkeyGeneration += 1;
     pendingTagHotkey = "";
-  }
-
-  function localPreferenceStorage(): Storage | undefined {
-    try {
-      return globalThis.localStorage;
-    } catch {
-      return undefined;
-    }
   }
 
   function clearShortcutFeedback(): void {
@@ -1871,6 +1884,7 @@
   }
 </script>
 
+<svelte:window onpopstate={() => { photoMode = location.pathname === "/photos"; }} />
 {#if !webSession}
   <main class="unlock-shell">
     <Card level="raised" title="Open your Docbank">
@@ -1891,6 +1905,13 @@
         <span class="brand-mark"><LibraryIcon size="15" aria-hidden="true" /></span>
         Docbank
       </div>
+      <div class="nav-group" aria-label="Workspaces">
+        <button type="button" class="nav-item" aria-current={!photoMode ? "page" : undefined} onclick={() => switchWorkspace(false)}><FileIcon size="16" aria-hidden="true" />Documents</button>
+        <button type="button" class="nav-item" aria-current={photoMode ? "page" : undefined} onclick={() => switchWorkspace(true)}><ImageIcon size="16" aria-hidden="true" />Photos</button>
+      </div>
+      {#if photoMode}
+        <div class="nav-group"><button type="button" class="nav-item" aria-current="page" onclick={() => navOpen = false}><LibraryIcon size="16" aria-hidden="true" />Library</button></div>
+      {:else}
       <div class="nav-group">
         <button type="button" class="nav-item"
           aria-current={!snapshotActive && !activeQuery && !tagBrowse ? "page" : undefined}
@@ -1921,6 +1942,7 @@
           <LayersIcon size="16" aria-hidden="true" />Snapshot actions
         </button>
       </div>
+      {/if}
       <div class="nav-group">
         <h2>Vault</h2>
         <button type="button" class="nav-item" onclick={() => openPanel({ kind: "backups" })}>
@@ -1954,6 +1976,7 @@
         </span>
       {/snippet}
       {#snippet search()}
+        {#if !photoMode}
         <div class="search-controls">
           <form
             class="search"
@@ -1987,9 +2010,11 @@
             <SlidersHorizontalIcon size="14" aria-hidden="true" />Edit query
           </Button>
         </div>
+        {/if}
       {/snippet}
       {#snippet right()}
         <div class="top-actions">
+          {#if !photoMode}
           <Button size="sm" disabled={!exportHasJob && (snapshotActive ? (snapshotPage?.total ?? 0) === 0 : visibleDocumentCount === 0)} onclick={() => openExport()}>
             <DownloadIcon size="14" aria-hidden="true" />Export
           </Button>
@@ -2001,6 +2026,7 @@
           >
             <KeyboardIcon size="16" aria-hidden="true" />
           </IconButton>
+          {/if}
           <ThemeToggle />
           <IconButton ariaLabel="Lock web session" onclick={() => void lock()}>
             <LogOutIcon size="16" aria-hidden="true" />
@@ -2009,6 +2035,9 @@
       {/snippet}
     </TopBar>
 
+    {#if photoMode && photoState}
+      {#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} />{/key}
+    {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
     {#if savedQueryDraft}
       <div class="query-draft-notice">
@@ -2736,6 +2765,7 @@
         onexport={() => openExport(true)}
         onreport={openSelectedReport}
       />
+    {/if}
     {/if}
     </div>
     {#if shortcutHelpOpen}

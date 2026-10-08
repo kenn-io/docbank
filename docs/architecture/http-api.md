@@ -844,7 +844,7 @@ dropping it.
 
 These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
-and `/` plus `/assets/` (the static web application, when `[web] enabled`).
+and `/`, `/photos`, and `/assets/` (the static web application, when `[web] enabled`).
 
 A hidden `POST /api/daemon/shutdown` (not in the OpenAPI document) backs
 `docbank daemon stop`. It isn't auth-exempt: it requires both the API key and
@@ -1719,7 +1719,7 @@ would expose the key and vault contents in cleartext, and
 `docbank daemon run` refuses to start on one. Remote access goes through an SSH
 tunnel or VPN (see [Configuration](../configuration.md)). `/health`,
 `/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
-`/` and `/assets/` are auth-exempt. Everything else, including the shutdown
+`/`, `/photos`, and `/assets/` are auth-exempt. Everything else, including the shutdown
 route, requires the key.
 
 ## Error mapping

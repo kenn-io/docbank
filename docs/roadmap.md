@@ -24,7 +24,7 @@ Instructions and limits live in the guides linked below. The
 | Find documents | Ranked name and text search, filtering without a query, and saved queries and highlight sets in the web app and API | [Searching](usage/searching.md) |
 | Review and export | Frozen queries, verified ZIP bundles, dated search reports, load-file packages, and Bates-stamped selected pages | [Web application](usage/web.md) and [export bundles](usage/export-bundles.md) |
 | Read email and recordings | Mailbox import, navigation between messages and their attachments, stored email PDFs, imported recordings, and timed transcripts | [Web application](usage/web.md#read-archived-email) and [processing](usage/document-processing.md) |
-| Organize photos | RAW/JPEG/XMP grouping and HTTP browsing with technical metadata filters | [Photo assets](usage/photos.md) |
+| Organize photos | RAW/JPEG/XMP grouping, a web photo grid, and HTTP technical metadata filters | [Photo assets](usage/photos.md) |
 | Keep earlier content | Immutable versions, revision checks, reversion, and history pruning on request | [Editing and versions](architecture/editing-and-versions.md) |
 | Record origin and evidence | Append-only provenance and permanent audited directory scopes | [Importing](usage/importing.md) and [audited history](usage/audited-history.md) |
 | Recover documents | Trash with restore, permanent deletion as a separate step, garbage collection, and pack reclamation | [Trash and GC](usage/trash-and-gc.md) |
