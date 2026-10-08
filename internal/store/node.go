@@ -15,6 +15,7 @@ const (
 
 // Node is a row of the virtual tree. IDs are canonical; paths are display.
 type Node struct {
+	// Photo metadata is populated only by the paginated trash listing.
 	PhotoAssetID     string
 	PhotoFileCount   int
 	ID               int64
@@ -61,11 +62,11 @@ const nodeCols = `n.id, n.parent_id, n.name, n.kind,
 	COALESCE(cv.size, 0), COALESCE(cv.mime_type, ''),
 	n.revision, n.created_at, n.modified_at, n.trashed_at`
 
-func scanNode(row interface{ Scan(args ...any) error }) (Node, error) {
+func scanNode(row interface{ Scan(args ...any) error }, extra ...any) (Node, error) {
 	var n Node
-	err := row.Scan(&n.ID, &n.ParentID, &n.Name, &n.Kind,
+	err := row.Scan(append([]any{&n.ID, &n.ParentID, &n.Name, &n.Kind,
 		&n.CurrentVersionID, &n.BlobHash, &n.MD5, &n.Size, &n.MimeType,
-		&n.Revision, &n.CreatedAt, &n.ModifiedAt, &n.TrashedAt)
+		&n.Revision, &n.CreatedAt, &n.ModifiedAt, &n.TrashedAt}, extra...)...)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Node{}, ErrNotFound
 	}

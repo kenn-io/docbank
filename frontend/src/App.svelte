@@ -1587,7 +1587,7 @@
     await loadDirectory(parent.id, true, exact.id, false, { node: exact, path });
   }
 
-  function handleTrashed(_receipt: Node): void {
+  function handleTrashed(_receipt?: Node): void {
     selectNode(undefined);
 
     // Cached views may contain the removed node or pre-trash parent revisions.
@@ -2061,7 +2061,7 @@
     </TopBar>
 
     {#if photoMode && photoState}
-      {#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} />{/key}
+      {#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} ontrashed={() => handleTrashed()} />{/key}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
     {#if savedQueryDraft}

@@ -1,11 +1,40 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { Photos } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photo } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
+
+it("keeps failed off-prefix targets in the confirmation and invalidates Documents after partial success", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3)], total: 3 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-2", revision: 7 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-2", revision: 8 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3)], total: 3 })));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const ontrashed = vi.fn();
+  render(PhotosWorkspace, { photos, cache, ontrashed });
+  await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+  const dialog = screen.getByRole("dialog", { name: "Move selected photos to trash" });
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Move to trash" }));
+  await within(dialog).findByText(/Photo changed/);
+  await waitFor(() => expect(photos.items.map(item => item.asset_id)).toEqual(["photo-3"]));
+  expect(ontrashed).toHaveBeenCalledTimes(1);
+  expect(photos.selection.selectedIDs.has("photo-2")).toBe(true);
+  await fireEvent.click(await within(dialog).findByRole("button", { name: "Move to trash" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Move selected photos to trash" })).toBeNull());
+  expect(ontrashed).toHaveBeenCalledTimes(2);
+  photos.dispose(); await cache.dispose();
+});
 
 it("keeps loaded photos visible on paging failure and selects with touch checkboxes", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });

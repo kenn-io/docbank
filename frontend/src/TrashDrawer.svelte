@@ -82,7 +82,7 @@
         <strong>Trashed items</strong>
         <small>
           {#if page}
-            {page.total} restorable root{page.total === 1 ? "" : "s"}
+            {page.total} restorable item{page.total === 1 ? "" : "s"}
           {:else}
             Items removed from the live tree
           {/if}
@@ -146,7 +146,7 @@
                   <div>
                     <strong>{node.name}</strong>
                     <Chip size="xs" tone="muted">
-                      {node.photo_asset_id ? `Photo · ${node.photo_file_count} files` : node.kind === "dir" ? "Folder" : "Document"}
+                      {node.photo_asset_id ? `Photo · ${node.photo_file_count} trashed files` : node.kind === "dir" ? "Folder" : "Document"}
                     </Chip>
                   </div>
                   <span>Trashed {formatDate(node.trashed_at ?? "")}</span>
@@ -179,7 +179,7 @@
         </div>
         {#if page.total > page.items.length}
           <p class="bounded">
-            Showing the newest {page.items.length} of {page.total} restorable roots.
+            Showing the newest {page.items.length} of {page.total} restorable items.
             Use the CLI or API for the complete listing.
           </p>
         {/if}

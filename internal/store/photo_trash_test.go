@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,10 +73,73 @@ func TestPhotoTrashAndRestoreMember(t *testing.T) {
 	jpeg, err := s.NodeByID(t.Context(), nodes[1].ID)
 	require.NoError(t, err)
 	assert.Equal(t, "capture (2).jpg", jpeg.Name)
+	current, err := s.PhotoAssetByID(t.Context(), asset.ID)
+	require.NoError(t, err)
+	assert.Equal(t, trashed.Revision+1, current.Revision)
+	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, asset.ID)), "trash")
+	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, asset.ID)), "restore")
 	members, err := photoSetMemberIDs(t.Context(), s.db, album.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{asset.ID}, members)
 	require.NoError(t, s.ValidateMetadata(t.Context()))
+}
+
+func TestPhotoRestoreOriginalParentOrder(t *testing.T) {
+	for _, nested := range []bool{false, true} {
+		t.Run(strconv.FormatBool(nested), func(t *testing.T) {
+			s := newTestStore(t)
+			asset, nodes := photoTrashFixture(t, s)
+			parent, err := s.NodeByID(t.Context(), *nodes[0].ParentID)
+			require.NoError(t, err)
+			container := parent
+			if nested {
+				container, err = s.Mkdir(t.Context(), s.RootID(), "Trips")
+				require.NoError(t, err)
+				parent, _, err = s.Move(t.Context(), parent.ID, container.ID, parent.Name, UnconditionalRev)
+				require.NoError(t, err)
+			}
+			_, _, err = s.Move(t.Context(), nodes[1].ID, container.ID, nodes[1].Name, UnconditionalRev)
+			require.NoError(t, err)
+			ordinary, err := s.CreateFile(t.Context(), parent.ID, "notes.txt", fakeHash("b2"), 1, "text/plain")
+			require.NoError(t, err)
+			member, original, err := s.Trash(t.Context(), nodes[0].ID, UnconditionalRev)
+			require.NoError(t, err)
+			folder, _, err := s.Trash(t.Context(), container.ID, UnconditionalRev)
+			require.NoError(t, err)
+			_, err = s.db.Exec(`UPDATE nodes SET trashed_at=? WHERE trashed_at=?`, time.Now().UTC().Add(-time.Hour).Format(timestampLayout), *folder.TrashedAt)
+			require.NoError(t, err)
+			_, _, err = s.Restore(t.Context(), ordinary.ID, UnconditionalRev)
+			require.ErrorIs(t, err, ErrNotTrashed)
+			_, _, err = s.Restore(t.Context(), member.ID, member.Revision-1)
+			require.ErrorIs(t, err, ErrStaleRevision)
+			_, restoredPath, err := s.Restore(t.Context(), member.ID, member.Revision)
+			require.NoError(t, err)
+			assert.Equal(t, original, restoredPath)
+			current, err := s.PhotoAssetByID(t.Context(), asset.ID)
+			require.NoError(t, err)
+			assert.Equal(t, asset.Revision+1, current.Revision)
+		})
+	}
+}
+
+func TestPhotoTrashCompletesPartialGroup(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset, nodes := photoTrashFixture(t, s)
+	_, _, err := s.Trash(t.Context(), nodes[0].ID, UnconditionalRev)
+	require.NoError(t, err)
+	rows, total, err := s.TrashedRootsPage(t.Context(), 1, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	assert.Equal(t, 1, rows[0].PhotoFileCount)
+	_, err = s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision)
+	require.NoError(t, err)
+	rows, _, err = s.TrashedRootsPage(t.Context(), 1, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 3, rows[0].PhotoFileCount)
+	rep, err := s.TrashEmptyBounded(t.Context(), 0, 1, true)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, rep.Deleted)
 }
 
 func TestPhotoRestoreFolderContainedMember(t *testing.T) {
@@ -92,7 +156,11 @@ func TestPhotoRestoreFolderContainedMember(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = s.Trash(t.Context(), nodes[2].ID, UnconditionalRev)
 	require.NoError(t, err)
-	_, _, err = s.Restore(t.Context(), nodes[0].ID, UnconditionalRev)
+	selected, err := s.NodeByID(t.Context(), nodes[0].ID)
+	require.NoError(t, err)
+	_, _, err = s.Restore(t.Context(), selected.ID, selected.Revision-1)
+	require.ErrorIs(t, err, ErrStaleRevision)
+	_, _, err = s.Restore(t.Context(), selected.ID, selected.Revision)
 	require.NoError(t, err)
 	for _, before := range nodes {
 		n, err := s.NodeByID(t.Context(), before.ID)
@@ -206,7 +274,32 @@ func TestPhotoTrashAuditedGroup(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(t.Context()))
 	_, _, err = s.Restore(t.Context(), nodes[1].ID, UnconditionalRev)
 	require.NoError(t, err)
+	current, err := s.PhotoAssetByID(t.Context(), asset.ID)
+	require.NoError(t, err)
+	assert.Equal(t, asset.Revision+2, current.Revision)
+	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, asset.ID)), "trash")
+	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, asset.ID)), "restore")
 	require.NoError(t, s.ValidateMetadata(t.Context()))
+}
+
+func TestPhotoTrashIndexedLookups(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for _, query := range []string{`SELECT asset_id FROM photo_files WHERE node_id=?`, `SELECT trash_name FROM nodes WHERE id=?`} {
+		rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, s.RootID())
+		require.NoError(t, err)
+		var details []string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+			details = append(details, detail)
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
+		assert.Contains(t, strings.Join(details, " "), "SEARCH")
+		assert.NotContains(t, strings.Join(details, " "), "SCAN")
+	}
 }
 
 func TestPhotoTrashAuditedUnsupportedMemberRollsBack(t *testing.T) {

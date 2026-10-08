@@ -74,7 +74,7 @@ deletes the selected tree entries. The document bytes are still on disk and may
 still be referenced by another node or version. Only content with no remaining
 reference becomes a GC candidate.
 
-Photo groups are deleted together. A live, too-new, or retained member protects every connected trash root, including folders containing members. Bounded maintenance finishes a complete group even when it exceeds the root budget. Photo and album relationships remain recoverable until permanent deletion; file bytes stay in place throughout trash and restore.
+Photo groups are deleted together. A live, too-new, or retained member protects every connected trash root, including folders containing members. Trash the remaining members with `docbank photos assets trash <asset-id>`, or detach live companions, to make a partial group eligible. Bounded maintenance finishes a complete group even when it exceeds the root budget; the dry run reports that expanded group, and `More` reports another eligible group. Photo and album relationships remain recoverable until permanent deletion; file bytes stay in place throughout trash and restore.
 
 ### Release email attachment references
 

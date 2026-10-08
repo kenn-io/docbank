@@ -228,9 +228,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 			Items: []Node{}, Total: total, Limit: in.Limit, Offset: in.Offset,
 		}
 		for _, n := range roots {
-			item := fromStoreNode(n)
-			item.PhotoAssetID, item.PhotoFileCount = n.PhotoAssetID, n.PhotoFileCount
-			out.Body.Items = append(out.Body.Items, item)
+			out.Body.Items = append(out.Body.Items, fromStoreNode(n))
 		}
 		return out, nil
 	})

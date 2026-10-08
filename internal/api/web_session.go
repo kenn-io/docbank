@@ -234,6 +234,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	}
 	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/assets/"); ok {
 		parts := strings.Split(after, "/")
+		if len(parts) == 1 && parts[0] != "" {
+			return r.Method == http.MethodGet && r.URL.RawQuery == ""
+		}
 		if len(parts) == 3 && parts[1] == "previews" {
 			return r.Method == http.MethodGet && r.URL.RawQuery == "" && validPhotoPreviewPath(parts[0], parts[2])
 		}

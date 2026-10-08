@@ -9,7 +9,7 @@
   import PhotoGrid from "./PhotoGrid.svelte";
   import SelectionDock from "./SelectionDock.svelte";
 
-  let { photos, cache }: { photos: Photos; cache: PhotoPreviewCache } = $props();
+  let { photos, cache, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; ontrashed?: () => void } = $props();
   let trashOpen = $state(false);
   let grid = $state<{ preservePosition: () => (() => Promise<void>) }>();
   const preserve = () => grid?.preservePosition();
@@ -64,7 +64,7 @@
     {#if photos.trashError}<p role="alert">{photos.trashError} Failed photos remain selected for retry.</p>{/if}
     {#snippet footer()}
       <Button disabled={photos.trashing} onclick={() => trashOpen = false}>Keep in Docbank</Button>
-      <Button tone="danger" disabled={photos.trashing || photos.selection.selectedIDs.size === 0} onclick={async () => { if (await photos.trashSelected(preserve)) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
+      <Button tone="danger" disabled={photos.trashing || photos.selection.selectedIDs.size === 0} onclick={async () => { if (await photos.trashSelected(preserve, ontrashed)) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
     {/snippet}
   </Modal>
 {/if}

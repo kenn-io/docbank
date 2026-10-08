@@ -313,8 +313,10 @@ func (s *Store) TrashedRootsPage(
 		return nil, 0, fmt.Errorf("counting trash: %w", err)
 	}
 	rows, err := tx.QueryContext(ctx,
-		grouped+`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.id IN (SELECT id FROM groups WHERE representative=1)
+		grouped+`SELECT `+nodeCols+`, COALESCE(g.asset_id, ''),
+(SELECT COUNT(*) FROM photo_files member JOIN nodes file ON file.id=member.node_id WHERE member.asset_id=g.asset_id AND file.trashed_at IS NOT NULL)
+ FROM `+nodeFrom+` JOIN groups g ON g.id=n.id
+		 WHERE g.representative=1
 		 ORDER BY n.trashed_at DESC, n.id DESC LIMIT ? OFFSET ?`,
 		limit, offset)
 	if err != nil {
@@ -324,7 +326,10 @@ func (s *Store) TrashedRootsPage(
 
 	roots := make([]Node, 0)
 	for rows.Next() {
-		node, err := scanNode(rows)
+		var assetID string
+		var fileCount int
+		node, err := scanNode(rows, &assetID, &fileCount)
+		node.PhotoAssetID, node.PhotoFileCount = assetID, fileCount
 		if err != nil {
 			return nil, 0, err
 		}
@@ -335,16 +340,6 @@ func (s *Store) TrashedRootsPage(
 	}
 	if err := rows.Close(); err != nil {
 		return nil, 0, fmt.Errorf("closing trash page: %w", err)
-	}
-	for i := range roots {
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT asset_id FROM photo_files WHERE node_id=?), '')`, roots[i].ID).Scan(&roots[i].PhotoAssetID); err != nil {
-			return nil, 0, err
-		}
-		if roots[i].PhotoAssetID != "" {
-			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files WHERE asset_id=?`, roots[i].PhotoAssetID).Scan(&roots[i].PhotoFileCount); err != nil {
-				return nil, 0, err
-			}
-		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, 0, fmt.Errorf("closing trash snapshot: %w", err)
@@ -369,7 +364,7 @@ func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run boo
 	return s.trashEmpty(ctx, olderThan, 0, run)
 }
 
-// TrashEmptyBounded reports or deletes at most maxRoots eligible trash roots.
+// TrashEmptyBounded finishes the last complete photo group even if it exceeds maxRoots.
 // More reports whether another deletable root existed beyond this batch.
 // Retained counts all age-matching email-retained roots, outside the batch limit.
 func (s *Store) TrashEmptyBounded(
@@ -429,7 +424,6 @@ func (s *Store) trashEmpty(
 		SELECT n.parent_id FROM nodes n JOIN retained r ON n.id=r.id WHERE n.parent_id IS NOT NULL
 	) SELECT id FROM retained`
 	deletable += ` AND id NOT IN (` + emailRetainedNodes + `)`
-	eligibleSelection := `SELECT id FROM nodes WHERE ` + deletable + ` ORDER BY trashed_at ASC, id ASC`
 	runTx := s.withStorageTx
 	if run {
 		runTx = s.withLogicalTx
@@ -438,7 +432,7 @@ func (s *Store) trashEmpty(
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes WHERE `+where+` AND id IN (`+emailRetainedNodes+`)`, args...).Scan(&rep.Retained); err != nil {
 			return fmt.Errorf("counting retained trash roots: %w", err)
 		}
-		selection, selectionArgs, more, err := photoTrashSelectionTx(ctx, tx, eligibleSelection, args, maxRoots)
+		selection, selectionArgs, more, err := photoTrashSelectionTx(ctx, tx, deletable, args, maxRoots)
 		if err != nil {
 			return err
 		}

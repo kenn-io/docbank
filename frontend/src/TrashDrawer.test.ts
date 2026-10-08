@@ -60,13 +60,13 @@ it("shows a recoverable photo group and refreshes after restoring it", async () 
   });
 
   expect(await screen.findByText("quarterly-report.txt")).toBeTruthy();
-  expect(screen.getByText("Photo · 3 files")).toBeTruthy();
+  expect(screen.getByText("Photo · 3 trashed files")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Restore" }));
   const dialog = screen.getByRole("dialog", {
     name: "Restore quarterly-report.txt from trash",
   });
   expect(dialog).toBeTruthy();
-  expect(within(dialog).getByText(/recovers all 3 member files together/)).toBeTruthy();
+  expect(within(dialog).getByText(/recovers 3 trashed member files together/)).toBeTruthy();
   expect(
     screen.getByText(
       "Restore keeps the same stable node and retained content. It does not roll back versions or alter permanent audited history.",

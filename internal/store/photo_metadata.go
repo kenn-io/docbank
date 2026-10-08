@@ -133,7 +133,7 @@ func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
 		if v.SetID == nil || validateUUIDv4(*v.SetID) != nil || v.AssetID != nil || v.SettingsKey != nil {
 			return errors.New("invalid photo set receipt identity")
 		}
-	case "create", "promote", "attach", "detach", "exclude", "display", "purge", "settings_recompute", "import":
+	case "create", "promote", "attach", "detach", "exclude", "display", "purge", "settings_recompute", "import", "trash", "restore":
 		if v.AssetID == nil || v.SettingsKey != nil || v.SetID != nil {
 			return errors.New("invalid photo receipt asset/settings identity")
 		}

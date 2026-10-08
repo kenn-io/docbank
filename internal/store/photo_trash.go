@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
+	"sort"
 )
 
 // TrashPhotoAsset moves every live member to recoverable trash atomically.
@@ -43,142 +44,281 @@ func (s *Store) TrashPhotoAsset(ctx context.Context, assetID string, revision in
 		if !changed {
 			return ErrNotFound
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_assets SET revision=revision+1, updated_at=? WHERE asset_id=?`, now, assetID); err != nil {
-			return err
-		}
-		asset, err = photoAssetByIDQuery(ctx, tx, assetID)
+		asset, err = commitPhotoAssetTx(ctx, tx, asset, asset, "trash")
 		return err
 	})
 	return asset, err
 }
 
-type photoTrashGraph struct {
-	roots  map[int64]int64
-	assets map[int64][]string
-	peers  map[string][]int64
+type photoTrashGroup struct {
+	roots  map[int64]Node
+	assets map[string]PhotoAsset
+	live   bool
 }
 
-// Restore traverses only descendants that the existing subtree restore will recover.
-func loadPhotoTrashGraph(ctx context.Context, tx *sql.Tx, restore bool) (photoTrashGraph, error) {
-	graph := photoTrashGraph{roots: map[int64]int64{}, assets: map[int64][]string{}, peers: map[string][]int64{}}
-	filter := ""
-	if restore {
-		filter = " WHERE child.trashed_at=tree.stamp"
-	}
-	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE tree(id, root, stamp) AS (
-		SELECT id, id, trashed_at FROM nodes WHERE trash_name IS NOT NULL
-		UNION ALL SELECT child.id, tree.root, tree.stamp FROM nodes child JOIN tree ON child.parent_id=tree.id`+filter+`)
-		SELECT tree.id, tree.root, COALESCE(file.asset_id, '') FROM tree LEFT JOIN photo_files file ON file.node_id=tree.id ORDER BY tree.root, tree.id`)
-	if err != nil {
-		return graph, err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var node, root int64
-		var asset string
-		if err := rows.Scan(&node, &root, &asset); err != nil {
-			return graph, err
+func trashRootTx(ctx context.Context, tx *sql.Tx, node Node) (Node, error) {
+	for node.TrashedAt != nil {
+		var name sql.NullString
+		if err := tx.QueryRowContext(ctx, `SELECT trash_name FROM nodes WHERE id=?`, node.ID).Scan(&name); err != nil {
+			return Node{}, err
 		}
-		graph.roots[node] = root
-		if asset != "" {
-			graph.assets[root] = append(graph.assets[root], asset)
-			graph.peers[asset] = append(graph.peers[asset], root)
+		if name.Valid {
+			return node, nil
 		}
+		if node.ParentID == nil {
+			break
+		}
+		parent, err := nodeByIDTx(tx, *node.ParentID)
+		if err != nil {
+			return Node{}, err
+		}
+		if parent.TrashedAt == nil || *parent.TrashedAt != *node.TrashedAt {
+			break
+		}
+		node = parent
 	}
-	return graph, rows.Err()
+	return Node{}, ErrNotTrashed
 }
 
-func (g photoTrashGraph) group(root int64) []int64 {
-	group := []int64{root}
-	seen := map[int64]bool{root: true}
-	for i := 0; i < len(group); i++ {
-		for _, asset := range g.assets[group[i]] {
-			for _, peer := range g.peers[asset] {
-				if !seen[peer] {
-					seen[peer] = true
-					group = append(group, peer)
+func photoTrashGroupTx(ctx context.Context, tx *sql.Tx, root Node, restore bool) (photoTrashGroup, error) {
+	group := photoTrashGroup{roots: map[int64]Node{root.ID: root}, assets: map[string]PhotoAsset{}}
+	pending := []Node{root}
+	for i := 0; i < len(pending); i++ {
+		node := pending[i]
+		filter := ""
+		if restore {
+			filter = " WHERE child.trashed_at=tree.stamp"
+		}
+		rows, err := tx.QueryContext(ctx, `WITH RECURSIVE tree(id,stamp) AS (
+   SELECT id, trashed_at FROM nodes WHERE id=?
+   UNION ALL SELECT child.id, tree.stamp FROM nodes child JOIN tree ON child.parent_id=tree.id`+filter+`)
+   SELECT DISTINCT file.asset_id FROM tree JOIN photo_files file ON file.node_id=tree.id`, node.ID)
+		if err != nil {
+			return group, err
+		}
+		var ids []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return group, err
+			}
+			ids = append(ids, id)
+		}
+		err = rows.Err()
+		if closeErr := rows.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return group, err
+		}
+		for _, id := range ids {
+			if _, seen := group.assets[id]; seen {
+				continue
+			}
+			asset, err := photoAssetByIDQuery(ctx, tx, id)
+			if err != nil {
+				return group, err
+			}
+			group.assets[id] = asset
+			for _, file := range asset.Files {
+				member, err := nodeByIDTx(tx, file.NodeID)
+				if err != nil {
+					return group, err
+				}
+				if member.TrashedAt == nil {
+					group.live = true
+					continue
+				}
+				peer, err := trashRootTx(ctx, tx, member)
+				if err != nil {
+					return group, err
+				}
+				if _, seen := group.roots[peer.ID]; !seen {
+					group.roots[peer.ID] = peer
+					pending = append(pending, peer)
 				}
 			}
 		}
 	}
-	return group
+	return group, nil
 }
 
-func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleSelection string, args []any, maxRoots int) (string, []any, bool, error) {
-	graph, err := loadPhotoTrashGraph(ctx, tx, false)
+func restoreRootTx(ctx context.Context, s *Store, tx *sql.Tx, node Node, ifRev int64, active bool) (Node, error) {
+	if node.TrashedAt == nil {
+		return Node{}, ErrNotTrashed
+	}
+	if ifRev != UnconditionalRev && node.Revision != ifRev {
+		return Node{}, ErrStaleRevision
+	}
+	if active {
+		return s.restoreAuditedTx(ctx, tx, node, ifRev)
+	}
+	target, err := s.restoreTargetTx(tx, node)
 	if err != nil {
-		return "", nil, false, err
+		return Node{}, err
 	}
-	rows, err := tx.QueryContext(ctx, eligibleSelection, args...)
+	return s.restoreNodeTx(tx, node, target, nowRFC3339())
+}
+
+func (s *Store) restorePhotoGroupTx(ctx context.Context, tx *sql.Tx, node Node, ifRev int64, active bool) (Node, error) {
+	if node.TrashedAt == nil {
+		return Node{}, ErrNotTrashed
+	}
+	if ifRev != UnconditionalRev && node.Revision != ifRev {
+		return Node{}, ErrStaleRevision
+	}
+	_, owned, err := photoAssetOwningNodeTx(ctx, tx, node.ID)
 	if err != nil {
-		return "", nil, false, err
+		return Node{}, err
 	}
-	var ordered []int64
-	eligible := map[int64]bool{}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return "", nil, false, err
-		}
-		ordered = append(ordered, id)
-		eligible[id] = true
+	if !owned && !node.IsDir() {
+		return restoreRootTx(ctx, s, tx, node, ifRev, active)
 	}
-	err = rows.Err()
-	if closeErr := rows.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return "", nil, false, err
-	}
-	rows, err = tx.QueryContext(ctx, `SELECT asset_id, node_id FROM photo_files`)
-	if err != nil {
-		return "", nil, false, err
-	}
-	blocked := map[string]bool{}
-	for rows.Next() {
-		var asset string
-		var node int64
-		if err := rows.Scan(&asset, &node); err != nil {
-			_ = rows.Close()
-			return "", nil, false, err
-		}
-		if !eligible[graph.roots[node]] {
-			blocked[asset] = true
+	root := node
+	if owned {
+		root, err = trashRootTx(ctx, tx, node)
+		if err != nil {
+			return Node{}, err
 		}
 	}
-	err = rows.Err()
-	if closeErr := rows.Close(); err == nil {
-		err = closeErr
-	}
+	group, err := photoTrashGroupTx(ctx, tx, root, true)
 	if err != nil {
-		return "", nil, false, err
+		return Node{}, err
 	}
+	order, err := photoRestoreOrderTx(ctx, tx, group.roots)
+	if err != nil {
+		return Node{}, err
+	}
+	for _, id := range order {
+		current, err := nodeByIDTx(tx, id)
+		if err != nil {
+			return Node{}, err
+		}
+		if _, err = restoreRootTx(ctx, s, tx, current, current.Revision, active); err != nil {
+			return Node{}, err
+		}
+	}
+	for _, asset := range group.assets {
+		if _, err := commitPhotoAssetTx(ctx, tx, asset, asset, "restore"); err != nil {
+			return Node{}, err
+		}
+	}
+	return nodeByIDTx(tx, node.ID)
+}
+
+func photoRestoreOrderTx(ctx context.Context, tx *sql.Tx, roots map[int64]Node) ([]int64, error) {
+	dependencies := map[int64]int64{}
+	var ids []int64
+	for id := range roots {
+		ids = append(ids, id)
+		var parent sql.NullInt64
+		if err := tx.QueryRowContext(ctx, `SELECT trash_parent FROM nodes WHERE id=?`, id).Scan(&parent); err != nil {
+			return nil, err
+		}
+		for parent.Valid {
+			if _, selected := roots[parent.Int64]; selected {
+				dependencies[id] = parent.Int64
+				break
+			}
+			err := tx.QueryRowContext(ctx, `SELECT parent_id FROM nodes WHERE id=?`, parent.Int64).Scan(&parent)
+			if err == sql.ErrNoRows {
+				break
+			}
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	var order []int64
+	state := map[int64]int{}
+	var visit func(int64) error
+	visit = func(id int64) error {
+		if state[id] == 2 {
+			return nil
+		}
+		if state[id] == 1 {
+			return fmt.Errorf("cyclic trash parent dependency: %w", ErrNotTrashed)
+		}
+		state[id] = 1
+		if parent, ok := dependencies[id]; ok {
+			if err := visit(parent); err != nil {
+				return err
+			}
+		}
+		state[id] = 2
+		order = append(order, id)
+		return nil
+	}
+	for _, id := range ids {
+		if err := visit(id); err != nil {
+			return nil, err
+		}
+	}
+	return order, nil
+}
+
+func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string, args []any, maxRoots int) (string, []any, bool, error) {
+	eligibleSelection := `SELECT id FROM nodes WHERE ` + eligibleWhere + ` ORDER BY trashed_at ASC, id ASC`
 	seen := map[int64]bool{}
 	var selected []int64
 	more := false
-	for _, root := range ordered {
-		if seen[root] {
-			continue
+	for offset := 0; ; offset += 100 {
+		rows, err := tx.QueryContext(ctx, eligibleSelection+` LIMIT 100 OFFSET ?`, append(append([]any{}, args...), offset)...)
+		if err != nil {
+			return "", nil, false, err
 		}
-		group := graph.group(root)
-		allowed := true
-		for _, peer := range group {
-			seen[peer] = true
-			allowed = allowed && eligible[peer]
-			for _, asset := range graph.assets[peer] {
-				allowed = allowed && !blocked[asset]
+		var candidates []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return "", nil, false, err
+			}
+			candidates = append(candidates, id)
+		}
+		err = rows.Err()
+		if closeErr := rows.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return "", nil, false, err
+		}
+		for _, id := range candidates {
+			if seen[id] {
+				continue
+			}
+			node, err := nodeByIDTx(tx, id)
+			if err != nil {
+				return "", nil, false, err
+			}
+			group, err := photoTrashGroupTx(ctx, tx, node, false)
+			if err != nil {
+				return "", nil, false, err
+			}
+			allowed := !group.live
+			for peer := range group.roots {
+				seen[peer] = true
+				var eligible bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE `+eligibleWhere+` AND id=?)`, append(append([]any{}, args...), peer)...).Scan(&eligible); err != nil {
+					return "", nil, false, err
+				}
+				allowed = allowed && eligible
+			}
+			if !allowed {
+				continue
+			}
+			if maxRoots > 0 && len(selected) >= maxRoots {
+				more = true
+				break
+			}
+			for peer := range group.roots {
+				selected = append(selected, peer)
 			}
 		}
-		if !allowed {
-			continue
-		}
-		if maxRoots > 0 && len(selected) >= maxRoots {
-			more = true
+		if more || len(candidates) < 100 {
 			break
-		}
-		for _, peer := range group {
-			selected = append(selected, peer)
 		}
 	}
 	encoded, err := json.Marshal(selected)
@@ -186,49 +326,4 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleSelection st
 		return "", nil, false, err
 	}
 	return `SELECT value FROM json_each(?)`, []any{string(encoded)}, more, nil
-}
-
-func (s *Store) restorePhotoGroupTx(ctx context.Context, tx *sql.Tx, n Node, ifRev int64, active bool) (Node, error) {
-	if n.TrashedAt == nil {
-		return Node{}, ErrNotTrashed
-	}
-	if ifRev != UnconditionalRev && n.Revision != ifRev {
-		return Node{}, ErrStaleRevision
-	}
-	graph, err := loadPhotoTrashGraph(ctx, tx, true)
-	if err != nil {
-		return Node{}, err
-	}
-	root, ok := graph.roots[n.ID]
-	if !ok {
-		return Node{}, fmt.Errorf("node %d has no restorable trash root: %w", n.ID, ErrNotTrashed)
-	}
-	if root != n.ID {
-		var count int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files WHERE node_id=?`, n.ID).Scan(&count); err != nil {
-			return Node{}, err
-		}
-		if count == 0 {
-			return Node{}, ErrNotTrashed
-		}
-	}
-	for _, id := range graph.group(root) {
-		peer, err := nodeByIDTx(tx, id)
-		if err != nil {
-			return Node{}, err
-		}
-		if active {
-			_, err = s.restoreAuditedTx(ctx, tx, peer, peer.Revision)
-		} else {
-			target, targetErr := s.restoreTargetTx(tx, peer)
-			if targetErr != nil {
-				return Node{}, targetErr
-			}
-			_, err = s.restoreNodeTx(tx, peer, target, nowRFC3339())
-		}
-		if err != nil {
-			return Node{}, err
-		}
-	}
-	return nodeByIDTx(tx, n.ID)
 }

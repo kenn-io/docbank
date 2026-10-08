@@ -1,4 +1,4 @@
-import { listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { listPhotoAssets, trashPhotoAsset, getPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
@@ -22,6 +22,7 @@ export class Photos {
   loading = $state(false);
   trashing = $state(false);
   trashError = $state("");
+  trashTargets = $state<PhotoBrowseRow[]>([]);
   error = $state("");
   scrollTop = $state(0);
   grouping = $state<"months" | "sessions">("months");
@@ -125,7 +126,7 @@ export class Photos {
       this.total = total;
       this.cursor = cursor;
       this.started = true;
-      this.selection = reconcileIDSelection(this.selection, new Set(candidate.keys()));
+      this.selection = reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...this.trashTargets.map(item => item.asset_id)]));
       this.expired = false;
       this.replacement = undefined;
       await restore?.();
@@ -138,16 +139,23 @@ export class Photos {
     }
   }
 
-  async trashSelected(preserve?: () => (() => Promise<void>) | undefined) {
+  async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
     if (this.trashing || this.disposed) return false;
-    const selected = this.items.filter(item => this.selection.selectedIDs.has(item.asset_id));
+    const retry = this.trashTargets.length > 0;
+    const selected = retry ? [...this.trashTargets] : this.items.filter(item => this.selection.selectedIDs.has(item.asset_id));
+    this.trashTargets = selected;
     this.trashing = true;
     this.trashError = "";
+    let successes = 0;
     try {
       for (const item of selected) {
         try {
-          const receipt = await trashPhotoAsset(item.asset_id, { "If-Match": String(item.revision) }, { session: this.session, signal: AbortSignal.timeout(60_000) });
-          if (receipt.id !== item.asset_id || receipt.revision <= item.revision) throw new Error("Photo trash response did not confirm the selected photo. Refresh and retry.");
+          const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
+          const revision = retry ? (await getPhotoAsset(item.asset_id, options)).revision : item.revision;
+          const receipt = await trashPhotoAsset(item.asset_id, { "If-Match": String(revision) }, options);
+          if (receipt.id !== item.asset_id || receipt.revision <= revision) throw new Error("Photo trash response did not confirm the selected photo. Refresh and retry.");
+          successes++;
+          this.trashTargets = this.trashTargets.filter(target => target.asset_id !== item.asset_id);
           const ids = new Set(this.selection.selectedIDs);
           ids.delete(item.asset_id);
           this.selection = { selectedIDs: ids, anchorID: undefined };
@@ -156,8 +164,9 @@ export class Photos {
           this.trashError = cause instanceof Error ? cause.message : String(cause);
         }
       }
+      if (successes) ontrashed?.();
       await this.refresh(preserve);
-      return this.selection.selectedIDs.size === 0;
+      return successes === selected.length;
     } finally { this.trashing = false; }
   }
 
@@ -172,7 +181,7 @@ export class Photos {
     this.selection = toggleIDSelection(this.selection, orderedIDs, id, checked, range);
   }
 
-  clearSelection() { this.selection = clearSelection<string>(); }
+  clearSelection() { this.selection = clearSelection<string>(); this.trashTargets = []; }
   selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; }
   dispose() { this.disposed = true; this.controller.abort(); }
 }
