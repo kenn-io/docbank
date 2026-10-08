@@ -10,6 +10,47 @@ const state = (unlocked: boolean) => ({ configured: true, change_id: "unchanged"
 const problem = (status: number, detail: string) => new Response(JSON.stringify({ detail }), { status });
 const prepare = () => { vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} }); vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000); vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800); };
 
+it("preserves an unlocked selection when polling observes the same state", async () => {
+  prepare();
+  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
+  let hidden = state(false);
+  let failing = false;
+  const fetcher = vi.fn(async (url: string) => {
+    if (url.endsWith("/unlock")) { hidden = state(true); return new Response(JSON.stringify(hidden)); }
+    if (url.endsWith("/photos/hidden")) return failing ? problem(503, "Temporary state failure") : new Response(JSON.stringify(hidden));
+    if (url.includes("/assets/query")) return new Response(JSON.stringify({ items: [photo(1)], total: 1 }));
+    return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(App);
+  await waitFor(() => expect((screen.getByLabelText("Passcode", { exact: true }) as HTMLInputElement).disabled).toBe(false));
+  await fireEvent.input(screen.getByLabelText("Passcode", { exact: true }), { target: { value: "synthetic" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await screen.findByText("1 selected photo");
+  const listings = () => fetcher.mock.calls.filter(([url]) => url.includes("/assets/query")).length;
+  const before = listings();
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(screen.getByText("1 selected photo")).not.toBeNull();
+  expect(listings()).toBe(before);
+  hidden = { ...hidden, change_id: "changed-by-cli" };
+  await fireEvent(document, new Event("visibilitychange"));
+  await waitFor(() => expect(listings()).toBe(before + 1));
+  await waitFor(() => expect(screen.queryByText("1 selected photo")).toBeNull());
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  const otherContext = new BroadcastChannel(photoPrivacyEvent);
+  otherContext.postMessage({ origin: "synthetic-other-context" });
+  otherContext.close();
+  await waitFor(() => expect(listings()).toBe(before + 2));
+  await waitFor(() => expect(screen.queryByText("1 selected photo")).toBeNull());
+  failing = true;
+  await fireEvent(document, new Event("visibilitychange"));
+  await screen.findByText("Could not check Hidden access. Retry or wait for the next check.");
+  expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
+});
+
 it.each([false, true])("Retry clears a resolved read error when unlocked=%s", async unlocked => {
   prepare();
   let failing = true;

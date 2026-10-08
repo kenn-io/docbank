@@ -73,7 +73,12 @@
 
   onMount(() => {
     void refresh();
-    const privacy = (event: Event) => { const detail = (event as CustomEvent<unknown>).detail; if (typeof detail === "string") actionError = detail; void refresh(); };
+    const privacy = (event: Event) => {
+      const detail = (event as CustomEvent<PhotoHiddenState | string | undefined>).detail;
+      if (workspace && detail && typeof detail === "object" && detail.change_id === hiddenState.change_id && detail.configured === hiddenState.configured && detail.expires_at === hiddenState.expires_at) return;
+      if (typeof detail === "string") actionError = detail;
+      void refresh();
+    };
     const failed = (event: Event) => { refreshController.abort(); clear(); hiddenState.expires_at = undefined; busy = false; readError = (event as CustomEvent<string>).detail; };
     window.addEventListener(photoPrivacyEvent, privacy);
     window.addEventListener(photoRevalidationErrorEvent, failed);
@@ -92,7 +97,7 @@
   {#if readError}<p role="alert">{readError}</p><Button size="sm" onclick={() => void refresh()}>Retry</Button>{/if}
   {#if workspace && remaining}
     <div class="hidden-controls"><span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span><Button size="sm" disabled={busy} onclick={() => void action("lock")}>Lock</Button></div>
-    {#key workspace}<PhotosWorkspace photos={workspace.photos} cache={workspace.cache} title="Hidden" />{/key}
+    {#each [workspace] as current (current)}<PhotosWorkspace photos={current.photos} cache={current.cache} title="Hidden" />{/each}
   {:else}
     <div class="hidden-gate">
       <h1>Hidden</h1>
