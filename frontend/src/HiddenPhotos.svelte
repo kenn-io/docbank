@@ -73,7 +73,7 @@
 
   onMount(() => {
     void refresh();
-    const privacy = () => { void refresh(); };
+    const privacy = (event: Event) => { const detail = (event as CustomEvent<unknown>).detail; if (typeof detail === "string") actionError = detail; void refresh(); };
     const failed = (event: Event) => { refreshController.abort(); clear(); hiddenState.expires_at = undefined; busy = false; readError = (event as CustomEvent<string>).detail; };
     window.addEventListener(photoPrivacyEvent, privacy);
     window.addEventListener(photoRevalidationErrorEvent, failed);

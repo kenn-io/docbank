@@ -248,6 +248,9 @@ func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, n
 		if cover != nil {
 			if *cover != nil {
 				if _, err := s.photoAssetReadQuery(ctx, tx, **cover); err != nil {
+					if errors.Is(err, ErrNotFound) {
+						return ErrInvalidPhotoAlbum
+					}
 					return err
 				}
 				var count int

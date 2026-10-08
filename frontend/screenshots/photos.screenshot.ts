@@ -62,8 +62,17 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-hidden-unlocked-${theme}.png`), animations: "disabled" });
     }
+    await page.route(`**/api/v1/photos/assets/${id}/unhide`, route => route.fulfill({ status: 412, contentType: "application/problem+json", body: JSON.stringify({ detail: "Synthetic stale photo revision", code: "stale_revision" }) }), { times: 1 });
     await page.locator(`[data-asset="${id}"]`).getByRole("button", { name: /^Actions for / }).click();
     await page.getByRole("menuitem", { name: "Unhide", exact: true }).click();
+    await expect(page.getByRole("alert")).toHaveText("Synthetic stale photo revision");
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await page.waitForResponse(response => response.url().endsWith("/api/v1/photos/hidden") && response.request().method() === "GET");
+    await expect(page.getByRole("alert")).toHaveText("Synthetic stale photo revision");
+    await page.screenshot({ path: path.join(output!, "web-hidden-unhide-failure-dark.png"), animations: "disabled" });
+    await page.locator(`[data-asset="${id}"]`).getByRole("button", { name: /^Actions for / }).click();
+    await page.getByRole("menuitem", { name: "Unhide", exact: true }).click();
+    await expect(page.getByRole("alert")).toHaveCount(0);
     await expect(page.locator(`[data-asset="${id}"]`)).toHaveCount(0);
     await page.getByRole("button", { name: "Library", exact: true }).click();
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
@@ -107,7 +116,7 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     } finally { globalThis.fetch = fetcher; }
     await expect(page.getByText("The browser session expired or was rejected. Run `docbank web` again.")).toBeVisible({ timeout: 6000 });
     await expect(page.locator("[data-asset]")).toHaveCount(0);
-    await writeFile(path.join(output!, "hidden-proof.json"), JSON.stringify({ workspace, id, passcode: "synthetic-passcode", states: ["hide", "unlock", "lock", "unhide", "automatic-recovery", "browser-session-rejected", "cli-lock", "expiry", "tab-lock"] }, null, 2));
+    await writeFile(path.join(output!, "hidden-proof.json"), JSON.stringify({ workspace, id, passcode: "synthetic-passcode", states: ["hide", "unlock", "lock", "unhide", "stale-unhide-error", "automatic-recovery", "browser-session-rejected", "cli-lock", "expiry", "tab-lock"] }, null, 2));
   } finally {
     if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {
       const previewURL = new URL(await run("web", "--no-browser"));

@@ -226,7 +226,7 @@ filters.
 
 ### Photo imports
 
-Hidden passcodes use protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks within that invocation. Disable returns all hidden photos to Library; reset preserves hidden flags while removing credentials. Locked Photos inspection refuses hidden assets. Documents still expose their ordinary file nodes.
+Hidden passcodes use protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks within that invocation. Disable returns all hidden photos to Library; reset preserves hidden flags while removing credentials. Unhide first to use other CLI or MCP photo commands on hidden assets. Documents and MCP document tools still expose their ordinary file nodes.
 
 `photos import` queues a background import of a folder on the daemon host and
 prints the operation ID. It creates one photo per same-folder, same-name group
