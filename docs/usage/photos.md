@@ -73,7 +73,7 @@ docbank photos hidden state
 docbank photos hidden reset
 ```
 
-Passcodes use protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks and forwards the cookie within that invocation. Unhide saves no client credential file. Unhide first to use other CLI or MCP photo commands on a hidden asset; ordinary Documents and MCP document tools retain file access. HTTP operations live under `/api/v1/photos/hidden`; hide and unhide use `/api/v1/photos/assets/{asset_id}/hide` and `/unhide` with `If-Match`. Browser sessions can use the interactive operations. Reset requires the daemon API key.
+Passcodes must be 1 to 1,024 bytes. CLI input uses protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks and forwards the cookie within that invocation. Unhide saves no client credential file. Unhide first to use other CLI or MCP photo commands on a hidden asset; ordinary Documents and MCP document tools retain file access. HTTP operations live under `/api/v1/photos/hidden`; hide and unhide use `/api/v1/photos/assets/{asset_id}/hide` and `/unhide` with `If-Match`. Browser sessions can use the interactive operations. Reset requires the daemon API key.
 
 ## Previews
 
@@ -277,6 +277,7 @@ an empty asset identity.
 Automatic enrollment and explicit graph writes are skipped or refused when
 audit authority is active, according to the existing audit boundary. The
 preexisting graph is preserved. Photo trash and restore remain available under audit and record audited node changes plus photo revision receipts.
+Hidden unlock and lock remain available. Setup, change, disable, reset, hide, and unhide require a writable vault.
 
 ## Browse photo assets over HTTP
 
