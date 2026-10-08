@@ -129,14 +129,41 @@ func photoQualityForVersions(
 		if err := rows.Scan(&id, &state, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]); err != nil {
 			return photoQualityResults{}, err
 		}
-		if state == photoQualityStateUnavailable {
+		signals, unavailable, err := decodePhotoQualityRow(state, v)
+		if err != nil {
+			return photoQualityResults{}, fmt.Errorf("reading photo quality for %s: %w", id, err)
+		}
+		if unavailable {
 			result.unavailable[id] = true
 			continue
 		}
-		result.signals[id] = document.PhotoQualitySignals{
+		result.signals[id] = signals
+	}
+	return result, rows.Err()
+}
+
+// decodePhotoQualityRow rejects unknown states and score presence that does
+// not match the state.
+func decodePhotoQualityRow(
+	state string, v [8]sql.NullFloat64,
+) (document.PhotoQualitySignals, bool, error) {
+	present := 0
+	for _, score := range v {
+		if score.Valid {
+			present++
+		}
+	}
+	switch {
+	case state == photoQualityStateUnavailable && present == 0:
+		return document.PhotoQualitySignals{}, true, nil
+	case state == photoQualityStateReady && present == len(v):
+		signals := document.PhotoQualitySignals{
 			Focus: v[0].Float64, Blur: v[1].Float64, Brightness: v[2].Float64, ColorRed: v[3].Float64,
 			ColorGreen: v[4].Float64, ColorBlue: v[5].Float64, Framing: v[6].Float64, Aesthetics: v[7].Float64,
 		}
+		return signals, false, document.ValidatePhotoQualitySignals(signals)
+	default:
+		return document.PhotoQualitySignals{}, false, fmt.Errorf(
+			"invalid photo quality state %q with %d of %d scores", state, present, len(v))
 	}
-	return result, rows.Err()
 }

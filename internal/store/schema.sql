@@ -2487,18 +2487,13 @@ CREATE TABLE IF NOT EXISTS mailbox_occurrences (
 
 -- Derived pixels rebuild locally and are omitted from metadata backups.
 -- Unavailable rows record previews whose verified bytes cannot be measured.
+-- Go validates state and score presence on every write and read.
 CREATE TABLE IF NOT EXISTS photo_quality_signals (
  content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
  evaluator_fingerprint TEXT NOT NULL,
- state TEXT NOT NULL CHECK(state IN ('ready','unavailable')),
+ state TEXT NOT NULL,
  focus REAL, blur REAL, brightness REAL,
  color_red REAL, color_green REAL, color_blue REAL,
  framing REAL, aesthetics REAL,
- CHECK((state='ready') = (focus IS NOT NULL AND blur IS NOT NULL AND brightness IS NOT NULL
-  AND color_red IS NOT NULL AND color_green IS NOT NULL AND color_blue IS NOT NULL
-  AND framing IS NOT NULL AND aesthetics IS NOT NULL)),
- CHECK(state='ready' OR (focus IS NULL AND blur IS NULL AND brightness IS NULL
-  AND color_red IS NULL AND color_green IS NULL AND color_blue IS NULL
-  AND framing IS NULL AND aesthetics IS NULL)),
  PRIMARY KEY(content_version_id,evaluator_fingerprint)
 );

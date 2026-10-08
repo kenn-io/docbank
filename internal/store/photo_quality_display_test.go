@@ -114,3 +114,25 @@ func TestPhotoQualityUnavailableIsTerminal(t *testing.T) {
 	require.Empty(t, browsePhotoPage(t, s, `{"filters":{"focus_min":"0"}}`).Items)
 	require.Empty(t, browsePhotoPage(t, s, `{"filters":{"focus_max":"1"}}`).Items)
 }
+
+func TestPhotoQualityRejectsInvalidStoredRows(t *testing.T) {
+	t.Parallel()
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	require.NoError(t, err)
+	for name, row := range map[string]string{
+		"unknown state":         `'stale',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL`,
+		"ready missing a score": `'ready',0,1,0,0,0,0,NULL,0`,
+		"unavailable with data": `'unavailable',0,NULL,NULL,NULL,NULL,NULL,NULL,NULL`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			node := browsePhotoNode(t, s, "stored.jpg", browseHash("stored-quality"), "image/jpeg")
+			_, err := s.db.Exec(`INSERT INTO photo_quality_signals(content_version_id,evaluator_fingerprint,state,`+
+				photoQualityColumns+`) VALUES(?,?,`+row+`)`, node.CurrentVersionID, fingerprints.Evaluator)
+			require.NoError(t, err)
+			_, err = s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`)}, nil)
+			require.ErrorContains(t, err, "invalid photo quality state")
+		})
+	}
+}
