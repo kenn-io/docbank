@@ -38,7 +38,7 @@ it("keeps base counts across day changes and rejects a pre-refresh calendar repl
   finish(first); await Promise.resolve();
   expect(oldSignal.aborted).toBe(true);
   await vi.waitFor(() => expect(photos.timeline?.total).toBe(20));
-  expect(create.mock.calls[1][1].sort.field).toBe("name");
+  expect(create.mock.calls[1][1].sort.field).toBe("capture_time");
   await photos.selectDay("2024-02-29");
   expect(create).toHaveBeenCalledTimes(2);
   expect(photos.timeline?.total).toBe(20);

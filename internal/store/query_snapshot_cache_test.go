@@ -400,6 +400,7 @@ func TestQuerySnapshotCacheRejectsNilStoreAtOperationTime(t *testing.T) {
 	_, err := service.Create(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
 	require.Error(t, err)
 }
+
 func TestCaptureDayCountsPreservePageableSnapshots(t *testing.T) {
 	for _, driverCase := range walkTestDrivers() {
 		t.Run(driverCase.name, func(t *testing.T) {
@@ -432,7 +433,11 @@ func TestCaptureDayCountsPreservePageableSnapshots(t *testing.T) {
 						service.limits.MaxBytes = baseline.CachedBytes
 					}
 					_, err := service.CreateFacets(t.Context(), "owner", request)
-					require.ErrorIs(t, err, ErrSnapshotAdmission)
+					if budget == "rows" {
+						require.NoError(t, err)
+					} else {
+						require.ErrorIs(t, err, ErrSnapshotAdmission)
+					}
 					assert.Equal(t, baseline, service.stats())
 					service.limits = original
 					page, err := service.Page(t.Context(), "owner", first.SnapshotID, first.NextCursor)
@@ -452,8 +457,8 @@ func TestCaptureDayCountsCancellationKeepsReservationsUntilStopped(t *testing.T)
 			require.NoError(t, err)
 			entered := make(chan struct{})
 			release := make(chan struct{})
-			service := newQuerySnapshotService(s, querySnapshotServiceOptions{Limits: snapshotCacheLimits{MaxBuilders: 1}, ChargeHook: func(ctx context.Context, _ string, rows, _ int64) error {
-				if rows > 0 {
+			service := newQuerySnapshotService(s, querySnapshotServiceOptions{Limits: snapshotCacheLimits{MaxBuilders: 1}, ChargeHook: func(ctx context.Context, _ string, _, bytes int64) error {
+				if bytes > 0 {
 					close(entered)
 					<-release
 					return ctx.Err()
@@ -476,7 +481,8 @@ func TestCaptureDayCountsCancellationKeepsReservationsUntilStopped(t *testing.T)
 			}
 			assert.Equal(t, int64(1), service.stats().ActiveBuilders)
 			assert.Zero(t, service.stats().ReservedHandles)
-			assert.Positive(t, service.stats().ReservedRows)
+			assert.Zero(t, service.stats().ReservedRows)
+			assert.Positive(t, service.stats().ReservedBytes)
 			close(release)
 			require.ErrorIs(t, <-done, context.Canceled)
 			assert.Equal(t, snapshotCacheStats{}, service.stats())

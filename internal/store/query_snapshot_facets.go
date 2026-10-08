@@ -219,7 +219,7 @@ func materializeCaptureDayFacet(ctx context.Context, q metadataQuerier, compiled
 		return SnapshotFacet{}, err
 	}
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{
-		sql:  `SELECT COALESCE(p.capture_date,'') FROM ` + photoBrowseDisplayFrom + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + match.sql,
+		sql:  `SELECT COALESCE(p.capture_date,''),COUNT(*) FROM ` + photoBrowseDisplayFrom + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + match.sql + ` GROUP BY COALESCE(p.capture_date,'') ORDER BY COALESCE(p.capture_date,'') DESC`,
 		args: match.args, relations: match.relations,
 	}, coverage, generation)
 	if err != nil {
@@ -230,34 +230,27 @@ func materializeCaptureDayFacet(ctx context.Context, q metadataQuerier, compiled
 		return SnapshotFacet{}, err
 	}
 	defer func() { _ = rows.Close() }()
-	counts := make(map[string]int64)
+	values := make([]SnapshotFacetValue, 0)
 	var total, missing int64
 	for rows.Next() {
 		var day string
-		if err := rows.Scan(&day); err != nil {
+		var count int64
+		if err := rows.Scan(&day, &count); err != nil {
 			return SnapshotFacet{}, err
 		}
-		total++
+		total += count
 		if total > limit {
 			return unavailableSnapshotFacet("capture_day", "member_budget_exceeded"), nil
 		}
-		if err := options.Charge(1, 0); err != nil {
-			return SnapshotFacet{}, err
-		}
 		if day == "" {
-			missing++
+			missing = count
 		} else {
-			counts[day]++
+			values = append(values, SnapshotFacetValue{Key: day, Label: day, Count: count})
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return SnapshotFacet{}, err
 	}
-	values := make([]SnapshotFacetValue, 0, len(counts))
-	for day, count := range counts {
-		values = append(values, SnapshotFacetValue{Key: day, Label: day, Count: count})
-	}
-	slices.SortFunc(values, func(a, b SnapshotFacetValue) int { return strings.Compare(b.Key, a.Key) })
 	if err := ctx.Err(); err != nil {
 		return SnapshotFacet{}, err
 	}

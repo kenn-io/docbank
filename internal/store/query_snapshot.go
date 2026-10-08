@@ -228,7 +228,7 @@ func (s *Store) materializeNormalizedQuerySnapshot(ctx context.Context, request 
 		if err != nil {
 			return err
 		}
-		if compiled.Query.Sort.Field == "capture_time" || compiled.Query.Sort.Field == "import_time" || compiled.Query.Sort.Field == "added_time" {
+		if !request.FacetsOnly && (compiled.Query.Sort.Field == "capture_time" || compiled.Query.Sort.Field == "import_time" || compiled.Query.Sort.Field == "added_time") {
 			return compileExpressionError(0, len(compiled.Query.Text), fmt.Sprintf("sort %q is only supported in Photos", compiled.Query.Sort.Field))
 		}
 		if coverage.Configuration == "configured" {

@@ -102,7 +102,7 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, photos.Total)
 	require.Zero(t, *facetByDimension(t, photos, "capture_day").Total)
-	for _, value := range []string{`{}`, `{"filters":{"extensions":["xmp"]}}`, `{"syntax":"advanced","text":"saved:Sidecars AND capture_before:2025-01-01"}`, `{"filters":{"capture_after":"2024-02-29","capture_before":"2024-03-01"}}`, `{"filters":{"collapse_duplicates":true}}`, fmt.Sprintf(`{"filters":{"tag_ids":[%q]}}`, tag.ID), fmt.Sprintf(`{"filters":{"set_ids":[%q]}}`, album.ID)} {
+	for _, value := range []string{`{}`, `{"filters":{"extensions":["xmp"]}}`, `{"syntax":"advanced","text":"saved:Sidecars AND capture_before:2025-01-01"}`, `{"filters":{"capture_after":"2024-02-29","capture_before":"2024-03-01"}}`, `{"filters":{"collapse_duplicates":true}}`, fmt.Sprintf(`{"filters":{"tag_ids":[%q]}}`, tag.ID), fmt.Sprintf(`{"filters":{"set_ids":[%q]}}`, album.ID), `{"sort":{"field":"capture_time","direction":"desc"}}`, `{"sort":{"field":"import_time","direction":"asc"}}`, fmt.Sprintf(`{"filters":{"set_ids":[%q]},"sort":{"field":"added_time","direction":"desc"}}`, album.ID)} {
 		projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, value), Facets: []string{"capture_day"}})
 		require.NoError(t, err, value)
 		facet := facetByDimension(t, projection, "capture_day")
@@ -466,6 +466,7 @@ func TestQuerySnapshotRejectsProductionRowOver64KiB(t *testing.T) {
 	_, err = s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
 	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
 }
+
 func TestCaptureDayCountsIgnoreUnusedLargeTags(t *testing.T) {
 	for _, driverCase := range walkTestDrivers() {
 		t.Run(driverCase.name, func(t *testing.T) {

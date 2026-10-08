@@ -647,12 +647,14 @@ processing `profile`, `page_size` of 50, 100, or 250 (default 100), and any
 subset of `collections`, `tags`, `media_family`, `extension`, `modified`,
 `size`, `text_coverage`, and `duplicates` facets.
 
-`facets_only: true` accepts exactly the `capture_day` facet and admits one
-selected live display node and version per matching photo asset. Its response
+`facets_only: true` accepts exactly the `capture_day` facet and counts scoped
+photo assets under the member limit. It reserves output bytes and zero cached
+rows, so occupied row capacity leaves calendar counts available. Its response
 contains `facets_only`, query, dependencies, generation, coverage, observation
 time and facets. The build releases its reservations without publishing a
 snapshot handle, rows, hashes or cursors. Counts requests preserve existing
-snapshot handles and return busy or capacity errors when resources are occupied.
+snapshot handles and return busy or capacity errors when builders or bytes are
+occupied. Photo sorts remain valid in counts requests.
 
 The response freezes the canonical query, dependency revisions, selected
 lexical generation and processing coverage, ordered row metadata, and exact

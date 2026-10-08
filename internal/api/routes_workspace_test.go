@@ -50,6 +50,21 @@ func TestWorkspaceQueryCaptureDayDelivery(t *testing.T) {
 	require.Equal(t, int64(121), *facet.Total)
 	require.Equal(t, int64(1), *facet.Missing)
 	require.Zero(t, *facet.Other)
+	album, err := s.CreatePhotoSet(t.Context(), "Counts photo sorts")
+	require.NoError(t, err)
+	for _, field := range []string{"capture_time", "import_time", "added_time"} {
+		filters := `{}`
+		if field == "added_time" {
+			filters = fmt.Sprintf(`{"set_ids":[%q]}`, album.ID)
+		}
+		payload := fmt.Sprintf(`{"facets_only":true,"query":{"filters":%s,"sort":{"field":%q,"direction":"desc"}},"facets":["capture_day"]}`, filters, field)
+		resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, payload)
+		require.Equal(t, http.StatusOK, resp.StatusCode, body)
+		require.Contains(t, body, fmt.Sprintf(`"field":"%s"`, field))
+		payload = fmt.Sprintf(`{"query":{"filters":%s,"sort":{"field":%q,"direction":"desc"}}}`, filters, field)
+		resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, payload)
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	}
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"facets_only":true,"query":{},"facets":["tags"]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"query":{},"facets":["capture_day"]}`)

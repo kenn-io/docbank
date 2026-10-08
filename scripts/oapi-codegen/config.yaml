@@ -10,5 +10,6 @@ generate:
 user-templates:
   header.tmpl: scripts/oapi-codegen/header.tmpl
   types.tmpl: scripts/oapi-codegen/types.tmpl
+  union.tmpl: scripts/oapi-codegen/union.tmpl
   client-options.tmpl: scripts/oapi-codegen/client-options.tmpl
   client.tmpl: scripts/oapi-codegen/client.tmpl

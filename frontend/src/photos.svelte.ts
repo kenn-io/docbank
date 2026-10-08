@@ -120,7 +120,7 @@ export class Photos {
     this.timelineLoading = true;
     this.timelineError = "";
     try {
-      const page = await createFacetCounts(this.session, { ...photoQuery, sort: { field: "name", direction: "asc" } }, controller.signal);
+      const page = await createFacetCounts(this.session, photoQuery, controller.signal);
       if (!controller.signal.aborted) this.timeline = page.facets[0];
     } catch (cause) {
       if (controller.signal.aborted) return;

@@ -44,7 +44,6 @@ it("shows full-scope year density and only the focused month's day rows", async 
   await fireEvent.click(day);
   expect(onselect).toHaveBeenCalledWith("2024-02-29");
   expect(screen.getByRole("navigation", { name: "Timeline month scrubber" })).toBeTruthy();
-
 });
 
 it("shows undated and unavailable scopes honestly", async () => {
