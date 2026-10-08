@@ -14,11 +14,15 @@
   let nextPasscode = $state("");
   let readError = $state("");
   let actionError = $state("");
-  let busy = $state(true);
+  let reading = $state(true);
+  let actionPending = $state(false);
+  let concealingAction = $state(false);
+  const busy = $derived(reading || actionPending);
   let remaining = $state(0);
   let refreshController = new AbortController();
+  const actionController = new AbortController();
   let disposed = false;
-  const options = () => ({ session, signal: AbortSignal.any([refreshController.signal, AbortSignal.timeout(30_000)]) });
+  const options = (signal = refreshController.signal) => ({ session, signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
 
   function clear() {
     workspace?.photos.clearForPrivacy();
@@ -45,30 +49,36 @@
       readError = "";
       hiddenState = result;
       remaining = result.expires_at ? Math.max(0, Math.ceil((Date.parse(result.expires_at) - Date.now()) / 1000)) : 0;
-      if (remaining) workspace = { photos: new Photos(session, authorizationLost, true), cache: new PhotoPreviewCache(session, authorizationLost) };
+      if (remaining && !concealingAction) workspace = { photos: new Photos(session, authorizationLost, true), cache: new PhotoPreviewCache(session, authorizationLost) };
     } catch (cause) { if (!controller.signal.aborted && !disposed) { if (cause instanceof APIError && cause.status === 401) onauthfailure(cause); else readError = cause instanceof Error ? cause.message : String(cause); } }
-    finally { if (!controller.signal.aborted) busy = false; }
+    finally { if (!controller.signal.aborted) reading = false; }
   }
   async function action(kind: "enter" | "lock" | "change" | "disable") {
-    busy = true;
+    if (actionPending) return;
+    actionPending = true;
+    concealingAction = kind !== "enter";
+    let completed = false;
     actionError = "";
     if (kind === "lock" || kind === "disable" || kind === "change") clear();
     try {
       if (kind === "enter") {
-        if (!hiddenState.configured) await setupPhotoHidden({ passcode }, options());
-        await unlockPhotoHidden({ passcode }, options());
-      } else if (kind === "lock") await lockPhotoHidden({}, options());
-      else if (kind === "change") await changePhotoHidden({ passcode, new_passcode: nextPasscode }, options());
-      else await disablePhotoHidden({ passcode }, options());
+        if (!hiddenState.configured) await setupPhotoHidden({ passcode }, options(actionController.signal));
+        await unlockPhotoHidden({ passcode }, options(actionController.signal));
+      } else if (kind === "lock") await lockPhotoHidden({}, options(actionController.signal));
+      else if (kind === "change") await changePhotoHidden({ passcode, new_passcode: nextPasscode }, options(actionController.signal));
+      else await disablePhotoHidden({ passcode }, options(actionController.signal));
       passcode = "";
       nextPasscode = "";
-      notifyPhotoPrivacy();
+      completed = true;
     } catch (cause) {
-      if (refreshController.signal.aborted || disposed) return;
+      if (disposed) return;
       if (cause instanceof APIError && cause.status === 401) { onauthfailure(cause); return; }
       actionError = cause instanceof Error ? cause.message : String(cause);
-      await refresh();
-    } finally { busy = false; }
+    } finally {
+      actionPending = false;
+      concealingAction = false;
+      if (!disposed) { if (completed) notifyPhotoPrivacy(); else await refresh(); }
+    }
   }
 
   onMount(() => {
@@ -79,7 +89,7 @@
       if (typeof detail === "string") actionError = detail;
       void refresh();
     };
-    const failed = (event: Event) => { refreshController.abort(); clear(); hiddenState.expires_at = undefined; busy = false; readError = (event as CustomEvent<string>).detail; };
+    const failed = (event: Event) => { refreshController.abort(); clear(); hiddenState.expires_at = undefined; reading = false; readError = (event as CustomEvent<string>).detail; };
     window.addEventListener(photoPrivacyEvent, privacy);
     window.addEventListener(photoRevalidationErrorEvent, failed);
     const timer = setInterval(() => {
@@ -87,7 +97,7 @@
       remaining = Math.max(0, Math.ceil((Date.parse(hiddenState.expires_at) - Date.now()) / 1000));
       if (!remaining) { clear(); hiddenState.expires_at = undefined; notifyPhotoPrivacy(); }
     }, 250);
-    return () => { disposed = true; refreshController.abort(); clear(); clearInterval(timer); window.removeEventListener(photoPrivacyEvent, privacy); window.removeEventListener(photoRevalidationErrorEvent, failed); passcode = ""; nextPasscode = ""; };
+    return () => { disposed = true; refreshController.abort(); actionController.abort(); clear(); clearInterval(timer); window.removeEventListener(photoPrivacyEvent, privacy); window.removeEventListener(photoRevalidationErrorEvent, failed); passcode = ""; nextPasscode = ""; };
   });
 </script>
 

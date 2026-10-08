@@ -3,12 +3,38 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/sv
 import HiddenPhotos from "./HiddenPhotos.svelte";
 import App from "./App.svelte";
 import { photo } from "./photo-test-fixtures.js";
-import { photoPrivacyEvent } from "./photos.svelte.js";
+import { photoPrivacyEvent, photoRevalidationErrorEvent } from "./photos.svelte.js";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const state = (unlocked: boolean) => ({ configured: true, change_id: "unchanged", ...(unlocked ? { expires_at: new Date(Date.now() + 300_000).toISOString() } : {}) });
 const problem = (status: number, detail: string) => new Response(JSON.stringify({ detail }), { status });
 const prepare = () => { vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} }); vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000); vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800); };
+
+it.each(["lock", "unlock"])("privacy read failure preserves pending %s and its error", async kind => {
+  prepare();
+  let settle!: (response: Response) => void;
+  let actionSignal: AbortSignal | undefined;
+  const pending = new Promise<Response>(resolve => { settle = resolve; });
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith(`/${kind}`)) { actionSignal = options?.signal ?? undefined; return pending; }
+    if (url.endsWith("/photos/hidden")) return new Response(JSON.stringify(state(kind === "lock")));
+    return new Response(JSON.stringify({ items: [photo(1)], total: 1 }));
+  }));
+  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  if (kind === "unlock") {
+    await waitFor(() => expect((screen.getByLabelText("Passcode", { exact: true }) as HTMLInputElement).disabled).toBe(false));
+    await fireEvent.input(screen.getByLabelText("Passcode", { exact: true }), { target: { value: "synthetic" } });
+  }
+  await fireEvent.click(await screen.findByRole("button", { name: kind === "lock" ? "Lock" : "Unlock" }));
+  await waitFor(() => expect(actionSignal).toBeDefined());
+  window.dispatchEvent(new CustomEvent(photoRevalidationErrorEvent, { detail: "Temporary privacy read failure" }));
+  expect(actionSignal?.aborted).toBe(false);
+  window.dispatchEvent(new Event(photoPrivacyEvent));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
+  settle(problem(503, "Synthetic passcode action failed"));
+  await screen.findByText("Synthetic passcode action failed");
+});
 
 it("preserves an unlocked selection when polling observes the same state", async () => {
   prepare();
