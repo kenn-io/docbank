@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json/v2"
-	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -227,6 +227,7 @@ func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
 
 type delayedProofWriteConn struct {
 	net.Conn
+
 	closed chan struct{}
 	once   sync.Once
 }
@@ -235,12 +236,18 @@ func (c *delayedProofWriteConn) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
 	// Hold write completion until the transport discards the valid proof socket.
 	<-c.closed
-	return n, err
+	if err != nil {
+		return n, fmt.Errorf("writing proof request: %w", err)
+	}
+	return n, nil
 }
 
 func (c *delayedProofWriteConn) Close() error {
 	c.once.Do(func() { close(c.closed) })
-	return c.Conn.Close()
+	if err := c.Conn.Close(); err != nil {
+		return fmt.Errorf("closing proof connection: %w", err)
+	}
+	return nil
 }
 
 func TestProvenClientRecoversDiscardedChallengeConnection(t *testing.T) {
@@ -305,23 +312,26 @@ func TestProvenClientRecoversDiscardedChallengeConnection(t *testing.T) {
 					return nil, ctx.Err()
 				}
 				conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
-				if err == nil && (attempt == 1 || tc.discardBoth) {
+				if err != nil {
+					return nil, fmt.Errorf("dialing proof connection: %w", err)
+				}
+				if attempt == 1 || tc.discardBoth {
 					conn = &delayedProofWriteConn{Conn: conn, closed: make(chan struct{})}
 				}
-				return conn, err
+				return conn, nil
 			})
 			if tc.wantErr != nil || tc.invalidProof != 0 {
 				require.Error(t, err)
 				if tc.wantErr != nil {
 					require.ErrorIs(t, err, tc.wantErr)
 				} else {
-					assert.False(t, errors.Is(err, ErrTransientDaemonAcquisition))
+					require.NotErrorIs(t, err, ErrTransientDaemonAcquisition)
 				}
 				require.Nil(t, c)
 				assert.Zero(t, requests.Load())
 			} else {
 				require.NoError(t, err)
-				defer c.Close()
+				defer func() { require.NoError(t, c.Close()) }()
 				_, err = c.API().Health(t.Context())
 				require.NoError(t, err)
 				assert.Equal(t, int64(1), requests.Load())
@@ -355,7 +365,7 @@ func TestProvenClientRefusesRedialAfterHandoff(t *testing.T) {
 	rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "synthetic-api-key", token, "")
 	c, err := newProvenClientFor(t.Context(), rec)
 	require.NoError(t, err)
-	defer c.Close()
+	defer func() { require.NoError(t, c.Close()) }()
 	_, err = c.API().Health(t.Context())
 	require.NoError(t, err)
 	_, err = c.API().Health(t.Context())
