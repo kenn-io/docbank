@@ -638,7 +638,7 @@ function validPhotoLabel(value: string): boolean {
   return value.length > 0 && scalarLength(value) <= 256 && !value.includes("\0");
 }
 
-function normalizeCaptureDate(value: string | undefined): string | undefined {
+export function normalizeCaptureDate(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
   if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(value) || value.startsWith("0000")) throw new Error("capture date must be YYYY-MM-DD");
   normalizeTimestamp(`${value}T00:00:00Z`, "capture date");

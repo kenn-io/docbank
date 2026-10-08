@@ -13,40 +13,6 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
-func TestQuerySnapshotCaptureDayCompleteCalendar(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	for i := range 120 {
-		day := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
-		node := browsePhotoNode(t, s, fmt.Sprintf("day-%03d.jpg", i), browseHash(day), "image/jpeg")
-		stamp := day + "T23:30:00-12:00"
-		browsePhotoMetadata(t, s, node, day, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOffset, "-12:00")))
-	}
-	browsePhotoNode(t, s, "undated.jpg", browseHash("undated-calendar"), "image/jpeg")
-	browsePhotoNode(t, s, "ordinary.txt", browseHash("ordinary-calendar"), "text/plain")
-	request := SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"}}
-	projection, err := s.MaterializeQuerySnapshot(t.Context(), request)
-	require.NoError(t, err)
-	facet := facetByDimension(t, projection, "capture_day")
-	require.True(t, facet.Available)
-	require.Len(t, facet.Values, 120)
-	require.Equal(t, int64(121), *facet.Total)
-	require.Equal(t, int64(1), *facet.Missing)
-	require.Zero(t, *facet.Other)
-	require.Equal(t, "2024-04-29", facet.Values[0].Key)
-	require.Equal(t, int64(1), facetCounts(facet)["2024-02-29"])
-	page := browsePhotoPage(t, s, `{}`)
-	require.Equal(t, page.Total, *facet.Total)
-	for _, options := range []snapshotMaterializeOptions{{FacetMemberLimit: 1}, {FacetTimeout: -time.Nanosecond}} {
-		projection, err := s.materializeQuerySnapshot(t.Context(), request, options)
-		require.NoError(t, err)
-		facet := facetByDimension(t, projection, "capture_day")
-		require.False(t, facet.Available)
-		require.Nil(t, facet.Total)
-		require.Empty(t, facet.Values)
-	}
-}
-
 func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -132,6 +98,35 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 	projection, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"}})
 	require.NoError(t, err)
 	require.Zero(t, *facetByDimension(t, projection, "capture_day").Total)
+	for i := range 120 {
+		day := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
+		node := browsePhotoNode(t, s, fmt.Sprintf("day-%03d.jpg", i), browseHash(day), "image/jpeg")
+		stamp := day + "T23:30:00-12:00"
+		browsePhotoMetadata(t, s, node, day, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOffset, "-12:00")))
+	}
+	browsePhotoNode(t, s, "undated.jpg", browseHash("undated-calendar"), "image/jpeg")
+	browsePhotoNode(t, s, "ordinary.txt", browseHash("ordinary-calendar"), "text/plain")
+	request := SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"}}
+	projection, err = s.MaterializeQuerySnapshot(t.Context(), request)
+	require.NoError(t, err)
+	facet := facetByDimension(t, projection, "capture_day")
+	require.True(t, facet.Available)
+	require.Len(t, facet.Values, 120)
+	require.Equal(t, int64(121), *facet.Total)
+	require.Equal(t, int64(1), *facet.Missing)
+	require.Zero(t, *facet.Other)
+	require.Equal(t, "2024-04-29", facet.Values[0].Key)
+	require.Equal(t, int64(1), facetCounts(facet)["2024-02-29"])
+	page := browsePhotoPage(t, s, `{}`)
+	require.Equal(t, page.Total, *facet.Total)
+	for _, options := range []snapshotMaterializeOptions{{FacetMemberLimit: 1}, {FacetTimeout: -time.Nanosecond}} {
+		projection, err := s.materializeQuerySnapshot(t.Context(), request, options)
+		require.NoError(t, err)
+		facet := facetByDimension(t, projection, "capture_day")
+		require.False(t, facet.Available)
+		require.Nil(t, facet.Total)
+		require.Empty(t, facet.Values)
+	}
 }
 
 type snapshotFacetFixture struct {
@@ -465,26 +460,4 @@ func TestQuerySnapshotRejectsProductionRowOver64KiB(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{}`)})
 	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
-}
-
-func TestCaptureDayCountsIgnoreUnusedLargeTags(t *testing.T) {
-	for _, driverCase := range walkTestDrivers() {
-		t.Run(driverCase.name, func(t *testing.T) {
-			s := newTestStoreWithDriver(t, driverCase.driver)
-			node := browsePhotoNode(t, s, "large-tag.jpg", browseHash("calendar-large-tag"), "image/jpeg")
-			browsePhotoMetadata(t, s, node, "large-tag", photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp("2024-02-29T12:00:00", "2024-02-29T12:00:00", document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOmitted, "")))
-			tag, err := s.CreateTag(t.Context(), strings.Repeat("x", 65<<10))
-			require.NoError(t, err)
-			_, err = s.AssignTag(t.Context(), tag.ID, node.ID, node.Revision)
-			require.NoError(t, err)
-			service := NewQuerySnapshotService(s)
-			t.Cleanup(func() { require.NoError(t, service.Close()) })
-			counts, err := service.CreateFacets(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`), FacetsOnly: true, Facets: []string{"capture_day"}})
-			require.NoError(t, err)
-			require.Equal(t, map[string]int64{"2024-02-29": 1}, facetCounts(facetByDimension(t, counts, "capture_day")))
-			require.Empty(t, counts.Rows)
-			require.Empty(t, counts.MemberHash)
-			require.Equal(t, snapshotCacheStats{}, service.stats())
-		})
-	}
 }

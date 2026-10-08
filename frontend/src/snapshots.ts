@@ -1,5 +1,5 @@
 import { createWorkspaceQuery, readWorkspaceQueryPage, type WorkspaceQueryCreateRequestFacetsItem } from "./generated/docbank.js";
-import { canonicalQuery, parseQuery, queryFingerprint as fingerprintQuery, type Query } from "./query.js";
+import { canonicalQuery, normalizeCaptureDate, parseQuery, queryFingerprint as fingerprintQuery, type Query } from "./query.js";
 import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
 
 export type SnapshotOptions = {
@@ -275,6 +275,13 @@ function parseFacet(value: unknown, index: number, counts = false): WorkspaceQue
     if (reason !== undefined && reason !== "") malformed(`facets[${index}] has an unavailable reason`);
     if (total === undefined || total === null || missing === undefined || missing === null || other === undefined || other === null) {
       malformed(`facets[${index}] lacks available counts`);
+    }
+    if (counts) {
+      for (const value of values) {
+        try { normalizeCaptureDate(value.key); } catch { malformed(`facets[${index}] has an invalid capture day`); }
+      }
+      const counted = values.reduce((sum, value) => sum + value.count, missing);
+      if (!Number.isSafeInteger(counted) || counted !== total || other !== 0) malformed(`facets[${index}] has inconsistent capture-day counts`);
     }
   } else if (!reason || values.length !== 0 || total != null || missing != null || other != null) {
     malformed(`facets[${index}] fabricates unavailable counts`);

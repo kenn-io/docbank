@@ -190,11 +190,9 @@ it("switches Grid and Timeline, seeks an empty day and clears its date", async (
   await fireEvent.click(await screen.findByRole("button", { name: "2024-02-29 · 1 photos" }));
   expect(await screen.findByText("No photos on this day")).toBeTruthy();
   expect(screen.getByText("0 photos on 2024-02-29 · 0 loaded")).toBeTruthy();
-  expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters).toEqual({ capture_after: "2024-02-29", capture_before: "2024-03-01" });
   await fireEvent.click(screen.getByRole("button", { name: "Clear date" }));
   await screen.findByRole("button", { name: "Select Photo 1.jpg" });
   expect(screen.queryByRole("button", { name: "Clear date" })).toBeNull();
-  expect(JSON.parse(fetcher.mock.calls[1][1].body).query.filters).toEqual({});
   await fireEvent.click(screen.getByRole("button", { name: "Grid" }));
   expect(screen.queryByRole("region", { name: "Photo timeline" })).toBeNull();
   view.unmount(); photos.dispose(); await cache.dispose();

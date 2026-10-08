@@ -409,13 +409,17 @@ func TestCaptureDayCountsPreservePageableSnapshots(t *testing.T) {
 				_, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("doc-%02d.txt", i), fakeHash(fmt.Sprintf("counts-doc-%d", i)), 1, "text/plain")
 				require.NoError(t, err)
 			}
-			_, err := s.CreateFile(t.Context(), s.RootID(), "photo.jpg", fakeHash("counts-photo"), 1, "image/jpeg")
+			photo, err := s.CreateFile(t.Context(), s.RootID(), "photo.jpg", fakeHash("counts-photo"), 1, "image/jpeg")
 			require.NoError(t, err)
 			service := newQuerySnapshotService(s, querySnapshotServiceOptions{Limits: snapshotCacheLimits{MaxHandles: 1}})
 			t.Cleanup(func() { require.NoError(t, service.Close()) })
 			first, err := service.Create(t.Context(), "owner", SnapshotRequest{Query: snapshotTestQuery(t, `{}`), PageSize: 50})
 			require.NoError(t, err)
 			baseline := service.stats()
+			tag, err := s.CreateTag(t.Context(), strings.Repeat("x", 65<<10))
+			require.NoError(t, err)
+			_, err = s.AssignTag(t.Context(), tag.ID, photo.ID, photo.Revision)
+			require.NoError(t, err)
 			request := SnapshotRequest{Query: snapshotTestQuery(t, `{}`), FacetsOnly: true, Facets: []string{"capture_day"}}
 			for range 10 {
 				counts, err := service.CreateFacets(t.Context(), "owner", request)

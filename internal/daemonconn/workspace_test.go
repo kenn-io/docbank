@@ -42,9 +42,6 @@ func TestWorkspaceClientRoundTripsExactPagesAndSavedRuns(t *testing.T) {
 
 	_, err = c.ReadWorkspaceQueryPage(t.Context(), strings.Repeat("0", 32), "opaque")
 	require.ErrorIs(t, err, store.ErrSnapshotGone)
-	_, err = c.CreateWorkspaceQuery(t.Context(), api.WorkspaceQueryCreateRequest{Query: api.QueryPayload(`{}`), PageSize: 50, Facets: []string{"capture_day"}})
-	require.Error(t, err)
-
 }
 
 func TestWorkspaceClientRejectsInvalidRequestsBeforeTransport(t *testing.T) {
@@ -52,10 +49,6 @@ func TestWorkspaceClientRejectsInvalidRequestsBeforeTransport(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests++ }))
 	t.Cleanup(ts.Close)
 	c := daemonconn.New(ts.URL, "key")
-	for _, request := range []api.WorkspaceQueryCreateRequest{{Query: api.QueryPayload(`{}`), FacetsOnly: true}, {Query: api.QueryPayload(`{}`), FacetsOnly: true, Facets: []string{"tags"}}} {
-		_, err := c.CreateWorkspaceQuery(t.Context(), request)
-		require.Error(t, err)
-	}
 
 	_, err := c.CreateWorkspaceQuery(t.Context(), api.WorkspaceQueryCreateRequest{})
 	require.Error(t, err)
@@ -64,6 +57,10 @@ func TestWorkspaceClientRejectsInvalidRequestsBeforeTransport(t *testing.T) {
 		Query: api.QueryPayload(`{}`), PageSize: 51,
 	})
 	require.Error(t, err)
+	_, err = c.CreateWorkspaceQuery(t.Context(), api.WorkspaceQueryCreateRequest{Query: api.QueryPayload(`{}`), Facets: []string{"capture_day"}})
+	require.Error(t, err)
+	_, err = c.CreateWorkspaceQuery(t.Context(), api.WorkspaceQueryCreateRequest{Query: api.QueryPayload(`{}`), FacetsOnly: true, Facets: []string{"capture_day"}})
+	require.EqualError(t, err, "counts requests do not return snapshots")
 	_, err = c.ReadWorkspaceQueryPage(t.Context(), "not-a-snapshot", "opaque")
 	require.Error(t, err)
 	_, err = c.ReadWorkspaceQueryPage(t.Context(), strings.Repeat("0", 32), "")

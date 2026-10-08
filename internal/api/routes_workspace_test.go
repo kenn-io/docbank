@@ -16,25 +16,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 )
 
 func TestWorkspaceQueryCaptureDayDelivery(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)
-	for i := range 120 {
-		day := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
-		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("day-%03d.jpg", i), testHash(day), 10, "image/jpeg")
-		require.NoError(t, err)
-		stamp := day + "T12:00:00"
-		canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "created", Namespace: "image.exif", SourceField: "DateTimeOriginal", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{Raw: stamp, Normalized: stamp, Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneOmitted}}}}})
-		require.NoError(t, err)
-		_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, testHash("calendar-extractor"), canonical)
-		require.NoError(t, err)
-	}
-	_, err := s.CreateFile(t.Context(), s.RootID(), "undated.jpg", testHash("undated"), 10, "image/jpeg")
-	require.NoError(t, err)
 	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"facets_only":true,"query":{},"page_size":50,"facets":["capture_day"]}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var page api.WorkspaceFacetResponse
@@ -43,13 +30,6 @@ func TestWorkspaceQueryCaptureDayDelivery(t *testing.T) {
 	for _, field := range []string{"snapshot_id", "member_hash", "rows", "next_cursor", "snapshot_fingerprint"} {
 		assert.NotContains(t, body, `"`+field+`"`)
 	}
-	require.Len(t, page.Facets, 1)
-	facet := page.Facets[0]
-	require.True(t, facet.Available)
-	require.Len(t, facet.Values, 120)
-	require.Equal(t, int64(121), *facet.Total)
-	require.Equal(t, int64(1), *facet.Missing)
-	require.Zero(t, *facet.Other)
 	album, err := s.CreatePhotoSet(t.Context(), "Counts photo sorts")
 	require.NoError(t, err)
 	for _, field := range []string{"capture_time", "import_time", "added_time"} {
