@@ -84,6 +84,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /photos/assets/{asset_id}/previews/{generation_id}` | read verified bytes for an eligible display preview | Implemented |
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |
 | `POST /photos/assets/{asset_id}/exclude` · `POST /photos/nodes/{node_id}/promote` | change exclusion or promote a live file | Implemented |
+| `POST /photos/assets/{asset_id}/trash` | atomically move every live photo member to recoverable trash | Implemented |
 | `PUT /photos/assets/{asset_id}/display` · `GET\|PUT /photos/settings` | set an asset display override or vault preference | Implemented |
 | `GET /people` · `POST /people` | list, search, and create active canonical people | Implemented |
 | `GET /people/by-id/{person_id}` | inspect one person, its identities, and its external UIDs | Implemented |
@@ -127,7 +128,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /batch/move` | validate and apply up to 1,000 moves as one final-state transaction | Implemented |
 | `POST /batch/tags` · `POST /batch/tags/preview` | atomically assign/remove one tag on a selected set of nodes checked against their revisions, or inspect its exact membership | Implemented |
 | `POST /nodes/{id}/trash` · `POST /nodes/{id}/restore` | soft delete / recover | Implemented |
-| `GET /trash` · `POST /trash/empty` `{run, older_than}` | list (optionally paginated) / report or hard-delete trash roots | Implemented |
+| `GET /trash` · `POST /trash/empty` `{run, older_than}` | list nodes, grouping photos on paginated requests / report or hard-delete eligible complete groups | Implemented |
 | `POST /gc` `{run}` · `POST /verify` | reclaim unreachable blobs / validate metadata and re-hash all blobs | Implemented |
 | `GET /storage` · `POST /storage/pack` · `POST /storage/repack` | inspect usage / pack loose blobs / compact sparse packs | Implemented |
 | `GET /jobs` | inspect daemon-owned background tasks and terminal failures | Implemented |
@@ -1073,10 +1074,14 @@ decision writes one bounded immutable photo receipt. No-op decisions preserve
 the revision and write no receipt. Permanent node deletion repairs affected
 graphs and preserves an empty asset identity.
 
+`POST /photos/assets/{asset_id}/trash` requires the asset revision in `If-Match` and moves all live members together. It returns the updated asset and ETag, recording one receipt. An asset with no live files returns `422 invalid_photo_asset`. Each photo is atomic; browser selections submit sequentially and can make partial progress. Audited trash uses the existing audited node rules.
+
+Paginated `GET /trash?limit=&offset=` groups independently trashed photo members into one item with optional `photo_asset_id` and `photo_file_count`, the count of trashed files recovered together. Unpaged listing remains per node. Restoring any member recovers its group, including companions inside trashed folders, under the selected member's revision. The affected roots are read and restored atomically. Ordinary Documents deletion can trash one member; permanent deletion waits until every connected member is trashed, old enough, and free of retention references. Trash the remaining members or detach live companions to make a partial group eligible.
+
 Photo assets, file memberships, settings, and receipts are included in the
 deterministic metadata JSONL stream and are validated as one graph on restore.
 Older supported metadata streams restore an empty photo authority. Audit-active
-vaults skip automatic enrollment and refuse explicit photo mutations while
+vaults skip automatic enrollment and refuse membership, display, and settings mutations while
 preserving any graph that existed before audit was enabled. Display and
 settings writes are available through HTTP and the CLI. MCP exposes them only
 as reads in this slice.
@@ -1095,7 +1100,7 @@ group. Starting an import requires the API key on a loopback connection.
 
 `POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` and `cursor`, returning one item per eligible matching asset, `total` counted on the first page and optional forward `next_cursor`. The supported sort fields are `capture_time`, `import_time`, `added_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Capture keys sort missing or unreadable evidence last, then use ascending asset UUID for ties. Text keys compare their first 1,024 characters, so names or media types that share that prefix fall back to the UUID order. Album filters constrain the matching population before choosing duplicate representatives. `added_time` requires exactly one normalized `filters.set_ids` value and uses that album's added dates. Document snapshots reject `capture_time`, `import_time`, and `added_time` with a field-specific error that directs callers to Photos. Later pages reuse the first page's total while rows remain live; a new browse refreshes the count. Cursors expire after 15 minutes and bind resolved saved-query revisions, effective coverage, canonical query, and page size. Invalid options return `invalid_photo_query`; invalid or changed bindings return `invalid_photo_cursor`; expiry returns `cursor_expired`. Invalid expressions retain their operand positions.
 
-`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag, `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-cache`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses vary by API-key, authorization and browser-session headers. Browser sessions permit the exact list POST and preview GET with empty query strings. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
+`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag, `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-cache`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses vary by API-key, authorization and browser-session headers. Browser sessions permit the exact list POST, preview GET, and `POST /photos/assets/{asset_id}/trash` with empty query strings. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
 
 Person reads return the canonical row and, for `GET /people/by-id/{person_id}`,
 the identities and external UIDs used by split. Rename, retire, merge, and
@@ -1137,7 +1142,7 @@ and maintenance are exceptions:
 | `PATCH /saved-queries/{saved_query_id}`, `DELETE /saved-queries/{saved_query_id}` | required: saved-definition revision |
 | `POST /saved-queries/{saved_query_id}/runs` | required: executes the saved definition revision the caller inspected |
 | `PUT\|DELETE /nodes/{id}/tags/{tag_id}` | required: target node revision; the tag revision also advances on a real assignment change |
-| `POST /photos/assets/{asset_id}/files`, `DELETE /photos/assets/{asset_id}/files/{file_id}`, `POST /photos/assets/{asset_id}/exclude`, `PUT /photos/assets/{asset_id}/display` | required: photo asset revision |
+| `POST /photos/assets/{asset_id}/files`, `DELETE /photos/assets/{asset_id}/files/{file_id}`, `POST /photos/assets/{asset_id}/exclude`, `POST /photos/assets/{asset_id}/trash`, `PUT /photos/assets/{asset_id}/display` | required: photo asset revision |
 | `PUT /photos/settings` | required: photo library settings revision |
 | `PATCH /people/by-id/{person_id}` | required: person revision |
 | `POST /people/by-id/{person_id}/retire` | required: person revision |

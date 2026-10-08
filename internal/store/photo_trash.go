@@ -42,7 +42,7 @@ func (s *Store) TrashPhotoAsset(ctx context.Context, assetID string, revision in
 			changed = true
 		}
 		if !changed {
-			return fmt.Errorf("%w: photo is already in trash", ErrInvalidPhotoAsset)
+			return fmt.Errorf("%w: photo has no live files to trash", ErrInvalidPhotoAsset)
 		}
 		asset, err = commitPhotoAssetTx(ctx, tx, asset, asset, "trash")
 		return err
@@ -257,7 +257,7 @@ func photoRestoreOrderTx(ctx context.Context, tx *sql.Tx, roots map[int64]Node) 
 }
 
 func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string, args []any, maxRoots int) (string, []any, bool, error) {
-	eligibleSelection := `SELECT id FROM nodes WHERE ` + eligibleWhere + ` ORDER BY trashed_at ASC, id ASC`
+	eligibleSelection := `SELECT id, kind, EXISTS(SELECT 1 FROM photo_files WHERE node_id=nodes.id) FROM nodes WHERE ` + eligibleWhere + ` ORDER BY trashed_at ASC, id ASC`
 	seen := map[int64]bool{}
 	var selected []int64
 	more := false
@@ -266,14 +266,19 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string
 		if err != nil {
 			return "", nil, false, err
 		}
-		var candidates []int64
+		type candidate struct {
+			id    int64
+			kind  string
+			photo bool
+		}
+		var candidates []candidate
 		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
+			var item candidate
+			if err := rows.Scan(&item.id, &item.kind, &item.photo); err != nil {
 				_ = rows.Close()
 				return "", nil, false, err
 			}
-			candidates = append(candidates, id)
+			candidates = append(candidates, item)
 		}
 		err = rows.Err()
 		if closeErr := rows.Close(); err == nil {
@@ -282,8 +287,17 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string
 		if err != nil {
 			return "", nil, false, err
 		}
-		for _, id := range candidates {
+		for _, candidate := range candidates {
+			id := candidate.id
 			if seen[id] {
+				continue
+			}
+			if candidate.kind == "file" && !candidate.photo {
+				if maxRoots > 0 && len(selected) >= maxRoots {
+					more = true
+					break
+				}
+				selected = append(selected, id)
 				continue
 			}
 			node, err := nodeByIDTx(tx, id)

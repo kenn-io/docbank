@@ -14,7 +14,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("shows a recoverable photo group and refreshes after restoring it", async () => {
+it.each([1, 3])("shows a recoverable photo group with %s files and refreshes after restoring it", async count => {
   const trashed = {
     id: 42,
     parent_id: 1,
@@ -29,7 +29,7 @@ it("shows a recoverable photo group and refreshes after restoring it", async () 
     modified_at: "2026-07-28T12:00:00Z",
     trashed_at: "2026-07-28T12:01:00Z",
     photo_asset_id: "11111111-1111-4111-8111-111111111112",
-    photo_file_count: 3,
+    photo_file_count: count,
   };
   const restored = {
     ...trashed,
@@ -60,13 +60,13 @@ it("shows a recoverable photo group and refreshes after restoring it", async () 
   });
 
   expect(await screen.findByText("quarterly-report.txt")).toBeTruthy();
-  expect(screen.getByText("Photo · 3 trashed files")).toBeTruthy();
+  expect(screen.getByText(`Photo · ${count} trashed file${count === 1 ? "" : "s"}`)).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Restore" }));
   const dialog = screen.getByRole("dialog", {
     name: "Restore quarterly-report.txt from trash",
   });
   expect(dialog).toBeTruthy();
-  expect(within(dialog).getByText(/recovers 3 trashed member files together/)).toBeTruthy();
+  expect(within(dialog).getByText(new RegExp(`recovers ${count} trashed member file${count === 1 ? "" : "s"} together`))).toBeTruthy();
   expect(
     screen.getByText(
       "Restore keeps the same stable node and retained content. It does not roll back versions or alter permanent audited history.",

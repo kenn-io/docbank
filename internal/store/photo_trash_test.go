@@ -53,7 +53,7 @@ func TestPhotoTrashAndRestoreMember(t *testing.T) {
 	receipts := photoReceiptRows(t, s, asset.ID)
 	_, err = s.TrashPhotoAsset(t.Context(), asset.ID, trashed.Revision)
 	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
-	assert.Contains(t, err.Error(), "photo is already in trash")
+	assert.Contains(t, err.Error(), "photo has no live files to trash")
 	unchanged, err := s.PhotoAssetByID(t.Context(), asset.ID)
 	require.NoError(t, err)
 	assert.Equal(t, trashed.Revision, unchanged.Revision)

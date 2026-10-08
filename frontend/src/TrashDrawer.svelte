@@ -146,7 +146,7 @@
                   <div>
                     <strong>{node.name}</strong>
                     <Chip size="xs" tone="muted">
-                      {node.photo_asset_id ? `Photo · ${node.photo_file_count} trashed files` : node.kind === "dir" ? "Folder" : "Document"}
+                      {node.photo_asset_id ? `Photo · ${node.photo_file_count} trashed file${node.photo_file_count === 1 ? "" : "s"}` : node.kind === "dir" ? "Folder" : "Document"}
                     </Chip>
                   </div>
                   <span>Trashed {formatDate(node.trashed_at ?? "")}</span>
