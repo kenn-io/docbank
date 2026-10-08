@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-10-06
+last_edited: 2026-10-07
 title: Photo assets
-description: Group ordinary files into photo assets that carry their own revision.
+description: Group camera files, browse photos in the web app, and organize albums through the CLI or HTTP API.
 ---
 
 # Photo assets
@@ -104,7 +104,12 @@ performs role, ownership, sidecar, display, and audit checks.
 
 ## Albums
 
-Albums group photo assets without moving their files. Create an album, add selected asset UUIDs or a complete query result, then browse its members:
+Albums group photo assets without moving their files. Manage albums through
+the CLI or HTTP API. The web app's Photos workspace browses the library;
+album management is not available there.
+
+Create an album, add selected asset UUIDs or a complete query result, then
+browse its members:
 
 ```text
 docbank photos albums create "Holiday"

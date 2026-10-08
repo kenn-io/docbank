@@ -10,6 +10,47 @@ pre-1.0, so public interfaces may still evolve, but vaults created by v0.9.0 and
 later are within the
 [storage compatibility boundary](architecture/storage.md#released-upgrades).
 
+## [v0.15.1](https://github.com/kenn-io/docbank/releases/tag/v0.15.1) — 2026-10-08
+
+### New features
+
+- Browse photos from the sidebar in a grid grouped by month or capture session.
+  Select photos with clicks or touch checkboxes, adjust grid density, and keep
+  your selection and scroll position when switching between Documents and Photos.
+- Organize photos into albums through `docbank photos albums` and HTTP. Add
+  selected photos or all photos matching a query, choose covers, star albums,
+  and filter photos by album with `set:`. Removing photos from an album or
+  deleting an album keeps the files.
+- Match recording search results to the exact saved transcript after a
+  replacement or retry. Transcript responses include optional IDs for the build
+  and supplied input.
+
+### Improvements
+
+- Open collections and page through their files faster as your document store
+  grows.
+- Import new files faster with fewer disk waits.
+- Re-import folders and repeat uploads faster for files smaller than 4 KiB under
+  the default compression policy.
+- Anonymous usage reporting counts each screen once per local document store
+  per UTC day for each interface, including across restarts. The privacy dialog
+  explains screen reporting in the browser and terminal UI.
+
+### Bug fixes
+
+- Restoring a backup keeps large originals compressed instead of leaving them
+  uncompressed and inflating storage use. Existing backups need no conversion.
+  Restore still requires temporary space for raw and compressed copies of each
+  individual file.
+- The public website loads its stylesheets and JavaScript without getting stuck
+  in a redirect loop.
+
+### Contributors
+
+Thank you to [Rod Boev (@rodboev)](https://github.com/rodboev) and
+[Wes McKinney (@wesm)](https://github.com/wesm) for their contributions to v0.15.1.
+See the [full contribution history](https://github.com/kenn-io/docbank/compare/v0.15.0...v0.15.1).
+
 ## [v0.15.0](https://github.com/kenn-io/docbank/releases/tag/v0.15.0) — 2026-10-05
 
 ### New features
