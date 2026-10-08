@@ -88,11 +88,13 @@ type MediaTranscriptUnit struct {
 }
 
 type MediaTranscriptEvidence struct {
-	Origin       string                `json:"origin"`
-	Completeness string                `json:"completeness"`
-	Truncated    bool                  `json:"truncated"`
-	HasOmissions bool                  `json:"has_omissions"`
-	Units        []MediaTranscriptUnit `json:"units"`
+	BuildID         string                `json:"build_id"`
+	SuppliedInputID string                `json:"supplied_input_id,omitempty"`
+	Origin          string                `json:"origin"`
+	Completeness    string                `json:"completeness"`
+	Truncated       bool                  `json:"truncated"`
+	HasOmissions    bool                  `json:"has_omissions"`
+	Units           []MediaTranscriptUnit `json:"units"`
 }
 
 type MediaTranscript struct {

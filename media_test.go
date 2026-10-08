@@ -421,7 +421,7 @@ func TestMediaProcessingFreezesSelectedInputAndRevocation(t *testing.T) {
 	_, err = vault.GrantProcessingPlanConsent(t.Context(), ProcessingConsentGrantRequest{
 		PlanRequest: ProcessingPlanRequest{Selector: selector}, PlanFingerprint: plan.Fingerprint})
 	require.NoError(t, err)
-	process := func(operationID, inputID, phrase string) MediaReceipt {
+	process := func(operationID, inputID, phrase string) (MediaReceipt, string) {
 		t.Helper()
 		queued, retryErr := vault.RetryMedia(t.Context(), operationID, mediaReceipt.SourceID,
 			MediaProcessingRequest{Profile: "supplied-transcript", SuppliedInputID: inputID})
@@ -443,19 +443,34 @@ func TestMediaProcessingFreezesSelectedInputAndRevocation(t *testing.T) {
 		require.NoError(t, rendition.Reader.Verify())
 		require.NoError(t, rendition.Reader.Close())
 		require.Contains(t, string(body), phrase)
-		return queued
+		return queued, rendition.BuildID
 	}
-	firstJob := process("00000000-0000-4000-8000-000000000425",
+	firstJob, firstBuildID := process("00000000-0000-4000-8000-000000000425",
 		older.SuppliedInputID, "older exact transcript")
+	transcript, err := vault.MediaTranscript(t.Context(), MediaTranscriptRequest{
+		SourceID: mediaReceipt.SourceID, SourceVersionID: firstJob.SourceVersionID,
+		ContentVersionID: mediaReceipt.ContentVersionID})
+	require.NoError(t, err)
+	require.NotNil(t, transcript.Transcript)
+	require.Equal(t, firstBuildID, transcript.Transcript.BuildID)
+	require.Equal(t, older.SuppliedInputID, transcript.Transcript.SuppliedInputID)
 	newer := importTranscript("00000000-0000-4000-8000-000000000424",
 		secondOccurrence.OccurrenceID, "newer replacement transcript")
 	require.NotEqual(t, older.SuppliedInputID, newer.SuppliedInputID)
 	statusAfterImport, err := vault.MediaStatus(t.Context(), mediaReceipt.SourceID)
 	require.NoError(t, err)
 	require.Equal(t, "transcribed", statusAfterImport.CoverageState)
-	secondJob := process("00000000-0000-4000-8000-000000000426",
+	secondJob, secondBuildID := process("00000000-0000-4000-8000-000000000426",
 		newer.SuppliedInputID, "newer replacement transcript")
 	require.NotEqual(t, firstJob.JobID, secondJob.JobID)
+	transcript, err = vault.MediaTranscript(t.Context(), MediaTranscriptRequest{
+		SourceID: mediaReceipt.SourceID, SourceVersionID: secondJob.SourceVersionID,
+		ContentVersionID: mediaReceipt.ContentVersionID})
+	require.NoError(t, err)
+	require.NotNil(t, transcript.Transcript)
+	require.NotEqual(t, firstBuildID, secondBuildID)
+	require.Equal(t, secondBuildID, transcript.Transcript.BuildID)
+	require.Equal(t, newer.SuppliedInputID, transcript.Transcript.SuppliedInputID)
 
 	revoked, err := vault.RevokeMediaOccurrence(t.Context(),
 		"00000000-0000-4000-8000-000000000427", secondOccurrence.OccurrenceID, "1")

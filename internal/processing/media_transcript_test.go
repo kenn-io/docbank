@@ -151,17 +151,24 @@ func TestMediaTranscriptFollowsCoverageAndTheCurrentFile(t *testing.T) {
 	initial := read()
 	require.Equal(t, mediaTranscriptEvidenceUnavailable, initial.EvidenceState)
 	require.Equal(t, "unprocessed", initial.CoverageState)
+	require.Nil(t, initial.Transcript)
 
 	queued := f.caption(t, f.remote.OccurrenceID, "synthetic cue")
 	pending := read()
 	require.Equal(t, mediaTranscriptEvidencePending, pending.EvidenceState)
 	require.Equal(t, "queued", pending.OperationState)
+	require.Nil(t, pending.Transcript)
 	runLoomRenditionJob(t, f.captions, queued.JobID)
 	ready := read()
 	require.Equal(t, mediaTranscriptEvidenceReady, ready.EvidenceState)
 	require.Equal(t, "transcribed", ready.CoverageState)
 	require.NotNil(t, ready.Transcript)
 	require.Equal(t, "supplied", ready.Transcript.Origin)
+	active, err := f.fixture.catalog.ActiveRendition(t.Context(), request.ContentVersionID,
+		f.captions.profiles[f.profile].record.Fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, active.Build.ID, ready.Transcript.BuildID)
+	require.Equal(t, queued.SuppliedInputID, ready.Transcript.SuppliedInputID)
 	require.Len(t, ready.Transcript.Units, 1)
 	require.Equal(t, "synthetic cue", ready.Transcript.Units[0].Text)
 	require.Equal(t, &retrieval.MediaTimeSpan{StartMS: 0, EndMS: 1000}, ready.Transcript.Units[0].TimeSpan)
@@ -172,6 +179,18 @@ func TestMediaTranscriptFollowsCoverageAndTheCurrentFile(t *testing.T) {
 	require.Equal(t, mediaTranscriptEvidenceReady, failed.EvidenceState, "a failed retry keeps covering evidence")
 	require.Equal(t, "failed", failed.OperationState)
 	require.Equal(t, "synthetic cue", failed.Transcript.Units[0].Text)
+	require.Equal(t, ready.Transcript.BuildID, failed.Transcript.BuildID)
+	require.Equal(t, ready.Transcript.SuppliedInputID, failed.Transcript.SuppliedInputID)
+	require.NotEqual(t, failedQueued.SuppliedInputID, failed.Transcript.SuppliedInputID)
+
+	replacement := f.caption(t, f.remote.OccurrenceID, "replacement cue")
+	require.Equal(t, request.SourceVersionID, replacement.SourceVersionID)
+	require.Equal(t, request.ContentVersionID, replacement.ContentVersionID)
+	runLoomRenditionJob(t, f.captions, replacement.JobID)
+	updated := read()
+	require.Equal(t, "replacement cue", updated.Transcript.Units[0].Text)
+	require.NotEqual(t, ready.Transcript.BuildID, updated.Transcript.BuildID)
+	require.Equal(t, replacement.SuppliedInputID, updated.Transcript.SuppliedInputID)
 
 	version, err := f.fixture.catalog.ContentVersionByID(t.Context(), request.ContentVersionID)
 	require.NoError(t, err)
@@ -193,6 +212,26 @@ func TestMediaTranscriptFollowsCoverageAndTheCurrentFile(t *testing.T) {
 	trashed := read()
 	require.Equal(t, mediaTranscriptEvidenceUnavailable, trashed.EvidenceState)
 	require.Nil(t, trashed.Transcript)
+}
+
+func TestMediaTranscriptGeneratedBuildHasNoSuppliedInput(t *testing.T) {
+	t.Parallel()
+	f := newMediaStateFixture(t)
+	retained, err := f.service.SubmitSuppliedMedia(t.Context(),
+		f.suppliedRequest(uuid.New().String(), &MediaProcessingRequest{Profile: "speech"}))
+	require.NoError(t, err)
+	require.NoError(t, f.run(t, retained.JobID))
+	result, err := f.service.MediaTranscript(t.Context(), MediaTranscriptRequest{
+		SourceID: retained.SourceID, SourceVersionID: retained.SourceVersionID,
+		ContentVersionID: retained.ContentVersionID})
+	require.NoError(t, err)
+	require.Equal(t, mediaTranscriptEvidenceReady, result.EvidenceState)
+	active, err := f.catalog.ActiveRendition(t.Context(), retained.ContentVersionID,
+		f.service.profiles["speech"].record.Fingerprint)
+	require.NoError(t, err)
+	require.Equal(t, active.Build.ID, result.Transcript.BuildID)
+	require.Equal(t, "generated", result.Transcript.Origin)
+	require.Empty(t, result.Transcript.SuppliedInputID)
 }
 
 func TestMediaTranscriptSharedRecordingKeepsForeignCaptionOut(t *testing.T) {

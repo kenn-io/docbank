@@ -357,7 +357,14 @@ func validateMediaTranscript(
 		}
 		return nil
 	}
-	if transcript.Transcript == nil || (transcript.Transcript.Origin != "supplied" && transcript.Transcript.Origin != "generated") {
+	evidence := transcript.Transcript
+	if evidence == nil || evidence.BuildID == "" {
+		return errors.New("daemon returned an invalid ready media transcript")
+	}
+	switch {
+	case evidence.Origin == "supplied" && evidence.SuppliedInputID != "":
+	case evidence.Origin == "generated" && evidence.SuppliedInputID == "":
+	default:
 		return errors.New("daemon returned an invalid ready media transcript")
 	}
 	return nil
