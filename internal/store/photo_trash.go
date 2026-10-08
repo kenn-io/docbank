@@ -80,18 +80,14 @@ func trashRootTx(ctx context.Context, tx *sql.Tx, node Node) (Node, error) {
 	return Node{}, ErrNotTrashed
 }
 
-func photoTrashGroupTx(ctx context.Context, tx *sql.Tx, root Node, restore bool) (photoTrashGroup, error) {
+func photoTrashGroupTx(ctx context.Context, tx *sql.Tx, root Node) (photoTrashGroup, error) {
 	group := photoTrashGroup{roots: map[int64]Node{root.ID: root}, assets: map[string]PhotoAsset{}}
 	pending := []Node{root}
 	for i := 0; i < len(pending); i++ {
 		node := pending[i]
-		filter := ""
-		if restore {
-			filter = " WHERE child.trashed_at=tree.stamp"
-		}
-		rows, err := tx.QueryContext(ctx, `WITH RECURSIVE tree(id,stamp) AS (
-   SELECT id, trashed_at FROM nodes WHERE id=?
-   UNION ALL SELECT child.id, tree.stamp FROM nodes child JOIN tree ON child.parent_id=tree.id`+filter+`)
+		rows, err := tx.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
+   SELECT id FROM nodes WHERE id=?
+   UNION ALL SELECT child.id FROM nodes child JOIN tree ON child.parent_id=tree.id)
    SELECT DISTINCT file.asset_id FROM tree JOIN photo_files file ON file.node_id=tree.id`, node.ID)
 		if err != nil {
 			return group, err
@@ -176,7 +172,7 @@ func (s *Store) restorePhotoGroupTx(ctx context.Context, tx *sql.Tx, node Node, 
 			return Node{}, err
 		}
 	}
-	group, err := photoTrashGroupTx(ctx, tx, root, true)
+	group, err := photoTrashGroupTx(ctx, tx, root)
 	if err != nil {
 		return Node{}, err
 	}
@@ -304,7 +300,7 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string
 			if err != nil {
 				return "", nil, false, err
 			}
-			group, err := photoTrashGroupTx(ctx, tx, node, false)
+			group, err := photoTrashGroupTx(ctx, tx, node)
 			if err != nil {
 				return "", nil, false, err
 			}

@@ -7262,7 +7262,7 @@ export type ReadPhotoPreviewHeaders = {
 };
 
 export type TrashPhotoAssetHeaders = {
-'If-Match'?: string;
+'If-Match': string;
 };
 
 export type PromotePhotoNodeHeaders = {
@@ -14269,7 +14269,7 @@ export const getTrashPhotoAssetUrl = (assetId: string,) => {
  * @summary Move every photo asset member to recoverable trash
  */
 export const trashPhotoAsset = async (assetId: string,
-    headers?: TrashPhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+    headers: TrashPhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};

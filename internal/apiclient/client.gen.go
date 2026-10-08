@@ -21430,7 +21430,7 @@ type ReadPhotoPreviewHeaders struct {
 }
 
 type TrashPhotoAssetHeaders struct {
-	IfMatch *string `json:"If-Match,omitempty"`
+	IfMatch string `json:"If-Match"`
 }
 
 type PromotePhotoNodeHeaders struct {

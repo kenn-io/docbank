@@ -183,7 +183,7 @@ func (c *Connection) TrashPhotoAsset(ctx context.Context, assetID string, revisi
 	var response *http.Response
 	asset, err := c.apiWithResponse(&response).TrashPhotoAsset(ctx, &apiclient.TrashPhotoAssetRequestOptions{
 		PathParams: &apiclient.TrashPhotoAssetPath{AssetID: assetID},
-		Header:     &apiclient.TrashPhotoAssetHeaders{IfMatch: new(revisionIfMatch(revision))},
+		Header:     &apiclient.TrashPhotoAssetHeaders{IfMatch: revisionIfMatch(revision)},
 	})
 	return photoMutationResponse(response, asset, err, assetID)
 }

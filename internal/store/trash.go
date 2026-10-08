@@ -304,8 +304,9 @@ func (s *Store) TrashedRootsPage(
 
 	const grouped = `WITH groups AS (
         SELECT n.id, file.asset_id,
-        ROW_NUMBER() OVER (PARTITION BY COALESCE(file.asset_id, CAST(n.id AS TEXT)) ORDER BY n.trashed_at DESC, n.id DESC) AS representative
+        ROW_NUMBER() OVER (PARTITION BY COALESCE(file.asset_id, CAST(n.id AS TEXT)) ORDER BY (file.file_id=asset.display_file_id) DESC, n.trashed_at DESC, n.id DESC) AS representative
         FROM nodes n LEFT JOIN photo_files file ON file.node_id=n.id
+        LEFT JOIN photo_assets asset ON asset.asset_id=file.asset_id
         WHERE n.trash_name IS NOT NULL
     ) `
 	var total int

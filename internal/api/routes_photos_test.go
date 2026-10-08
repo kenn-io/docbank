@@ -77,6 +77,8 @@ func TestPhotoTrashRouteRevisionAndRestore(t *testing.T) {
 	assert.Equal(t, asset.ID, page.Items[0].PhotoAssetID)
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/nodes/"+strconv.FormatInt(node.ID, 10)+"/restore", map[string]string{"If-Match": strconv.FormatInt(page.Items[0].Revision, 10)}, nil)
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.NotContains(t, body, "photo_asset_id")
+	assert.NotContains(t, body, "photo_file_count")
 }
 
 func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
