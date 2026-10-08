@@ -365,14 +365,8 @@ func (s *Store) photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection 
 			if validateUUIDv4(id) != nil {
 				return nil, ErrInvalidPhotoAlbum
 			}
-			asset, err := photoAssetByIDQuery(ctx, tx, id)
-			if err != nil {
+			if _, err := s.photoAssetReadQuery(ctx, tx, id); err != nil {
 				return nil, err
-			}
-			if asset.HiddenAt != nil {
-				if _, err := s.hiddenSession(ctx, tx); err != nil {
-					return nil, err
-				}
 			}
 			if !seen[id] {
 				ids = append(ids, id)
