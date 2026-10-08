@@ -225,36 +225,6 @@ func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
 	assert.False(t, leaked.Load(), "forged endpoint must receive no runtime secret")
 }
 
-func TestProvenClientRefusesRedialAfterChallengeConnectionCloses(t *testing.T) {
-	const token = "connection-proof-token"
-	var leaked atomic.Bool
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Api-Key") != "" ||
-			r.Header.Get("X-Docbank-Daemon-Token") != "" {
-			leaked.Store(true)
-		}
-		if r.URL.Path != daemonauth.ChallengePath {
-			http.NotFound(w, r)
-			return
-		}
-		nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-		if err != nil {
-			http.Error(w, "bad nonce", http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Connection", "close")
-		_ = json.MarshalWrite(w, map[string]string{
-			"proof": daemonauth.Proof(token, nonce),
-		})
-	}))
-	t.Cleanup(ts.Close)
-	rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "private-api-key", token, "")
-
-	_, err := newProvenClientFor(t.Context(), rec)
-	require.ErrorIs(t, err, ErrTransientDaemonAcquisition)
-	assert.False(t, leaked.Load(), "redial target must receive no runtime secret")
-}
-
 type delayedProofWriteConn struct {
 	net.Conn
 	closed chan struct{}

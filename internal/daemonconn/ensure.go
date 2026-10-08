@@ -37,9 +37,8 @@ const (
 	daemonStartProblemVaultLocked = "vault_locked"
 )
 
-// ErrTransientDaemonAcquisition marks a daemon that disappeared after
-// discovery but before its ownership-proven client was ready. A caller may
-// safely repeat the complete discovery/start/proof sequence.
+// ErrTransientDaemonAcquisition marks interrupted discovery or proof acquisition,
+// including a discarded proof socket. Callers may safely repeat acquisition.
 var ErrTransientDaemonAcquisition = errors.New("daemon acquisition was interrupted")
 
 type daemonStartError struct {
