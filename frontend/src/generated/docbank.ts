@@ -3517,7 +3517,7 @@ export interface MediaTranscriptUnit {
 }
 
 export interface MediaTranscriptEvidence {
-  build_id?: string;
+  build_id: string;
   completeness: string;
   has_omissions: boolean;
   origin: string;

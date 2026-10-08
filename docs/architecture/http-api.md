@@ -378,7 +378,6 @@ transcript or caption, and `generated` otherwise.
 includes `transcript.supplied_input_id`, the input bound to that build. A failed
 retry keeps the identities of the earlier covering build. Generated evidence
 omits `supplied_input_id`. Responses without ready evidence omit `transcript`.
-Older servers may omit both identity fields.
 
 A content version that no longer matches the source version or is no longer
 the file's current version, or a build whose supplied input this source

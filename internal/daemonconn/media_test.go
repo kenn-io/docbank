@@ -102,7 +102,7 @@ func TestMediaTranscriptClientSendsTheCompleteTuple(t *testing.T) {
 			t.Errorf("unexpected transcript request: %s %s", r.Method, r.URL.String())
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":{"origin":"supplied","units":[{"text":"cue","time_span":{"start_ms":0,"end_ms":1000}}]}}`))
+		_, _ = w.Write([]byte(`{"vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":{"build_id":"build","origin":"supplied","supplied_input_id":"input","units":[{"text":"cue","time_span":{"start_ms":0,"end_ms":1000}}]}}`))
 	}))
 	t.Cleanup(server.Close)
 	result, err := New(server.URL, "key").MediaTranscript(t.Context(), "source", "source-version", "content")
@@ -110,4 +110,24 @@ func TestMediaTranscriptClientSendsTheCompleteTuple(t *testing.T) {
 	require.Equal(t, "ready", result.EvidenceState)
 	require.NotNil(t, result.Transcript)
 	require.Equal(t, &api.MediaTimeSpan{StartMS: 0, EndMS: 1000}, result.Transcript.Units[0].TimeSpan)
+	require.Equal(t, "build", result.Transcript.BuildID)
+	require.Equal(t, "input", result.Transcript.SuppliedInputID)
+}
+
+func TestMediaTranscriptClientRejectsInconsistentBuildIdentity(t *testing.T) {
+	for name, evidence := range map[string]string{
+		"missing build":           `{"origin":"generated","units":[]}`,
+		"supplied without input":  `{"build_id":"build","origin":"supplied","units":[]}`,
+		"generated with an input": `{"build_id":"build","origin":"generated","supplied_input_id":"input","units":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"vault_uid":"vault","source_id":"source","source_version_id":"source-version","content_version_id":"content","evidence_state":"ready","coverage_state":"transcribed","operation_state":"succeeded","transcript":` + evidence + `}`))
+			}))
+			t.Cleanup(server.Close)
+			_, err := New(server.URL, "key").MediaTranscript(t.Context(), "source", "source-version", "content")
+			require.ErrorContains(t, err, "invalid ready media transcript")
+		})
+	}
 }

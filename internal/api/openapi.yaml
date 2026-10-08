@@ -8587,6 +8587,7 @@ components:
             $ref: "#/components/schemas/MediaTranscriptUnit"
           type: array
       required:
+        - build_id
         - origin
         - completeness
         - truncated
