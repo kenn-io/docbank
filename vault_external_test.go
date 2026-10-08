@@ -13,6 +13,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -2830,6 +2831,9 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 		invalid bool
 	}{
 		{"empty", []docbank.DocumentMediaSourceSelector{}, true},
+		{"empty_source_id", []docbank.DocumentMediaSourceSelector{{SourceVersionID: "unknown", ContentVersionID: ids[0]}}, true},
+		{"supplied_input_count", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0], SuppliedInputIDs: slices.Repeat([]string{strings.Repeat("a", 64)}, 65)}}, true},
+		{"invalid_utf8_source_version", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "\xff", ContentVersionID: ids[0]}}, true},
 		{"selected", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2837,7 +2841,7 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 			selected.MediaSources = tc.sources
 			report, err := vault.SearchDocuments(t.Context(), selected)
 			if tc.invalid {
-				require.EqualError(t, err, "media search selectors are invalid")
+				require.ErrorIs(t, err, docbank.ErrMediaSearchInvalid)
 			} else {
 				require.NoError(t, err)
 				require.True(t, report.MediaSourceSelection)

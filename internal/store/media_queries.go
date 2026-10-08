@@ -109,7 +109,9 @@ type MediaSourceVersionKey struct {
 }
 
 // MediaSourceVersions reads exact visible revisions and their receipts in one snapshot.
-func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys []MediaSourceVersionKey) (map[MediaSourceVersionKey]MediaSourceProjection, error) {
+func (s *Store) MediaSourceVersions(
+	ctx context.Context, principal string, keys []MediaSourceVersionKey,
+) (map[MediaSourceVersionKey]MediaSourceProjection, error) {
 	if len(keys) == 0 {
 		return map[MediaSourceVersionKey]MediaSourceProjection{}, nil
 	}
@@ -117,7 +119,8 @@ func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys 
 		if err := validateBoundedMediaText("media source", key.SourceID, 256, false); err != nil {
 			return nil, err
 		}
-		if err := validateBoundedMediaText("media source version", key.SourceVersionID, 256, false); err != nil {
+		err := validateBoundedMediaText("media source version", key.SourceVersionID, 256, false)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -131,12 +134,15 @@ func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys 
 	}
 	defer func() { _ = tx.Rollback() }()
 	rows, err := tx.QueryContext(ctx, `WITH visible AS (
-		SELECT o.source_id,s.kind,o.source_version_id,COALESCE(v.content_version_id,''),o.occurrence_id,o.caller_filename,o.message_json,
-		ROW_NUMBER() OVER (PARTITION BY o.source_id,o.source_version_id ORDER BY o.first_seen_at DESC,o.occurrence_id DESC) position
+		SELECT o.source_id,s.kind,o.source_version_id,COALESCE(v.content_version_id,''),
+		o.occurrence_id,o.caller_filename,o.message_json,
+		ROW_NUMBER() OVER (PARTITION BY o.source_id,o.source_version_id
+			ORDER BY o.first_seen_at DESC,o.occurrence_id DESC) position
 		FROM media_occurrences o JOIN media_sources s ON s.source_id=o.source_id
 		LEFT JOIN media_source_versions v ON v.source_version_id=o.source_version_id
 		WHERE o.caller_principal=? AND o.visible=1 AND (o.source_id,o.source_version_id) IN
-		(SELECT json_extract(value,'$.source_id'),json_extract(value,'$.source_version_id') FROM json_each(?)))
+		(SELECT json_extract(value,'$.source_id'),json_extract(value,'$.source_version_id')
+			FROM json_each(?)))
 		SELECT * FROM visible WHERE position=1`, principal, string(encoded))
 	if err != nil {
 		return nil, err
@@ -146,7 +152,8 @@ func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys 
 	for rows.Next() {
 		var item MediaSourceProjection
 		var position int
-		if err := rows.Scan(&item.SourceID, &item.Kind, &item.SourceVersionID, &item.ContentVersionID, &item.OccurrenceID, &item.Filename, &item.CaptureJSON, &position); err != nil {
+		if err := rows.Scan(&item.SourceID, &item.Kind, &item.SourceVersionID, &item.ContentVersionID,
+			&item.OccurrenceID, &item.Filename, &item.CaptureJSON, &position); err != nil {
 			return nil, err
 		}
 		key := MediaSourceVersionKey{item.SourceID, item.SourceVersionID}
@@ -161,7 +168,10 @@ func (s *Store) MediaSourceVersions(ctx context.Context, principal string, keys 
 	return result, tx.Commit()
 }
 
-func (s *Store) mediaSourceReceipts(ctx context.Context, query metadataQuerier, principal string, result map[MediaSourceVersionKey]MediaSourceProjection, exactVersion bool) error {
+func (s *Store) mediaSourceReceipts(
+	ctx context.Context, query metadataQuerier, principal string,
+	result map[MediaSourceVersionKey]MediaSourceProjection, exactVersion bool,
+) error {
 	if len(result) == 0 {
 		return nil
 	}
@@ -174,24 +184,31 @@ func (s *Store) mediaSourceReceipts(ctx context.Context, query metadataQuerier, 
 		return err
 	}
 	rows, err := query.QueryContext(ctx, `WITH requested AS MATERIALIZED (
-  SELECT json_extract(value,'$.source_id') source_id,json_extract(value,'$.source_version_id') source_version_id FROM json_each(?)
+  SELECT json_extract(value,'$.source_id') source_id,
+   json_extract(value,'$.source_version_id') source_version_id FROM json_each(?)
  ), retention AS (
   SELECT r.source_id,r.source_version_id,o.receipt_json,
    ROW_NUMBER() OVER (PARTITION BY r.source_id,r.source_version_id ORDER BY
-    CASE WHEN ? AND json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id THEN 0 ELSE 1 END,
+    CASE WHEN ? AND json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id
+     THEN 0 ELSE 1 END,
     o.updated_at DESC,o.operation_id DESC) selection_rank
   FROM requested r JOIN media_operations o ON o.source_id=r.source_id
   WHERE o.principal=? AND o.verb IN ('submit_supplied_media','submit_remote_recording')
    AND (?=0 OR json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id
     OR COALESCE(json_extract(o.receipt_json,'$.source_version_id'),'')='')
  ), receipts AS (
-  SELECT source_id,source_version_id,receipt_json,0 processing,'' created_at,'' operation_id FROM retention WHERE selection_rank=1
+  SELECT source_id,source_version_id,receipt_json,0 processing,'' created_at,'' operation_id
+  FROM retention WHERE selection_rank=1
   UNION ALL
   SELECT r.source_id,r.source_version_id,o.receipt_json,1,o.created_at,o.operation_id
   FROM requested r JOIN media_operations o ON o.source_id=r.source_id
-  WHERE o.principal=? AND r.source_version_id<>'' AND o.verb IN ('submit_supplied_media','retry_media')
-   AND o.receipt_json LIKE '%"processing_profile"%' AND json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id
- ) SELECT source_id,source_version_id,receipt_json,processing FROM receipts ORDER BY processing,created_at DESC,operation_id DESC`, string(encoded), exactVersion, principal, exactVersion, principal)
+  WHERE o.principal=? AND r.source_version_id<>''
+   AND o.verb IN ('submit_supplied_media','retry_media')
+   AND o.receipt_json LIKE '%"processing_profile"%'
+   AND json_extract(o.receipt_json,'$.source_version_id')=r.source_version_id
+ ) SELECT source_id,source_version_id,receipt_json,processing FROM receipts
+ ORDER BY processing,created_at DESC,operation_id DESC`,
+		string(encoded), exactVersion, principal, exactVersion, principal)
 	if err != nil {
 		return err
 	}

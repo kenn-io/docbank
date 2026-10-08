@@ -126,7 +126,10 @@ func (service *Service) mediaSourceReceipt(
 	return service.mediaSourceReceiptFromAttempts(ctx, item, processing, coverage)
 }
 
-func (service *Service) mediaSourceReceiptFromAttempts(ctx context.Context, item store.MediaSourceProjection, processing, coverage *store.MediaPublicationReceipt) (MediaReceipt, error) {
+func (service *Service) mediaSourceReceiptFromAttempts(
+	ctx context.Context, item store.MediaSourceProjection,
+	processing, coverage *store.MediaPublicationReceipt,
+) (MediaReceipt, error) {
 	receipt := mediaReceiptFromStore(item.Receipt)
 	if item.Kind == "remote_recording" && item.ContentVersionID != "" {
 		receipt.Outcome = "content_available"

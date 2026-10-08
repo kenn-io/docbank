@@ -104,7 +104,8 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		if err != nil {
 			return nil, false, err
 		}
-		selectedCTE = `WITH selected AS MATERIALIZED (SELECT json_extract(value,'$.content_version_id') content_version_id,
+		selectedCTE = `WITH selected AS MATERIALIZED (
+			SELECT json_extract(value,'$.content_version_id') content_version_id,
 			json_extract(value,'$.build_id') build_id FROM json_each(?)) `
 		// Check each build's pairs before catalog joins to avoid repeating the fence scan.
 		selectedJoin = ` CROSS JOIN selected ON selected.build_id=rendition_lexical_fts.build_id `
@@ -176,7 +177,8 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 				JOIN rendition_lexical_segments ls ON ls.build_id=rendition_lexical_fts.build_id
 				 AND ls.segment_id=rendition_lexical_fts.segment_id
 				JOIN rendition_units ru ON ru.build_id=ls.build_id AND ru.unit_id=ls.unit_id
-				JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id ` + attachmentSelection + `
+				JOIN rendition_attachments a
+				 ON a.build_id=rendition_lexical_fts.build_id ` + attachmentSelection + `
 				JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id
 				 AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id
 				JOIN content_versions cv ON cv.version_id=a.content_version_id

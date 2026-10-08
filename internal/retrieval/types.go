@@ -72,7 +72,8 @@ type MediaSourceSelector struct {
 }
 
 func (source MediaSourceSelector) Identity() MediaSource {
-	return MediaSource{SourceID: source.SourceID, SourceVersionID: source.SourceVersionID, ContentVersionID: source.ContentVersionID}
+	return MediaSource{SourceID: source.SourceID, SourceVersionID: source.SourceVersionID,
+		ContentVersionID: source.ContentVersionID}
 }
 
 type Candidate struct {

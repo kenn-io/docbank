@@ -1753,7 +1753,10 @@ export interface DocumentMediaSourceSelector {
      * @maxLength 256
      */
   source_version_id: string;
-  /** @items.pattern ^[0-9a-f]{64}$ */
+  /**
+     * @maxItems 64
+     * @items.pattern ^[0-9a-f]{64}$
+     */
   supplied_input_ids?: string[];
 }
 

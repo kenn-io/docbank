@@ -354,7 +354,7 @@ type DocumentMediaSourceSelector struct {
 	SourceID         string              `json:"source_id" minLength:"1" maxLength:"256"`
 	SourceVersionID  string              `json:"source_version_id" minLength:"1" maxLength:"256"`
 	ContentVersionID string              `json:"content_version_id" format:"uuid"`
-	SuppliedInputIDs MediaSearchInputIDs `json:"supplied_input_ids,omitzero" nullable:"false" pattern:"^[0-9a-f]{64}$"`
+	SuppliedInputIDs MediaSearchInputIDs `json:"supplied_input_ids,omitzero" maxItems:"64" nullable:"false" pattern:"^[0-9a-f]{64}$"`
 }
 
 type DocumentSearchTrace struct {

@@ -60,7 +60,7 @@ type MediaTranscript struct {
 func (service *Service) MediaTranscript(
 	ctx context.Context, request MediaTranscriptRequest,
 ) (MediaTranscript, error) {
-	selected, err := service.selectMediaTranscript(ctx, request, false)
+	selected, err := service.selectMediaTranscript(ctx, request)
 	result := selected.result
 	if err != nil || result.EvidenceState != mediaTranscriptEvidenceReady {
 		return result, err
@@ -95,7 +95,14 @@ type mediaTranscriptSelection struct {
 	inputID, origin string
 }
 
-func (service *Service) selectMediaTranscript(ctx context.Context, request MediaTranscriptRequest, metadataOnly bool) (mediaTranscriptSelection, error) {
+// renditionLookup reads the active rendition for a content version and profile.
+type renditionLookup func(
+	ctx context.Context, contentVersionID, profileFingerprint string,
+) (store.RenditionView, error)
+
+func (service *Service) selectMediaTranscript(
+	ctx context.Context, request MediaTranscriptRequest,
+) (mediaTranscriptSelection, error) {
 	result := MediaTranscript{SourceID: request.SourceID, SourceVersionID: request.SourceVersionID,
 		ContentVersionID: request.ContentVersionID, EvidenceState: mediaTranscriptEvidenceUnavailable}
 	if service == nil || service.catalog == nil || service.blobs == nil {
@@ -105,28 +112,38 @@ func (service *Service) selectMediaTranscript(ctx context.Context, request Media
 	if err := validateMediaTranscriptContentVersion(request.ContentVersionID); err != nil {
 		return mediaTranscriptSelection{result: result}, err
 	}
-	item, err := service.catalog.MediaSourceVersion(ctx, service.principal, request.SourceID, request.SourceVersionID)
+	item, err := service.catalog.MediaSourceVersion(ctx, service.principal,
+		request.SourceID, request.SourceVersionID)
 	if err != nil {
 		return mediaTranscriptSelection{result: result}, err
 	}
-	return service.selectMediaTranscriptItem(ctx, request, item, result, metadataOnly)
+	return service.selectMediaTranscriptItem(ctx, request, item, result,
+		service.catalog.ActiveRendition)
 }
 
-func (service *Service) selectMediaTranscripts(ctx context.Context, requests []MediaTranscriptRequest) (map[MediaTranscriptRequest]mediaTranscriptSelection, error) {
+// selectMediaTranscripts reads selection metadata for many exact source
+// versions. Missing sources select no evidence instead of failing the batch.
+func (service *Service) selectMediaTranscripts(
+	ctx context.Context, requests []MediaTranscriptRequest,
+) (map[MediaTranscriptRequest]mediaTranscriptSelection, error) {
 	keys := make([]store.MediaSourceVersionKey, len(requests))
 	for i, request := range requests {
-		keys[i] = store.MediaSourceVersionKey{SourceID: request.SourceID, SourceVersionID: request.SourceVersionID}
+		keys[i] = store.MediaSourceVersionKey{SourceID: request.SourceID,
+			SourceVersionID: request.SourceVersionID}
 	}
 	items, err := service.catalog.MediaSourceVersions(ctx, service.principal, keys)
 	if err != nil {
 		return nil, err
 	}
 	result := make(map[MediaTranscriptRequest]mediaTranscriptSelection, len(requests))
-	for _, request := range requests {
-		base := MediaTranscript{VaultUID: service.catalog.VaultID(), SourceID: request.SourceID, SourceVersionID: request.SourceVersionID, ContentVersionID: request.ContentVersionID, EvidenceState: mediaTranscriptEvidenceUnavailable}
+	for i, request := range requests {
+		base := MediaTranscript{VaultUID: service.catalog.VaultID(), SourceID: request.SourceID,
+			SourceVersionID: request.SourceVersionID, ContentVersionID: request.ContentVersionID,
+			EvidenceState: mediaTranscriptEvidenceUnavailable}
 		selected := mediaTranscriptSelection{result: base}
-		if item, ok := items[store.MediaSourceVersionKey{SourceID: request.SourceID, SourceVersionID: request.SourceVersionID}]; ok {
-			selected, err = service.selectMediaTranscriptItem(ctx, request, item, base, true)
+		if item, ok := items[keys[i]]; ok {
+			selected, err = service.selectMediaTranscriptItem(ctx, request, item, base,
+				service.catalog.ActiveRenditionMetadata)
 			if errors.Is(err, store.ErrNotFound) {
 				selected, err = mediaTranscriptSelection{result: base}, nil
 			}
@@ -147,7 +164,12 @@ func validateMediaTranscriptContentVersion(id string) error {
 	return nil
 }
 
-func (service *Service) selectMediaTranscriptItem(ctx context.Context, request MediaTranscriptRequest, item store.MediaSourceProjection, result MediaTranscript, metadataOnly bool) (mediaTranscriptSelection, error) {
+// selectMediaTranscriptItem checks that the source still covers the node's
+// current, untrashed version before selecting its rendition.
+func (service *Service) selectMediaTranscriptItem(
+	ctx context.Context, request MediaTranscriptRequest, item store.MediaSourceProjection,
+	result MediaTranscript, lookup renditionLookup,
+) (mediaTranscriptSelection, error) {
 	processing, coverage, err := service.mediaProcessingAttempts(ctx, item.ProcessingReceipts)
 	if err != nil {
 		return mediaTranscriptSelection{result: result}, err
@@ -177,12 +199,8 @@ func (service *Service) selectMediaTranscriptItem(ctx context.Context, request M
 		result.EvidenceState = mediaTranscriptEvidenceStale
 		return mediaTranscriptSelection{result: result}, nil
 	}
-	profile := service.mediaTranscriptProfileFromReceipt(coverage)
-	lookup := service.catalog.ActiveRendition
-	if metadataOnly {
-		lookup = service.catalog.ActiveRenditionMetadata
-	}
-	view, err := lookup(ctx, request.ContentVersionID, profile)
+	view, err := lookup(ctx, request.ContentVersionID,
+		service.mediaTranscriptProfileFromReceipt(coverage))
 	if errors.Is(err, store.ErrNotFound) {
 		if receipt.CoverageState != "transcribed" &&
 			(receipt.OperationState == "queued" || receipt.OperationState == "running") {
@@ -193,6 +211,15 @@ func (service *Service) selectMediaTranscriptItem(ctx context.Context, request M
 	if err != nil {
 		return mediaTranscriptSelection{result: result}, err
 	}
+	return service.selectMediaTranscriptInput(ctx, item, result, view)
+}
+
+// selectMediaTranscriptInput names the build's origin and hides a supplied
+// input that this source version cannot see.
+func (service *Service) selectMediaTranscriptInput(
+	ctx context.Context, item store.MediaSourceProjection, result MediaTranscript,
+	view store.RenditionView,
+) (mediaTranscriptSelection, error) {
 	inputBinding, err := service.catalog.RenditionInputBinding(ctx, view.Build.ID)
 	if err != nil {
 		return mediaTranscriptSelection{result: result}, err
@@ -212,10 +239,15 @@ func (service *Service) selectMediaTranscriptItem(ctx context.Context, request M
 		origin = "supplied"
 	}
 	result.EvidenceState = mediaTranscriptEvidenceReady
-	return mediaTranscriptSelection{result: result, view: view, inputID: inputBinding, origin: origin}, nil
+	return mediaTranscriptSelection{result: result, view: view, inputID: inputBinding,
+		origin: origin}, nil
 }
 
-func (service *Service) mediaTranscriptProfileFromReceipt(receipt *store.MediaPublicationReceipt) string {
+// mediaTranscriptProfileFromReceipt names the profile of the receipt that
+// covers the source, so a pending retry under another profile does not hide it.
+func (service *Service) mediaTranscriptProfileFromReceipt(
+	receipt *store.MediaPublicationReceipt,
+) string {
 	if receipt == nil {
 		return ""
 	}

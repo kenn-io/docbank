@@ -651,7 +651,9 @@ func toMediaSearchSources(sources []DocumentMediaSourceSelector) []retrieval.Med
 	}
 	result := make([]retrieval.MediaSourceSelector, len(sources))
 	for i, source := range sources {
-		result[i] = retrieval.MediaSourceSelector{SourceID: source.SourceID, SourceVersionID: source.SourceVersionID, ContentVersionID: source.ContentVersionID, SuppliedInputIDs: source.SuppliedInputIDs}
+		result[i] = retrieval.MediaSourceSelector{SourceID: source.SourceID,
+			SourceVersionID: source.SourceVersionID, ContentVersionID: source.ContentVersionID,
+			SuppliedInputIDs: source.SuppliedInputIDs}
 	}
 	return result
 }
@@ -684,7 +686,8 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 				InputGenerationID: evidence.InputGenerationID, InputID: evidence.InputID,
 				InputKind: string(evidence.InputKind), SourceManifestChecksum: evidence.SourceManifestChecksum}
 			for _, source := range evidence.MediaSources {
-				convertedEvidence.MediaSources = append(convertedEvidence.MediaSources, DocumentMediaSource(source))
+				convertedEvidence.MediaSources = append(convertedEvidence.MediaSources,
+					DocumentMediaSource(source))
 			}
 			if evidence.TimeSpan != nil {
 				convertedEvidence.TimeSpan = &MediaTimeSpan{
@@ -777,7 +780,8 @@ func fromProcessingError(err error) error {
 		code   string
 		detail string
 	}{
-		{processing.ErrMediaSearchInvalid, http.StatusUnprocessableEntity, "invalid_media_search", "media search selectors or mode are invalid"},
+		{processing.ErrMediaSearchInvalid, http.StatusUnprocessableEntity, "invalid_media_search",
+			"media search selectors or mode are invalid"},
 		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", "document rendition failed"},
 		{processing.ErrRenditionOperatorRequired, http.StatusConflict, "rendition_operator_required", "document rendition requires operator intervention"},
 		{processing.ErrForeignVault, http.StatusUnprocessableEntity, "foreign_vault", "source fence belongs to another vault"},

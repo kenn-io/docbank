@@ -436,11 +436,15 @@ func (s *Store) ActiveRendition(
 }
 
 // ActiveRenditionMetadata omits units and transcript text from source selection.
-func (s *Store) ActiveRenditionMetadata(ctx context.Context, contentVersionID, profile string) (RenditionView, error) {
+func (s *Store) ActiveRenditionMetadata(
+	ctx context.Context, contentVersionID, profile string,
+) (RenditionView, error) {
 	return s.activeRenditionSnapshot(ctx, contentVersionID, profile, true)
 }
 
-func (s *Store) activeRenditionSnapshot(ctx context.Context, contentVersionID, processingProfileFingerprint string, metadataOnly bool) (RenditionView, error) {
+func (s *Store) activeRenditionSnapshot(
+	ctx context.Context, contentVersionID, processingProfileFingerprint string, metadataOnly bool,
+) (RenditionView, error) {
 	if err := validateUUIDv4(contentVersionID); err != nil {
 		return RenditionView{}, fmt.Errorf("active rendition content version %q: %w", contentVersionID, ErrNotFound)
 	}
@@ -452,7 +456,8 @@ func (s *Store) activeRenditionSnapshot(ctx context.Context, contentVersionID, p
 		return RenditionView{}, fmt.Errorf("starting active rendition snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	view, err := activeRenditionView(ctx, tx, contentVersionID, processingProfileFingerprint, metadataOnly)
+	view, err := activeRenditionView(ctx, tx, contentVersionID, processingProfileFingerprint,
+		metadataOnly)
 	if err != nil {
 		return RenditionView{}, err
 	}
@@ -466,7 +471,10 @@ func activeRendition(ctx context.Context, tx metadataQuerier, contentVersionID, 
 	return activeRenditionView(ctx, tx, contentVersionID, processingProfileFingerprint, false)
 }
 
-func activeRenditionView(ctx context.Context, tx metadataQuerier, contentVersionID, processingProfileFingerprint string, metadataOnly bool) (RenditionView, error) {
+func activeRenditionView(
+	ctx context.Context, tx metadataQuerier, contentVersionID, processingProfileFingerprint string,
+	metadataOnly bool,
+) (RenditionView, error) {
 	view := RenditionView{Head: RenditionHeadRecord{
 		ContentVersionID: contentVersionID, ProcessingProfileFingerprint: processingProfileFingerprint,
 	}}
@@ -1064,7 +1072,9 @@ func loadRenditionBuild(ctx context.Context, tx metadataQuerier, buildID string)
 	return loadRenditionBuildView(ctx, tx, buildID, false)
 }
 
-func loadRenditionBuildView(ctx context.Context, tx metadataQuerier, buildID string, metadataOnly bool) (RenditionBuildRecord, error) {
+func loadRenditionBuildView(
+	ctx context.Context, tx metadataQuerier, buildID string, metadataOnly bool,
+) (RenditionBuildRecord, error) {
 	record := RenditionBuildRecord{ID: buildID}
 	var policy, receipt, warnings string
 	var partialSuccess, truncated int

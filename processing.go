@@ -14,6 +14,7 @@ var (
 	ErrInvalidEvidenceRequest       = internalprocessing.ErrInvalidEvidenceRequest
 	ErrInvalidRenditionWindow       = internalprocessing.ErrInvalidRenditionWindow
 	ErrInvalidRenditionEncoding     = internalprocessing.ErrInvalidRenditionEncoding
+	ErrMediaSearchInvalid           = internalprocessing.ErrMediaSearchInvalid
 	ErrForeignVault                 = internalprocessing.ErrForeignVault
 	ErrProcessingProfileUnavailable = internalprocessing.ErrProfileNotConfigured
 	ErrProcessingPlanChanged        = internalprocessing.ErrPlanChanged
@@ -178,6 +179,9 @@ func (v *Vault) LookupFormat(_ context.Context, query string) (document.FormatLo
 	return v.processing.LookupFormat(query), nil
 }
 
+// SearchDocuments searches the request's source fence. Invalid MediaSources
+// selectors, or a mode or reranking choice they do not support, match
+// ErrMediaSearchInvalid.
 func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchRequest) (DocumentSearchReport, error) {
 	if err := v.begin(); err != nil {
 		return DocumentSearchReport{}, err
@@ -287,7 +291,8 @@ func fromSearchReport(report internalprocessing.SearchReport, explain bool) Docu
 				InputGenerationID: evidence.InputGenerationID, InputID: evidence.InputID,
 				InputKind: string(evidence.InputKind), SourceManifestChecksum: evidence.SourceManifestChecksum}
 			for _, source := range evidence.MediaSources {
-				convertedEvidence.MediaSources = append(convertedEvidence.MediaSources, DocumentMediaSource(source))
+				convertedEvidence.MediaSources = append(convertedEvidence.MediaSources,
+					DocumentMediaSource(source))
 			}
 			if evidence.TimeSpan != nil {
 				convertedEvidence.TimeSpan = &MediaTimeSpan{

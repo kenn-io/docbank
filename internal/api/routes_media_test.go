@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -349,6 +350,7 @@ func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
 		{"UTF8_byte_bound", invalid, http.StatusUnprocessableEntity, `"code":"invalid_media_search"`},
 		{"null_inputs", rawInput(nil), http.StatusUnprocessableEntity, ""},
 		{"invalid_input_identity", rawInput([]string{"invalid-input"}), http.StatusUnprocessableEntity, ""},
+		{"input_count", rawInput(slices.Repeat([]string{strings.Repeat("a", 64)}, 65)), http.StatusUnprocessableEntity, "expected array length <= 64"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, tc.body)
