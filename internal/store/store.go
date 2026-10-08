@@ -28,6 +28,7 @@ type Store struct {
 	primaryStoreID   string
 	driver           docsqlite.Driver
 	providerEgressMu sync.RWMutex
+	photoHiddenNow   func() time.Time
 }
 
 // currentStorageSchemaVersion identifies the canonical SQLite layout created
@@ -178,6 +179,9 @@ func (s *Store) bootstrapTx(incarnation *metadataProcessingIncarnation) error {
 		}
 		if err := validateUUIDv4(s.vaultID); err != nil {
 			return fmt.Errorf("validating vault identity: %w", err)
+		}
+		if _, err := tx.Exec(`DELETE FROM photo_hidden_sessions`); err != nil {
+			return err
 		}
 		if err := ensureProcessingIncarnationTx(tx, incarnation); err != nil {
 			return err

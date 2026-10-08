@@ -9,7 +9,7 @@
   import PhotoGrid from "./PhotoGrid.svelte";
   import SelectionDock from "./SelectionDock.svelte";
 
-  let { photos, cache, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; ontrashed?: () => void } = $props();
+  let { photos, cache, title = "Library", ontrashed }: { photos: Photos; cache: PhotoPreviewCache; title?: string; ontrashed?: () => void } = $props();
   let trashOpen = $state(false);
   let grid = $state<{ preservePosition: () => (() => Promise<void>) }>();
   const preserve = () => grid?.preservePosition();
@@ -35,7 +35,7 @@
 <svelte:window onkeydown={escape} />
 <main class="photos-workspace" aria-label="Photo library">
   <div class="photo-toolbar browser-toolbar">
-    <div class="library-title"><h1>Library</h1><span>{photos.total.toLocaleString()} photos · {photos.items.length.toLocaleString()} loaded</span></div>
+    <div class="library-title"><h1>{title}</h1><span>{photos.total.toLocaleString()} photos · {photos.items.length.toLocaleString()} loaded</span></div>
     <div class="toolbar-actions">
       <div class="photo-options">
         <SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => relayout(() => photos.grouping = value as "months" | "sessions")} />
@@ -48,9 +48,9 @@
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
   {/if}
   {#if photos.items.length}
-    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} />
+    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading} {cache} hidden={photos.hidden} onhidden={id => void photos.setHidden(id)} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} />
   {:else if !photos.loading && !photos.error}
-    <EmptyState title="Your photo library is empty" description="Import photos with docbank photos import to browse them here.">
+    <EmptyState title={photos.hidden ? "No hidden photos" : "Your photo library is empty"} description={photos.hidden ? "Choose Hide from a photo's actions menu in Library." : "Import photos with docbank photos import to browse them here."}>
       {#snippet icon()}<ImageIcon size="24" />{/snippet}
     </EmptyState>
   {/if}

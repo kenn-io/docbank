@@ -182,7 +182,7 @@ func clearLongRunningBodyReadDeadlines(api huma.API) {
 // the daemon always has one; see NewServer.
 func authExempt(path string) bool {
 	switch path {
-	case "/", "/photos", "/health", kitPingPath, daemonauth.ChallengePath,
+	case "/", "/photos", "/photos/hidden", "/health", kitPingPath, daemonauth.ChallengePath,
 		webDownloadFilePath, webUploadSocketPath:
 		return true
 	}

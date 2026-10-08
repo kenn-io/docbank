@@ -3779,10 +3779,6 @@ components:
           type: string
         kind:
           type: string
-        media_sources:
-          items:
-            $ref: "#/components/schemas/DocumentMediaSource"
-          type: array
         segment_id:
           type: string
         source_manifest_checksum:
@@ -3816,84 +3812,6 @@ components:
         - path
       type: object
       x-go-type: api.DocumentIdentity
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
-    DocumentMediaSelection:
-      additionalProperties: false
-      properties:
-        completeness:
-          type: string
-        content_version_id:
-          type: string
-        origin:
-          type: string
-        source_id:
-          type: string
-        source_version_id:
-          type: string
-        supplied_input_id:
-          type: string
-      required:
-        - source_id
-        - source_version_id
-        - content_version_id
-        - origin
-        - completeness
-      type: object
-      x-go-type: api.DocumentMediaSelection
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
-    DocumentMediaSource:
-      additionalProperties: false
-      properties:
-        content_version_id:
-          format: uuid
-          type: string
-        source_id:
-          maxLength: 256
-          minLength: 1
-          type: string
-        source_version_id:
-          maxLength: 256
-          minLength: 1
-          type: string
-      required:
-        - source_id
-        - source_version_id
-        - content_version_id
-      type: object
-      x-go-type: api.DocumentMediaSource
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
-    DocumentMediaSourceSelector:
-      additionalProperties: false
-      properties:
-        content_version_id:
-          format: uuid
-          type: string
-        source_id:
-          maxLength: 256
-          minLength: 1
-          type: string
-        source_version_id:
-          maxLength: 256
-          minLength: 1
-          type: string
-        supplied_input_ids:
-          items:
-            pattern: ^[0-9a-f]{64}$
-            type: string
-          maxItems: 64
-          type: array
-      required:
-        - source_id
-        - source_version_id
-        - content_version_id
-      type: object
-      x-go-type: api.DocumentMediaSourceSelector
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -4038,13 +3956,6 @@ components:
           items:
             type: string
           type: array
-        media_selections:
-          items:
-            $ref: "#/components/schemas/DocumentMediaSelection"
-          maxItems: 4096
-          type: array
-        media_source_selection:
-          type: boolean
         requested_mode:
           type: string
         reranking:
@@ -4096,12 +4007,6 @@ components:
           maximum: 100
           minimum: 1
           type: integer
-        media_sources:
-          items:
-            $ref: "#/components/schemas/DocumentMediaSourceSelector"
-          maxItems: 4096
-          minItems: 1
-          type: array
         mode:
           enum:
             - auto
@@ -9015,11 +8920,6 @@ components:
           type: integer
         path:
           type: string
-        photo_asset_id:
-          type: string
-        photo_file_count:
-          format: int64
-          type: integer
         revision:
           format: int64
           type: integer
@@ -11348,6 +11248,10 @@ components:
           type:
             - string
             - "null"
+        hidden_count:
+          format: int64
+          minimum: 0
+          type: integer
         id:
           format: uuid
           type: string
@@ -11373,6 +11277,7 @@ components:
           type: string
       required:
         - member_count
+        - hidden_count
         - included_count
         - id
         - name
@@ -11425,6 +11330,10 @@ components:
             $ref: "#/components/schemas/PhotoFile"
           maxItems: 256
           type: array
+        hidden_at:
+          type:
+            - string
+            - "null"
         id:
           format: uuid
           type: string
@@ -11496,6 +11405,8 @@ components:
         cursor:
           maxLength: 32768
           type: string
+        hidden:
+          type: boolean
         page_size:
           default: 50
           format: int64
@@ -11648,6 +11559,54 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoHiddenPasscodeRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoHiddenPasscodeRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        new_passcode:
+          maxLength: 1024
+          type: string
+        passcode:
+          maxLength: 1024
+          type: string
+      type: object
+      x-go-type: api.PhotoHiddenPasscodeRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoHiddenState:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoHiddenState.json
+          format: uri
+          readOnly: true
+          type: string
+        configured:
+          type: boolean
+        expires_at:
+          type:
+            - string
+            - "null"
+        locked_until:
+          type:
+            - string
+            - "null"
+      required:
+        - configured
+      type: object
+      x-go-type: store.PhotoHiddenState
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoImportStartRequest:
       additionalProperties: false
       properties:
@@ -16156,9 +16115,6 @@ components:
         deleted:
           format: int64
           type: integer
-        held_roots:
-          format: int64
-          type: integer
         retained_roots:
           format: int64
           type: integer
@@ -16167,7 +16123,6 @@ components:
       required:
         - candidate_roots
         - retained_roots
-        - held_roots
         - deleted
         - run
       type: object
@@ -20563,7 +20518,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Restore a trash root or photo member, recovering its photo group and containing trash folders
+      summary: Restore a trash root to its original location (root fallback, suffix on collision)
   /api/v1/nodes/{id}/revert:
     post:
       description: "Reversion is metadata-only: it adopts the source version's existing blob authority and records a new content_revert history row under If-Match."
@@ -23009,6 +22964,37 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Detach one file from a photo asset
+  /api/v1/photos/assets/{asset_id}/hide:
+    post:
+      operationId: hidePhotoAsset
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: hide a revisioned photo asset
   /api/v1/photos/assets/{asset_id}/previews/{generation_id}:
     get:
       description: Returns 304 Not Modified without a body when If-None-Match matches an eligible generation. Private HTTP caches must revalidate before reuse.
@@ -23046,9 +23032,9 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read verified bytes of an eligible exact photo preview
-  /api/v1/photos/assets/{asset_id}/trash:
+  /api/v1/photos/assets/{asset_id}/unhide:
     post:
-      operationId: trashPhotoAsset
+      operationId: unhidePhotoAsset
       parameters:
         - in: path
           name: asset_id
@@ -23057,7 +23043,6 @@ paths:
             type: string
         - in: header
           name: If-Match
-          required: true
           schema:
             type: string
       responses:
@@ -23077,7 +23062,190 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Move every photo asset member to recoverable trash
+      summary: unhide a revisioned photo asset
+  /api/v1/photos/hidden:
+    get:
+      operationId: getPhotoHiddenState
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read hidden photos configuration and current unlock expiry
+  /api/v1/photos/hidden/change:
+    post:
+      operationId: changePhotoHidden
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoHiddenPasscodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: change hidden photos access
+  /api/v1/photos/hidden/disable:
+    post:
+      operationId: disablePhotoHidden
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoHiddenPasscodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: disable hidden photos access
+  /api/v1/photos/hidden/lock:
+    post:
+      operationId: lockPhotoHidden
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoHiddenPasscodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: lock hidden photos access
+  /api/v1/photos/hidden/reset:
+    post:
+      operationId: resetPhotoHidden
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoHiddenPasscodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: reset hidden photos access
+  /api/v1/photos/hidden/setup:
+    post:
+      operationId: setupPhotoHidden
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoHiddenPasscodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: setup hidden photos access
+  /api/v1/photos/hidden/unlock:
+    post:
+      operationId: unlockPhotoHidden
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoHiddenPasscodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: unlock hidden photos access
   /api/v1/photos/imports:
     post:
       operationId: startPhotoImport
@@ -25017,7 +25185,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: List restorable trash roots, newest first; paginated results group photo members
+      summary: List restorable trash roots, newest first, optionally paginated
   /api/v1/trash/empty:
     post:
       operationId: emptyTrash
@@ -25490,3 +25658,35 @@ paths:
 security:
   - apiKey: []
   - bearer: []
+  /api/v1/photos/assets/{asset_id}/trash:
+    post:
+      operationId: trashPhotoAsset
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Move every photo asset member to recoverable trash

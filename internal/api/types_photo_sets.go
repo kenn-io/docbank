@@ -17,6 +17,7 @@ type PhotoAlbumSummary struct {
 	PhotoAlbum
 
 	MemberCount           int64   `json:"member_count" minimum:"0"`
+	HiddenCount           int64   `json:"hidden_count" minimum:"0"`
 	IncludedCount         int64   `json:"included_count" minimum:"0"`
 	EffectiveCoverAssetID *string `json:"effective_cover_asset_id,omitzero" format:"uuid"`
 	CoverGenerationID     *string `json:"cover_generation_id,omitzero"`
@@ -46,5 +47,5 @@ func fromStorePhotoAlbum(v store.PhotoSet) PhotoAlbum {
 	return PhotoAlbum{ID: v.ID, Name: v.Name, Starred: v.Starred, Revision: v.Revision, CoverAssetID: v.CoverAssetID, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt, DeletedAt: v.DeletedAt}
 }
 func fromStorePhotoAlbumSummary(v store.PhotoSetSummary) PhotoAlbumSummary {
-	return PhotoAlbumSummary{PhotoAlbum: fromStorePhotoAlbum(v.PhotoSet), MemberCount: v.MemberCount, IncludedCount: v.IncludedCount, EffectiveCoverAssetID: v.EffectiveCoverAssetID, CoverGenerationID: v.CoverGenerationID}
+	return PhotoAlbumSummary{PhotoAlbum: fromStorePhotoAlbum(v.PhotoSet), MemberCount: v.MemberCount, HiddenCount: v.HiddenCount, IncludedCount: v.IncludedCount, EffectiveCoverAssetID: v.EffectiveCoverAssetID, CoverGenerationID: v.CoverGenerationID}
 }

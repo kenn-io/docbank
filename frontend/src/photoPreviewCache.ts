@@ -33,7 +33,7 @@ export class PhotoPreviewCache {
   get(assetID: string, generationID: string, caller?: AbortSignal, reload = false): Promise<Blob> {
     const signal = AbortSignal.any([this.controller.signal, ...(caller ? [caller] : [])]);
     return this.read(assetID, generationID, getReadPhotoPreviewUrl(assetID, generationID), signal, reload).catch(cause => {
-      if (!signal.aborted && cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      if (!signal.aborted && cause instanceof APIError && (cause.status === 401 || cause.status === 403)) this.onauthfailure(cause);
       throw cause;
     });
   }
@@ -63,15 +63,17 @@ export class PhotoPreviewCache {
       if (cached) return cached.blob();
       await this.acquire(signal);
       let bytes: ArrayBuffer;
+      let noStore = false;
       try {
         const fetchSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
         const response = await readPhotoPreview(assetID, generationID, undefined, { session: this.session, signal: fetchSignal });
+        noStore = /(?:^|,)\s*no-store\s*(?:,|$)/i.test(response.headers.get("Cache-Control") ?? "");
         bytes = await response.arrayBuffer();
       } finally { this.release(); }
       signal.throwIfAborted();
       try {
         // The network response varies by credentials; retained keys contain no credentials.
-        await cache?.put(key, new Response(bytes, { headers: { "Content-Type": "image/jpeg" } }));
+        if (!noStore) await cache?.put(key, new Response(bytes, { headers: { "Content-Type": "image/jpeg" } }));
       } catch { signal.throwIfAborted(); }
       signal.throwIfAborted();
       return new Blob([bytes], { type: "image/jpeg" });

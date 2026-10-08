@@ -1,4 +1,4 @@
-import { listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { hidePhotoAsset, unhidePhotoAsset, listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
@@ -34,7 +34,7 @@ export class Photos {
   private controller = new AbortController();
   private disposed = false;
 
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void) {}
+  constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false) {}
 
   setDensity(density: Density) {
     this.density = density;
@@ -46,7 +46,7 @@ export class Photos {
     this.loading = true;
     const controller = this.controller;
     try {
-      const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
+      const page = await listPhotoAssets({ query: photoQuery, hidden: this.hidden, page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
       if (controller.signal.aborted) return;
       const seen = new Set(this.items.map(item => item.asset_id));
       const restore = preserve?.();
@@ -61,12 +61,34 @@ export class Photos {
       await restore?.();
     } catch (cause) {
       if (controller.signal.aborted) return;
-      if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
       this.expired = cause instanceof APIError && cause.code === "cursor_expired";
       this.error = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.loading = false;
     }
+  }
+
+  clearForPrivacy() {
+    this.cancelPending();
+    this.items = [];
+    this.total = 0;
+    this.cursor = undefined;
+    this.started = false;
+    this.clearSelection();
+    this.error = "";
+  }
+
+  async setHidden(id: string) {
+    const members = this.selection.selectedIDs.has(id) ? this.items.filter(item => this.selection.selectedIDs.has(item.asset_id)) : this.items.filter(item => item.asset_id === id);
+    let failure = "";
+    for (const member of members) {
+      try {
+        await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(member.asset_id, { "If-Match": JSON.stringify(String(member.revision)) }, { session: this.session });
+      } catch (cause) { failure = cause instanceof Error ? cause.message : String(cause); }
+    }
+    notifyPhotoPrivacy(failure);
+    this.error = failure;
   }
 
   cancelPending() {
@@ -111,7 +133,7 @@ export class Photos {
     try {
       do {
         signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
-        const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
+        const page = await listPhotoAssets({ query: photoQuery, hidden: this.hidden, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
         if (signal.aborted) throw signal.reason;
         const reachedPreviously = reachedPrefix;
         for (const item of page.items) candidate.set(item.asset_id, item);
@@ -132,7 +154,7 @@ export class Photos {
       await restore?.();
     } catch (cause) {
       if (controller.signal.aborted) return;
-      if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
       this.error = signal.aborted ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.loading = false;
@@ -198,4 +220,14 @@ export class Photos {
   clearSelection() { this.selection = clearSelection<string>(); this.trashTargets = []; }
   selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
   dispose() { this.disposed = true; this.controller.abort(); }
+}
+
+export const photoPrivacyEvent = "docbank-photo-privacy";
+export function notifyPhotoPrivacy(error = "") {
+  window.dispatchEvent(new CustomEvent(photoPrivacyEvent, { detail: error }));
+  if (typeof BroadcastChannel !== "undefined") {
+    const channel = new BroadcastChannel(photoPrivacyEvent);
+    channel.postMessage("changed");
+    channel.close();
+  }
 }

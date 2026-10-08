@@ -5722,7 +5722,7 @@ func (c *Client) AppendNodeProvenance(ctx context.Context, options *AppendNodePr
 	return responseParser(ctx, resp)
 }
 
-// RestoreNode Restore a trash root or photo member, recovering its photo group and containing trash folders
+// RestoreNode Restore a trash root to its original location (root fallback, suffix on collision)
 func (c *Client) RestoreNode(ctx context.Context, options *RestoreNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RestoreNodeResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -8980,6 +8980,52 @@ func (c *Client) DetachPhotoFile(ctx context.Context, options *DetachPhotoFileRe
 	return responseParser(ctx, resp)
 }
 
+// HidePhotoAsset hide a revisioned photo asset
+func (c *Client) HidePhotoAsset(ctx context.Context, options *HidePhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*HidePhotoAssetResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/hide",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*HidePhotoAssetResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(HidePhotoAssetResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "HidePhotoAssetResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[HidePhotoAssetErrorResponse](resp, "HidePhotoAssetErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/hide")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ReadPhotoPreview Read verified bytes of an eligible exact photo preview
 func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadPhotoPreviewResult, error) {
 	var err error
@@ -9023,11 +9069,11 @@ func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreview
 	return responseParser(ctx, resp)
 }
 
-// TrashPhotoAsset Move every photo asset member to recoverable trash
-func (c *Client) TrashPhotoAsset(ctx context.Context, options *TrashPhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashPhotoAssetResponse, error) {
+// UnhidePhotoAsset unhide a revisioned photo asset
+func (c *Client) UnhidePhotoAsset(ctx context.Context, options *UnhidePhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnhidePhotoAssetResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/trash",
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/unhide",
 		Method:     "POST",
 		Options:    options,
 	}
@@ -9037,16 +9083,16 @@ func (c *Client) TrashPhotoAsset(ctx context.Context, options *TrashPhotoAssetRe
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	responseParser := func(_ context.Context, resp *runtime.Response) (*TrashPhotoAssetResponse, error) {
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UnhidePhotoAssetResponse, error) {
 		switch resp.StatusCode {
 
 		case 200:
 
-			target := new(TrashPhotoAssetResponse)
+			target := new(UnhidePhotoAssetResponse)
 			if err := json.Unmarshal(resp.Content, target); err != nil {
 				return nil, &runtime.ResponseDecodeError{
 					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "TrashPhotoAssetResponse", Body: resp.Content, Err: err,
+					ContentLength: len(resp.Content), TargetType: "UnhidePhotoAssetResponse", Body: resp.Content, Err: err,
 				}
 			}
 
@@ -9054,12 +9100,339 @@ func (c *Client) TrashPhotoAsset(ctx context.Context, options *TrashPhotoAssetRe
 
 		default:
 
-			return nil, decodeAPIError[TrashPhotoAssetErrorResponse](resp, "TrashPhotoAssetErrorResponse")
+			return nil, decodeAPIError[UnhidePhotoAssetErrorResponse](resp, "UnhidePhotoAssetErrorResponse")
 
 		}
 	}
 
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/trash")
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/unhide")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetPhotoHiddenState Read hidden photos configuration and current unlock expiry
+func (c *Client) GetPhotoHiddenState(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoHiddenStateResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/hidden",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPhotoHiddenStateResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPhotoHiddenStateResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPhotoHiddenStateResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPhotoHiddenStateErrorResponse](resp, "GetPhotoHiddenStateErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/hidden")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ChangePhotoHidden change hidden photos access
+func (c *Client) ChangePhotoHidden(ctx context.Context, options *ChangePhotoHiddenRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ChangePhotoHiddenResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/hidden/change",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ChangePhotoHiddenResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ChangePhotoHiddenResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ChangePhotoHiddenResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ChangePhotoHiddenErrorResponse](resp, "ChangePhotoHiddenErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/hidden/change")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// DisablePhotoHidden disable hidden photos access
+func (c *Client) DisablePhotoHidden(ctx context.Context, options *DisablePhotoHiddenRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DisablePhotoHiddenResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/hidden/disable",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*DisablePhotoHiddenResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(DisablePhotoHiddenResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "DisablePhotoHiddenResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[DisablePhotoHiddenErrorResponse](resp, "DisablePhotoHiddenErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/hidden/disable")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// LockPhotoHidden lock hidden photos access
+func (c *Client) LockPhotoHidden(ctx context.Context, options *LockPhotoHiddenRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LockPhotoHiddenResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/hidden/lock",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*LockPhotoHiddenResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(LockPhotoHiddenResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "LockPhotoHiddenResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[LockPhotoHiddenErrorResponse](resp, "LockPhotoHiddenErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/hidden/lock")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ResetPhotoHidden reset hidden photos access
+func (c *Client) ResetPhotoHidden(ctx context.Context, options *ResetPhotoHiddenRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResetPhotoHiddenResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/hidden/reset",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResetPhotoHiddenResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResetPhotoHiddenResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResetPhotoHiddenResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResetPhotoHiddenErrorResponse](resp, "ResetPhotoHiddenErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/hidden/reset")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SetupPhotoHidden setup hidden photos access
+func (c *Client) SetupPhotoHidden(ctx context.Context, options *SetupPhotoHiddenRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetupPhotoHiddenResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/hidden/setup",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SetupPhotoHiddenResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SetupPhotoHiddenResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SetupPhotoHiddenResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SetupPhotoHiddenErrorResponse](resp, "SetupPhotoHiddenErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/hidden/setup")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UnlockPhotoHidden unlock hidden photos access
+func (c *Client) UnlockPhotoHidden(ctx context.Context, options *UnlockPhotoHiddenRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnlockPhotoHiddenResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/hidden/unlock",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*UnlockPhotoHiddenResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(UnlockPhotoHiddenResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "UnlockPhotoHiddenResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[UnlockPhotoHiddenErrorResponse](resp, "UnlockPhotoHiddenErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/hidden/unlock")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -12129,7 +12502,7 @@ func (c *Client) ReadTimelineRebuild(ctx context.Context, options *ReadTimelineR
 	return responseParser(ctx, resp)
 }
 
-// ListTrash List restorable trash roots, newest first; paginated results group photo members
+// ListTrash List restorable trash roots, newest first, optionally paginated
 func (c *Client) ListTrash(ctx context.Context, options *ListTrashRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTrashResponse, error) {
 	var err error
 
@@ -18769,6 +19142,44 @@ func (o *DetachPhotoFileRequestOptions) GetHeader() (map[string]string, error) {
 	return headers, err
 }
 
+// HidePhotoAssetRequestOptions is the options needed to make a request to HidePhotoAsset.
+type HidePhotoAssetRequestOptions struct {
+	PathParams *HidePhotoAssetPath
+	Header     *HidePhotoAssetHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *HidePhotoAssetRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *HidePhotoAssetRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *HidePhotoAssetRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *HidePhotoAssetRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // ReadPhotoPreviewRequestOptions is the options needed to make a request to ReadPhotoPreview.
 type ReadPhotoPreviewRequestOptions struct {
 	PathParams *ReadPhotoPreviewPath
@@ -18807,14 +19218,14 @@ func (o *ReadPhotoPreviewRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
-// TrashPhotoAssetRequestOptions is the options needed to make a request to TrashPhotoAsset.
-type TrashPhotoAssetRequestOptions struct {
-	PathParams *TrashPhotoAssetPath
-	Header     *TrashPhotoAssetHeaders
+// UnhidePhotoAssetRequestOptions is the options needed to make a request to UnhidePhotoAsset.
+type UnhidePhotoAssetRequestOptions struct {
+	PathParams *UnhidePhotoAssetPath
+	Header     *UnhidePhotoAssetHeaders
 }
 
 // GetPathParams returns the path params as a map.
-func (o *TrashPhotoAssetRequestOptions) GetPathParams() (map[string]any, error) {
+func (o *UnhidePhotoAssetRequestOptions) GetPathParams() (map[string]any, error) {
 	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
 	if err != nil {
 		return nil, err
@@ -18825,17 +19236,17 @@ func (o *TrashPhotoAssetRequestOptions) GetPathParams() (map[string]any, error) 
 }
 
 // GetQuery returns the query params as a map.
-func (o *TrashPhotoAssetRequestOptions) GetQuery() (map[string]any, error) {
+func (o *UnhidePhotoAssetRequestOptions) GetQuery() (map[string]any, error) {
 	return nil, nil
 }
 
 // GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *TrashPhotoAssetRequestOptions) GetBody() any {
+func (o *UnhidePhotoAssetRequestOptions) GetBody() any {
 	return nil
 }
 
 // GetHeader returns the headers as a map.
-func (o *TrashPhotoAssetRequestOptions) GetHeader() (map[string]string, error) {
+func (o *UnhidePhotoAssetRequestOptions) GetHeader() (map[string]string, error) {
 	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
 	if err != nil {
 		return nil, err
@@ -18843,6 +19254,174 @@ func (o *TrashPhotoAssetRequestOptions) GetHeader() (map[string]string, error) {
 	var headers map[string]string
 	err = json.Unmarshal(encoded, &headers)
 	return headers, err
+}
+
+// ChangePhotoHiddenRequestOptions is the options needed to make a request to ChangePhotoHidden.
+type ChangePhotoHiddenRequestOptions struct {
+	Body *ChangePhotoHiddenBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ChangePhotoHiddenRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ChangePhotoHiddenRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ChangePhotoHiddenRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ChangePhotoHiddenRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// DisablePhotoHiddenRequestOptions is the options needed to make a request to DisablePhotoHidden.
+type DisablePhotoHiddenRequestOptions struct {
+	Body *DisablePhotoHiddenBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *DisablePhotoHiddenRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *DisablePhotoHiddenRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *DisablePhotoHiddenRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *DisablePhotoHiddenRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// LockPhotoHiddenRequestOptions is the options needed to make a request to LockPhotoHidden.
+type LockPhotoHiddenRequestOptions struct {
+	Body *LockPhotoHiddenBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *LockPhotoHiddenRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *LockPhotoHiddenRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *LockPhotoHiddenRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *LockPhotoHiddenRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ResetPhotoHiddenRequestOptions is the options needed to make a request to ResetPhotoHidden.
+type ResetPhotoHiddenRequestOptions struct {
+	Body *ResetPhotoHiddenBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResetPhotoHiddenRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResetPhotoHiddenRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResetPhotoHiddenRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResetPhotoHiddenRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SetupPhotoHiddenRequestOptions is the options needed to make a request to SetupPhotoHidden.
+type SetupPhotoHiddenRequestOptions struct {
+	Body *SetupPhotoHiddenBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SetupPhotoHiddenRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SetupPhotoHiddenRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SetupPhotoHiddenRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SetupPhotoHiddenRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UnlockPhotoHiddenRequestOptions is the options needed to make a request to UnlockPhotoHidden.
+type UnlockPhotoHiddenRequestOptions struct {
+	Body *UnlockPhotoHiddenBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UnlockPhotoHiddenRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *UnlockPhotoHiddenRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UnlockPhotoHiddenRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UnlockPhotoHiddenRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
 }
 
 // StartPhotoImportRequestOptions is the options needed to make a request to StartPhotoImport.
@@ -21425,12 +22004,16 @@ type DetachPhotoFileHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type HidePhotoAssetHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
+
 type ReadPhotoPreviewHeaders struct {
 	IfNoneMatch *string `json:"If-None-Match,omitempty"`
 }
 
-type TrashPhotoAssetHeaders struct {
-	IfMatch string `json:"If-Match"`
+type UnhidePhotoAssetHeaders struct {
+	IfMatch *string `json:"If-Match,omitempty"`
 }
 
 type PromotePhotoNodeHeaders struct {
@@ -21884,12 +22467,16 @@ type DetachPhotoFilePath struct {
 	FileID  string `json:"file_id"`
 }
 
+type HidePhotoAssetPath struct {
+	AssetID string `json:"asset_id"`
+}
+
 type ReadPhotoPreviewPath struct {
 	AssetID      string `json:"asset_id"`
 	GenerationID string `json:"generation_id"`
 }
 
-type TrashPhotoAssetPath struct {
+type UnhidePhotoAssetPath struct {
 	AssetID string `json:"asset_id"`
 }
 
@@ -22212,6 +22799,18 @@ type SetPhotoDisplayBody = SetPhotoDisplayRequest
 type ExcludePhotoAssetBody = SetPhotoExcludedRequest
 
 type AttachPhotoFileBody = AttachPhotoFileRequest
+
+type ChangePhotoHiddenBody = PhotoHiddenPasscodeRequest
+
+type DisablePhotoHiddenBody = PhotoHiddenPasscodeRequest
+
+type LockPhotoHiddenBody = PhotoHiddenPasscodeRequest
+
+type ResetPhotoHiddenBody = PhotoHiddenPasscodeRequest
+
+type SetupPhotoHiddenBody = PhotoHiddenPasscodeRequest
+
+type UnlockPhotoHiddenBody = PhotoHiddenPasscodeRequest
 
 type StartPhotoImportBody = PhotoImportStartRequest
 
@@ -23434,11 +24033,43 @@ type DetachPhotoFileResponse = api.PhotoAsset
 
 type DetachPhotoFileErrorResponse = Error
 
+type HidePhotoAssetResponse = api.PhotoAsset
+
+type HidePhotoAssetErrorResponse = Error
+
 type ReadPhotoPreviewResponse = []byte
 
-type TrashPhotoAssetResponse = api.PhotoAsset
+type UnhidePhotoAssetResponse = api.PhotoAsset
 
-type TrashPhotoAssetErrorResponse = Error
+type UnhidePhotoAssetErrorResponse = Error
+
+type GetPhotoHiddenStateResponse = store.PhotoHiddenState
+
+type GetPhotoHiddenStateErrorResponse = Error
+
+type ChangePhotoHiddenResponse = store.PhotoHiddenState
+
+type ChangePhotoHiddenErrorResponse = Error
+
+type DisablePhotoHiddenResponse = store.PhotoHiddenState
+
+type DisablePhotoHiddenErrorResponse = Error
+
+type LockPhotoHiddenResponse = store.PhotoHiddenState
+
+type LockPhotoHiddenErrorResponse = Error
+
+type ResetPhotoHiddenResponse = store.PhotoHiddenState
+
+type ResetPhotoHiddenErrorResponse = Error
+
+type SetupPhotoHiddenResponse = store.PhotoHiddenState
+
+type SetupPhotoHiddenErrorResponse = Error
+
+type UnlockPhotoHiddenResponse = store.PhotoHiddenState
+
+type UnlockPhotoHiddenErrorResponse = Error
 
 type StartPhotoImportResponse = api.StorageOperation
 
@@ -24023,12 +24654,6 @@ type DocumentEvidenceReference = api.DocumentEvidenceReference
 
 type DocumentIdentity = api.DocumentIdentity
 
-type DocumentMediaSelection = api.DocumentMediaSelection
-
-type DocumentMediaSource = api.DocumentMediaSource
-
-type DocumentMediaSourceSelector = api.DocumentMediaSourceSelector
-
 type DocumentMissingCoverage = api.DocumentMissingCoverage
 
 type DocumentPage = api.DocumentPage
@@ -24548,6 +25173,10 @@ type PhotoBrowseRequest = api.PhotoBrowseRequest
 type PhotoBrowseRow = api.PhotoBrowseRow
 
 type PhotoFile = api.PhotoFile
+
+type PhotoHiddenPasscodeRequest = api.PhotoHiddenPasscodeRequest
+
+type PhotoHiddenState = store.PhotoHiddenState
 
 type PhotoImportStartRequest = api.PhotoImportStartRequest
 
@@ -25087,3 +25716,103 @@ type WorkspaceQueryResponse = api.WorkspaceQueryResponse
 type WorkspaceQueryRow = api.WorkspaceQueryRow
 
 type WorkspaceQueryTag = api.WorkspaceQueryTag
+
+func (c *Client) TrashPhotoAsset(ctx context.Context, options *TrashPhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashPhotoAssetResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/trash",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*TrashPhotoAssetResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(TrashPhotoAssetResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "TrashPhotoAssetResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[TrashPhotoAssetErrorResponse](resp, "TrashPhotoAssetErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/trash")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+
+type TrashPhotoAssetRequestOptions struct {
+	PathParams *TrashPhotoAssetPath
+	Header     *TrashPhotoAssetHeaders
+}
+
+
+func (o *TrashPhotoAssetRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+
+func (o *TrashPhotoAssetRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+
+func (o *TrashPhotoAssetRequestOptions) GetBody() any {
+	return nil
+}
+
+
+func (o *TrashPhotoAssetRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
+
+type TrashPhotoAssetHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
+
+type TrashPhotoAssetPath struct {
+	AssetID string `json:"asset_id"`
+}
+
+
+type TrashPhotoAssetResponse = api.PhotoAsset
+
+
+type TrashPhotoAssetErrorResponse = Error
+
