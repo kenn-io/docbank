@@ -36,9 +36,9 @@
 <svelte:window onkeydown={escape} />
 <main class="photos-workspace" aria-label="Photo library">
   <div class="photo-toolbar browser-toolbar">
-    <div class="library-title"><h1>Library</h1><span>{photos.total.toLocaleString()} photos{photos.date ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}` : ""} · {photos.items.length.toLocaleString()} loaded</span></div>
+    <div class="library-title"><h1>Library</h1><span>{!photos.started ? (photos.loading ? "Loading photos" : "Photos") : `${photos.total.toLocaleString()} photos`}{photos.date ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}` : ""}{photos.started ? ` · ${photos.items.length.toLocaleString()} loaded` : ""}</span></div>
     <div class="toolbar-actions">
-      <nav class="photo-views" aria-label="Photo views"><Button size="sm" tone={photos.view === "grid" ? "info" : "neutral"} onclick={() => photos.setView("grid")}>Grid</Button><Button size="sm" tone={photos.view === "timeline" ? "info" : "neutral"} onclick={() => photos.setView("timeline")}>Timeline</Button></nav>
+      <nav class="photo-views" aria-label="Photo views"><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "grid"} onclick={() => photos.setView("grid")}>Grid</button><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "timeline"} onclick={() => photos.setView("timeline")}>Timeline</button></nav>
       <div class="photo-options">
         <SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => relayout(() => photos.grouping = value as "months" | "sessions")} />
         <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => relayout(() => photos.setDensity(value as Density))} />

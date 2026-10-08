@@ -181,15 +181,26 @@ it("switches Grid and Timeline, seeks an empty day and clears its date", async (
   const photos = new Photos("scoped", vi.fn());
   photos.started = true; photos.items = [photo(1)]; photos.total = 1;
   photos.timeline = { dimension: "capture_day", available: true, total: 1, missing: 0, other: 0, values: [{ key: "2024-02-29", label: "2024-02-29", count: 1, selected: false }] };
-  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0 })))
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(1)], total: 1 })));
   vi.stubGlobal("fetch", fetcher);
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const view = render(PhotosWorkspace, { photos, cache });
+  expect(screen.getByRole("button", { name: "Grid", pressed: true })).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+  expect(screen.getByRole("button", { name: "Timeline", pressed: true })).toBeTruthy();
   await fireEvent.click(screen.getByRole("navigation", { name: "Timeline years" }).querySelector("button")!);
+  expect(screen.getByText("Loading photos in 2024")).toBeTruthy();
+  expect(screen.queryByText("0 photos in 2024 · 0 loaded")).toBeNull();
+  finish(new Response(JSON.stringify({ detail: "Try again" }), { status: 503 }));
+  await screen.findByText("Try again");
+  expect(screen.getByText("Photos in 2024")).toBeTruthy();
+  expect(screen.queryByText("0 photos in 2024 · 0 loaded")).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: /^Retry$/ }));
   expect(await screen.findByText("No photos in this year")).toBeTruthy();
   expect(screen.getByText("0 photos in 2024 · 0 loaded")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "February 2024 · 1" }));

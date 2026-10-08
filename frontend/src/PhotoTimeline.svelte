@@ -30,22 +30,22 @@
     {#if years.length}
       <nav class="year-ribbon" aria-label="Timeline years">
         {#each years as year (year.key)}
-          <Button size="sm" tone={selected?.startsWith(year.key) ? "info" : "neutral"} onclick={() => onselect(year.key)}>
+          <button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={Boolean(selected?.startsWith(year.key))} onclick={() => onselect(year.key)}>
             <span class="year-count">{year.key}<span>{year.count.toLocaleString()}</span><span class="year-density" style:width={`${Math.max(5, year.count / peak * 100)}%`}></span></span>
-          </Button>
+          </button>
         {/each}
       </nav>
       <nav class="month-sections scrubber" aria-label="Timeline month scrubber" bind:this={monthStrip}>
         {#each years as year (year.key)}
           {#if focused?.key.startsWith(year.key)}
-            {#each year.months as month (month.key)}<Button size="sm" class={focused?.key === month.key ? "timeline-active" : ""} tone={selected?.startsWith(month.key) ? "info" : "neutral"} onclick={() => onselect(month.key)}>{monthLabel(month.key)} · {month.count.toLocaleString()}</Button>{/each}
+            {#each year.months as month (month.key)}<button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" class:timeline-active={focused?.key === month.key} aria-pressed={Boolean(selected?.startsWith(month.key))} onclick={() => onselect(month.key)}>{monthLabel(month.key)} · {month.count.toLocaleString()}</button>{/each}
           {/if}
         {/each}
       </nav>
       {#if focused}
         <div class="day-rows" aria-label={monthLabel(focused.key)}>
           {#each focused.days as day (day.key)}
-            <Button size="sm" tone={selected === day.key ? "info" : "neutral"} onclick={() => onselect(day.key)}>{day.key} · {day.count.toLocaleString()} {day.count === 1 ? "photo" : "photos"}</Button>
+            <button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={selected === day.key} onclick={() => onselect(day.key)}>{day.key} · {day.count.toLocaleString()} {day.count === 1 ? "photo" : "photos"}</button>
           {/each}
         </div>
       {/if}

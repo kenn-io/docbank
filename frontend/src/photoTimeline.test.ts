@@ -42,13 +42,18 @@ it("shows full-scope year density and only the focused month's day rows", async 
   await fireEvent.click([...years.querySelectorAll("button")][1]);
   expect(onselect).toHaveBeenLastCalledWith("2024");
   await view.rerender({ selected: "2024" });
+  expect(years.querySelector('[aria-pressed="true"]')?.textContent).toContain("2024");
+  expect(screen.getByRole("button", { name: "February 2024 · 400", pressed: false })).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "February 2024 · 400" }));
   expect(onselect).toHaveBeenLastCalledWith("2024-02");
   await view.rerender({ selected: "2024-02" });
+  expect(screen.getByRole("button", { name: "February 2024 · 400", pressed: true })).toBeTruthy();
   const day = screen.getByRole("button", { name: "2024-02-29 · 400 photos" });
   expect(screen.queryByRole("button", { name: "2025-01-01 · 500 photos" })).toBeNull();
   await fireEvent.click(day);
   expect(onselect).toHaveBeenCalledWith("2024-02-29");
+  await view.rerender({ selected: "2024-02-29" });
+  expect(screen.getByRole("button", { name: "2024-02-29 · 400 photos", pressed: true })).toBeTruthy();
   expect(screen.getByRole("navigation", { name: "Timeline month scrubber" })).toBeTruthy();
 });
 

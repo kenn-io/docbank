@@ -35,7 +35,7 @@ export class Photos {
   grouping = $state<"months" | "sessions">("months");
   density = $state<Density>(loadDensity());
   selection = $state<SelectionState<string>>(clearSelection<string>());
-  started = false;
+  started = $state(false);
   private expired = false;
   private replacement: "refresh" | "expiry" | undefined;
   private controller = new AbortController();
