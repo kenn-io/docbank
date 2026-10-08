@@ -15397,6 +15397,53 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    TelemetryEventProperties:
+      additionalProperties: false
+      properties:
+        screen:
+          description: The screen shown. Other values return 400 for screen_viewed.
+          enum:
+            - browse
+            - search
+            - tags
+            - snapshot
+            - history
+            - versions
+            - provenance
+            - jobs
+            - audit_evidence
+            - storage
+            - backups
+            - bates
+            - export
+            - saved_queries
+            - collections
+            - trash
+            - tag_catalog
+            - telemetry
+            - term_reports
+            - processing
+            - rendition
+            - upload
+            - mailbox
+            - load_file
+            - snapshot_actions
+            - help
+            - document
+            - packages
+            - operations
+          type: string
+        surface:
+          description: The interface that showed the screen.
+          enum:
+            - web
+            - tui
+          type: string
+      type: object
+      x-go-type: api.TelemetryEventProperties
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Term:
       additionalProperties: false
       properties:
@@ -16458,10 +16505,8 @@ paths:
                   minLength: 1
                   type: string
                 properties:
-                  additionalProperties:
-                    type: string
-                  description: Optional allowlisted event properties. screen_viewed requires fixed screen and surface values.
-                  type: object
+                  $ref: "#/components/schemas/TelemetryEventProperties"
+                  description: Event properties. screen_viewed requires screen and surface.
               required:
                 - event
               type: object
@@ -16474,7 +16519,7 @@ paths:
                 additionalProperties: false
                 properties:
                   status:
-                    description: queued when accepted, including daily duplicates and dropped screen names; disabled when telemetry is off and nothing is sent.
+                    description: queued when the event is queued or its screen was already sent today; disabled when telemetry is off and nothing is sent.
                     enum:
                       - queued
                       - disabled
@@ -16484,7 +16529,7 @@ paths:
                 type: object
           description: Event queued, or dropped because telemetry is off
         "400":
-          description: Malformed body or an event the daemon does not allow
+          description: Malformed body, an event the daemon does not allow, or a screen_viewed without an allowed screen and surface
         "401":
           description: Missing or invalid API key or browser session
         "403":
@@ -16495,7 +16540,7 @@ paths:
           description: Content type must be application/json
         "500":
           description: Telemetry capture failed
-      summary: Report an anonymous web application usage event
+      summary: Report an anonymous interface usage event
   /api/daemon/web-download:
     delete:
       operationId: cancelWebDownload

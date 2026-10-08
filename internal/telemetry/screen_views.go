@@ -1,8 +1,6 @@
 package telemetry
 
 import (
-	"bytes"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"io"
@@ -11,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +20,19 @@ import (
 
 var screenNames = []string{"browse", "search", "tags", "snapshot", "history", "versions", "provenance", "jobs", "audit_evidence", "storage", "backups", "bates", "export", "saved_queries", "collections", "trash", "tag_catalog", "telemetry", "term_reports", "processing", "rendition", "upload", "mailbox", "load_file", "snapshot_actions", "help", "document", "packages", "operations"}
 
-const screenClaimsFile = "telemetry-screen-views.json"
+// ScreenNames returns the screen values screen_viewed accepts.
+func ScreenNames() []string { return slices.Clone(screenNames) }
+
+const (
+	screenClaimsFile     = "telemetry-screen-views.json"
+	maxCaptureBodyBytes  = 64 << 10
+	maxScreenClaimsBytes = 8 << 10
+)
+
+type captureRequest struct {
+	Event      string         `json:"event"`
+	Properties map[string]any `json:"properties"`
+}
 
 type screenClaims struct {
 	InstallID string          `json:"install_id"`
@@ -29,78 +40,81 @@ type screenClaims struct {
 	Screens   map[string]bool `json:"screens"`
 }
 
-type screenCapture struct {
+type captureHandler struct {
 	reporter *Reporter
-	next     http.Handler
 	dir      string
 	mu       sync.Mutex
 	now      func() time.Time
 	claims   screenClaims
 }
 
-// CaptureHandler tracks daily claims for each interface under the daemon's vault lock.
+// CaptureHandler serves interface usage events through r. It sends each
+// screen_viewed screen and surface pair once per UTC day, remembering the day's
+// claims in dir so daemon restarts don't resend them.
+//
+// Responses: 202 {"status":"queued"} when the event is queued or was already
+// sent today; 202 {"status":"disabled"} when telemetry is off; 400 for a
+// malformed body, an event the allowlist omits, or a screen_viewed without an
+// allowed screen and surface; 413 for a body over 64 KiB; 415 for a content
+// type other than application/json; 500 when Capture fails.
 func CaptureHandler(r *Reporter, dir string) http.Handler {
-	return &screenCapture{reporter: r, next: posthog.NewCaptureHandler(r), dir: dir, now: time.Now}
+	return &captureHandler{reporter: r, dir: dir, now: time.Now}
 }
 
-func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if r.Method != http.MethodPost || err != nil || media != "application/json" || !h.reporter.Enabled() {
-		h.next.ServeHTTP(w, r)
+func (h *captureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	request, ok := decodeCaptureRequest(w, r)
+	if !ok {
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, (64<<10)+1))
-	r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+	event := strings.TrimSpace(request.Event)
+	if !h.reporter.EventAllowed(event) {
+		http.Error(w, posthog.ErrUnsupportedEvent.Error(), http.StatusBadRequest)
+		return
+	}
+	if event == EventScreenViewed {
+		h.serveScreen(w, request.Properties)
+		return
+	}
+	if !h.reporter.Enabled() {
+		writeCaptureStatus(w, "disabled")
+		return
+	}
+	if err := h.reporter.Capture(event, request.Properties); err != nil {
+		http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
+		return
+	}
+	writeCaptureStatus(w, "queued")
+}
 
-	var request struct {
-		Event      string
-		Properties map[string]any
+func decodeCaptureRequest(w http.ResponseWriter, r *http.Request) (captureRequest, bool) {
+	var request captureRequest
+	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || media != "application/json" {
+		http.Error(w, "telemetry request must be application/json", http.StatusUnsupportedMediaType)
+		return request, false
 	}
-	if err != nil || len(body) > 64<<10 {
-		h.next.ServeHTTP(w, r)
-		return
+	err = json.UnmarshalRead(http.MaxBytesReader(w, r.Body, maxCaptureBodyBytes), &request)
+	if _, tooLarge := errors.AsType[*http.MaxBytesError](err); tooLarge {
+		http.Error(w, "telemetry request too large", http.StatusRequestEntityTooLarge)
+		return request, false
 	}
-	// Options follow kit's v1 decoder; reject peek errors here so v1 can't bypass daily claims.
-	decoder := jsontext.NewDecoder(bytes.NewReader(body), jsontext.AllowDuplicateNames(true), jsontext.AllowInvalidUTF8(true))
-	token, err := decoder.ReadToken()
-	if err != nil || token.Kind() != '{' {
+	if err != nil {
 		http.Error(w, "invalid telemetry request", http.StatusBadRequest)
-		return
+		return request, false
 	}
-	for err == nil && decoder.PeekKind() != '}' {
-		token, err = decoder.ReadToken()
-		if err != nil {
-			break
-		}
-		switch {
-		case strings.EqualFold(token.String(), "event"):
-			if decoder.PeekKind() == 'n' {
-				_, err = decoder.ReadToken()
-			} else {
-				err = json.UnmarshalDecode(decoder, &request.Event)
-			}
-		case strings.EqualFold(token.String(), "properties"):
-			err = json.UnmarshalDecode(decoder, &request.Properties)
-		default:
-			err = decoder.SkipValue()
-		}
-	}
-	if err == nil {
-		_, err = decoder.ReadToken()
-	}
-	if err != nil || !trailingEOF(decoder) {
-		http.Error(w, "invalid telemetry request", http.StatusBadRequest)
-		return
-	}
-	if strings.TrimSpace(request.Event) != EventScreenViewed || !h.reporter.Enabled() {
-		h.next.ServeHTTP(w, r)
-		return
-	}
-	properties, _ := h.reporter.SanitizeProperties(EventScreenViewed, request.Properties)
+	return request, true
+}
+
+func (h *captureHandler) serveScreen(w http.ResponseWriter, raw map[string]any) {
+	properties, err := h.reporter.SanitizeProperties(EventScreenViewed, raw)
 	screen, validScreen := properties["screen"].(string)
 	surface, validSurface := properties["surface"].(string)
-	if !validScreen || !validSurface {
-		screenReceipt(w, "queued")
+	if err != nil || !validScreen || !validSurface {
+		http.Error(w, "screen_viewed requires an allowed screen and surface", http.StatusBadRequest)
+		return
+	}
+	if !h.reporter.Enabled() {
+		writeCaptureStatus(w, "disabled")
 		return
 	}
 	h.mu.Lock()
@@ -110,7 +124,7 @@ func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	key := screen + "|" + surface
 	if h.claims.Screens[key] {
-		screenReceipt(w, "queued")
+		writeCaptureStatus(w, "queued")
 		return
 	}
 	if err := h.reporter.Capture(EventScreenViewed, properties); err != nil {
@@ -118,17 +132,19 @@ func (h *screenCapture) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.reporter.Enabled() {
-		screenReceipt(w, "disabled")
+		writeCaptureStatus(w, "disabled")
 		return
 	}
 	h.claims.Screens[key] = true
 	if err := h.save(h.claims); err != nil {
 		slog.Warn("telemetry screen claims failed", "error", err)
 	}
-	screenReceipt(w, "queued")
+	writeCaptureStatus(w, "queued")
 }
 
-func (h *screenCapture) load() screenClaims {
+// load reads today's claims for the current install ID. The reporter is
+// enabled here, so New has already created the install file.
+func (h *captureHandler) load() screenClaims {
 	claims := screenClaims{Day: h.now().UTC().Format(time.DateOnly), Screens: map[string]bool{}}
 	inst, err := posthog.LoadOrCreateInstall(h.dir)
 	if err != nil {
@@ -144,8 +160,8 @@ func (h *screenCapture) load() screenClaims {
 		return claims
 	}
 	defer func() { _ = file.Close() }()
-	body, err := io.ReadAll(io.LimitReader(file, 8193))
-	if err == nil && len(body) > 8192 {
+	body, err := io.ReadAll(io.LimitReader(file, maxScreenClaimsBytes+1))
+	if err == nil && len(body) > maxScreenClaimsBytes {
 		err = errors.New("telemetry screen claims too large")
 	}
 	var stored screenClaims
@@ -162,7 +178,7 @@ func (h *screenCapture) load() screenClaims {
 	return claims
 }
 
-func (h *screenCapture) save(claims screenClaims) error {
+func (h *captureHandler) save(claims screenClaims) error {
 	data, err := json.Marshal(claims)
 	if err != nil {
 		return err
@@ -170,13 +186,8 @@ func (h *screenCapture) save(claims screenClaims) error {
 	return atomicfile.WriteFile(filepath.Join(h.dir, screenClaimsFile), data, atomicfile.WithPrivate())
 }
 
-func screenReceipt(w http.ResponseWriter, status string) {
+func writeCaptureStatus(w http.ResponseWriter, status string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = io.WriteString(w, `{"status":"`+status+`"}`)
-}
-
-func trailingEOF(decoder *jsontext.Decoder) bool {
-	_, err := decoder.ReadValue()
-	return errors.Is(err, io.EOF)
 }

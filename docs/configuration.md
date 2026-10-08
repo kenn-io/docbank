@@ -704,7 +704,7 @@ Docbank sends these events:
   a later UTC day. The browser remembers the day for the daemon's address, so
   it sends about one per UTC day until the daemon restarts on a new address.
 
-- `screen_viewed` with a fixed `screen` name and `surface` of `web` or `tui`. Each screen counts once per vault per UTC day for each interface, browser and terminal, across daemon restarts. `surface` records the interface of the visit. Invalid names are dropped. The daemon keeps daily claims in memory and saves them in `telemetry-screen-views.json` beside the install ID for daemon restarts. Rejected enqueue attempts remain eligible; remote delivery is best effort.
+- `screen_viewed` with a fixed `screen` name and `surface` of `web` or `tui`. Each screen counts once per vault per UTC day for each interface, browser and terminal, across daemon restarts. `surface` records the interface of the visit. The daemon rejects other names with 400. The daemon keeps daily claims in memory and saves them in `telemetry-screen-views.json` beside the install ID for daemon restarts. Rejected enqueue attempts remain eligible; remote delivery is best effort.
 
 Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
 

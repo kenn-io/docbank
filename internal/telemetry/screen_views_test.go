@@ -38,6 +38,48 @@ func screenCollector(t *testing.T, mu *sync.Mutex, events *[]map[string]any) *ht
 	}))
 }
 
+func TestCaptureHandlerRejectsInvalidRequests(t *testing.T) {
+	enableTelemetryEnv(t)
+	var mu sync.Mutex
+	var events []map[string]any
+	collector := screenCollector(t, &mu, &events)
+	defer collector.Close()
+	dir := t.TempDir()
+	reporter := New(Options{Dir: dir, endpoint: collector.URL, Logger: discardLogger()})
+	handler := CaptureHandler(reporter, dir)
+	for _, tc := range []struct {
+		name, media, body string
+		status            int
+	}{
+		{"unknown screen", "application/json", screenBody("unknown", "web"), http.StatusBadRequest},
+		{"unknown surface", "application/json", screenBody("browse", "unknown"), http.StatusBadRequest},
+		{"missing properties", "application/json", `{"event":"screen_viewed"}`, http.StatusBadRequest},
+		{"properties not an object", "application/json", `{"event":"screen_viewed","properties":[]}`, http.StatusBadRequest},
+		{"event key in another case", "application/json", `{"Event":"app_opened"}`, http.StatusBadRequest},
+		{"duplicate event", "application/json", `{"event":"app_opened","event":"screen_viewed"}`, http.StatusBadRequest},
+		{"duplicate property", "application/json", `{"event":"screen_viewed","properties":{"screen":"browse","screen":"help","surface":"web"}}`, http.StatusBadRequest},
+		{"unknown event", "application/json", `{"event":"search_run"}`, http.StatusBadRequest},
+		{"blank event", "application/json", `{"event":" "}`, http.StatusBadRequest},
+		{"trailing data", "application/json", screenBody("browse", "web") + `{}`, http.StatusBadRequest},
+		{"truncated", "application/json", `{"event":"screen_viewed"`, http.StatusBadRequest},
+		{"text body", "text/plain", screenBody("browse", "web"), http.StatusUnsupportedMediaType},
+		{"too large", "application/json", screenBody("browse", "web") + strings.Repeat(" ", maxCaptureBodyBytes), http.StatusRequestEntityTooLarge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/daemon/telemetry/events", strings.NewReader(tc.body))
+			request.Header.Set("Content-Type", tc.media)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			assert.Equal(t, tc.status, response.Code, response.Body.String())
+		})
+	}
+	require.NoError(t, reporter.Close())
+	require.NoFileExists(t, filepath.Join(dir, screenClaimsFile))
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Empty(t, events)
+}
+
 func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	enableTelemetryEnv(t)
 	var mu sync.Mutex
@@ -45,19 +87,15 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 	collector := screenCollector(t, &mu, &events)
 	defer collector.Close()
 	dir := t.TempDir()
-	makeHandler := func() (*Reporter, *screenCapture) {
+	makeHandler := func() (*Reporter, *captureHandler) {
 		reporter := New(Options{Dir: dir, endpoint: collector.URL, Logger: discardLogger()})
-		handler, ok := CaptureHandler(reporter, dir).(*screenCapture)
+		handler, ok := CaptureHandler(reporter, dir).(*captureHandler)
 		require.True(t, ok)
 		return reporter, handler
 	}
 	reporter, handler := makeHandler()
 	now := time.Date(2026, 1, 2, 23, 59, 0, 0, time.UTC)
 	handler.now = func() time.Time { return now }
-	for _, body := range []string{screenBody("unknown", "web"), screenBody("browse", "unknown"), `{"event":"screen_viewed"}`} {
-		require.Equal(t, 202, postEvent(t, handler, body).Code)
-	}
-	require.NoFileExists(t, filepath.Join(dir, screenClaimsFile))
 	for range 2 {
 		for _, surface := range []string{"web", "tui"} {
 			require.Equal(t, 202, postEvent(t, handler, screenBody("browse", surface)).Code)
@@ -74,29 +112,7 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	require.Equal(t, 202, postEvent(t, handler, `{"Event":" screen_viewed ","properties":{"screen":"browse","surface":"web"}}`).Code)
-	require.Equal(t, 202, postEvent(t, handler, `{"event":"screen_viewed","e-vent":"app_opened","properties":{"screen":"browse","surface":"web"}}`).Code)
-	require.Equal(t, 202, postEvent(t, handler, `{"event":"screen_viewed","event":null,"properties":{"screen":"browse","surface":"web"}}`).Code)
-	require.Equal(t, 202, postEvent(t, handler, `{"event":"app_opened","Event":"screen_viewed","properties":{"screen":"browse","surface":"web"}}`).Code)
-
 	require.Equal(t, 202, postEvent(t, handler, screenBody("search", "tui")).Code)
-	// Malformed duplicates retain kit's transport validation.
-	for _, body := range []string{screenBody("browse", "web") + `{}`, `{"event":"screen_viewed","properties":[]}`, `{"event":"screen_viewed"`, `{"event":"screen_viewed","properties":{"screen":"browse","surface":"web","x":false,"x":""}}`} {
-		require.Equal(t, 400, postEvent(t, handler, body).Code)
-	}
-	for _, tc := range []struct {
-		media, body string
-		status      int
-	}{
-		{"text/plain", screenBody("browse", "web"), http.StatusUnsupportedMediaType},
-		{"application/json", screenBody("browse", "web") + strings.Repeat(" ", 64<<10), http.StatusRequestEntityTooLarge},
-	} {
-		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "http://localhost/api/daemon/telemetry/events", strings.NewReader(tc.body))
-		request.Header.Set("Content-Type", tc.media)
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, request)
-		assert.Equal(t, tc.status, response.Code)
-	}
 	require.NoError(t, reporter.Close())
 	reporter, handler = makeHandler()
 	handler.now = func() time.Time { return now }
@@ -114,9 +130,9 @@ func TestScreenClaimsAcrossInterfacesRestartsAndDays(t *testing.T) {
 		reporter, handler = makeHandler()
 		path := filepath.Join(dir, screenClaimsFile)
 		if directory {
-			require.NoError(t, os.Mkdir(path, 0700))
+			require.NoError(t, os.Mkdir(path, 0o700))
 		} else {
-			require.NoError(t, os.WriteFile(path, []byte("garbage"), 0600))
+			require.NoError(t, os.WriteFile(path, []byte("garbage"), 0o600))
 		}
 		require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)
 		require.Equal(t, 202, postEvent(t, handler, screenBody("browse", "web")).Code)

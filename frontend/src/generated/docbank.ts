@@ -6110,6 +6110,62 @@ export interface TaggedNodePage {
   total: number;
 }
 
+/**
+ * The screen shown. Other values return 400 for screen_viewed.
+ */
+export type TelemetryEventPropertiesScreen = typeof TelemetryEventPropertiesScreen[keyof typeof TelemetryEventPropertiesScreen];
+
+
+export const TelemetryEventPropertiesScreen = {
+  browse: 'browse',
+  search: 'search',
+  tags: 'tags',
+  snapshot: 'snapshot',
+  history: 'history',
+  versions: 'versions',
+  provenance: 'provenance',
+  jobs: 'jobs',
+  audit_evidence: 'audit_evidence',
+  storage: 'storage',
+  backups: 'backups',
+  bates: 'bates',
+  export: 'export',
+  saved_queries: 'saved_queries',
+  collections: 'collections',
+  trash: 'trash',
+  tag_catalog: 'tag_catalog',
+  telemetry: 'telemetry',
+  term_reports: 'term_reports',
+  processing: 'processing',
+  rendition: 'rendition',
+  upload: 'upload',
+  mailbox: 'mailbox',
+  load_file: 'load_file',
+  snapshot_actions: 'snapshot_actions',
+  help: 'help',
+  document: 'document',
+  packages: 'packages',
+  operations: 'operations',
+} as const;
+
+/**
+ * The interface that showed the screen.
+ */
+export type TelemetryEventPropertiesSurface = typeof TelemetryEventPropertiesSurface[keyof typeof TelemetryEventPropertiesSurface];
+
+
+export const TelemetryEventPropertiesSurface = {
+  web: 'web',
+  tui: 'tui',
+} as const;
+
+export interface TelemetryEventProperties {
+  /** The screen shown. Other values return 400 for screen_viewed. */
+  screen?: TelemetryEventPropertiesScreen;
+  /** The interface that showed the screen. */
+  surface?: TelemetryEventPropertiesSurface;
+}
+
 export interface TermReportHistory {
   request: Request;
   summary: Summary;
@@ -6367,23 +6423,18 @@ export type ShutdownDaemonHeaders = {
 'X-Docbank-Daemon-Token': string;
 };
 
-/**
- * Optional allowlisted event properties. screen_viewed requires fixed screen and surface values.
- */
-export type ReportTelemetryEventBodyProperties = {[key: string]: string};
-
 export type ReportTelemetryEventBody = {
   /**
      * An event the daemon's telemetry allowlist names. Other events return 400.
      * @minLength 1
      */
   event: string;
-  /** Optional allowlisted event properties. screen_viewed requires fixed screen and surface values. */
-  properties?: ReportTelemetryEventBodyProperties;
+  /** Event properties. screen_viewed requires screen and surface. */
+  properties?: TelemetryEventProperties;
 };
 
 /**
- * queued when accepted, including daily duplicates and dropped screen names; disabled when telemetry is off and nothing is sent.
+ * queued when the event is queued or its screen was already sent today; disabled when telemetry is off and nothing is sent.
  */
 export type ReportTelemetryEvent202Status = typeof ReportTelemetryEvent202Status[keyof typeof ReportTelemetryEvent202Status];
 
@@ -6394,7 +6445,7 @@ export const ReportTelemetryEvent202Status = {
 } as const;
 
 export type ReportTelemetryEvent202 = {
-  /** queued when accepted, including daily duplicates and dropped screen names; disabled when telemetry is off and nothing is sent. */
+  /** queued when the event is queued or its screen was already sent today; disabled when telemetry is off and nothing is sent. */
   status: ReportTelemetryEvent202Status;
 };
 
@@ -7383,7 +7434,7 @@ export const getReportTelemetryEventUrl = () => {
 }
 
 /**
- * @summary Report an anonymous web application usage event
+ * @summary Report an anonymous interface usage event
  */
 export const reportTelemetryEvent = async (reportTelemetryEventBody: ReportTelemetryEventBody, options?: Parameters<typeof sessionJSON>[1]): Promise<ReportTelemetryEvent202> => {
 

@@ -64,6 +64,7 @@ func TestNewOptedOut(t *testing.T) {
 			assert.JSONEq(t, `{"status":"disabled"}`, rec.Body.String())
 			assert.JSONEq(t, `{"status":"disabled"}`, postEvent(t, handler, screenBody("browse", "web")).Body.String())
 			assert.NoFileExists(t, filepath.Join(dir, screenClaimsFile))
+			assert.Equal(t, http.StatusBadRequest, postEvent(t, handler, screenBody("unknown", "web")).Code)
 			assert.Equal(t, http.StatusBadRequest, postEvent(t, handler, `{"event":"search_run"}`).Code)
 			assert.NoFileExists(t, filepath.Join(dir, posthog.InstallFileName))
 		})

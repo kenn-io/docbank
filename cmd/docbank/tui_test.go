@@ -269,7 +269,7 @@ func TestTUIBackendReportsScreenThroughGeneratedRoute(t *testing.T) {
 		var request api.TelemetryEventRequest
 		assert.NoError(t, json.UnmarshalRead(r.Body, &request))
 		assert.Equal(t, "screen_viewed", request.Event)
-		assert.Equal(t, map[string]string{"screen": "help", "surface": "tui"}, request.Properties)
+		assert.Equal(t, &api.TelemetryEventProperties{Screen: "help", Surface: "tui"}, request.Properties)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"status":"queued"}`))

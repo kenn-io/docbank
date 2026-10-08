@@ -165,6 +165,14 @@
     | { kind: "upload" | "mailbox" | "loadFile"; target: Node }
     | { kind: "trashNode"; target: Row };
 
+  const panelScreens: Record<Panel["kind"], generated.TelemetryEventPropertiesScreen | null> = {
+    history: "history", versions: "versions", provenance: "provenance", jobs: "jobs", auditEvidence: "audit_evidence",
+    storage: "storage", backups: "backups", bates: "bates", export: "export", savedQueries: "saved_queries",
+    collections: "collections", trash: "trash", tagCatalog: "tag_catalog", telemetry: "telemetry",
+    termReports: "term_reports", processing: "processing", rendition: "rendition", upload: "upload", mailbox: "mailbox",
+    loadFile: "load_file", trashNode: null,
+  };
+
   let webSession = $state("");
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
@@ -255,10 +263,10 @@
   const selected = $derived(rows.find((row) => row.node.id === selectedID));
   const snapshotActive = $derived(snapshot.state.status !== "idle");
   const tagBrowse = $derived(activeTagID !== "" && activeQuery === "");
-  const visibleScreen = $derived(shortcutHelpOpen ? "help"
+  const panelScreen = $derived(activePanel ? panelScreens[activePanel.kind] : null);
+  const visibleScreen = $derived<generated.TelemetryEventPropertiesScreen>(shortcutHelpOpen ? "help"
     : snapshot.actionsOpen ? "snapshot_actions"
-    : activePanel && activePanel.kind !== "trashNode" ? activePanel.kind.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)
-    : snapshotActive ? "snapshot" : activeQuery || queryBarOpen ? "search" : tagBrowse ? "tags" : "browse");
+    : panelScreen ?? (snapshotActive ? "snapshot" : activeQuery || queryBarOpen ? "search" : tagBrowse ? "tags" : "browse"));
   $effect(() => {
     if (webSession) return startScreenReporting(webSession, visibleScreen);
   });

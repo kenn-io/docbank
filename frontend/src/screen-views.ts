@@ -1,9 +1,9 @@
 import { APIError, sessionResponse } from "./api-transport.js";
-import { getReportTelemetryEventUrl } from "./generated/docbank.js";
+import { getReportTelemetryEventUrl, type ReportTelemetryEventBody, type TelemetryEventPropertiesScreen } from "./generated/docbank.js";
 
-let memory = { day: "", screens: [] as string[] };
+let memory = { day: "", screens: [] as TelemetryEventPropertiesScreen[] };
 
-export function startScreenReporting(session: string, screen: string): () => void {
+export function startScreenReporting(session: string, screen: TelemetryEventPropertiesScreen): () => void {
   let controller: AbortController | undefined;
   let timer: number | undefined;
   let stopped = false;
@@ -18,7 +18,7 @@ export function startScreenReporting(session: string, screen: string): () => voi
     void sessionResponse(getReportTelemetryEventUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ event: "screen_viewed", properties: { screen, surface: "web" } }),
+      body: JSON.stringify({ event: "screen_viewed", properties: { screen, surface: "web" } } satisfies ReportTelemetryEventBody),
       session,
       signal: controller.signal,
     })
