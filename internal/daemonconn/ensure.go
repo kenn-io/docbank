@@ -1,6 +1,8 @@
 package daemonconn
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -10,13 +12,11 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptrace"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -37,8 +37,8 @@ const (
 	daemonStartProblemVaultLocked = "vault_locked"
 )
 
-// ErrTransientDaemonAcquisition marks interrupted discovery or proof acquisition,
-// including a discarded proof socket. Callers may safely repeat acquisition.
+// ErrTransientDaemonAcquisition marks a daemon that disappeared after discovery
+// but before its proven client was ready. Callers may safely repeat acquisition.
 var ErrTransientDaemonAcquisition = errors.New("daemon acquisition was interrupted")
 
 type daemonStartError struct {
@@ -119,48 +119,81 @@ func newProvenClientFor(ctx context.Context, rec kitdaemon.RuntimeRecord) (*Conn
 func newProvenClientForDial(ctx context.Context, rec kitdaemon.RuntimeRecord, dial func(context.Context, string, string) (net.Conn, error)) (*Connection, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, probeOptions().Timeout)
 	defer cancel()
-	for range 2 {
-		conn, err := dial(probeCtx, kitdaemon.NetworkTCP, rec.Address)
-		if err != nil {
-			return nil, fmt.Errorf("dialing daemon for ownership proof: %w", err)
-		}
-		dialer := &singleConnDialer{conn: conn}
-		transport := &http.Transport{
-			Proxy:               nil,
-			DialContext:         dialer.DialContext,
-			MaxConnsPerHost:     1,
-			MaxIdleConnsPerHost: 1,
-		}
-		hc := &http.Client{
-			Transport: transport,
-			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-				return errors.New("daemon requests must not redirect")
-			},
-		}
-		var reusable atomic.Bool
-		proofCtx := httptrace.WithClientTrace(probeCtx, &httptrace.ClientTrace{
-			PutIdleConn: func(err error) { reusable.Store(err == nil) },
-		})
-		owned, proofErr := proveOwnershipWithClient(proofCtx, rec, hc)
-		if proofErr != nil || !owned || !reusable.Load() || probeCtx.Err() != nil {
-			transport.CloseIdleConnections()
-			_ = conn.Close()
-			if err := probeCtx.Err(); err != nil {
-				return nil, err
-			}
-			if proofErr != nil {
-				return nil, proofErr
-			}
-			if !owned {
-				return nil, errors.New("daemon endpoint failed ownership proof")
-			}
-			continue
-		}
-		c := New("http://"+rec.Address, rec.Metadata[metaAPIKey])
-		c.hc = hc
-		return c, nil
+	conn, err := dial(probeCtx, kitdaemon.NetworkTCP, rec.Address)
+	if err != nil {
+		return nil, fmt.Errorf("dialing daemon for ownership proof: %w", err)
 	}
-	return nil, fmt.Errorf("%w: proven daemon connection was discarded during ownership proof", ErrTransientDaemonAcquisition)
+	ready := false
+	defer func() {
+		if !ready {
+			_ = conn.Close()
+		}
+	}()
+	deadline, _ := probeCtx.Deadline()
+	if err := conn.SetDeadline(deadline); err != nil {
+		return nil, fmt.Errorf("setting daemon proof deadline: %w", err)
+	}
+	stop := context.AfterFunc(probeCtx, func() { _ = conn.Close() })
+	defer stop()
+	hc := &http.Client{
+		Transport: proofTransport{conn: conn},
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errors.New("daemon requests must not redirect")
+		},
+	}
+	owned, proofErr := proveOwnershipWithClient(probeCtx, rec, hc)
+	if !stop() || probeCtx.Err() != nil {
+		return nil, probeCtx.Err()
+	}
+	if proofErr != nil {
+		return nil, proofErr
+	}
+	if !owned {
+		return nil, errors.New("daemon endpoint failed ownership proof")
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		return nil, fmt.Errorf("clearing daemon proof deadline: %w", err)
+	}
+	hc.Transport = &http.Transport{
+		Proxy:               nil,
+		DialContext:         (&singleConnDialer{conn: conn}).DialContext,
+		MaxConnsPerHost:     1,
+		MaxIdleConnsPerHost: 1,
+	}
+	c := New("http://"+rec.Address, rec.Metadata[metaAPIKey])
+	c.hc = hc
+	ready = true
+	return c, nil
+}
+
+// proofTransport finishes the credential-free exchange before handing its socket away.
+type proofTransport struct{ conn net.Conn }
+
+func (t proofTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if err := req.Write(t.conn); err != nil {
+		return nil, fmt.Errorf("writing daemon ownership challenge: %w", err)
+	}
+	// Bound the complete proof exchange to the standard transport's 10 MiB header limit.
+	reader := bufio.NewReader(io.LimitReader(t.conn, 10<<20))
+	resp, err := http.ReadResponse(reader, req)
+	if err != nil {
+		return nil, fmt.Errorf("reading daemon ownership response: %w", err)
+	}
+	if resp.Close {
+		return nil, errors.New("daemon ownership response closes its connection")
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (4<<10)+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading daemon ownership body: %w", err)
+	}
+	if len(body) > 4<<10 || reader.Buffered() != 0 {
+		return nil, errors.New("daemon ownership response exceeds its framing bounds")
+	}
+	if err := resp.Body.Close(); err != nil {
+		return nil, fmt.Errorf("closing daemon ownership body: %w", err)
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return resp, nil
 }
 
 // singleConnDialer gives the HTTP transport exactly the socket that completed

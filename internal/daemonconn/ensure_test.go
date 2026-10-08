@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,7 +15,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -228,150 +228,180 @@ func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
 type delayedProofWriteConn struct {
 	net.Conn
 
-	closed chan struct{}
-	once   sync.Once
+	response      <-chan struct{}
+	first         atomic.Bool
+	deadline      time.Time
+	proofDeadline time.Time
 }
 
 func (c *delayedProofWriteConn) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
-	// Hold write completion until the transport discards the valid proof socket.
-	<-c.closed
+	if !c.first.Swap(true) {
+		select {
+		case <-c.response:
+		case <-time.After(time.Second):
+			return n, errors.New("waiting for proof response")
+		}
+		// Keep write completion behind the response past Go's 50 ms reuse budget.
+		timer := time.NewTimer(100 * time.Millisecond)
+		<-timer.C
+	}
 	if err != nil {
 		return n, fmt.Errorf("writing proof request: %w", err)
 	}
 	return n, nil
 }
 
-func (c *delayedProofWriteConn) Close() error {
-	c.once.Do(func() { close(c.closed) })
-	if err := c.Conn.Close(); err != nil {
-		return fmt.Errorf("closing proof connection: %w", err)
+func (c *delayedProofWriteConn) SetDeadline(deadline time.Time) error {
+	c.deadline = deadline
+	if !deadline.IsZero() {
+		c.proofDeadline = deadline
+	}
+	if err := c.Conn.SetDeadline(deadline); err != nil {
+		return fmt.Errorf("setting proof deadline: %w", err)
 	}
 	return nil
 }
 
-func TestProvenClientRecoversDiscardedChallengeConnection(t *testing.T) {
-	for _, tc := range []struct {
-		name         string
-		discardBoth  bool
-		invalidProof int
-		cancelRetry  bool
-		wantDials    int64
-		wantErr      error
-	}{
-		{name: "recover", wantDials: 2},
-		{name: "exhausted", discardBoth: true, wantDials: 2, wantErr: ErrTransientDaemonAcquisition},
-		{name: "invalid second proof", invalidProof: 2, wantDials: 2},
-		{name: "invalid first proof", invalidProof: 1, wantDials: 1},
-		{name: "canceled retry", cancelRetry: true, wantDials: 2, wantErr: context.Canceled},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			const token = "synthetic-proof-token"
-			var challenges, requests, dials atomic.Int64
-			var leaked atomic.Bool
-			var nonces sync.Map
-			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == daemonauth.ChallengePath {
-					if r.Header.Get("X-Api-Key") != "" || r.Header.Get("X-Docbank-Daemon-Token") != "" {
-						leaked.Store(true)
-					}
-					nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-					if err != nil {
-						http.Error(w, "bad nonce", http.StatusBadRequest)
-						return
-					}
-					_, duplicate := nonces.LoadOrStore(string(nonce), true)
-					assert.False(t, duplicate, "each acquisition attempt needs a fresh nonce")
-					proof := daemonauth.Proof(token, nonce)
-					if challenges.Add(1) == int64(tc.invalidProof) {
-						proof = "forged"
-					}
-					_ = json.MarshalWrite(w, map[string]string{"proof": proof})
-					return
-				}
-				requests.Add(1)
-				assert.Equal(t, "synthetic-api-key", r.Header.Get("X-Api-Key"))
-				_ = json.MarshalWrite(w, map[string]string{"status": "ok"})
-			}))
-			t.Cleanup(ts.Close)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "synthetic-api-key", token, "")
-			var deadline time.Time
-			c, err := newProvenClientForDial(ctx, rec, func(ctx context.Context, network, address string) (net.Conn, error) {
-				attempt := dials.Add(1)
-				current, ok := ctx.Deadline()
-				require.True(t, ok)
-				if attempt == 1 {
-					deadline = current
-				} else {
-					assert.Equal(t, deadline, current, "retry shares the original probe budget")
-				}
-				if attempt == 2 && tc.cancelRetry {
-					cancel()
-					return nil, ctx.Err()
-				}
-				conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
-				if err != nil {
-					return nil, fmt.Errorf("dialing proof connection: %w", err)
-				}
-				if attempt == 1 || tc.discardBoth {
-					conn = &delayedProofWriteConn{Conn: conn, closed: make(chan struct{})}
-				}
-				return conn, nil
-			})
-			if tc.wantErr != nil || tc.invalidProof != 0 {
-				require.Error(t, err)
-				if tc.wantErr != nil {
-					require.ErrorIs(t, err, tc.wantErr)
-				} else {
-					require.NotErrorIs(t, err, ErrTransientDaemonAcquisition)
-				}
-				require.Nil(t, c)
-				assert.Zero(t, requests.Load())
-			} else {
-				require.NoError(t, err)
-				defer func() { require.NoError(t, c.Close()) }()
-				_, err = c.API().Health(t.Context())
-				require.NoError(t, err)
-				assert.Equal(t, int64(1), requests.Load())
-			}
-			assert.Equal(t, tc.wantDials, dials.Load())
-			assert.False(t, leaked.Load(), "challenge requests must carry no credentials")
-		})
-	}
-}
-
-func TestProvenClientRefusesRedialAfterHandoff(t *testing.T) {
+func TestProvenClientDelayedChallengeWrite(t *testing.T) {
 	const token = "synthetic-proof-token"
-	var challenges, requests atomic.Int64
+	var challenges, requests, dials atomic.Int64
+	response := make(chan struct{})
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == daemonauth.ChallengePath {
 			challenges.Add(1)
 			assert.Empty(t, r.Header.Get("X-Api-Key"))
+			assert.Empty(t, r.Header.Get("X-Docbank-Daemon-Token"))
 			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
 			if err != nil {
 				http.Error(w, "bad nonce", http.StatusBadRequest)
 				return
 			}
 			_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)})
+			flusher, ok := w.(http.Flusher)
+			if !assert.True(t, ok) {
+				return
+			}
+			flusher.Flush()
+			if challenges.Load() == 1 {
+				close(response)
+			}
 			return
 		}
 		requests.Add(1)
+		assert.Equal(t, "synthetic-api-key", r.Header.Get("X-Api-Key"))
 		w.Header().Set("Connection", "close")
 		_ = json.MarshalWrite(w, map[string]string{"status": "ok"})
 	}))
 	t.Cleanup(ts.Close)
 	rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "synthetic-api-key", token, "")
-	c, err := newProvenClientFor(t.Context(), rec)
+	var delayed *delayedProofWriteConn
+	c, err := newProvenClientForDial(t.Context(), rec, func(ctx context.Context, network, address string) (net.Conn, error) {
+		dials.Add(1)
+		conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+		if err != nil {
+			return nil, fmt.Errorf("dialing proof connection: %w", err)
+		}
+		delayed = &delayedProofWriteConn{Conn: conn, response: response}
+		return delayed, nil
+	})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, c.Close()) }()
+	require.False(t, delayed.proofDeadline.IsZero(), "proof has a socket deadline")
+	require.True(t, delayed.deadline.IsZero(), "handoff clears the proof deadline")
 	_, err = c.API().Health(t.Context())
 	require.NoError(t, err)
 	_, err = c.API().Health(t.Context())
 	require.ErrorContains(t, err, "proven daemon connection is closed; refusing to redial")
+	assert.Equal(t, int64(1), dials.Load())
+	assert.Equal(t, int64(1), requests.Load())
 	assert.Equal(t, int64(1), challenges.Load())
-	assert.Equal(t, int64(1), requests.Load(), "requests must not replay after handoff")
+}
+
+func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
+	for _, scenario := range []string{"forged", "malformed", "oversized body", "oversized headers", "truncated", "close", "leftover", "redirect", "canceled", "deadline"} {
+		t.Run(scenario, func(t *testing.T) {
+			const token = "synthetic-proof-token"
+			var dials, requests atomic.Int64
+			timeout := probeOptions().Timeout
+			if scenario == "deadline" {
+				timeout = 100 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), timeout)
+			defer cancel()
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				assert.Empty(t, r.Header.Get("X-Api-Key"))
+				assert.Empty(t, r.Header.Get("X-Docbank-Daemon-Token"))
+				nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+				if err != nil {
+					http.Error(w, "bad nonce", http.StatusBadRequest)
+					return
+				}
+				body, err := json.Marshal(map[string]string{"proof": daemonauth.Proof(token, nonce)})
+				if !assert.NoError(t, err) {
+					return
+				}
+				switch scenario {
+				case "forged":
+					body = []byte(`{"proof":"forged"}`)
+				case "malformed":
+					body = []byte(`{"proof":`)
+				case "oversized body":
+					body = append(body, []byte(strings.Repeat(" ", 4<<10))...)
+				case "oversized headers":
+					w.Header().Set("X-Proof-Padding", strings.Repeat("x", 10<<20))
+				case "truncated":
+					w.Header().Set("Content-Length", strconv.Itoa(len(body)+1))
+				case "close":
+					w.Header().Set("Connection", "close")
+				case "leftover":
+					hijacker, ok := w.(http.Hijacker)
+					if !assert.True(t, ok) {
+						return
+					}
+					conn, buffered, err := hijacker.Hijack()
+					if !assert.NoError(t, err) {
+						return
+					}
+					defer func() { _ = conn.Close() }()
+					_, _ = fmt.Fprintf(buffered, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%sleftover", len(body), body)
+					assert.NoError(t, buffered.Flush())
+					return
+				case "redirect":
+					http.Redirect(w, r, "/other", http.StatusFound)
+					return
+				case "canceled":
+					cancel()
+					return
+				case "deadline":
+					<-ctx.Done()
+					return
+				}
+				_, _ = w.Write(body)
+			}))
+			t.Cleanup(ts.Close)
+			rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "synthetic-api-key", token, "")
+			c, err := newProvenClientForDial(ctx, rec, func(ctx context.Context, network, address string) (net.Conn, error) {
+				dials.Add(1)
+				conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+				if err != nil {
+					return nil, fmt.Errorf("dialing proof connection: %w", err)
+				}
+				return conn, nil
+			})
+			require.Error(t, err)
+			require.Nil(t, c)
+			switch scenario {
+			case "canceled":
+				require.ErrorIs(t, err, context.Canceled)
+			case "deadline":
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+			}
+			assert.Equal(t, int64(1), dials.Load())
+			assert.Equal(t, int64(1), requests.Load(), "failed proof must not send another request")
+		})
+	}
 }
 
 func TestStopSignalsPinglessDaemonWithoutSendingSecrets(t *testing.T) {
