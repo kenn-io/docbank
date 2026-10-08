@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-08
 title: Format coverage
 description: How Docbank reports detection, retention, metadata, expansion, text, page, and transcript support from the running binary.
 ---
@@ -93,6 +93,13 @@ provider fingerprint.
 
 Detection and retention use readable version IDs maintained with their
 implementations. These IDs are version labels, not hashes of source code.
-`generated_by.extractor_id` records the active metadata extractor's existing
-recipe fingerprint. Executing fixture tests check their manifest entries so
-changes to the registered identities cannot silently retain qualification.
+`generated_by.extractor_id` records the metadata implementation fingerprint:
+the local parser descriptor and the complete shared email recipe with its Go
+version normalized to `toolchain-independent`. A Go toolchain update therefore
+does not invalidate fixture qualification. Parser, recipe, or limit changes
+still change the identity and require matching fixture evidence.
+
+Stored source-metadata generations use a separate fingerprint that retains the
+actual Go version. Their identities and reuse rules are unchanged. Executing
+fixture tests check the independently pinned qualification manifest; it never
+automatically adopts the runtime implementation's identity.

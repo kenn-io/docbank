@@ -58,7 +58,8 @@ const (
 	documentDetectionID       = "docbank-document-format-detection:pdf+ooxml+epub+compound+rtf+utf8-structured-text:v1"
 	mediaDetectionID          = "docbank-media-detection:jpeg+png+webp+gif+iso-bmff:v1"
 	originalRetentionID       = "docbank-original-retention:verified-blob+ingest-authority:v1"
-	sourceMetadataExtractorID = "42b01ef9219b3b35dedf49ef98d311b21772da27631c3ca90597f28363de1ec5"
+	// Independently pin the parser implementation, excluding its Go toolchain.
+	sourceMetadataExtractorID = "42b4922f2c65c53cebd52445d49583010fab6a3ee0eed037d9f37e076ab18312"
 )
 
 var baseQualifications = []Qualification{

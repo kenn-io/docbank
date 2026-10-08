@@ -10,14 +10,61 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/coverage"
+	"go.kenn.io/docbank/internal/emailmime"
 	internalformatcoverage "go.kenn.io/docbank/internal/formatcoverage"
 )
 
 var updateFormatCoverage = flag.Bool("update", false, "update the pinned format coverage fixture")
 
+func TestMetadataQualificationSurvivesToolchainChanges(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		version     string
+		fingerprint string
+	}{
+		{"go1.27.0", "42b01ef9219b3b35dedf49ef98d311b21772da27631c3ca90597f28363de1ec5"},
+		{"go1.27.1", "9af1567363a06c5ca4b84cfc6d8ccfe267cb472f757aff4533855621417909e6"},
+	} {
+		t.Run(test.version, func(t *testing.T) {
+			t.Parallel()
+			recipe := emailmime.Recipe()
+			recipe.GoVersion = test.version
+			assert.Equal(t, test.fingerprint,
+				fingerprintSourceMetadataExtractor(sourceMetadataExtractorDescriptor, recipe),
+				"stored metadata generations must retain their existing identity")
+			id := sourceMetadataImplementationID(sourceMetadataExtractorDescriptor, recipe)
+			record, err := internalformatcoverage.Compute(nil, id)
+			require.NoError(t, err)
+			assert.Equal(t, SourceMetadataImplementationID, record.GeneratedBy.ExtractorID)
+			assert.Equal(t, document.CapabilityQualified,
+				processingFormatByID(t, record, "xlsx").Capabilities[document.CapabilityMetadata].State)
+		})
+	}
+}
+
+func TestMetadataQualificationRejectsParserChanges(t *testing.T) {
+	t.Parallel()
+	for _, change := range []string{"local parsers", "email decoder"} {
+		t.Run(change, func(t *testing.T) {
+			t.Parallel()
+			descriptor, recipe := sourceMetadataExtractorDescriptor, emailmime.Recipe()
+			if change == "local parsers" {
+				descriptor += "-changed"
+			} else {
+				recipe.ImplementationRevision++
+			}
+			id := sourceMetadataImplementationID(descriptor, recipe)
+			record, err := internalformatcoverage.Compute(nil, id)
+			require.NoError(t, err)
+			assert.Equal(t, document.CapabilityUnqualified,
+				processingFormatByID(t, record, "xlsx").Capabilities[document.CapabilityMetadata].State)
+		})
+	}
+}
+
 func TestFormatCoverageMatchesPinnedFixture(t *testing.T) {
 	t.Parallel()
-	record, err := internalformatcoverage.Compute(nil, SourceMetadataExtractorFingerprint)
+	record, err := internalformatcoverage.Compute(nil, SourceMetadataImplementationID)
 	require.NoError(t, err)
 	encoded, _, err := document.MarshalFormatCoverageV1(record)
 	require.NoError(t, err)
@@ -32,10 +79,10 @@ func TestFormatCoverageMatchesPinnedFixture(t *testing.T) {
 
 func TestFormatCoverageComposesQualifiedOwnersWithoutInflatingClaims(t *testing.T) {
 	t.Parallel()
-	record, err := internalformatcoverage.Compute(nil, SourceMetadataExtractorFingerprint)
+	record, err := internalformatcoverage.Compute(nil, SourceMetadataImplementationID)
 	require.NoError(t, err)
 	assert.Len(t, record.Formats, 52)
-	assert.Equal(t, SourceMetadataExtractorFingerprint, record.GeneratedBy.ExtractorID)
+	assert.Equal(t, SourceMetadataImplementationID, record.GeneratedBy.ExtractorID)
 
 	qualifiedDetect := map[string]bool{
 		"csv": true, "doc": true, "docx": true, "eml": true, "epub": true,
@@ -69,7 +116,7 @@ func TestFormatCoverageComposesQualifiedOwnersWithoutInflatingClaims(t *testing.
 func TestFormatCoverageUsesExecutedSyntheticProviderQualification(t *testing.T) {
 	t.Parallel()
 	descriptor := syntheticMarkdownCoverageDescriptor(t)
-	record, err := internalformatcoverage.Compute([]document.RenditionDescriptor{descriptor}, SourceMetadataExtractorFingerprint)
+	record, err := internalformatcoverage.Compute([]document.RenditionDescriptor{descriptor}, SourceMetadataImplementationID)
 	require.NoError(t, err)
 	text := processingFormatByID(t, record, "pdf").Capabilities[document.CapabilityText]
 	assert.Equal(t, document.CapabilityQualified, text.State)
@@ -98,7 +145,7 @@ func TestLookupFormatDistinguishesCatalogPendingAndUnknown(t *testing.T) {
 		{query: "wpd", match: document.FormatLookupPending},
 		{query: "qqq", match: document.FormatLookupUnknown},
 	} {
-		record, err := internalformatcoverage.Compute(nil, SourceMetadataExtractorFingerprint)
+		record, err := internalformatcoverage.Compute(nil, SourceMetadataImplementationID)
 		require.NoError(t, err)
 		lookup := coverage.Lookup(record, testCase.query)
 		assert.Equal(t, testCase.match, lookup.Match)

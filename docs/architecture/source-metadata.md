@@ -98,7 +98,10 @@ change creates a new immutable generation and moves the active head for that
 content SHA-256. Old generations remain evidence. Retrying the same generation
 is idempotent. Because the fingerprint covers every parser, any change to it
 makes the daemon re-read and re-extract every retained original in every
-vault. A test pins the fingerprint so that cost is taken deliberately.
+vault. Tests pin the parser descriptor and check that the shared email recipe,
+including the actual Go version, contributes to the fingerprint. Format
+[qualification](format-coverage.md#keep-the-record-current) uses a separate
+implementation identity that excludes only the Go version.
 
 The active head follows the last successful publication, including publication
 of an already-recorded generation. Fingerprints identify parser bundles. They
