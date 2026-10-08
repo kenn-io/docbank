@@ -132,6 +132,10 @@ Docbank sends anonymous usage events by default:
 - `app_opened` when the web app opens, about once a day per browser and daemon
   run.
 - `screen_viewed` with a fixed screen name, once per vault per UTC day for each interface, browser and terminal, across daemon restarts.
+- `session_ended` once when a tab closes or stays hidden for 30 minutes, or the
+  terminal browser exits, with duration grouped into four buckets. Browser
+  visible time adds up across tab switches. Hidden time is excluded. The
+  terminal browser counts the time from opening to exit, including idle time.
 
 Each event carries a random per-vault install ID, the version and commit, and
 the operating system and architecture. Events never include document content,

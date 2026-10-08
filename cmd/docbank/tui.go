@@ -5,8 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/signal"
 	"strconv"
 	"sync"
+	"syscall"
+	"time"
 	"uuid"
 
 	tea "charm.land/bubbletea/v2"
@@ -22,7 +25,7 @@ import (
 var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Browse and search the vault interactively",
-	Long: `Open a terminal interface backed by the authenticated daemon API.
+	Long: `Open a terminal browser backed by the authenticated daemon API.
 
 Navigation:
   Up/Down or j/k       Move between documents
@@ -55,11 +58,47 @@ enrollment remain outside the TUI.`,
 		if err != nil {
 			return err
 		}
-		if _, err := tea.NewProgram(model).Run(); err != nil {
+		// Closing the terminal sends SIGHUP, which would otherwise exit before the report.
+		ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGHUP)
+		defer stop()
+		started := time.Now()
+		_, err = tea.NewProgram(model, tea.WithContext(ctx)).Run()
+		if tuiProgramRan(err) {
+			// Usage reporting is best effort and must not change how the TUI exits.
+			_ = reportTUISessionEnded(time.Since(started))
+		}
+		if err != nil {
 			return fmt.Errorf("running docbank TUI: %w", err)
 		}
 		return nil
 	},
+}
+
+func tuiProgramRan(err error) bool {
+	return err == nil || errors.Is(err, tea.ErrInterrupted) || errors.Is(err, tea.ErrProgramKilled)
+}
+
+// reportTUISessionEnded sends session_ended only to an already-running daemon.
+func reportTUISessionEnded(elapsed time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	c, ok, err := daemonconn.Running(ctx)
+	if err != nil || !ok {
+		return err
+	}
+	defer func() { _ = c.Close() }()
+	return sendTUISessionEnded(ctx, c, elapsed)
+}
+
+func sendTUISessionEnded(ctx context.Context, c *daemonconn.Connection, elapsed time.Duration) error {
+	properties := &apiclient.TelemetryEventProperties{Surface: "tui", DurationBucket: telemetry.DurationBucket(elapsed)}
+	_, err := c.API().ReportTelemetryEvent(ctx, &apiclient.ReportTelemetryEventRequestOptions{
+		Body: &apiclient.ReportTelemetryEventBody{Event: telemetry.EventSessionEnded, Properties: properties},
+	})
+	if err != nil {
+		return fmt.Errorf("reporting TUI session_ended: %w", err)
+	}
+	return nil
 }
 
 func (b *tuiDaemonBackend) Close() error {

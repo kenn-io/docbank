@@ -703,7 +703,12 @@ Docbank sends these events:
 - `app_opened` when the web app loads, and again on the first window focus of
   a later UTC day. The browser remembers the day for the daemon's address, so
   it sends about one per UTC day until the daemon restarts on a new address.
-
+- `session_ended` once when a browser tab closes or stays hidden for 30 minutes,
+  or the terminal browser exits, including when its terminal closes. Browser
+  visible time adds up across tab switches. Hidden time is excluded. The
+  terminal browser counts the time from opening to exit, including idle time.
+  A terminal browser left idle past the daemon's idle timeout reports nothing
+  on exit because it sends the report only to a running daemon.
 - `screen_viewed` with a fixed `screen` name and `surface` of `web` or `tui`. Each screen counts once per vault per UTC day for each interface, browser and terminal, across daemon restarts. `surface` records the interface of the visit. The daemon rejects other names with 400. The daemon keeps daily claims in memory and saves them in `telemetry-screen-views.json` beside the install ID for daemon restarts. Rejected enqueue attempts remain eligible; remote delivery is best effort.
 
 Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
@@ -718,6 +723,8 @@ Each event carries these fields:
 - `$process_person_profile=false` and `$geoip_disable=true`
 - fields the PostHog Go library adds: `$lib`, `$lib_version`, `$os`,
   `$os_version`, `$os_distro` (Linux only), and `$go_version`
+- `session_ended` also carries `surface` as `web` or `tui` and `duration_bucket`
+  as `under_1m`, `1_to_5m`, `5_to_30m`, or `over_30m`
 
 Usage telemetry never carries document content, filenames, paths, hashes,
 tags, queries, the vault ID, account names, the hostname, or configuration
