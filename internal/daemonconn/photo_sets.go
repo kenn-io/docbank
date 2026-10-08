@@ -3,9 +3,10 @@ package daemonconn
 import (
 	"context"
 	"errors"
+	"net/http"
+
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
-	"net/http"
 )
 
 func validatePhotoAlbumIdentity(album api.PhotoAlbum, id string) error {

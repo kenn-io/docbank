@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/docbank/internal/query"
 )
 
+// ErrInvalidPhotoAlbum reports an invalid album name, cover, or member selection.
 var ErrInvalidPhotoAlbum = errors.New("invalid photo album")
 
 // PhotoSet is an album. Its membership is independent of photo visibility.
@@ -24,6 +25,7 @@ type PhotoSet struct {
 	DeletedAt    *string `json:"deleted_at,omitzero" db:"deleted_at"`
 }
 
+// PhotoSetSummary adds member counts and the effective ready cover to an album.
 type PhotoSetSummary struct {
 	PhotoSet
 
@@ -44,12 +46,19 @@ func validPhotoSetName(name string) bool {
 	return strings.TrimSpace(name) != "" && utf8.ValidString(name) && utf8.RuneCountInString(name) <= 256 && !strings.ContainsRune(name, 0)
 }
 
+const photoSetColumns = `set_id,name,starred,revision,cover_asset_id,created_at,updated_at,deleted_at`
+
+func scanPhotoSet(row interface{ Scan(dest ...any) error }) (PhotoSet, error) {
+	var set PhotoSet
+	err := row.Scan(&set.ID, &set.Name, &set.Starred, &set.Revision, &set.CoverAssetID, &set.CreatedAt, &set.UpdatedAt, &set.DeletedAt)
+	return set, err
+}
+
 func photoSetByID(ctx context.Context, q metadataQuerier, id string) (PhotoSet, error) {
 	if validateUUIDv4(id) != nil {
 		return PhotoSet{}, ErrNotFound
 	}
-	var set PhotoSet
-	err := q.QueryRowContext(ctx, `SELECT set_id,name,starred,revision,cover_asset_id,created_at,updated_at,deleted_at FROM photo_sets WHERE set_id=? AND deleted_at IS NULL`, id).Scan(&set.ID, &set.Name, &set.Starred, &set.Revision, &set.CoverAssetID, &set.CreatedAt, &set.UpdatedAt, &set.DeletedAt)
+	set, err := scanPhotoSet(q.QueryRowContext(ctx, `SELECT `+photoSetColumns+` FROM photo_sets WHERE set_id=? AND deleted_at IS NULL`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return PhotoSet{}, ErrNotFound
 	}
@@ -93,6 +102,7 @@ func photoSetSummary(ctx context.Context, q metadataQuerier, set PhotoSet, recip
 	return out, err
 }
 
+// PhotoSet returns one live album summary using the given grid preview recipe.
 func (s *Store) PhotoSet(ctx context.Context, id, recipe string) (PhotoSetSummary, error) {
 	var out PhotoSetSummary
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
@@ -106,21 +116,22 @@ func (s *Store) PhotoSet(ctx context.Context, id, recipe string) (PhotoSetSummar
 	return out, err
 }
 
+// ListPhotoSets returns live albums, starred first, then by name.
 func (s *Store) ListPhotoSets(ctx context.Context, recipe string) ([]PhotoSetSummary, error) {
 	out := make([]PhotoSetSummary, 0)
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT set_id FROM photo_sets WHERE deleted_at IS NULL ORDER BY starred DESC,name,set_id`)
+		rows, err := tx.QueryContext(ctx, `SELECT `+photoSetColumns+` FROM photo_sets WHERE deleted_at IS NULL ORDER BY starred DESC,name,set_id`)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = rows.Close() }()
-		var ids []string
+		var sets []PhotoSet
 		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
+			set, err := scanPhotoSet(rows)
+			if err != nil {
 				return err
 			}
-			ids = append(ids, id)
+			sets = append(sets, set)
 		}
 		err = rows.Err()
 		closeErr := rows.Close()
@@ -130,11 +141,7 @@ func (s *Store) ListPhotoSets(ctx context.Context, recipe string) ([]PhotoSetSum
 		if closeErr != nil {
 			return closeErr
 		}
-		for _, id := range ids {
-			set, err := photoSetByID(ctx, tx, id)
-			if err != nil {
-				return err
-			}
+		for _, set := range sets {
 			summary, err := photoSetSummary(ctx, tx, set, recipe)
 			if err != nil {
 				return err
@@ -178,6 +185,7 @@ func writePhotoSetReceipts(ctx context.Context, tx *sql.Tx, operation string, be
 	}
 }
 
+// CreatePhotoSet creates an empty album at revision 1.
 func (s *Store) CreatePhotoSet(ctx context.Context, name string) (PhotoSet, error) {
 	var out PhotoSet
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
@@ -250,6 +258,7 @@ func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, n
 	return out, err
 }
 
+// DeletePhotoSet clears an album's members and cover and marks it deleted.
 func (s *Store) DeletePhotoSet(ctx context.Context, id string, revision int64) (PhotoSet, error) {
 	var out PhotoSet
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
@@ -290,6 +299,7 @@ func photoSetMemberIDs(ctx context.Context, q metadataQuerier, id string) ([]str
 	return ids, rows.Err()
 }
 
+// DuplicatePhotoSet copies an album's star, cover, members, and added dates.
 func (s *Store) DuplicatePhotoSet(ctx context.Context, id string, revision int64, name string) (PhotoSet, error) {
 	var out PhotoSet
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
@@ -387,6 +397,9 @@ func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSel
 	return ids, rows.Err()
 }
 
+// ChangePhotoSetMembers adds or removes the selected assets at the expected revision.
+// A query selection resolves only visible photos, so hidden members stay
+// until they are removed by ID.
 func (s *Store) ChangePhotoSetMembers(ctx context.Context, id string, revision int64, add bool, selection PhotoSetSelection) (PhotoSet, error) {
 	var out PhotoSet
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {

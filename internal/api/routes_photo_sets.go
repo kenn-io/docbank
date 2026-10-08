@@ -2,11 +2,12 @@ package api
 
 import (
 	"context"
+	"net/http"
+
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
-	"net/http"
 )
 
 func registerPhotoSetRoutes(api huma.API, d Deps, g *gate) {
@@ -135,7 +136,16 @@ func registerPhotoSetRoutes(api huma.API, d Deps, g *gate) {
 		})
 		return out, err
 	})
-	huma.Register(api, huma.Operation{OperationID: "addPhotoAlbumMembers", Method: http.MethodPost, Path: "/api/v1/photos/albums/{set_id}/members/add", Summary: "Add explicit photos or complete search results"}, func(ctx context.Context, in *struct {
+	registerPhotoAlbumMembersRoute(api, d, g, true)
+	registerPhotoAlbumMembersRoute(api, d, g, false)
+}
+
+func registerPhotoAlbumMembersRoute(api huma.API, d Deps, g *gate, add bool) {
+	operation := huma.Operation{OperationID: "addPhotoAlbumMembers", Method: http.MethodPost, Path: "/api/v1/photos/albums/{set_id}/members/add", Summary: "Add explicit photos or complete search results"}
+	if !add {
+		operation = huma.Operation{OperationID: "removePhotoAlbumMembers", Method: http.MethodPost, Path: "/api/v1/photos/albums/{set_id}/members/remove", Summary: "Remove explicit photos or complete search results"}
+	}
+	huma.Register(api, operation, func(ctx context.Context, in *struct {
 		SetID   string `path:"set_id"`
 		IfMatch string `header:"If-Match"`
 		Body    PhotoAlbumMembersRequest
@@ -154,35 +164,7 @@ func registerPhotoSetRoutes(api huma.API, d Deps, g *gate) {
 		}
 		var out *photoAlbumOutput
 		err = g.mutate(func() error {
-			set, err := d.Store.ChangePhotoSetMembers(ctx, in.SetID, revision, true, selection)
-			if err != nil {
-				return workspaceQueryError(err)
-			}
-			out = &photoAlbumOutput{ETag: revisionETag(set.Revision), Body: fromStorePhotoAlbum(set)}
-			return nil
-		})
-		return out, err
-	})
-	huma.Register(api, huma.Operation{OperationID: "removePhotoAlbumMembers", Method: http.MethodPost, Path: "/api/v1/photos/albums/{set_id}/members/remove", Summary: "Remove explicit photos or complete search results"}, func(ctx context.Context, in *struct {
-		SetID   string `path:"set_id"`
-		IfMatch string `header:"If-Match"`
-		Body    PhotoAlbumMembersRequest
-	}) (*photoAlbumOutput, error) {
-		revision, err := parseIfMatch(in.IfMatch)
-		if err != nil {
-			return nil, err
-		}
-		selection := store.PhotoSetSelection{AssetIDs: in.Body.AssetIDs, Coverage: store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint}}
-		if in.Body.Query != nil {
-			value, err := parseWorkspaceQuery(*in.Body.Query)
-			if err != nil {
-				return nil, err
-			}
-			selection.Query = &value
-		}
-		var out *photoAlbumOutput
-		err = g.mutate(func() error {
-			set, err := d.Store.ChangePhotoSetMembers(ctx, in.SetID, revision, false, selection)
+			set, err := d.Store.ChangePhotoSetMembers(ctx, in.SetID, revision, add, selection)
 			if err != nil {
 				return workspaceQueryError(err)
 			}
