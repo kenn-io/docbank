@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -78,6 +79,35 @@ type PhotoImportReceipt struct {
 	Ambiguous   int64                  `json:"ambiguous"`
 	Unsupported int64                  `json:"unsupported"`
 	Ambiguities []PhotoImportAmbiguity `json:"ambiguities,omitzero"`
+}
+
+// PhotoImportReceiptResponse conceals currently locked photo IDs without changing the stored receipt.
+func (s *Store) PhotoImportReceiptResponse(ctx context.Context, receiptJSON string) (string, error) {
+	var receipt PhotoImportReceipt
+	if err := json.Unmarshal([]byte(receiptJSON), &receipt); err != nil {
+		return "", err
+	}
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		for i := range receipt.Ambiguities {
+			for j := range receipt.Ambiguities[i].Files {
+				file := &receipt.Ambiguities[i].Files[j]
+				if file.AssetID == "" {
+					continue
+				}
+				if _, err := s.photoAssetReadQuery(ctx, tx, file.AssetID); errors.Is(err, ErrHiddenLocked) || errors.Is(err, ErrNotFound) {
+					file.AssetID = ""
+				} else if err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(receipt)
+	return string(encoded), err
 }
 
 func photoImportSourceKey(path string) (folder, stem string) {

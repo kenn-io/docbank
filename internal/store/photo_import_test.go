@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"encoding/json/v2"
 	"path/filepath"
 	"testing"
 	"time"
@@ -73,6 +74,47 @@ func photoImportTestMember(path, role, hash, mediaType string) PhotoImportMember
 
 func photoImportTestGroup(members ...PhotoImportMember) PhotoImportGroup {
 	return PhotoImportGroup{Members: members, DestinationID: 1}
+}
+
+func TestPhotoImportReceiptProjectionFailsClosed(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "receipt.jpg", fakeHash("receipt"), 4, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	receipt, err := json.Marshal(PhotoImportReceipt{Ambiguities: []PhotoImportAmbiguity{{Files: []PhotoImportAmbiguousFile{{AssetID: asset.ID}}}}})
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `ALTER TABLE photo_assets RENAME TO unavailable_photo_assets`)
+	require.NoError(t, err)
+	projected, err := s.PhotoImportReceiptResponse(ctx, string(receipt))
+	require.Error(t, err)
+	require.Empty(t, projected)
+}
+
+func TestPhotoImportLateSidecarUpdatesLockedHiddenAsset(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	root := filepath.Join(t.TempDir(), "camera")
+	run, err := s.BeginIngest(ctx, "photo-import", root)
+	require.NoError(t, err)
+	raw := photoImportTestMember(filepath.Join(root, "IMG.ARW"), PhotoRoleRAW, fakeHash("hidden-raw"), "image/x-sony-arw")
+	first, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw))
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	hidden, err := s.SetPhotoAssetHidden(ctx, first.Asset.ID, first.Asset.Revision, true)
+	require.NoError(t, err)
+	xmp := photoImportTestMember(filepath.Join(root, "IMG.XMP"), PhotoRoleSidecar, fakeHash("hidden-xmp"), "application/rdf+xml")
+	updated, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, xmp))
+	require.NoError(t, err)
+	require.Equal(t, hidden.ID, updated.Asset.ID)
+	require.Equal(t, hidden.HiddenAt, updated.Asset.HiddenAt)
+	require.Len(t, updated.Asset.Files, 2)
+	require.Equal(t, PhotoRoleSidecar, fileByRole(updated.Asset.Files, PhotoRoleSidecar).Role)
+	_, err = s.PhotoAssetByID(ctx, hidden.ID)
+	require.ErrorIs(t, err, ErrHiddenLocked)
 }
 
 func TestPhotoImportAtomicGroup(t *testing.T) {

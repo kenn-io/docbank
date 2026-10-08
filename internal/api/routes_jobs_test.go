@@ -13,9 +13,72 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestPhotoImportJobReceiptUsesCurrentHiddenAccess(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	ctx := t.Context()
+	node, err := s.CreateFile(ctx, s.RootID(), "hidden.jpg", testHash("hidden receipt"), 4, "image/jpeg")
+	require.NoError(t, err)
+	hidden, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	visibleNode, err := s.CreateFile(ctx, s.RootID(), "visible.jpg", testHash("visible receipt"), 4, "image/jpeg")
+	require.NoError(t, err)
+	visible, err := s.PhotoAssetForNode(ctx, visibleNode.ID)
+	require.NoError(t, err)
+	receipt := store.PhotoImportReceipt{Ambiguous: 1, Ambiguities: []store.PhotoImportAmbiguity{{
+		Reason: store.PhotoImportSeparatePhotos,
+		Files: []store.PhotoImportAmbiguousFile{
+			{SourcePath: "/camera/hidden.jpg", NodeID: node.ID, AssetID: hidden.ID, Role: store.PhotoRoleImage},
+			{SourcePath: "/camera/visible.jpg", NodeID: visibleNode.ID, AssetID: visible.ID, Role: store.PhotoRoleImage},
+		},
+	}}}
+	encoded, err := json.Marshal(receipt)
+	require.NoError(t, err)
+	completed, err := s.CreateLocalOperation(ctx, store.StorageOperationKindPhotoImport, `{}`)
+	require.NoError(t, err)
+	require.NoError(t, s.FinishStorageOperation(ctx, completed.ID, store.StorageOperationCompleted, string(encoded), "", time.Time{}))
+	running, err := s.CreateLocalOperation(ctx, store.StorageOperationKindPhotoImport, `{}`)
+	require.NoError(t, err)
+	_, err = s.ClaimStorageOperation(ctx, running.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetStorageOperationTotal(ctx, running.ID, 1))
+	require.NoError(t, s.AdvanceStorageOperation(ctx, running.ID, "", 0, 0, 0, string(encoded)))
+	connection := daemonconn.New(ts.URL, testAPIKey)
+	_, _, err = connection.PhotoHidden(ctx, "setup", "correct", "")
+	require.NoError(t, err)
+	_, err = connection.SetPhotoAssetHidden(ctx, hidden.ID, hidden.Revision, true, "")
+	require.NoError(t, err)
+	check := func(method, path, cookie string, wantID string) {
+		t.Helper()
+		response, body := do(t, ts, method, path, map[string]string{"Cookie": cookie}, nil)
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		var got struct {
+			Receipt store.PhotoImportReceipt `json:"receipt"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(body), &got))
+		want := receipt
+		want.Ambiguities = []store.PhotoImportAmbiguity{{Reason: receipt.Ambiguities[0].Reason, Files: append([]store.PhotoImportAmbiguousFile(nil), receipt.Ambiguities[0].Files...)}}
+		want.Ambiguities[0].Files[0].AssetID = wantID
+		require.Equal(t, want, got.Receipt)
+	}
+	path := "/api/v1/jobs/" + completed.ID
+	check(http.MethodGet, path, "", "")
+	check(http.MethodPost, "/api/v1/jobs/"+running.ID+"/cancel", "", "")
+	_, cookie, err := connection.PhotoHidden(ctx, "unlock", "correct", "")
+	require.NoError(t, err)
+	check(http.MethodGet, path, cookie, hidden.ID)
+	_, _, err = connection.PhotoHidden(ctx, "lock", "", "")
+	require.NoError(t, err)
+	check(http.MethodGet, path, cookie, "")
+	stored, err := s.StorageOperation(ctx, completed.ID)
+	require.NoError(t, err)
+	require.Equal(t, string(encoded), stored.ReceiptJSON)
+}
 
 func TestListJobsReturnsStableObservableState(t *testing.T) {
 	t.Parallel()
