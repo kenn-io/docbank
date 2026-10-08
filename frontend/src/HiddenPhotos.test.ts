@@ -71,13 +71,14 @@ it("poll HTTP 401 reaches the shared browser session-expired screen", async () =
 
 it.each([false, true])("real Unhide retains stale revision failure with mixed success=%s", async mixed => {
   prepare();
-  let items = mixed ? [photo(1), photo(2)] : [photo(2)];
+  let items = mixed ? [photo(1), photo(2), photo(3)] : [photo(2)];
   let stale = true;
+  const failure = `${mixed ? 2 : 1} photo${mixed ? "s" : ""} failed: Synthetic stale photo revision`;
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (url.endsWith("/photos/hidden")) return new Response(JSON.stringify(state(true)));
     if (url.includes("/assets/query")) return new Response(JSON.stringify({ items, total: items.length }));
     if (url.endsWith("/unhide")) {
-      if (url.includes("/photo-2/") && stale) return problem(412, "Synthetic stale photo revision");
+      if ((url.includes("/photo-2/") || url.includes("/photo-3/")) && stale) return problem(412, "Synthetic stale photo revision");
       items = items.filter(item => !url.includes(`/${item.asset_id}/`));
       return new Response("{}");
     }
@@ -85,17 +86,17 @@ it.each([false, true])("real Unhide retains stale revision failure with mixed su
   }));
   render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
   await screen.findByRole("checkbox", { name: "Select photo Photo 2.jpg" });
-  if (mixed) { await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" })); await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" })); }
+  if (mixed) { await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" })); await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" })); await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 3.jpg" })); }
   await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 2.jpg" }));
   await fireEvent.click(await screen.findByRole("menuitem", { name: "Unhide" }));
-  await screen.findByText("Synthetic stale photo revision");
+  await screen.findByText(failure);
   await screen.findByRole("checkbox", { name: "Select photo Photo 2.jpg" });
   expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
   await fireEvent(window, new Event(photoPrivacyEvent));
   await screen.findByRole("button", { name: "Actions for Photo 2.jpg" });
-  expect(screen.getByText("Synthetic stale photo revision")).not.toBeNull();
+  expect(screen.getByText(failure)).not.toBeNull();
   stale = false;
   await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 2.jpg" }));
   await fireEvent.click(await screen.findByRole("menuitem", { name: "Unhide" }));
-  await waitFor(() => expect(screen.queryByText("Synthetic stale photo revision")).toBeNull());
+  await waitFor(() => expect(screen.queryByText(failure)).toBeNull());
 });

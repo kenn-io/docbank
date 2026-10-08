@@ -418,6 +418,9 @@ func (s *Store) photoAssetCreateTx(ctx context.Context, tx *sql.Tx, nodeID int64
 	if owner, owned, err := photoAssetOwningNodeTx(ctx, tx, nodeID); err != nil {
 		return PhotoAsset{}, err
 	} else if owned {
+		if _, err := s.photoAssetReadQuery(ctx, tx, owner); err != nil {
+			return PhotoAsset{}, err
+		}
 		return PhotoAsset{}, fmt.Errorf("node %d belongs to asset %s: %w", nodeID, owner, ErrPhotoNodeOwned)
 	}
 	role := explicitRole
@@ -690,6 +693,9 @@ func (s *Store) AttachPhotoFile(ctx context.Context, assetID string, revision, n
 		if ownedID, owned, err := photoAssetOwningNodeTx(ctx, tx, nodeID); err != nil {
 			return false, err
 		} else if owned {
+			if _, err := s.photoAssetReadQuery(ctx, tx, ownedID); err != nil {
+				return false, err
+			}
 			return false, fmt.Errorf("node %d belongs to asset %s: %w", nodeID, ownedID, ErrPhotoNodeOwned)
 		}
 		if role == "" {

@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -404,6 +405,27 @@ func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "private.jpg")
+	target := albumAsset(t, s, "target.jpg")
+	checkOwner := func(ctx context.Context, want error) {
+		_, err := s.CreatePhotoAsset(ctx, asset.Files[0].NodeID, "", "")
+		require.ErrorIs(t, err, want)
+		if errors.Is(want, ErrHiddenLocked) {
+			require.NotContains(t, err.Error(), asset.ID)
+		} else {
+			require.ErrorContains(t, err, asset.ID)
+		}
+		_, err = s.AttachPhotoFile(ctx, target.ID, target.Revision, asset.Files[0].NodeID, "", nil)
+		require.ErrorIs(t, err, want)
+		if errors.Is(want, ErrHiddenLocked) {
+			require.NotContains(t, err.Error(), asset.ID)
+		} else {
+			require.ErrorContains(t, err, asset.ID)
+		}
+		unchanged, err := s.PhotoAssetByID(ctx, target.ID)
+		require.NoError(t, err)
+		require.Equal(t, target, unchanged)
+	}
+	checkOwner(ctx, ErrPhotoNodeOwned)
 	album, err := s.CreatePhotoSet(ctx, "Synthetic")
 	require.NoError(t, err)
 	album, err = s.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
@@ -414,6 +436,7 @@ func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
 	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
 	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
+	checkOwner(ctx, ErrHiddenLocked)
 	cover := &asset.ID
 	_, err = s.UpdatePhotoSet(ctx, album.ID, album.Revision, nil, nil, &cover)
 	require.ErrorIs(t, err, ErrHiddenLocked)
@@ -422,6 +445,13 @@ func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
 	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
 	require.NoError(t, err)
 	unlocked := WithPhotoHiddenToken(ctx, token)
+	checkOwner(unlocked, ErrPhotoNodeOwned)
+	_, err = s.db.Exec(`UPDATE photo_hidden_sessions SET expires_at='2000-01-01T00:00:00Z'`)
+	require.NoError(t, err)
+	checkOwner(unlocked, ErrHiddenLocked)
+	token, _, err = s.UnlockPhotoHidden(ctx, "correct")
+	require.NoError(t, err)
+	unlocked = WithPhotoHiddenToken(ctx, token)
 	_, err = s.PromotePhotoNode(unlocked, asset.Files[0].NodeID, nil, "", "")
 	require.ErrorIs(t, err, ErrStaleRevision)
 	require.ErrorContains(t, err, "needs its revision")
