@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import PhotoTimeline from "./PhotoTimeline.svelte";
 import { parseQuery } from "./query.js";
-import { captureDayQuery, nextCaptureDay, timelineYears } from "./photoTimeline.js";
+import { captureDateQuery, timelineYears } from "./photoTimeline.js";
 
 afterEach(cleanup);
 
@@ -18,19 +18,20 @@ it("uses recorded days and full counts for years and months", () => {
 });
 
 it("bounds leap days and the final supported day without a timezone shift", () => {
-  expect(nextCaptureDay("2024-02-29")).toBe("2024-03-01");
-  expect(nextCaptureDay("2025-12-31")).toBe("2026-01-01");
-  expect(nextCaptureDay("0000-02-29")).toBe("0000-03-01");
-  expect(nextCaptureDay("9999-12-31")).toBeUndefined();
   const base = parseQuery("{}");
-  expect(captureDayQuery(base, "2024-02-29").filters).toEqual({ capture_after: "2024-02-29", capture_before: "2024-03-01" });
-  expect(captureDayQuery(base).filters).toEqual(base.filters);
-  expect(captureDayQuery(parseQuery("{}"), "9999-12-31").filters).toEqual({ capture_after: "9999-12-31" });
+  expect(captureDateQuery(base, "2025").filters).toEqual({ capture_after: "2025-01-01", capture_before: "2026-01-01" });
+  expect(captureDateQuery(base, "2025-12").filters).toEqual({ capture_after: "2025-12-01", capture_before: "2026-01-01" });
+  expect(captureDateQuery(base, "0001").filters).toEqual({ capture_after: "0001-01-01", capture_before: "0002-01-01" });
+  expect(captureDateQuery(base, "9999").filters).toEqual({ capture_after: "9999-01-01" });
+  expect(captureDateQuery(base, "9999-12").filters).toEqual({ capture_after: "9999-12-01" });
+  expect(captureDateQuery(base, "2024-02-29").filters).toEqual({ capture_after: "2024-02-29", capture_before: "2024-03-01" });
+  expect(captureDateQuery(base).filters).toEqual(base.filters);
+  expect(captureDateQuery(parseQuery("{}"), "9999-12-31").filters).toEqual({ capture_after: "9999-12-31" });
 });
 
 it("shows full-scope year density and only the focused month's day rows", async () => {
   const onselect = vi.fn();
-  render(PhotoTimeline, { loading: false, error: "", onselect, onretry: vi.fn(), facet: {
+  const view = render(PhotoTimeline, { loading: false, error: "", onselect, onretry: vi.fn(), facet: {
     dimension: "capture_day", available: true, total: 905, missing: 5, other: 0, values: [
       { key: "2025-01-01", label: "2025-01-01", count: 500, selected: false },
       { key: "2024-02-29", label: "2024-02-29", count: 400, selected: false },
@@ -39,6 +40,11 @@ it("shows full-scope year density and only the focused month's day rows", async 
   expect(screen.getByText("905 photos in scope · 5 undated")).toBeTruthy();
   const years = screen.getByRole("navigation", { name: "Timeline years" });
   await fireEvent.click([...years.querySelectorAll("button")][1]);
+  expect(onselect).toHaveBeenLastCalledWith("2024");
+  await view.rerender({ selected: "2024" });
+  await fireEvent.click(screen.getByRole("button", { name: "February 2024 · 400" }));
+  expect(onselect).toHaveBeenLastCalledWith("2024-02");
+  await view.rerender({ selected: "2024-02" });
   const day = screen.getByRole("button", { name: "2024-02-29 · 400 photos" });
   expect(screen.queryByRole("button", { name: "2025-01-01 · 500 photos" })).toBeNull();
   await fireEvent.click(day);

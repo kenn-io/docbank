@@ -4,12 +4,11 @@
   import { monthLabel } from "./photoGrid.js";
   import { timelineYears, type CaptureDayFacet } from "./photoTimeline.js";
 
-  let { facet, loading, error, selected, onselect, onretry }: { facet?: CaptureDayFacet; loading: boolean; error: string; selected?: string; onselect: (day: string) => void; onretry: () => void } = $props();
-  let focus = $state("");
+  let { facet, loading, error, selected, onselect, onretry }: { facet?: CaptureDayFacet; loading: boolean; error: string; selected?: string; onselect: (date: string) => void; onretry: () => void } = $props();
   let monthStrip = $state<HTMLElement>();
   const years = $derived(facet?.available ? timelineYears(facet) : []);
   const months = $derived(years.flatMap(year => year.months));
-  const focused = $derived(months.find(month => month.key === focus) ?? months.find(month => month.key === selected?.slice(0, 7)) ?? months[0]);
+  const focused = $derived(months.find(month => selected?.length === 4 ? month.key.startsWith(selected) : month.key === selected?.slice(0, 7)) ?? months[0]);
   const peak = $derived(Math.max(1, ...years.map(year => year.count)));
   $effect(() => {
     focused?.key; selected;
@@ -31,7 +30,7 @@
     {#if years.length}
       <nav class="year-ribbon" aria-label="Timeline years">
         {#each years as year (year.key)}
-          <Button size="sm" tone={focused?.key.startsWith(year.key) ? "info" : "neutral"} onclick={() => focus = year.months[0].key}>
+          <Button size="sm" tone={selected?.startsWith(year.key) ? "info" : "neutral"} onclick={() => onselect(year.key)}>
             <span class="year-count">{year.key}<span>{year.count.toLocaleString()}</span><span class="year-density" style:width={`${Math.max(5, year.count / peak * 100)}%`}></span></span>
           </Button>
         {/each}
@@ -39,7 +38,7 @@
       <nav class="month-sections scrubber" aria-label="Timeline month scrubber" bind:this={monthStrip}>
         {#each years as year (year.key)}
           {#if focused?.key.startsWith(year.key)}
-            {#each year.months as month (month.key)}<Button size="sm" class={focused?.key === month.key ? "timeline-active" : ""} tone={focused?.key === month.key ? "info" : "neutral"} onclick={() => focus = month.key}>{monthLabel(month.key)} · {month.count.toLocaleString()}</Button>{/each}
+            {#each year.months as month (month.key)}<Button size="sm" class={focused?.key === month.key ? "timeline-active" : ""} tone={selected?.startsWith(month.key) ? "info" : "neutral"} onclick={() => onselect(month.key)}>{monthLabel(month.key)} · {month.count.toLocaleString()}</Button>{/each}
           {/if}
         {/each}
       </nav>

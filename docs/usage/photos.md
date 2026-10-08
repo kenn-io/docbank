@@ -38,10 +38,10 @@ the same position when further results remain.
 
 Choose **Timeline** to see counts for every recorded capture day in the current
 scope, including days beyond the loaded grid. The year ribbon shows each year's
-total and relative density. Choose a year, move through months with the month
-scrubber, then choose a dated day row to open its photos. **Clear date** restores the full scope.
-The grid keeps paging within the chosen day. Choosing a day clears selection
-and starts at the top. Counts stay tied to the full scope until you refresh.
+total and relative density. Choose a year, month, or day to open its photos.
+The grid pages within that range. Each choice clears selection and starts at
+the top. **Clear date** restores the full scope. Counts stay tied to the full
+scope until you refresh.
 
 Dates use the selected display file's recorded calendar day, so a capture near
 midnight keeps its date regardless of the browser's timezone. A RAW/JPEG pair

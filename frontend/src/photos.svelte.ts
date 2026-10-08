@@ -5,7 +5,7 @@ import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
 import { clearSelection, reconcileIDSelection, toggleIDSelection, type SelectionState } from "./selection.js";
 import { createFacetCounts } from "./snapshots.js";
 import type { Query } from "./query.js";
-import { captureDayQuery, type CaptureDayFacet } from "./photoTimeline.js";
+import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 
 export const photoQuery: Query = { v: 1, syntax: "advanced", mode: "lexical", text: "", filters: {}, sort: { field: "capture_time", direction: "desc" } };
 const densityKey = "docbank.photos.density";
@@ -20,7 +20,7 @@ export function loadDensity(): Density {
 
 export class Photos {
   view = $state<"grid" | "timeline">("grid");
-  day = $state<string | undefined>();
+  date = $state<string | undefined>();
   query = $state<Query>(photoQuery);
   timeline = $state<CaptureDayFacet | undefined>();
   timelineLoading = $state(false);
@@ -133,12 +133,12 @@ export class Photos {
     }
   }
 
-  selectDay(day?: string) {
-    const query = captureDayQuery(photoQuery, day);
+  selectDate(date?: string) {
+    const query = captureDateQuery(photoQuery, date);
     this.controller.abort();
     this.controller = new AbortController();
     this.query = query;
-    this.day = day;
+    this.date = date;
     this.items = [];
     this.total = 0;
     this.cursor = undefined;

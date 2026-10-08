@@ -28,7 +28,7 @@ it("keeps base counts across day changes and rejects a pre-refresh calendar repl
   await vi.waitFor(() => expect(photos.timeline?.total).toBe(20));
   expect(create.mock.calls[2][1].sort.field).toBe("capture_time");
   expect(create.mock.calls[2][1].filters).toEqual({});
-  await photos.selectDay("2024-02-29");
+  await photos.selectDate("2024-02-29");
   expect(create).toHaveBeenCalledTimes(3);
   expect(photos.timeline?.total).toBe(20);
   photos.dispose();
@@ -65,6 +65,8 @@ it("resumes an interrupted timeline request", async () => {
 
 it("seeks an unloaded day, pages within it, and restores the full scope", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1)], "old"))
+    .mockResolvedValueOnce(response([photo(4)], "year-page"))
+    .mockResolvedValueOnce(response([photo(5)], "month-page"))
     .mockResolvedValueOnce(response([photo(2)], "day-page"))
     .mockResolvedValueOnce(response([photo(3)]))
     .mockResolvedValueOnce(response([photo(1)], "full"));
@@ -72,27 +74,35 @@ it("seeks an unloaded day, pages within it, and restores the full scope", async 
   const photos = new Photos("scoped", vi.fn());
   await photos.loadMore();
   photos.selectLoaded(); photos.scrollTop = 500;
-  await photos.selectDay("2024-02-29");
+  await photos.selectDate("2025");
+  expect(photos.items[0].asset_id).toBe("photo-4");
+  expect(photos.date).toBe("2025");
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  expect(JSON.parse(fetcher.mock.calls[1][1].body).cursor).toBeUndefined();
+  await photos.selectDate("2025-12");
+  expect(photos.items[0].asset_id).toBe("photo-5");
+  expect(photos.date).toBe("2025-12");
+  await photos.selectDate("2024-02-29");
   expect(photos.selection.selectedIDs.size).toBe(0);
   expect(photos.scrollTop).toBe(0);
-  const request = JSON.parse(fetcher.mock.calls[1][1].body);
+  const request = JSON.parse(fetcher.mock.calls[3][1].body);
   expect(request.cursor).toBeUndefined();
   expect(request.query.filters.capture_after).toBe("2024-02-29");
   await photos.loadMore();
-  expect(JSON.parse(fetcher.mock.calls[2][1].body).cursor).toBe("day-page");
+  expect(JSON.parse(fetcher.mock.calls[4][1].body).cursor).toBe("day-page");
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2", "photo-3"]);
-  await photos.selectDay();
-  expect(photos.day).toBeUndefined();
+  await photos.selectDate();
+  expect(photos.date).toBeUndefined();
   let finish!: (value: Response) => void;
   fetcher.mockImplementationOnce(() => new Promise(resolve => finish = resolve))
     .mockResolvedValueOnce(response([photo(2)]))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Try again" }), { status: 503 }))
     .mockResolvedValueOnce(response([photo(3)]));
-  const older = photos.selectDay("2024-01-01");
-  await photos.selectDay("2024-02-29");
+  const older = photos.selectDate("2024-01-01");
+  await photos.selectDate("2024-02-29");
   finish(response([photo(1)])); await older;
   expect(photos.items[0].asset_id).toBe("photo-2");
-  await photos.selectDay("2025-01-01");
+  await photos.selectDate("2025-01-01");
   expect(photos.error).toBe("Try again");
   await photos.retry();
   expect(photos.items[0].asset_id).toBe("photo-3");

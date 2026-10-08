@@ -1,4 +1,4 @@
-import type { Query } from "./query.js";
+import { normalizeCaptureDate, type Query } from "./query.js";
 import type { CaptureDayFacet } from "./snapshots.js";
 
 export type { CaptureDayFacet } from "./snapshots.js";
@@ -21,14 +21,13 @@ export function timelineYears(facet: CaptureDayFacet): TimelineYear[] {
   return [...years.values()];
 }
 
-export function nextCaptureDay(day: string): string | undefined {
-  const date = new Date(`${day}T00:00:00Z`);
-  if (day === "9999-12-31") return undefined;
-  date.setUTCDate(date.getUTCDate() + 1);
-  return date.toISOString().slice(0, 10);
-}
-
-export function captureDayQuery(base: Query, day?: string): Query {
-  const before = day ? nextCaptureDay(day) : undefined;
-  return { ...base, filters: day ? { capture_after: day, ...(before ? { capture_before: before } : {}) } : {} };
+export function captureDateQuery(base: Query, date?: string): Query {
+  if (!date) return { ...base, filters: {} };
+  const after = normalizeCaptureDate(date.length === 4 ? `${date}-01-01` : date.length === 7 ? `${date}-01` : date)!;
+  const end = new Date(`${after}T00:00:00Z`);
+  if (date.length === 4) end.setUTCFullYear(end.getUTCFullYear() + 1);
+  else if (date.length === 7) end.setUTCMonth(end.getUTCMonth() + 1);
+  else end.setUTCDate(end.getUTCDate() + 1);
+  const before = end.getUTCFullYear() <= 9999 ? end.toISOString().slice(0, 10) : undefined;
+  return { ...base, filters: { capture_after: after, ...(before ? { capture_before: before } : {}) } };
 }

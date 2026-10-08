@@ -27,15 +27,26 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
     await page.getByRole("button", { name: "Timeline", exact: true }).click();
     await expect(page.getByText(/10,000 photos in scope/)).toBeVisible({ timeout: 35_000 });
     await expect(page.getByRole("navigation", { name: "Timeline years" }).getByRole("button", { name: /^2018/ })).toBeVisible();
-    await page.getByRole("navigation", { name: "Timeline years" }).getByRole("button", { name: /^2024/ }).click();
-    await page.getByRole("button", { name: "February 2024", exact: false }).click();
-    await expect(page.getByRole("button", { name: /^2024-02-29 ·/ })).toBeVisible();
+    const views = page.getByRole("navigation", { name: "Photo views" });
+    const gridBounds = await views.getByRole("button", { name: "Grid", exact: true }).boundingBox();
+    const timelineBounds = await views.getByRole("button", { name: "Timeline", exact: true }).boundingBox();
+    expect(timelineBounds!.x - gridBounds!.x - gridBounds!.width).toBeGreaterThan(0);
+    const heading = page.locator(".library-title span");
+    const years = page.getByRole("navigation", { name: "Timeline years" });
+    await years.getByRole("button", { name: /^2026/ }).click();
+    await expect(heading).toHaveText("108 photos in 2026 · 108 loaded");
+    await years.getByRole("button", { name: /^2025/ }).click();
+    await expect(heading).toHaveText("106 photos in 2025 · 106 loaded");
+    await page.getByRole("button", { name: "December 2025", exact: false }).click();
+    await expect(heading).toHaveText("27 photos in December 2025 · 27 loaded");
+    await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
+    await expect(page.getByTestId("photo-scroll").locator("img").first()).toBeVisible();
     for (const theme of ["light", "dark"]) {
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-timeline-${theme}.png`), clip: { x: 0, y: 0, width: 1440, height: 640 }, animations: "disabled" });
     }
-    await page.getByRole("button", { name: /^2024-02-29 ·/ }).click();
-    await expect(page.getByText("Capture day 2024-02-29", { exact: false })).toBeVisible();
+    await page.getByRole("button", { name: /^2025-12-15 ·/ }).click();
+    await expect(heading).toHaveText("27 photos on 2025-12-15 · 27 loaded");
     await expect(page.getByRole("button", { name: "Refresh previews" })).toBeEnabled();
     await expect(page.getByText(/10,000 photos in scope/)).toBeVisible();
     await expect(page.getByTestId("photo-scroll").locator("img").first()).toBeVisible();
@@ -44,6 +55,10 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-timeline-day-${theme}.png`), clip: { x: 0, y: 0, width: 1440, height: 640 }, animations: "disabled" });
     }
+    await years.getByRole("button", { name: /^2024/ }).click();
+    await page.getByRole("button", { name: "February 2024", exact: false }).click();
+    await page.getByRole("button", { name: /^2024-02-29 ·/ }).click();
+    await expect(heading).toHaveText("27 photos on 2024-02-29 · 27 loaded");
     await page.getByRole("button", { name: "Clear date", exact: true }).click();
     await expect(page.getByText(/10,000 photos ·/)).toBeVisible();
     await page.getByRole("button", { name: "Grid", exact: true }).click();
@@ -60,7 +75,13 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
     await page.getByRole("button", { name: "Timeline", exact: true }).click();
     await expect(page.getByText(/10,000 photos in scope/)).toBeVisible({ timeout: 35_000 });
     await page.getByRole("navigation", { name: "Timeline years" }).getByRole("button", { name: /^2022/ }).click();
+    await expect(heading).toHaveText("9,104 photos in 2022 · 250 loaded");
+    await page.getByRole("button", { name: "Load more", exact: true }).click();
+    await expect(heading).toHaveText("9,104 photos in 2022 · 500 loaded");
     await page.getByRole("button", { name: "June 2022", exact: false }).click();
+    await expect(heading).toHaveText("9,000 photos in June 2022 · 250 loaded");
+    await page.getByRole("button", { name: "Load more", exact: true }).click();
+    await expect(heading).toHaveText("9,000 photos in June 2022 · 500 loaded");
     await page.getByRole("button", { name: /^2022-06-15 ·/ }).click();
     await expect(page.getByText(/9,0\d\d photos on 2022-06-15 ·/)).toBeVisible();
     await page.getByRole("button", { name: "Load more", exact: true }).click();

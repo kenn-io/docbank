@@ -182,11 +182,19 @@ it("switches Grid and Timeline, seeks an empty day and clears its date", async (
   photos.started = true; photos.items = [photo(1)]; photos.total = 1;
   photos.timeline = { dimension: "capture_day", available: true, total: 1, missing: 0, other: 0, values: [{ key: "2024-02-29", label: "2024-02-29", count: 1, selected: false }] };
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(1)], total: 1 })));
   vi.stubGlobal("fetch", fetcher);
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const view = render(PhotosWorkspace, { photos, cache });
   await fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+  await fireEvent.click(screen.getByRole("navigation", { name: "Timeline years" }).querySelector("button")!);
+  expect(await screen.findByText("No photos in this year")).toBeTruthy();
+  expect(screen.getByText("0 photos in 2024 · 0 loaded")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "February 2024 · 1" }));
+  expect(await screen.findByText("No photos in this month")).toBeTruthy();
+  expect(screen.getByText("0 photos in February 2024 · 0 loaded")).toBeTruthy();
   await fireEvent.click(await screen.findByRole("button", { name: "2024-02-29 · 1 photos" }));
   expect(await screen.findByText("No photos on this day")).toBeTruthy();
   expect(screen.getByText("0 photos on 2024-02-29 · 0 loaded")).toBeTruthy();
