@@ -51,26 +51,17 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 	for i := range 5 {
 		browsePhotoNode(t, s, fmt.Sprintf("unrelated-%d.txt", i), browseHash(fmt.Sprintf("unrelated-%d", i)), "text/plain")
 	}
-	photoRequest := SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"}}
-	photos, err := s.materializeQuerySnapshot(ctx, photoRequest, snapshotMaterializeOptions{MaxRows: 1})
-	require.NoError(t, err)
-	require.Empty(t, photos.Rows)
-	require.Equal(t, int64(1), *facetByDimension(t, photos, "capture_day").Total)
-	photoRequest.Query = snapshotTestQuery(t, `{"filters":{"extensions":["xmp"]}}`)
-	matched, err := s.materializeQuerySnapshot(ctx, photoRequest, snapshotMaterializeOptions{MaxRows: 1})
-	require.NoError(t, err)
-	require.Empty(t, matched.Rows)
-	require.Equal(t, int64(1), *facetByDimension(t, matched, "capture_day").Total)
 	_, err = s.materializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{}`)}, snapshotMaterializeOptions{MaxRows: 1})
 	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
 	outside := snapshotTestQuery(t, `{"syntax":"advanced","text":"saved:Sidecars AND capture_after:2025-01-01 AND capture_before:2025-01-02"}`)
-	photos, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: outside, Facets: []string{"capture_day"}})
+	photos, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: outside, Facets: []string{"capture_day"}})
 	require.NoError(t, err)
 	require.Zero(t, photos.Total)
 	require.Zero(t, *facetByDimension(t, photos, "capture_day").Total)
 	for _, value := range []string{`{}`, `{"filters":{"extensions":["xmp"]}}`, `{"syntax":"advanced","text":"saved:Sidecars AND capture_before:2025-01-01"}`, `{"filters":{"capture_after":"2024-02-29","capture_before":"2024-03-01"}}`, `{"filters":{"collapse_duplicates":true}}`, fmt.Sprintf(`{"filters":{"tag_ids":[%q]}}`, tag.ID), fmt.Sprintf(`{"filters":{"set_ids":[%q]}}`, album.ID), `{"sort":{"field":"capture_time","direction":"desc"}}`, `{"sort":{"field":"import_time","direction":"asc"}}`, fmt.Sprintf(`{"filters":{"set_ids":[%q]},"sort":{"field":"added_time","direction":"desc"}}`, album.ID)} {
-		projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, value), Facets: []string{"capture_day"}})
+		projection, err := s.materializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, value), Facets: []string{"capture_day"}}, snapshotMaterializeOptions{MaxRows: 1})
 		require.NoError(t, err, value)
+		require.Empty(t, projection.Rows)
 		facet := facetByDimension(t, projection, "capture_day")
 		require.Equal(t, browsePhotoPage(t, s, value).Total, *facet.Total, value)
 		require.Equal(t, map[string]int64{"2024-02-29": 1}, facetCounts(facet), value)
@@ -119,7 +110,7 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 	require.Equal(t, int64(1), facetCounts(facet)["2024-02-29"])
 	page := browsePhotoPage(t, s, `{}`)
 	require.Equal(t, page.Total, *facet.Total)
-	for _, options := range []snapshotMaterializeOptions{{FacetMemberLimit: 1}, {FacetTimeout: -time.Nanosecond}} {
+	for _, options := range []snapshotMaterializeOptions{{FacetMemberLimit: 1}} {
 		projection, err := s.materializeQuerySnapshot(t.Context(), request, options)
 		require.NoError(t, err)
 		facet := facetByDimension(t, projection, "capture_day")

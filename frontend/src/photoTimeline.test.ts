@@ -57,15 +57,14 @@ it("shows full-scope year density and only the focused month's day rows", async 
   expect(screen.getByRole("navigation", { name: "Timeline month scrubber" })).toBeTruthy();
 });
 
-it("shows undated and unavailable scopes honestly", async () => {
-  const view = render(PhotoTimeline, { loading: false, error: "", onselect: vi.fn(), onretry: vi.fn(), facet: { dimension: "capture_day", available: true, total: 10, missing: 10, other: 0, values: [] } });
+it("shows an undated scope honestly", () => {
+  render(PhotoTimeline, { loading: false, error: "", onselect: vi.fn(), onretry: vi.fn(), facet: { dimension: "capture_day", available: true, total: 10, missing: 10, other: 0, values: [] } });
   expect(screen.getByText("These photos have no recorded capture dates.")).toBeTruthy();
-  await view.rerender({ loading: false, error: "", onselect: vi.fn(), onretry: vi.fn(), facet: { dimension: "capture_day", available: false, reason: "time_budget_exceeded", values: [] } });
-  expect(screen.queryByRole("navigation", { name: "Timeline years" })).toBeNull();
 });
 it.each([ ["time_budget_exceeded", /Timeline took too long/], ["snapshot_busy", /Timeline is busy/], ["snapshot_capacity", /Timeline is busy/], ["snapshot_too_large", /Timeline exceeds its limits/], ["member_budget_exceeded", /Too many photos/] ])("shows %s with its retry message", async (reason, message) => {
   const retry = vi.fn();
   render(PhotoTimeline, { loading: false, error: "", onselect: vi.fn(), onretry: retry, facet: { dimension: "capture_day", available: false, reason: String(reason), values: [] } });
   expect(screen.getByText(message)).toBeTruthy();
+  expect(screen.queryByRole("navigation", { name: "Timeline years" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Retry timeline" })); expect(retry).toHaveBeenCalledTimes(1);
 });

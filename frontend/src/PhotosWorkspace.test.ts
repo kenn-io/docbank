@@ -203,10 +203,10 @@ it("switches Grid and Timeline, seeks an empty day and clears its date", async (
   await fireEvent.click(screen.getByRole("button", { name: /^Retry$/ }));
   expect(await screen.findByText("No photos in this year")).toBeTruthy();
   expect(screen.getByText("0 photos in 2024 · 0 loaded")).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "February 2024 · 1" }));
+  await photos.selectDate("2024-02");
   expect(await screen.findByText("No photos in this month")).toBeTruthy();
   expect(screen.getByText("0 photos in February 2024 · 0 loaded")).toBeTruthy();
-  await fireEvent.click(await screen.findByRole("button", { name: "2024-02-29 · 1 photo" }));
+  await photos.selectDate("2024-02-29");
   expect(await screen.findByText("No photos on this day")).toBeTruthy();
   expect(screen.getByText("0 photos on 2024-02-29 · 0 loaded")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Clear date" }));

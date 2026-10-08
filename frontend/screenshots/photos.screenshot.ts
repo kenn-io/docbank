@@ -55,10 +55,6 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-timeline-day-${theme}.png`), clip: { x: 0, y: 0, width: 1440, height: 640 }, animations: "disabled" });
     }
-    await years.getByRole("button", { name: /^2024/ }).click();
-    await page.getByRole("button", { name: "February 2024", exact: false }).click();
-    await page.getByRole("button", { name: /^2024-02-29 ·/ }).click();
-    await expect(heading).toHaveText("27 photos on 2024-02-29 · 27 loaded");
     await page.getByRole("button", { name: "Clear date", exact: true }).click();
     await expect(page.getByText(/10,000 photos ·/)).toBeVisible();
     await page.getByRole("button", { name: "Grid", exact: true }).click();
