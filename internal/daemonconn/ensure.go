@@ -565,9 +565,6 @@ func proveOwnershipWithClient(
 	if err := json.UnmarshalRead(limited, &result); err != nil {
 		return false, nil
 	}
-	if _, err := io.Copy(io.Discard, limited); err != nil {
-		return false, fmt.Errorf("draining daemon ownership proof: %w", err)
-	}
 	return daemonauth.Verify(token, nonce, result.Proof), nil
 }
 
