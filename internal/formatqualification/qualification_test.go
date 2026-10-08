@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testExtractorFingerprint = "42b01ef9219b3b35dedf49ef98d311b21772da27631c3ca90597f28363de1ec5"
+const testExtractorFingerprint = "42b4922f2c65c53cebd52445d49583010fab6a3ee0eed037d9f37e076ab18312"
 
 func TestLookupRequiresTheExactQualifiedTuple(t *testing.T) {
 	query := Query{
