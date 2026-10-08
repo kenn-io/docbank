@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json/v2"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -402,6 +403,7 @@ func TestQuerySnapshotCacheRejectsNilStoreAtOperationTime(t *testing.T) {
 }
 
 func TestCaptureDayCountsPreservePageableSnapshots(t *testing.T) {
+	t.Parallel()
 	for _, driverCase := range walkTestDrivers() {
 		t.Run(driverCase.name, func(t *testing.T) {
 			s := newTestStoreWithDriver(t, driverCase.driver)
@@ -454,8 +456,9 @@ func TestCaptureDayCountsPreservePageableSnapshots(t *testing.T) {
 }
 
 func TestCaptureDayCountsCancellationKeepsReservationsUntilStopped(t *testing.T) {
+	t.Parallel()
 	for _, revoke := range []bool{false, true} {
-		t.Run(fmt.Sprint(revoke), func(t *testing.T) {
+		t.Run(strconv.FormatBool(revoke), func(t *testing.T) {
 			s := newTestStore(t)
 			_, err := s.CreateFile(t.Context(), s.RootID(), "photo.jpg", fakeHash("counts-cancel"), 1, "image/jpeg")
 			require.NoError(t, err)

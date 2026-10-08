@@ -283,11 +283,11 @@ func (s *Store) materializeNormalizedQuerySnapshot(ctx context.Context, request 
 func NormalizeSnapshotRequest(request SnapshotRequest) (SnapshotRequest, error) {
 	pageSize, err := normalizeSnapshotPageSize(request.PageSize)
 	if err != nil {
-		return SnapshotRequest{}, fmt.Errorf("%w: %v", ErrInvalidSnapshotRequest, err)
+		return SnapshotRequest{}, fmt.Errorf("%w: %w", ErrInvalidSnapshotRequest, err)
 	}
 	facets, err := normalizeSnapshotFacets(request.Facets)
 	if err != nil {
-		return SnapshotRequest{}, fmt.Errorf("%w: %v", ErrInvalidSnapshotRequest, err)
+		return SnapshotRequest{}, fmt.Errorf("%w: %w", ErrInvalidSnapshotRequest, err)
 	}
 	if request.FacetsOnly {
 		if len(facets) != 1 || facets[0] != "capture_day" {
