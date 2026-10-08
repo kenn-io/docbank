@@ -27,9 +27,9 @@ import (
 
 const (
 	visualPreviewProcessorDescriptor = document.VisualPreviewProcessorDescriptor
-	visualPreviewMaxEdgePixels       = 4096
+	visualPreviewMaxEdgePixels       = document.VisualPreviewMaxEdgePixels
 	visualPreviewMaxSourcePixels     = 100_000_000
-	visualPreviewJPEGQuality         = 90
+	visualPreviewJPEGQuality         = document.VisualPreviewJPEGQuality
 	visualPreviewMaxJPEGSegments     = 1024
 	visualPreviewMaxPNGChunks        = 1024
 	visualPreviewMaxWebPChunks       = 1024
