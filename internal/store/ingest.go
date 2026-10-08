@@ -225,46 +225,53 @@ func resolveIngestNameTx(
 	tx *sql.Tx, parentID int64, name, blobHash, sourceKind string,
 ) (string, int64, bool, error) {
 	base, ext := splitSuffix(name)
-	// Start with the blob index, then look up each owning node by ID. Keeping
-	// this join order avoids scanning every sibling for each imported file.
+	// Select candidate IDs through the blob index before joining their active
+	// origins. SQLite can visit those IDs in order without sorting provenance,
+	// so an early match need not load every sibling's origins. The left join
+	// preserves the name fallback for unknown origins.
 	rows, err := tx.Query(
-		`SELECT n.id, n.name FROM content_versions AS cv
-		 CROSS JOIN nodes AS n ON n.id = cv.node_id
-		 WHERE cv.blob_hash = ? AND n.current_version_id = cv.version_id
-		   AND n.parent_id = ? AND n.trashed_at IS NULL AND n.kind = 'file'
+		`SELECT n.id, n.name, i.source_kind, p.original_path FROM nodes AS n
+		 LEFT JOIN provenance AS p ON p.node_id = n.id
+		   AND NOT EXISTS (
+			 SELECT 1 FROM provenance AS successor WHERE successor.supersedes = p.identity
+		   )
+		 LEFT JOIN ingests AS i ON i.id = p.ingest_id
+		 WHERE n.id IN (
+			 SELECT candidate.id FROM content_versions AS cv
+			 CROSS JOIN nodes AS candidate ON candidate.id = cv.node_id
+			 WHERE cv.blob_hash = ? AND candidate.current_version_id = cv.version_id
+			   AND candidate.parent_id = ? AND candidate.trashed_at IS NULL AND candidate.kind = 'file'
+		 )
 		 ORDER BY n.id`, blobHash, parentID)
 	if err != nil {
 		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	type hashCandidate struct {
-		nodeID       int64
-		inNameFamily bool
-	}
-	var sameHash []hashCandidate
 	for rows.Next() {
 		var sibID int64
 		var sibName string
-		if err := rows.Scan(&sibID, &sibName); err != nil {
+		var storedSourceKind, originalPath sql.NullString
+		if err := rows.Scan(&sibID, &sibName, &storedSourceKind, &originalPath); err != nil {
 			return "", 0, false, fmt.Errorf("scanning sibling: %w", err)
 		}
-		_, inNameFamily := parseSuffix(sibName, base, ext)
-		sameHash = append(sameHash, hashCandidate{nodeID: sibID, inNameFamily: inNameFamily})
+		match := false
+		if !originalPath.Valid {
+			// Without provenance, only a name in the incoming suffix family
+			// identifies a prior import of this content.
+			_, match = parseSuffix(sibName, base, ext)
+		} else if storedSourceKind.String == sourceKind && !sourceKindIsEmbedded(storedSourceKind.String) {
+			// Operational origins use normalized local basenames. Embedded
+			// references are opaque and must never be treated as paths.
+			originName, err := NormalizeName(filepath.Base(originalPath.String))
+			match = err == nil && originName == name
+		}
+		if match {
+			return "", sibID, true, nil // already imported (possibly renamed)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return "", 0, false, fmt.Errorf("listing siblings for %q: %w", name, err)
-	}
-	for _, candidate := range sameHash {
-		imported, err := sameOriginTx(
-			tx, candidate.nodeID, name, candidate.inNameFamily, sourceKind,
-		)
-		if err != nil {
-			return "", 0, false, err
-		}
-		if imported {
-			return "", candidate.nodeID, true, nil // already imported (possibly under a suffix)
-		}
 	}
 	// Two disjoint index ranges cover the original name and every possible
 	// suffix. The upper bound ends in ')' (the byte after '('), so arbitrary
@@ -301,55 +308,6 @@ func resolveIngestNameTx(
 			return suffixedName(base, ext, n), 0, false, nil
 		}
 	}
-}
-
-// sameOriginTx reports whether node nodeID's active operational provenance leaf
-// has the same source kind and a basename (normalized) equal to name. Embedded
-// references are opaque and are never interpreted as filesystem paths. A node
-// with no provenance matches only when its virtual name belongs to the incoming
-// suffix family: its origin is unknown, so the legacy idempotent fallback must
-// not suppress an unrelated same-content file.
-func sameOriginTx(
-	tx *sql.Tx, nodeID int64, name string, allowUnknown bool, sourceKind string,
-) (bool, error) {
-	rows, err := tx.Query(`
-		SELECT i.source_kind, p.original_path
-		FROM provenance AS p JOIN ingests AS i ON i.id = p.ingest_id
-		WHERE p.node_id = ?
-		  AND NOT EXISTS (
-			SELECT 1 FROM provenance AS successor WHERE successor.supersedes = p.identity
-		  )`, nodeID)
-	if err != nil {
-		return false, fmt.Errorf("reading provenance of node %d: %w", nodeID, err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	sawProvenance := false
-	match := false
-	for rows.Next() {
-		var storedSourceKind, origPath string
-		if err := rows.Scan(&storedSourceKind, &origPath); err != nil {
-			return false, fmt.Errorf("scanning provenance of node %d: %w", nodeID, err)
-		}
-		sawProvenance = true
-		if sourceKindIsEmbedded(storedSourceKind) {
-			continue
-		}
-		if storedSourceKind != sourceKind {
-			continue
-		}
-		origName, err := NormalizeName(filepath.Base(origPath))
-		if err != nil {
-			continue // unnormalizable origin can't match a normalized name
-		}
-		if origName == name {
-			match = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("reading provenance of node %d: %w", nodeID, err)
-	}
-	return match || (!sawProvenance && allowUnknown), nil
 }
 
 // IngestFile imports one already-durable blob as a node under parentID,

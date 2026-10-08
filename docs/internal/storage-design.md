@@ -158,10 +158,20 @@ head.
 
 ## Ingest convergence
 
-Bulk ingest is intentionally restartable. For a destination name, the ingester
-scans the base name and numeric collision candidates. A candidate with the same
-blob hash is a skip; candidates with different content are preserved; the next
-free name receives the new node.
+Bulk ingest is intentionally restartable. The ingester finds live files in the
+destination whose current content has the incoming hash, then reads their active
+provenance in the same query. An operational origin matches when its source kind
+and normalized basename match the incoming file, even if the stored node was
+renamed. Embedded references remain opaque. A file without active provenance
+matches only within the incoming name's numeric suffix family. The first matching
+node by ID is reused; identical bytes under distinct source names remain separate
+documents.
+
+Candidate IDs are selected through the blob index before joining provenance, so
+the query avoids one database call per candidate and can stop reading origins
+after a match. It still examines same-content candidates as their count grows.
+When no origin matches, the next free name in the numeric suffix family receives
+the new node; existing content is preserved.
 
 Each successful file gets its own metadata transaction. Source errors are
 collected and the batch continues, so rerunning after permissions or mount
