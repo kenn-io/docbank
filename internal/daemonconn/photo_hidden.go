@@ -48,7 +48,7 @@ func (c *Connection) PhotoHidden(ctx context.Context, action, passcode, next str
 	if action == "unlock" {
 		for _, value := range response.Cookies() {
 			if value.Name == "docbank-hidden" {
-				cookie = (&http.Cookie{Name: value.Name, Value: value.Value}).String()
+				cookie = value.Name + "=" + value.Value
 				break
 			}
 		}

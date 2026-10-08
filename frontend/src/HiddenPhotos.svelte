@@ -12,7 +12,8 @@
   let workspace = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
   let passcode = $state("");
   let nextPasscode = $state("");
-  let error = $state("");
+  let readError = $state("");
+  let actionError = $state("");
   let busy = $state(true);
   let remaining = $state(0);
   let refreshController = new AbortController();
@@ -28,7 +29,7 @@
   }
   function authorizationLost(cause: unknown) {
     clear();
-    error = cause instanceof Error ? cause.message : String(cause);
+    readError = cause instanceof Error ? cause.message : String(cause);
     if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
     else void refresh();
   }
@@ -41,15 +42,16 @@
     try {
       const result = await getPhotoHiddenState(options());
       if (controller.signal.aborted || disposed) return;
+      readError = "";
       hiddenState = result;
       remaining = result.expires_at ? Math.max(0, Math.ceil((Date.parse(result.expires_at) - Date.now()) / 1000)) : 0;
       if (remaining) workspace = { photos: new Photos(session, authorizationLost, true), cache: new PhotoPreviewCache(session, authorizationLost) };
-    } catch (cause) { if (!controller.signal.aborted) error = cause instanceof Error ? cause.message : String(cause); }
+    } catch (cause) { if (!controller.signal.aborted && !disposed) { if (cause instanceof APIError && cause.status === 401) onauthfailure(cause); else readError = cause instanceof Error ? cause.message : String(cause); } }
     finally { if (!controller.signal.aborted) busy = false; }
   }
   async function action(kind: "enter" | "lock" | "change" | "disable") {
     busy = true;
-    error = "";
+    actionError = "";
     if (kind === "lock" || kind === "disable" || kind === "change") clear();
     try {
       if (kind === "enter") {
@@ -62,15 +64,17 @@
       nextPasscode = "";
       notifyPhotoPrivacy();
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
+      if (refreshController.signal.aborted || disposed) return;
+      if (cause instanceof APIError && cause.status === 401) { onauthfailure(cause); return; }
+      actionError = cause instanceof Error ? cause.message : String(cause);
       await refresh();
     } finally { busy = false; }
   }
 
   onMount(() => {
     void refresh();
-    const privacy = (event: Event) => { error = (event as CustomEvent<string>).detail ?? ""; void refresh(); };
-    const failed = (event: Event) => { refreshController.abort(); clear(); hiddenState.expires_at = undefined; busy = false; error = (event as CustomEvent<string>).detail; };
+    const privacy = () => { void refresh(); };
+    const failed = (event: Event) => { refreshController.abort(); clear(); hiddenState.expires_at = undefined; busy = false; readError = (event as CustomEvent<string>).detail; };
     window.addEventListener(photoPrivacyEvent, privacy);
     window.addEventListener(photoRevalidationErrorEvent, failed);
     const timer = setInterval(() => {
@@ -84,7 +88,8 @@
 
 <section class="hidden-photos" aria-label="Hidden photos">
   <div class="hidden-boundary">Hidden photos stay out of Photos. Documents and document tools can still read the underlying files.</div>
-  {#if error}<p role="alert">{error}</p><Button size="sm" onclick={() => void refresh()}>Retry</Button>{/if}
+  {#if actionError}<p role="alert">{actionError}</p>{/if}
+  {#if readError}<p role="alert">{readError}</p><Button size="sm" onclick={() => void refresh()}>Retry</Button>{/if}
   {#if workspace && remaining}
     <div class="hidden-controls"><span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span><Button size="sm" disabled={busy} onclick={() => void action("lock")}>Lock</Button></div>
     {#key workspace}<PhotosWorkspace photos={workspace.photos} cache={workspace.cache} title="Hidden" />{/key}

@@ -1,3 +1,4 @@
+import { revokeWebSession } from "../src/generated/docbank.js";
 import { expect, test } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -44,8 +45,8 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await page.route("**/api/v1/photos/hidden", route => route.abort("failed"), { times: 1 });
     await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible({ timeout: 6000 });
     await expect(page.locator("[data-asset]")).toHaveCount(0);
-    await page.getByRole("button", { name: "Retry", exact: true }).click();
-    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible({ timeout: 6000 });
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Lock", exact: true }).click();
     await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
     await expect(page.locator("[data-asset]")).toHaveCount(0);
@@ -91,7 +92,22 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
     await expect(page.locator("[data-asset]")).toHaveCount(0);
     await tab.close();
-    await writeFile(path.join(output!, "hidden-proof.json"), JSON.stringify({ workspace, id, passcode: "synthetic-passcode", states: ["hide", "unlock", "lock", "unhide", "state-read-failure", "cli-lock", "expiry", "tab-lock"] }, null, 2));
+    const token = new URLSearchParams(webURL.hash.slice(1)).get("web_session")!;
+    const fetcher = globalThis.fetch;
+    try {
+      globalThis.fetch = async (input, init) => {
+        const address = new URL(String(input), webURL.origin);
+        const host = address.host;
+        address.hostname = "127.0.0.1";
+        const headers = new Headers(init?.headers);
+        headers.set("Host", host);
+        return fetcher(address, { ...init, headers });
+      };
+      await revokeWebSession({ session: token });
+    } finally { globalThis.fetch = fetcher; }
+    await expect(page.getByText("The browser session expired or was rejected. Run `docbank web` again.")).toBeVisible({ timeout: 6000 });
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
+    await writeFile(path.join(output!, "hidden-proof.json"), JSON.stringify({ workspace, id, passcode: "synthetic-passcode", states: ["hide", "unlock", "lock", "unhide", "automatic-recovery", "browser-session-rejected", "cli-lock", "expiry", "tab-lock"] }, null, 2));
   } finally {
     if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {
       const previewURL = new URL(await run("web", "--no-browser"));

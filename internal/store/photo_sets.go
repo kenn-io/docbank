@@ -204,9 +204,6 @@ func (s *Store) CreatePhotoSet(ctx context.Context, name string) (PhotoSet, erro
 		}
 		return writePhotoSetReceipts(ctx, tx, "set_create", PhotoSet{}, out, nil)
 	})
-	if err == nil {
-		err = s.photoReadTx(ctx, func(tx *sql.Tx) error { var e error; out, e = s.photoSetResponse(ctx, tx, out); return e })
-	}
 	return out, err
 }
 
@@ -250,6 +247,9 @@ func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, n
 		}
 		if cover != nil {
 			if *cover != nil {
+				if _, err := s.photoAssetReadQuery(ctx, tx, **cover); err != nil {
+					return err
+				}
 				var count int
 				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members WHERE set_id=? AND asset_id=?`, id, **cover).Scan(&count); err != nil {
 					return err

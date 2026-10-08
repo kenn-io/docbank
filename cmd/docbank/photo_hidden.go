@@ -20,7 +20,7 @@ func readPhotoPasscode(cmd *cobra.Command, input *bufio.Reader, prompt string) (
 		bytes, err := term.ReadPassword(int(file.Fd()))
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr())
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("reading hidden passcode: %w", err)
 		}
 		if len(bytes) < 1 || len(bytes) > 1024 {
 			return "", errors.New("passcode must be 1 to 1024 bytes")
@@ -29,7 +29,7 @@ func readPhotoPasscode(cmd *cobra.Command, input *bufio.Reader, prompt string) (
 	}
 	bytes, err := input.ReadSlice('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
-		return "", err
+		return "", fmt.Errorf("reading hidden passcode: %w", err)
 	}
 	value := strings.TrimSuffix(strings.TrimSuffix(string(bytes), "\n"), "\r")
 	if len(value) < 1 || len(value) > 1024 {

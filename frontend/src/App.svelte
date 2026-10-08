@@ -202,7 +202,7 @@
     window.addEventListener(photoPrivacyEvent, privacy);
     const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(photoPrivacyEvent) : undefined;
     if (channel) channel.onmessage = () => window.dispatchEvent(new Event(photoPrivacyEvent));
-    return () => { window.removeEventListener(photoPrivacyEvent, privacy); channel?.close(); state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
+    return () => { photoPrivacyStamp = undefined; window.removeEventListener(photoPrivacyEvent, privacy); channel?.close(); state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
   });
 
   let photoPrivacyStamp: string | undefined;
@@ -220,11 +220,14 @@
       try {
         const hidden = await getPhotoHiddenState({ session: webSession, signal: AbortSignal.any([pollController.signal, AbortSignal.timeout(2000)]) });
         if (pollController.signal.aborted) return;
+        const recovered = photoPrivacyError !== "";
         photoPrivacyError = "";
         const next = JSON.stringify([hidden.change_id, hidden.configured, hidden.expires_at]);
-        if (photoPrivacyStamp !== undefined && next !== photoPrivacyStamp) window.dispatchEvent(new Event(photoPrivacyEvent));
+        if (recovered || (photoPrivacyStamp !== undefined && next !== photoPrivacyStamp)) window.dispatchEvent(new Event(photoPrivacyEvent));
         photoPrivacyStamp = next;
-      } catch {
+      } catch (cause) {
+        if (pollController.signal.aborted) return;
+        if (cause instanceof APIError && cause.status === 401) { handleFailure(cause); return; }
         if (!pollController.signal.aborted) { photoPrivacyError = "Could not check Hidden access. Retry or wait for the next check."; window.dispatchEvent(new CustomEvent(photoRevalidationErrorEvent, { detail: photoPrivacyError })); }
       } finally { polling = false; }
     };

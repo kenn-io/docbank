@@ -62,6 +62,13 @@ it("retains photo state and previews across sidebar switches until lock", async 
   expect(stored.data.get(cacheName)?.size).toBe(1);
   expect(listings()).toBe(1);
   pollFailed = false;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const recovered = vi.fn();
+  window.addEventListener("docbank-photo-privacy", recovered, { once: true });
+  await fireEvent(document, new Event("visibilitychange"));
+  await waitFor(() => expect(recovered).toHaveBeenCalledOnce());
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
   previewDenied = true;
   window.dispatchEvent(new Event("docbank-photo-privacy"));
   await waitFor(() => expect(previews()).toBeGreaterThan(2));

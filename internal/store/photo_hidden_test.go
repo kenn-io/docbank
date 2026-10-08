@@ -14,6 +14,7 @@ import (
 )
 
 func TestPhotoHiddenLifecycleAndBackup(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	now := time.Now().UTC()
@@ -85,6 +86,7 @@ func TestPhotoHiddenLifecycleAndBackup(t *testing.T) {
 }
 
 func TestPhotoHiddenFailuresSurviveBackupAndRestart(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	now := time.Now().UTC()
@@ -117,6 +119,7 @@ func TestPhotoHiddenFailuresSurviveBackupAndRestart(t *testing.T) {
 }
 
 func TestPhotoHiddenChangeRevokesAndFailedDisableIsAtomic(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
@@ -144,6 +147,7 @@ func TestPhotoHiddenChangeRevokesAndFailedDisableIsAtomic(t *testing.T) {
 }
 
 func TestPhotoHiddenValidatesBoundedHashesAndPasscodes(t *testing.T) {
+	t.Parallel()
 	for _, passcode := range []string{"", strings.Repeat("x", 1025)} {
 		require.ErrorIs(t, validHiddenPasscode(passcode), ErrInvalidHiddenPasscode)
 	}
@@ -151,13 +155,14 @@ func TestPhotoHiddenValidatesBoundedHashesAndPasscodes(t *testing.T) {
 		_, _, err := hiddenHashParts(hash)
 		require.Error(t, err)
 	}
-	assert.Equal(t, "", hiddenTokenDigest("AAAA"))
-	assert.Equal(t, "", hiddenTokenDigest(strings.Repeat("x", 1000)))
+	assert.Empty(t, hiddenTokenDigest("AAAA"))
+	assert.Empty(t, hiddenTokenDigest(strings.Repeat("x", 1000)))
 	_, _, err := newTestStore(t).UnlockPhotoHidden(context.Background(), "")
 	require.ErrorIs(t, err, ErrInvalidHiddenPasscode)
 }
 
 func TestPhotoHiddenAlbumPopulationAndCursor(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	a := albumAsset(t, s, "first.jpg")
@@ -177,12 +182,12 @@ func TestPhotoHiddenAlbumPopulationAndCursor(t *testing.T) {
 	visible := browsePhotoPage(t, s, `{"filters":{"set_ids":["`+set.ID+`"]},"sort":{"field":"name","direction":"asc"}}`)
 	require.Len(t, visible.Items, 1)
 	assert.Equal(t, b.ID, visible.Items[0].AssetID)
-	copy, err := s.CreatePhotoSet(ctx, "Selected query")
+	duplicate, err := s.CreatePhotoSet(ctx, "Selected query")
 	require.NoError(t, err)
 	value := snapshotTestQuery(t, `{}`)
-	copy, err = s.ChangePhotoSetMembers(ctx, copy.ID, copy.Revision, true, PhotoSetSelection{Query: &value})
+	duplicate, err = s.ChangePhotoSetMembers(ctx, duplicate.ID, duplicate.Revision, true, PhotoSetSelection{Query: &value})
 	require.NoError(t, err)
-	ids, err := photoSetMemberIDs(ctx, s.db, copy.ID)
+	ids, err := photoSetMemberIDs(ctx, s.db, duplicate.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{b.ID}, ids)
 	_, err = s.SetPhotoAssetHidden(ctx, b.ID, b.Revision, true)
@@ -201,6 +206,7 @@ func TestPhotoHiddenAlbumPopulationAndCursor(t *testing.T) {
 }
 
 func TestPhotoHiddenConcurrentResetCannotResurrectSession(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
@@ -221,6 +227,7 @@ func TestPhotoHiddenConcurrentResetCannotResurrectSession(t *testing.T) {
 }
 
 func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	node, err := s.CreateFile(ctx, s.RootID(), "private.jpg", fakeHash("a1"), 4, "image/jpeg")
@@ -267,6 +274,7 @@ func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
 }
 
 func TestPhotoHiddenMutationGateAndPrivacyStamp(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	asset := albumAsset(t, s, "private.jpg")
@@ -303,6 +311,7 @@ func TestPhotoHiddenMutationGateAndPrivacyStamp(t *testing.T) {
 }
 
 func TestPhotoHiddenCoverResponseProjection(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	a := albumAsset(t, s, "private.jpg")
@@ -330,9 +339,9 @@ func TestPhotoHiddenCoverResponseProjection(t *testing.T) {
 	album, err = s.UpdatePhotoSet(ctx, album.ID, album.Revision, nil, &star, nil)
 	require.NoError(t, err)
 	require.Nil(t, album.CoverAssetID)
-	copy, err := s.DuplicatePhotoSet(ctx, album.ID, album.Revision, "Copy")
+	duplicate, err := s.DuplicatePhotoSet(ctx, album.ID, album.Revision, "Copy")
 	require.NoError(t, err)
-	require.Nil(t, copy.CoverAssetID)
+	require.Nil(t, duplicate.CoverAssetID)
 	album, err = s.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: []string{b.ID}})
 	require.NoError(t, err)
 	require.Nil(t, album.CoverAssetID)
@@ -341,4 +350,83 @@ func TestPhotoHiddenCoverResponseProjection(t *testing.T) {
 	summary, err = s.PhotoSet(WithPhotoHiddenToken(ctx, token), album.ID, "")
 	require.NoError(t, err)
 	require.Equal(t, &a.ID, summary.CoverAssetID)
+}
+
+func TestPhotoHiddenChangeStampUsesBoundedReceiptSeeks(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	for range 20 {
+		_, err := s.CreatePhotoSet(ctx, "Synthetic unrelated receipt")
+		require.NoError(t, err)
+	}
+	state, err := s.PhotoHiddenState(ctx)
+	require.NoError(t, err)
+	require.Empty(t, state.ChangeID)
+	rows, err := s.db.Query(`EXPLAIN QUERY PLAN ` + photoHiddenChangeSQL)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var searches int
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		require.NotContains(t, detail, "SCAN photo_change_receipts")
+		if strings.Contains(detail, "SEARCH photo_change_receipts USING INDEX photo_change_receipts_operation") {
+			searches++
+		}
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, 2, searches)
+	asset := albumAsset(t, s, "Synthetic private.jpg")
+	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
+	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	hidden, err := s.PhotoHiddenState(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, hidden.ChangeID)
+	_, err = s.CreatePhotoSet(ctx, "Later unrelated receipt")
+	require.NoError(t, err)
+	state, err = s.PhotoHiddenState(ctx)
+	require.NoError(t, err)
+	require.Equal(t, hidden.ChangeID, state.ChangeID)
+	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetHidden(WithPhotoHiddenToken(ctx, token), asset.ID, asset.Revision, false)
+	require.NoError(t, err)
+	state, err = s.PhotoHiddenState(ctx)
+	require.NoError(t, err)
+	require.NotEqual(t, hidden.ChangeID, state.ChangeID)
+}
+
+func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "private.jpg")
+	album, err := s.CreatePhotoSet(ctx, "Synthetic")
+	require.NoError(t, err)
+	album, err = s.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
+	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	cover := &asset.ID
+	_, err = s.UpdatePhotoSet(ctx, album.ID, album.Revision, nil, nil, &cover)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	_, err = s.PromotePhotoNode(ctx, asset.Files[0].NodeID, nil, "", "")
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
+	require.NoError(t, err)
+	unlocked := WithPhotoHiddenToken(ctx, token)
+	_, err = s.PromotePhotoNode(unlocked, asset.Files[0].NodeID, nil, "", "")
+	require.ErrorIs(t, err, ErrStaleRevision)
+	require.ErrorContains(t, err, "needs its revision")
+	_, err = s.UpdatePhotoSet(unlocked, album.ID, album.Revision, nil, nil, &cover)
+	require.NoError(t, err)
+	asset, err = s.SetPhotoAssetHidden(unlocked, asset.ID, asset.Revision, false)
+	require.NoError(t, err)
+	require.NoError(t, s.LockPhotoHidden(ctx))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, false)
+	require.ErrorIs(t, err, ErrHiddenLocked)
 }
