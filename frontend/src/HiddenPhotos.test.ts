@@ -7,8 +7,96 @@ import { photoPrivacyEvent, photoRevalidationErrorEvent } from "./photos.svelte.
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const state = (unlocked: boolean) => ({ configured: true, change_id: "unchanged", ...(unlocked ? { expires_at: new Date(Date.now() + 300_000).toISOString() } : {}) });
-const problem = (status: number, detail: string) => new Response(JSON.stringify({ detail }), { status });
+const problem = (status: number, detail: string, code = "") => new Response(JSON.stringify({ detail, code }), { status });
 const prepare = () => { vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} }); vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000); vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800); };
+
+it("associates incorrect unlock feedback with its field and preserves it through privacy refresh", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.endsWith("/unlock") ? problem(403, "Wrong passcode", "hidden_passcode") : new Response(JSON.stringify(state(false)))));
+  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  const passcode = await screen.findByLabelText("Passcode", { exact: true });
+  await waitFor(() => expect((passcode as HTMLInputElement).disabled).toBe(false));
+  await fireEvent.input(passcode, { target: { value: "wrong" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+  await screen.findByText("Incorrect passcode.");
+  expect(passcode.getAttribute("aria-invalid")).toBe("true");
+  expect(passcode.getAttribute("aria-describedby")).toBe("hidden-passcode-error");
+  await waitFor(() => expect(document.activeElement).toBe(passcode));
+  await fireEvent(window, new Event(photoPrivacyEvent));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(screen.getByText("Incorrect passcode.")).toBeTruthy();
+  await fireEvent.click(screen.getByText("Manage passcode"));
+  await fireEvent.input(screen.getByLabelText("Current passcode", { exact: true }), { target: { value: "current" } });
+  expect(screen.getByText("Incorrect passcode.")).toBeTruthy();
+  await fireEvent.input(passcode, { target: { value: "edited" } });
+  expect(screen.queryByText("Incorrect passcode.")).toBeNull();
+});
+
+it("keeps management credentials independent and lets Disable ignore an invalid new passcode", async () => {
+  let configured = true;
+  let currentWrong = false;
+  const requests: unknown[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith("/change")) { requests.push(JSON.parse(String(options?.body))); return currentWrong ? problem(403, "Wrong current", "hidden_passcode") : problem(422, "Invalid new", "invalid_hidden_passcode"); }
+    if (url.endsWith("/disable")) { requests.push(JSON.parse(String(options?.body))); configured = false; return new Response("{}"); }
+    return new Response(JSON.stringify({ configured, change_id: "unchanged" }));
+  }));
+  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  await screen.findByRole("button", { name: "Unlock" });
+  await fireEvent.click(screen.getByText("Manage passcode"));
+  const current = screen.getByLabelText("Current passcode", { exact: true });
+  const next = screen.getByLabelText("New passcode", { exact: true });
+  await fireEvent.click(screen.getByRole("button", { name: "Change passcode" }));
+  expect(requests).toHaveLength(0);
+  expect(document.activeElement).toBe(next);
+  await fireEvent.input(current, { target: { value: "current" } });
+  await fireEvent.input(next, { target: { value: "é".repeat(513) } });
+  await fireEvent.click(screen.getByRole("button", { name: "Change passcode" }));
+  await screen.findByText("Use 1–1,024 bytes.");
+  expect(next.getAttribute("aria-invalid")).toBe("true");
+  expect(current.getAttribute("aria-invalid")).toBeNull();
+  expect(requests[0]).toEqual({ passcode: "current", new_passcode: "é".repeat(513) });
+  await fireEvent.input(next, { target: { value: "new" } });
+  currentWrong = true;
+  await fireEvent.click(screen.getByRole("button", { name: "Change passcode" }));
+  await screen.findByText("Incorrect passcode.");
+  expect(current.getAttribute("aria-describedby")).toBe("hidden-current-passcode-error");
+  await fireEvent.input(next, { target: { value: "" } });
+  expect(screen.getByText("Incorrect passcode.")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Disable Hidden" }));
+  await screen.findByRole("button", { name: "Set passcode" });
+  expect(requests.at(-1)).toEqual({ passcode: "current" });
+  expect(screen.queryByText("Incorrect passcode.")).toBeNull();
+  expect((screen.getByLabelText("Passcode", { exact: true }) as HTMLInputElement).value).toBe("");
+});
+
+it("shows lockout beside the submitted form without marking its field invalid", async () => {
+  let locked = false;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/unlock")) { locked = true; return problem(429, "Locked", "hidden_lockout"); }
+    return new Response(JSON.stringify({ ...state(false), ...(locked ? { locked_until: new Date(Date.now() + 300_000).toISOString() } : {}) }));
+  }));
+  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  const passcode = await screen.findByLabelText("Passcode", { exact: true });
+  await waitFor(() => expect((passcode as HTMLInputElement).disabled).toBe(false));
+  await fireEvent.input(passcode, { target: { value: "wrong" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+  await screen.findByText(/Too many attempts/);
+  expect(screen.getAllByText(/Too many attempts/)).toHaveLength(1);
+  expect(passcode.getAttribute("aria-invalid")).toBeNull();
+});
+
+it("waits for the initial privacy state and focuses locally rejected empty credentials", async () => {
+  let resolve!: (response: Response) => void;
+  const fetcher = vi.fn(() => new Promise<Response>(settle => { resolve = settle; }));
+  vi.stubGlobal("fetch", fetcher);
+  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  expect(screen.queryByRole("button", { name: "Set passcode" })).toBeNull();
+  resolve(new Response(JSON.stringify({ configured: false, change_id: "" })));
+  await fireEvent.click(await screen.findByRole("button", { name: "Set passcode" }));
+  await screen.findByText("Enter a passcode.");
+  expect(document.activeElement).toBe(screen.getByLabelText("Passcode", { exact: true }));
+  expect(fetcher).toHaveBeenCalledOnce();
+});
 
 it.each(["lock", "unlock"])("privacy read failure preserves pending %s and its error", async kind => {
   prepare();
@@ -91,6 +179,7 @@ it.each([false, true])("Retry clears a resolved read error and preserves action 
     await fireEvent.input(screen.getByLabelText("Passcode", { exact: true }), { target: { value: "wrong" } });
     await fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
     await screen.findByText("Wrong passcode");
+    expect(screen.getByLabelText("Passcode", { exact: true }).getAttribute("aria-invalid")).toBeNull();
     failing = true;
     window.dispatchEvent(new Event(photoPrivacyEvent));
   }
