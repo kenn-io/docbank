@@ -225,7 +225,7 @@
         const recovered = photoPrivacyError !== "";
         photoPrivacyError = "";
         const next = JSON.stringify([hidden.change_id, hidden.configured, hidden.expires_at]);
-        if (recovered || (photoPrivacyStamp !== undefined && next !== photoPrivacyStamp)) window.dispatchEvent(new CustomEvent(photoPrivacyEvent, { detail: hidden }));
+        if (recovered || next !== photoPrivacyStamp) window.dispatchEvent(new CustomEvent(photoPrivacyEvent, { detail: hidden }));
         photoPrivacyStamp = next;
       } catch (cause) {
         if (pollController.signal.aborted) return;
