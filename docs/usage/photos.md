@@ -39,14 +39,15 @@ the same position when further results remain.
 Choose **Timeline** to see counts for every recorded capture day in the current
 scope, including days beyond the loaded grid. The year ribbon shows each year's
 total and relative density. Choose a year or month, then a day row or the day
-selector to open that day's photos. **Clear date** restores the full scope.
+scrubber to open that day's photos. **Clear date** restores the full scope.
 The grid keeps paging within the chosen day. Choosing a day clears selection
 and starts at the top. Counts stay tied to the full scope until you refresh.
 
 Dates use the selected display file's recorded calendar day, so a capture near
 midnight keeps its date regardless of the browser's timezone. A RAW/JPEG pair
 counts once. The Undated total includes photos without a readable capture date.
-Timeline uses snapshot limits. When the scope exceeds those limits, it shows
+Timeline admits one row per included photo asset under snapshot limits, even in
+a vault with many ordinary documents. When the photos exceed those limits, it shows
 an unavailable message and offers Retry instead of a partial calendar.
 
 Choose Months or Capture sessions to group the grid. A session joins captures

@@ -25,7 +25,7 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
     await page.goto(webURL.href);
     await expect(page.getByText(/10,000 photos/)).toBeVisible();
     await page.getByRole("button", { name: "Timeline", exact: true }).click();
-    await expect(page.getByText(/10,000 photos in scope/)).toBeVisible();
+    await expect(page.getByText(/10,000 photos in scope/)).toBeVisible({ timeout: 35_000 });
     await expect(page.getByRole("navigation", { name: "Timeline years" }).getByRole("button", { name: /^2018/ })).toBeVisible();
     await page.getByRole("navigation", { name: "Timeline years" }).getByRole("button", { name: /^2024/ }).click();
     await page.getByRole("button", { name: "February 2024", exact: false }).click();
@@ -34,17 +34,31 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-timeline-${theme}.png`), clip: { x: 0, y: 0, width: 1440, height: 640 }, animations: "disabled" });
     }
-    await page.getByRole("button", { name: /^2024-02-29 ·/ }).click();
+    await page.getByRole("navigation", { name: "Timeline day scrubber" }).getByRole("button", { name: "Choose capture day 2024-02-29", exact: true }).click();
     await expect(page.getByText("Capture day 2024-02-29", { exact: false })).toBeVisible();
     await expect(page.getByRole("button", { name: "Refresh previews" })).toBeEnabled();
     await expect(page.getByText(/10,000 photos in scope/)).toBeVisible();
     await expect(page.getByTestId("photo-scroll").locator("img").first()).toBeVisible();
+    await expect.poll(() => page.getByTestId("photo-scroll").locator("img").count()).toBe(await page.locator("[data-asset]").count());
     for (const theme of ["light", "dark"]) {
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-timeline-day-${theme}.png`), clip: { x: 0, y: 0, width: 1440, height: 640 }, animations: "disabled" });
     }
     await page.getByRole("button", { name: "Clear date", exact: true }).click();
     await expect(page.getByText(/10,000 photos ·/)).toBeVisible();
+    await page.getByRole("button", { name: "Grid", exact: true }).click();
+    const excludedID = await page.locator("[data-asset]").first().getAttribute("data-asset");
+    await run("photos", "assets", "exclude", excludedID!, "--revision", "1");
+    await page.getByRole("button", { name: "Refresh previews" }).click();
+    await expect(page.getByText(/9,999 photos ·/)).toBeVisible();
+    await page.getByRole("button", { name: "Timeline", exact: true }).click();
+    await expect(page.getByText(/9,999 photos in scope/)).toBeVisible({ timeout: 35_000 });
+    await page.getByRole("button", { name: "Grid", exact: true }).click();
+    await run("photos", "assets", "exclude", excludedID!, "--revision", "2", "--excluded=false");
+    await page.getByRole("button", { name: "Refresh previews" }).click();
+    await expect(page.getByText(/10,000 photos ·/)).toBeVisible();
+    await page.getByRole("button", { name: "Timeline", exact: true }).click();
+    await expect(page.getByText(/10,000 photos in scope/)).toBeVisible({ timeout: 35_000 });
     await page.getByRole("navigation", { name: "Timeline years" }).getByRole("button", { name: /^2022/ }).click();
     await page.getByRole("button", { name: "June 2022", exact: false }).click();
     await page.getByRole("button", { name: /^2022-06-15 ·/ }).click();

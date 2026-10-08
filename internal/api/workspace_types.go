@@ -1,6 +1,7 @@
 package api
 
 import (
+	"maps"
 	"reflect"
 	"time"
 
@@ -14,10 +15,11 @@ const maxWorkspaceQueryRequestBytes = query.MaxInputBytes + (32 << 10)
 
 // WorkspaceQueryCreateRequest opens one exact, daemon-lifetime query snapshot.
 type WorkspaceQueryCreateRequest struct {
-	Query    QueryPayload `json:"query"`
-	Profile  string       `json:"profile,omitempty" maxLength:"128"`
-	PageSize int          `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
-	Facets   []string     `json:"facets,omitempty" maxItems:"9" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates,capture_day"`
+	Population string       `json:"population,omitempty" enum:"documents,photos"`
+	Query      QueryPayload `json:"query"`
+	Profile    string       `json:"profile,omitempty" maxLength:"128"`
+	PageSize   int          `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
+	Facets     []string     `json:"facets,omitempty" maxItems:"9" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates,capture_day"`
 }
 
 // WorkspaceQueryPageRequest reads one page using only the opaque cursor minted
@@ -94,7 +96,7 @@ type WorkspaceFacet struct {
 	Available bool                  `json:"available"`
 	Reason    string                `json:"reason,omitempty"`
 	Total     *int64                `json:"total,omitempty" nullable:"true"`
-	Values    []WorkspaceFacetValue `json:"values" maxItems:"250000"`
+	Values    []WorkspaceFacetValue `json:"values" maxItems:"114"`
 	Missing   *int64                `json:"missing,omitempty" nullable:"true"`
 	Other     *int64                `json:"other,omitempty" nullable:"true"`
 }
@@ -110,11 +112,19 @@ func (WorkspaceFacet) Schema(r huma.Registry) *huma.Schema {
 			{Type: "null"},
 		}}
 	}
-	return schema
+	schema.Properties["dimension"].Enum = []any{"collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates"}
+	capture := *schema
+	capture.Properties = maps.Clone(schema.Properties)
+	capture.Properties["dimension"] = &huma.Schema{Type: huma.TypeString, Enum: []any{"capture_day"}}
+	values := *schema.Properties["values"]
+	values.MaxItems = new(250000)
+	capture.Properties["values"] = &values
+	return &huma.Schema{OneOf: []*huma.Schema{schema, &capture}}
 }
 
 // WorkspaceQueryResponse carries complete frozen metadata and one row page.
 type WorkspaceQueryResponse struct {
+	Population          string                     `json:"population,omitempty" enum:"documents,photos"`
 	Query               QueryPayload               `json:"query"`
 	Dependencies        []WorkspaceQueryDependency `json:"dependencies"`
 	QueryFingerprint    string                     `json:"query_fingerprint" pattern:"^sha256:[0-9a-f]{64}$"`
@@ -171,7 +181,8 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 		return WorkspaceQueryResponse{}, err
 	}
 	out := WorkspaceQueryResponse{
-		Query: QueryPayload(canonical), Dependencies: []WorkspaceQueryDependency{},
+		Population: page.Population,
+		Query:      QueryPayload(canonical), Dependencies: []WorkspaceQueryDependency{},
 		QueryFingerprint: page.QueryFingerprint, MemberHash: page.MemberHash,
 		SnapshotFingerprint: page.SnapshotFingerprint,
 		Generation:          WorkspaceQueryGeneration{Kind: page.Generation.Kind, GenerationID: page.Generation.GenerationID},

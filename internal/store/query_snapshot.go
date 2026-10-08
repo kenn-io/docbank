@@ -33,10 +33,11 @@ var ErrQuerySnapshotTooLarge = errors.New("query snapshot exceeds its materializ
 
 // SnapshotRequest selects one frozen QueryV1 projection and its optional facets.
 type SnapshotRequest struct {
-	Query    query.Query       `json:"query"`
-	Coverage CoverageSelection `json:"coverage"`
-	PageSize int               `json:"page_size"`
-	Facets   []string          `json:"facets"`
+	Population string            `json:"population,omitempty"`
+	Query      query.Query       `json:"query"`
+	Coverage   CoverageSelection `json:"coverage"`
+	PageSize   int               `json:"page_size"`
+	Facets     []string          `json:"facets"`
 }
 
 // SnapshotMember is the exact node/content authority frozen by a snapshot.
@@ -102,6 +103,7 @@ type SnapshotFacet struct {
 
 // SnapshotProjection is a complete immutable materialization without cache ownership.
 type SnapshotProjection struct {
+	Population          string             `json:"population,omitempty"`
 	Query               query.Query        `json:"query"`
 	Dependencies        []query.Dependency `json:"dependencies"`
 	QueryFingerprint    string             `json:"query_fingerprint"`
@@ -193,6 +195,16 @@ func (s *Store) materializeQuerySnapshot(
 	if err != nil {
 		return SnapshotProjection{}, err
 	}
+	if request.Population != "" && request.Population != "documents" && request.Population != "photos" {
+		return SnapshotProjection{}, errors.New("unknown snapshot population")
+	}
+	if request.Population == "photos" {
+		for _, facet := range facets {
+			if facet != "capture_day" {
+				return SnapshotProjection{}, errors.New("photo snapshots support only capture_day facets")
+			}
+		}
+	}
 	coverage, err := normalizeCoverageSelection(request.Coverage)
 	if err != nil {
 		return SnapshotProjection{}, err
@@ -220,7 +232,7 @@ func (s *Store) materializeQuerySnapshot(
 			}
 			value = *resolved.Query
 		}
-		compiled, err := compileQuery(ctx, value, queryResolver{q: q})
+		compiled, err := (queryCompiler{photoDisplayMetadata: request.Population == "photos"}).compile(ctx, value, queryResolver{q: q})
 		if err != nil {
 			return err
 		}
@@ -237,7 +249,8 @@ func (s *Store) materializeQuerySnapshot(
 			return err
 		}
 		projection = SnapshotProjection{
-			Query: compiled.Query, Dependencies: slices.Clone(compiled.Dependencies),
+			Population: request.Population,
+			Query:      compiled.Query, Dependencies: slices.Clone(compiled.Dependencies),
 			QueryFingerprint: queryFingerprint, Coverage: coverage, PageSize: pageSize,
 			ObservedAt: options.Now().UTC(), Rows: make([]SnapshotRow, 0), Facets: make([]SnapshotFacet, 0, len(facets)),
 			Generation: SnapshotGeneration{Kind: "native"},
@@ -301,7 +314,17 @@ func materializeSnapshotRows(
 	if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, 2); err != nil {
 		return err
 	}
-	population, err := matchedPopulation(compiled, generationID, nil)
+	var population compiledQueryFragment
+	var err error
+	if projection.Population == "photos" {
+		match, matchErr := photoBrowseMatch(compiled, generationID, coverage)
+		if matchErr != nil {
+			return matchErr
+		}
+		population = compiledQueryFragment{sql: `SELECT n.id AS node_id,v.version_id AS content_version_id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + match.sql, args: match.args, relations: match.relations}
+	} else {
+		population, err = matchedPopulation(compiled, generationID, nil)
+	}
 	if err != nil {
 		return err
 	}
@@ -473,6 +496,7 @@ func snapshotMemberHash(members []SnapshotMember) string {
 }
 
 type snapshotFingerprintPayload struct {
+	Population   string             `json:"population,omitempty"`
 	Query        query.Query        `json:"query"`
 	Dependencies []query.Dependency `json:"dependencies"`
 	Generation   SnapshotGeneration `json:"generation"`
@@ -484,7 +508,8 @@ type snapshotFingerprintPayload struct {
 func snapshotProjectionFingerprint(projection SnapshotProjection) (string, error) {
 	digest := sha256.New()
 	err := json.MarshalWrite(digest, snapshotFingerprintPayload{
-		Query: projection.Query, Dependencies: projection.Dependencies, Generation: projection.Generation,
+		Population: projection.Population,
+		Query:      projection.Query, Dependencies: projection.Dependencies, Generation: projection.Generation,
 		Coverage: projection.Coverage, Rows: projection.Rows, Facets: projection.Facets,
 	}, json.Deterministic(true))
 	if err != nil {

@@ -2,12 +2,28 @@ import { afterEach, expect, it, vi } from "vitest";
 import { Photos, loadDensity } from "./photos.svelte.js";
 import { photo } from "./photo-test-fixtures.js";
 import * as snapshots from "./snapshots.js";
-import { parseQuery } from "./query.js";
+import { APIError } from "./api-transport.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
 
-it("keeps base-scope timeline counts across day changes and rejects late scope replies", async () => {
+it("invalidates cached calendar counts when the grid refreshes", async () => {
+  const first = { facets: [{ dimension: "capture_day", available: true, total: 1, missing: 0, other: 0, values: [] }] } as unknown as snapshots.SnapshotPage;
+  const second = { facets: [{ dimension: "capture_day", available: true, total: 2, missing: 0, other: 0, values: [] }] } as unknown as snapshots.SnapshotPage;
+  const create = vi.spyOn(snapshots, "createSnapshot").mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response([photo(1), photo(2)])));
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadTimeline(); photos.setView("timeline"); photos.setView("grid");
+  await photos.refresh();
+  expect(photos.timeline).toBeUndefined();
+  expect(create).toHaveBeenCalledTimes(1);
+  photos.setView("timeline");
+  await vi.waitFor(() => expect(photos.timeline?.total).toBe(2));
+  expect(create.mock.calls[1][2].population).toBe("photos");
+  photos.dispose();
+});
+
+it("keeps base counts across day changes and rejects a pre-refresh calendar reply", async () => {
   const first = { facets: [{ dimension: "capture_day", available: true, total: 9000, missing: 4, other: 0, values: [] }] } as unknown as snapshots.SnapshotPage;
   const second = { facets: [{ dimension: "capture_day", available: true, total: 20, missing: 0, other: 0, values: [] }] } as unknown as snapshots.SnapshotPage;
   let finish!: (page: snapshots.SnapshotPage) => void;
@@ -16,15 +32,25 @@ it("keeps base-scope timeline counts across day changes and rejects late scope r
   const photos = new Photos("scoped", vi.fn());
   photos.setView("timeline");
   const oldSignal = create.mock.calls[0][3];
-  await photos.setScope(parseQuery('{"filters":{"extensions":["jpg"]},"sort":{"field":"capture_time","direction":"desc"}}'));
+  photos.setView("grid");
+  await photos.refresh();
+  photos.setView("timeline");
   finish(first); await Promise.resolve();
   expect(oldSignal.aborted).toBe(true);
-  expect(photos.timeline?.total).toBe(20);
+  await vi.waitFor(() => expect(photos.timeline?.total).toBe(20));
   expect(create.mock.calls[1][1].sort.field).toBe("name");
   await photos.selectDay("2024-02-29");
   expect(create).toHaveBeenCalledTimes(2);
   expect(photos.timeline?.total).toBe(20);
-  expect(photos.query.filters.extensions).toEqual(["jpg"]);
+  photos.dispose();
+});
+
+it("maps bounded snapshot failures to an unavailable calendar", async () => {
+  vi.spyOn(snapshots, "createSnapshot").mockRejectedValue(new APIError("Too many photos", 413, "snapshot_too_large"));
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadTimeline();
+  expect(photos.timeline?.available).toBe(false);
+  expect(photos.timelineError).toBe("");
   photos.dispose();
 });
 

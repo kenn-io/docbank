@@ -19,6 +19,9 @@ func (c *Connection) CreateWorkspaceQuery(
 	ctx context.Context, request api.WorkspaceQueryCreateRequest,
 ) (api.WorkspaceQueryResponse, error) {
 	var response api.WorkspaceQueryResponse
+	if err := validateWorkspacePopulation(request.Population, request.Facets); err != nil {
+		return response, err
+	}
 	if _, err := validateWorkspaceRequest(request.Query, request.PageSize, request.Facets); err != nil {
 		return response, err
 	}
@@ -27,6 +30,9 @@ func (c *Connection) CreateWorkspaceQuery(
 		return api.WorkspaceQueryResponse{}, err
 	}
 	response = *apiResponse
+	if response.Population != request.Population {
+		return api.WorkspaceQueryResponse{}, errors.New("workspace response population differs from request")
+	}
 	if err := validateWorkspaceQueryResponse(response); err != nil {
 		return api.WorkspaceQueryResponse{}, err
 	}
@@ -105,7 +111,7 @@ func validateWorkspaceOptions(pageSize int, facets []string) error {
 	}
 	known := map[string]bool{
 		"collections": true, "tags": true, "media_family": true, "extension": true,
-		"modified": true, "size": true, "text_coverage": true, "duplicates": true,
+		"modified": true, "size": true, "text_coverage": true, "duplicates": true, "capture_day": true,
 	}
 	seen := make(map[string]bool, len(facets))
 	for _, facet := range facets {
@@ -118,6 +124,9 @@ func validateWorkspaceOptions(pageSize int, facets []string) error {
 }
 
 func validateWorkspaceQueryResponse(response api.WorkspaceQueryResponse) error {
+	if err := validateWorkspacePopulation(response.Population, nil); err != nil {
+		return err
+	}
 	if !response.Snapshot || !validSnapshotID(response.SnapshotID) ||
 		!validPrefixedSHA256(response.QueryFingerprint) || !validSHA256Hex(response.MemberHash) ||
 		!validPrefixedSHA256(response.SnapshotFingerprint) {
@@ -162,6 +171,20 @@ func validateWorkspaceQueryResponse(response api.WorkspaceQueryResponse) error {
 			}
 		} else if facet.Reason == "" || facet.Total != nil || facet.Missing != nil || facet.Other != nil || len(facet.Values) != 0 {
 			return fmt.Errorf("workspace response facet %d fabricates unavailable counts", index)
+		}
+	}
+	return nil
+}
+
+func validateWorkspacePopulation(population string, facets []string) error {
+	if population != "" && population != "documents" && population != "photos" {
+		return errors.New("unknown workspace population")
+	}
+	if population == "photos" {
+		for _, facet := range facets {
+			if facet != "capture_day" {
+				return errors.New("photo snapshots support only capture_day facets")
+			}
 		}
 	}
 	return nil

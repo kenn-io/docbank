@@ -252,7 +252,7 @@ func materializeCaptureDayFacet(ctx context.Context, q metadataQuerier, value qu
 		if total > limit {
 			return unavailableSnapshotFacet("capture_day", "member_budget_exceeded"), nil
 		}
-		if _, err := time.Parse("2006-01-02", day); err != nil {
+		if day == "" {
 			missing++
 		} else {
 			counts[day]++

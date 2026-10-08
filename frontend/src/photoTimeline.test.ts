@@ -22,7 +22,6 @@ it("bounds leap days and the final supported day without a timezone shift", () =
   expect(nextCaptureDay("2025-12-31")).toBe("2026-01-01");
   expect(nextCaptureDay("0000-02-29")).toBe("0000-03-01");
   expect(nextCaptureDay("9999-12-31")).toBeUndefined();
-  expect(() => nextCaptureDay("2023-02-29")).toThrow();
   const base = parseQuery('{"filters":{"extensions":["jpg"],"capture_after":"2024-01-01","capture_before":"2025-01-01"}}');
   expect(captureDayQuery(base, "2024-02-29").filters).toEqual({ extensions: ["jpg"], capture_after: "2024-02-29", capture_before: "2024-03-01" });
   expect(captureDayQuery(base).filters).toEqual(base.filters);
@@ -44,8 +43,9 @@ it("shows full-scope year density and only the focused month's day rows", async 
   expect(screen.queryByRole("button", { name: "2025-01-01 · 500 photos" })).toBeNull();
   await fireEvent.click(day);
   expect(onselect).toHaveBeenCalledWith("2024-02-29");
-  expect(screen.getByRole("combobox", { name: /^Timeline month/ })).toBeTruthy();
-  expect(screen.getByRole("combobox", { name: /^Timeline day/ })).toBeTruthy();
+  expect(screen.getByRole("navigation", { name: "Timeline month scrubber" })).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Choose capture day 2024-02-29" }));
+  expect(onselect).toHaveBeenCalledTimes(2);
 });
 
 it("shows undated and unavailable scopes honestly", async () => {

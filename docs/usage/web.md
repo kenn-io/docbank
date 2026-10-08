@@ -187,6 +187,10 @@ facet or changing the query creates a new snapshot. It never splices live
 results into the accepted one. An unavailable facet says why instead of
 presenting a zero count.
 
+Photos' Timeline uses the `capture_day` snapshot facet to count each included
+photo asset once. Its snapshot admits photo assets rather than unrelated
+documents. Year and month buttons and a day scrubber open older dates directly.
+
 Snapshot handles last for one daemon lifetime, up to 15 minutes idle and 30
 minutes total. Locking the browser session or stopping the daemon revokes them.
 If paging reports that the snapshot is gone, run the complete query again and

@@ -18,6 +18,18 @@ const blob10 = "a".repeat(64);
 const tagID = "11111111-1111-4111-8111-111111111111";
 const query = parseQuery("{}");
 
+it("binds photo population to creation and subsequent page authority", async () => {
+  const receipt = await page({ population: "photos", facets: [], total: 51, next_cursor: "next", rows: Array.from({ length: 50 }, (_, index) => row(index + 1, version2, blob2, 20)) });
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(receipt));
+  const first = await createSnapshot("session", query, { population: "photos", page_size: 50 }, new AbortController().signal);
+  expect(first.population).toBe("photos");
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).population).toBe("photos");
+  fetcher.mockResolvedValue(jsonResponse({ ...receipt, population: "documents", previous_cursor: "previous", next_cursor: undefined, rows: [row(51, version2, blob2, 20)] }));
+  await expect(readSnapshotPage("session", first, "next", new AbortController().signal)).rejects.toThrow("immutable snapshot authority");
+  fetcher.mockResolvedValue(jsonResponse({ ...receipt, population: "documents" }));
+  await expect(createSnapshot("session", query, { population: "photos", page_size: 50 }, new AbortController().signal)).rejects.toThrow("population does not match");
+});
+
 it("preserves a capture-day calendar beyond the ordinary facet bound", async () => {
   const values = Array.from({ length: 120 }, (_, index) => {
     const date = new Date("2024-01-01T00:00:00Z"); date.setUTCDate(date.getUTCDate() + index);

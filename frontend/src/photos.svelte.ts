@@ -101,6 +101,10 @@ export class Photos {
   }
 
   refresh(preserve?: () => (() => Promise<void>) | undefined) {
+    this.timelineController.abort();
+    this.timeline = undefined;
+    this.timelineError = "";
+    this.timelineLoading = false;
     if (this.view === "timeline") void this.loadTimeline();
     return this.replace("refresh", preserve);
   }
@@ -117,12 +121,14 @@ export class Photos {
     this.timelineLoading = true;
     this.timelineError = "";
     try {
-      const page = await createSnapshot(this.session, { ...this.baseQuery, sort: { field: "name", direction: "asc" } }, { facets: ["capture_day"], page_size: 50 }, controller.signal);
+      const page = await createSnapshot(this.session, { ...this.baseQuery, sort: { field: "name", direction: "asc" } }, { population: "photos", facets: ["capture_day"], page_size: 50 }, controller.signal);
       if (!controller.signal.aborted) this.timeline = page.facets[0];
     } catch (cause) {
       if (controller.signal.aborted) return;
       if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
-      this.timelineError = cause instanceof Error ? cause.message : String(cause);
+      if (cause instanceof APIError && ["snapshot_too_large", "snapshot_capacity", "snapshot_busy", "snapshot_unavailable"].includes(cause.code)) {
+        this.timeline = { dimension: "capture_day", available: false, reason: cause.code, values: [] };
+      } else this.timelineError = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.timelineLoading = false;
     }
@@ -145,16 +151,6 @@ export class Photos {
     this.scrollTop = 0;
     this.clearSelection();
     return this.loadMore();
-  }
-
-  setScope(query: Query) {
-    this.baseQuery = { ...query, filters: { ...query.filters } };
-    this.timeline = undefined;
-    this.timelineError = "";
-    this.timelineController.abort();
-    this.timelineLoading = false;
-    if (this.view === "timeline") void this.loadTimeline();
-    return this.selectDay();
   }
 
   private async replace(mode: "refresh" | "expiry", preserve?: () => (() => Promise<void>) | undefined) {

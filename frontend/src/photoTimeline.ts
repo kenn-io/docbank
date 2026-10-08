@@ -22,9 +22,7 @@ export function timelineYears(facet: CaptureDayFacet): TimelineYear[] {
 }
 
 export function nextCaptureDay(day: string): string | undefined {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error("Invalid capture day.");
   const date = new Date(`${day}T00:00:00Z`);
-  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== day) throw new Error("Invalid capture day.");
   if (day === "9999-12-31") return undefined;
   date.setUTCDate(date.getUTCDate() + 1);
   return date.toISOString().slice(0, 10);

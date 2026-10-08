@@ -16384,6 +16384,11 @@ components:
             - 250
           format: int64
           type: integer
+        population:
+          enum:
+            - documents
+            - photos
+          type: string
         profile:
           maxLength: 128
           type: string
@@ -16478,39 +16483,84 @@ components:
           type: string
         facets:
           items:
-            additionalProperties: false
-            properties:
-              available:
-                type: boolean
-              dimension:
-                type: string
-              missing:
-                anyOf:
-                  - minimum: 0
-                    type: integer
-                  - type: "null"
-              other:
-                anyOf:
-                  - minimum: 0
-                    type: integer
-                  - type: "null"
-              reason:
-                type: string
-              total:
-                anyOf:
-                  - minimum: 0
-                    type: integer
-                  - type: "null"
-              values:
-                items:
-                  $ref: "#/components/schemas/WorkspaceFacetValue"
-                maxItems: 250000
-                type: array
-            required:
-              - dimension
-              - available
-              - values
-            type: object
+            oneOf:
+              - additionalProperties: false
+                properties:
+                  available:
+                    type: boolean
+                  dimension:
+                    enum:
+                      - collections
+                      - tags
+                      - media_family
+                      - extension
+                      - modified
+                      - size
+                      - text_coverage
+                      - duplicates
+                    type: string
+                  missing:
+                    anyOf:
+                      - minimum: 0
+                        type: integer
+                      - type: "null"
+                  other:
+                    anyOf:
+                      - minimum: 0
+                        type: integer
+                      - type: "null"
+                  reason:
+                    type: string
+                  total:
+                    anyOf:
+                      - minimum: 0
+                        type: integer
+                      - type: "null"
+                  values:
+                    items:
+                      $ref: "#/components/schemas/WorkspaceFacetValue"
+                    maxItems: 114
+                    type: array
+                required:
+                  - dimension
+                  - available
+                  - values
+                type: object
+              - additionalProperties: false
+                properties:
+                  available:
+                    type: boolean
+                  dimension:
+                    enum:
+                      - capture_day
+                    type: string
+                  missing:
+                    anyOf:
+                      - minimum: 0
+                        type: integer
+                      - type: "null"
+                  other:
+                    anyOf:
+                      - minimum: 0
+                        type: integer
+                      - type: "null"
+                  reason:
+                    type: string
+                  total:
+                    anyOf:
+                      - minimum: 0
+                        type: integer
+                      - type: "null"
+                  values:
+                    items:
+                      $ref: "#/components/schemas/WorkspaceFacetValue"
+                    maxItems: 250000
+                    type: array
+                required:
+                  - dimension
+                  - available
+                  - values
+                type: object
           maxItems: 9
           type: array
         generation:
@@ -16531,6 +16581,11 @@ components:
             - 250
           format: int64
           type: integer
+        population:
+          enum:
+            - documents
+            - photos
+          type: string
         previous_cursor:
           maxLength: 2048
           type: string

@@ -3,6 +3,7 @@ import { canonicalQuery, parseQuery, queryFingerprint as fingerprintQuery, type 
 import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
 
 export type SnapshotOptions = {
+	population?: "documents" | "photos";
   profile?: string;
   page_size?: 50 | 100 | 250;
   facets?: string[];
@@ -32,6 +33,7 @@ export interface SnapshotRow {
 }
 
 export interface WorkspaceQueryResponse {
+	population?: "documents" | "photos";
   query: Query;
   dependencies: { kind: "tag" | "collection" | "saved"; id: string; revision: number }[];
   query_fingerprint: string;
@@ -290,7 +292,9 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
     "query", "dependencies", "query_fingerprint", "member_hash", "snapshot_fingerprint", "generation",
     "coverage", "observed_at", "page_size", "total", "total_bytes", "rows", "facets", "snapshot",
     "snapshot_id", "created_at", "expires_at",
-  ], ["$schema", "previous_cursor", "next_cursor"], "receipt");
+  ], ["$schema", "previous_cursor", "next_cursor", "population"], "receipt");
+  const population = optionalString(raw.population, "population");
+  if (population !== undefined && population !== "documents" && population !== "photos") malformed("population is unknown");
   if (raw.$schema !== undefined && string(raw.$schema, "receipt.$schema").length === 0) malformed("receipt.$schema is invalid");
   const queryRaw = record(raw.query, "query");
   let decodedQuery: Query;
@@ -359,6 +363,7 @@ async function parseSnapshot(value: unknown, expectedQuery?: Query): Promise<Sna
   if (lifetime < 0 || lifetime > snapshotAbsoluteLifetimeMilliseconds) malformed("expiry exceeds the snapshot lifetime");
   return {
     query: decodedQuery,
+    ...(population === undefined ? {} : { population }),
     dependencies,
     query_fingerprint: queryFingerprint,
     member_hash: memberHash,
@@ -422,6 +427,8 @@ async function boundedJSON(response: Response): Promise<unknown> {
 
 function normalizedOptions(options: SnapshotOptions): SnapshotOptions & { facets?: WorkspaceQueryCreateRequestFacetsItem[] } {
   if (typeof options !== "object" || options === null || Array.isArray(options)) throw new Error("Snapshot options are invalid.");
+  if (options.population !== undefined && options.population !== "documents" && options.population !== "photos") throw new Error("Snapshot population is invalid.");
+  if (options.population === "photos" && options.facets?.some(facet => facet !== "capture_day")) throw new Error("Photo snapshots support only capture_day facets.");
   const profile = options.profile;
   if (profile !== undefined && (typeof profile !== "string" || !validUnicode(profile) || encoder.encode(profile).length > 128)) {
     throw new Error("Snapshot profile exceeds its bound.");
@@ -438,6 +445,7 @@ function normalizedOptions(options: SnapshotOptions): SnapshotOptions & { facets
   });
   if (facets !== undefined && new Set(facets).size !== facets.length) throw new Error("Snapshot facets repeat a dimension.");
   return {
+    ...(options.population === undefined ? {} : { population: options.population }),
     ...(profile === undefined ? {} : { profile }),
     ...(options.page_size === undefined ? {} : { page_size: options.page_size }),
     ...(facets === undefined ? {} : { facets }),
@@ -445,6 +453,7 @@ function normalizedOptions(options: SnapshotOptions): SnapshotOptions & { facets
 }
 
 function validateFirstPage(page: SnapshotPage, options: SnapshotOptions): void {
+  if (page.population !== options.population) malformed("population does not match the request");
   if (page.previous_cursor !== undefined) malformed("first page has a previous cursor");
   const expectedRows = Math.min(page.page_size, page.total);
   if (page.rows.length !== expectedRows || (page.next_cursor !== undefined) !== (expectedRows < page.total)) {
@@ -470,7 +479,7 @@ export async function createSnapshot(
 }
 
 function sameAuthority(left: SnapshotPage, right: SnapshotPage): boolean {
-  return canonicalQuery(left.query) === canonicalQuery(right.query) &&
+  return left.population === right.population && canonicalQuery(left.query) === canonicalQuery(right.query) &&
     JSON.stringify(left.dependencies) === JSON.stringify(right.dependencies) &&
     left.query_fingerprint === right.query_fingerprint && left.member_hash === right.member_hash &&
     left.snapshot_fingerprint === right.snapshot_fingerprint &&

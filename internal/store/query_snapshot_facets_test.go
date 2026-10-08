@@ -72,7 +72,7 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 		stamp := item.day + "T00:30:00"
 		browsePhotoMetadata(t, s, item.node, item.day, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOmitted, "")))
 	}
-	_, err = s.CreateSavedQuery(ctx, "Sidecars", "", SavedQueryKindQuery, []byte(`{"filters":{"extensions":["xmp"]}}`))
+	_, err = s.CreateSavedQuery(ctx, "Sidecars", "", SavedQueryKindQuery, []byte(`{"filters":{"extensions":["xmp"],"capture_before":"2025-01-01"}}`))
 	require.NoError(t, err)
 	tag, err := s.CreateTag(ctx, "Calendar")
 	require.NoError(t, err)
@@ -82,6 +82,30 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
 	require.NoError(t, err)
+	for i := range 5 {
+		browsePhotoNode(t, s, fmt.Sprintf("unrelated-%d.txt", i), browseHash(fmt.Sprintf("unrelated-%d", i)), "text/plain")
+	}
+	photoRequest := SnapshotRequest{Population: "photos", Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"}}
+	photos, err := s.materializeQuerySnapshot(ctx, photoRequest, snapshotMaterializeOptions{MaxRows: 1})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), photos.Total)
+	require.Equal(t, raw.ID, photos.Rows[0].NodeID)
+	require.Equal(t, int64(1), *facetByDimension(t, photos, "capture_day").Total)
+	photoRequest.Query = snapshotTestQuery(t, `{"filters":{"extensions":["xmp"]}}`)
+	matched, err := s.materializeQuerySnapshot(ctx, photoRequest, snapshotMaterializeOptions{MaxRows: 1})
+	require.NoError(t, err)
+	require.Equal(t, raw.ID, matched.Rows[0].NodeID)
+	_, err = s.materializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{}`)}, snapshotMaterializeOptions{MaxRows: 1})
+	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
+	ordinary, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: photoRequest.Query, Facets: photoRequest.Facets})
+	require.NoError(t, err)
+	require.Equal(t, matched.QueryFingerprint, ordinary.QueryFingerprint)
+	require.NotEqual(t, matched.SnapshotFingerprint, ordinary.SnapshotFingerprint)
+	outside := snapshotTestQuery(t, `{"syntax":"advanced","text":"saved:Sidecars AND capture_after:2025-01-01 AND capture_before:2025-01-02"}`)
+	photos, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Population: "photos", Query: outside, Facets: []string{"capture_day"}})
+	require.NoError(t, err)
+	require.Zero(t, photos.Total)
+	require.Zero(t, *facetByDimension(t, photos, "capture_day").Total)
 	for _, value := range []string{`{}`, `{"filters":{"extensions":["xmp"]}}`, `{"syntax":"advanced","text":"saved:Sidecars AND capture_before:2025-01-01"}`, `{"filters":{"capture_after":"2024-02-29","capture_before":"2024-03-01"}}`, `{"filters":{"collapse_duplicates":true}}`, fmt.Sprintf(`{"filters":{"tag_ids":[%q]}}`, tag.ID), fmt.Sprintf(`{"filters":{"set_ids":[%q]}}`, album.ID)} {
 		projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, value), Facets: []string{"capture_day"}})
 		require.NoError(t, err, value)
