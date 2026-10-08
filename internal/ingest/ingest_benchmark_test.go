@@ -17,19 +17,30 @@ import (
 // and metadata commits. Each iteration owns a fresh vault; source generation,
 // vault startup, and shutdown are excluded from the measured interval.
 func BenchmarkAddPaths(b *testing.B) {
-	for _, size := range []int{1024, 8192, 1 << 20} {
-		b.Run(fmt.Sprintf("bytes=%d", size), func(b *testing.B) {
-			const files = 128
+	for _, tc := range []struct {
+		name         string
+		size, files  int
+		shareContent bool
+	}{
+		{"bytes=1024", 1024, 128, false},
+		{"bytes=8192", 8192, 128, false},
+		{"bytes=1048576", 1 << 20, 128, false},
+		{"shared-content/files=100", 1024, 100, true},
+		{"shared-content/files=1000", 1024, 1000, true},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
 			source := b.TempDir()
 			random := rand.NewChaCha8([32]byte{1})
-			content := make([]byte, size)
-			for i := range files {
-				_, err := random.Read(content)
-				require.NoError(b, err)
+			content := make([]byte, tc.size)
+			for i := range tc.files {
+				if i == 0 || !tc.shareContent {
+					_, err := random.Read(content)
+					require.NoError(b, err)
+				}
 				require.NoError(b, os.WriteFile(filepath.Join(source,
 					fmt.Sprintf("file-%04d.bin", i)), content, 0o600))
 			}
-			b.SetBytes(int64(files * size))
+			b.SetBytes(int64(tc.files * tc.size))
 			b.ReportAllocs()
 			for b.Loop() {
 				b.StopTimer()
@@ -47,7 +58,7 @@ func BenchmarkAddPaths(b *testing.B) {
 				storeErr := s.Close()
 				require.NoError(b, err)
 				require.Empty(b, report.Failed)
-				require.Equal(b, files, report.Added)
+				require.Equal(b, tc.files, report.Added)
 				require.NoError(b, closeErr)
 				require.NoError(b, storeErr)
 				b.StartTimer()

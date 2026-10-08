@@ -100,6 +100,70 @@ func TestFilesystemIngestDoesNotAdoptEmbeddedOpaqueReference(t *testing.T) {
 	require.Equal(t, "report.pdf", imported.Name)
 }
 
+func TestIngestSharedContentOriginRules(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		label, kind, name, origin string
+		wantAdded                 bool
+	}{
+		{"unknown matching name", "", "café (02).bin", "", false},
+		{"unknown unrelated name", "", "other.bin", "", true},
+		{"known unrelated origin", "cli", "café (02).bin", "/synthetic/other.bin", true},
+		{"other source kind", "upload", "café (02).bin", "/synthetic/café.bin", true},
+		{"embedded origin", "embedded:cli", "café (02).bin", "/synthetic/café.bin", true},
+		{"renamed normalized origin", "cli", "renamed.bin", "/synthetic/cafe\u0301.bin", false},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			var prior Node
+			var err error
+			if tc.kind == "" {
+				prior, err = s.CreateFile(ctx, s.RootID(), tc.name, fakeHash("a1"), 1, "application/octet-stream")
+			} else {
+				run, beginErr := s.BeginIngest(ctx, tc.kind, "Synthetic origin")
+				require.NoError(t, beginErr)
+				prior, err = s.IngestFileExact(ctx, run, s.RootID(), tc.name, fakeHash("a1"),
+					1, "application/octet-stream", tc.origin, "")
+			}
+			require.NoError(t, err)
+			run, err := s.BeginIngest(ctx, "cli", "Synthetic reimport")
+			require.NoError(t, err)
+			node, added, err := s.IngestFile(ctx, run, s.RootID(), "café.bin", fakeHash("a1"),
+				1, "application/octet-stream", "/synthetic/café.bin", "")
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantAdded, added)
+			if tc.wantAdded {
+				assert.NotEqual(t, prior.ID, node.ID)
+				assert.Equal(t, "café.bin", node.Name)
+			} else {
+				assert.Equal(t, prior.ID, node.ID)
+			}
+		})
+	}
+}
+
+func TestIngestSharedContentMatchesAnyActiveOriginOfFirstCandidate(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "cli", "Synthetic origins")
+	require.NoError(t, err)
+	first, err := s.IngestFileExact(ctx, run, s.RootID(), "first.bin", fakeHash("a1"),
+		1, "application/octet-stream", "/synthetic/unrelated.bin", "")
+	require.NoError(t, err)
+	addCollectionMembership(t, s, run, first.ID, "/synthetic/report.bin", nil)
+	_, err = s.IngestFileExact(ctx, run, s.RootID(), "second.bin", fakeHash("a1"),
+		1, "application/octet-stream", "/synthetic/report.bin", "")
+	require.NoError(t, err)
+
+	node, added, err := s.IngestFile(ctx, run, s.RootID(), "report.bin", fakeHash("a1"),
+		1, "application/octet-stream", "/synthetic/report.bin", "")
+	require.NoError(t, err)
+	assert.False(t, added)
+	assert.Equal(t, first.ID, node.ID)
+}
+
 func TestEmbeddedWatchKindIsPortableProvenanceNotOperationalState(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
