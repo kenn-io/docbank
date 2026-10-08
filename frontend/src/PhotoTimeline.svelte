@@ -7,7 +7,6 @@
   let { facet, loading, error, selected, onselect, onretry }: { facet?: CaptureDayFacet; loading: boolean; error: string; selected?: string; onselect: (day: string) => void; onretry: () => void } = $props();
   let focus = $state("");
   let monthStrip = $state<HTMLElement>();
-  let dayStrip = $state<HTMLElement>();
   const years = $derived(facet?.available ? timelineYears(facet) : []);
   const months = $derived(years.flatMap(year => year.months));
   const focused = $derived(months.find(month => month.key === focus) ?? months.find(month => month.key === selected?.slice(0, 7)) ?? months[0]);
@@ -16,7 +15,6 @@
     focused?.key; selected;
     void tick().then(() => {
       monthStrip?.querySelector<HTMLElement>(".timeline-active")?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-      dayStrip?.querySelector<HTMLElement>(".timeline-active")?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     });
   });
 </script>
@@ -46,11 +44,6 @@
         {/each}
       </nav>
       {#if focused}
-        <nav class="scrubber" aria-label="Timeline day scrubber" bind:this={dayStrip}>
-          {#each focused.days as day (day.key)}
-            <Button size="sm" class={selected === day.key ? "timeline-active" : ""} tone={selected === day.key ? "info" : "neutral"} ariaLabel={`Choose capture day ${day.key}`} onclick={() => onselect(day.key)}>{day.key.slice(8)} · {day.count.toLocaleString()}</Button>
-          {/each}
-        </nav>
         <div class="day-rows" aria-label={monthLabel(focused.key)}>
           {#each focused.days as day (day.key)}
             <Button size="sm" tone={selected === day.key ? "info" : "neutral"} onclick={() => onselect(day.key)}>{day.key} · {day.count.toLocaleString()} photos</Button>

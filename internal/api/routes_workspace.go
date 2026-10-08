@@ -36,9 +36,6 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 			FacetsOnly: in.Body.FacetsOnly,
 			Query:      value, Coverage: selection.Coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
 		}
-		if err := store.ValidateSnapshotRequest(request); err != nil {
-			return nil, NewError(http.StatusUnprocessableEntity, "validation", err.Error())
-		}
 		if request.FacetsOnly {
 			projection, err := service.CreateFacets(ctx, owner, request)
 			if err != nil {
@@ -48,7 +45,7 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 			if err != nil {
 				return nil, NewError(http.StatusInternalServerError, "internal", "could not encode workspace facets")
 			}
-			counts := &WorkspaceFacetResponse{FacetsOnly: true, Query: wire.Query, Dependencies: wire.Dependencies, Generation: wire.Generation, Coverage: wire.Coverage, ObservedAt: wire.ObservedAt, Facets: wire.Facets}
+			counts := &WorkspaceFacetResponse{FacetsOnly: true, Query: wire.Query, Dependencies: wire.Dependencies, Generation: wire.Generation, Coverage: wire.Coverage, ObservedAt: wire.ObservedAt, Facets: []WorkspaceCaptureDayFacet{WorkspaceCaptureDayFacet(wire.Facets[0])}}
 			return &struct{ Body WorkspaceCreateResponse }{Body: WorkspaceCreateResponse{Counts: counts}}, nil
 		}
 		page, err := service.Create(ctx, owner, request)
@@ -109,6 +106,8 @@ func workspaceQueryError(err error) error {
 		return problem
 	}
 	switch {
+	case errors.Is(err, store.ErrInvalidSnapshotRequest):
+		return NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 	case errors.Is(err, store.ErrSnapshotGone):
 		return NewError(http.StatusGone, "snapshot_gone", "query snapshot is missing, expired, or revoked")
 	case errors.Is(err, store.ErrSnapshotCursor):

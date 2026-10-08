@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json/v2"
-	"maps"
 	"reflect"
 	"time"
 
@@ -20,7 +19,7 @@ type WorkspaceQueryCreateRequest struct {
 	Query      QueryPayload `json:"query"`
 	Profile    string       `json:"profile,omitempty" maxLength:"128"`
 	PageSize   int          `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
-	Facets     []string     `json:"facets,omitempty" maxItems:"9" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates,capture_day"`
+	Facets     []string     `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates,capture_day"`
 }
 
 // WorkspaceQueryPageRequest reads one page using only the opaque cursor minted
@@ -34,7 +33,7 @@ type WorkspaceQueryPageRequest struct {
 type SavedQueryRunRequest struct {
 	Profile  string   `json:"profile,omitempty" maxLength:"128"`
 	PageSize int      `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
-	Facets   []string `json:"facets,omitempty" maxItems:"9" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates,capture_day"`
+	Facets   []string `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
 }
 
 // WorkspaceQueryDependency is the explicit snake-case wire form of an
@@ -114,13 +113,16 @@ func (WorkspaceFacet) Schema(r huma.Registry) *huma.Schema {
 		}}
 	}
 	schema.Properties["dimension"].Enum = []any{"collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates"}
-	capture := *schema
-	capture.Properties = maps.Clone(schema.Properties)
-	capture.Properties["dimension"] = &huma.Schema{Type: huma.TypeString, Enum: []any{"capture_day"}}
-	values := *schema.Properties["values"]
-	values.MaxItems = new(250000)
-	capture.Properties["values"] = &values
-	return &huma.Schema{OneOf: []*huma.Schema{schema, &capture}}
+	return schema
+}
+
+type WorkspaceCaptureDayFacet WorkspaceFacet
+
+func (WorkspaceCaptureDayFacet) Schema(r huma.Registry) *huma.Schema {
+	schema := (WorkspaceFacet{}).Schema(r)
+	schema.Properties["dimension"].Enum = []any{"capture_day"}
+	schema.Properties["values"].MaxItems = new(250000)
+	return schema
 }
 
 // WorkspaceQueryResponse carries complete frozen metadata and one row page.
@@ -137,7 +139,7 @@ type WorkspaceQueryResponse struct {
 	Total               int64                      `json:"total" minimum:"0"`
 	TotalBytes          int64                      `json:"total_bytes" minimum:"0"`
 	Rows                []WorkspaceQueryRow        `json:"rows" maxItems:"250"`
-	Facets              []WorkspaceFacet           `json:"facets" maxItems:"9"`
+	Facets              []WorkspaceFacet           `json:"facets" maxItems:"8"`
 	Snapshot            bool                       `json:"snapshot"`
 	SnapshotID          string                     `json:"snapshot_id" pattern:"^[0-9a-f]{32}$"`
 	CreatedAt           time.Time                  `json:"created_at" format:"date-time"`
@@ -232,7 +234,7 @@ type WorkspaceFacetResponse struct {
 	Generation   WorkspaceQueryGeneration   `json:"generation"`
 	Coverage     WorkspaceQueryCoverage     `json:"coverage"`
 	ObservedAt   time.Time                  `json:"observed_at" format:"date-time"`
-	Facets       []WorkspaceFacet           `json:"facets" maxItems:"1"`
+	Facets       []WorkspaceCaptureDayFacet `json:"facets" maxItems:"1"`
 }
 
 type WorkspaceCreateResponse struct {

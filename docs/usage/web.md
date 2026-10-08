@@ -189,7 +189,7 @@ presenting a zero count.
 
 Photos' Timeline uses the `capture_day` counts-only facet to count each included
 photo asset once. Its snapshot admits photo assets rather than unrelated
-documents. Year and month buttons and a day scrubber open older dates directly.
+documents. The year ribbon and month scrubber reveal dated day rows that open older photos.
 
 Snapshot handles last for one daemon lifetime, up to 15 minutes idle and 30
 minutes total. Locking the browser session or stopping the daemon revokes them.

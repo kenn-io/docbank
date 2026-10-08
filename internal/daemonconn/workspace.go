@@ -107,7 +107,8 @@ func validateWorkspaceRequest(raw api.QueryPayload, pageSize int, facets []strin
 }
 
 func validateWorkspaceOptions(pageSize int, facets []string) error {
-	return store.ValidateSnapshotRequest(store.SnapshotRequest{PageSize: pageSize, Facets: facets})
+	_, err := store.NormalizeSnapshotRequest(store.SnapshotRequest{PageSize: pageSize, Facets: facets})
+	return err
 }
 
 func validateWorkspaceQueryResponse(response api.WorkspaceQueryResponse) error {

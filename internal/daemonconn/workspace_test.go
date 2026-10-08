@@ -42,10 +42,9 @@ func TestWorkspaceClientRoundTripsExactPagesAndSavedRuns(t *testing.T) {
 
 	_, err = c.ReadWorkspaceQueryPage(t.Context(), strings.Repeat("0", 32), "opaque")
 	require.ErrorIs(t, err, store.ErrSnapshotGone)
-	photos, err := c.CreateWorkspaceQuery(t.Context(), api.WorkspaceQueryCreateRequest{Query: api.QueryPayload(`{}`), PageSize: 50, Facets: []string{"capture_day"}})
-	require.NoError(t, err)
-	require.Equal(t, int64(2), photos.Total)
-	require.Len(t, photos.Facets, 1)
+	_, err = c.CreateWorkspaceQuery(t.Context(), api.WorkspaceQueryCreateRequest{Query: api.QueryPayload(`{}`), PageSize: 50, Facets: []string{"capture_day"}})
+	require.Error(t, err)
+
 }
 
 func TestWorkspaceClientRejectsInvalidRequestsBeforeTransport(t *testing.T) {

@@ -14212,9 +14212,8 @@ components:
               - size
               - text_coverage
               - duplicates
-              - capture_day
             type: string
-          maxItems: 9
+          maxItems: 8
           type: array
           uniqueItems: true
         page_size:
@@ -16327,84 +16326,41 @@ components:
           type: array
         facets:
           items:
-            oneOf:
-              - additionalProperties: false
-                properties:
-                  available:
-                    type: boolean
-                  dimension:
-                    enum:
-                      - collections
-                      - tags
-                      - media_family
-                      - extension
-                      - modified
-                      - size
-                      - text_coverage
-                      - duplicates
-                    type: string
-                  missing:
-                    anyOf:
-                      - minimum: 0
-                        type: integer
-                      - type: "null"
-                  other:
-                    anyOf:
-                      - minimum: 0
-                        type: integer
-                      - type: "null"
-                  reason:
-                    type: string
-                  total:
-                    anyOf:
-                      - minimum: 0
-                        type: integer
-                      - type: "null"
-                  values:
-                    items:
-                      $ref: "#/components/schemas/WorkspaceFacetValue"
-                    maxItems: 114
-                    type: array
-                required:
-                  - dimension
-                  - available
-                  - values
-                type: object
-              - additionalProperties: false
-                properties:
-                  available:
-                    type: boolean
-                  dimension:
-                    enum:
-                      - capture_day
-                    type: string
-                  missing:
-                    anyOf:
-                      - minimum: 0
-                        type: integer
-                      - type: "null"
-                  other:
-                    anyOf:
-                      - minimum: 0
-                        type: integer
-                      - type: "null"
-                  reason:
-                    type: string
-                  total:
-                    anyOf:
-                      - minimum: 0
-                        type: integer
-                      - type: "null"
-                  values:
-                    items:
-                      $ref: "#/components/schemas/WorkspaceFacetValue"
-                    maxItems: 250000
-                    type: array
-                required:
-                  - dimension
-                  - available
-                  - values
-                type: object
+            additionalProperties: false
+            properties:
+              available:
+                type: boolean
+              dimension:
+                enum:
+                  - capture_day
+                type: string
+              missing:
+                anyOf:
+                  - minimum: 0
+                    type: integer
+                  - type: "null"
+              other:
+                anyOf:
+                  - minimum: 0
+                    type: integer
+                  - type: "null"
+              reason:
+                type: string
+              total:
+                anyOf:
+                  - minimum: 0
+                    type: integer
+                  - type: "null"
+              values:
+                items:
+                  $ref: "#/components/schemas/WorkspaceFacetValue"
+                maxItems: 250000
+                type: array
+            required:
+              - dimension
+              - available
+              - values
+            type: object
           maxItems: 1
           type: array
         facets_only:
@@ -16494,7 +16450,7 @@ components:
               - duplicates
               - capture_day
             type: string
-          maxItems: 9
+          maxItems: 8
           type: array
           uniqueItems: true
         facets_only:
@@ -16601,85 +16557,49 @@ components:
           type: string
         facets:
           items:
-            oneOf:
-              - additionalProperties: false
-                properties:
-                  available:
-                    type: boolean
-                  dimension:
-                    enum:
-                      - collections
-                      - tags
-                      - media_family
-                      - extension
-                      - modified
-                      - size
-                      - text_coverage
-                      - duplicates
-                    type: string
-                  missing:
-                    anyOf:
-                      - minimum: 0
-                        type: integer
-                      - type: "null"
-                  other:
-                    anyOf:
-                      - minimum: 0
-                        type: integer
-                      - type: "null"
-                  reason:
-                    type: string
-                  total:
-                    anyOf:
-                      - minimum: 0
-                        type: integer
-                      - type: "null"
-                  values:
-                    items:
-                      $ref: "#/components/schemas/WorkspaceFacetValue"
-                    maxItems: 114
-                    type: array
-                required:
-                  - dimension
-                  - available
-                  - values
-                type: object
-              - additionalProperties: false
-                properties:
-                  available:
-                    type: boolean
-                  dimension:
-                    enum:
-                      - capture_day
-                    type: string
-                  missing:
-                    anyOf:
-                      - minimum: 0
-                        type: integer
-                      - type: "null"
-                  other:
-                    anyOf:
-                      - minimum: 0
-                        type: integer
-                      - type: "null"
-                  reason:
-                    type: string
-                  total:
-                    anyOf:
-                      - minimum: 0
-                        type: integer
-                      - type: "null"
-                  values:
-                    items:
-                      $ref: "#/components/schemas/WorkspaceFacetValue"
-                    maxItems: 250000
-                    type: array
-                required:
-                  - dimension
-                  - available
-                  - values
-                type: object
-          maxItems: 9
+            additionalProperties: false
+            properties:
+              available:
+                type: boolean
+              dimension:
+                enum:
+                  - collections
+                  - tags
+                  - media_family
+                  - extension
+                  - modified
+                  - size
+                  - text_coverage
+                  - duplicates
+                type: string
+              missing:
+                anyOf:
+                  - minimum: 0
+                    type: integer
+                  - type: "null"
+              other:
+                anyOf:
+                  - minimum: 0
+                    type: integer
+                  - type: "null"
+              reason:
+                type: string
+              total:
+                anyOf:
+                  - minimum: 0
+                    type: integer
+                  - type: "null"
+              values:
+                items:
+                  $ref: "#/components/schemas/WorkspaceFacetValue"
+                maxItems: 114
+                type: array
+            required:
+              - dimension
+              - available
+              - values
+            type: object
+          maxItems: 8
           type: array
         generation:
           $ref: "#/components/schemas/WorkspaceQueryGeneration"

@@ -35,7 +35,7 @@
 <svelte:window onkeydown={escape} />
 <main class="photos-workspace" aria-label="Photo library">
   <div class="photo-toolbar browser-toolbar">
-    <div class="library-title"><h1>Library</h1><span>{photos.total.toLocaleString()} photos · {photos.items.length.toLocaleString()} loaded</span></div>
+    <div class="library-title"><h1>Library</h1><span>{photos.total.toLocaleString()} photos{photos.day ? ` on ${photos.day}` : ""} · {photos.items.length.toLocaleString()} loaded</span></div>
     <div class="toolbar-actions">
       <nav aria-label="Photo views"><Button size="sm" tone={photos.view === "grid" ? "info" : "neutral"} onclick={() => photos.setView("grid")}>Grid</Button><Button size="sm" tone={photos.view === "timeline" ? "info" : "neutral"} onclick={() => photos.setView("timeline")}>Timeline</Button></nav>
       <div class="photo-options">

@@ -69,7 +69,13 @@ func materializeSnapshotFacets(
 			}
 			continue
 		}
-		facet, err := materializeSnapshotFacet(facetCtx, q, compiled, generationID, coverage, dimension, rows, options.FacetMemberLimit)
+		var facet SnapshotFacet
+		var err error
+		if dimension == "capture_day" {
+			facet, err = materializeCaptureDayFacet(facetCtx, q, compiled, generationID, coverage, options)
+		} else {
+			facet, err = materializeSnapshotFacet(facetCtx, q, compiled, generationID, coverage, dimension, rows, options.FacetMemberLimit)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -121,9 +127,6 @@ func materializeSnapshotFacet(
 	ctx context.Context, q metadataQuerier, compiled CompiledQuery, generationID string,
 	coverage CoverageSelection, dimension string, snapshotRows []SnapshotRow, memberLimit int64,
 ) (SnapshotFacet, error) {
-	if dimension == "capture_day" {
-		return materializeCaptureDayFacet(ctx, q, compiled.Query, generationID, coverage, memberLimit)
-	}
 	facetQuery := queryWithoutSnapshotFacet(compiled.Query, dimension)
 	if dimension != "duplicates" && reflect.DeepEqual(facetQuery.Filters, compiled.Query.Filters) {
 		return materializeSnapshotFacetFromRows(ctx, q, compiled.Query, dimension, snapshotRows, memberLimit)
@@ -209,11 +212,8 @@ func materializeSnapshotFacet(
 	return finishSnapshotFacet(ctx, q, compiled.Query, dimension, observation)
 }
 
-func materializeCaptureDayFacet(ctx context.Context, q metadataQuerier, value query.Query, generation string, coverage CoverageSelection, limit int64) (SnapshotFacet, error) {
-	compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(ctx, value, queryResolver{q: q})
-	if err != nil {
-		return SnapshotFacet{}, err
-	}
+func materializeCaptureDayFacet(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, options snapshotMaterializeOptions) (SnapshotFacet, error) {
+	limit := min(options.MaxRows, options.FacetMemberLimit)
 	match, err := photoBrowseMatch(compiled, generation, coverage)
 	if err != nil {
 		return SnapshotFacet{}, err
@@ -240,6 +240,9 @@ func materializeCaptureDayFacet(ctx context.Context, q metadataQuerier, value qu
 		total++
 		if total > limit {
 			return unavailableSnapshotFacet("capture_day", "member_budget_exceeded"), nil
+		}
+		if err := options.Charge(1, 0); err != nil {
+			return SnapshotFacet{}, err
 		}
 		if day == "" {
 			missing++

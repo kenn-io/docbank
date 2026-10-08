@@ -187,8 +187,9 @@ it("switches Grid and Timeline, seeks an empty day and clears its date", async (
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const view = render(PhotosWorkspace, { photos, cache });
   await fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Choose capture day 2024-02-29" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "2024-02-29 · 1 photos" }));
   expect(await screen.findByText("No photos on this day")).toBeTruthy();
+  expect(screen.getByText("0 photos on 2024-02-29 · 0 loaded")).toBeTruthy();
   expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters).toEqual({ capture_after: "2024-02-29", capture_before: "2024-03-01" });
   await fireEvent.click(screen.getByRole("button", { name: "Clear date" }));
   await screen.findByRole("button", { name: "Select Photo 1.jpg" });

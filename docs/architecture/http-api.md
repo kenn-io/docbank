@@ -645,7 +645,7 @@ Existing `/search` requests do not gain advanced syntax through this endpoint.
 200 with its first page. The request accepts `query`, an optional configured
 processing `profile`, `page_size` of 50, 100, or 250 (default 100), and any
 subset of `collections`, `tags`, `media_family`, `extension`, `modified`,
-`size`, `text_coverage`, `duplicates`, and `capture_day` facets.
+`size`, `text_coverage`, and `duplicates` facets.
 
 `facets_only: true` accepts exactly the `capture_day` facet and admits one
 selected live display node and version per matching photo asset. Its response
@@ -681,8 +681,8 @@ file's active metadata and recorded calendar date. It preserves every scope
 filter, including capture-date filters and nested saved queries. It returns all
 observed days in descending calendar order, with `other: 0`; `missing` counts
 photos without a readable date. Its photo membership matches photo browsing,
-including member predicates and duplicate collapse. Other dimensions count
-document nodes. A counts-only request admits photo assets, so unrelated
+including member predicates and duplicate collapse. Ordinary and saved snapshots
+reject `capture_day`. A counts-only request admits photo assets, so unrelated
 documents and paired member files do not consume its row allowance.
 
 Each ordinary available facet keeps its leading 50 values plus selected QueryV1 values

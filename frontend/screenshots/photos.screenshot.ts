@@ -34,7 +34,7 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-timeline-${theme}.png`), clip: { x: 0, y: 0, width: 1440, height: 640 }, animations: "disabled" });
     }
-    await page.getByRole("navigation", { name: "Timeline day scrubber" }).getByRole("button", { name: "Choose capture day 2024-02-29", exact: true }).click();
+    await page.getByRole("button", { name: /^2024-02-29 ·/ }).click();
     await expect(page.getByText("Capture day 2024-02-29", { exact: false })).toBeVisible();
     await expect(page.getByRole("button", { name: "Refresh previews" })).toBeEnabled();
     await expect(page.getByText(/10,000 photos in scope/)).toBeVisible();

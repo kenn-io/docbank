@@ -21,8 +21,7 @@ export function loadDensity(): Density {
 export class Photos {
   view = $state<"grid" | "timeline">("grid");
   day = $state<string | undefined>();
-  baseQuery: Query = { ...photoQuery, filters: {} };
-  query = $state<Query>(this.baseQuery);
+  query = $state<Query>(photoQuery);
   timeline = $state<CaptureDayFacet | undefined>();
   timelineLoading = $state(false);
   timelineError = $state("");
@@ -121,7 +120,7 @@ export class Photos {
     this.timelineLoading = true;
     this.timelineError = "";
     try {
-      const page = await createFacetCounts(this.session, { ...this.baseQuery, sort: { field: "name", direction: "asc" } }, controller.signal);
+      const page = await createFacetCounts(this.session, { ...photoQuery, sort: { field: "name", direction: "asc" } }, controller.signal);
       if (!controller.signal.aborted) this.timeline = page.facets[0];
     } catch (cause) {
       if (controller.signal.aborted) return;
@@ -135,7 +134,7 @@ export class Photos {
   }
 
   selectDay(day?: string) {
-    const query = captureDayQuery(this.baseQuery, day);
+    const query = captureDayQuery(photoQuery, day);
     this.controller.abort();
     this.controller = new AbortController();
     this.query = query;

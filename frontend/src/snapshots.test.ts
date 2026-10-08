@@ -26,13 +26,14 @@ it("preserves a capture-day calendar beyond the ordinary facet bound", async () 
     const key = date.toISOString().slice(0, 10);
     return { key, label: key, count: 1, selected: false };
   });
-  const receipt = await page({ facets: [{ dimension: "capture_day", available: true, total: 122, missing: 2, other: 0, values }] });
+  const base = await page();
+  const receipt = { facets_only: true, query: base.query, dependencies: base.dependencies, generation: base.generation, coverage: base.coverage, observed_at: base.observed_at, facets: [{ dimension: "capture_day", available: true, total: 122, missing: 2, other: 0, values }] };
   const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(receipt)));
-  const result = await createSnapshot("session", query, { page_size: 50, facets: ["capture_day"] }, new AbortController().signal);
+  const result = await createFacetCounts("session", query, new AbortController().signal);
   expect(result.facets[0].values).toHaveLength(120);
   expect(result.facets[0].missing).toBe(2);
   receipt.facets = [{ dimension: "tags", available: true, total: 120, missing: 0, other: 0, values }];
-  fetcher.mockResolvedValue(new Response(JSON.stringify(receipt)));
+  fetcher.mockResolvedValue(new Response(JSON.stringify({ ...base, facets: receipt.facets })));
   await expect(createSnapshot("session", query, { page_size: 50, facets: ["tags"] }, new AbortController().signal)).rejects.toThrow("values exceeds its bound");
 });
 

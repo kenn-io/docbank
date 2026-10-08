@@ -234,7 +234,6 @@ func (s *QuerySnapshotService) CreateFacets(ctx context.Context, owner string, r
 		prepared.cancel()
 		s.finishBuild(prepared.build, false)
 	}()
-	prepared.projection.Rows = nil
 	return prepared.projection, nil
 }
 
@@ -298,7 +297,8 @@ func (s *QuerySnapshotService) RunSaved(
 func (s *QuerySnapshotService) prepareSnapshot(
 	ctx context.Context, owner string, request SnapshotRequest, saved *savedQuerySnapshotInput,
 ) (preparedQuerySnapshot, error) {
-	if err := ValidateSnapshotRequest(request); err != nil {
+	normalized, err := NormalizeSnapshotRequest(request)
+	if err != nil {
 		return preparedQuerySnapshot{}, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -345,7 +345,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		}
 		return nil
 	}
-	projection, err := s.store.materializeQuerySnapshot(buildCtx, request, options)
+	projection, err := s.store.materializeNormalizedQuerySnapshot(buildCtx, normalized, options)
 	if err != nil {
 		return preparedQuerySnapshot{}, err
 	}

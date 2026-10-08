@@ -5711,7 +5711,6 @@ export const SavedQueryRunRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
-  capture_day: 'capture_day',
 } as const;
 
 export type SavedQueryRunRequestPageSize = typeof SavedQueryRunRequestPageSize[keyof typeof SavedQueryRunRequestPageSize];
@@ -5726,7 +5725,7 @@ export const SavedQueryRunRequestPageSize = {
 export interface SavedQueryRunRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @maxItems 9 */
+  /** @maxItems 8 */
   facets?: SavedQueryRunRequestFacetsItem[];
   page_size?: SavedQueryRunRequestPageSize;
   /** @maxLength 128 */
@@ -5739,6 +5738,20 @@ export interface WorkspaceQueryDependency {
   /** @minimum 1 */
   revision: number;
 }
+
+export type WorkspaceQueryResponseFacetsItemDimension = typeof WorkspaceQueryResponseFacetsItemDimension[keyof typeof WorkspaceQueryResponseFacetsItemDimension];
+
+
+export const WorkspaceQueryResponseFacetsItemDimension = {
+  collections: 'collections',
+  tags: 'tags',
+  media_family: 'media_family',
+  extension: 'extension',
+  modified: 'modified',
+  size: 'size',
+  text_coverage: 'text_coverage',
+  duplicates: 'duplicates',
+} as const;
 
 export interface WorkspaceFacetValue {
   /** @minimum 0 */
@@ -5806,21 +5819,12 @@ export interface WorkspaceQueryRow {
 
 export type WorkspaceQueryResponseFacetsItem = {
   available: boolean;
-  dimension: 'collections' | 'tags' | 'media_family' | 'extension' | 'modified' | 'size' | 'text_coverage' | 'duplicates';
+  dimension: WorkspaceQueryResponseFacetsItemDimension;
   missing?: number | null;
   other?: number | null;
   reason?: string;
   total?: number | null;
   /** @maxItems 114 */
-  values: WorkspaceFacetValue[];
-} | {
-  available: boolean;
-  dimension: 'capture_day';
-  missing?: number | null;
-  other?: number | null;
-  reason?: string;
-  total?: number | null;
-  /** @maxItems 250000 */
   values: WorkspaceFacetValue[];
 };
 
@@ -5831,7 +5835,7 @@ export interface WorkspaceQueryResponse {
   created_at: string;
   dependencies: WorkspaceQueryDependency[];
   expires_at: string;
-  /** @maxItems 9 */
+  /** @maxItems 8 */
   facets: WorkspaceQueryResponseFacetsItem[];
   generation: WorkspaceQueryGeneration;
   /** @pattern ^[0-9a-f]{64}$ */
@@ -6479,18 +6483,16 @@ export interface WatchedInboxList {
   items: WatchedInbox[];
 }
 
+export type WorkspaceFacetResponseFacetsItemDimension = typeof WorkspaceFacetResponseFacetsItemDimension[keyof typeof WorkspaceFacetResponseFacetsItemDimension];
+
+
+export const WorkspaceFacetResponseFacetsItemDimension = {
+  capture_day: 'capture_day',
+} as const;
+
 export type WorkspaceFacetResponseFacetsItem = {
   available: boolean;
-  dimension: 'collections' | 'tags' | 'media_family' | 'extension' | 'modified' | 'size' | 'text_coverage' | 'duplicates';
-  missing?: number | null;
-  other?: number | null;
-  reason?: string;
-  total?: number | null;
-  /** @maxItems 114 */
-  values: WorkspaceFacetValue[];
-} | {
-  available: boolean;
-  dimension: 'capture_day';
+  dimension: WorkspaceFacetResponseFacetsItemDimension;
   missing?: number | null;
   other?: number | null;
   reason?: string;
@@ -6539,7 +6541,7 @@ export const WorkspaceQueryCreateRequestPageSize = {
 export interface WorkspaceQueryCreateRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  /** @maxItems 9 */
+  /** @maxItems 8 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
   facets_only?: boolean;
   page_size?: WorkspaceQueryCreateRequestPageSize;

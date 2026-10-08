@@ -278,11 +278,11 @@ func TestOpenAPIWorkspaceSnapshotsExposeStrictBoundedAuthority(t *testing.T) {
 
 	facets := resolveOpenAPISchema(t, schemas, response.Properties["facets"])
 	facet := resolveOpenAPISchema(t, schemas, facets.Items)
-	require.Len(t, facet.OneOf, 2)
-	capture := facet.OneOf[1]
+	counts := schemas["WorkspaceFacetResponse"]
+	capture := resolveOpenAPISchema(t, schemas, resolveOpenAPISchema(t, schemas, counts.Properties["facets"]).Items)
 	assert.Equal(t, []any{"capture_day"}, capture.Properties["dimension"].Enum)
 	assert.Equal(t, 250000, *capture.Properties["values"].MaxItems)
-	facet = facet.OneOf[0]
+	assert.NotContains(t, facet.Properties["dimension"].Enum, "capture_day")
 	values := resolveOpenAPISchema(t, schemas, facet.Properties["values"])
 	require.NotNil(t, values.MaxItems)
 	assert.Equal(t, 114, *values.MaxItems)
