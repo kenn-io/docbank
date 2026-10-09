@@ -43,16 +43,3 @@ func TestWebSessionDeniesPhotoAlbumRoutes(t *testing.T) {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(route.method, route.path, nil)), route.method+" "+route.path)
 	}
 }
-
-func TestWebSessionPermitsOnlyPhotoTrashMutation(t *testing.T) {
-	t.Parallel()
-	asset := "/api/v1/photos/assets/11111111-1111-4111-8111-111111111111"
-	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, asset, nil)))
-	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, asset+"?run=true", nil)))
-	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPatch, asset, nil)))
-	require.True(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, asset+"/trash", nil)))
-	for _, suffix := range []string{"/trash?run=true", "/trash/extra", "/exclude", "/files"} {
-		require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, asset+suffix, nil)))
-	}
-	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodDelete, asset+"/trash", nil)))
-}

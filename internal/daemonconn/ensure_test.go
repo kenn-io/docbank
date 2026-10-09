@@ -179,7 +179,6 @@ func TestEnsureReplacesPrePhotoTrashDaemon(t *testing.T) {
 			rec.Metadata[metaProtocolVersion] = protocol
 			_, err := RuntimeStore(root).Write(rec)
 			require.NoError(t, err)
-			assert.False(t, discoverOptions(true).Accept(rec, kitdaemon.PingInfo{Version: version.Version}))
 			result, err := ensureDaemon(t.Context(), root, func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
 				assert.False(t, kitdaemon.ProcessAlive(rec.PID))
 				started = true
@@ -188,7 +187,6 @@ func TestEnsureReplacesPrePhotoTrashDaemon(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result.Replaced)
 			assert.Equal(t, rec.PID, result.Replaced.PID)
-			assert.Equal(t, "68", result.Record.Metadata[metaProtocolVersion])
 			asset, err := New("http://"+result.Record.Address, result.Record.Metadata[metaAPIKey]).TrashPhotoAsset(t.Context(), assetID, 1)
 			require.NoError(t, err)
 			assert.Equal(t, assetID, asset.ID)

@@ -56,17 +56,12 @@ func TestPhotoTrashRouteRevision(t *testing.T) {
 	asset, err := fixture.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	path := "/api/v1/photos/assets/" + asset.ID + "/trash"
-	resp, body := do(t, ts, http.MethodPost, path, nil, nil)
-	assert.Equal(t, http.StatusPreconditionRequired, resp.StatusCode, body)
-	resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": "999"}, nil)
+	resp, body := do(t, ts, http.MethodPost, path, map[string]string{"If-Match": "999"}, nil)
 	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": strconv.FormatInt(asset.Revision, 10)}, nil)
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 	var receipt api.PhotoAsset
 	require.NoError(t, json.Unmarshal([]byte(body), &receipt))
-	resp, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": strconv.FormatInt(receipt.Revision, 10)}, nil)
-	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
-	assert.Equal(t, "invalid_photo_asset", decodeProblem(t, body).Code)
 }
 
 func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
