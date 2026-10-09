@@ -8,6 +8,37 @@ const state = (unlocked: boolean) => ({ configured: true, ...(unlocked ? { expir
 const prepare = () => { vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} }); vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000); vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800); };
 const problem = (status: number, detail: string, code = "") => new Response(JSON.stringify({ detail, code }), { status });
 
+it.each(["setup", "unlock", "current", "new"])("preserves %s input focus and value during an access poll", async field => {
+  let poll!: () => void;
+  const interval = globalThis.setInterval;
+  vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+    if (delay === 2000) poll = callback as () => void;
+    return interval(callback, delay, ...args);
+  });
+  let settle!: (response: Response) => void;
+  let reads = 0;
+  const hidden = { configured: field !== "setup" };
+  vi.stubGlobal("fetch", vi.fn(async () => ++reads === 1 ? Response.json(hidden) : new Promise<Response>(resolve => settle = resolve)));
+  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  await screen.findByLabelText("Passcode", { exact: true });
+  if (field === "current" || field === "new") await fireEvent.click(screen.getByText("Manage passcode"));
+  const label = field === "current" ? "Current passcode" : field === "new" ? "New passcode" : "Passcode";
+  const input = screen.getByLabelText(label, { exact: true }) as HTMLInputElement;
+  input.focus();
+  await fireEvent.input(input, { target: { value: "part" } });
+  poll();
+  await fireEvent.input(input, { target: { value: "partial" } });
+  expect(input.disabled).toBe(false);
+  expect(document.activeElement).toBe(input);
+  expect(input.value).toBe("partial");
+  settle(Response.json(hidden));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  await fireEvent.input(input, { target: { value: "partial passcode" } });
+  expect(screen.getByLabelText(label, { exact: true })).toBe(input);
+  expect(document.activeElement).toBe(input);
+  expect(input.value).toBe("partial passcode");
+});
+
 it("associates incorrect unlock feedback with its field and preserves it through access check", async () => {
   let settle!: (response: Response) => void;
   let initial = true;

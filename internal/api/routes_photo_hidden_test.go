@@ -3,6 +3,8 @@ package api_test
 import (
 	"encoding/json/v2"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,6 +14,37 @@ import (
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
+
+func TestPhotoHiddenCookiesIsolateLoopbackDaemons(t *testing.T) {
+	t.Parallel()
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+	var origins []*url.URL
+	for range 2 {
+		ts, s := newTestServer(t, nil)
+		require.NoError(t, s.SetupPhotoHidden(t.Context(), "correct"))
+		response, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/unlock", nil, map[string]string{"passcode": "correct"})
+		require.Equal(t, http.StatusOK, response.StatusCode, body)
+		origin, err := url.Parse(ts.URL)
+		require.NoError(t, err)
+		origins = append(origins, origin)
+		jar.SetCookies(origin, response.Cookies())
+	}
+	client := &http.Client{Jar: jar}
+	for _, origin := range origins {
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, origin.String()+"/api/v1/photos/hidden", nil)
+		require.NoError(t, err)
+		request.Header.Set("X-Api-Key", testAPIKey)
+		response, err := client.Do(request)
+		require.NoError(t, err)
+		var state store.PhotoHiddenState
+		err = json.UnmarshalRead(response.Body, &state)
+		require.NoError(t, response.Body.Close())
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, response.StatusCode)
+		require.NotNil(t, state.ExpiresAt)
+	}
+}
 
 func TestPhotoHiddenHTTPAndClient(t *testing.T) {
 	t.Parallel()
@@ -86,9 +119,9 @@ func TestPhotoHiddenPreviewChecksBeforeETag(t *testing.T) {
 	headers := map[string]string{"If-None-Match": strconv.Quote(generation.GenerationID)}
 	response, body := get(t, ts, path, headers)
 	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
+	_, cookie, err := daemonconn.New(ts.URL, testAPIKey).PhotoHidden(ctx, "unlock", "correct", "")
 	require.NoError(t, err)
-	headers["Cookie"] = "docbank-hidden=" + token
+	headers["Cookie"] = cookie
 	response, body = get(t, ts, path, headers)
 	require.Equal(t, http.StatusNotModified, response.StatusCode, body)
 	require.Equal(t, "no-store", response.Header.Get("Cache-Control"))
@@ -134,7 +167,7 @@ func TestPhotoHiddenLockDuringMaintenance(t *testing.T) {
 	ts, s := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
 	ctx := t.Context()
 	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
-	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
+	_, cookie, err := daemonconn.New(ts.URL, testAPIKey).PhotoHidden(ctx, "unlock", "correct", "")
 	require.NoError(t, err)
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -148,9 +181,9 @@ func TestPhotoHiddenLockDuringMaintenance(t *testing.T) {
 	}()
 	<-entered
 	t.Cleanup(func() { close(release); require.NoError(t, <-done) })
-	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/lock", map[string]string{"Cookie": "docbank-hidden=" + token}, map[string]string{})
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/lock", map[string]string{"Cookie": cookie}, map[string]string{})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	state, err := s.PhotoHiddenState(store.WithPhotoHiddenToken(ctx, token))
+	state, err := s.PhotoHiddenState(store.WithPhotoHiddenToken(ctx, strings.SplitN(cookie, "=", 2)[1]))
 	require.NoError(t, err)
 	require.Nil(t, state.ExpiresAt)
 }
