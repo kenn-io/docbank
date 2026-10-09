@@ -29,7 +29,7 @@ type mediaSearchPlan struct {
 func (service *Service) searchMediaSources(
 	ctx context.Context, request SearchRequest, ids []string, prepared preparedSearch,
 ) (retrieval.Report, error) {
-	requests, err := validateMediaSearch(request, ids, prepared.mode)
+	requests, err := validateMediaSearch(request, ids)
 	if err != nil {
 		return retrieval.Report{}, err
 	}
@@ -41,10 +41,10 @@ func (service *Service) searchMediaSources(
 	report := retrieval.Report{RequestedMode: prepared.mode, ActualMode: retrieval.ModeLexical,
 		Results: []retrieval.Result{}}
 	if len(plan.builds) != 0 {
+		candidateLimit := service.profiles[request.Profile].portable.Retrieval.LexicalLimit
 		report, err = prepared.searcher.Search(ctx, retrieval.Query{Text: request.Query,
-			Mode: prepared.mode, Limit: prepared.limit,
-			LexicalLimit: service.profiles[request.Profile].portable.Retrieval.LexicalLimit,
-			Scope:        store.SearchOptions{SelectedBuilds: plan.builds}, ContentFirst: true})
+			Mode: prepared.mode, Limit: candidateLimit, LexicalLimit: candidateLimit,
+			Scope: store.SearchOptions{SelectedBuilds: plan.builds}, ContentFirst: true})
 		if err != nil {
 			return retrieval.Report{}, err
 		}
@@ -56,17 +56,20 @@ func (service *Service) searchMediaSources(
 	}
 	plan.dropChanged(current)
 	report.Results = plan.attributedResults(report.Results)
+	if len(report.Results) > prepared.limit {
+		report.Results = report.Results[:prepared.limit]
+		report.Truncated = true
+	}
 	report.MediaSelections = plan.mediaSelections(request.MediaSources)
 	report.MediaSourceSelection, report.Coverage = true, plan.coverage()
 	return report, nil
 }
 
 func validateMediaSearch(
-	request SearchRequest, ids []string, mode retrieval.Mode,
+	request SearchRequest, ids []string,
 ) ([]MediaTranscriptRequest, error) {
 	sources := request.MediaSources
-	if len(sources) == 0 || len(sources) > store.MaxSearchSourceFenceIDs || request.Rerank ||
-		(mode != retrieval.ModeLexical && mode != retrieval.ModeAuto) {
+	if len(sources) == 0 || len(sources) > store.MaxSearchSourceFenceIDs {
 		return nil, ErrMediaSearchInvalid
 	}
 	fence := make(map[string]bool, len(ids))

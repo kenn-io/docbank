@@ -504,60 +504,6 @@ func TestProcessingClientValidatesSearchResponseAgainstExactFence(t *testing.T) 
 	assert.Equal(t, versionID, report.Results[0].ContentVersionID)
 }
 
-func TestProcessingClientAcceptsOneSelectedResultPerBuild(t *testing.T) {
-	const (
-		vaultID   = "11111111-1111-4111-8111-111111111111"
-		versionID = "22222222-2222-4222-8222-222222222222"
-	)
-	request := api.DocumentSearchRequest{Query: "visible", Mode: "lexical", Limit: 20,
-		Profile: "private", Fence: api.DocumentSourceFence{VaultUID: vaultID,
-			ContentVersionIDs: []string{versionID}},
-		MediaSources: api.MediaSearchSources{{SourceID: "source", SourceVersionID: "version",
-			ContentVersionID: versionID}}}
-	result := func(rank int, buildID string) api.DocumentSearchResult {
-		return api.DocumentSearchResult{VaultUID: vaultID, NodeID: 7, ContentVersionID: versionID,
-			Rank: rank, LexicalRank: rank, Score: 0.5, Path: "/recording.wav",
-			Evidence: []api.DocumentEvidenceReference{{Kind: "rendition_segment", BuildID: buildID,
-				SegmentID: "segment-1", MediaSources: []api.DocumentMediaSource{{SourceID: "source",
-					SourceVersionID: "version", ContentVersionID: versionID}}}}}
-	}
-	for _, testCase := range []struct {
-		name          string
-		secondBuildID string
-		selection     bool
-		wantErr       bool
-	}{
-		{name: "distinct builds", secondBuildID: strings.Repeat("b", 64), selection: true},
-		{name: "repeated build", secondBuildID: strings.Repeat("a", 64), selection: true, wantErr: true},
-		{name: "distinct builds without selection", secondBuildID: strings.Repeat("b", 64), wantErr: true},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			report := api.DocumentSearchReport{RequestedMode: "lexical", ActualMode: "lexical",
-				MediaSourceSelection: true, MediaSelections: []api.DocumentMediaSelection{},
-				Coverage:     api.DocumentSearchCoverage{ScopedDocuments: 1, CompleteDocuments: 1, State: "complete"},
-				Degradations: []string{}, Trace: []api.DocumentSearchTrace{},
-				Results: []api.DocumentSearchResult{result(1, strings.Repeat("a", 64)),
-					result(2, testCase.secondBuildID)}}
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				assert.NoError(t, json.MarshalWrite(w, report))
-			}))
-			t.Cleanup(server.Close)
-			requestValue := request
-			if !testCase.selection {
-				requestValue.MediaSources = nil
-			}
-			got, err := daemonconn.New(server.URL, serverKey).SearchDocuments(t.Context(), requestValue)
-			if testCase.wantErr {
-				require.ErrorContains(t, err, "duplicates a document identity")
-				return
-			}
-			require.NoError(t, err)
-			require.Len(t, got.Results, 2)
-		})
-	}
-}
-
 func TestProcessingClientValidatesRerankingReceiptAgainstRequest(t *testing.T) {
 	const vaultID = "11111111-1111-4111-8111-111111111111"
 	const versionID = "22222222-2222-4222-8222-222222222222"

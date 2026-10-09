@@ -334,6 +334,14 @@ func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
 	emptySelection.MediaSources = api.MediaSearchSources{}
 	id := request.Fence.ContentVersionIDs[0]
 	invalid := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{id}}, MediaSources: []api.DocumentMediaSourceSelector{{SourceID: strings.Repeat("é", 129), SourceVersionID: "version", ContentVersionID: id}}}
+	unsupported := invalid
+	unsupported.MediaSources = api.MediaSearchSources{{SourceID: "source", SourceVersionID: "version", ContentVersionID: id}}
+	reranked := unsupported
+	reranked.Rerank = true
+	semantic := unsupported
+	semantic.Mode = "semantic"
+	hybrid := unsupported
+	hybrid.Mode = "hybrid"
 	rawInput := func(input any) any {
 		return map[string]any{"query": "cue", "mode": "lexical", "profile": processing.SuppliedMediaProfileName, "fence": invalid.Fence, "media_sources": []map[string]any{{"source_id": "source", "source_version_id": "version", "content_version_id": id, "supplied_input_ids": input}}}
 	}
@@ -348,6 +356,9 @@ func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
 		{"null_selection", map[string]any{"query": "cue", "mode": "lexical", "profile": processing.SuppliedMediaProfileName, "fence": invalid.Fence, "media_sources": nil}, http.StatusUnprocessableEntity, ""},
 		{"selector_count", tooMany, http.StatusUnprocessableEntity, "expected array length <= 4096"},
 		{"UTF8_byte_bound", invalid, http.StatusUnprocessableEntity, `"code":"invalid_media_search"`},
+		{"reranking", reranked, http.StatusUnprocessableEntity, `"code":"invalid_media_search"`},
+		{"semantic", semantic, http.StatusUnprocessableEntity, `"code":"invalid_media_search"`},
+		{"hybrid", hybrid, http.StatusUnprocessableEntity, `"code":"invalid_media_search"`},
 		{"null_inputs", rawInput(nil), http.StatusUnprocessableEntity, ""},
 		{"invalid_input_identity", rawInput([]string{"invalid-input"}), http.StatusUnprocessableEntity, ""},
 		{"input_count", rawInput(slices.Repeat([]string{strings.Repeat("a", 64)}, 65)), http.StatusUnprocessableEntity, "expected array length <= 64"},

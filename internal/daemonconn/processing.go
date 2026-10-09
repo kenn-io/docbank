@@ -599,8 +599,7 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 			return errors.New("retrieval trace is invalid")
 		}
 	}
-	type resultIdentity struct{ contentVersionID, buildID string }
-	seenDocuments := make(map[resultIdentity]struct{}, len(report.Results))
+	seenDocuments := make(map[string]struct{}, len(report.Results))
 	seenLexicalRanks := make(map[int]struct{}, len(report.Results))
 	seenSemanticRanks := make(map[int]struct{}, len(report.Results))
 	for index, result := range report.Results {
@@ -616,15 +615,10 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 		if !validDocumentSearchPath(result.Path) || !validDocumentSearchExcerpt(result.Excerpt) {
 			return fmt.Errorf("result %d has invalid path or excerpt", index)
 		}
-		identity := resultIdentity{contentVersionID: result.ContentVersionID}
-		if request.MediaSources != nil && len(result.Evidence) != 0 {
-			// Media source selection returns one result per selected content/build pair.
-			identity.buildID = result.Evidence[0].BuildID
-		}
-		if _, duplicate := seenDocuments[identity]; duplicate {
+		if _, duplicate := seenDocuments[result.ContentVersionID]; duplicate {
 			return fmt.Errorf("result %d duplicates a document identity", index)
 		}
-		seenDocuments[identity] = struct{}{}
+		seenDocuments[result.ContentVersionID] = struct{}{}
 		if err := validateDocumentLaneRanks(report.ActualMode, result, seenLexicalRanks, seenSemanticRanks); err != nil {
 			return fmt.Errorf("result %d: %w", index, err)
 		}

@@ -1478,6 +1478,10 @@ func (service *Service) prepareSearch(
 	if mode == "" {
 		mode = retrieval.ModeAuto
 	}
+	if request.MediaSources != nil && (request.Rerank ||
+		(mode != retrieval.ModeLexical && mode != retrieval.ModeAuto)) {
+		return preparedSearch{}, ErrMediaSearchInvalid
+	}
 	limit := request.Limit
 	if limit == 0 {
 		limit = DefaultSearchLimit

@@ -240,12 +240,19 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 type mediaSearchChangingBackend struct {
 	*store.Store
 
-	change func()
+	firstVersionID string
+	change         func()
 }
 
 func (backend mediaSearchChangingBackend) SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int,
 	options store.SearchOptions, contentFirst bool) ([]store.ExplainedLexicalCandidate, bool, error) {
 	hits, truncated, err := backend.Store.SearchExplainedLexicalCandidates(ctx, query, limit, options, contentFirst)
+	for i, hit := range hits {
+		if hit.Node.CurrentVersionID == backend.firstVersionID {
+			hits[0], hits[i] = hits[i], hits[0]
+			break
+		}
+	}
 	backend.change()
 	return hits, truncated, err
 }
@@ -291,7 +298,7 @@ func TestMediaSearchKeepsHealthyMatchesDuringSourceChanges(t *testing.T) {
 						require.NoError(t, f.run(t, changing.JobID))
 					}
 				}
-				request := SearchRequest{Query: query, Mode: "lexical", Profile: "speech", Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{healthy.ContentVersionID, changing.ContentVersionID}}, MediaSources: []retrieval.MediaSourceSelector{
+				request := SearchRequest{Query: query, Mode: "lexical", Profile: "speech", Limit: 1, Fence: SourceFence{VaultUID: f.catalog.VaultID(), ContentVersionIDs: []string{healthy.ContentVersionID, changing.ContentVersionID}}, MediaSources: []retrieval.MediaSourceSelector{
 					{SourceID: healthy.SourceID, SourceVersionID: healthy.SourceVersionID, ContentVersionID: healthy.ContentVersionID},
 					{SourceID: changing.SourceID, SourceVersionID: changing.SourceVersionID, ContentVersionID: changing.ContentVersionID}}}
 				if change == "unknown" {
@@ -302,7 +309,7 @@ func TestMediaSearchKeepsHealthyMatchesDuringSourceChanges(t *testing.T) {
 				}
 				prepared, err := f.service.prepareSearch(request, f.service.profiles["speech"])
 				require.NoError(t, err)
-				prepared.searcher, err = retrieval.NewSearcher(retrieval.SearcherConfig{Owner: "changing-source", LeaseDuration: time.Minute, Backend: mediaSearchChangingBackend{Store: f.catalog, change: func() {
+				prepared.searcher, err = retrieval.NewSearcher(retrieval.SearcherConfig{Owner: "changing-source", LeaseDuration: time.Minute, Backend: mediaSearchChangingBackend{Store: f.catalog, firstVersionID: changing.ContentVersionID, change: func() {
 					switch change {
 					case "shared_build_revoke":
 						_, err := f.service.RevokeMediaOccurrence(t.Context(), uuid.New().String(), healthy.OccurrenceID, "1")
@@ -337,6 +344,9 @@ func TestMediaSearchKeepsHealthyMatchesDuringSourceChanges(t *testing.T) {
 					require.Len(t, report.Results, 1)
 					require.Equal(t, healthy.ContentVersionID, report.Results[0].Document.ContentVersionID)
 					require.Equal(t, 1, report.Results[0].Rank)
+					if change == "hidden" {
+						require.Equal(t, 2, report.Results[0].LexicalRank)
+					}
 				} else {
 					require.Empty(t, report.Results)
 				}

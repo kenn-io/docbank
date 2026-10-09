@@ -2829,16 +2829,20 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 		name    string
 		sources []docbank.DocumentMediaSourceSelector
 		invalid bool
+		mode    docbank.DocumentSearchMode
 	}{
-		{"empty", []docbank.DocumentMediaSourceSelector{}, true},
-		{"empty_source_id", []docbank.DocumentMediaSourceSelector{{SourceVersionID: "unknown", ContentVersionID: ids[0]}}, true},
-		{"supplied_input_count", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0], SuppliedInputIDs: slices.Repeat([]string{strings.Repeat("a", 64)}, 65)}}, true},
-		{"invalid_utf8_source_version", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "\xff", ContentVersionID: ids[0]}}, true},
-		{"selected", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}, false},
+		{"empty", []docbank.DocumentMediaSourceSelector{}, true, docbank.DocumentSearchLexical},
+		{"empty_source_id", []docbank.DocumentMediaSourceSelector{{SourceVersionID: "unknown", ContentVersionID: ids[0]}}, true, docbank.DocumentSearchLexical},
+		{"supplied_input_count", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0], SuppliedInputIDs: slices.Repeat([]string{strings.Repeat("a", 64)}, 65)}}, true, docbank.DocumentSearchLexical},
+		{"invalid_utf8_source_version", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "\xff", ContentVersionID: ids[0]}}, true, docbank.DocumentSearchLexical},
+		{"selected", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}, false, docbank.DocumentSearchLexical},
+		{"semantic", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}, true, docbank.DocumentSearchSemantic},
+		{"hybrid", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}, true, docbank.DocumentSearchHybrid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			selected := request
 			selected.MediaSources = tc.sources
+			selected.Mode = tc.mode
 			report, err := vault.SearchDocuments(t.Context(), selected)
 			if tc.invalid {
 				require.ErrorIs(t, err, docbank.ErrMediaSearchInvalid)
