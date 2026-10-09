@@ -132,8 +132,9 @@ func TestCacheReleaseRetainsReaders(t *testing.T) {
 		require.NoError(t, reader.Close())
 	}
 	require.NoError(t, cache.Release("owner", summary.ID))
-	_, _, _, err = cache.Acquire(t.Context(), "owner", summary.ID, "bundle")
+	reader, _, _, err := cache.Acquire(t.Context(), "owner", summary.ID, "bundle")
 	require.ErrorIs(t, err, ErrUnavailable)
+	require.Nil(t, reader)
 }
 
 // These barriers delay real operations without replacing their lifetime accounting.
@@ -160,6 +161,7 @@ func (b *releaseBarrier) wait() {
 
 type releaseBudget struct {
 	report.Budget
+
 	barrier *releaseBarrier
 }
 
@@ -198,6 +200,7 @@ func TestCacheReleaseDuringRevision(t *testing.T) {
 
 type releaseContext struct {
 	context.Context
+
 	barrier *releaseBarrier
 }
 

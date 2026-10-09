@@ -26,9 +26,11 @@ type reportReleaseOutput struct {
 }
 
 func releaseReportSchemas() (schema, schema) {
+	released := booleanSchema()
+	released["const"] = true
 	return rootObjectSchema(schema{"report_id": reportIDSchema()}, "report_id"),
 		rootObjectSchema(withPrivateCache(schema{
-			"report_id": reportIDSchema(), "released": schema{"type": "boolean", "const": true},
+			"report_id": reportIDSchema(), "released": released,
 		}), cacheRequired("report_id", "released")...)
 }
 

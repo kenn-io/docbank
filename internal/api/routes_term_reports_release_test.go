@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -86,6 +87,7 @@ func TestTermReportReleaseRoutes(t *testing.T) {
 
 type reportDownloadBarrier struct {
 	*httptest.ResponseRecorder
+
 	once    sync.Once
 	entered chan struct{}
 	resume  chan struct{}
@@ -93,7 +95,11 @@ type reportDownloadBarrier struct {
 
 func (w *reportDownloadBarrier) Write(data []byte) (int, error) {
 	w.once.Do(func() { close(w.entered); <-w.resume })
-	return w.ResponseRecorder.Write(data)
+	n, err := w.ResponseRecorder.Write(data)
+	if err != nil {
+		return n, fmt.Errorf("record report download: %w", err)
+	}
+	return n, nil
 }
 
 func TestTermReportReleaseDuringDownload(t *testing.T) {

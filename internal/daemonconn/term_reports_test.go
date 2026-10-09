@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 
 	"go.kenn.io/docbank/internal/daemonconn"
@@ -75,13 +76,14 @@ func TestReleaseTermReport(t *testing.T) {
 	err = client.ReleaseTermReport(t.Context(), summary.ID)
 	facts, ok = daemonconn.ExtractProblemFacts(err)
 	require.True(t, ok)
+	require.Equal(t, "report_unavailable", facts.Code)
 	require.ErrorContains(t, err, "daemon error (410 report_unavailable)")
 }
 
 func TestReleaseTermReportBoundary(t *testing.T) {
 	id := strings.Repeat("a", 48)
 	for _, status := range []int{204, 409, 410, 503, 404, 0} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
