@@ -1028,3 +1028,77 @@ func TestValidateMediaOriginsAcceptsIPv6(t *testing.T) {
 	}
 	require.NoError(t, cfg.Validate())
 }
+
+func TestDoclingDocumentRuntime(t *testing.T) {
+	valid := func() Config {
+		cfg := validRenditionRuntimeConfig(t)
+		p := cfg.RenditionProfiles["primary"]
+		p.AdapterContract = DoclingDocumentAdapterContract
+		p.MaxTranscriptChars = 0
+		p.RequestedArtifacts = []string{string(document.EvidenceArtifactMarkdown), string(document.EvidenceArtifactStructured)}
+		p.Runtime.AllowedCIDRs = []string{"127.0.0.0/8"}
+		cfg.RenditionProfiles["primary"] = p
+		return cfg
+	}
+	require.NoError(t, valid().Validate())
+	for _, test := range []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{"missing credential", func(c *Config) { c.CredentialBindings = nil }, "runtime credential binding"},
+		{"endpoint path", func(c *Config) { c.RenditionProfiles["primary"].Runtime.Endpoint += "/v1" }, "root origin"},
+		{"endpoint query", func(c *Config) { c.RenditionProfiles["primary"].Runtime.Endpoint += "?token=synthetic" }, "credential-free"},
+		{"public network", func(c *Config) { c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{"8.8.8.0/24"} }, "private or loopback"},
+		{"private supernet", func(c *Config) { c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{"10.0.0.0/7"} }, "private or loopback"},
+		{"all IPv6", func(c *Config) { c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{"::/0"} }, "private or loopback"},
+		{"invalid CIDR", func(c *Config) { c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{"synthetic"} }, "allowed CIDR"},
+		{"ambient proxy", func(c *Config) { c.RenditionProfiles["primary"].Runtime.ProxyMode = "environment" }, "proxy-disabled"},
+		{"HTTP hosted", func(c *Config) {
+			p := c.RenditionProfiles["primary"]
+			p.TrustBoundary = "hosted_provider"
+			p.Runtime.Endpoint = "http://provider.example.invalid"
+			c.RenditionProfiles["primary"] = p
+		}, "requires operator_network"},
+		{"HTTP pins", func(c *Config) {
+			c.RenditionProfiles["primary"].Runtime.Endpoint = "http://127.0.0.1"
+			c.RenditionProfiles["primary"].Runtime.SPKISHA256 = []string{strings.Repeat("a", 64)}
+		}, "requires an HTTPS"},
+		{"transcript role", func(c *Config) {
+			p := c.RenditionProfiles["primary"]
+			p.RequestedArtifacts = []string{string(document.EvidenceArtifactTranscript)}
+			c.RenditionProfiles["primary"] = p
+		}, "only markdown and structured_evidence"},
+		{"ASR limit", func(c *Config) {
+			p := c.RenditionProfiles["primary"]
+			p.MaxTranscriptChars = 1
+			c.RenditionProfiles["primary"] = p
+		}, "only supported for ASR"},
+		{"staged ASR limit", func(c *Config) {
+			p := c.RenditionProfiles["primary"]
+			p.Runtime = nil
+			p.MaxTranscriptChars = 1
+			c.RenditionProfiles["primary"] = p
+		}, "only supported for ASR"},
+		{"missing timeout", func(c *Config) { c.RenditionProfiles["primary"].Runtime.RequestTimeout = 0 }, "request and poll bounds"},
+		{"oversized poll interval", func(c *Config) { c.RenditionProfiles["primary"].Runtime.PollInterval = Duration(time.Hour) }, "request and poll bounds"},
+		{"missing poll attempts", func(c *Config) { c.RenditionProfiles["primary"].Runtime.MaxPollAttempts = 0 }, "request and poll bounds"},
+	} {
+		t.Run(test.name, func(t *testing.T) { c := valid(); test.mutate(&c); require.ErrorContains(t, c.Validate(), test.want) })
+	}
+	for _, network := range []string{"127.0.0.0/8", "10.1.0.0/16", "172.18.0.0/16", "192.168.1.0/24", "::1/128", "fd00::/64"} {
+		t.Run(network, func(t *testing.T) {
+			c := valid()
+			c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{network}
+			require.NoError(t, c.Validate())
+		})
+	}
+	t.Run("hosted HTTPS", func(t *testing.T) {
+		c := valid()
+		p := c.RenditionProfiles["primary"]
+		p.TrustBoundary = "hosted_provider"
+		p.Runtime.AllowedCIDRs = []string{"8.8.8.0/24"}
+		c.RenditionProfiles["primary"] = p
+		require.NoError(t, c.Validate())
+	})
+}

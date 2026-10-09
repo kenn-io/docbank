@@ -2029,10 +2029,10 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 	var artifactRoles []document.EvidenceArtifactRole
 	for _, role := range profile.portable.Rendition.RequestedArtifacts {
 		if role == document.EvidenceArtifactMarkdown {
-			markdownMaximum = maximum
+			markdownMaximum = min(maximum, 64<<20)
 		} else {
 			artifactRoles = append(artifactRoles, role)
-			artifactMaximum = maximum
+			artifactMaximum = min(maximum, 256<<20)
 		}
 	}
 	authorization := document.RenditionAuthorization{ProviderID: profile.provider.Descriptor().ID,
@@ -2078,6 +2078,7 @@ func runtimeVersion(work store.RenditionJobWork) store.ContentVersion {
 
 func inspectionPolicy(filename string, version store.ContentVersion, profile configuredProfile) media.InspectionPolicy {
 	maximum := min(profile.portable.Rendition.MaxDocumentBytes, int64(1<<30))
+	maxUnits := int64(profile.portable.Rendition.MaxUnits)
 	declaredMediaType := version.MimeType
 	if baseType, _, err := mime.ParseMediaType(declaredMediaType); err == nil {
 		declaredMediaType = baseType
@@ -2090,8 +2091,8 @@ func inspectionPolicy(filename string, version store.ContentVersion, profile con
 		InputKind:             document.RenditionInputOriginalFile, MaxSourceBytes: maximum,
 		MaxExpandedBytes: maximum, MaxEntryBytes: maximum, MaxEntries: 100_000,
 		MaxNestingDepth: 1, MaxTextLines: 10_000_000, MaxCharacters: 1_000_000_000,
-		MaxRecords: 10_000_000, MaxPages: 1_000_000, MaxSlides: 1_000_000,
-		MaxSheets: 1_000_000, MaxCells: 100_000_000, MaxSpineItems: 1_000_000,
+		MaxRecords: 10_000_000, MaxPages: maxUnits, MaxSlides: maxUnits,
+		MaxSheets: maxUnits, MaxCells: 100_000_000, MaxSpineItems: 1_000_000,
 		MaxResources: 1_000_000, MaxPixels: 1_000_000_000, MaxFrames: 1_000_000,
 		MaxDurationMS: 24 * 60 * 60 * 1000}
 }

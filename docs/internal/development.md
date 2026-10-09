@@ -165,6 +165,16 @@ transport, credential, and adapter inputs match. Add a typed plan disclosure,
 an authenticated daemon test with synthetic provider responses, and focused
 tests for missing credentials, consent, retries, and restored work.
 
+The Docling document and ASR runtimes share transport construction, lazy
+credential resolution, descriptor conflict checks, and the configured rendition
+request guard. `document/docling.DocumentDescriptor` owns the fixed document
+capabilities and policy identity; ASR keeps its separately qualified transcript
+policy. Each adapter has its own endpoint/deployment disclosure fingerprint.
+The document runtime additionally restricts `operator_network` allowlists to
+private or loopback prefixes. Neither adapter owns vault state or grants consent.
+See [Docling document configuration](../configuration.md#document-conversion-with-docling)
+for the admission limits and provenance behavior.
+
 ### Add configured search reranking
 
 Keep reranking deployment settings in the processing profile's `reranking`

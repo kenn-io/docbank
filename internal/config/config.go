@@ -649,7 +649,10 @@ var lowercaseSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var credentialReferencePattern = regexp.MustCompile(`^credential:[a-z][a-z0-9_-]{0,62}$`)
 var environmentVariablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-const DoclingASRAdapterContract = "docbank-docling-asr/v1"
+const (
+	DoclingASRAdapterContract      = "docbank-docling-asr/v1"
+	DoclingDocumentAdapterContract = "docbank-docling-document/v1"
+)
 
 func validateProcessingProfiles(c Config) error {
 	for name, binding := range c.CredentialBindings {
@@ -820,6 +823,9 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 			return fmt.Errorf("%s max_transcript_chars is invalid: %w", prefix, err)
 		}
 	}
+	if profile.AdapterContract == DoclingDocumentAdapterContract && profile.MaxTranscriptChars != 0 {
+		return fmt.Errorf("%s max_transcript_chars is only supported for ASR", prefix)
+	}
 
 	if profile.MaxUnits <= 0 || profile.MaxUnits > 1_000_000 {
 		return fmt.Errorf("%s max units must be between 1 and 1000000", prefix)
@@ -848,20 +854,43 @@ func validateRenditionProfileConfig(profile RenditionProfileConfig, prefix strin
 
 func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix string) error {
 	runtime := profile.Runtime
-	if profile.AdapterContract != DoclingASRAdapterContract {
-		return fmt.Errorf("%s runtime is supported only for %s", prefix, DoclingASRAdapterContract)
+	if profile.AdapterContract != DoclingASRAdapterContract && profile.AdapterContract != DoclingDocumentAdapterContract {
+		return fmt.Errorf("%s runtime is supported only for %s or %s", prefix, DoclingASRAdapterContract, DoclingDocumentAdapterContract)
 	}
 	if profile.TrustBoundary != string(document.RenditionTrustOperatorNetwork) &&
 		profile.TrustBoundary != string(document.RenditionTrustHostedProvider) {
 		return fmt.Errorf("%s runtime trust_boundary must be operator_network or hosted_provider", prefix)
 	}
-	if len(profile.RequestedArtifacts) != 1 ||
-		profile.RequestedArtifacts[0] != string(document.EvidenceArtifactTranscript) {
-		return fmt.Errorf("%s runtime requires exactly the transcript artifact role", prefix)
+	if profile.AdapterContract == DoclingASRAdapterContract {
+		if len(profile.RequestedArtifacts) != 1 || profile.RequestedArtifacts[0] != string(document.EvidenceArtifactTranscript) {
+			return fmt.Errorf("%s runtime requires exactly the transcript artifact role", prefix)
+		}
+	} else {
+		hasMarkdown := false
+		for _, role := range profile.RequestedArtifacts {
+			switch document.EvidenceArtifactRole(role) {
+			case document.EvidenceArtifactMarkdown:
+				hasMarkdown = true
+			case document.EvidenceArtifactStructured:
+			default:
+				return fmt.Errorf("%s document runtime supports only markdown and structured_evidence artifact roles", prefix)
+			}
+		}
+		if !hasMarkdown {
+			return fmt.Errorf("%s document runtime requires the markdown artifact role", prefix)
+		}
 	}
 	parsed, err := validateProviderEgressConfig(runtime.ProviderEgressConfig, prefix)
 	if err != nil {
 		return err
+	}
+	if profile.AdapterContract == DoclingDocumentAdapterContract && profile.TrustBoundary == string(document.RenditionTrustOperatorNetwork) {
+		for _, value := range runtime.AllowedCIDRs {
+			network, _ := netip.ParsePrefix(value) // Parsed by validateProviderEgressConfig.
+			if !privateRenditionNetwork(network) {
+				return fmt.Errorf("%s operator_network allowed CIDRs must be private or loopback", prefix)
+			}
+		}
 	}
 	if parsed.Path != "" && parsed.Path != "/" {
 		return fmt.Errorf("%s runtime endpoint must be an absolute root origin", prefix)
@@ -876,6 +905,19 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 		return fmt.Errorf("%s runtime request and poll bounds are invalid", prefix)
 	}
 	return nil
+}
+
+// Require the entire allowlisted prefix to remain inside one private or loopback
+// network; checking only its first address could authorize a public supernet.
+func privateRenditionNetwork(network netip.Prefix) bool {
+	network = network.Masked()
+	for _, value := range []string{"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7"} {
+		allowed := netip.MustParsePrefix(value)
+		if network.Addr().BitLen() == allowed.Addr().BitLen() && network.Bits() >= allowed.Bits() && allowed.Contains(network.Addr()) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateProviderEgressConfig(runtime ProviderEgressConfig, prefix string) (*url.URL, error) {

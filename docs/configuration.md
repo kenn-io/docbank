@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-07
+last_edited: 2026-10-09
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -306,6 +306,76 @@ content identity. The watcher does not pack content itself. Configure
 `[storage] pack_interval` when accumulated loose content should be packed
 automatically. GC and repack still run only on request.
 
+### Document conversion with Docling
+
+The daemon can send an original PDF, PPTX, XLSX, plain text, Markdown, PNG,
+or JPEG to the Docling Serve deployment you run, then retain searchable
+Markdown. Add a rendition profile with
+`adapter_contract = "docbank-docling-document/v1"`,
+`descriptor_id = "docling.serve-v1"`, and
+`requested_artifacts = ["provider_markdown", "structured_evidence"]`. Select it
+from a processing profile with `retain_sanitized_markdown = true`. No conversion
+runs on import: review `processing plan`, then grant consent with
+`processing build`.
+
+Use the same named `credential_binding = "credential:<name>"` and
+[runtime fields as Docling ASR](#supplied-audio-transcription). The named binding
+must exist even for a deployment that normally accepts anonymous requests.
+Its environment variable is read only when a request is sent. A missing secret
+fails that attempt without sending the document. The endpoint must be an
+absolute root origin; redirects and ambient proxies are refused.
+
+HTTP requires `trust_boundary = "operator_network"`. For document conversion,
+every `allowed_cidrs` prefix at that boundary must fit entirely inside a
+loopback or private network: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16`, `::1/128`, or `fc00::/7`. A public or broader prefix is
+rejected. Hosted deployments use `hosted_provider`, require HTTPS, and may
+allow explicit public networks. Optional `spki_sha256` pins require HTTPS and
+keep normal certificate verification.
+
+`max_document_bytes` must be positive and at most 1 GiB;
+`max_response_bytes` must be positive and at most 512 MiB. Set `max_units` to
+cap the PDF pages, presentation slides, or workbook sheets found during local
+inspection. A source above that limit is rejected before upload. The
+`provider_markdown` artifact role is required for bounded provider text.
+`structured_evidence` is optional for retained PDF page JSON. Document
+conversion has no transcript limit; omit `max_transcript_chars`. Request,
+total, poll, and transport timeouts use the ASR bounds below.
+
+The descriptor is fixed by the document adapter and trust boundary. Go callers
+can obtain it with `docling.DocumentDescriptor(boundary)`. The document policy
+fingerprint is SHA-256 of the UTF-8 contract string
+`docbank-docling-document/v1`. The descriptor declares Markdown and structured
+results, the structured evidence artifact role, and original-file capabilities
+for PDF, DOCX, PPTX, XLSX, plain text, Markdown, PNG, and JPEG. Its fingerprint
+includes those capabilities and the trust boundary. DOCX remains ineligible
+because the current local inspector cannot bound it. HTML, TIFF, legacy Office
+formats, audio, and video are outside this daemon document profile. Docling's
+format support cannot override local inspection.
+
+Set `descriptor_fingerprint` to the value for your trust boundary:
+
+| Trust boundary | Descriptor fingerprint |
+| --- | --- |
+| `operator_network` | `21bcb9a189ebd0c285637a3d0b7bb1f29310080b997a0c043ae5dce05c908b4f` |
+| `hosted_provider` | `f5603a0b0cf6ea91a65a141323a025eb205bfb3278f2baffa46e893ebdff0357` |
+
+`disclosure_fingerprint` uses the same NUL-separated formula and Python command
+as ASR below, with the document adapter contract and descriptor. Go callers use
+`docling.DocumentDisclosureFingerprint(descriptor, endpoint, deployment)`.
+The plan identifies the document adapter, Docling provider, endpoint, deployment,
+filename disclosure, and retained artifact roles before consent. An endpoint,
+deployment, or descriptor mismatch prevents startup. Profiles sharing a
+descriptor must agree on all effective runtime and credential settings.
+A runtime without a selecting processing profile stays staged.
+
+PDF results can preserve exact page evidence, including blank pages. Other
+formats use bounded Markdown with explicitly degraded provenance. The existing
+upload authorization, sanitization, publication, and lexical indexing checks
+still apply. Original bytes remain unchanged. After changing the descriptor,
+queued work fails with `stale_authority`; plan and consent to the changed profile
+before retrying.
+
 ### Supplied audio transcription
 
 The daemon can transcribe supplied WAV and MP3 files through a configured
@@ -336,7 +406,7 @@ before retrying it.
 For this adapter, `disclosure_fingerprint` binds the descriptor, endpoint, and
 deployment fingerprint. Recompute it when the endpoint or deployment changes.
 The daemon rejects a mismatched binding before it starts provider work.
-Go applications can use `docling.ASRDisclosureFingerprint` from
+For audio, Go applications can use `docling.ASRDisclosureFingerprint` from
 `go.kenn.io/docbank/document/docling`. Operators can compute the same value
 from their config with Python 3.11 or later. Replace the path and profile name
 in this command, then copy the output into that profile's

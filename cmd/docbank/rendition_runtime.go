@@ -24,7 +24,9 @@ const (
 )
 
 type renditionProviderInputs struct {
-	profile               docling.ASRProfile
+	profile               docling.Profile
+	adapterContract       string
+	maxTranscriptChars    int
 	egress                providerhttp.EgressPolicy
 	credentialEnvironment string
 }
@@ -79,8 +81,8 @@ func configureRenditionProviders(cfg config.Config) (
 			provider, err = plaintext.New(plaintext.Profile{MaxDocumentBytes: configured.MaxDocumentBytes})
 		case epubRenditionAdapter:
 			provider, err = epub.New(epub.Profile{MaxDocumentBytes: configured.MaxDocumentBytes, MaxUnits: int64(configured.MaxUnits)})
-		case config.DoclingASRAdapterContract:
-			provider, disclosures[name], err = configureDoclingASR(cfg, name, secrets, registered)
+		case config.DoclingASRAdapterContract, config.DoclingDocumentAdapterContract:
+			provider, disclosures[name], err = configureDocling(cfg, name, secrets, registered)
 		default:
 			continue
 		}
@@ -100,7 +102,7 @@ func configureRenditionProviders(cfg config.Config) (
 	return providers, disclosures, nil
 }
 
-func configureDoclingASR(cfg config.Config, name string, secrets environmentCredentialSecrets,
+func configureDocling(cfg config.Config, name string, secrets environmentCredentialSecrets,
 	registered map[string]registeredRenditionProvider,
 ) (document.RenditionProvider, processing.RuntimeDisclosure, error) {
 	var disclosure processing.RuntimeDisclosure
@@ -112,12 +114,15 @@ func configureDoclingASR(cfg config.Config, name string, secrets environmentCred
 	if err != nil || len(requestFingerprints) == 0 {
 		return nil, disclosure, err
 	}
-	profile, err := configuredDoclingASRProfile(configured)
+	profile, err := configuredDoclingProfile(configured)
 	if err != nil {
 		return nil, disclosure, err
 	}
-	expectedDisclosure := docling.ASRDisclosureFingerprint(profile.Descriptor, profile.Origin,
-		configured.DeploymentFingerprint)
+	fingerprint := docling.ASRDisclosureFingerprint
+	if configured.AdapterContract == config.DoclingDocumentAdapterContract {
+		fingerprint = docling.DocumentDisclosureFingerprint
+	}
+	expectedDisclosure := fingerprint(profile.Descriptor, profile.Origin, configured.DeploymentFingerprint)
 	if configured.DisclosureFingerprint != expectedDisclosure {
 		return nil, disclosure, errors.New("disclosure fingerprint does not bind the runtime endpoint")
 	}
@@ -126,8 +131,9 @@ func configureDoclingASR(cfg config.Config, name string, secrets environmentCred
 		return nil, disclosure, errors.New("rendition credential binding is not configured")
 	}
 	egress := providerEgressPolicy(configured.Runtime.ProviderEgressConfig)
-	inputs := renditionProviderInputs{profile: profile, egress: egress, credentialEnvironment: environmentVariable}
-	disclosure = processing.RuntimeDisclosure{ImmediateProcessor: config.DoclingASRAdapterContract,
+	inputs := renditionProviderInputs{profile: profile, adapterContract: configured.AdapterContract,
+		maxTranscriptChars: configured.MaxTranscriptChars, egress: egress, credentialEnvironment: environmentVariable}
+	disclosure = processing.RuntimeDisclosure{ImmediateProcessor: configured.AdapterContract,
 		UltimateProcessor: profile.Descriptor.ID, Endpoint: profile.Origin,
 		Deployment: configured.DeploymentFingerprint}
 	if existing, ok := registered[profile.Descriptor.Fingerprint]; ok {
@@ -143,7 +149,12 @@ func configureDoclingASR(cfg config.Config, name string, secrets environmentCred
 	if err != nil {
 		return nil, disclosure, err
 	}
-	provider, err := docling.NewASR(profile, secrets, &http.Client{Transport: transport})
+	var provider document.RenditionProvider
+	if configured.AdapterContract == config.DoclingASRAdapterContract {
+		provider, err = docling.NewASR(docling.ASRProfile{Profile: profile, MaxTranscriptChars: configured.MaxTranscriptChars}, secrets, &http.Client{Transport: transport})
+	} else {
+		provider, err = docling.New(profile, secrets, &http.Client{Transport: transport})
+	}
 	if err != nil {
 		return nil, disclosure, err
 	}
@@ -151,6 +162,32 @@ func configureDoclingASR(cfg config.Config, name string, secrets environmentCred
 		allowedRenditionRequests: requestFingerprints}
 	registered[profile.Descriptor.Fingerprint] = registeredRenditionProvider{provider: bound, inputs: inputs}
 	return bound, disclosure, nil
+}
+
+func configuredDoclingProfile(configured config.RenditionProfileConfig) (docling.Profile, error) {
+	if configured.AdapterContract == config.DoclingASRAdapterContract {
+		profile, err := configuredDoclingASRProfile(configured)
+		return profile.Profile, err
+	}
+	descriptor, err := docling.DocumentDescriptor(document.RenditionTrustBoundary(configured.TrustBoundary))
+	if err != nil {
+		return docling.Profile{}, err
+	}
+	if descriptor.ID != configured.DescriptorID || descriptor.Fingerprint != configured.DescriptorFingerprint {
+		return docling.Profile{}, errors.New("descriptor differs from portable binding")
+	}
+	return configuredDoclingTransportProfile(configured, descriptor), nil
+}
+
+func configuredDoclingTransportProfile(configured config.RenditionProfileConfig, descriptor document.RenditionDescriptor) docling.Profile {
+	runtime := configured.Runtime
+	return docling.Profile{
+		Origin: runtime.Endpoint, Descriptor: descriptor,
+		SecretBinding:  strings.TrimPrefix(configured.CredentialBinding, "credential:"),
+		RequestTimeout: runtime.RequestTimeout.Std(), TotalTimeout: runtime.TotalTimeout.Std(),
+		PollInterval: runtime.PollInterval.Std(), MaxPollAttempts: runtime.MaxPollAttempts,
+		MaxResponseBytes: configured.MaxResponseBytes, MaxDocumentBytes: configured.MaxDocumentBytes,
+	}
 }
 
 func configuredDoclingASRProfile(configured config.RenditionProfileConfig) (docling.ASRProfile, error) {
@@ -176,15 +213,8 @@ func configuredDoclingASRProfile(configured config.RenditionProfileConfig) (docl
 		string(descriptor.TrustBoundary) != configured.TrustBoundary {
 		return docling.ASRProfile{}, errors.New("descriptor differs from portable binding")
 	}
-	runtime := configured.Runtime
-	return docling.ASRProfile{
-		Origin: runtime.Endpoint, Descriptor: descriptor,
-		SecretBinding:  strings.TrimPrefix(configured.CredentialBinding, "credential:"),
-		RequestTimeout: runtime.RequestTimeout.Std(), TotalTimeout: runtime.TotalTimeout.Std(),
-		PollInterval: runtime.PollInterval.Std(), MaxPollAttempts: runtime.MaxPollAttempts,
-		MaxResponseBytes: configured.MaxResponseBytes, MaxDocumentBytes: configured.MaxDocumentBytes,
-		MaxTranscriptChars: configured.MaxTranscriptChars,
-	}, nil
+	return docling.ASRProfile{Profile: configuredDoclingTransportProfile(configured, descriptor),
+		MaxTranscriptChars: configured.MaxTranscriptChars}, nil
 }
 
 func configuredRenditionRequestFingerprints(cfg config.Config, renditionName string) (map[string]struct{}, error) {
