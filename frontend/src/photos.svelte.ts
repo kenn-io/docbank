@@ -83,7 +83,7 @@ export class Photos {
     this.error = "";
   }
 
-  async setHidden(id: string, preserve?: () => (() => Promise<void>) | undefined, onchanged?: (ids: string[]) => Promise<void>, onactionerror?: (error: string) => void) {
+  async setHidden(id: string, preserve?: () => (() => Promise<void>) | undefined, onhidden?: () => void, onactionerror?: (error: string) => void) {
     if (this.hiding || this.trashing || this.disposed) return;
     const members = this.resolveTargets(this.selection.selectedIDs.has(id) ? this.selection.selectedIDs : [id]);
     if (!members) {
@@ -102,7 +102,7 @@ export class Photos {
         if (this.disposed) break;
         try {
           const signal = AbortSignal.any([this.actionController.signal, AbortSignal.timeout(60_000)]);
-          const receipt = await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(member.asset_id, { "If-Match": JSON.stringify(String(member.revision)) }, { session: this.session, signal });
+          const receipt = await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(member.asset_id, { "If-Match": String(member.revision) }, { session: this.session, signal });
           if (signal.aborted) throw signal.reason;
           if (receipt.id !== member.asset_id || receipt.revision <= member.revision) throw new Error("Photo response did not confirm the selected photo. Refresh and retry.");
           this.cancelPending();
@@ -119,7 +119,7 @@ export class Photos {
       }
       this.actionError = failures ? `${failures} photo${failures === 1 ? "" : "s"} failed: ${failure}` : "";
       onactionerror?.(this.actionError);
-      if (successes.length) await onchanged?.(successes);
+      if (successes.length) onhidden?.();
       await this.refresh(preserve);
     } finally { this.hiding = false; }
   }

@@ -74,6 +74,40 @@ func TestPhotoHiddenLifecycle(t *testing.T) {
 	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
 }
 
+func TestPhotoHiddenTrashListsFilesAndRestorePreservesHidden(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset, nodes := photoTrashFixture(t, s)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	asset, err := s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	for _, node := range nodes {
+		_, _, err = s.Trash(ctx, node.ID, node.Revision)
+		require.NoError(t, err)
+	}
+	page, total, err := s.TrashedRootsPage(ctx, 10, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Len(t, page, 1)
+	assert.Equal(t, nodes[0].Name, page[0].Name)
+	assert.Equal(t, asset.ID, page[0].PhotoAssetID)
+	assert.Equal(t, len(nodes), page[0].PhotoFileCount)
+	_, _, err = s.Restore(ctx, page[0].ID, page[0].Revision)
+	require.NoError(t, err)
+	for _, node := range nodes {
+		restored, err := s.NodeByID(ctx, node.ID)
+		require.NoError(t, err)
+		assert.Nil(t, restored.TrashedAt)
+	}
+	current, err := photoAssetByIDQuery(ctx, s.db, asset.ID)
+	require.NoError(t, err)
+	assert.Equal(t, asset.HiddenAt, current.HiddenAt)
+	_, err = s.PhotoAssetByID(ctx, asset.ID)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	require.NoError(t, s.ValidateMetadata(ctx))
+}
+
 func TestPhotoHiddenChangeRevokesAndFailedDisableIsAtomic(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

@@ -303,7 +303,7 @@ it.each([false, true])("partial visibility writes keep failures, position and pe
   photos.scrollTop = 480;
   const oldRead = photos.refresh();
   const restore = vi.fn(async () => {});
-  const changed = vi.fn(async () => {});
+  const changed = vi.fn();
   await photos.setHidden("photo-1", () => restore, changed);
   expect(readSignal?.aborted).toBe(true);
   expect(writeSignal).toBeDefined();
@@ -315,7 +315,7 @@ it.each([false, true])("partial visibility writes keep failures, position and pe
   expect(photos.total).toBe(2);
   expect(photos.scrollTop).toBe(480);
   expect(restore).toHaveBeenCalledOnce();
-  expect(changed).toHaveBeenCalledWith(["photo-1"]);
+  expect(changed).toHaveBeenCalledWith();
   expect(photos.actionError).toBe("1 photo failed: Photo changed");
   expect(photos.error).toBe("Listing unavailable");
   fetcher.mockResolvedValueOnce(response([photo(2), photo(3)]));
@@ -385,9 +385,9 @@ it.each([false, true])("keeps failed visibility targets selected after a reorder
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
   expect(photos.actionError).toBe("1 photo failed: Photo changed");
   await photos.setHidden("photo-1");
-  expect(new Headers(fetcher.mock.calls[2][1].headers).get("If-Match")).toBe('"1"');
+  expect(new Headers(fetcher.mock.calls[2][1].headers).get("If-Match")).toBe("1");
   await photos.setHidden("photo-1");
-  expect(new Headers(fetcher.mock.calls[4][1].headers).get("If-Match")).toBe('"3"');
+  expect(new Headers(fetcher.mock.calls[4][1].headers).get("If-Match")).toBe("3");
   expect(photos.selection.selectedIDs.size).toBe(0);
   expect(photos.trashTargets).toEqual([]);
   photos.dispose();

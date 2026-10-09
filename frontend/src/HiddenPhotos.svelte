@@ -151,7 +151,7 @@
   {:else}
     <div class="hidden-gate">
       <h1>Hidden</h1>
-      {#if hiddenState.configured}<p>Unlocks for five minutes.</p>{/if}
+      {#if hiddenState.configured}<p>Unlocks for five minutes.</p>{:else}<p>Forgotten passcode? Run <code>docbank photos hidden reset</code>.</p>{/if}
       {#if lockoutDescription}<p id="hidden-lockout" class="lockout" role="status">{hiddenState.locked_until ? `Too many attempts. Try again after ${new Date(hiddenState.locked_until).toLocaleTimeString()}.` : lockoutError}</p>{/if}
       <form aria-describedby={lockoutDescription} onsubmit={event => { event.preventDefault(); void action("enter"); }}>
         <FormField type="password" field={{ id: "hidden-passcode", label: "Passcode", value: passcode, error: passcodeError, disabled: busy }} autocomplete={hiddenState.configured ? "current-password" : "new-password"} oninput={value => { passcode = value; passcodeError = ""; }} />

@@ -381,6 +381,9 @@ func (s *Store) SetPhotoAssetHidden(ctx context.Context, id string, revision int
 		operation = "unhide"
 	}
 	return s.mutatePhotoAsset(ctx, id, revision, operation, func(tx *sql.Tx, asset *PhotoAsset) (bool, error) {
+		if (asset.HiddenAt != nil) == hidden {
+			return false, nil
+		}
 		if hidden {
 			var exists bool
 			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_hidden_credentials)`).Scan(&exists); err != nil {
@@ -389,9 +392,6 @@ func (s *Store) SetPhotoAssetHidden(ctx context.Context, id string, revision int
 			if !exists {
 				return false, ErrHiddenNotConfigured
 			}
-		}
-		if (asset.HiddenAt != nil) == hidden {
-			return false, nil
 		}
 		asset.HiddenAt = nil
 		if hidden {

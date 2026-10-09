@@ -33,8 +33,24 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await expect(page.locator("[data-asset]")).toHaveCount(12);
     await expect(page.locator("[data-asset] img").first()).toBeVisible();
     const id = (await page.locator("[data-asset]").first().getAttribute("data-asset"))!;
+    let releaseHide!: () => void;
+    let enteredHide!: () => void;
+    const hidePending = new Promise<void>(resolve => enteredHide = resolve);
+    const hideHold = new Promise<void>(resolve => releaseHide = resolve);
+    await page.route(`**/api/v1/photos/assets/${id}/hide`, async route => {
+      enteredHide();
+      await hideHold;
+      await route.continue();
+    }, { times: 1 });
     await page.locator(`[data-asset="${id}"]`).getByRole("button", { name: /^Select / }).click({ button: "right" });
     await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
+    await hidePending;
+    await page.getByRole("button", { name: "Hidden", exact: true }).click();
+    await expect(page.getByText(/Locks in/)).toBeVisible();
+    await expect(page.getByText("No hidden photos", { exact: true })).toBeVisible();
+    releaseHide();
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await page.getByRole("button", { name: "Library", exact: true }).click();
     await expect(page.locator(`[data-asset="${id}"]`)).toHaveCount(0);
     await expect(page.locator("[data-asset]")).toHaveCount(11);
     await expect(page.locator("[data-asset] img").first()).toBeVisible();
@@ -68,6 +84,7 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await page.waitForResponse(response => response.url().endsWith("/api/v1/photos/hidden") && response.request().method() === "GET");
     await expect(page.getByRole("alert")).toHaveText("1 photo failed: Synthetic stale photo revision");
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Refresh previews", exact: true })).toBeEnabled();
     await page.screenshot({ path: path.join(output!, "web-hidden-unhide-failure-dark.png"), animations: "disabled" });
     await page.locator(`[data-asset="${id}"]`).getByRole("button", { name: /^Actions for / }).click();
     await page.getByRole("menuitem", { name: "Unhide", exact: true }).click();
