@@ -862,6 +862,7 @@ A paused lane keeps its Resume control after its last operation disappears.
 Idle lanes show their controls, so you can pause one before it has work. Each
 operation shows its operation ID, which matches `docbank jobs`.
 
+The drawer reads lane settings with the job list and uses `PUT` to change them.
 The drawer refreshes every two seconds while open. If another client changes
 controls first, review the refreshed settings and try again. Controls survive
 daemon restarts. The list includes the newest 1,000 storage operations.

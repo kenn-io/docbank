@@ -104,7 +104,7 @@ func (s *Store) readLaneControls(ctx context.Context) (map[string]laneControlSet
 			path, ErrLaneControlsFile)
 	}
 	for lane, entry := range entries {
-		if !controllableLane(lane) {
+		if !ControllableLane(lane) {
 			settings[lane] = laneControlSetting{Unknown: entry}
 			continue
 		}
@@ -184,7 +184,7 @@ func (s *Store) SetLaneControl(
 	}
 	entries := make(map[string]jsontext.Value, len(settings))
 	for lane, setting := range settings {
-		if !controllableLane(lane) {
+		if !ControllableLane(lane) {
 			entries[lane] = setting.Unknown
 			continue
 		}

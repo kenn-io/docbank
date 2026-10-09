@@ -37,6 +37,7 @@
 
   let updating = $state(new Set<string>());
   const lanes = $derived(jobLanes(items, controls));
+  const occupiedLanes = $derived(lanes.filter((lane) => lane.members.length > 0 || lane.active));
   const running = $derived(
     lanes.filter((lane) => lane.status === "running").length,
   );
@@ -173,7 +174,7 @@
       <div>
         <span>Daemon activity</span>
         <strong>Background jobs</strong>
-        <small>{running} running · {lanes.length} lanes</small>
+        <small>{running} running · {occupiedLanes.length} lanes</small>
       </div>
       <div class="drawer-actions">
         <IconButton
@@ -195,15 +196,15 @@
     {#if actionError}<p class="error" role="alert">{actionError}</p>{/if}
     {#if loading && lanes.length === 0}
       <div class="loading"><Spinner size={16} /> Loading background jobs…</div>
-    {:else if loadError && lanes.length === 0}
-      <div class="load-error">
-        <p role="alert">{loadError}</p>
-        <Button size="sm" onclick={() => void refresh()}>Try again</Button>
-      </div>
-    {:else if lanes.length === 0 && !actionError}
+    {:else if occupiedLanes.length === 0 && controls.length === 0}
+      {#if loadError}
+        <div class="load-error">
+          <p role="alert">{loadError}</p>
+          <Button size="sm" onclick={() => void refresh()}>Try again</Button>
+        </div>
+      {/if}
       <EmptyState
         title="No background jobs"
-        description="This daemon has no supervised extraction, watcher, or packing work."
       >
         {#snippet icon()}<ActivityIcon size="22" />{/snippet}
       </EmptyState>

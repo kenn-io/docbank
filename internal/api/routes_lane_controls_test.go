@@ -60,13 +60,16 @@ func TestLaneControlRoutesAndReadonlyJobs(t *testing.T) {
 	}
 	headers := map[string]string{api.WebSessionHeader: issueWebSession(t, ts), "X-Api-Key": "", "If-Match": "2"}
 	resp, body = get(t, ts, path, headers)
-	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPut, path, headers, api.SetLaneControlRequest{Paused: true, Concurrency: 1})
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 	for _, request := range []struct {
 		method string
 		path   string
 	}{
+		{http.MethodPut, "/api/v1/jobs/lanes/place?x=1"},
+		{http.MethodPut, "/api/v1/jobs/lanes/unknown"},
+		{http.MethodPut, "/api/v1/jobs/lanes/place/x"},
 		{http.MethodGet, "/api/v1/jobs/lanes/place?x=1"},
 		{http.MethodGet, "/api/v1/jobs/lanes/unknown"},
 		{http.MethodPost, "/api/v1/jobs/lanes/place"},
@@ -86,12 +89,10 @@ func TestBrowserLaneControlBackendErrorIsRedacted(t *testing.T) {
 	headers := map[string]string{api.WebSessionHeader: issueWebSession(t, ts), "X-Api-Key": "", "If-Match": "1"}
 	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(live.DBPath), "lane-controls.json"), []byte("{"), 0o600))
 	path := "/api/v1/jobs/lanes/" + store.VisualPreviewLane
-	for _, method := range []string{http.MethodGet, http.MethodPut} {
-		resp, body := do(t, ts, method, path, headers, api.SetLaneControlRequest{Concurrency: 1})
-		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
-		assert.Contains(t, body, "inspect with the Docbank CLI")
-		assert.NotContains(t, body, "database")
-	}
+	resp, body := do(t, ts, http.MethodPut, path, headers, api.SetLaneControlRequest{Concurrency: 1})
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
+	assert.Contains(t, body, "inspect with the Docbank CLI")
+	assert.NotContains(t, body, "database")
 }
 
 func TestStorageJobControlsFollowOperationState(t *testing.T) {

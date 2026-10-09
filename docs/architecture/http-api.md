@@ -1048,8 +1048,8 @@ Controls survive restart in the vault's `lane-controls.json` and stay out of
 backups; restored vaults use unpaused lanes with concurrency 1 and revision 1.
 When that file cannot be read, the job list still returns every job without
 control fields and adds `lane_controls_error`; browser sessions get a generic
-message. Lane-control reads and writes require the daemon API key or a browser
-session; browser sessions may access supported lanes without query parameters.
+message. Lane-control reads require the daemon API key. Browser sessions read
+settings through `GET /jobs` and may `PUT` supported lanes without query parameters.
 
 Durable storage operations, such as placement and photo imports, also appear as
 `storage:<operation_id>` items with `operation_id`, `kind`, object progress,

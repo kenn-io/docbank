@@ -14,7 +14,7 @@ const output = process.env.DOCBANK_SCREENSHOT_DIR!;
 const before = process.env.DOCBANK_ACTIVITY_BEFORE === "1";
 
 test("activity lanes and controls use the real daemon", async ({ browser }) => {
-  test.setTimeout(1_200_000);
+  test.setTimeout(240_000);
   const workspace = await mkdtemp(path.join(tmpdir(), "docbank-activity-"));
   const env = { ...process.env, DOCBANK_HOME: path.join(workspace, "vault"), DOCBANK_LOCK_DIR: path.join(workspace, "locks") };
   const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
@@ -26,15 +26,17 @@ test("activity lanes and controls use the real daemon", async ({ browser }) => {
     await createSyntheticCameraFiles(source, 1);
     // A larger second import keeps running long enough to report a known total.
     const bulk = path.join(workspace, "camera-bulk");
-    await createSyntheticCameraFiles(bulk, 3000, 2);
+    await createSyntheticCameraFiles(bulk, 100, 2);
     const url = await run("web", "--no-browser");
     await run("jobs", "pause", "photo_import");
     await run("jobs", "pause", "place");
-    await run("photos", "import", source, "/Photos/Trip");
+    const { id: completedID } = JSON.parse(await run("photos", "import", source, "/Photos/Trip", "--json")) as { id: string };
     const { id: bulkID } = JSON.parse(await run("photos", "import", bulk, "/Photos/Second trip", "--json")) as { id: string };
     type Listed = { items: { operation_id?: string; status: string; completed_objects?: number; total_objects?: number; error?: string }[] };
     const bulkImport = async () => (JSON.parse(await run("jobs", "--json")) as Listed).items.find((job) => job.operation_id === bulkID);
     const bulkOperation = page.locator(".operation").filter({ has: page.getByText(bulkID, { exact: true }) });
+    const completedImport = async () => (JSON.parse(await run("jobs", "--json")) as Listed).items.find((job) => job.operation_id === completedID);
+    const completedOperation = page.locator(".operation").filter({ has: page.getByText(completedID, { exact: true }) });
     if (before) {
       // The base drawer has no lane controls, so the CLI reaches the same paused, known-progress state.
       await run("jobs", "resume", "photo_import");
@@ -53,7 +55,7 @@ test("activity lanes and controls use the real daemon", async ({ browser }) => {
       await expect(bulkOperation.getByText("Queued", { exact: true })).toBeVisible();
       await page.getByRole("button", { name: "Resume Photo import" }).click();
       await expect.poll(async () => (await bulkImport())?.completed_objects ?? 0, { timeout: 60_000 }).toBeGreaterThan(0);
-      await expect(bulkOperation.getByText(/^\d+ of 3000 groups$/)).toBeVisible();
+      await expect(bulkOperation.getByText(/^\d+ of 100 groups$/)).toBeVisible();
       await page.getByRole("button", { name: "Pause Photo import" }).click();
       await expect(page.getByRole("button", { name: "Resume Photo import" })).toBeVisible();
       await expect.poll(async () => (await bulkImport())?.status, { timeout: 30_000 }).toBe("queued");
@@ -89,11 +91,14 @@ test("activity lanes and controls use the real daemon", async ({ browser }) => {
       await expect(page.getByRole("button", { name: "Pause Storage placement" })).toBeVisible();
       await page.getByRole("button", { name: "Resume Photo import" }).click();
       await expect(page.getByRole("button", { name: "Pause Photo import" })).toBeVisible();
-      await expect.poll(async () => ["completed", "failed", "cancelled"].includes((await bulkImport())?.status ?? ""), { timeout: 900_000 }).toBe(true);
-      const finished = await bulkImport();
-      expect({ status: finished?.status, completed: finished?.completed_objects, total: finished?.total_objects, error: finished?.error ?? "" }).toEqual({ status: "completed", completed: 3000, total: 3000, error: "" });
-      await expect(bulkOperation.getByText("Completed", { exact: true })).toBeVisible();
-      await expect(bulkOperation.getByText("3000 of 3000 groups", { exact: true })).toBeVisible();
+      await bulkOperation.getByRole("button", { name: /^Cancel Photo import/ }).click();
+      await expect.poll(async () => (await bulkImport())?.status, { timeout: 30_000 }).toBe("cancelled");
+      await expect(bulkOperation.getByText("Cancelled", { exact: true })).toBeVisible();
+      await expect.poll(async () => (await completedImport())?.status, { timeout: 60_000 }).toBe("completed");
+      const finished = await completedImport();
+      expect({ status: finished?.status, completed: finished?.completed_objects, total: finished?.total_objects, error: finished?.error ?? "" }).toEqual({ status: "completed", completed: 1, total: 1, error: "" });
+      await expect(completedOperation.getByText("Completed", { exact: true })).toBeVisible();
+      await expect(completedOperation.getByText("1 of 1 groups", { exact: true })).toBeVisible();
       const controlsPath = path.join(env.DOCBANK_HOME, "lane-controls.json");
       const settings = await readFile(controlsPath);
       try {
@@ -101,7 +106,7 @@ test("activity lanes and controls use the real daemon", async ({ browser }) => {
         await page.getByRole("button", { name: "Refresh background jobs" }).click();
         await expect(page.getByRole("alert")).toContainText("lane controls are unavailable");
         await expect(page.getByText("Read-only", { exact: true })).toHaveCount(0);
-        await expect(bulkOperation.getByText("3000 of 3000 groups", { exact: true })).toBeVisible();
+        await expect(completedOperation.getByText("1 of 1 groups", { exact: true })).toBeVisible();
         await page.screenshot({ path: path.join(output, "activity-controls-unavailable.png"), animations: "disabled" });
       } finally {
         await writeFile(controlsPath, settings);

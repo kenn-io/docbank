@@ -319,7 +319,7 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		return true
 	}
 	if lane, ok := strings.CutPrefix(path, "/api/v1/jobs/lanes/"); ok {
-		return r.URL.RawQuery == "" && store.ControllableLane(lane) && (method == http.MethodGet || method == http.MethodPut)
+		return r.URL.RawQuery == "" && store.ControllableLane(lane) && method == http.MethodPut
 	}
 	if after, ok := strings.CutPrefix(path, "/api/v1/jobs/"); ok {
 		parts := strings.Split(after, "/")

@@ -23,6 +23,14 @@ function jobsResponse(items: unknown[], lanes = items.filter((item: any) => item
 }
 
 describe("background jobs drawer", () => {
+  it("shows the empty state when lane controls are unavailable and no jobs remain", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ items: [], lane_controls_error: "Lane controls are unavailable" }), { headers: { "Content-Type": "application/json" } }));
+    render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
+    expect(await screen.findByText("No background jobs")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toBe("Lane controls are unavailable");
+    expect(screen.getByText("0 running · 0 lanes")).toBeTruthy();
+  });
+
   it("shows unavailable lane controls while keeping progress and cancellation", async () => {
     const item = { name: "storage:a", kind: "photo_import", operation_id: "a", status: "queued", started_at: "2026-07-23T12:00:00Z", completed_objects: 1, total_objects: 2, can_cancel: true };
     let available = false;
@@ -58,6 +66,8 @@ describe("background jobs drawer", () => {
       expect(screen.getByText("Paused").parentElement?.textContent).toBe("Paused Idle");
       expect(screen.getByRole("button", { name: "Pause Storage repair" })).toBeTruthy();
       expect(screen.getAllByText("Idle")).toHaveLength(2);
+      expect(screen.getByText("0 running · 0 lanes")).toBeTruthy();
+      expect(screen.queryByText("No background jobs")).toBeNull();
       expect(screen.queryByText("Started")).toBeNull();
       expect(screen.queryByRole("progressbar")).toBeNull();
       await fireEvent.click(screen.getByRole("button", { name: "Resume Storage placement" }));
@@ -117,6 +127,7 @@ describe("background jobs drawer", () => {
     expect(screen.getAllByText("Photo import")).toHaveLength(1);
     expect(screen.getByRole("progressbar", { name: "Photo import progress" }).getAttribute("aria-valuemax")).toBe("2");
     expect(screen.getByText("2 operations")).toBeTruthy();
+    expect(screen.getByText("0 running · 1 lanes")).toBeTruthy();
     expect(screen.getAllByText("Queued")).toHaveLength(3);
     expect(screen.getAllByText("Status")).toHaveLength(2);
     expect(screen.queryByText("Finished")).toBeNull();
