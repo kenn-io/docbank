@@ -394,8 +394,6 @@ metadata streams remain readable and restore an empty photo authority.
 
 ### Photo technical projection
 
-Schema 30 adds `photo_quality_signals`, a derived row per content version and evaluator fingerprint. It records focus, blur, brightness, color, framing, and aesthetics from the verified grid preview, or an unavailable result. It stays out of metadata JSONL and backups; the quality worker rebuilds it from ready previews.
-
 `photo_technical_metadata` stores one derived row for each source metadata
 generation that has at least one photo fact. The row keeps typed camera, lens,
 exposure, dimension, capture, orientation, GPS, and coarse place fields.
@@ -424,6 +422,10 @@ differs, so an unchanged store pays one single-row read. A recipe change costs
 one decode of every retained source generation and one gazetteer load when any
 has GPS; it reads no original blobs. A valid GPS pair can have no label when
 the embedded Natural Earth map has no matching country or simplified boundary.
+
+### Photo quality signals
+
+Schema 30 adds `photo_quality_signals`, a derived row per content version and evaluator fingerprint. It records focus, blur, brightness, color, framing, and aesthetics from the verified grid preview, or an unavailable result. It stays out of metadata JSONL and backups; the quality worker rebuilds it from ready previews.
 
 SQLite is Docbank's runtime query and transaction engine, but its historical
 page layout is not the intended long-lived backup contract. The logical

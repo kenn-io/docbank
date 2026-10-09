@@ -87,9 +87,7 @@ images receive framing 0.5. Aesthetics combines focus, balanced exposure,
 channel spread, and framing. These pixel heuristics do not judge subject
 intent, distinguish motion blur from soft focus, or detect faces.
 
-Docbank uses Catmull-Rom sampling instead of Teststrip's CoreGraphics medium
-interpolation. Scores can differ despite identical formulas and the same
-0.15 focus calibration ceiling.
+Scores can differ slightly from other tools because of image sampling differences.
 
 Each scalar supports `_min` and `_max` query filters. JSON bounds are decimal
 strings, such as `"brightness_min":"0.4"`, to preserve QueryV1's integer-only
