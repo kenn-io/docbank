@@ -141,7 +141,7 @@ keeps reusable requests. Named saved queries are a separate workflow.
 ## Photo query predicates
 
 Saved QueryV1 definitions can include photo kind, case-insensitive complete
-camera/lens make or model, safe integer ISO bounds, capture dates,
+camera/lens make or model, exact location labels through `location:` or `filters.locations`, safe integer ISO bounds, capture dates,
 decimal-string GPS boxes, asset UUID sets, and album UUID sets through `set:` or `filters.set_ids`. See
 [Browse photo assets over HTTP](photos.md#browse-photo-assets-over-http) for the
 complete field and sort contract. Existing tag, text, and collection predicates

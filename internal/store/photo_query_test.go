@@ -1,15 +1,19 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
+	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func browsePhotoNode(t *testing.T, s *Store, name, hash, mime string) Node {
@@ -37,6 +41,7 @@ func TestCompilePhotoPredicates(t *testing.T) {
 	for _, tc := range []struct{ typed, expression string }{
 		{`{"rating_min":3}`, `rating_min:3`}, {`{"rating_min":4}`, `rating_min:4`}, {`{"rating_max":3}`, `rating_max:3`}, {`{"flags":["pick"]}`, `flag:pick`}, {`{"labels":["red"]}`, `label:red`},
 		{`{"kinds":["photo"]}`, `kind:photo`}, {`{"cameras":["Camera A"]}`, `camera:"Camera A"`}, {`{"lenses":["Lens B"]}`, `lens:"Lens B"`}, {`{"iso_min":0}`, `iso_min:0`}, {`{"iso_max":400}`, `iso_max:400`}, {`{"capture_after":"2024-01-01"}`, `capture_after:2024-01-01`}, {`{"capture_before":"2025-01-01"}`, `capture_before:2025-01-01`}, {`{"gps_bounds":{"south":"-1","west":"170","north":"1","east":"-170"}}`, `gps:"-1,170,1,-170"`}, {`{"asset_ids":["00000000-0000-4000-8000-000000000001"]}`, `asset:00000000-0000-4000-8000-000000000001`},
+		{`{"kinds":["photo"]}`, `kind:photo`}, {`{"cameras":["Camera A"]}`, `camera:"Camera A"`}, {`{"lenses":["Lens B"]}`, `lens:"Lens B"`}, {`{"locations":["Paris"]}`, `location:Paris`}, {`{"iso_min":0}`, `iso_min:0`}, {`{"iso_max":400}`, `iso_max:400`}, {`{"capture_after":"2024-01-01"}`, `capture_after:2024-01-01`}, {`{"capture_before":"2025-01-01"}`, `capture_before:2025-01-01`}, {`{"gps_bounds":{"south":"-1","west":"170","north":"1","east":"-170"}}`, `gps:"-1,170,1,-170"`}, {`{"asset_ids":["00000000-0000-4000-8000-000000000001"]}`, `asset:00000000-0000-4000-8000-000000000001`},
 	} {
 		typed, err := compileQuery(t.Context(), snapshotTestQuery(t, `{"filters":`+tc.typed+`}`), nil)
 		require.NoError(t, err)
@@ -166,6 +171,8 @@ func TestPhotoBrowseDisplayMetadata(t *testing.T) {
 	require.Len(t, browsePhotoPage(t, s, qualityQuery).Items, 1)
 	_, err = s.CreateSavedQuery(ctx, "Camera match", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"camera:\"Camera A\""}`))
 	require.NoError(t, err)
+	_, err = s.CreateSavedQuery(ctx, "Nested camera", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Camera match\""}`))
+	require.NoError(t, err)
 	for _, tc := range []struct {
 		text  string
 		count int64
@@ -174,13 +181,37 @@ func TestPhotoBrowseDisplayMetadata(t *testing.T) {
 		{`camera:"Camera A" AND lens:"Lens B"`, 0}, {`camera:"Camera A" OR lens:"Lens B"`, 1},
 		{`NOT camera:"Camera A"`, 0}, {`saved:"Camera match" AND lens:"Lens B"`, 0},
 		{`saved:"Camera match" OR lens:"Lens B"`, 1},
+		{`NOT lens:"Lens B"`, 1}, {`NOT iso:400`, 1}, {`NOT gps:"-1,-1,1,1"`, 1},
+		{`saved:"Nested camera" AND NOT lens:"Lens B"`, 1},
 	} {
-		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Text: tc.text, Sort: query.Sort{Field: "name", Direction: "asc"}}}, nil)
+		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Text: tc.text, Sort: query.Sort{Field: "name", Direction: "asc"}}, Facets: []string{"camera", "lens", "year"}}, nil)
 		require.NoError(t, err, tc.text)
 		require.Equal(t, tc.count, page.Total, tc.text)
+		for _, facet := range page.Facets {
+			require.True(t, facet.Available, tc.text)
+			require.Equal(t, tc.count, *facet.Total, tc.text)
+		}
 		if tc.count > 0 {
 			require.Len(t, page.Items, 1)
 			require.Equal(t, pair.ID, page.Items[0].AssetID)
+		}
+	}
+	for _, tc := range []struct {
+		text  string
+		count int64
+	}{
+		{`"Lens B"`, 1}, {`"Camera A" AND "Lens B"`, 0}, {`"Camera A" OR "Lens B"`, 1},
+		{`saved:"Camera match" AND "Lens B"`, 1}, {`saved:"Camera match" AND NOT "Lens B"`, 1},
+	} {
+		ranked := query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Text: tc.text, Sort: query.Sort{Field: "relevance", Direction: "desc"}}
+		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: ranked, Facets: []string{"camera", "lens"}}, nil)
+		require.NoError(t, err, tc.text)
+		require.Equal(t, tc.count, page.Total, tc.text)
+		if tc.count > 0 {
+			require.Equal(t, pair.ID, page.Items[0].AssetID)
+			require.Equal(t, int64(1), *page.Facets[0].Total)
+			require.Equal(t, "Camera A", page.Facets[0].Values[0].Key)
+			require.Equal(t, int64(1), *page.Facets[1].Missing)
 		}
 	}
 	sidecar := browsePhotoNode(t, s, "paired-sidecar.xmp", browseHash("paired-sidecar"), "application/octet-stream")
@@ -226,17 +257,26 @@ func TestPhotoBrowseEligibility(t *testing.T) {
 	video := browsePhotoNode(t, s, "included.mp4", browseHash("video"), "video/mp4")
 	browsePhotoNode(t, s, "ordinary.txt", browseHash("ordinary"), "text/plain")
 	require.Equal(t, int64(2), browsePhotoPage(t, s, `{}`).Total)
+	request := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`), Facets: []string{"camera"}}
+	page, err := s.ListPhotoAssets(t.Context(), request, nil)
+	require.NoError(t, err)
+	require.Equal(t, page.Total, *page.Facets[0].Total)
 	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"filters":{"kinds":["video"]}}`).Total)
 	asset, err := s.PhotoAssetForNode(t.Context(), photo.ID)
 	require.NoError(t, err)
 	_, err = s.SetPhotoAssetExcluded(t.Context(), asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	page := browsePhotoPage(t, s, `{}`)
+	page, err = s.ListPhotoAssets(t.Context(), request, nil)
+	require.NoError(t, err)
 	require.Equal(t, int64(1), page.Total)
+	require.Equal(t, page.Total, *page.Facets[0].Total)
 	require.Equal(t, video.ID, page.Items[0].NodeID)
 	_, _, err = s.Trash(t.Context(), video.ID, video.Revision)
 	require.NoError(t, err)
 	require.Zero(t, browsePhotoPage(t, s, `{}`).Total)
+	page, err = s.ListPhotoAssets(t.Context(), request, nil)
+	require.NoError(t, err)
+	require.Zero(t, *page.Facets[0].Total)
 }
 
 func TestPhotoBrowsePagination(t *testing.T) {
@@ -305,7 +345,7 @@ func TestPhotoBrowsePagination(t *testing.T) {
 	for _, field := range []string{"import_time", "name", "modified_at", "size", "media_type"} {
 		require.Equal(t, int64(7), browsePhotoPage(t, s, sprintfPhotoSort(field, "desc")).Total)
 	}
-	for _, field := range []string{"path", "relevance"} {
+	for _, field := range []string{"path"} {
 		_, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: snapshotTestQuery(t, sprintfPhotoSort(field, "asc"))}, nil)
 		require.Error(t, err)
 	}
@@ -369,13 +409,18 @@ func TestPhotoBrowseSavedDuplicateScope(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
-	definition := `{"filters":{"collapse_duplicates":true}}`
+	browsePhotoMetadata(t, s, included, "duplicate-camera", photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Camera A")))
+	definition := `{"syntax":"advanced","text":"camera:\"Camera A\"","filters":{"collapse_duplicates":true}}`
 	_, err = s.CreateSavedQuery(ctx, "Photo duplicates", "", SavedQueryKindQuery, []byte(definition))
 	require.NoError(t, err)
-	for _, raw := range []string{definition, `{"syntax":"advanced","text":"saved:\"Photo duplicates\""}`} {
-		page := browsePhotoPage(t, s, raw)
+	_, err = s.CreateSavedQuery(ctx, "Nested duplicates", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Photo duplicates\""}`))
+	require.NoError(t, err)
+	for _, raw := range []string{definition, `{"syntax":"advanced","text":"saved:\"Photo duplicates\""}`, `{"syntax":"advanced","text":"saved:\"Nested duplicates\""}`} {
+		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: snapshotTestQuery(t, raw), Facets: []string{"camera", "lens"}}, nil)
+		require.NoError(t, err)
 		require.Len(t, page.Items, 1, raw)
 		require.Equal(t, included.ID, page.Items[0].NodeID, raw)
+		require.Equal(t, int64(1), *page.Facets[0].Total, raw)
 	}
 	compiled := compileFixtureQuery(t, s, `saved:"Photo duplicates"`, query.Filters{})
 	require.Equal(t, []int64{older.ID}, compiledFixtureIDs(t, s.db, compiled, ""),
@@ -761,4 +806,554 @@ func TestPhotoHiddenSavedDuplicateScope(t *testing.T) {
 	compiled := compileFixtureQuery(t, s, `saved:"Photo duplicates"`, query.Filters{})
 	require.Equal(t, []int64{older.ID}, compiledFixtureIDs(t, s.db, compiled, ""),
 		"document queries retain the hidden photo as their duplicate representative")
+func TestPhotoBrowseRelevanceAndFacets(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for i := range 8 {
+		node := browsePhotoNode(t, s, fmt.Sprintf("image-%d.jpg", i), browseHash(strconv.Itoa(i)), "image/jpeg")
+		camera := "Canon EOS R6"
+		if i == 7 {
+			camera = "Nikon Z6"
+		}
+		browsePhotoMetadata(t, s, node, strconv.Itoa(i), photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString(camera)), photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString(strings.Fields(camera)[0])), photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("RF 24-70mm")), photoMetadataField("created", "image.exif", "DateTimeOriginal", document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{Raw: "2024-06-15T12:00:00", Normalized: "2024-06-15T12:00:00", Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneOmitted}}))
+	}
+	request := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"text":"Canon","sort":{"field":"relevance","direction":"desc"}}`), PageSize: 3, Facets: []string{"camera", "lens", "year", "location", "set"}}
+	var boundary *PhotoBrowsePosition
+	var ids []string
+	for {
+		page, err := s.ListPhotoAssets(t.Context(), request, boundary)
+		require.NoError(t, err)
+		require.Equal(t, int64(7), page.Total)
+		if boundary == nil {
+			require.Len(t, page.Facets, 5)
+			require.Equal(t, int64(7), page.Facets[0].Values[1].Count)
+			require.Equal(t, "Canon EOS R6", page.Facets[0].Values[1].Key)
+			require.Equal(t, "2024", page.Facets[2].Values[0].Key)
+		} else {
+			require.Empty(t, page.Facets)
+		}
+		for _, row := range page.Items {
+			ids = append(ids, row.AssetID)
+		}
+		boundary = page.Next
+		if boundary == nil {
+			break
+		}
+	}
+	require.True(t, slices.IsSorted(ids), "equal scores use asset ID")
+	first, err := s.ListPhotoAssets(t.Context(), request, nil)
+	require.NoError(t, err)
+	request.Facets = []string{"camera"}
+	_, err = s.ListPhotoAssets(t.Context(), request, first.Next)
+	require.ErrorIs(t, err, ErrInvalidPhotoCursor)
+	request.Query = snapshotTestQuery(t, `{"filters":{"cameras":["Absent"]},"sort":{"field":"relevance","direction":"desc"}}`)
+	page, err := s.ListPhotoAssets(t.Context(), request, nil)
+	require.NoError(t, err)
+	require.Empty(t, page.Items)
+	require.Zero(t, page.Total)
+	require.Equal(t, int64(8), *page.Facets[0].Total)
+	require.Equal(t, SnapshotFacetValue{Key: "Absent", Label: "Absent", Selected: true}, page.Facets[0].Values[4])
+}
+
+func mustPhotoCompiled(t *testing.T, s *Store, value query.Query) CompiledQuery {
+	t.Helper()
+	compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(t.Context(), value, queryResolver{q: s.db})
+	require.NoError(t, err)
+	return compiled
+}
+
+func TestPhotoLexicalActiveHeads(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node := browsePhotoNode(t, s, "holiday.jpg", browseHash("holiday"), "image/jpeg")
+	browsePhotoMetadata(t, s, node, "one", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Canon")), photoMetadataField("image.exif.gps_latitude", "image.exif", "GPSLatitude", photoString("48.8566")), photoMetadataField("image.exif.gps_longitude", "image.exif", "GPSLongitude", photoString("2.3522")))
+	locationPage := browsePhotoPage(t, s, `{"text":"Paris","sort":{"field":"relevance"}}`)
+	require.Equal(t, int64(1), locationPage.Total)
+	label := *locationPage.Items[0].Fields.LocationLabel
+	require.Equal(t, int64(1), browsePhotoPage(t, s, fmt.Sprintf(`{"filters":{"locations":[%q]}}`, label)).Total)
+	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"locations":["Paris"]}}`).Total)
+	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Canon","sort":{"field":"relevance"}}`).Total)
+	browsePhotoMetadata(t, s, node, "two", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Nikon")))
+	require.Zero(t, browsePhotoPage(t, s, `{"text":"Canon","sort":{"field":"relevance"}}`).Total)
+	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Nikon","sort":{"field":"relevance"}}`).Total)
+}
+
+func TestPhotoFacetsFoldIdentityAndCountEachUnitOnce(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for i, spelling := range []struct{ camera, lens string }{{"SONY", "Straße"}, {"Sony", "STRASSE"}} {
+		node := browsePhotoNode(t, s, fmt.Sprintf("fold-%d.jpg", i), browseHash(fmt.Sprint("fold", i)), "image/jpeg")
+		browsePhotoMetadata(t, s, node, fmt.Sprint("fold", i),
+			photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString(spelling.camera)),
+			photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("sony")),
+			photoMetadataField("image.exif.lens_make", "image.exif", "LensMake", photoString(spelling.lens)),
+			photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("strasse")))
+	}
+	value := snapshotTestQuery(t, `{"filters":{"cameras":["SoNy"],"lenses":["STRASSE"]}}`)
+	page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: value, Facets: []string{"camera", "lens"}}, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), page.Total)
+	snapshot, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value, Facets: []string{"camera", "lens", "year", "location", "set"}})
+	require.NoError(t, err)
+	require.Len(t, snapshot.Rows, 2)
+	require.Len(t, snapshot.Facets, 5)
+	for _, facets := range [][]SnapshotFacet{page.Facets, snapshot.Facets[:2]} {
+		require.Equal(t, []SnapshotFacetValue{{Key: "SONY", Label: "SONY", Count: 2, Selected: true}}, facets[0].Values)
+		require.Equal(t, []SnapshotFacetValue{{Key: "STRASSE", Label: "STRASSE", Count: 2, Selected: true}}, facets[1].Values)
+		for _, facet := range facets {
+			require.Equal(t, int64(2), *facet.Total)
+			require.Zero(t, *facet.Missing)
+		}
+	}
+	assetID := page.Items[0].AssetID
+	assetIDs := []string{assetID, page.Items[1].AssetID}
+	for _, name := range []string{"First album", "Second album"} {
+		album, err := s.CreatePhotoSet(t.Context(), name)
+		require.NoError(t, err)
+		_, err = s.ChangePhotoSetMembers(t.Context(), album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: assetIDs})
+		require.NoError(t, err)
+	}
+	value.Filters.AssetIDs = []string{assetID}
+	albums, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: value, Facets: []string{"set"}}, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), *albums.Facets[0].Total)
+	require.Len(t, albums.Facets[0].Values, 2)
+	require.Equal(t, int64(1), albums.Facets[0].Values[0].Count)
+	require.Zero(t, *albums.Facets[0].Missing)
+	compiled := mustPhotoCompiled(t, s, snapshotTestQuery(t, `{}`))
+	options := defaultSnapshotMaterializeOptions()
+	options.FacetMemberLimit = 3
+	for _, dimensions := range [][]string{{"camera"}, {"camera", "set"}, {"set", "camera"}, {"camera", "lens", "year", "location", "set"}} {
+		facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options)
+		require.NoError(t, err)
+		require.Len(t, facets, len(dimensions))
+		for i, facet := range facets {
+			require.Equal(t, dimensions[i], facet.Dimension)
+			if facet.Dimension == "set" {
+				require.False(t, facet.Available)
+				require.Equal(t, "member_budget_exceeded", facet.Reason)
+			} else {
+				require.True(t, facet.Available, dimensions)
+				require.Equal(t, int64(2), *facet.Total)
+			}
+		}
+	}
+	options.FacetMemberLimit = 4
+	facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, []string{"set"}, options)
+	require.NoError(t, err)
+	require.True(t, facets[0].Available)
+	require.Len(t, facets[0].Values, 2)
+	for _, value := range facets[0].Values {
+		require.Equal(t, int64(2), value.Count)
+	}
+}
+
+func TestPhotoYearFacetSelectionRequiresWholeYear(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		after, before string
+		selected      bool
+	}{
+		{"2024-01-01", "2025-01-01", true}, {"2024-01-01", "2024-06-01", false}, {"2024-01-01", "", false}, {"9999-01-01", "", true},
+	} {
+		value := snapshotTestQuery(t, `{}`)
+		value.Filters.CaptureAfter, value.Filters.CaptureBefore = tc.after, tc.before
+		require.Equal(t, tc.selected, snapshotFacetSelected(value, "year")[tc.after[:4]])
+	}
+}
+
+func TestPhotoLexicalMetadataUsesUncorrelatedPostingList(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node := browsePhotoNode(t, s, "plan.jpg", browseHash("plan"), "image/jpeg")
+	browsePhotoMetadata(t, s, node, "plan", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Canon")))
+	_, err := s.db.Exec(`WITH RECURSIVE synthetic(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM synthetic WHERE i<20000) INSERT INTO photo_metadata_fts(generation_id,text) SELECT 'synthetic-'||i,'Canon' FROM synthetic`)
+	require.NoError(t, err)
+	fragment := (queryCompiler{photoDisplayMetadata: true}).compileLexicalPredicate(`"Canon"`, true)
+	statement, args, err := (CompiledQuery{predicate: fragment}).Bind("")
+	require.NoError(t, err)
+	rows, err := s.db.Query(`EXPLAIN QUERY PLAN SELECT n.id FROM nodes n JOIN content_versions cv ON cv.version_id=n.current_version_id WHERE `+statement, args...)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var plan []string
+	steps := make(map[int]string)
+	metadataParent := 0
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		plan = append(plan, detail)
+		steps[id] = detail
+		if strings.Contains(detail, "photo_metadata_fts VIRTUAL TABLE INDEX") {
+			metadataParent = parent
+		}
+	}
+	require.NoError(t, rows.Err())
+	t.Log(strings.Join(plan, "\n"))
+	// SQLite materializes MATCH once; active-head lookups still correlate by blob.
+	require.True(t, strings.HasPrefix(steps[metadataParent], "LIST SUBQUERY"), strings.Join(plan, "\n"))
+	require.Contains(t, strings.Join(plan, "\n"), "photo_metadata_fts VIRTUAL TABLE INDEX")
+	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Canon"}`).Total)
+}
+
+func TestPhotoRankingOperandFieldsAndMeaning(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for i, camera := range []string{"Canon Canon Canon Canon Canon", "Nikon"} {
+		dir, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprint("same", i))
+		require.NoError(t, err)
+		node, err := s.CreateFile(t.Context(), dir.ID, "Canon.jpg", browseHash(fmt.Sprint("same", i)), 20, "image/jpeg")
+		require.NoError(t, err)
+		browsePhotoMetadata(t, s, node, fmt.Sprint("same", i), photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString(camera)))
+	}
+	page := browsePhotoPage(t, s, `{"syntax":"advanced","text":"name:Canon","sort":{"field":"relevance"}}`)
+	require.Len(t, page.Items, 2)
+	require.InDelta(t, *page.Items[0].position.Score, *page.Items[1].position.Score, 0)
+	for _, tc := range []struct{ exact, prefix, first, second string }{
+		{`name:alpha OR name:other`, `name:alpha* OR name:other`, "alpha.jpg", "other alphabeta.jpg"},
+		{`name:"blue harbor" OR name:other`, "", "blue harbor.jpg", "other blue distant harbor.jpg"},
+		{`name:(blue NEAR/1 harbor) OR name:other`, "", "blue harbor near.jpg", "other blue far far far harbor.jpg"},
+	} {
+		fixture := newTestStore(t)
+		browsePhotoNode(t, fixture, tc.first, browseHash(tc.first), "image/jpeg")
+		second := browsePhotoNode(t, fixture, tc.second, browseHash(tc.second), "image/jpeg")
+		queryScore := func(text string) float64 {
+			raw := fmt.Sprintf(`{"syntax":"advanced","text":%q,"sort":{"field":"relevance"}}`, text)
+			for _, row := range browsePhotoPage(t, fixture, raw).Items {
+				if row.NodeID == second.ID {
+					return *row.position.Score
+				}
+			}
+			t.Fatal("missing accepted fallback member")
+			return 0
+		}
+		baseline := queryScore(`name:other`)
+		require.InDelta(t, baseline, queryScore(tc.exact), 0, tc.exact)
+		if tc.prefix != "" {
+			require.Greater(t, queryScore(tc.prefix), baseline)
+		}
+	}
+	_, err := s.CreateSavedQuery(t.Context(), "Canon filename", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"name:Canon"}`))
+	require.NoError(t, err)
+	for _, text := range []string{`saved:"Canon filename"`, `NOT NOT name:Canon`, `name:Canon AND NOT absent`} {
+		result := browsePhotoPage(t, s, fmt.Sprintf(`{"syntax":"advanced","text":%q,"sort":{"field":"relevance"}}`, text))
+		require.Len(t, result.Items, 2)
+		require.InDelta(t, *page.Items[0].position.Score, *result.Items[0].position.Score, 0, text)
+	}
+	require.Empty(t, browsePhotoPage(t, s, `{"syntax":"advanced","text":"NOT name:Canon","sort":{"field":"relevance"}}`).Items)
+}
+
+func TestPhotoRankingUsesDuplicateRepresentatives(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	hash := browseHash("duplicate-ranking")
+	representative := browsePhotoNode(t, s, "Canon Canon Canon Canon.jpg", hash, "image/jpeg")
+	weak := browsePhotoNode(t, s, "Canon many filler words dilute this match quite considerably.jpg", browseHash("weak"), "image/jpeg")
+	duplicate := browsePhotoNode(t, s, "Canon Canon Canon Canon.raw", hash, "application/octet-stream")
+	asset, err := s.PhotoAssetForNode(t.Context(), weak.ID)
+	require.NoError(t, err)
+	_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, duplicate.ID, PhotoRoleRAW, nil)
+	require.NoError(t, err)
+	middle := browsePhotoNode(t, s, "Canon.jpg", browseHash("middle"), "image/jpeg")
+	for _, collapse := range []bool{false, true} {
+		for _, direction := range []string{"asc", "desc"} {
+			request := PhotoBrowseRequest{Query: snapshotTestQuery(t, fmt.Sprintf(`{"text":"Canon","filters":{"collapse_duplicates":%t},"sort":{"field":"relevance","direction":%q}}`, collapse, direction)), PageSize: 1}
+			ranked, err := s.ListPhotoAssets(t.Context(), request, nil)
+			require.NoError(t, err)
+			request.Query.Sort.Field = "capture_time"
+			captured, err := s.ListPhotoAssets(t.Context(), request, nil)
+			require.NoError(t, err)
+			require.Equal(t, captured.Total, ranked.Total)
+			require.Equal(t, ranked.Total, ranked.Next.Total)
+		}
+	}
+	for _, text := range []string{`name:Canon`, `saved:"Collapsed Canon"`} {
+		if strings.HasPrefix(text, "saved") {
+			_, err = s.CreateSavedQuery(t.Context(), "Collapsed Canon", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"name:Canon","filters":{"collapse_duplicates":true}}`))
+			require.NoError(t, err)
+		}
+		request := PhotoBrowseRequest{Query: snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":%q,"filters":{"collapse_duplicates":true},"sort":{"field":"relevance","direction":"desc"}}`, text))}
+		page, err := s.ListPhotoAssets(t.Context(), request, nil)
+		require.NoError(t, err)
+		require.Equal(t, int64(3), page.Total)
+		expected := []int64{representative.ID, middle.ID, duplicate.ID}
+		for i, row := range page.Items {
+			require.Equal(t, expected[i], row.NodeID)
+			if i > 0 {
+				require.Greater(t, *page.Items[i-1].position.Score, *row.position.Score)
+			}
+		}
+	}
+}
+
+func TestPhotoMetadataTextLeavesDocumentsUnchanged(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node := browsePhotoNode(t, s, "holiday.jpg", browseHash("document-text"), "image/jpeg")
+	browsePhotoMetadata(t, s, node, "document-text", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Canon")))
+	value := snapshotTestQuery(t, `{"text":"Canon"}`)
+	snapshot, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Empty(t, snapshot.Rows)
+	hits, _, err := s.SearchPageWithOptions(t.Context(), "Canon", 50, SearchOptions{})
+	require.NoError(t, err)
+	require.Empty(t, hits)
+	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Canon"}`).Total)
+}
+
+func TestPhotoRankingPagesCompleteUnequalScores(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for i := range 240 {
+		group := i % 2
+		name := fmt.Sprintf("Canon %03d.jpg", i)
+		if group == 1 {
+			name = fmt.Sprintf("Canon extra filler words for weaker rank %03d.jpg", i)
+		}
+		node := browsePhotoNode(t, s, name, browseHash(name), "image/jpeg")
+		if i == 0 {
+			browsePhotoMetadata(t, s, node, "mixed-rank", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Canon Canon Canon Canon")))
+		}
+	}
+	content := browsePhotoNode(t, s, "content.jpg", browseHash("content-only-page"), "image/jpeg")
+	seedCompiledLegacyText(t, s, content, "Canon landscape")
+	for _, direction := range []string{"desc", "asc"} {
+		request := PhotoBrowseRequest{Query: snapshotTestQuery(t, fmt.Sprintf(`{"syntax":"advanced","text":"Canon OR extension:jpg","sort":{"field":"relevance","direction":%q}}`, direction)), PageSize: 73}
+		full, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: request.Query, PageSize: 250}, nil)
+		require.NoError(t, err)
+		require.Nil(t, full.Next)
+		var expected []string
+		for _, row := range full.Items {
+			expected = append(expected, row.AssetID)
+		}
+		if direction == "asc" {
+			require.Equal(t, 0, full.Items[0].position.Tier)
+			require.Zero(t, *full.Items[0].position.Score)
+		} else {
+			require.Equal(t, 1, full.Items[len(full.Items)-1].position.Tier)
+		}
+		var ids []string
+		var boundary *PhotoBrowsePosition
+		for {
+			page, err := s.ListPhotoAssets(t.Context(), request, boundary)
+			require.NoError(t, err)
+			require.Equal(t, full.Total, page.Total)
+			for _, row := range page.Items {
+				ids = append(ids, row.AssetID)
+			}
+			boundary = page.Next
+			if boundary != nil && len(ids) == request.PageSize {
+				for _, invalid := range []PhotoBrowsePosition{
+					{Key: "invalid", Score: boundary.Score}, {Missing: true, Score: boundary.Score},
+					{Score: new(math.NaN())}, {Score: new(math.Inf(1))}, {Tier: 3, Score: boundary.Score}, {},
+				} {
+					invalid.AssetID, invalid.QueryIdentity, invalid.Total = boundary.AssetID, boundary.QueryIdentity, boundary.Total
+					_, err := s.ListPhotoAssets(t.Context(), request, &invalid)
+					require.ErrorIs(t, err, ErrInvalidPhotoCursor)
+				}
+			}
+			if boundary == nil {
+				break
+			}
+		}
+		require.Equal(t, expected, ids)
+		if direction == "desc" {
+			first, err := s.ListPhotoAssets(t.Context(), request, nil)
+			require.NoError(t, err)
+			late := browsePhotoNode(t, s, "late-zero.jpg", browseHash("late-zero"), "image/jpeg")
+			var lateSeen bool
+			for boundary := first.Next; boundary != nil; {
+				page, err := s.ListPhotoAssets(t.Context(), request, boundary)
+				require.NoError(t, err)
+				for _, row := range page.Items {
+					lateSeen = lateSeen || row.NodeID == late.ID
+				}
+				boundary = page.Next
+			}
+			require.True(t, lateSeen, "a new zero-score member remains eligible with the cursor's retained total")
+		}
+		require.NoError(t, s.withLexicalGenerationRead(t.Context(), func(q metadataQuerier, generation LexicalGeneration) error {
+			compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(t.Context(), request.Query, queryResolver{q: q})
+			require.NoError(t, err)
+			coverage, err := normalizeCoverageSelection(CoverageSelection{})
+			require.NoError(t, err)
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			rows, err := rankedPhotoRows(ctx, q, compiled, generation.ID, coverage, request.PageSize, nil, "", full.Total)
+			require.ErrorIs(t, err, context.Canceled)
+			require.Nil(t, rows)
+			ctx, cancel = context.WithDeadline(t.Context(), time.Unix(0, 0))
+			defer cancel()
+			rows, err = rankedPhotoRows(ctx, q, compiled, generation.ID, coverage, request.PageSize, nil, "", full.Total)
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+			require.Nil(t, rows)
+			return nil
+		}))
+	}
+}
+
+func TestPhotoRankingRetainedContentEvidence(t *testing.T) {
+	t.Parallel()
+	for _, source := range []string{"legacy", "active_generation"} {
+		t.Run(source, func(t *testing.T) {
+			s, _ := newRenditionCatalogFixture(t)
+			profile := catalogProcessingProfile(t, false)
+			var nodes []Node
+			for i := range 2 {
+				node := browsePhotoNode(t, s, fmt.Sprintf("retained-%d.jpg", i), browseHash(fmt.Sprint("retained", i)), "image/jpeg")
+				nodes = append(nodes, node)
+				text := "harbor " + strings.Repeat("filler ", 39)
+				if i == 1 {
+					text = strings.Repeat("harbor ", 20) + strings.Repeat("filler ", 20)
+				}
+				if source == "legacy" {
+					require.NoError(t, s.RecordExtraction(t.Context(), ExtractionResult{BlobHash: node.BlobHash, Extractor: "synthetic", ExtractorVersion: 1, Status: ExtractionOK, Text: text}))
+					_, err := s.db.Exec(`INSERT INTO text_searchable_versions(version_id) VALUES(?)`, node.CurrentVersionID)
+					require.NoError(t, err)
+				} else {
+					build := lexicalSearchBuild(s, profile, browseHash(fmt.Sprint("retained-build", i)), text)
+					build.SourceSHA256 = node.BlobHash
+					require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+					attachment := RenditionAttachmentRecord{ID: browseHash(fmt.Sprint("retained-attachment", i)), VaultID: s.VaultID(), ContentVersionID: node.CurrentVersionID, BuildID: build.ID, Profile: profile, AttachedAt: embeddingCatalogTime}
+					require.NoError(t, publishRenditionForTest(t, s, attachment, embeddingCatalogTime, browseHash(fmt.Sprint("retained-generation", i))))
+				}
+			}
+			filename := browsePhotoNode(t, s, "harbor.jpg", browseHash("retained-filename"), "image/jpeg")
+			request := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"text":"harbor","sort":{"field":"relevance","direction":"desc"}}`), PageSize: 1}
+			expected := []int64{filename.ID, nodes[1].ID, nodes[0].ID}
+			var boundary *PhotoBrowsePosition
+			for i, id := range expected {
+				page, err := s.ListPhotoAssets(t.Context(), request, boundary)
+				require.NoError(t, err)
+				require.Equal(t, int64(3), page.Total)
+				require.Len(t, page.Items, 1)
+				require.Equal(t, id, page.Items[0].NodeID)
+				tier := 1
+				if i == 0 {
+					tier = 2
+				}
+				require.Equal(t, tier, page.Items[0].position.Tier)
+				boundary = page.Next
+			}
+			require.Nil(t, boundary)
+			if source == "active_generation" {
+				request.Coverage = CoverageSelection{Configuration: "configured", ProfileFingerprint: browseHash("other-profile")}
+				page, err := s.ListPhotoAssets(t.Context(), request, nil)
+				require.NoError(t, err)
+				require.Equal(t, int64(1), page.Total)
+			}
+		})
+	}
+}
+
+func TestPhotoFacetRawOperandsAndBudgets(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	raw := strings.Repeat("ß", 200)
+	var invalidAssetID string
+	for i, model := range []string{raw, strings.Repeat("ss", 200)} {
+		node := browsePhotoNode(t, s, fmt.Sprintf("raw-operand-%d.jpg", i), browseHash(fmt.Sprint("raw-operand", i)), "image/jpeg")
+		date := "2024-02-01"
+		if i == 1 {
+			date = "2024-08-01"
+			asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+			require.NoError(t, err)
+			invalidAssetID = asset.ID
+		}
+		browsePhotoMetadata(t, s, node, fmt.Sprint("raw-operand", i), photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString(model)), photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString(model)), photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(date, date, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
+	}
+	oversized := strings.Repeat("x", 300)
+	node := browsePhotoNode(t, s, "oversized.jpg", browseHash("oversized"), "image/jpeg")
+	browsePhotoMetadata(t, s, node, "oversized", photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString(oversized)), photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp("2025-01-01", "2025-01-01", document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
+	value := snapshotTestQuery(t, `{}`)
+	for _, photos := range []bool{true, false} {
+		var facets []SnapshotFacet
+		if photos {
+			page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: value, Facets: []string{"camera", "year"}}, nil)
+			require.NoError(t, err)
+			facets = page.Facets
+		} else {
+			page, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value, Facets: []string{"camera", "year"}})
+			require.NoError(t, err)
+			facets = page.Facets
+		}
+		require.Equal(t, SnapshotFacetValue{Key: raw, Label: raw, Count: 2}, facets[0].Values[0])
+		require.NoError(t, query.ValidateTextOperand("camera", facets[0].Values[0].Key))
+		require.Equal(t, int64(3), *facets[1].Total)
+	}
+	page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: value, Facets: []string{"camera"}}, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), page.Facets[0].Values[0].Count)
+	require.Equal(t, raw, page.Facets[0].Values[0].Key)
+	require.Equal(t, SnapshotFacetValue{Key: oversized, Label: oversized, Count: 1}, page.Facets[0].Values[1])
+	require.Zero(t, *page.Facets[0].Missing)
+	options := defaultSnapshotMaterializeOptions()
+	options.FacetMemberLimit = 1
+	facets, err := materializeSharedPhotoFacets(t.Context(), s.db, mustPhotoCompiled(t, s, value), "", CoverageSelection{}, []string{"camera", "year"}, options)
+	require.NoError(t, err)
+	require.False(t, facets[0].Available)
+	require.Equal(t, "member_budget_exceeded", facets[0].Reason)
+	options.FacetMemberLimit = 100
+	options.MaxSerializedBytes = 1
+	facets, err = materializeSharedPhotoFacets(t.Context(), s.db, mustPhotoCompiled(t, s, value), "", CoverageSelection{}, []string{"camera", "year"}, options)
+	require.NoError(t, err)
+	require.Equal(t, "byte_budget_exceeded", facets[0].Reason)
+	require.Equal(t, int64(2), browsePhotoPage(t, s, fmt.Sprintf(`{"filters":{"cameras":[%q]}}`, raw)).Total)
+	for _, tc := range []struct{ dimension, filter string }{{"camera", "cameras"}, {"lens", "lenses"}} {
+		selected := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"asset_ids":[%q],%q:[%q]}}`, invalidAssetID, tc.filter, raw))
+		for _, photos := range []bool{true, false} {
+			var facets []SnapshotFacet
+			if photos {
+				page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: selected, Facets: []string{tc.dimension}}, nil)
+				require.NoError(t, err)
+				facets = page.Facets
+			} else {
+				page, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: selected, Facets: []string{tc.dimension}})
+				require.NoError(t, err)
+				facets = page.Facets
+			}
+			require.Equal(t, SnapshotFacetValue{Key: raw, Label: raw, Count: 1, Selected: true}, facets[0].Values[0])
+			require.Equal(t, int64(1), browsePhotoPage(t, s, fmt.Sprintf(`{"filters":{"asset_ids":[%q],%q:[%q]}}`, invalidAssetID, tc.filter, facets[0].Values[0].Key)).Total)
+		}
+	}
+}
+
+func TestPhotoOrdinarySeekAvoidsPopulationMaterialization(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	browsePhotoNode(t, s, "seek.jpg", browseHash("seek"), "image/jpeg")
+	match, err := photoBrowseMatch(mustPhotoCompiled(t, s, snapshotTestQuery(t, `{}`)), "", CoverageSelection{})
+	require.NoError(t, err)
+	from, key, _ := photoBrowseOrder("name")
+	rows, err := s.db.Query(`EXPLAIN QUERY PLAN SELECT a.asset_id FROM `+from+` WHERE `+photoBrowseLiveDisplay+` AND `+match.sql+` AND `+key+`>? ORDER BY `+key+`,a.asset_id LIMIT 51`, append(match.args, "seek")...)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		plan = append(plan, detail)
+	}
+	require.NoError(t, rows.Err())
+	require.NotContains(t, strings.Join(plan, "\n"), "MATERIALIZE")
+	require.Contains(t, strings.Join(plan, "\n"), "SEARCH n USING INDEX nodes_photo_name")
+	compiler := queryCompiler{photoDisplayMetadata: true, photoOuterDisplay: true}
+	compiled, err := compiler.compile(t.Context(), snapshotTestQuery(t, `{"filters":{"cameras":["Canon"]}}`), queryResolver{q: s.db})
+	require.NoError(t, err)
+	match, err = photoBrowseMatch(compiled, "", CoverageSelection{})
+	require.NoError(t, err)
+	filteredRows, err := s.db.Query(`EXPLAIN QUERY PLAN SELECT a.asset_id FROM `+photoBrowseDisplayFrom+` WHERE `+photoBrowseLiveDisplay+` AND `+match.sql, match.args...)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, filteredRows.Close()) }()
+	plan = nil
+	for filteredRows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, filteredRows.Scan(&id, &parent, &unused, &detail))
+		plan = append(plan, detail)
+	}
+	require.NoError(t, filteredRows.Err())
+	require.Equal(t, 1, strings.Count(strings.Join(plan, "\n"), "SEARCH p USING INDEX"))
+	require.NotContains(t, strings.Join(plan, "\n"), "SEARCH display")
 }

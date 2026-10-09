@@ -47,7 +47,7 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(1), photo(2)], total: 3, next_cursor: "next" })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Page unavailable" }), { status: 503 }))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3, "2024-01-01T12:00:00")], total: 3 })));
-  vi.stubGlobal("fetch", fetcher);
+  vi.stubGlobal("fetch", (url: string, init: RequestInit) => JSON.parse(init.body as string).page_size === 1 ? Promise.resolve(new Response(JSON.stringify({ facets: [] }))) : fetcher(url, init));
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const view = render(PhotosWorkspace, { photos, cache });
@@ -206,4 +206,24 @@ it("keeps loading pages that add no rows and keeps the top photo across density 
   expect(moved.getBoundingClientRect().top).toBeCloseTo(offset);
   photos.dispose();
   await cache.dispose();
+});
+
+it("keeps import guidance after clearing an empty search and recognizes numeric zero filters", async () => {
+ vi.stubGlobal("ResizeObserver",class { observe() {} disconnect() {} });
+ Object.defineProperty(Element.prototype,"scrollIntoView",{configurable:true,value:vi.fn()});
+ const photos = new Photos("scoped",vi.fn()); photos.started = true;
+ const cache = new PhotoPreviewCache("scoped",vi.fn());
+ vi.stubGlobal("fetch",vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({items:[],total:0})))));
+ render(PhotosWorkspace,{photos,cache});
+ await screen.findByText("Your photo library is empty");
+ await fireEvent.click(screen.getByRole("combobox",{name:"Sort photos: Capture date"}));
+ expect(screen.queryByRole("option",{name:"Relevance"})).toBeNull();
+ await fireEvent.click(screen.getByRole("option",{name:"Capture date"}));
+ expect(await screen.findByText(/Import photos with docbank photos import/)).toBeTruthy();
+ await photos.setQuery({...photos.query,filters:{iso_min:0}});
+ await screen.findByText("No matching photos");
+ await fireEvent.click(screen.getByRole("button",{name:"Clear filters"}));
+ await screen.findByText("Your photo library is empty");
+ expect(screen.getByText(/Search checks paired files/)).toBeTruthy();
+ photos.dispose(); await cache.dispose();
 });

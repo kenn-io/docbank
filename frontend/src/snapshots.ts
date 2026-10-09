@@ -49,7 +49,7 @@ export interface WorkspaceQueryResponse {
   rows: SnapshotRow[];
   facets: {
     dimension: "collections" | "tags" | "media_family" | "extension" | "modified" |
-      "size" | "text_coverage" | "duplicates";
+      "size" | "text_coverage" | "duplicates" | "camera" | "lens" | "year" | "location" | "set";
     available: boolean;
     reason?: string;
     total?: number | null;
@@ -89,7 +89,7 @@ const coverageStates = new Set<NonNullable<SnapshotRow["coverage_state"]>>([
 ]);
 const dependencyKinds = new Set(["tag", "collection", "saved"]);
 const facetDimensions = new Set<WorkspaceQueryResponse["facets"][number]["dimension"]>([
-  "collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates",
+  "collections", "tags", "media_family", "extension", "modified", "size", "text_coverage", "duplicates", "camera", "lens", "year", "location", "set",
 ]);
 const encoder = new TextEncoder();
 

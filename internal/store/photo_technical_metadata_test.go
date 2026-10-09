@@ -424,6 +424,7 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 	assert.Equal(t, "2024-06-01T22:30:00.000000000", sortKey)
 	assert.Equal(t, "2024-06-02", date)
 	assert.Equal(t, "current", camera)
+	require.Equal(t, int64(1), browsePhotoPage(t, reopened, `{"text":"Current","sort":{"field":"relevance"}}`).Total)
 }
 
 func TestPhotoTechnicalMetadataBackupScope(t *testing.T) {
@@ -567,6 +568,8 @@ func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
 	)
 	generation, err := s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("fb"), canonical)
 	require.NoError(t, err)
+	survivor := browsePhotoNode(t, s, "kept.jpg", fakeHash("ad"), "image/jpeg")
+	browsePhotoMetadata(t, s, survivor, "survivor", photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Survivor")))
 	_, err = s.db.ExecContext(ctx, `DELETE FROM source_metadata_heads WHERE source_sha256=?`, node.BlobHash)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `DELETE FROM source_metadata_generations WHERE generation_id=?`, generation.GenerationID)
@@ -575,6 +578,20 @@ func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM photo_technical_metadata WHERE generation_id=?`, generation.GenerationID).Scan(&projections))
 	assert.Zero(t, projections)
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_metadata_fts WHERE generation_id=?`, generation.GenerationID).Scan(&projections))
+	require.Zero(t, projections)
+
+	var identity int64
+	require.NoError(t, s.db.QueryRow(`SELECT row_id FROM photo_technical_metadata`).Scan(&identity))
+	_, err = s.db.Exec(`VACUUM`)
+	require.NoError(t, err)
+	var after int64
+	require.NoError(t, s.db.QueryRow(`SELECT row_id FROM photo_technical_metadata`).Scan(&after))
+	require.Equal(t, identity, after)
+	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Survivor","sort":{"field":"relevance"}}`).Total)
+	_, err = s.db.Exec(`DELETE FROM source_metadata_generations WHERE generation_id=(SELECT generation_id FROM source_metadata_heads WHERE source_sha256=?)`, survivor.BlobHash)
+	require.NoError(t, err)
+	require.Zero(t, browsePhotoPage(t, s, `{"text":"Survivor","sort":{"field":"relevance"}}`).Total)
 }
 
 func TestPhotoTechnicalMetadataCorruptSource(t *testing.T) {
@@ -685,4 +702,5 @@ func TestPhotoTechnicalMetadataRestoreRebuildsFromSourceMetadata(t *testing.T) {
 	var restored bytes.Buffer
 	require.NoError(t, target.ExportMetadata(ctx, &restored))
 	assert.Equal(t, exported.String(), restored.String())
+	require.Equal(t, int64(1), browsePhotoPage(t, target, `{"text":"France","sort":{"field":"relevance"}}`).Total)
 }

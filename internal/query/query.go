@@ -84,6 +84,7 @@ type Filters struct {
 	Kinds         []string   `json:"kinds,omitzero"`
 	Cameras       []string   `json:"cameras,omitzero"`
 	Lenses        []string   `json:"lenses,omitzero"`
+	Locations     []string   `json:"locations,omitzero"`
 	ISOMin        *int64     `json:"iso_min,omitzero"`
 	ISOMax        *int64     `json:"iso_max,omitzero"`
 	CaptureAfter  string     `json:"capture_after,omitzero"`
@@ -151,6 +152,7 @@ type filtersInput struct {
 	Kinds         *[]string  `json:"kinds"`
 	Cameras       *[]string  `json:"cameras"`
 	Lenses        *[]string  `json:"lenses"`
+	Locations     *[]string  `json:"locations"`
 	ISOMin        *int64     `json:"iso_min"`
 	ISOMax        *int64     `json:"iso_max"`
 	CaptureAfter  *string    `json:"capture_after"`
@@ -183,7 +185,7 @@ var optionalFilterFields = withQualityFields(map[string]struct{}{
 	"tag_ids": {}, "exclude_tag_ids": {}, "no_tags": {}, "media_families": {},
 	"mime_types": {}, "extensions": {}, "modified_after": {}, "modified_before": {},
 	"size_min": {}, "size_max": {}, "text_coverage": {}, "has_duplicates": {},
-	"rating_min": {}, "rating_max": {}, "flags": {}, "labels": {}, "collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {}, "set_ids": {},
+	"rating_min": {}, "rating_max": {}, "flags": {}, "labels": {}, "collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "locations": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {}, "set_ids": {},
 })
 
 // Parse validates and normalizes one bounded QueryV1 JSON value.
@@ -295,6 +297,9 @@ func (input filtersInput) value() Filters {
 	}
 	if input.Cameras != nil {
 		value.Cameras = *input.Cameras
+	}
+	if input.Locations != nil {
+		value.Locations = *input.Locations
 	}
 	if input.Lenses != nil {
 		value.Lenses = *input.Lenses

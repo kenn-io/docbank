@@ -106,6 +106,7 @@ func validateWorkspaceOptions(pageSize int, facets []string) error {
 	known := map[string]bool{
 		"collections": true, "tags": true, "media_family": true, "extension": true,
 		"modified": true, "size": true, "text_coverage": true, "duplicates": true,
+		"camera": true, "lens": true, "year": true, "location": true, "set": true,
 	}
 	seen := make(map[string]bool, len(facets))
 	for _, facet := range facets {

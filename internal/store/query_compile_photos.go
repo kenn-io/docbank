@@ -40,10 +40,13 @@ func (c queryCompiler) compilePhotoDecisionPredicate(predicate string, args ...a
 }
 
 func isPhotoScalarField(field string) bool {
-	return query.IsQualityField(field) || slices.Contains([]string{"rating", "rating_min", "rating_max", "flag", "label", "kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field)
+	return query.IsQualityField(field) || slices.Contains([]string{"rating", "rating_min", "rating_max", "flag", "label", "kind", "camera", "lens", "location", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field)
 }
 
 func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
+	if c.photoOuterDisplay {
+		return compiledQueryFragment{sql: `COALESCE(p.generation_id IS NOT NULL AND (` + predicate + `),0)`, args: args}
+	}
 	return c.compilePhotoVersionPredicate(func(alias string) string {
 		return `EXISTS (SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND ` + predicate + `)`
 	}, args...)
@@ -97,7 +100,12 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 			column = "pa.asset_id"
 		}
 		return compilePhotoAssetPredicate(column+`=?`, value), nil
-	case "camera", "lens":
+	case compiledLocationField:
+		if err := query.ValidateTextOperand(field, value); err != nil {
+			return compiledQueryFragment{}, err
+		}
+		return c.compilePhotoMetadataPredicate(`p.location_label=?`, value), nil
+	case compiledCameraField, compiledLensField:
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
 		}
@@ -182,7 +190,7 @@ func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int
 	for _, set := range []struct {
 		field  string
 		values []string
-	}{{"flag", filters.Flags}, {"label", filters.Labels}, {"kind", filters.Kinds}, {"camera", filters.Cameras}, {"lens", filters.Lenses}, {"asset", filters.AssetIDs}, {"set", filters.SetIDs}} {
+	}{{"flag", filters.Flags}, {"label", filters.Labels}, {"kind", filters.Kinds}, {"camera", filters.Cameras}, {"lens", filters.Lenses}, {compiledLocationField, filters.Locations}, {"asset", filters.AssetIDs}, {"set", filters.SetIDs}} {
 		matches := []compiledQueryFragment{}
 		for _, v := range set.values {
 			part, err := c.compileScalarPredicate(set.field, v, start, end)

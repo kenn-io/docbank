@@ -51,8 +51,11 @@ it("retains photo state and previews across sidebar switches until lock", async 
   vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL() {} });
   const stored = storage();
   let items = [photo(1)];
-  const fetcher = vi.fn(async (url: string) => {
-    if (url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: items.map(item => ({ ...item, previews: { ...item.previews, grid: { state: "ready", generation_id: "synthetic" } } })), total: 1 }));
+  const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/photos/assets/query")) {
+      if (JSON.parse(init!.body as string).facets.length) return new Response(JSON.stringify({ items: [], total: 1, facets: [] }));
+      return new Response(JSON.stringify({ items: items.map(item => ({ ...item, previews: { ...item.previews, grid: { state: "ready", generation_id: "synthetic" } } })), total: 1 }));
+    }
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
     if (url.includes("/nodes/1")) return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", revision: 1, path: "/" }));
     return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
@@ -63,9 +66,11 @@ it("retains photo state and previews across sidebar switches until lock", async 
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   const cacheName = stored.open.mock.calls[0][0];
   await waitFor(() => expect(stored.data.get(cacheName)?.size).toBe(1));
-  const listings = () => fetcher.mock.calls.filter(([url]) => url.includes("/photos/assets/query")).length;
+  const listings = () => fetcher.mock.calls.filter(([url, init]) => url.includes("/photos/assets/query") && !JSON.parse(init!.body as string).facets.length).length;
+  const counts = () => fetcher.mock.calls.filter(([url, init]) => url.includes("/photos/assets/query") && JSON.parse(init!.body as string).facets.length).length;
   const previews = () => fetcher.mock.calls.filter(([url]) => url.includes("/previews/")).length;
   expect(listings()).toBe(1);
+  await waitFor(() => expect(counts()).toBe(1));
   expect(previews()).toBe(1);
   const historyLength = history.length;
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
@@ -78,6 +83,7 @@ it("retains photo state and previews across sidebar switches until lock", async 
   await screen.findByText("1 selected photo");
   await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
   expect(listings()).toBe(1);
+  expect(counts()).toBe(1);
   expect(previews()).toBe(1);
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   items = [photo(2)];

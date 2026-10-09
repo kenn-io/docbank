@@ -38,7 +38,7 @@ type Store struct {
 // by this binary. It is intentionally independent of metadata JSONL's logical
 // format version: physical schema changes can rebuild through the same logical
 // format without changing that portable contract.
-const currentStorageSchemaVersion = 32
+const currentStorageSchemaVersion = 33
 
 const peopleStorageSchemaVersion = 15
 

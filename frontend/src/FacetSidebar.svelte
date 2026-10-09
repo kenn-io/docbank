@@ -9,16 +9,19 @@
     facets: SnapshotPage["facets"];
     query: Query;
     disabled?: boolean;
+    unit?: string;
     onchange: (query: Query) => void;
   }
 
-  let { facets, query, disabled = false, onchange }: Props = $props();
+  let { facets, query, disabled = false, unit = "documents", onchange }: Props = $props();
 
   const names: Record<Facet["dimension"], string> = {
+    camera: "Camera", lens: "Lens", year: "Year", location: "Location", set: "Albums",
     collections: "Collections", tags: "Tags", media_family: "Media family", extension: "Extension",
     modified: "Modified", size: "Size", text_coverage: "Text coverage", duplicates: "Duplicates",
   };
   const arrayFields = {
+    camera: "cameras", lens: "lenses", location: "locations", set: "set_ids",
     collections: "collection_ids", tags: "tag_ids", media_family: "media_families",
     extension: "extensions", text_coverage: "text_coverage",
   } as const;
@@ -34,13 +37,15 @@
     return parseQuery(canonicalQuery({ ...query, filters }));
   }
 
-  function toggleArray(dimension: keyof typeof arrayFields, key: string): void {
+  function arrayQuery(dimension: keyof typeof arrayFields, key: string): Query {
     const field = arrayFields[dimension];
-    const current = (query.filters[field] as string[] | undefined) ?? [];
+    const current = dimension === "camera" || dimension === "lens"
+      ? facets.find((facet) => facet.dimension === dimension)?.values.filter((value) => value.selected).map((value) => value.key) ?? []
+      : (query.filters[field] as string[] | undefined) ?? [];
     const values = current.includes(key) ? current.filter((value) => value !== key) : [...current, key];
     const filters = { ...query.filters, [field]: values.length ? values : undefined };
     if (dimension === "tags" && values.length) filters.no_tags = undefined;
-    onchange(changed(filters));
+    return changed(filters);
   }
 
   function monthRange(key: string): { after: string; before: string } | undefined {
@@ -75,9 +80,16 @@
     return value.label.replaceAll("_", " ");
   }
 
+  function yearBefore(year: string) { return year === "9999" ? undefined : `${String(Number(year) + 1).padStart(4, "0")}-01-01`; }
+
   function apply(dimension: Facet["dimension"], value: FacetValue): void {
+    if (dimension === "year") {
+      const active = selected(dimension, value);
+      onchange(changed({ ...query.filters, capture_after: active ? undefined : `${value.key}-01-01`, capture_before: active ? undefined : yearBefore(value.key) }));
+      return;
+    }
     if (dimension in arrayFields) {
-      toggleArray(dimension as keyof typeof arrayFields, value.key);
+      onchange(arrayQuery(dimension as keyof typeof arrayFields, value.key));
       return;
     }
     if (dimension === "modified") {
@@ -100,7 +112,10 @@
   }
 
   function actionable(dimension: Facet["dimension"], value: FacetValue): boolean {
-    return dimension in arrayFields || (dimension === "modified" && monthRange(value.key) !== undefined) ||
+    if (dimension in arrayFields) {
+      try { arrayQuery(dimension as keyof typeof arrayFields, value.key); return true; } catch { return false; }
+    }
+    return dimension === "year" || (dimension === "modified" && monthRange(value.key) !== undefined) ||
       (dimension === "size" && sizeRanges[value.key] !== undefined) ||
       (dimension === "duplicates" && value.key === "duplicate");
   }
@@ -111,8 +126,8 @@
   }
 </script>
 
-<aside class="facets" aria-label="Snapshot facets">
-  <h2>Refine snapshot</h2>
+<aside class="facets" aria-label={unit === "photos" ? "Photo facets" : "Snapshot facets"}>
+  <h2>{unit === "photos" ? "Refine photos" : "Refine snapshot"}</h2>
   {#each facets as facet (facet.dimension)}
     <section role="group" aria-label={`${names[facet.dimension]} facet`}>
       <h3>{names[facet.dimension]}</h3>
@@ -125,7 +140,7 @@
             {#if actionable(facet.dimension, value)}
               <button type="button" class:selected={selected(facet.dimension, value)}
                 aria-pressed={selected(facet.dimension, value)} disabled={disabled}
-                aria-label={`${valueLabel}, ${value.count} documents${selected(facet.dimension, value) ? ", selected" : ""}`}
+                aria-label={`${valueLabel}, ${value.count} ${unit}${selected(facet.dimension, value) ? ", selected" : ""}`}
                 onclick={() => apply(facet.dimension, value)}>
                 <span>{valueLabel}</span><strong>{value.count}</strong>
               </button>

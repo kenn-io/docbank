@@ -677,7 +677,8 @@ Existing `/search` requests do not gain advanced syntax through this endpoint.
 200 with its first page. The request accepts `query`, an optional configured
 processing `profile`, `page_size` of 50, 100, or 250 (default 100), and any
 subset of `collections`, `tags`, `media_family`, `extension`, `modified`,
-`size`, `text_coverage`, and `duplicates` facets.
+`size`, `text_coverage`, `duplicates`, `camera`, `lens`, `year`, `location`,
+and `set` facets, up to eight dimensions.
 
 The response freezes the canonical query, dependency revisions, selected
 lexical generation and processing coverage, ordered row metadata, and exact
@@ -698,8 +699,10 @@ its matching outer structured filter so clients can see alternative values.
 Expression operands and nested saved-query scope stay in force. `total` counts
 distinct documents in that self-excluded population, `missing` counts documents
 without a value, and `other` sums value counts omitted from the response. A
-document with several tags or collections contributes once to each value, so
-those value counts need not sum to `total`.
+document with several tags, collections, album memberships, or camera/lens
+make and model labels contributes once to each value, so those value counts
+need not sum to `total`. Photo dimensions here retain the document count unit.
+[Photo browse](../usage/photos.md) counts distinct assets instead.
 
 Each available facet keeps its leading 50 values plus selected QueryV1 values
 outside that set, including a selected value whose count is zero. Size uses the
@@ -827,6 +830,7 @@ fields, not additional parameters for `GET /search`:
 | `labels` | At most 64 entries: `""`, `red`, `yellow`, `green`, `blue`, or `purple` |
 | `kinds` | At most 64 entries, `photo` or `video` |
 | `cameras`, `lenses` | At most 64 complete make/model strings, matched with Unicode case folding; each 1 through 256 Unicode characters |
+| `locations` | At most 64 complete location labels, matched exactly; each 1 through 256 Unicode characters |
 | `iso_min`, `iso_max` | Inclusive safe nonnegative integer bounds; zero is accepted |
 | `capture_after`, `capture_before` | Strict YYYY-MM-DD local capture dates; inclusive lower and exclusive upper bounds |
 | `gps_bounds` | Decimal-string `south`, `west`, `north`, `east`; each at most 64 characters, latitude within -90 through 90, longitude within -180 through 180, south <= north; west > east crosses the antimeridian |
@@ -1140,7 +1144,7 @@ skipped, changed, failed, ambiguous and unsupported counts, plus the groups
 left unpaired. `POST /jobs/{operation_id}/cancel` stops it before the next
 group. Starting an import requires the API key on a loopback connection.
 
-`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size`, `cursor` and `hidden`, with `hidden` defaulting to false; true lists only hidden assets and validates the unlock on every page. It returns one item per eligible matching asset, `total` counted on the first page and optional forward `next_cursor`. The supported sort fields are `capture_time`, `import_time`, `added_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Capture keys sort missing or unreadable evidence last, then use ascending asset UUID for ties. Text keys compare their first 1,024 characters, so names or media types that share that prefix fall back to the UUID order. Album filters constrain the matching population before choosing duplicate representatives. `added_time` requires exactly one normalized `filters.set_ids` value and uses that album's added dates. Document snapshots reject `capture_time`, `import_time`, and `added_time` with a field-specific error that directs callers to Photos. Later pages reuse the first page's total while rows remain live; a new browse refreshes the count. Cursors expire after 15 minutes and bind resolved saved-query revisions, effective coverage, canonical query, and page size. Invalid options return `invalid_photo_query`; invalid or changed bindings return `invalid_photo_cursor`; expiry returns `cursor_expired`. Invalid expressions retain their operand positions.
+`POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size`, `facets`, `cursor`, and `hidden`. Hidden defaults to false; true lists only hidden assets and validates the unlock on every page. It returns one item per eligible matching asset, `total` and requested `camera`, `lens`, `year`, `location`, or `set` facets counted on the first page and optional forward `next_cursor`. The Photos UI requests rows with no facets, then requests counts separately with the same scope in capture-time order and page size 1. The first relevance page counts its complete ranked scope before limiting rows. Ranked row retrieval has a ten-second deadline; query deadlines or cancellation return HTTP 503 `snapshot_unavailable`. Facets count distinct assets across the whole scope while omitting their own root filter. Camera and lens group Unicode-folded make/model identities and emit original spellings as keys; an asset can count under both make and model. The supported sort fields are `relevance`, `capture_time`, `import_time`, `added_time`, `name`, `modified_at`, `size` and `media_type`; default ordering is name ascending. Capture keys sort missing or unreadable evidence last, then use ascending asset UUID for ties. Text keys compare their first 1,024 characters, so names or media types that share that prefix fall back to the UUID order. Album filters constrain the matching population before choosing duplicate representatives. `added_time` requires exactly one normalized `filters.set_ids` value and uses that album's added dates. Document snapshots reject `capture_time`, `import_time`, and `added_time` with a field-specific error that directs callers to Photos. Later pages reuse the first page's total while rows remain live; a new browse refreshes the count. Cursors expire after 15 minutes and bind resolved saved-query revisions, effective coverage, canonical query, requested facet dimensions, and page size. Relevance pages use evidence tier, numeric score and ascending asset UUID. Filename/metadata evidence precedes content-only matches in descending relevance; operands keep their field, prefix, phrase and NEAR meaning. Invalid options return `invalid_photo_query`; invalid or changed bindings return `invalid_photo_cursor`; expiry returns `cursor_expired`. Invalid expressions retain their operand positions.
 
 `POST /photos/assets/{asset_id}/hide` and `/unhide` require `If-Match` and return the asset and ETag. Interactive Photos reads and mutations of already-hidden assets require an unlock. Background imports continue updating hidden files and return ordinary import receipts. Hide requires configured credentials. Unhide of an already-hidden asset requires an unlock; a visible no-op still requires the current revision. Ordinary Documents reads retain file access.
 
@@ -1832,7 +1836,7 @@ include a `position` span:
 | `snapshot_capacity` | 429 | bounded snapshot cache admission could not reserve the requested rows or serialized bytes |
 | `snapshot_busy` | 429 | both bounded snapshot builders are already occupied |
 | `snapshot_too_large` | 413 | one materialization exceeded its row, per-row, or serialized-size bound |
-| `snapshot_unavailable` | 503 | snapshot materialization exceeded its build deadline |
+| `snapshot_unavailable` | 503 | query deadline exceeded or query canceled |
 | `invalid_profile` | 422 | requested processing profile or coverage selection is invalid |
 | `invalid_saved_query_run` | 422 | saved-run identity, revision, or execution request is invalid |
 | `not_dir` / `not_file` / `invalid_name` / `invalid_tag` / `not_trashed` / `is_root` | 422 | `store.ErrNotDir` / `ErrNotFile` / `ErrInvalidName` / `ErrInvalidTag` / `ErrNotTrashed` / `ErrIsRoot` |

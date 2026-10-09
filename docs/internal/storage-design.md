@@ -388,9 +388,9 @@ keep their revision and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart. JSONL v1 backs up hidden flags, credentials and decision receipts; restored vaults start without attempts or lockout. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 32 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 and 31 remain unsupported, unreleased sources.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart. JSONL v1 backs up hidden flags, credentials and decision receipts; restored vaults start without attempts or lockout. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 33 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 through 32 remain unsupported, unreleased sources.
 
-Schema version 32 exports assets, files, settings, albums, album members, and receipts in stable
+Schema version 33 exports assets, files, settings, albums, album members, and receipts in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, complete non-null authored receipt snapshots, and the graph before commit.
@@ -406,6 +406,8 @@ exposure, dimension, capture, orientation, GPS, and coarse place fields.
 Generations without those facts, such as PDFs and email, have no row. Its
 foreign key cascades with the generation, so it never becomes a second blob or
 version authority.
+
+`photo_metadata_fts` uses the stable integer `row_id` as its row key. Insert and delete triggers keep the index current; reads follow active metadata heads. Projection refresh and restore rebuild the index. See the [source metadata guide](https://docbank.ai/docs/architecture/source-metadata/) for the full contract.
 
 An exact content-version read first follows `content_versions.blob_hash` to
 the selected `source_metadata_heads` generation, validates that generation's

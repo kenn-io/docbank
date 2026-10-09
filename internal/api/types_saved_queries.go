@@ -73,6 +73,7 @@ type savedQueryFiltersSchema struct {
 	Labels               []string                           `json:"labels,omitempty" maxItems:"64"`
 	Kinds                []string                           `json:"kinds,omitempty" maxItems:"64" enum:"photo,video"`
 	Cameras              []string                           `json:"cameras,omitempty" maxItems:"64"`
+	Locations            []string                           `json:"locations,omitempty" maxItems:"64"`
 	Lenses               []string                           `json:"lenses,omitempty" maxItems:"64"`
 	SetIDs               []string                           `json:"set_ids,omitempty" maxItems:"64" format:"uuid"`
 	AssetIDs             []string                           `json:"asset_ids,omitempty" maxItems:"64" format:"uuid"`

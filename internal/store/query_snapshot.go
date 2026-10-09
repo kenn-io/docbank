@@ -119,6 +119,7 @@ type SnapshotProjection struct {
 }
 
 type snapshotMaterializeOptions struct {
+	MaterializeFacet   func(context.Context, string) (SnapshotFacet, error)
 	MaxRows            int64
 	MaxRowBytes        int64
 	MaxSerializedBytes int64

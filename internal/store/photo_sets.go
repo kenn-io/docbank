@@ -395,7 +395,7 @@ func (s *Store) photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection 
 	if err != nil {
 		return nil, err
 	}
-	match, err := photoBrowseMatch(compiled, generation, coverage, false)
+	match, err := photoBrowseMatch(compiled, generation, coverage)
 	if err != nil {
 		return nil, err
 	}

@@ -9,20 +9,23 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"go.kenn.io/docbank/internal/query"
+	"golang.org/x/text/cases"
 )
 
 var snapshotFacetDimensions = [...]string{
-	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, "duplicates",
+	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, "duplicates", compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField,
 }
 
 const (
 	snapshotFacetTags         = "tags"
 	snapshotFacetMediaFamily  = "media_family"
 	snapshotFacetTextCoverage = "text_coverage"
+	snapshotFacetYear         = "year"
 )
 
 func normalizeSnapshotFacets(values []string) ([]string, error) {
@@ -69,7 +72,13 @@ func materializeSnapshotFacets(
 			}
 			continue
 		}
-		facet, err := materializeSnapshotFacet(facetCtx, q, compiled, generationID, coverage, dimension, rows, options.FacetMemberLimit)
+		var facet SnapshotFacet
+		var err error
+		if options.MaterializeFacet != nil {
+			facet, err = options.MaterializeFacet(facetCtx, dimension)
+		} else {
+			facet, err = materializeSnapshotFacet(facetCtx, q, compiled, generationID, coverage, dimension, rows, options.FacetMemberLimit)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -122,7 +131,7 @@ func materializeSnapshotFacet(
 	coverage CoverageSelection, dimension string, snapshotRows []SnapshotRow, memberLimit int64,
 ) (SnapshotFacet, error) {
 	facetQuery := queryWithoutSnapshotFacet(compiled.Query, dimension)
-	if dimension != "duplicates" && reflect.DeepEqual(facetQuery.Filters, compiled.Query.Filters) {
+	if !isPhotoFacet(dimension) && dimension != "duplicates" && reflect.DeepEqual(facetQuery.Filters, compiled.Query.Filters) {
 		return materializeSnapshotFacetFromRows(ctx, q, compiled.Query, dimension, snapshotRows, memberLimit)
 	}
 	facetCompiled, err := compileQuery(ctx, facetQuery, queryResolver{q: q})
@@ -139,6 +148,8 @@ func materializeSnapshotFacet(
 	}
 	ctes, join, key, label := "", "", `''`, `''`
 	switch dimension {
+	case compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField:
+		join, key, label = photoFacetProjection(dimension)
 	case "collections":
 		ctes = `, ` + CollectionMembershipCTE
 		join = `LEFT JOIN collection_members cm ON cm.node_id=n.id LEFT JOIN collection_labels cl ON cl.ingest_id=cm.ingest_id`
@@ -165,43 +176,21 @@ func materializeSnapshotFacet(
 		return SnapshotFacet{}, fmt.Errorf("materializing %s facet: %w", dimension, err)
 	}
 	defer func() { _ = rows.Close() }()
-	observation := snapshotFacetObservation{counts: make(map[string]int64), labels: make(map[string]string)}
-	var priorNodeID int64
-	havePrior := false
-	var projectedRows int64
-	for rows.Next() {
+	observation, limited, err := observeSnapshotFacet(rows, dimension, memberLimit, func() (string, string, string, error) {
 		var nodeID, size int64
-		var name, mimeType, modifiedAt, value, valueLabel string
-		if err := rows.Scan(&nodeID, &name, &mimeType, &size, &modifiedAt, &value, &valueLabel); err != nil {
-			return SnapshotFacet{}, fmt.Errorf("scanning %s facet: %w", dimension, err)
-		}
-		projectedRows++
-		if projectedRows > memberLimit {
-			return unavailableSnapshotFacet(dimension, "member_budget_exceeded"), rows.Close()
-		}
-		if !havePrior || nodeID != priorNodeID {
-			observation.total++
-			if observation.total > memberLimit {
-				return unavailableSnapshotFacet(dimension, "member_budget_exceeded"), rows.Close()
-			}
-			priorNodeID, havePrior = nodeID, true
-		}
-		if dimension != "collections" && dimension != snapshotFacetTags && dimension != snapshotFacetTextCoverage && dimension != "duplicates" {
+		var name, mimeType, modifiedAt, value, label string
+		err := rows.Scan(&nodeID, &name, &mimeType, &size, &modifiedAt, &value, &label)
+		if !isPhotoFacet(dimension) && dimension != "collections" && dimension != snapshotFacetTags && dimension != snapshotFacetTextCoverage && dimension != "duplicates" {
 			value = snapshotFacetScalarValue(dimension, name, mimeType, modifiedAt, size)
-			valueLabel = value
+			label = value
 		}
-		if value == "" {
-			observation.missing++
-			continue
-		}
-		observation.counts[value]++
-		observation.labels[value] = valueLabel
-	}
-	if err := rows.Err(); err != nil {
+		return strconv.FormatInt(nodeID, 10), value, label, err
+	})
+	if err != nil {
 		return SnapshotFacet{}, fmt.Errorf("materializing %s facet: %w", dimension, err)
 	}
-	if err := rows.Close(); err != nil {
-		return SnapshotFacet{}, fmt.Errorf("closing %s facet: %w", dimension, err)
+	if limited {
+		return unavailableSnapshotFacet(dimension, "member_budget_exceeded"), nil
 	}
 	return finishSnapshotFacet(ctx, q, compiled.Query, dimension, observation)
 }
@@ -266,6 +255,18 @@ func finishSnapshotFacet(
 		return SnapshotFacet{}, err
 	}
 	selected := snapshotFacetSelected(value, dimension)
+	if dimension == compiledCameraField || dimension == compiledLensField {
+		raw := value.Filters.Cameras
+		if dimension == compiledLensField {
+			raw = value.Filters.Lenses
+		}
+		for _, label := range raw {
+			key := cases.Fold().String(label)
+			if observed, ok := observation.labels[key]; !ok || query.ValidateTextOperand(dimension, observed) != nil {
+				observation.labels[key] = label
+			}
+		}
+	}
 	fixed := fixedSnapshotFacetValues(dimension)
 	for _, value := range fixed {
 		if _, ok := observation.counts[value]; !ok {
@@ -285,6 +286,9 @@ func finishSnapshotFacet(
 	}
 	for i := range values {
 		values[i].Label = observation.labels[values[i].Key]
+		if dimension == compiledCameraField || dimension == compiledLensField {
+			values[i].Key = values[i].Label
+		}
 	}
 	total, missing := observation.total, observation.missing
 	return SnapshotFacet{
@@ -297,6 +301,18 @@ func finishSnapshotFacet(
 // nested saved queries retain their constraints in the same read transaction.
 func queryWithoutSnapshotFacet(value query.Query, dimension string) query.Query {
 	switch dimension {
+	case compiledCameraField:
+		value.Filters.Cameras = nil
+	case compiledLensField:
+		value.Filters.Lenses = nil
+	case compiledLocationField:
+		value.Filters.Locations = nil
+	case snapshotFacetYear:
+		if wholeCaptureYear(value) != "" {
+			value.Filters.CaptureAfter, value.Filters.CaptureBefore = "", ""
+		}
+	case compiledSetField:
+		value.Filters.SetIDs = nil
 	case "collections":
 		value.Filters.CollectionIDs, value.Filters.ExcludeCollectionIDs = nil, nil
 	case snapshotFacetTags:
@@ -370,6 +386,18 @@ func snapshotFacetSelected(value query.Query, dimension string) map[string]bool 
 	selected := make(map[string]bool)
 	var values []string
 	switch dimension {
+	case compiledCameraField:
+		values = value.Filters.Cameras
+	case compiledLensField:
+		values = value.Filters.Lenses
+	case compiledLocationField:
+		values = value.Filters.Locations
+	case compiledSetField:
+		values = value.Filters.SetIDs
+	case snapshotFacetYear:
+		if year := wholeCaptureYear(value); year != "" {
+			values = []string{year}
+		}
 	case "collections":
 		values = value.Filters.CollectionIDs
 	case snapshotFacetTags:
@@ -386,6 +414,9 @@ func snapshotFacetSelected(value query.Query, dimension string) map[string]bool 
 		}
 	}
 	for _, item := range values {
+		if dimension == compiledCameraField || dimension == compiledLensField {
+			item = cases.Fold().String(item)
+		}
 		selected[item] = true
 	}
 	return selected
@@ -399,6 +430,15 @@ func fillSelectedSnapshotFacetLabels(
 			continue
 		}
 		switch dimension {
+		case compiledSetField:
+			var name string
+			if err := q.QueryRowContext(ctx, `SELECT name FROM photo_sets WHERE set_id=?`, key).Scan(&name); err != nil {
+				if !errors.Is(err, sql.ErrNoRows) {
+					return err
+				}
+				name = key
+			}
+			labels[key] = name
 		case snapshotFacetTags:
 			var name string
 			if err := q.QueryRowContext(ctx, `SELECT name FROM tags WHERE id=?`, key).Scan(&name); err != nil {
@@ -466,4 +506,254 @@ func finalizeSnapshotFacetValues(
 		values = make([]SnapshotFacetValue, 0)
 	}
 	return values, other
+}
+
+func isPhotoFacet(dimension string) bool {
+	return slices.Contains([]string{compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField}, dimension)
+}
+
+func photoFacetProjection(dimension string) (join, key, label string) {
+	join = `LEFT JOIN source_metadata_heads photo_head ON photo_head.source_sha256=cv.blob_hash LEFT JOIN photo_technical_metadata p ON p.generation_id=photo_head.generation_id`
+	switch dimension {
+	case compiledCameraField, compiledLensField:
+		join += ` LEFT JOIN (SELECT 0 choice UNION ALL SELECT 1) photo_label ON (photo_label.choice=0 AND COALESCE(p.` + dimension + `_model,'')<>'') OR (photo_label.choice=1 AND COALESCE(p.` + dimension + `_make,'')<>'')`
+		key = `COALESCE(CASE WHEN photo_label.choice=0 THEN p.` + dimension + `_model_folded ELSE p.` + dimension + `_make_folded END,'')`
+		label = `COALESCE(CASE WHEN photo_label.choice=0 THEN p.` + dimension + `_model ELSE p.` + dimension + `_make END,'')`
+	case snapshotFacetYear:
+		key = `substr(COALESCE(p.capture_date,''),1,4)`
+		label = key
+	case compiledLocationField:
+		key = `COALESCE(p.location_label,'')`
+		label = key
+	case compiledSetField:
+		join = `LEFT JOIN photo_files pf ON pf.node_id=n.id LEFT JOIN (photo_set_members sm JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL) ON sm.asset_id=pf.asset_id`
+		key = `COALESCE(ps.set_id,'')`
+		label = `COALESCE(ps.name,'')`
+	}
+	return
+}
+
+func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions) ([]SnapshotFacet, error) {
+	results := make(map[string]SnapshotFacet)
+	options.MaterializeFacet = func(ctx context.Context, dimension string) (SnapshotFacet, error) {
+		if facet, ok := results[dimension]; ok {
+			return facet, nil
+		}
+		filters := queryWithoutSnapshotFacet(compiled.Query, dimension).Filters
+		var shared []string
+		for _, candidate := range dimensions {
+			if (candidate == compiledSetField) == (dimension == compiledSetField) && reflect.DeepEqual(filters, queryWithoutSnapshotFacet(compiled.Query, candidate).Filters) {
+				shared = append(shared, candidate)
+			}
+		}
+		facets, err := materializeSharedPhotoFacets(ctx, q, compiled, generation, coverage, shared, options)
+		if err != nil {
+			return SnapshotFacet{}, err
+		}
+		for _, facet := range facets {
+			results[facet.Dimension] = facet
+		}
+		return results[dimension], nil
+	}
+	var used int64
+	return materializeSnapshotFacets(ctx, q, compiled, generation, coverage, dimensions, nil, options, &used)
+}
+
+func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions) ([]SnapshotFacet, error) {
+	value := queryWithoutSnapshotFacet(compiled.Query, dimensions[0])
+	resolved, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: compiled.photoHidden, photoOuterDisplay: !value.Filters.CollapseDuplicates}).compile(ctx, value, queryResolver{q: q})
+	if err != nil {
+		return nil, err
+	}
+	match, err := photoBrowseMatch(resolved, generation, coverage)
+	if err != nil {
+		return nil, err
+	}
+	memberFilters := value.Filters
+	memberFilters.Cameras, memberFilters.Lenses, memberFilters.Locations = nil, nil, nil
+	memberFilters.ISOMin, memberFilters.ISOMax, memberFilters.GPSBounds = nil, nil, nil
+	memberFilters.CaptureAfter, memberFilters.CaptureBefore = "", ""
+	if value.Text == "" && reflect.DeepEqual(memberFilters, query.Filters{}) {
+		match = resolved.predicate
+		if match.sql == "" {
+			match = trueCompiledFragment()
+		}
+	}
+	albumJoin, albumValues := "", `'', ''`
+	if slices.Contains(dimensions, compiledSetField) {
+		albumJoin = ` LEFT JOIN photo_set_members sm ON sm.asset_id=a.asset_id LEFT JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL`
+		albumValues = `COALESCE(ps.set_id,''),COALESCE(ps.name,'')`
+	}
+	statement, args, err := bindQueryPopulation(compiledQueryFragment{sql: `SELECT a.asset_id,COALESCE(p.camera_make,''),COALESCE(p.camera_model,''),COALESCE(p.lens_make,''),COALESCE(p.lens_model,''),substr(COALESCE(p.capture_date,''),1,4),COALESCE(p.location_label,''),` + albumValues + ` FROM ` + photoBrowseDisplayFrom + albumJoin + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` AND ` + match.sql + ` ORDER BY a.asset_id LIMIT ?`, args: append(match.args, options.FacetMemberLimit+1), relations: match.relations}, coverage, generation)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := q.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	observations := make(map[string]*snapshotFacetAccumulator, len(dimensions))
+	for _, dimension := range dimensions {
+		observations[dimension] = newSnapshotFacetAccumulator()
+	}
+	var projected, bytes int64
+	exceeded := false
+	for rows.Next() {
+		var id, cameraMake, cameraModel, lensMake, lensModel, year, location, set, name string
+		if err := rows.Scan(&id, &cameraMake, &cameraModel, &lensMake, &lensModel, &year, &location, &set, &name); err != nil {
+			return nil, err
+		}
+		projected++
+		bytes += int64(len(id) + len(cameraMake) + len(cameraModel) + len(lensMake) + len(lensModel) + len(year) + len(location) + len(set) + len(name))
+		if projected > options.FacetMemberLimit || bytes > options.MaxSerializedBytes {
+			exceeded = true
+			break
+		}
+		for _, dimension := range dimensions {
+			values := []string{}
+			switch dimension {
+			case compiledCameraField:
+				values = []string{cameraMake, cameraModel}
+			case compiledLensField:
+				values = []string{lensMake, lensModel}
+			case snapshotFacetYear:
+				values = []string{year}
+			case compiledLocationField:
+				values = []string{location}
+			case compiledSetField:
+				values = []string{set}
+			}
+			have := false
+			for _, label := range values {
+				if label == "" {
+					continue
+				}
+				have = true
+				key := label
+				if dimension == compiledCameraField || dimension == compiledLensField {
+					key = cases.Fold().String(label)
+				}
+				if dimension == compiledSetField {
+					label = name
+				}
+				observations[dimension].add(dimension, id, key, label, options.FacetMemberLimit)
+			}
+			if !have {
+				observations[dimension].add(dimension, id, "", "", options.FacetMemberLimit)
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	result := make([]SnapshotFacet, 0, len(dimensions))
+	for _, dimension := range dimensions {
+		observation := observations[dimension]
+		if exceeded || observation.limited {
+			reason := "member_budget_exceeded"
+			if bytes > options.MaxSerializedBytes {
+				reason = "byte_budget_exceeded"
+			}
+			result = append(result, unavailableSnapshotFacet(dimension, reason))
+			continue
+		}
+		facet, err := finishSnapshotFacet(ctx, q, compiled.Query, dimension, observation.snapshotFacetObservation)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, facet)
+	}
+	return result, nil
+}
+
+type snapshotFacetAccumulator struct {
+	snapshotFacetObservation
+
+	previous  string
+	seen      map[string]bool
+	projected int64
+	limited   bool
+}
+
+func newSnapshotFacetAccumulator() *snapshotFacetAccumulator {
+	return &snapshotFacetAccumulator{counts: map[string]int64{}, labels: map[string]string{}, seen: map[string]bool{}}
+}
+
+func (observation *snapshotFacetAccumulator) add(dimension, id, value, label string, limit int64) {
+	if observation.limited {
+		return
+	}
+	if id != observation.previous {
+		observation.total++
+		observation.missing++
+		observation.previous = id
+		clear(observation.seen)
+	}
+	if !observation.seen[value] {
+		observation.projected++
+		if observation.projected > limit {
+			observation.limited = true
+			return
+		}
+		if value != "" {
+			if len(observation.seen) == 0 || len(observation.seen) == 1 && observation.seen[""] {
+				observation.missing--
+			}
+			observation.counts[value]++
+		}
+		observation.seen[value] = true
+	}
+	if value == "" {
+		return
+	}
+	prior, ok := observation.labels[value]
+	if ok && label == prior {
+		return
+	}
+	prefer := label < prior
+	if dimension == compiledCameraField || dimension == compiledLensField {
+		valid, priorValid := query.ValidateTextOperand(dimension, label) == nil, query.ValidateTextOperand(dimension, prior) == nil
+		prefer = valid && !priorValid || valid == priorValid && prefer
+	}
+	if !ok || prefer {
+		observation.labels[value] = label
+	}
+}
+
+func observeSnapshotFacet(rows *sql.Rows, dimension string, limit int64, scan func() (string, string, string, error)) (snapshotFacetObservation, bool, error) {
+	defer func() { _ = rows.Close() }()
+	observation := newSnapshotFacetAccumulator()
+	for rows.Next() {
+		id, value, label, err := scan()
+		if err != nil {
+			return observation.snapshotFacetObservation, false, err
+		}
+		observation.add(dimension, id, value, label, limit)
+		if observation.limited {
+			return observation.snapshotFacetObservation, true, rows.Close()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return observation.snapshotFacetObservation, false, err
+	}
+	return observation.snapshotFacetObservation, false, rows.Close()
+}
+
+func wholeCaptureYear(value query.Query) string {
+	if len(value.Filters.CaptureAfter) != 10 || value.Filters.CaptureAfter[4:] != "-01-01" {
+		return ""
+	}
+	year, _ := strconv.Atoi(value.Filters.CaptureAfter[:4])
+	before := ""
+	if year < 9999 {
+		before = fmt.Sprintf("%04d-01-01", year+1)
+	}
+	if value.Filters.CaptureBefore != before {
+		return ""
+	}
+	return value.Filters.CaptureAfter[:4]
 }

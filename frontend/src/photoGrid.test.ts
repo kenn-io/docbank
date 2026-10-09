@@ -56,3 +56,12 @@ it("groups recorded months and capture sessions across appended pages", () => {
     expect(groups.slice(0, -1).flatMap(group => group.items)).toHaveLength(2);
   }
 });
+
+it("keeps relevance order across months and undated photos", () => {
+  const items = [photo(3), photo(1), photo(2)];
+  items[0]!.capture_time = null;
+  items[1]!.capture_time = "2020-01-01T12:00:00";
+  items[2]!.capture_time = "2026-01-01T12:00:00";
+  expect(groupPhotos(items, "relevance").flatMap(group => group.items)).toEqual(items);
+  expect(groupPhotos(items, "relevance")[0]!.year).toBe("");
+});

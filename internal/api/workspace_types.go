@@ -17,7 +17,7 @@ type WorkspaceQueryCreateRequest struct {
 	Query    QueryPayload `json:"query"`
 	Profile  string       `json:"profile,omitempty" maxLength:"128"`
 	PageSize int          `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
-	Facets   []string     `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
+	Facets   []string     `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates,camera,lens,year,location,set"`
 }
 
 // WorkspaceQueryPageRequest reads one page using only the opaque cursor minted
@@ -31,7 +31,7 @@ type WorkspaceQueryPageRequest struct {
 type SavedQueryRunRequest struct {
 	Profile  string   `json:"profile,omitempty" maxLength:"128"`
 	PageSize int      `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
-	Facets   []string `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
+	Facets   []string `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates,camera,lens,year,location,set"`
 }
 
 // WorkspaceQueryDependency is the explicit snake-case wire form of an
@@ -201,17 +201,7 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 		}
 		out.Rows = append(out.Rows, wire)
 	}
-	for _, facet := range page.Facets {
-		wire := WorkspaceFacet{Dimension: facet.Dimension, Available: facet.Available,
-			Reason: facet.Reason, Total: facet.Total, Values: []WorkspaceFacetValue{},
-			Missing: facet.Missing, Other: facet.Other}
-		for _, value := range facet.Values {
-			wire.Values = append(wire.Values, WorkspaceFacetValue{
-				Key: value.Key, Label: value.Label, Count: value.Count, Selected: value.Selected,
-			})
-		}
-		out.Facets = append(out.Facets, wire)
-	}
+	out.Facets = fromStoreFacets(page.Facets)
 	return out, nil
 }
 
@@ -230,4 +220,20 @@ func fromStoreSavedQueryRun(run store.SavedQueryRun) SavedQueryRun {
 		out.PreviousTotal = new(run.PreviousTotal)
 	}
 	return out
+}
+
+func fromStoreFacets(facets []store.SnapshotFacet) []WorkspaceFacet {
+	result := make([]WorkspaceFacet, 0, len(facets))
+	for _, facet := range facets {
+		wire := WorkspaceFacet{Dimension: facet.Dimension, Available: facet.Available,
+			Reason: facet.Reason, Total: facet.Total, Values: []WorkspaceFacetValue{},
+			Missing: facet.Missing, Other: facet.Other}
+		for _, value := range facet.Values {
+			wire.Values = append(wire.Values, WorkspaceFacetValue{
+				Key: value.Key, Label: value.Label, Count: value.Count, Selected: value.Selected,
+			})
+		}
+		result = append(result, wire)
+	}
+	return result
 }

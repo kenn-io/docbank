@@ -4,6 +4,7 @@ import { photo } from "./photo-test-fixtures.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
+const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => Promise<Response>, facets: unknown[] = []) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => JSON.parse(init.body as string).page_size === 1 ? Promise.resolve(new Response(JSON.stringify({ facets }))) : fetcher(url, init));
 
 it.each(["hide", "unhide", "trash"])("reconciles other views after a lost %s reply and retains uncertain targets", async kind => {
   const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Reply lost after commit"))
@@ -109,7 +110,7 @@ it.each(["replace", "checkbox", "loaded", "add"])("uses current selection after 
 
 it("keeps earlier pages on failure, waits for Retry, and reuses the failed cursor", async () => {
   const fetcher = vi.fn();
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn());
   let finish!: (response: Response) => void;
   let release!: () => void;
@@ -150,7 +151,7 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
     .mockResolvedValueOnce(new Response("{}", { status: 503 }))
     .mockResolvedValueOnce(response([photo(4), photo(1)], "replacement"))
     .mockResolvedValueOnce(response([photo(2), photo(3)], "new-tail"));
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const restore = vi.fn(async () => {});
   const preserve = vi.fn(() => restore);
   const photos = new Photos("scoped", vi.fn());
@@ -231,7 +232,7 @@ it("ignores canceled reads while a later request continues", async () => {
   let finishNew!: (value: Response) => void;
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve))
     .mockResolvedValueOnce(response([photo(2)], "next"));
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn());
   const initial = photos.resume();
   photos.cancelPending();
@@ -294,7 +295,7 @@ it("times each replacement page separately", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1)], "second")).mockResolvedValueOnce(response([photo(2)], "third"))
     .mockResolvedValueOnce(response([photo(1)], "refresh-second"))
     .mockImplementationOnce(async () => { timers[0].abort(new DOMException("Timed out", "TimeoutError")); return response([photo(2)], "third"); });
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn());
   await photos.loadMore();
   await photos.loadMore();
@@ -406,4 +407,81 @@ it("reports unresolved visibility selections before sending requests", async () 
   expect(report).toHaveBeenCalledWith(photos.actionError);
   expect(fetcher).not.toHaveBeenCalled();
   photos.dispose();
+}
+
+it("search scope cancels stale reads and retains first-page facets through paging", async () => {
+  let finish!: (response: Response) => void;
+  const facet = { dimension: "camera", available: true, total: 2, missing: 0, other: 0, values: [{ key: "Canon", label: "Canon", count: 2, selected: false }] };
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(2)], total: 2, facets: [facet], next_cursor: "ranked" })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3)], total: 2, facets: [] })));
+  stubPhotoFetch(fetcher, [facet]);
+  const photos = new Photos("scope", vi.fn());
+  const old = photos.loadMore();
+  await photos.setQuery({ ...photos.query, text: "Canon", sort: { field: "relevance", direction: "desc" } });
+  expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
+  finish(response([photo(1)])); await old;
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
+  await photos.loadMore();
+  expect(photos.facets).toEqual([facet]);
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2", "photo-3"]);
+  const request = JSON.parse(fetcher.mock.calls[2][1].body);
+  expect(request.query.text).toBe("Canon"); expect(request.cursor).toBe("ranked");
+  expect(new Photos("other", vi.fn()).query.text).toBe("");
+  photos.dispose();
+});
+
+it("publishes and pages rows before optional counts, and isolates count retry, cancellation and stale scopes", async () => {
+  const counts: { request: any; signal: AbortSignal; finish: (value: Response) => void }[] = [];
+  const rows = vi.fn().mockResolvedValueOnce(response([photo(1)], "next")).mockResolvedValueOnce(response([photo(2)], "later"));
+  vi.stubGlobal("fetch", (url: string, init: RequestInit) => {
+    const request = JSON.parse(init.body as string);
+    if (request.page_size !== 1) return rows(url, init);
+    return new Promise<Response>(finish => counts.push({ request, signal: init.signal!, finish }));
+  });
+  const photos = new Photos("scope", vi.fn());
+  await photos.loadMore();
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1"]);
+  expect(photos.loading).toBe(false);
+  expect(photos.facetsLoading).toBe(true);
+  await photos.loadMore();
+  expect(photos.items).toHaveLength(2);
+  expect(photos.cursor).toBe("later");
+  expect(rows.mock.calls.map(call => JSON.parse(call[1].body).facets)).toEqual([[], []]);
+  photos.cancelPending();
+  expect(counts[0].signal.aborted).toBe(true);
+  const resumed = photos.resume();
+  expect(counts).toHaveLength(2);
+  const facet = { dimension: "camera", available: true, total: 3, values: [], missing: 3, other: 0 };
+  counts[0].finish(new Response(JSON.stringify({ facets: [{ ...facet, total: 99 }] })));
+  counts[1].finish(new Response(JSON.stringify({ items: [photo(99)], total: 99, next_cursor: "wrong", facets: [facet] })));
+  await resumed;
+  expect(photos.facets).toEqual([facet]);
+  expect(photos.total).toBe(3);
+  expect(photos.cursor).toBe("later");
+  expect(photos.items).toHaveLength(2);
+  rows.mockResolvedValueOnce(response([photo(3), photo(6)], "refresh-tail"));
+  await photos.refresh();
+  expect(photos.items[0].asset_id).toBe("photo-3");
+  counts[2].finish(new Response(JSON.stringify({ detail: "Counts unavailable" }), { status: 503 }));
+  await vi.waitFor(() => expect(photos.facetsError).toBe("Counts unavailable"));
+  expect(photos.error).toBe("");
+  rows.mockResolvedValueOnce(response([photo(4)]));
+  await photos.loadMore();
+  expect(photos.items).toHaveLength(3);
+  const retry = photos.retryFacets();
+  rows.mockResolvedValueOnce(response([photo(5)], "ranked"));
+  await photos.setQuery({ ...photos.query, text: "Canon", sort: { field: "relevance", direction: "desc" } });
+  expect(counts[3].signal.aborted).toBe(true);
+  counts[3].finish(new Response(JSON.stringify({ facets: [facet] })));
+  await retry;
+  expect(photos.facets).toEqual([]);
+  expect(counts[4].request.query.text).toBe("Canon");
+  expect(counts[4].request.query.sort).toEqual({ field: "capture_time", direction: "desc" });
+  expect(counts[4].request.facets).toEqual(["camera", "lens", "year", "location", "set"]);
+  expect(counts[4].request.cursor).toBeUndefined();
+  photos.dispose();
+  expect(counts[4].signal.aborted).toBe(true);
+  counts[4].finish(new Response(JSON.stringify({ facets: [facet] })));
+  await vi.waitFor(() => expect(photos.items.map(item => item.asset_id)).toEqual(["photo-5"]));
 });

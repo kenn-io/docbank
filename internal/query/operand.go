@@ -18,7 +18,7 @@ func ValidateTextOperand(field, value string) error {
 		valid = ValidPhotoColorLabel(value)
 	case "kind":
 		valid = oneOf(value, "photo", "video")
-	case "camera", "lens":
+	case "camera", "lens", "location":
 		valid = validPhotoLabel(value)
 	case "asset", "set":
 		valid = validUUIDv4(value)

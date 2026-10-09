@@ -128,7 +128,10 @@ version reads exact and lets duplicate versions share one generation row.
 
 The projection also stores capture sort keys, local calendar dates and
 case-folded camera/lens labels, so browsing does not re-parse source evidence.
-These derived columns stay out of metadata JSONL and are rebuilt on restore.
+Photos uses a derived FTS5 index to search complete camera/lens makes and models plus
+location labels. Only active source heads serve matches; retained generations
+remain available for rebuilds. These columns and the index stay out of
+metadata JSONL and rebuild on restore.
 
 Capture timestamps retain normalized text, raw text, precision, timezone kind,
 and offset. A date-only value keeps its omitted timezone. The GPS adapter

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-07
+last_edited: 2026-10-08
 title: Photo assets
 description: Group camera files, browse photos in the web app, and organize albums through the CLI or HTTP API.
 ---
@@ -35,6 +35,20 @@ Open `docbank web` and choose **Photos** in the sidebar. Library opens at
 Undated. The year buttons jump to the years loaded so far; scrolling loads
 more photos and reveals older years. Choose **Load more** to continue from
 the same position when further results remain.
+
+Search filenames, camera or lens names, and location labels in the Photos
+search box. Search opens in relevance order, with one tile per asset even
+when several paired files match. Choose Capture date to
+return to date browsing. Relevance keeps the ranked order across loaded
+pages and uses asset IDs to break equal-score ties. The first ranked page counts its complete ranked scope. Ranked retrieval has a ten-second deadline; Retry repeats a timed-out read while retaining earlier pages.
+
+Camera, Lens, Year, Location, and Albums narrow the grid. Counts cover the
+whole matching library, including photos beyond the loaded page. The grid loads before optional counts; Retry counts reloads failed summaries while paging stays available. Each facet
+omits its own selected filter while retaining search and the other filters.
+Camera, lens, year, and location describe the selected display file; year
+uses its recorded local capture date. Text may match any live member of a
+pair, so a text match can appear under a different display-file camera or lens. Camera and lens count both make and model; their counts can sum to more than the asset total. Equivalent Unicode-folded values share one bucket and count each asset once. Buttons submit an original valid spelling; oversized metadata stays visible as informational counts. Year counts omit a selected whole-year range and retain other date ranges. Albums show live memberships. Choose Clear filters to reset the
+search and facets. Changing scope clears selection and starts a fresh grid.
 
 Choose Months or Capture sessions to group the grid. A session joins captures
 with gaps of four hours or less. Compact, Comfortable, and Large change the
@@ -341,24 +355,28 @@ Hidden unlock and lock remain available. Setup, change, disable, reset, hide, an
 
 `POST /api/v1/photos/assets/query` accepts a `query` object using
 [QueryV1](../architecture/http-api.md#saved-query-and-highlight-definitions),
-optional `coverage`, `page_size` from 1 through 250, `cursor`, and `hidden`.
+optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, and `hidden`.
 Omit `hidden` or set it to `false` for visible photos. `hidden: true` selects
-only hidden photos and requires an active unlock on every page. It returns
-`items`, the matching asset `total` counted on the first page, and an optional
-`next_cursor`. Later pages keep that total. Start a new browse to refresh it.
+only hidden photos and requires an active unlock on every page.
+Request `camera`, `lens`, `year`, `location`, or `set` facets. It returns
+`items`, the matching asset `total`, first-page `facets`, and an optional
+`next_cursor`. Facets count distinct eligible assets across the whole scope
+and omit their own root structured filter. Keep them across continuations.
+Facet time or member limits return an unavailable reason. Later pages keep that total. Start a new browse to refresh it.
 The default page size is 50. Send the same query and page options with each
 continuation. Editing a saved query invalidates its earlier cursor. Cursors
 expire after 15 minutes. Results are live: file changes can move assets across
 the previous page boundary.
 
 Use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`,
-`iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`,
+`location:"Paris, Île-de-France, France"`, `iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`,
 `capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, `rating:5`, `flag:pick`,
 `label:red`, or `asset:` or `set:`
 followed by a canonical asset or album UUIDv4. Existing `collection:`, tag, and text predicates combine
 with these fields. Camera and lens match the complete make or model, ignoring
 case using Unicode case folding. Values in one typed filter array combine with
-OR. Separate filters combine with AND.
+OR. Separate filters combine with AND. `locations` and `location:` match
+the complete location label exactly.
 
 Use typed `flags:[""]` or `labels:[""]` to select unflagged or unlabeled photos. Expression operands must be nonempty. `NOT flag:pick` selects unflagged and rejected photos; `NOT label:red` selects unlabeled photos and other colors.
 
@@ -368,27 +386,31 @@ filters even if its recorded UTC offset puts it on January 2 in UTC. GPS uses
 inclusive decimal-string latitude/longitude bounds and permits boxes crossing
 the antimeridian.
 
-Camera, lens, ISO, capture-date, and GPS predicates use the asset's selected
+Camera, lens, location, ISO, capture-date, and GPS predicates use the asset's selected
 display file. Metadata from other members is not combined with it. If the
 selected RAW has camera A and its paired JPEG has lens B, `camera:A` matches
 and `lens:B` does not. A sidecar without camera metadata cannot make
 `NOT camera:A` match. Changing the display file changes these metadata matches.
 
-Ordinary text, name, extension, tag, and collection predicates still match
+Photos text also searches camera and lens makes/models and location labels from
+active metadata heads. `name:` searches filenames only. Filenames and metadata supply BM25 relevance scores ahead of retained content-only matches, which rank by their text evidence. Prefix, phrase and NEAR operands keep their matching meaning when scored.
+The best matching member supplies an asset's score, after the complete
+expression restricts eligible members. Ordinary text, name, extension, tag, and collection predicates still match
 individual members. One member must satisfy the complete expression, using
 the display file for its photo metadata predicates. For example,
 `extension:xmp AND camera:A` can match a sidecar paired with a display image
-from camera A. Saved expressions follow the same rule. Document queries keep
-using each document's own metadata. Excluded, trashed, and displayless assets
+from camera A. Saved expressions follow the same rule. Document metadata filters use each document's own file; ordinary Documents text membership keeps its filename and retained-content sources. Excluded, trashed, and displayless assets
 stay out.
 
-Sort by `capture_time`, `import_time`, `name`, `modified_at`, `size`, or
+Sort by `relevance`, `capture_time`, `import_time`, `name`, `modified_at`, `size`, or
 `media_type`, with `asc` or `desc`. Set `filters.set_ids` to album UUIDs to browse their members. `added_time` requires exactly one album ID after normalization. Capture sorting converts recorded offsets
 to UTC. Omitted zones use civil calendar coordinates. Missing or unreadable
 capture times sort last in both directions and do not match capture-date
 filters. Asset UUID orders equal keys. Names and media types compare only their
 first 1,024 characters, so longer values that share that prefix also fall back
-to UUID order. `path` and `relevance` are unsupported by this route. Document
+to UUID order. Relevance uses an evidence tier, numeric score and asset UUID as the page
+boundary. Only members retained after duplicate collapse contribute scores. An unchanged library pages without duplicates or gaps. `path` is
+unsupported by this route. Document
 snapshots reject `capture_time`, `import_time`, and `added_time` with an error naming Photos
 as the supported view.
 

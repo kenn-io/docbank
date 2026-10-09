@@ -51,6 +51,14 @@ func TestPhotoCursor(t *testing.T) {
 	require.NoError(t, err)
 	_, err = service.decodePhotoCursor(service.signCursorEnvelope(payload))
 	require.ErrorIs(t, err, store.ErrInvalidPhotoCursor)
+	ranked := position
+	ranked.Key = ""
+	ranked.Score = new(0.123)
+	rankedCursor, err := service.encodePhotoCursor(ranked)
+	require.NoError(t, err)
+	decoded, err = service.decodePhotoCursor(rankedCursor)
+	require.NoError(t, err)
+	require.Equal(t, ranked, decoded)
 	now = now.Add(documentCursorTTL)
 	_, err = service.decodePhotoCursor(cursor)
 	require.ErrorIs(t, err, store.ErrDocumentCursorExpired)

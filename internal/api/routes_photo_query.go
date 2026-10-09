@@ -58,12 +58,12 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 				Configuration:      in.Body.Coverage.Configuration,
 				ProfileFingerprint: in.Body.Coverage.ProfileFingerprint,
 			},
-			PageSize: in.Body.PageSize, Recipes: recipes,
+			PageSize: in.Body.PageSize, Recipes: recipes, Facets: in.Body.Facets,
 		}, boundary)
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}
-		wire := PhotoBrowsePage{Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total}
+		wire := PhotoBrowsePage{Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, Facets: fromStoreFacets(page.Facets)}
 		for i, row := range page.Items {
 			slots := map[string]PhotoPreviewSlot{}
 			for size, slot := range row.Previews {

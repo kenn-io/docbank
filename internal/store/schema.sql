@@ -518,7 +518,8 @@ END;
 -- blob and source head. Rows and the recipe marker below are absent from
 -- metadata-v1 export/import: restore rebuilds them from source generations.
 CREATE TABLE IF NOT EXISTS photo_technical_metadata (
-    generation_id          TEXT PRIMARY KEY
+    row_id                 INTEGER PRIMARY KEY,
+    generation_id          TEXT NOT NULL UNIQUE
         REFERENCES source_metadata_generations(generation_id) ON DELETE CASCADE,
     camera_make            TEXT,
     camera_model           TEXT,
@@ -560,6 +561,19 @@ CREATE INDEX IF NOT EXISTS photo_technical_metadata_capture_date
     ON photo_technical_metadata(capture_date);
 CREATE INDEX IF NOT EXISTS photo_technical_metadata_location
     ON photo_technical_metadata(latitude, longitude);
+
+-- Searchable photo facts are derived from retained metadata generations.
+CREATE VIRTUAL TABLE IF NOT EXISTS photo_metadata_fts USING fts5(
+    generation_id UNINDEXED, text,
+    tokenize='unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS photo_metadata_fts_insert AFTER INSERT ON photo_technical_metadata BEGIN
+    INSERT INTO photo_metadata_fts(rowid,generation_id,text) VALUES(new.row_id,new.generation_id,
+        trim(COALESCE(new.camera_make,'') || ' ' || COALESCE(new.camera_model,'') || ' ' || COALESCE(new.lens_make,'') || ' ' || COALESCE(new.lens_model,'') || ' ' || COALESCE(new.location_label,'')));
+END;
+CREATE TRIGGER IF NOT EXISTS photo_metadata_fts_delete AFTER DELETE ON photo_technical_metadata BEGIN
+    DELETE FROM photo_metadata_fts WHERE rowid=old.row_id;
+END;
 
 -- The projection recipe last applied to every source generation, including
 -- generations that yielded no row. A different recipe re-projects on open.
