@@ -22,6 +22,7 @@ import (
 var (
 	ErrUnavailable     = errors.New("report handle unavailable")
 	ErrCapacity        = errors.New("report capacity exhausted")
+	ErrRetained        = errors.New("report retained by an active download")
 	ErrInvalidRevision = errors.New("invalid report revision")
 )
 
@@ -365,6 +366,22 @@ func (c *Cache) Request(owner, id string) (report.Request, error) {
 		request.SelectedDocuments = &report.SelectedDocuments{Documents: slices.Clone(selected.Documents)}
 	}
 	return request, nil
+}
+
+// Release frees an owned handle without interrupting its active downloads.
+func (c *Cache) Release(owner, id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sweepExpiredLocked()
+	entry, err := c.lookupLocked(owner, id)
+	if err != nil {
+		return err
+	}
+	if entry.pins > 0 {
+		return ErrRetained
+	}
+	c.removeEntryLocked(id, entry)
+	return nil
 }
 
 func (c *Cache) Drop(owner, id string) {
