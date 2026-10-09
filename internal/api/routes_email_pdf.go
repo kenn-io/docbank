@@ -91,7 +91,7 @@ func registerEmailPDFRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 		w.Header().Set("Content-Digest", contentDigest(mustDecodeHash(receipt.Output.PDFSHA256)))
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(b) //nolint:gosec // Independently parsed PDF bytes, served as an attachment with application/pdf and nosniff.
+		_, _ = w.Write(b) // Independently parsed PDF bytes, served as an attachment with application/pdf and nosniff.
 	})
 	registry := api.OpenAPI().Components.Schemas
 	versionParam := &huma.Param{Name: "version_id", In: openAPIPathLocation, Required: true, Schema: &huma.Schema{Type: openAPIStringType, Format: "uuid"}}
