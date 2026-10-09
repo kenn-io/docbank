@@ -64,8 +64,9 @@ Start with [Importing documents](usage/importing.md) and
   to the version that was attached.
 - Read imported or generated transcripts with speaker labels and timing, and
   match search evidence to the exact retained transcript build.
-- Browse photos in the web app, grouped by month or capture session. Adjust
-  grid density and keep your selection and place when switching workspaces.
+- Search photos in the web app and narrow results with filter counts. Group
+  by month or capture session, adjust grid density, and keep your selection
+  and place when switching workspaces.
 - Browse photo assets over HTTP and filter by camera, lens, ISO, capture date,
   GPS, asset type, album, or quality scores. Use `unevaluated` to include photos
   whose quality signals are pending or unavailable. A RAW/JPEG pair appears once.
@@ -74,7 +75,8 @@ Start with [Importing documents](usage/importing.md) and
   verification result.
 - Save a local download only after the complete temporary file verifies.
 
-See [Searching](usage/searching.md), the [Web application](usage/web.md), and
+See [Photo assets](usage/photos.md), [Searching](usage/searching.md), the
+[Web application](usage/web.md), and
 the [Interactive terminal browser](usage/tui.md).
 
 ## Export a reviewed selection
