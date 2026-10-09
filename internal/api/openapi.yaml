@@ -7557,8 +7557,13 @@ components:
           type: array
         lane_controls_error:
           type: string
+        lanes:
+          items:
+            $ref: "#/components/schemas/LaneControl"
+          type: array
       required:
         - items
+        - lanes
       type: object
       x-go-type: api.JobList
       x-go-type-import:

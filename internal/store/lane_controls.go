@@ -46,7 +46,7 @@ type laneControlSetting struct {
 
 var controllableLanes = append([]string{VisualPreviewLane}, storageOperationKinds...)
 
-func controllableLane(lane string) bool {
+func ControllableLane(lane string) bool {
 	return slices.Contains(controllableLanes, lane)
 }
 
@@ -60,7 +60,7 @@ func validLaneSetting(lane string, concurrency int) bool {
 	if LaneConcurrencyAdjustable(lane) {
 		limit = MaxLaneConcurrency
 	}
-	return controllableLane(lane) && concurrency >= 1 && concurrency <= limit
+	return ControllableLane(lane) && concurrency >= 1 && concurrency <= limit
 }
 
 // FinishRestoreLaneControls syncs the published reset before recovery marker removal.
@@ -134,7 +134,7 @@ func laneControlFrom(lane string, settings map[string]laneControlSetting) LaneCo
 }
 
 func (s *Store) LaneControl(ctx context.Context, lane string) (LaneControl, error) {
-	if !controllableLane(lane) {
+	if !ControllableLane(lane) {
 		return LaneControl{Lane: lane, Concurrency: 1, Revision: 1}, ErrLaneControl
 	}
 	s.laneControlsMu.Lock()

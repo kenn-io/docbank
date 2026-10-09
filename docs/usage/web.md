@@ -849,17 +849,25 @@ contention or interruption remains visible, and you can retry.
 
 ## Inspect background work
 
-Choose **Background jobs** in the sidebar to inspect the jobs owned by the
-current daemon. Each entry identifies the job name, whether it is
-running, completed, failed, or cancelled, and its start and finish time.
-Terminal failures include the daemon's error text so an operator can
-distinguish an idle system from a watcher, extractor, or automatic packer that
-stopped.
+Choose **Background jobs** in the sidebar to see one card per storage operation
+kind or daemon worker. Active operations in a lane share progress when every
+operation has a known total. Workers without counts show numeric progress as
+unavailable. Each operation keeps its status, times, error and cancel button.
 
-Use refresh to request a new snapshot. The drawer does not start, stop, retry,
-or reconfigure work. Use the relevant configuration, CLI, or authenticated API
-workflow after understanding the failure. Job records belong to one daemon
-lifetime and disappear when that daemon restarts.
+Pause or resume photo imports, visual previews, and the storage lanes `place`,
+`evacuate`, `repair`, and `salvage`. Pause takes effect at the next safe item
+boundary. Visual preview concurrency accepts 1 through 4. Document workers
+remain read-only. Pausing a finished lane keeps its last outcome visible until retention clears it.
+A paused lane keeps its Resume control after its last operation disappears.
+Idle lanes show their controls, so you can pause one before it has work. Each
+operation shows its operation ID, which matches `docbank jobs`.
+
+The drawer refreshes every two seconds while open. If another client changes
+controls first, review the refreshed settings and try again. Controls survive
+daemon restarts. Finished storage operations clear at their existing retention
+boundary unless they still own pending cleanup. Supervisor records disappear
+when the daemon restarts. Browser errors omit backend paths; use the CLI to
+inspect details.
 
 ## Inspect physical storage
 
@@ -983,7 +991,7 @@ accepts that credential for the following operations:
 | Read the tree, nodes, search results, tags, versions, and provenance | Uses the same result limits and document IDs as the ordinary API. |
 | Read audit status and history | Does not enroll or change a permanent scope. |
 | Verify permanent audit history | Does not run general metadata/content verification or backup verification. |
-| Read background jobs and physical storage status | Cannot start or change maintenance. |
+| Read background jobs and physical storage status | Can pause or resume supported lanes, set visual preview concurrency, and cancel individual storage operations. |
 | List backup snapshots | Uses only the repository already configured for this daemon. |
 | List trash | Returns a bounded list of restorable roots. |
 | Prepare, preview, or cancel an exact-version download | Writes only a private temporary file, enforces preview MIME and size limits, and issues one expiring ticket for that file. |

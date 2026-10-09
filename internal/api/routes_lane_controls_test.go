@@ -58,11 +58,45 @@ func TestLaneControlRoutesAndReadonlyJobs(t *testing.T) {
 		resp, body = do(t, ts, http.MethodPut, path, map[string]string{"If-Match": "2"}, api.SetLaneControlRequest{Concurrency: limit})
 		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	}
-	headers := map[string]string{api.WebSessionHeader: issueWebSession(t, ts), "X-Api-Key": "", "If-Match": "1"}
+	headers := map[string]string{api.WebSessionHeader: issueWebSession(t, ts), "X-Api-Key": "", "If-Match": "2"}
 	resp, body = get(t, ts, path, headers)
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode, body)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPut, path, headers, api.SetLaneControlRequest{Paused: true, Concurrency: 1})
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode, body)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
+	for _, request := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/jobs/lanes/place?x=1"},
+		{http.MethodGet, "/api/v1/jobs/lanes/unknown"},
+		{http.MethodPost, "/api/v1/jobs/lanes/place"},
+		{http.MethodDelete, "/api/v1/jobs/lanes/place"},
+		{http.MethodGet, "/api/v1/jobs/lanes/place/x"},
+	} {
+		t.Run(request.method+" "+request.path, func(t *testing.T) {
+			resp, body := do(t, ts, request.method, request.path, headers, nil)
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode, body)
+		})
+	}
+}
+
+func TestBrowserLaneControlBackendErrorIsRedacted(t *testing.T) {
+	t.Parallel()
+	ts, live := newTestServer(t, nil)
+	headers := map[string]string{api.WebSessionHeader: issueWebSession(t, ts), "X-Api-Key": "", "If-Match": "1"}
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(live.DBPath), "lane-controls.json"), []byte("{"), 0o600))
+	path := "/api/v1/jobs/lanes/" + store.VisualPreviewLane
+	for _, method := range []string{http.MethodGet, http.MethodPut} {
+		resp, body := do(t, ts, method, path, headers, api.SetLaneControlRequest{Concurrency: 1})
+		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
+		assert.Contains(t, body, "inspect with the Docbank CLI")
+		assert.NotContains(t, body, "database")
+	}
+	require.NoError(t, live.Close())
+	resp, body := get(t, ts, "/api/v1/jobs", headers)
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
+	assert.Contains(t, body, "background jobs failed; inspect with the Docbank CLI")
+	assert.NotContains(t, body, "database")
 }
 
 func TestStorageJobControlsFollowOperationState(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"go.kenn.io/docbank/internal/query"
+	"go.kenn.io/docbank/internal/store"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -316,6 +317,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	}
 	if batesBrowserRequestAllowed(r) {
 		return true
+	}
+	if lane, ok := strings.CutPrefix(path, "/api/v1/jobs/lanes/"); ok {
+		return r.URL.RawQuery == "" && store.ControllableLane(lane) && (method == http.MethodGet || method == http.MethodPut)
 	}
 	if after, ok := strings.CutPrefix(path, "/api/v1/jobs/"); ok {
 		parts := strings.Split(after, "/")

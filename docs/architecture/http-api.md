@@ -1022,8 +1022,8 @@ Malformed expected evidence is a `422 validation` request error.
 
 ### Background-job status
 
-`GET /jobs` returns `{items: [...]}` in stable job-name order. Each item carries
-`name`, `status` (`running`, `completed`, `failed`, or `cancelled`), and a UTC
+`GET /jobs` returns `{items: [...], lanes: [...]}` in stable job-name order. Each item carries
+`name`, `status` (`queued`, `running`, `completed`, `failed`, or `cancelled`), and a UTC
 `started_at`. Terminal jobs add `finished_at`, and failures add a bounded
 `error`. Supervised task records describe this daemon run only and disappear
 when it restarts. Stopping one requires stopping or reconfiguring the daemon
@@ -1037,7 +1037,7 @@ revision; `PUT /jobs/lanes/{lane}` accepts `paused` and `concurrency` with the
 current revision in `If-Match`. Missing preconditions return `428`; stale ones
 return `412`. Unsupported lanes and storage concurrency changes return `400`.
 An unreadable `lane-controls.json` returns `500` with code
-`lane_controls_unreadable`.
+`lane_controls_unreadable`; browser sessions get a generic `internal` error.
 Preview concurrency outside 1 through 4 returns `422`.
 
 Supported lanes are `derive:visual-previews`, `photo_import`, `place`, `evacuate`,
@@ -1048,8 +1048,8 @@ Controls survive restart in the vault's `lane-controls.json` and stay out of
 backups; restored vaults use unpaused lanes with concurrency 1 and revision 1.
 When that file cannot be read, the job list still returns every job without
 control fields and adds `lane_controls_error`; browser sessions get a generic
-message. Lane-control reads and writes
-require the daemon API key.
+message. Lane-control reads and writes require the daemon API key or a browser
+session; browser sessions may access supported lanes without query parameters.
 
 Durable storage operations, such as placement and photo imports, also appear as
 `storage:<operation_id>` items with `operation_id`, `kind`, object progress,
@@ -1057,7 +1057,8 @@ Durable storage operations, such as placement and photo imports, also appear as
 `GET /jobs/{operation_id}` returns the full operation and its receipt.
 `POST /jobs/{operation_id}/cancel` requests cancellation at the next durable
 object boundary and returns `409` once the operation is terminal or finalizing.
-A browser session may list jobs and cancel an operation by its UUID. It cannot
+A browser session may list jobs, read and set supported lane controls without
+query parameters, and cancel an operation by its UUID. It cannot
 read `GET /jobs/{operation_id}`, its error text is replaced with a generic
 message, and the cancel response omits the receipt, so host source paths stay
 with API-key clients.

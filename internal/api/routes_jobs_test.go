@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"testing"
@@ -57,6 +58,69 @@ func TestListJobsReturnsStableObservableState(t *testing.T) {
 	assert.Equal(t, "running", got.Items[1].Status)
 	assert.Empty(t, got.Items[1].FinishedAt)
 	close(release)
+}
+
+func TestListJobsFiltersExpiredHistoryWithoutDeletingAndPreservesAllActiveOperations(t *testing.T) {
+	t.Parallel()
+	supervisor := jobs.New(t.Context(), nil)
+	defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+	ts, live := newTestServer(t, func(d *api.Deps) { d.Jobs = supervisor })
+	create := func(seed, kind string) store.StorageOperation {
+		op, err := live.CreateStorageOperation(t.Context(), store.StorageOperationCreate{Kind: kind, RequestDigest: testHash(seed), RequestJSON: `{}`, PlanJSON: `{}`, TotalObjects: 1})
+		require.NoError(t, err)
+		return op
+	}
+	first := create("first active", "repair")
+	for n := range 1000 {
+		create(fmt.Sprintf("active-%d", n), "repair")
+	}
+	old := create("expired", "place")
+	_, err := live.SetLaneControl(t.Context(), store.LaneControl{Lane: "place", Paused: true, Concurrency: 1}, 1)
+	require.NoError(t, err)
+	require.NoError(t, live.FinishStorageOperation(t.Context(), old.ID, store.StorageOperationCompleted, "", "", time.Now().Add(-time.Hour)))
+	for _, name := range []string{"storage:" + old.ID, "storage:pack", "storage:" + first.ID} {
+		require.NoError(t, supervisor.Start(name, func(context.Context) error { return nil }))
+	}
+	resp, body := get(t, ts, "/api/v1/jobs", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var got api.JobList
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	require.Len(t, got.Lanes, 6)
+	for _, lane := range got.Lanes {
+		if lane.Lane == "place" {
+			assert.True(t, lane.Paused)
+			assert.Equal(t, int64(2), lane.Revision)
+		}
+	}
+	require.Len(t, got.Items, 1002)
+	foundFirst, foundPack := false, false
+	for _, job := range got.Items {
+		require.NotEqual(t, "storage:"+old.ID, job.Name)
+		foundFirst = foundFirst || job.OperationID == first.ID
+		foundPack = foundPack || job.Name == "storage:pack"
+	}
+	assert.True(t, foundFirst)
+	assert.True(t, foundPack)
+	_, err = live.ClaimStorageOperation(t.Context(), first.ID)
+	require.NoError(t, err)
+	require.NoError(t, live.AdvanceStorageOperation(t.Context(), first.ID, "", 1, 0, 0))
+	require.NoError(t, live.FinishStorageOperation(t.Context(), first.ID, store.StorageOperationCompleted, `{}`, "", time.Now().Add(time.Hour)))
+	resp, body = get(t, ts, "/api/v1/jobs", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	require.Len(t, got.Items, 1002)
+	foundFirst = false
+	for _, job := range got.Items {
+		if job.OperationID == first.ID {
+			foundFirst = true
+			require.Equal(t, "completed", job.Status)
+			require.Equal(t, int64(1), job.CompletedObjects)
+		}
+	}
+	require.True(t, foundFirst)
+	retained, err := live.StorageOperation(t.Context(), old.ID)
+	require.NoError(t, err)
+	require.Equal(t, store.StorageOperationCompleted, retained.State)
 }
 
 func TestListJobsWithoutSupervisorReturnsEmptyObject(t *testing.T) {

@@ -45,11 +45,46 @@ func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
 		t.Context(), created.ID, StorageOperationCancelled, `{"cancelled":true}`, "",
 		time.Now().Add(24*time.Hour),
 	))
-	items, err := s.StorageOperations(t.Context(), 10)
+	items, err := s.RetainedStorageOperations(t.Context())
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	assert.Equal(t, StorageOperationCancelled, items[0].State)
 	assert.NotNil(t, items[0].FinishedAt)
+}
+
+func TestRetainedStorageOperationsFiltersExpiredHistoryAndPreservesCleanup(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	var operations [4]StorageOperation
+	createdAt := time.Now().UTC().Add(-time.Hour)
+	for i := range operations {
+		operation, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
+			Kind: "place", RequestDigest: fakeHash("af"), RequestJSON: `{}`, PlanJSON: `{}`,
+		})
+		require.NoError(t, err)
+		_, err = s.db.ExecContext(t.Context(), `UPDATE storage_operations SET created_at=? WHERE operation_id=?`, createdAt.Add(time.Duration(i)*time.Second).Format(timestampLayout), operation.ID)
+		require.NoError(t, err)
+		operations[i] = operation
+	}
+	require.NoError(t, s.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		return recordStorageOperationCleanupTx(t.Context(), tx, operations[2].ID, s.primaryStoreID, []packstore.ObjectRef{
+			{LooseHash: packstore.Hash(fakeHash("ae")), LooseEncoding: packstore.LooseEncodingRaw},
+		})
+	}))
+	for i, operation := range operations {
+		retention := time.Now().Add(-time.Hour)
+		if i == 0 {
+			retention = time.Now().Add(time.Hour)
+		}
+		require.NoError(t, s.FinishStorageOperation(t.Context(), operation.ID, StorageOperationCompleted, `{}`, "", retention))
+	}
+	items, err := s.RetainedStorageOperations(t.Context())
+	require.NoError(t, err)
+	require.Len(t, items, 2)
+	require.Equal(t, operations[2].ID, items[0].ID)
+	require.Equal(t, operations[0].ID, items[1].ID)
+	_, err = s.StorageOperation(t.Context(), operations[3].ID)
+	require.NoError(t, err)
 }
 
 func TestStorageOperationClaimResumesInterruptedWork(t *testing.T) {
