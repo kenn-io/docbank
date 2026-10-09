@@ -47,7 +47,6 @@ export class PhotoAlbums {
   }
 
   private remember(album: api.PhotoAlbum, empty = false) {
-    ++this.read; this.loading = false;
     if (album.deleted_at) {
       this.items = this.items.filter(item => item.id !== album.id);
       if (this.targetID === album.id) this.targetID = "";
@@ -59,7 +58,6 @@ export class PhotoAlbums {
   }
 
   private invalidate(id: string, counts: boolean) {
-    ++this.read; this.loading = false;
     this.items = this.items.map(item => item.id === id ? { ...item, ...(counts ? { member_count: undefined, included_count: undefined } : {}), effective_cover_asset_id: undefined, cover_generation_id: undefined, cover_known: false } : item);
   }
 
