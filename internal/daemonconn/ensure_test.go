@@ -1,10 +1,10 @@
 package daemonconn
 
 import (
+	"bufio"
 	"context"
 	"encoding/hex"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -245,68 +246,70 @@ func challengeResponse(t *testing.T, r *http.Request, token string) []byte {
 type delayedProofWriteConn struct {
 	net.Conn
 
-	response <-chan struct{}
-	first    atomic.Bool
+	afterFirstWrite func()
+	first           atomic.Bool
 }
 
 func (c *delayedProofWriteConn) Write(p []byte) (int, error) {
 	n, err := c.Conn.Write(p)
-	if !c.first.Swap(true) {
-		select {
-		case <-c.response:
-		case <-time.After(time.Second):
-			return n, errors.New("waiting for proof response")
-		}
-		// Keep write completion behind the response past Go's 50 ms reuse budget.
-		timer := time.NewTimer(100 * time.Millisecond)
-		<-timer.C
-	}
 	if err != nil {
 		return n, fmt.Errorf("writing proof request: %w", err)
+	}
+	if !c.first.Swap(true) {
+		c.afterFirstWrite()
 	}
 	return n, nil
 }
 
 func TestProvenClientDelayedChallengeWrite(t *testing.T) {
-	const token = "synthetic-proof-token"
-	var challenges, requests atomic.Int64
-	response := make(chan struct{})
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == daemonauth.ChallengePath {
-			challenges.Add(1)
-			_, _ = w.Write(challengeResponse(t, r, token))
-			flusher, ok := w.(http.Flusher)
-			if !assert.True(t, ok) {
+	synctest.Test(t, func(t *testing.T) {
+		const token = "synthetic-proof-token"
+		clientConn, serverConn := net.Pipe()
+		challengeRead := make(chan struct{})
+		respond := func(body []byte, headers string) bool {
+			_, err := fmt.Fprintf(serverConn, "HTTP/1.1 200 OK\r\n%sContent-Type: application/json\r\n"+
+				"Content-Length: %d\r\n\r\n%s", headers, len(body), body)
+			if err != nil {
+				t.Errorf("writing daemon response: %v", err)
+			}
+			return err == nil
+		}
+		go func() {
+			defer func() { _ = serverConn.Close() }()
+			reader := bufio.NewReader(serverConn)
+			req, err := http.ReadRequest(reader)
+			if err != nil {
+				t.Errorf("reading challenge request: %v", err)
 				return
 			}
-			flusher.Flush()
-			if challenges.Load() == 1 {
-				close(response)
+			close(challengeRead)
+			if !respond(challengeResponse(t, req, token), "") {
+				return
 			}
-			return
-		}
-		requests.Add(1)
-		assert.Equal(t, "synthetic-api-key", r.Header.Get("X-Api-Key"))
-		w.Header().Set("Connection", "close")
-		_ = json.MarshalWrite(w, map[string]string{"status": "ok"})
-	}))
-	t.Cleanup(ts.Close)
-	rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "synthetic-api-key", token, "")
-	c, err := newProvenClientForDial(t.Context(), rec, func(ctx context.Context, network, address string) (net.Conn, error) {
-		conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
-		if err != nil {
-			return nil, fmt.Errorf("dialing proof connection: %w", err)
-		}
-		return &delayedProofWriteConn{Conn: conn, response: response}, nil
+			req, err = http.ReadRequest(reader)
+			if err != nil {
+				t.Errorf("reading health request: %v", err)
+				return
+			}
+			assert.Equal(t, "synthetic-api-key", req.Header.Get("X-Api-Key"))
+			respond([]byte(`{"status":"ok"}`), "Connection: close\r\n")
+		}()
+		rec := NewRecord("127.0.0.1:1", "synthetic-api-key", token, "")
+		conn := &delayedProofWriteConn{Conn: clientConn, afterFirstWrite: func() {
+			<-challengeRead
+			// Finish the challenge write after net/http's 50 ms wait for write completion.
+			time.Sleep(100 * time.Millisecond)
+		}}
+		c, err := newProvenClientForDial(t.Context(), rec, func(context.Context, string, string) (net.Conn, error) {
+			return conn, nil
+		})
+		require.NoError(t, err)
+		defer func() { require.NoError(t, c.Close()) }()
+		_, err = c.API().Health(t.Context())
+		require.NoError(t, err)
+		_, err = c.API().Health(t.Context())
+		require.ErrorContains(t, err, "proven daemon connection is closed; refusing to redial")
 	})
-	require.NoError(t, err)
-	defer func() { require.NoError(t, c.Close()) }()
-	_, err = c.API().Health(t.Context())
-	require.NoError(t, err)
-	_, err = c.API().Health(t.Context())
-	require.ErrorContains(t, err, "proven daemon connection is closed; refusing to redial")
-	assert.Equal(t, int64(1), requests.Load())
-	assert.Equal(t, int64(1), challenges.Load())
 }
 
 func TestProvenClientCloseBeforeFirstRequest(t *testing.T) {
