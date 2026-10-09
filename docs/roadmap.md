@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-07
+last_edited: 2026-10-08
 title: Roadmap
 description: What Docbank does today, what it does not do yet, and what is planned.
 ---

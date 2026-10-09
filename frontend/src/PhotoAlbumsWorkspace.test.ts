@@ -92,6 +92,19 @@ it.each(["picker add", "picker create", "index create", "delete", "duplicate"] a
   expect(photos.selection.selectedIDs.has("photo-1")).toBe(true);
 });
 
+it.each(["Escape", "focusout"])("keeps a delayed picker failure visible after closing with %s", async dismissal => {
+  const { albums, finish } = await pendingAlbumWrite("picker add");
+  const input = screen.getByRole("combobox", { name: "Find or create an album" });
+  if (dismissal === "Escape") await fireEvent.keyDown(input, { key: "Escape" });
+  else await fireEvent.focusOut(input, { relatedTarget: screen.getByRole("button", { name: "Refresh previews" }) });
+  await waitFor(() => expect(screen.queryByRole("combobox", { name: "Find or create an album" })).toBeNull());
+  finish(new Response(JSON.stringify({ detail: "Add unavailable" }), { status: 503 }));
+  await waitFor(() => expect(albums.busy).toBe(false));
+  await waitFor(() => expect(albums.error).toBe(""));
+  await screen.findByText("Add unavailable");
+  expect(screen.getAllByRole("alert")).toHaveLength(1);
+});
+
 it.each(["index create", "delete", "duplicate"] as const)("stops delayed %s success from navigating a destroyed view", async operation => {
   const { albums, cache, onnavigate, finish, unmount } = await pendingAlbumWrite(operation);
   unmount();

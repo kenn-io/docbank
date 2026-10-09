@@ -32,7 +32,6 @@ func TestWebSessionAllowsPhotoAlbumRoutes(t *testing.T) {
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/photos/albums"},
 		{http.MethodPost, "/api/v1/photos/albums"},
-		{http.MethodGet, album},
 		{http.MethodPut, album},
 		{http.MethodDelete, album},
 		{http.MethodPut, album + "/cover"},
@@ -46,6 +45,7 @@ func TestWebSessionAllowsPhotoAlbumRoutes(t *testing.T) {
 	for _, path := range []string{album + "/extra", album + "/members/add/extra", "/api/v1/photos/albums/invalid", "/api/v1/photos/albums/11111111-1111-4111-8111-11111111111A", "/api/v1/photos/albums/"} {
 		require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, path, nil)), path)
 	}
+	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodGet, album, nil)))
 	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPatch, album, nil)))
 	require.False(t, webSessionRequestAllowed(httptest.NewRequest(http.MethodPost, "/api/v1/photos/assets", nil)))
 }

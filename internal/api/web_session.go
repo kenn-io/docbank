@@ -520,7 +520,7 @@ func photoAlbumBrowserRequestAllowed(r *http.Request) bool {
 		return false
 	}
 	if len(parts) == 1 {
-		return r.Method == http.MethodGet || r.Method == http.MethodPut || r.Method == http.MethodDelete
+		return r.Method == http.MethodPut || r.Method == http.MethodDelete
 	}
 	if len(parts) == 2 {
 		return parts[1] == "cover" && r.Method == http.MethodPut || parts[1] == "duplicate" && r.Method == http.MethodPost
