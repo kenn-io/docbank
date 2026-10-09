@@ -73,7 +73,7 @@
   <div class="selection-actions">
     <Button
       size="sm"
-      disabled={visibleSelected && !allResults}
+      disabled={visibleSelected && selectedCount === visibleDocumentCount && !allResults}
       onclick={onselectvisible}
     >{context === "photos" ? "Select loaded photos" : "Select visible documents"}</Button>
     <Button size="sm" onclick={onclear}>Clear selection</Button>

@@ -278,13 +278,9 @@ it("remembers density with safe defaults for unknown or unavailable storage", as
   photos.started = true;
   photos.scrollTop = 750;
   photos.items = [photo(1)];
-  const restore = vi.fn().mockResolvedValue(undefined);
-  const preserve = vi.fn(() => restore);
   new Photos("scoped", vi.fn()).setDensity("large");
-  await photos.resume(preserve);
+  photos.syncDensity();
   expect(photos.density).toBe("large");
-  expect(preserve).toHaveBeenCalledOnce();
-  expect(restore).toHaveBeenCalledOnce();
   expect(photos.scrollTop).toBe(750);
   expect(photos.items).toEqual([photo(1)]);
   photos.setDensity("compact");

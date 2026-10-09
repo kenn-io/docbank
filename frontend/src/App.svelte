@@ -1630,7 +1630,8 @@
     await loadDirectory(parent.id, true, exact.id, false, { node: exact, path });
   }
 
-  function handleTrashed(_receipt?: Node): void {
+  function handleTrashed(_receipt?: Node, source?: Photos): void {
+    refreshPhotoViews(source);
     selectNode(undefined);
 
     // Cached views may contain the removed node or pre-trash parent revisions.
@@ -2125,8 +2126,8 @@
 
     {#if photoMode && photoState}
       {#if photoPath === "/photos/albums"}<PhotoAlbumsIndex albums={photoState.albums} cache={photoState.cache} onnavigate={navigatePhotos} />
-      {:else if albumID && albumPhotos}{#key albumPhotos}<PhotosWorkspace photos={albumPhotos} cache={photoState.cache} albums={photoState.albums} {albumID} onnavigate={navigatePhotos} ontrashed={() => { handleTrashed(); refreshPhotoViews(albumPhotos); }} />{/key}
-      {:else if !albumID}{#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} albums={photoState.albums} onnavigate={navigatePhotos} ontrashed={() => { handleTrashed(); refreshPhotoViews(photoState?.photos); }} />{/key}{/if}
+      {:else if albumID && albumPhotos}{#key albumPhotos}<PhotosWorkspace photos={albumPhotos} cache={photoState.cache} albums={photoState.albums} {albumID} onnavigate={navigatePhotos} ontrashed={() => handleTrashed(undefined, albumPhotos)} />{/key}
+      {:else if !albumID}{#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} albums={photoState.albums} onnavigate={navigatePhotos} ontrashed={() => handleTrashed(undefined, photoState?.photos)} />{/key}{/if}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
     {#if savedQueryDraft}

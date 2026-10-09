@@ -173,6 +173,22 @@ it("clears selection with Escape from focused photo controls while honoring shor
   await cache.dispose();
 });
 
+it("keeps the retained scroll position when density changed in another view", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = Array.from({ length: 60 }, (_, index) => photo(index + 1)); photos.total = 60; photos.started = true; photos.scrollTop = 1000;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  new Photos("scoped", vi.fn()).setDensity("compact");
+  render(PhotosWorkspace, { photos, cache });
+  await waitFor(() => expect(screen.getByTestId("photo-scroll").scrollTop).toBe(1000));
+  expect(photos.density).toBe("compact");
+  expect(photos.scrollTop).toBe(1000);
+  photos.dispose();
+  await cache.dispose();
+});
+
 it("keeps loading pages that add no rows and keeps the top photo across density changes", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);

@@ -40,6 +40,16 @@ it("selects loaded photos by ID when equally many selected photos are off-page",
   expect((button as HTMLButtonElement).disabled).toBe(true);
 });
 
+it("lets loaded photos narrow a selection that also holds off-page photos", async () => {
+  const { photos } = setup();
+  photos.selection = { selectedIDs: new Set(["photo-1", "photo-2", "photo-3"]), anchorID: undefined };
+  const button = await screen.findByRole("button", { name: "Select loaded photos" });
+  expect((button as HTMLButtonElement).disabled).toBe(false);
+  await fireEvent.click(button);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
+  expect((button as HTMLButtonElement).disabled).toBe(true);
+});
+
 async function pendingAlbumWrite(operation: "picker add" | "picker create" | "index create" | "delete" | "duplicate") {
   let finish!: (response: Response) => void;
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve)).mockResolvedValue(albumResponse([album]));

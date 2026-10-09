@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
   import { Button, EmptyState, IconButton, Menu, MenuTrigger, MenuContent, MenuItem, Modal, TextInput, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
@@ -38,6 +38,8 @@
   const densityOptions = [{ value: "compact", label: "Compact" }, { value: "comfortable", label: "Comfortable" }, { value: "large", label: "Large" }];
   const groupingOptions = [{ value: "months", label: "Months" }, { value: "sessions", label: "Capture sessions" }];
 
+  // Another view may have changed density; apply it before the grid mounts so its scroll restore uses the final layout.
+  untrack(() => photos.syncDensity());
   onMount(() => {
     void photos.resume(preserve);
     return () => photos.cancelPending();
