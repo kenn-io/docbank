@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -146,7 +147,21 @@ func decodePhotoAuthoredReceipt(beforeJSON, afterJSON []byte, id string) (PhotoA
 	if err := json.Unmarshal(beforeJSON, &r.Before, json.RejectUnknownMembers(true)); err != nil {
 		return r, err
 	}
-	return r, validatePhotoAuthoredReceipt(r, id)
+	if err := validatePhotoAuthoredReceipt(r, id); err != nil {
+		return r, err
+	}
+	canonicalBefore, err := json.Marshal(r.Before, json.Deterministic(true))
+	if err != nil {
+		return r, err
+	}
+	canonicalAfter, err := json.Marshal(r.afterState(), json.Deterministic(true))
+	if err != nil {
+		return r, err
+	}
+	if !bytes.Equal(beforeJSON, canonicalBefore) || !bytes.Equal(afterJSON, canonicalAfter) {
+		return r, ErrInvalidPhotoAsset
+	}
+	return r, nil
 }
 
 func photoAgreement(files []PhotoFile) map[string]bool {

@@ -166,7 +166,7 @@ func currentAuditAttachmentsForLayout(
 		appendAuditTagAssignments, appendAuditTagDefinitions,
 		appendAuditDerivativePurgeSuppressions,
 	)
-	if layout.schemaVersion >= 29 {
+	if layout.schemaVersion >= 32 {
 		appenders = append(appenders, appendAuditPhotoAuthored)
 	}
 	for _, appendRecords := range appenders {

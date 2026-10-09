@@ -822,6 +822,9 @@ fields, not additional parameters for `GET /search`:
 | `modified_after`, `modified_before` | RFC3339 timestamps, normalized to UTC |
 | `size_min`, `size_max` | Byte counts from 0 through 9,007,199,254,740,991 |
 | `text_coverage` | Array of at most 6 entries: `complete`, `partial`, `failed`, `unprocessed`, `none`, or `unavailable` |
+| `rating_min`, `rating_max` | Inclusive integer bounds from 0 through 5; minimum must be <= maximum |
+| `flags` | At most 64 entries: `""`, `pick`, or `reject` |
+| `labels` | At most 64 entries: `""`, `red`, `yellow`, `green`, `blue`, or `purple` |
 | `kinds` | At most 64 entries, `photo` or `video` |
 | `cameras`, `lenses` | At most 64 complete make/model strings, matched with Unicode case folding; each 1 through 256 Unicode characters |
 | `iso_min`, `iso_max` | Inclusive safe nonnegative integer bounds; zero is accepted |

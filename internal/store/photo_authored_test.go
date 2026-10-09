@@ -34,6 +34,63 @@ func authoredPair(t *testing.T, s *Store) PhotoAsset {
 	return asset
 }
 
+func TestPhotoAuthoredReceiptRequiresCompleteValues(t *testing.T) {
+	t.Parallel()
+	const id = "40000000-0000-4000-8000-000000000001"
+	before := PhotoAuthoredSnapshot{FileID: id, NodeID: 1, Revision: 1}
+	after := before
+	after.Revision++
+	r := PhotoAuthoredReceipt{ReceiptID: id, Before: []PhotoAuthoredSnapshot{before}, After: []PhotoAuthoredSnapshot{after}}
+	beforeJSON, err := json.Marshal(r.Before, json.Deterministic(true))
+	require.NoError(t, err)
+	afterJSON, err := json.Marshal(r.afterState(), json.Deterministic(true))
+	require.NoError(t, err)
+	_, err = decodePhotoAuthoredReceipt(beforeJSON, afterJSON, id)
+	require.NoError(t, err)
+	for _, side := range []string{"before", "after"} {
+		for _, field := range []string{"values", "rating", "flag", "label", "caption", "creator", "copyright", "rotation"} {
+			for _, null := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/null=%t", side, field, null), func(t *testing.T) {
+					t.Parallel()
+					var snapshots []map[string]any
+					var state map[string]any
+					b, a := beforeJSON, afterJSON
+					if side == "before" {
+						require.NoError(t, json.Unmarshal(b, &snapshots))
+					} else {
+						require.NoError(t, json.Unmarshal(a, &state))
+						entries, ok := state["after"].([]any)
+						require.True(t, ok)
+						snapshot, ok := entries[0].(map[string]any)
+						require.True(t, ok)
+						snapshots = []map[string]any{snapshot}
+					}
+					values := snapshots[0]
+					if field != "values" {
+						var ok bool
+						values, ok = values["values"].(map[string]any)
+						require.True(t, ok)
+					}
+					if null {
+						values[field] = nil
+					} else {
+						delete(values, field)
+					}
+					var encodeErr error
+					if side == "before" {
+						b, encodeErr = json.Marshal(snapshots, json.Deterministic(true))
+					} else {
+						a, encodeErr = json.Marshal(state, json.Deterministic(true))
+					}
+					require.NoError(t, encodeErr)
+					_, decodeErr := decodePhotoAuthoredReceipt(b, a, id)
+					require.ErrorIs(t, decodeErr, ErrInvalidPhotoAsset)
+				})
+			}
+		}
+	}
+}
+
 func TestPhotoAuthoredPairAtomicUndoAndRoundTrip(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

@@ -614,7 +614,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 		}
 	}
 	if layout.schemaVersion >= 25 {
-		if err := exportMetadataTables(ctx, tx, write, photoMetadataTablesForLayout(layout)); err != nil {
+		if err := exportMetadataTables(ctx, tx, write, photoMetadataTablesForSchema(layout.schemaVersion)); err != nil {
 			return err
 		}
 	}
@@ -1560,7 +1560,7 @@ func validateMetadataStateWithVaultIdentity(
 			}
 		}
 		if layout.schemaVersion >= 25 {
-			if err := validatePhotoMetadataStateForLayout(ctx, tx, layout); err != nil {
+			if err := validatePhotoMetadataState(ctx, tx, layout.schemaVersion); err != nil {
 				return err
 			}
 		}

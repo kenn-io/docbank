@@ -166,6 +166,8 @@ func TestUpgradeReleasedV0150PreservesAuthorityAndPendingWork(t *testing.T) {
 			photoNodeID, jobID, operationID := seedV0150PendingWork(t, db, legacy)
 			incarnation, err := legacy.CurrentProcessingIncarnation(t.Context())
 			require.NoError(t, err)
+			incarnationRecord := metadataProcessingIncarnation{Type: metadataProcessingIncarnationType, ID: incarnation.ID}
+			require.NoError(t, db.QueryRow(`SELECT created_at FROM processing_incarnations WHERE incarnation_id=?`, incarnation.ID).Scan(&incarnationRecord.CreatedAt))
 			snapshot, err := db.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
 			require.NoError(t, err)
 			var released bytes.Buffer
@@ -185,7 +187,18 @@ func TestUpgradeReleasedV0150PreservesAuthorityAndPendingWork(t *testing.T) {
 			assert.Equal(t, currentStorageSchemaVersion, version)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
-			assert.Equal(t, released.String(), upgraded.String())
+			var normalized [2]string
+			// Restore normalizes photo fields and strips live job ownership from either snapshot.
+			for i, metadata := range [][]byte{released.Bytes(), upgraded.Bytes()} {
+				target, err := openCurrentStore(filepath.Join(t.TempDir(), "normalized.db"), driver.driver, &incarnationRecord)
+				require.NoError(t, err)
+				require.NoError(t, target.ImportMetadata(t.Context(), bytes.NewReader(metadata)))
+				var exported bytes.Buffer
+				require.NoError(t, target.ExportMetadata(t.Context(), &exported))
+				require.NoError(t, target.Close())
+				normalized[i] = exported.String()
+			}
+			assert.Equal(t, normalized[0], normalized[1])
 			assert.Equal(t, pending, dumpReleasedOperationalTables(t, s.db))
 
 			current, err := s.CurrentProcessingIncarnation(t.Context())

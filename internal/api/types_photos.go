@@ -23,19 +23,18 @@ type PhotoFile struct {
 }
 
 type PhotoAsset struct {
-	Agreement map[string]bool `json:"agreement"`
-	ID                    string      `json:"id" format:"uuid"`
-	Kind                  string      `json:"kind" enum:"photo,video"`
-	Revision              int64       `json:"revision" minimum:"1"`
-	HiddenAt              *string     `json:"hidden_at,omitzero" format:"date-time"`
-	ExcludedAt            *string     `json:"excluded_at,omitzero" format:"date-time"`
-	DisplayFileID         *string     `json:"display_file_id,omitzero" format:"uuid"`
-	DisplayOverrideFileID *string     `json:"display_override_file_id,omitzero" format:"uuid"`
-	DisplaySource         string      `json:"display_source" enum:"asset,vault,default,none"`
-	CreatedAt             string      `json:"created_at" format:"date-time"`
-	UpdatedAt             string      `json:"updated_at" format:"date-time"`
-	Files                 []PhotoFile `json:"files" maxItems:"256"`
-
+	Agreement             map[string]bool `json:"agreement"`
+	ID                    string          `json:"id" format:"uuid"`
+	Kind                  string          `json:"kind" enum:"photo,video"`
+	Revision              int64           `json:"revision" minimum:"1"`
+	HiddenAt              *string         `json:"hidden_at,omitzero" format:"date-time"`
+	ExcludedAt            *string         `json:"excluded_at,omitzero" format:"date-time"`
+	DisplayFileID         *string         `json:"display_file_id,omitzero" format:"uuid"`
+	DisplayOverrideFileID *string         `json:"display_override_file_id,omitzero" format:"uuid"`
+	DisplaySource         string          `json:"display_source" enum:"asset,vault,default,none"`
+	CreatedAt             string          `json:"created_at" format:"date-time"`
+	UpdatedAt             string          `json:"updated_at" format:"date-time"`
+	Files                 []PhotoFile     `json:"files" maxItems:"256"`
 }
 
 type PhotoSettings struct {
