@@ -91,7 +91,7 @@ func measurePhotoQuality(source image.Image) document.PhotoQualitySignals {
 			wy += (float64(y) + 0.5) / edge * w
 		}
 	}
-	s.Focus = min(max(delta/float64(count)/0.15, 0), 1)
+	s.Focus = min(max(delta/float64(count)/document.PhotoQualityFocusCeiling, 0), 1)
 	s.Blur = 1 - s.Focus
 	s.Framing = 0.5
 	if weight > 0.0001 {

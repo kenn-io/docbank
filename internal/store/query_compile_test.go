@@ -252,6 +252,7 @@ func TestCompileQueryRejectsUnsupportedFeaturesAndMalformedFieldOperands(t *test
 		`modified_before:"2026-01-02T03:04:05.0000000001Z"`,
 		`modified_after:"2026-01-02T03:04:05,1Z"`,
 		`size_min:9007199254740992`, `size_max:+1`, `size_min:1.5`,
+		`unevaluated:false`, `unevaluated:"false"`, `unevaluated:(true OR false)`,
 	} {
 		t.Run(text, func(t *testing.T) {
 			_, err := compileQuery(t.Context(), compilerQuery(t, text), nil)

@@ -7,6 +7,11 @@ import (
 	"sync"
 )
 
+const (
+	photoQualityRevision     = "v2"
+	PhotoQualityFocusCeiling = 0.15
+)
+
 // PhotoQualitySignals measures preview pixels on a calibrated 0..1 scale.
 type PhotoQualitySignals struct {
 	Focus      float64 `json:"focus" minimum:"0" maximum:"1"`
@@ -46,7 +51,7 @@ var photoQualityFingerprints = sync.OnceValues(func() (PhotoQualityFingerprints,
 	if err != nil {
 		return PhotoQualityFingerprints{}, fmt.Errorf("fingerprinting photo quality grid recipe: %w", err)
 	}
-	evaluator := sha256Hex([]byte("photo-quality:v2:16x16:catmull-rom:focus-ceiling=0.15:" + grid))
+	evaluator := sha256Hex(fmt.Appendf(nil, "photo-quality:%s:16x16:catmull-rom:focus-ceiling=%g:%s", photoQualityRevision, PhotoQualityFocusCeiling, grid))
 	return PhotoQualityFingerprints{GridRecipe: grid, Evaluator: evaluator}, nil
 })
 
