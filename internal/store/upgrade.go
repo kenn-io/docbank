@@ -721,8 +721,9 @@ func restoreV3SourceState(ctx context.Context, source metadataQuerier, target *S
 }
 
 // restoreV28SourceState restores the v3-style blob catalog and copies
-// unfinished storage work. It also puts back the export state, embedding jobs,
-// and processing authority that metadata import drops for a restore.
+// unfinished storage work. It also puts back the export state, sessions,
+// embedding jobs, and processing authority that metadata import drops for a
+// restore.
 func restoreV28SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
 	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if err := restoreV3PhysicalCatalogTx(ctx, source, tx, target); err != nil {
@@ -737,6 +738,9 @@ func restoreV28SourceState(ctx context.Context, source metadataQuerier, target *
 		if err := replaceImportedTables(ctx, source, tx, releasedExportTables); err != nil {
 			return err
 		}
+		if err := restoreReleasedSessions(ctx, source, tx); err != nil {
+			return err
+		}
 		// Metadata JSONL omits embedding jobs. Reconciliation rebuilds them once
 		// consent is valid, which a restore must grant again. An upgrade keeps
 		// consent, so rebuilt jobs would reopen failed work with a fresh retry
@@ -749,6 +753,21 @@ func restoreV28SourceState(ctx context.Context, source metadataQuerier, target *
 		}
 		return restoreMediaReceipts(ctx, source, tx)
 	})
+}
+
+// restoreReleasedSessions copies short-lived sessions that a backup leaves
+// out: unexpired package preflights, and mailbox uploads with the chunks they
+// have accepted. An upgrade keeps them so the user can continue within the
+// session's lifetime instead of starting again.
+func restoreReleasedSessions(ctx context.Context, source metadataQuerier, tx *sql.Tx) error {
+	if err := copyReleasedTable(ctx, source, tx, "package_preflights"); err != nil {
+		return err
+	}
+	if err := copyReleasedRows(ctx, source, tx, "mailbox_containers", `state='uploading'`); err != nil {
+		return err
+	}
+	return copyReleasedRows(ctx, source, tx, "mailbox_chunks",
+		`container_id IN (SELECT id FROM mailbox_containers WHERE state='uploading')`)
 }
 
 // replaceImportedTables deletes what metadata import wrote to tables, in
@@ -828,6 +847,12 @@ func copyReleasedTables(ctx context.Context, source metadataQuerier, tx *sql.Tx,
 }
 
 func copyReleasedTable(ctx context.Context, source metadataQuerier, tx *sql.Tx, table string) error {
+	return copyReleasedRows(ctx, source, tx, table, "")
+}
+
+// copyReleasedRows copies the source rows of table that match filter, a SQL
+// WHERE clause or "" for every row, after checking that the columns match.
+func copyReleasedRows(ctx context.Context, source metadataQuerier, tx *sql.Tx, table, filter string) error {
 	sourceColumns, err := queryTableColumns(ctx, source, table)
 	if err != nil {
 		return err
@@ -841,7 +866,11 @@ func copyReleasedTable(ctx context.Context, source metadataQuerier, tx *sql.Tx, 
 			table, strings.Join(sourceColumns, ","), strings.Join(targetColumns, ","))
 	}
 	columns := strings.Join(sourceColumns, ",")
-	rows, err := source.QueryContext(ctx, `SELECT `+columns+` FROM `+table+` ORDER BY rowid`)
+	query := `SELECT ` + columns + ` FROM ` + table
+	if filter != "" {
+		query += ` WHERE ` + filter
+	}
+	rows, err := source.QueryContext(ctx, query+` ORDER BY rowid`)
 	if err != nil {
 		return fmt.Errorf("reading released %s: %w", table, err)
 	}

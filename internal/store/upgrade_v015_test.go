@@ -464,3 +464,67 @@ func TestUpgradeReleasedV0150KeepsFailedEmbeddingJobs(t *testing.T) {
 		})
 	}
 }
+
+func TestUpgradeReleasedV0150KeepsPackagePreflight(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0150SQL, 28)
+			pkg, run, _ := prepareReceivedPackage(t, legacy, "leased")
+			request := packageImportJobRequest(t, legacy, pkg)
+			released, err := legacy.PackagePreflight(ctx, request.Owner, request.PreflightID)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+
+			s, err := Open(path, driver.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+
+			upgraded, err := s.PackagePreflight(ctx, request.Owner, request.PreflightID)
+			require.NoError(t, err)
+			assert.Equal(t, released, upgraded)
+			job, err := s.AdmitPackageImport(ctx, run, pkg, request)
+			require.NoError(t, err, "the preview admits its import without being rerun")
+			assert.Equal(t, request.PreflightID, job.PreflightID)
+		})
+	}
+}
+
+func TestUpgradeReleasedV0150KeepsMailboxUpload(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0150SQL, 28)
+			first, last := MailboxChunk{Index: 0, SHA256: fakeHash("ab0"), Size: MailboxChunkBytes},
+				MailboxChunk{Index: 1, SHA256: fakeHash("ab1"), Size: 1}
+			require.NoError(t, legacy.withStorageTx(ctx, func(tx *sql.Tx) error {
+				if err := legacy.EnsureBlobTx(tx, first.SHA256, first.Size); err != nil {
+					return err
+				}
+				return legacy.EnsureBlobTx(tx, last.SHA256, last.Size)
+			}))
+			upload := MailboxContainerRequest{ID: "upload", Owner: "one", SHA256: fakeHash("abc"),
+				Size: MailboxChunkBytes + 1, Format: "mbox"}
+			_, err := legacy.BeginMailboxContainer(ctx, upload)
+			require.NoError(t, err)
+			require.NoError(t, legacy.PutMailboxChunk(ctx, upload.Owner, upload.ID, first))
+			released, err := legacy.MailboxContainer(ctx, upload.Owner, upload.ID)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+
+			s, err := Open(path, driver.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+
+			upgraded, err := s.MailboxContainer(ctx, upload.Owner, upload.ID)
+			require.NoError(t, err)
+			assert.Equal(t, released, upgraded)
+			require.NoError(t, s.PutMailboxChunk(ctx, upload.Owner, upload.ID, first), "accepted chunks stay accepted")
+			require.NoError(t, s.PutMailboxChunk(ctx, upload.Owner, upload.ID, last), "the upload resumes")
+		})
+	}
+}

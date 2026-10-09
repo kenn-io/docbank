@@ -156,6 +156,9 @@ vault, so it also keeps state that a restore deliberately resets:
   a fresh retry budget.
 - Media receipts, so an admitted request that has no rendition job yet still
   resumes.
+- Unexpired package preflights and in-progress mailbox uploads with their
+  accepted chunks, so the user can continue within the 24-hour session instead
+  of starting again.
 
 A copied source table whose columns differ from the current schema stops the
 upgrade before the vault changes. Restoring a backup still requires fresh
