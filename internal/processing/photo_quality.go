@@ -30,7 +30,7 @@ func EvaluatePhotoQuality(
 		return err
 	}
 	output := view.Generation.Preview.Output
-	if view.Generation.Preview.State != document.VisualPreviewReady || output == nil {
+	if view.Generation.Preview.State != document.VisualPreviewReady {
 		return errors.New("photo quality preview unavailable")
 	}
 	body, err := readExportBlob(ctx, blobs, output.BlobSHA256, output.Size, 4<<20)

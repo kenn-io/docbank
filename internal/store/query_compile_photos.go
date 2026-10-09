@@ -32,13 +32,24 @@ func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...a
 
 func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compiledQueryFragment, error) {
 	switch field {
+	case "focus_min", "focus_max", "blur_min", "blur_max", "brightness_min", "brightness_max", "framing_min", "framing_max", "aesthetics_min", "aesthetics_max", "color_red_min", "color_red_max", "color_green_min", "color_green_max", "color_blue_min", "color_blue_max", "unevaluated":
+		if field == "unevaluated" {
+			if value != "true" && value != "false" {
+				return compiledQueryFragment{}, errors.New("unevaluated must be true or false")
+			}
+		} else {
+			normalized, err := query.NormalizeQualityOperand(value)
+			if err != nil {
+				return compiledQueryFragment{}, err
+			}
+			value = normalized
+		}
+		return c.compilePhotoQualityPredicate(field, value)
 	case "set":
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
 		}
 		return compilePhotoAssetPredicate(`EXISTS (SELECT 1 FROM photo_set_members sm JOIN photo_sets ps ON ps.set_id=sm.set_id WHERE sm.asset_id=pa.asset_id AND sm.set_id=? AND ps.deleted_at IS NULL)`, value), nil
-	case "focus_min", "focus_max", "blur_min", "blur_max", "brightness_min", "brightness_max", "framing_min", "framing_max", "aesthetics_min", "aesthetics_max", "color_red_min", "color_red_max", "color_green_min", "color_green_max", "color_blue_min", "color_blue_max", "unevaluated":
-		return c.compilePhotoQualityPredicate(field, value)
 	case "kind", "asset":
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
@@ -104,7 +115,7 @@ func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int
 	parts := []compiledQueryFragment{}
 	for _, bound := range query.QualityBounds(filters) {
 		if bound.Value != nil {
-			part, err := c.compileScalarPredicate(bound.Field, *bound.Value, start, end)
+			part, err := c.compilePhotoQualityPredicate(bound.Field, *bound.Value)
 			if err != nil {
 				return compiledQueryFragment{}, err
 			}
@@ -112,7 +123,7 @@ func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int
 		}
 	}
 	if filters.Unevaluated {
-		part, err := c.compileScalarPredicate("unevaluated", "true", start, end)
+		part, err := c.compilePhotoQualityPredicate("unevaluated", "true")
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
@@ -182,20 +193,13 @@ func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compil
  AND q.evaluator_fingerprint=? AND q.state='ready'`
 	args := []any{fingerprints.Evaluator}
 	if field == "unevaluated" {
-		if value != "true" && value != "false" {
-			return compiledQueryFragment{}, errors.New("unevaluated must be true or false")
-		}
 		quality += `)`
 		if value == "true" {
 			quality = `NOT ` + quality
 		}
 		return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM ` + from + ` WHERE ` + binding + ` AND ` + liveIncludedPhotoDisplayPredicate + ` AND ` + quality + `)`, args: args}, nil
 	}
-	normalized, err := query.NormalizeQualityOperand(value)
-	if err != nil {
-		return compiledQueryFragment{}, err
-	}
-	number, err := strconv.ParseFloat(normalized, 64)
+	number, err := strconv.ParseFloat(value, 64)
 	if err != nil {
 		return compiledQueryFragment{}, fmt.Errorf("parsing quality bound %s: %w", field, err)
 	}
