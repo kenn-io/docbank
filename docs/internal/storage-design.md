@@ -390,7 +390,9 @@ Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide wr
 
 Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart. JSONL v1 backs up hidden flags, credentials and decision receipts; restored vaults start without attempts or lockout. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 31 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schema 30 remains an unsupported, unreleased source.
 
-Schema version 31 exports assets, files, settings, albums, album members, and receipts in stable
+Schema 31 upgrades to 32 through the same rebuild and initializes authored file revisions to 1 with empty decisions.
+
+Schema version 32 exports assets, files, settings, albums, album members, and receipts in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, receipt JSON, and the complete graph before commit. Released

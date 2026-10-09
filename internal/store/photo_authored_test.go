@@ -174,7 +174,7 @@ func TestPhotoAuthoredReleasedJSONLDefaults(t *testing.T) {
 	for i, line := range lines {
 		if bytes.Contains(line, []byte(`"type":"photo_file"`)) {
 			f := asset.Files[0]
-			old := metadataPhotoFileV28{Type: metadataPhotoFileType, FileID: f.ID, AssetID: f.AssetID, NodeID: f.NodeID, Role: f.Role, SidecarOfID: f.SidecarOfID, CreatedAt: f.CreatedAt}
+			old := metadataPhotoFileBeforeAuthored{Type: metadataPhotoFileType, FileID: f.ID, AssetID: f.AssetID, NodeID: f.NodeID, Role: f.Role, SidecarOfID: f.SidecarOfID, CreatedAt: f.CreatedAt}
 			lines[i], err = json.Marshal(old, json.Deterministic(true))
 			require.NoError(t, err)
 		}
