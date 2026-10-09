@@ -263,15 +263,15 @@ func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, n
 			}
 			out.CoverAssetID = *cover
 		}
-		if out.Name == before.Name && out.Starred == before.Starred && equalPhotoString(out.CoverAssetID, before.CoverAssetID) {
-			return nil
+		if out.Name != before.Name || out.Starred != before.Starred || !equalPhotoString(out.CoverAssetID, before.CoverAssetID) {
+			out, err = commitPhotoSet(ctx, tx, before, out, "set_update", nil)
+			if err != nil {
+				return err
+			}
 		}
-		out, err = commitPhotoSet(ctx, tx, before, out, "set_update", nil)
+		out, err = s.photoSetResponse(ctx, tx, out)
 		return err
 	})
-	if err == nil {
-		err = s.photoReadTx(ctx, func(tx *sql.Tx) error { var e error; out, e = s.photoSetResponse(ctx, tx, out); return e })
-	}
 	return out, err
 }
 
@@ -340,11 +340,12 @@ func (s *Store) DuplicatePhotoSet(ctx context.Context, id string, revision int64
 		if err != nil {
 			return err
 		}
-		return writePhotoSetReceipts(ctx, tx, "set_duplicate", PhotoSet{}, out, ids)
+		if err := writePhotoSetReceipts(ctx, tx, "set_duplicate", PhotoSet{}, out, ids); err != nil {
+			return err
+		}
+		out, err = s.photoSetResponse(ctx, tx, out)
+		return err
 	})
-	if err == nil {
-		err = s.photoReadTx(ctx, func(tx *sql.Tx) error { var e error; out, e = s.photoSetResponse(ctx, tx, out); return e })
-	}
 	return out, err
 }
 
@@ -429,11 +430,12 @@ func (s *Store) ChangePhotoSetMembers(ctx context.Context, id string, revision i
 			return err
 		}
 		out, err = changePhotoSetMembersTx(ctx, tx, before, add, ids)
+		if err != nil {
+			return err
+		}
+		out, err = s.photoSetResponse(ctx, tx, out)
 		return err
 	})
-	if err == nil {
-		err = s.photoReadTx(ctx, func(tx *sql.Tx) error { var e error; out, e = s.photoSetResponse(ctx, tx, out); return e })
-	}
 	return out, err
 }
 
