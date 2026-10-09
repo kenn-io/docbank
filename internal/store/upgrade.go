@@ -722,8 +722,8 @@ func restoreV3SourceState(ctx context.Context, source metadataQuerier, target *S
 
 // restoreV28SourceState restores the v3-style blob catalog and copies
 // unfinished storage work. It also puts back the export state, sessions,
-// embedding jobs, and processing authority that metadata import drops for a
-// restore.
+// embedding jobs, rebuild receipts, and processing authority that metadata
+// import drops for a restore.
 func restoreV28SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
 	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if err := restoreV3PhysicalCatalogTx(ctx, source, tx, target); err != nil {
@@ -751,8 +751,24 @@ func restoreV28SourceState(ctx context.Context, source metadataQuerier, target *
 		if err := restoreRenditionJobAuthorization(ctx, source, tx); err != nil {
 			return err
 		}
+		if err := restoreRebuildReceipts(ctx, source, tx); err != nil {
+			return err
+		}
 		return restoreMediaReceipts(ctx, source, tx)
 	})
+}
+
+// restoreRebuildReceipts copies document event and people rebuild receipts
+// with the epochs their progress counts against. Metadata import leaves both
+// out and starts the epochs over, so an upgrade would otherwise lose replay by
+// operation ID and leave running rebuilds unable to finish. Import writes a
+// placeholder people state row, which the source row replaces.
+func restoreRebuildReceipts(ctx context.Context, source metadataQuerier, tx *sql.Tx) error {
+	if err := copyReleasedTables(ctx, source, tx,
+		[]string{"document_event_state", "document_event_builds", "document_people_builds"}); err != nil {
+		return err
+	}
+	return replaceImportedTables(ctx, source, tx, []string{"document_people_state"})
 }
 
 // restoreReleasedSessions copies short-lived sessions that a backup leaves

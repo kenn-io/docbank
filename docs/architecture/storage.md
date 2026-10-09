@@ -156,6 +156,9 @@ vault, so it also keeps state that a restore deliberately resets:
   a fresh retry budget.
 - Media receipts, so an admitted request that has no rendition job yet still
   resumes.
+- Document event and people rebuild receipts with the epochs they count
+  against, so a rebuild can be looked up or replayed by its operation ID and
+  an unfinished one completes.
 - Unexpired package preflights and in-progress mailbox uploads with their
   accepted chunks, so the user can continue within the 24-hour session instead
   of starting again.
