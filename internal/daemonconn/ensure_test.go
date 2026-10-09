@@ -338,13 +338,19 @@ func TestProvenClientCloseBeforeFirstRequest(t *testing.T) {
 }
 
 func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
-	for _, scenario := range []string{"forged", "oversized body", "oversized headers", "truncated", "close", "leftover", "redirect", "canceled", "deadline"} {
+	for _, scenario := range []string{
+		"forged", "oversized body", "oversized headers", "truncated", "close", "leftover",
+		"redirect", "canceled", "deadline", "proof timeout",
+	} {
 		t.Run(scenario, func(t *testing.T) {
 			const token = "synthetic-proof-token"
 			var requests atomic.Int64
 			timeout := probeOptions().Timeout
-			if scenario == "deadline" {
+			switch scenario {
+			case "deadline":
 				timeout = 100 * time.Millisecond
+			case "proof timeout":
+				timeout = 2 * probeOptions().Timeout
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), timeout)
 			defer cancel()
@@ -355,9 +361,9 @@ func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
 				case "forged":
 					body = []byte(`{"proof":"forged"}`)
 				case "oversized body":
-					body = append(body, []byte(strings.Repeat(" ", 4<<10))...)
+					body = append(body, []byte(strings.Repeat(" ", proofBodyLimit))...)
 				case "oversized headers":
-					w.Header().Set("X-Proof-Padding", strings.Repeat("x", 10<<20))
+					w.Header().Set("X-Proof-Padding", strings.Repeat("x", proofResponseLimit))
 				case "truncated":
 					w.Header().Set("Content-Length", strconv.Itoa(len(body)+1))
 				case "close":
@@ -381,8 +387,8 @@ func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
 				case "canceled":
 					cancel()
 					return
-				case "deadline":
-					<-ctx.Done()
+				case "deadline", "proof timeout":
+					<-r.Context().Done()
 					return
 				}
 				_, _ = w.Write(body)
@@ -397,6 +403,16 @@ func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
 				require.ErrorIs(t, err, context.Canceled)
 			case "deadline":
 				require.ErrorIs(t, err, context.DeadlineExceeded)
+			case "proof timeout":
+				require.ErrorIs(t, err, errOwnershipProofTimeout)
+				require.NotErrorIs(t, err, context.DeadlineExceeded,
+					"the TUI retries an internal proof timeout but not caller deadlines")
+			case "forged":
+				require.ErrorContains(t, err, "daemon endpoint failed ownership proof")
+			case "close":
+				require.ErrorContains(t, err, "daemon ownership response closes its connection")
+			default:
+				require.ErrorIs(t, err, errOwnershipChallenge)
 			}
 			assert.Equal(t, int64(1), requests.Load(), "failed proof must not send another request")
 		})
