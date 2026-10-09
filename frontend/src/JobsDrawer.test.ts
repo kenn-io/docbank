@@ -23,12 +23,26 @@ function jobsResponse(items: unknown[], lanes = items.filter((item: any) => item
 }
 
 describe("background jobs drawer", () => {
-  it("shows the empty state when lane controls are unavailable and no jobs remain", async () => {
+  it("shows a retry when lane controls are unavailable and no jobs remain", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ items: [], lane_controls_error: "Lane controls are unavailable" }), { headers: { "Content-Type": "application/json" } }));
     render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
-    expect(await screen.findByText("No background jobs")).toBeTruthy();
-    expect(screen.getByRole("alert").textContent).toBe("Lane controls are unavailable");
+    expect((await screen.findByRole("alert")).textContent).toBe("Lane controls are unavailable");
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(screen.queryByText("No background jobs")).toBeNull();
     expect(screen.getByText("0 running · 0 total")).toBeTruthy();
+  });
+
+  it("shows the empty state after retrying a failed initial load", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "busy" }), { status: 503, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(jobsResponse([]));
+    render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
+    expect((await screen.findByRole("alert")).textContent).toBe("busy");
+    expect(screen.queryByText("No background jobs")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("No background jobs")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 
   it("shows unavailable lane controls while keeping progress and cancellation", async () => {

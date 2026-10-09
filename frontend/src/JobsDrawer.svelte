@@ -195,13 +195,12 @@
     {#if actionError}<p class="error" role="alert">{actionError}</p>{/if}
     {#if loading && lanes.length === 0}
       <div class="loading"><Spinner size={16} /> Loading background jobs…</div>
+    {:else if loadError && lanes.length === 0}
+      <div class="load-error">
+        <p role="alert">{loadError}</p>
+        <Button size="sm" onclick={() => void refresh()}>Try again</Button>
+      </div>
     {:else if lanes.length === 0}
-      {#if loadError}
-        <div class="load-error">
-          <p role="alert">{loadError}</p>
-          <Button size="sm" onclick={() => void refresh()}>Try again</Button>
-        </div>
-      {/if}
       <EmptyState
         title="No background jobs"
       >
