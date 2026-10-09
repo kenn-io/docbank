@@ -59,7 +59,10 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 		if _, exists := values[key]; exists {
 			return fmt.Errorf("duplicate XMP property %s", key)
 		}
-		values[key] = strings.TrimSpace(value)
+		if key != "description" && key != "creator" && key != "rights" {
+			value = strings.TrimSpace(value)
+		}
+		values[key] = value
 		return nil
 	}
 	for {
@@ -159,7 +162,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 			}
 		case xml.EndElement:
 			if itemDepth == len(stack) && itemDepth != 0 {
-				value := strings.TrimSpace(itemText.String())
+				value := itemText.String()
 				items = append(items, value)
 				if itemDefault {
 					if hasDefault {
@@ -171,7 +174,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 				itemDepth = 0
 			}
 			if field != "" && fieldDepth == len(stack) {
-				value := strings.TrimSpace(text.String())
+				value := text.String()
 				if len(items) > 0 {
 					if field == "creator" {
 						value = items[0]
@@ -218,10 +221,9 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	}
 	if value, ok := values["Rotation"]; ok {
 		n, err := strconv.Atoi(value)
-		if err != nil {
-			return result, errors.New("invalid XMP rotation")
+		if err == nil && (n == 0 || n == 90 || n == 180 || n == 270) {
+			result.Rotation = n
 		}
-		result.Rotation = n
 	}
 	if err := store.ValidatePhotoAuthored(result); err != nil {
 		return result, err

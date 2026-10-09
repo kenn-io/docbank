@@ -2187,6 +2187,14 @@ CREATE TABLE IF NOT EXISTS photo_files (
 CREATE INDEX IF NOT EXISTS photo_files_asset ON photo_files(asset_id, role, file_id);
 CREATE INDEX IF NOT EXISTS photo_files_sidecar ON photo_files(sidecar_of_file_id);
 
+CREATE TABLE IF NOT EXISTS photo_sidecar_considered (
+    sidecar_file_id      TEXT NOT NULL REFERENCES photo_files(file_id) ON DELETE CASCADE,
+    target_file_id       TEXT NOT NULL REFERENCES photo_files(file_id) ON DELETE CASCADE,
+    version_id           TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    extractor_fingerprint TEXT NOT NULL,
+    PRIMARY KEY (sidecar_file_id, target_file_id, version_id, extractor_fingerprint)
+);
+
 CREATE TABLE IF NOT EXISTS photo_library_settings (
     singleton    INTEGER PRIMARY KEY,
     preference   TEXT,

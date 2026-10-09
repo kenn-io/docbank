@@ -165,13 +165,15 @@ process. `docbank jobs` and authenticated `GET /api/v1/jobs` expose running and
 terminal state in deterministic order. Terminal records remain until restart,
 so a failed task stays visible.
 
-Every daemon runs three jobs that derive information from retained content:
+The daemon's content jobs include:
 
 - `extract:plain-text` verifies and indexes supported current text content with
   a bounded worker.
 - `extract:source-metadata` reads retained originals that the current extractor
   has not processed. It publishes typed metadata and keeps watching for new
   content.
+- `extract:photo-sidecars` initializes undecided photo files from linked XMP sidecars.
+- `derive:photo-quality` evaluates the selected display file's quality signals.
 - `maintenance:auxiliary-checksums` computes MD5 for retained blobs that
   predate auxiliary checksums, then completes. New writes record MD5 at ingest.
   On an existing vault, the first daemon start after this upgrade therefore

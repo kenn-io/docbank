@@ -1473,7 +1473,8 @@ Shows daemon-owned background tasks in stable name order, including status,
 start and finish timestamps, and the bounded error recorded for a failed task.
 Running tasks have no finish timestamp. Terminal task records remain visible
 until the daemon restarts. `--json` emits `{"items": [...]}` for automation.
-Every daemon registers `extract:plain-text`, `extract:source-metadata`, and
+Every daemon registers `extract:plain-text`, `extract:source-metadata`,
+`extract:photo-sidecars`, `derive:photo-quality`, and
 `maintenance:auxiliary-checksums`; `process:renditions` appears only when a
 rendition provider is bound, `telemetry:heartbeat` appears while anonymous
 usage telemetry is on, and configured watched inboxes add `watch:<name>`
