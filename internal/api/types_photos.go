@@ -5,6 +5,15 @@ import "go.kenn.io/docbank/internal/store"
 // PhotoFile is the daemon representation of one ordinary file node in an
 // asset. The node remains authoritative for bytes and content versions.
 type PhotoFile struct {
+	Revision  int64  `json:"revision"`
+	Rating    int    `json:"rating"`
+	Flag      string `json:"flag"`
+	Label     string `json:"label"`
+	Caption   string `json:"caption"`
+	Creator   string `json:"creator"`
+	Copyright string `json:"copyright"`
+	Rotation  int    `json:"rotation"`
+
 	ID          string  `json:"id" format:"uuid"`
 	AssetID     string  `json:"asset_id" format:"uuid"`
 	NodeID      int64   `json:"node_id" minimum:"1"`
@@ -14,6 +23,7 @@ type PhotoFile struct {
 }
 
 type PhotoAsset struct {
+	Agreement map[string]bool `json:"agreement"`
 	ID                    string      `json:"id" format:"uuid"`
 	Kind                  string      `json:"kind" enum:"photo,video"`
 	Revision              int64       `json:"revision" minimum:"1"`
@@ -25,6 +35,7 @@ type PhotoAsset struct {
 	CreatedAt             string      `json:"created_at" format:"date-time"`
 	UpdatedAt             string      `json:"updated_at" format:"date-time"`
 	Files                 []PhotoFile `json:"files" maxItems:"256"`
+
 }
 
 type PhotoSettings struct {
@@ -68,7 +79,7 @@ type photoSettingsOutput struct {
 }
 
 func fromStorePhotoFile(file store.PhotoFile) PhotoFile {
-	return PhotoFile{ID: file.ID, AssetID: file.AssetID, NodeID: file.NodeID, Role: file.Role, SidecarOfID: file.SidecarOfID, CreatedAt: file.CreatedAt}
+	return PhotoFile{Revision: file.Revision, Rating: file.Rating, Flag: file.Flag, Label: file.Label, Caption: file.Caption, Creator: file.Creator, Copyright: file.Copyright, Rotation: file.Rotation, ID: file.ID, AssetID: file.AssetID, NodeID: file.NodeID, Role: file.Role, SidecarOfID: file.SidecarOfID, CreatedAt: file.CreatedAt}
 }
 
 func fromStorePhotoAsset(asset store.PhotoAsset) PhotoAsset {
@@ -76,7 +87,7 @@ func fromStorePhotoAsset(asset store.PhotoAsset) PhotoAsset {
 	for _, file := range asset.Files {
 		files = append(files, fromStorePhotoFile(file))
 	}
-	return PhotoAsset{ID: asset.ID, Kind: asset.Kind, Revision: asset.Revision, HiddenAt: asset.HiddenAt, ExcludedAt: asset.ExcludedAt, DisplayFileID: asset.DisplayFileID, DisplayOverrideFileID: asset.DisplayOverrideFileID, DisplaySource: asset.DisplaySource, CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt, Files: files}
+	return PhotoAsset{Agreement: asset.Agreement, ID: asset.ID, Kind: asset.Kind, Revision: asset.Revision, HiddenAt: asset.HiddenAt, ExcludedAt: asset.ExcludedAt, DisplayFileID: asset.DisplayFileID, DisplayOverrideFileID: asset.DisplayOverrideFileID, DisplaySource: asset.DisplaySource, CreatedAt: asset.CreatedAt, UpdatedAt: asset.UpdatedAt, Files: files}
 }
 
 func fromStorePhotoSettings(settings store.PhotoSettings) PhotoSettings {

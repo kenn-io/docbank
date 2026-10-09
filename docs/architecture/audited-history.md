@@ -634,6 +634,13 @@ attachments, and do not enter baseline or mutation hashes.
 
 ### Attached metadata lifecycle
 
+Authored photo decisions use the stable photo-file UUID as attachment identity.
+Asset membership stays outside this attachment; detached files retain their
+decisions in the ordinary node projection. Edits advance the file and node
+revisions and record complete before and after
+values in the same transaction. Schema-28 imports may omit this attachment only
+while the file remains at revision 1 with default decisions.
+
 Tag definitions and assignments are mutable authority, so their create, rename,
 assign, unassign, and delete operations emit the canonical fan-out events
 described above whenever an audited member is affected.
@@ -859,6 +866,8 @@ Nested record schemas are:
 | `known_origin` | `node_id:u64`, `parent_id:u64`, `name:bytes` |
 | `topology_node` | `node_id:u64`, `parent_id:?u64`, `name:bytes`, `node_kind:text`, `state:state`, `origin:?record`, `created_at:timestamp`, `modified_at:timestamp`, `trashed_at:?timestamp` |
 | `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:u64`, `introduced_operation_id:uuid`, `transition_kind:text`, `source_version_id:?uuid` |
+| `photo_authored` | `file_id:uuid`, `node_id:u64`, `revision:u64`, `rating:u64`, `flag:text`, `label:text`, `caption:text`, `creator:text`, `copyright:text`, `rotation:u64` |
+| `photo_authored_identity` | `file_id:uuid` |
 | `tag_definition` | `tag_id:uuid`, `name:text` |
 | `tag_assignment` | `tag_id:uuid`, `node_id:u64` |
 | `ingest` | `ingest_id:uuid`, `started_at:timestamp`, `source_kind:text`, `source_desc:bytes` |
@@ -883,13 +892,14 @@ Nested record schemas are:
 
 In that table, `record` means one complete nested canonical record of the applicable
 registered kind. An attached-metadata change permits only `tag_definition`,
-`tag_assignment`, `ingest`, or `provenance`; an event's pre/post kinds are fixed
+`tag_assignment`, `ingest`, `provenance`, or `photo_authored`; an event's pre/post
+kinds are fixed
 by `event_kind` (`path_state` for `node_path`, `content_version` for content
-events, and the matching attached record for tag/provenance events). A
+events, and the matching attached record for tag/provenance/photo events). A
 `topology_node.origin` permits only `known_origin` or `unknown_origin`.
 An attached-metadata identity uses `tag_definition_identity`,
-`tag_assignment_identity`, `ingest_identity`, or `provenance_identity_ref` as
-selected by `record_kind`; event attachment identity uses the same matching
+`tag_assignment_identity`, `ingest_identity`, `provenance_identity_ref`, or
+`photo_authored_identity` as selected by `record_kind`; event attachment identity uses the same matching
 record. No other identity record is valid.
 
 Origin presence and identity follow these rules:
@@ -983,6 +993,7 @@ Event payload presence is exact:
 | `tag_define`, `tag_assign` | absent / matching tag record | attachment kind/identity present |
 | `tag_rename` | `tag_definition` / `tag_definition` | attachment kind/identity present |
 | `tag_delete`, `tag_unassign` | matching tag record / absent | attachment kind/identity present |
+| `photo_authored` | `photo_authored` / `photo_authored` | attachment kind/identity present |
 | `provenance_add` | absent / `provenance` | attachment kind/identity present |
 | `provenance_supersede` | `provenance` / `provenance` | attachment kind/identity present |
 
@@ -1149,14 +1160,17 @@ Format-v1 golden vectors cover every record kind, absent versus empty values,
 Unicode byte distinctions, integer limits, and timestamp encoding; export,
 import, verification, and restore must all reproduce them byte-for-byte.
 
-Kind codes are stable lowercase ASCII tokens frozen by the metadata format
-version, not implementation-assigned ordinals. Metadata format version 1 event
+Kind codes are stable lowercase ASCII tokens registered for the metadata format
+version. New registrations preserve existing canonical encodings and update the
+registry, kind tests, golden vectors, and this contract together. Metadata
+format version 1 event
 codes are `audit_enroll`, `audit_inherit`, `content_create`, `content_replace`,
-`content_revert`, `node_create`, `node_path`, `provenance_add`,
+`content_revert`, `node_create`, `node_path`, `photo_authored`, `provenance_add`,
 `provenance_supersede`, `tag_assign`, `tag_define`, `tag_delete`, `tag_rename`,
-and `tag_unassign`. Attachment codes are `provenance`, `tag_assignment`, and
-`tag_definition`. Canonical bytewise token order determines sorting. A later
-format may add codes but never remaps an existing token, and import rejects an
+and `tag_unassign`. Attachment codes are `photo_authored`, `provenance`,
+`tag_assignment`, and
+`tag_definition`. Canonical bytewise token order determines sorting.
+No registration remaps an existing token, and import rejects an
 unknown or non-canonical code for the declared format version.
 
 The zero-based position after that sort becomes `event_ordinal`. The canonical

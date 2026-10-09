@@ -93,7 +93,7 @@ func TestPhotoWriteTreatsMalformedSuccessAsUnknown(t *testing.T) {
 				ID: assetID, Kind: test.kind, Revision: test.revision,
 				DisplayFileID: &fileID, DisplaySource: "default",
 				CreatedAt: createdAt, UpdatedAt: createdAt,
-				Files: []api.PhotoFile{{ID: fileID, AssetID: assetID, NodeID: 7, Role: "raw", CreatedAt: createdAt}},
+				Files: []api.PhotoFile{{ID: fileID, AssetID: assetID, NodeID: 7, Role: "raw", Revision: 1, CreatedAt: createdAt}},
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				requests.Add(1)
@@ -155,19 +155,21 @@ func TestPhotoMCPCreateUsesDaemonRouteAndReturnsTimestamps(t *testing.T) {
 	fileID := "00000000-0000-4000-8000-000000000010"
 	createdAt := "2026-09-22T00:00:00Z"
 	asset := api.PhotoAsset{
-		ID: assetID, Kind: "photo", Revision: 1,
+		ID: assetID, Kind: "photo", Revision: 1, Agreement: map[string]bool{"rating": false, "flag": true},
 		DisplayFileID: &fileID, DisplaySource: "default",
 		CreatedAt: createdAt, UpdatedAt: createdAt,
-		Files: []api.PhotoFile{{ID: fileID, AssetID: assetID, NodeID: 7, Role: "raw", CreatedAt: createdAt}},
+		Files: []api.PhotoFile{{ID: fileID, AssetID: assetID, NodeID: 7, Role: "raw", Revision: 1, CreatedAt: createdAt}},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/photos/assets" {
+		if (r.Method != http.MethodPost || r.URL.Path != "/api/v1/photos/assets") && (r.Method != http.MethodGet || r.URL.Path != "/api/v1/photos/assets/"+assetID) {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("ETag", `"1"`)
-		w.WriteHeader(http.StatusCreated)
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+		}
 		if err := json.MarshalWrite(w, asset); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -186,4 +188,8 @@ func TestPhotoMCPCreateUsesDaemonRouteAndReturnsTimestamps(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, createdAt, structured["created_at"])
 	assert.Equal(t, createdAt, structured["updated_at"])
+	assert.Equal(t, map[string]any{"rating": false, "flag": true}, structured["agreement"])
+	inspection, err := getPhotoAsset(t.Context(), lease, []byte(`{"asset_id":"`+assetID+`"}`))
+	require.NoError(t, err)
+	assert.Equal(t, asset.Agreement, inspection.Agreement)
 }

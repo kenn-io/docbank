@@ -139,6 +139,24 @@ func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int
 		}
 		parts = append(parts, part)
 	}
+	for _, bound := range []struct {
+		value    *int64
+		operator string
+	}{{filters.RatingMin, ">="}, {filters.RatingMax, "<="}} {
+		if bound.value != nil {
+			parts = append(parts, compilePhotoAssetPredicate("pf.role<>'sidecar' AND pf.rating"+bound.operator+"?", *bound.value))
+		}
+	}
+	for _, set := range []struct {
+		values []string
+		column string
+	}{{filters.Flags, "pf.flag"}, {filters.Labels, "pf.label"}} {
+		matches := []compiledQueryFragment{}
+		for _, v := range set.values {
+			matches = append(matches, compilePhotoAssetPredicate("pf.role<>'sidecar' AND "+set.column+"=?", v))
+		}
+		parts = append(parts, joinCompiledFragments(matches, " OR "))
+	}
 	for _, set := range []struct {
 		field  string
 		values []string

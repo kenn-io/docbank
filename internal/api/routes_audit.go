@@ -414,7 +414,7 @@ func auditAttachmentChange(value *store.AuditAttachmentChange) *AuditAttachmentC
 	return &AuditAttachmentChange{
 		Kind: value.Kind,
 		Identity: AuditAttachmentIdentity{
-			TagID: value.Identity.TagID, NodeID: value.Identity.NodeID,
+			FileID: value.Identity.FileID, TagID: value.Identity.TagID, NodeID: value.Identity.NodeID,
 			ProvenanceID: value.Identity.ProvenanceID,
 		},
 		Before: auditAttachmentState(value.Before), After: auditAttachmentState(value.After),
@@ -426,7 +426,7 @@ func auditAttachmentState(value *store.AuditAttachmentState) *AuditAttachmentSta
 		return nil
 	}
 	return &AuditAttachmentState{
-		TagID: value.TagID, NodeID: value.NodeID, TagName: value.TagName,
+		Photo: value.Photo, TagID: value.TagID, NodeID: value.NodeID, TagName: value.TagName,
 		ProvenanceID: value.ProvenanceID, IngestID: value.IngestID,
 		OriginalPath: value.OriginalPath, OriginalMTime: value.OriginalMTime,
 		Supersedes: value.Supersedes,

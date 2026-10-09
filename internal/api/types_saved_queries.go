@@ -67,6 +67,10 @@ type savedQueryGPSBoundsSchema struct {
 }
 
 type savedQueryFiltersSchema struct {
+	RatingMin            *int64                             `json:"rating_min,omitempty" nullable:"true" minimum:"0" maximum:"5"`
+	RatingMax            *int64                             `json:"rating_max,omitempty" nullable:"true" minimum:"0" maximum:"5"`
+	Flags                []string                           `json:"flags,omitempty" maxItems:"64" enum:",pick,reject"`
+	Labels               []string                           `json:"labels,omitempty" maxItems:"64" enum:",red,yellow,green,blue,purple"`
 	Kinds                []string                           `json:"kinds,omitempty" maxItems:"64" enum:"photo,video"`
 	Cameras              []string                           `json:"cameras,omitempty" maxItems:"64"`
 	Lenses               []string                           `json:"lenses,omitempty" maxItems:"64"`

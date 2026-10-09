@@ -390,6 +390,8 @@ func validateAuditedHistory(
 						vaultID, mutation, allocation, mutationScopeIDs, scopeEntries,
 						attachmentDeltas, events, usedAttachmentDeltas, usedEvents,
 					)
+				} else if kind == "photo_authored" {
+					err = replay.applyPhotoAuthored(vaultID, mutation, allocation, mutationScopeIDs, scopeEntries, attachmentDeltas, events, usedAttachmentDeltas, usedEvents)
 				} else if kind == metadataProvenanceType {
 					if len(mutationScopeIDs) != 1 {
 						err = errors.New("cross-scope provenance mutation is unsupported")
@@ -684,6 +686,10 @@ func validateAuditEnrollmentBaseline(
 		return err
 	}
 	storedAttachments, err := auditRecordListField(baseline.record, "attachments")
+	if err != nil {
+		return err
+	}
+	storedAttachments, err = withoutImplicitPhotoDefaults(storedAttachments, attachments)
 	if err != nil {
 		return err
 	}
@@ -1645,6 +1651,12 @@ func (replay *auditedHistoryReplay) reconcileCurrentState(
 	if err != nil {
 		return err
 	}
+	if layout.schemaVersion >= 29 {
+		currentAttachments, err = withoutImplicitPhotoDefaults(currentAttachments, replay.attachments)
+		if err != nil {
+			return err
+		}
+	}
 	expectedAttachments := make([]audit.Record, 0, len(replay.attachments))
 	for _, record := range replay.attachments {
 		expectedAttachments = append(expectedAttachments, record)
@@ -1653,6 +1665,27 @@ func (replay *auditedHistoryReplay) reconcileCurrentState(
 		return errors.New("replayed audit attachments do not match current metadata")
 	}
 	return nil
+}
+
+func withoutImplicitPhotoDefaults(records []audit.Record, known map[string]audit.Record) ([]audit.Record, error) {
+	filtered := records[:0]
+	for _, record := range records {
+		if record.Kind == "photo_authored" {
+			snapshot, err := photoAuthoredFromAudit(record)
+			if err != nil {
+				return nil, err
+			}
+			key, err := attachedAuditKey(record)
+			if err != nil {
+				return nil, err
+			}
+			if _, exists := known[key]; !exists && snapshot.Revision == 1 && snapshot.Values == (PhotoAuthored{}) {
+				continue
+			}
+		}
+		filtered = append(filtered, record)
+	}
+	return filtered, nil
 }
 
 func (replay *auditedHistoryReplay) reconcileMembershipProjection(

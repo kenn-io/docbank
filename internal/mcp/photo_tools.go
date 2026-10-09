@@ -24,6 +24,7 @@ type photoAssetToolOutput struct {
 	DisplaySource         string          `json:"display_source"`
 	CreatedAt             string          `json:"created_at"`
 	UpdatedAt             string          `json:"updated_at"`
+	Agreement             map[string]bool `json:"agreement"`
 	Files                 []api.PhotoFile `json:"files"`
 }
 
@@ -72,6 +73,7 @@ func photoAssetOutput(asset api.PhotoAsset) photoAssetToolOutput {
 		CreatedAt:             asset.CreatedAt,
 		UpdatedAt:             asset.UpdatedAt,
 		Files:                 asset.Files,
+		Agreement:             asset.Agreement,
 	}
 }
 
