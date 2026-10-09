@@ -1,9 +1,113 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { Photos, loadDensity } from "./photos.svelte.js";
 import { photo } from "./photo-test-fixtures.js";
+import * as snapshots from "./snapshots.js";
+import { APIError } from "./api-transport.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
+
+it("keeps base counts across day changes and rejects a pre-refresh calendar reply", async () => {
+  const first = { facets: [{ dimension: "capture_day", available: true, total: 9000, missing: 4, other: 0, values: [] }] } as unknown as snapshots.FacetCounts;
+  const second = { facets: [{ dimension: "capture_day", available: true, total: 20, missing: 0, other: 0, values: [] }] } as unknown as snapshots.FacetCounts;
+  let finish!: (page: snapshots.FacetCounts) => void;
+  const create = vi.spyOn(snapshots, "createFacetCounts").mockResolvedValueOnce(first)
+    .mockImplementationOnce(() => new Promise(resolve => finish = resolve)).mockResolvedValueOnce(second);
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response([photo(1)])));
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadTimeline();
+  photos.setView("timeline");
+  const pending = photos.loadTimeline();
+  const oldSignal = create.mock.calls[1][2];
+  photos.setView("grid");
+  await photos.refresh();
+  expect(photos.timeline).toBeUndefined();
+  photos.setView("timeline");
+  finish(first); await pending;
+  expect(oldSignal.aborted).toBe(true);
+  await vi.waitFor(() => expect(photos.timeline?.total).toBe(20));
+  expect(create.mock.calls[2][1].sort.field).toBe("capture_time");
+  expect(create.mock.calls[2][1].filters).toEqual({});
+  await photos.selectDate("2024-02-29");
+  expect(create).toHaveBeenCalledTimes(3);
+  expect(photos.timeline?.total).toBe(20);
+  photos.dispose();
+});
+
+it.each([
+  [new APIError("Too many photos", 413, "snapshot_too_large"), "", 0, false],
+  [new APIError("Expired", 401, "unauthorized"), "", 1, undefined],
+  [new Error("Scope unavailable"), "Scope unavailable", 0, undefined],
+])("maps timeline failure %s", async (error, message, failures, available) => {
+  vi.spyOn(snapshots, "createFacetCounts").mockRejectedValue(error);
+  const failure = vi.fn();
+  const photos = new Photos("scoped", failure);
+  await photos.loadTimeline();
+  expect(photos.timeline?.available).toBe(available);
+  expect(photos.timelineError).toBe(message);
+  expect(failure).toHaveBeenCalledTimes(failures as number);
+  photos.dispose();
+});
+
+it("resumes an interrupted timeline request", async () => {
+  const receipt = { facets: [{ dimension: "capture_day", available: false, reason: "member_budget_exceeded", values: [] }] } as unknown as snapshots.FacetCounts;
+  const create = vi.spyOn(snapshots, "createFacetCounts").mockImplementationOnce(() => new Promise(() => {})).mockResolvedValueOnce(receipt);
+  const photos = new Photos("scoped", vi.fn());
+  photos.setView("timeline");
+  expect(photos.timelineLoading).toBe(true);
+  photos.cancelPending();
+  photos.started = true;
+  await photos.resume();
+  expect(create).toHaveBeenCalledTimes(2);
+  await vi.waitFor(() => expect(photos.timeline?.available).toBe(false));
+  photos.dispose();
+});
+
+it("seeks an unloaded day, pages within it, and restores the full scope", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1)], "old"))
+    .mockResolvedValueOnce(response([photo(4)], "year-page"))
+    .mockResolvedValueOnce(response([photo(5)], "month-page"))
+    .mockResolvedValueOnce(response([photo(2)], "day-page"))
+    .mockResolvedValueOnce(response([photo(3)]))
+    .mockResolvedValueOnce(response([photo(1)], "full"));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.loadMore();
+  photos.selectLoaded(); photos.scrollTop = 500;
+  await photos.selectDate("2025");
+  expect(photos.items[0].asset_id).toBe("photo-4");
+  expect(photos.date).toBe("2025");
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  expect(JSON.parse(fetcher.mock.calls[1][1].body).cursor).toBeUndefined();
+  await photos.selectDate("2025-12");
+  expect(photos.items[0].asset_id).toBe("photo-5");
+  expect(photos.date).toBe("2025-12");
+  await photos.selectDate("2024-02-29");
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  expect(photos.scrollTop).toBe(0);
+  const request = JSON.parse(fetcher.mock.calls[3][1].body);
+  expect(request.cursor).toBeUndefined();
+  expect(request.query.filters.capture_after).toBe("2024-02-29");
+  await photos.loadMore();
+  expect(JSON.parse(fetcher.mock.calls[4][1].body).cursor).toBe("day-page");
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2", "photo-3"]);
+  await photos.selectDate();
+  expect(photos.date).toBeUndefined();
+  let finish!: (value: Response) => void;
+  fetcher.mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockResolvedValueOnce(response([photo(2)]))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Try again" }), { status: 503 }))
+    .mockResolvedValueOnce(response([photo(3)]));
+  const older = photos.selectDate("2024-01-01");
+  await photos.selectDate("2024-02-29");
+  finish(response([photo(1)])); await older;
+  expect(photos.items[0].asset_id).toBe("photo-2");
+  await photos.selectDate("2025-01-01");
+  expect(photos.error).toBe("Try again");
+  await photos.retry();
+  expect(photos.items[0].asset_id).toBe("photo-3");
+  photos.dispose();
+});
 
 it("keeps earlier pages on failure, waits for Retry, and reuses the failed cursor", async () => {
   const fetcher = vi.fn();
@@ -38,6 +142,36 @@ it("keeps earlier pages on failure, waits for Retry, and reuses the failed curso
   expect(fetcher.mock.calls[0][1].headers.get("X-Docbank-Web-Session")).toBe("scoped");
   await photos.loadMore();
   expect(fetcher).toHaveBeenCalledTimes(3);
+  photos.dispose();
+});
+
+it.each(["2024", undefined])("resumes interrupted date navigation to %s and keeps the accepted date on failure", async date => {
+  let finish!: (value: Response) => void;
+  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1)], "old"))
+    .mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Try again" }), { status: 503 }))
+    .mockResolvedValueOnce(response([photo(2)], "new"));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.selectDate("2025-01-01");
+  photos.selectLoaded(); photos.scrollTop = 500;
+  const interrupted = photos.selectDate(date);
+  photos.cancelPending();
+  await photos.resume();
+  finish(response([photo(99)])); await interrupted;
+  expect(photos.error).toBe("Try again");
+  expect(photos.date).toBe("2025-01-01");
+  expect(photos.items[0].asset_id).toBe("photo-1");
+  expect(photos.cursor).toBe("old");
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  expect(photos.scrollTop).toBe(500);
+  await photos.retry();
+  expect(photos.date).toBe(date);
+  expect(photos.items[0].asset_id).toBe("photo-2");
+  expect(photos.cursor).toBe("new");
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  expect(photos.scrollTop).toBe(0);
+  expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual(JSON.parse(fetcher.mock.calls[3][1].body));
   photos.dispose();
 });
 

@@ -16,7 +16,7 @@ import (
 )
 
 var snapshotFacetDimensions = [...]string{
-	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, "duplicates",
+	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, "duplicates", "capture_day",
 }
 
 const (
@@ -69,7 +69,13 @@ func materializeSnapshotFacets(
 			}
 			continue
 		}
-		facet, err := materializeSnapshotFacet(facetCtx, q, compiled, generationID, coverage, dimension, rows, options.FacetMemberLimit)
+		var facet SnapshotFacet
+		var err error
+		if dimension == "capture_day" {
+			facet, err = materializeCaptureDayFacet(facetCtx, q, compiled, generationID, coverage, options)
+		} else {
+			facet, err = materializeSnapshotFacet(facetCtx, q, compiled, generationID, coverage, dimension, rows, options.FacetMemberLimit)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -204,6 +210,52 @@ func materializeSnapshotFacet(
 		return SnapshotFacet{}, fmt.Errorf("closing %s facet: %w", dimension, err)
 	}
 	return finishSnapshotFacet(ctx, q, compiled.Query, dimension, observation)
+}
+
+func materializeCaptureDayFacet(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, options snapshotMaterializeOptions) (SnapshotFacet, error) {
+	limit := min(options.MaxRows, options.FacetMemberLimit)
+	match, err := photoBrowseMatch(compiled, generation, coverage)
+	if err != nil {
+		return SnapshotFacet{}, err
+	}
+	statement, args, err := bindQueryPopulation(compiledQueryFragment{
+		sql:  `SELECT COALESCE(p.capture_date,''),COUNT(*) FROM ` + photoBrowseDisplayFrom + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + match.sql + ` GROUP BY COALESCE(p.capture_date,'') ORDER BY COALESCE(p.capture_date,'') DESC`,
+		args: match.args, relations: match.relations,
+	}, coverage, generation)
+	if err != nil {
+		return SnapshotFacet{}, err
+	}
+	rows, err := q.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return SnapshotFacet{}, err
+	}
+	defer func() { _ = rows.Close() }()
+	values := make([]SnapshotFacetValue, 0)
+	var total, missing int64
+	for rows.Next() {
+		var day string
+		var count int64
+		if err := rows.Scan(&day, &count); err != nil {
+			return SnapshotFacet{}, err
+		}
+		total += count
+		if total > limit {
+			return unavailableSnapshotFacet("capture_day", "member_budget_exceeded"), nil
+		}
+		if day == "" {
+			missing = count
+		} else {
+			values = append(values, SnapshotFacetValue{Key: day, Label: day, Count: count})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return SnapshotFacet{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return SnapshotFacet{}, err
+	}
+	other := int64(0)
+	return SnapshotFacet{Dimension: "capture_day", Available: true, Total: &total, Missing: &missing, Other: &other, Values: values}, nil
 }
 
 func materializeSnapshotFacetFromRows(

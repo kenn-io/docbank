@@ -676,6 +676,15 @@ processing `profile`, `page_size` of 50, 100, or 250 (default 100), and any
 subset of `collections`, `tags`, `media_family`, `extension`, `modified`,
 `size`, `text_coverage`, and `duplicates` facets.
 
+`facets_only: true` accepts exactly the `capture_day` facet and counts scoped
+photo assets under the member limit. It reserves output bytes and zero cached
+rows, so occupied row capacity leaves calendar counts available. Its response
+contains `facets_only`, query, dependencies, generation, coverage, observation
+time and facets. The build releases its reservations without publishing a
+snapshot handle, rows, hashes or cursors. Counts requests preserve existing
+snapshot handles and return busy or capacity errors when builders or bytes are
+occupied. Photo sorts remain valid in counts requests.
+
 The response freezes the canonical query, dependency revisions, selected
 lexical generation and processing coverage, ordered row metadata, and exact
 node/content-version membership observed at creation. It also carries exact
@@ -698,13 +707,26 @@ without a value, and `other` sums value counts omitted from the response. A
 document with several tags or collections contributes once to each value, so
 those value counts need not sum to `total`.
 
-Each available facet keeps its leading 50 values plus selected QueryV1 values
+`capture_day` counts included photo assets once, using the selected live display
+file's active metadata and recorded calendar date. It preserves every scope
+filter, including capture-date filters and nested saved queries. It returns all
+observed days in descending calendar order, with `other: 0`; `missing` counts
+photos without a readable date. Its photo membership matches photo browsing,
+including member predicates and duplicate collapse. Ordinary and saved snapshots
+reject `capture_day`. A counts-only request admits photo assets, so unrelated
+documents and paired member files do not consume its row allowance.
+
+Each ordinary available facet keeps its leading 50 values plus selected QueryV1 values
 outside that set, including a selected value whose count is zero. Size uses the
 fixed `<1 MiB`, 1–10 MiB, 10–100 MiB, 100 MiB–1 GiB, and `>=1 GiB` buckets.
 Modification time uses UTC calendar-month buckets. Fixed categorical facets
 include their defined zero-count buckets. A facet that cannot be computed
 within its coverage, member, or time budget returns `available: false` with a
 `reason` and omits count fields. It is not a successful zero.
+
+The capture-day array has the same 250,000-value ceiling as snapshot members.
+Its calendar becomes unavailable on member, time, or serialization budget
+exhaustion rather than returning incomplete days.
 
 Materialization admits at most 250,000 rows and 64 KiB of serialized data per
 row. Across the daemon, the cache admits at most 1,000,000 rows and 512 MiB of

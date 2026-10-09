@@ -86,8 +86,15 @@ func main() {
 		if index >= 10 {
 			date = fmt.Sprintf("%04d-%02d-15T12:00:00", 2026-(index-10)/4, 12-(index-10)%4)
 		}
+		if index == 46 {
+			date = "2024-02-29T23:30:00"
+		}
 		metadata, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "created", Namespace: "image.exif", SourceField: "DateTimeOriginal", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{Raw: date, Normalized: date, Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneOmitted}}}}})
 		check(err)
+		if index == 47 {
+			metadata, _, err = document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{}})
+			check(err)
+		}
 		samples[index].metadata = metadata
 	}
 	for index := range 10_000 {

@@ -4,6 +4,7 @@ import { parseQuery, queryFingerprint, type Query } from "./query.js";
 import {
   captureSnapshotTargets,
   createSnapshot,
+  createFacetCounts,
   readSnapshotPage,
   snapshotMemberHash,
   type SnapshotPage,
@@ -283,4 +284,32 @@ describe("exact snapshot target capture", () => {
     )).rejects.toThrow(/250,000/i);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+});
+it("decodes counts without accepting snapshot authority", async () => {
+  const values = Array.from({ length: 120 }, (_, index) => {
+    const date = new Date("2024-01-01T00:00:00Z"); date.setUTCDate(date.getUTCDate() + index);
+    const key = date.toISOString().slice(0, 10);
+    return { key, label: key, count: 1, selected: false };
+  });
+  const full = await page();
+  const counts = { facets_only: true, query: full.query, dependencies: full.dependencies, generation: full.generation, coverage: full.coverage, observed_at: full.observed_at, facets: [{ dimension: "capture_day", available: true, total: 122, missing: 2, other: 0, values }] };
+  const fetcher = vi.fn().mockResolvedValue(jsonResponse(counts)); vi.stubGlobal("fetch", fetcher);
+  const result = await createFacetCounts("session", query, new AbortController().signal);
+  expect(result.facets[0].values).toHaveLength(120);
+  expect(result.facets[0].missing).toBe(2);
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).facets_only).toBe(true);
+  for (const change of [
+    { values: [{ ...values[0], key: "2024-02-30" }] },
+    { values: [{ ...values[0], key: "0000-01-01" }] },
+    { total: 123 }, { missing: 3 }, { other: 1 },
+  ]) {
+    fetcher.mockResolvedValue(jsonResponse({ ...counts, facets: [{ ...counts.facets[0], ...change }] }));
+    await expect(createFacetCounts("session", query, new AbortController().signal)).rejects.toThrow(/invalid capture day|inconsistent capture-day counts/);
+  }
+  fetcher.mockResolvedValue(jsonResponse({ ...counts, snapshot_id: "123" }));
+  await expect(createFacetCounts("session", query, new AbortController().signal)).rejects.toThrow("unknown fields");
+  fetcher.mockResolvedValue(jsonResponse(counts));
+  await expect(createSnapshot("session", query, {}, new AbortController().signal)).rejects.toThrow("unknown fields");
+  fetcher.mockResolvedValue(jsonResponse({ ...full, facets: [{ dimension: "tags", available: true, total: 120, missing: 0, other: 0, values }] }));
+  await expect(createSnapshot("session", query, { page_size: 50, facets: ["tags"] }, new AbortController().signal)).rejects.toThrow("values exceeds its bound");
 });

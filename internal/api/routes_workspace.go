@@ -16,7 +16,7 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 		OperationID: "createWorkspaceQuery", Method: http.MethodPost,
 		Path: "/api/v1/workspace/queries", Summary: "Create an exact bounded query snapshot",
 		MaxBodyBytes: maxWorkspaceQueryRequestBytes,
-	}, func(ctx context.Context, in *struct{ Body WorkspaceQueryCreateRequest }) (*struct{ Body WorkspaceQueryResponse }, error) {
+	}, func(ctx context.Context, in *struct{ Body WorkspaceQueryCreateRequest }) (*struct{ Body WorkspaceCreateResponse }, error) {
 		owner, ok := workspaceSnapshotOwner(ctx)
 		if !ok {
 			return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated snapshot owner is missing")
@@ -32,9 +32,23 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 		if service == nil {
 			return nil, NewError(http.StatusServiceUnavailable, "workspace_unavailable", "workspace query snapshots are unavailable")
 		}
-		page, err := service.Create(ctx, owner, store.SnapshotRequest{
-			Query: value, Coverage: selection.Coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
-		})
+		request := store.SnapshotRequest{
+			FacetsOnly: in.Body.FacetsOnly,
+			Query:      value, Coverage: selection.Coverage, PageSize: in.Body.PageSize, Facets: in.Body.Facets,
+		}
+		if request.FacetsOnly {
+			projection, err := service.CreateFacets(ctx, owner, request)
+			if err != nil {
+				return nil, workspaceQueryError(err)
+			}
+			wire, err := fromStoreWorkspacePage(store.SnapshotPage{SnapshotProjection: projection})
+			if err != nil {
+				return nil, NewError(http.StatusInternalServerError, "internal", "could not encode workspace facets")
+			}
+			counts := &WorkspaceFacetResponse{FacetsOnly: true, Query: wire.Query, Dependencies: wire.Dependencies, Generation: wire.Generation, Coverage: wire.Coverage, ObservedAt: wire.ObservedAt, Facets: []WorkspaceCaptureDayFacet{WorkspaceCaptureDayFacet(wire.Facets[0])}}
+			return &struct{ Body WorkspaceCreateResponse }{Body: WorkspaceCreateResponse{Counts: counts}}, nil
+		}
+		page, err := service.Create(ctx, owner, request)
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}
@@ -42,7 +56,7 @@ func registerWorkspaceQueryRoutes(api huma.API, d Deps, service *store.QuerySnap
 		if err != nil {
 			return nil, NewError(http.StatusInternalServerError, "internal", "could not encode workspace query")
 		}
-		return &struct{ Body WorkspaceQueryResponse }{Body: response}, nil
+		return &struct{ Body WorkspaceCreateResponse }{Body: WorkspaceCreateResponse{Snapshot: &response}}, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -92,6 +106,8 @@ func workspaceQueryError(err error) error {
 		return problem
 	}
 	switch {
+	case errors.Is(err, store.ErrInvalidSnapshotRequest):
+		return NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 	case errors.Is(err, store.ErrSnapshotGone):
 		return NewError(http.StatusGone, "snapshot_gone", "query snapshot is missing, expired, or revoked")
 	case errors.Is(err, store.ErrSnapshotCursor):

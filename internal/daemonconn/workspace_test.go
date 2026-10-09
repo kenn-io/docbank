@@ -57,6 +57,10 @@ func TestWorkspaceClientRejectsInvalidRequestsBeforeTransport(t *testing.T) {
 		Query: api.QueryPayload(`{}`), PageSize: 51,
 	})
 	require.Error(t, err)
+	_, err = c.CreateWorkspaceQuery(t.Context(), api.WorkspaceQueryCreateRequest{Query: api.QueryPayload(`{}`), Facets: []string{"capture_day"}})
+	require.Error(t, err)
+	_, err = c.CreateWorkspaceQuery(t.Context(), api.WorkspaceQueryCreateRequest{Query: api.QueryPayload(`{}`), FacetsOnly: true, Facets: []string{"capture_day"}})
+	require.EqualError(t, err, "counts requests do not return snapshots")
 	_, err = c.ReadWorkspaceQueryPage(t.Context(), "not-a-snapshot", "opaque")
 	require.Error(t, err)
 	_, err = c.ReadWorkspaceQueryPage(t.Context(), strings.Repeat("0", 32), "")

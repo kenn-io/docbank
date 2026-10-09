@@ -19,6 +19,31 @@ import (
 	"go.kenn.io/docbank/internal/api"
 )
 
+func TestWorkspaceQueryCaptureDayDelivery(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"facets_only":true,"query":{},"page_size":50,"facets":["capture_day"]}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var page api.WorkspaceFacetResponse
+	require.NoError(t, json.Unmarshal([]byte(body), &page))
+	require.True(t, page.FacetsOnly)
+	for _, field := range []string{"snapshot_id", "member_hash", "rows", "next_cursor", "snapshot_fingerprint"} {
+		assert.NotContains(t, body, `"`+field+`"`)
+	}
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"facets_only":true,"query":{"sort":{"field":"capture_time","direction":"desc"}},"facets":["capture_day"]}`)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	require.Contains(t, body, `"field":"capture_time"`)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"query":{"sort":{"field":"capture_time","direction":"desc"}}}`)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"facets_only":true,"query":{},"facets":["tags"]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"query":{},"facets":["capture_day"]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	saved, _ := createSavedQuery(t, ts.URL, "Calendar rejected for saved runs", `{}`)
+	resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/saved-queries/"+saved.ID+"/runs", map[string]string{"X-Api-Key": testAPIKey, "If-Match": `"1"`}, `{"facets":["capture_day"]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+}
+
 func TestWorkspaceQueryRoutesCreateAndPageFrozenResults(t *testing.T) {
 	t.Parallel()
 	ts, s := newTestServer(t, nil)

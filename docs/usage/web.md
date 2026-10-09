@@ -187,6 +187,12 @@ facet or changing the query creates a new snapshot. It never splices live
 results into the accepted one. An unavailable facet says why instead of
 presenting a zero count.
 
+Photos' Timeline uses the `capture_day` counts-only facet to count each included
+photo asset once. Counts use the scoped-asset member limit and output bytes,
+reserve zero cached rows, and leave Documents snapshots pageable. The year
+ribbon, month scrubber, and day rows open photos for the chosen period. See
+[Browse photos](photos.md#browse-in-the-web-app).
+
 Snapshot handles last for one daemon lifetime, up to 15 minutes idle and 30
 minutes total. Locking the browser session or stopping the daemon revokes them.
 If paging reports that the snapshot is gone, run the complete query again and

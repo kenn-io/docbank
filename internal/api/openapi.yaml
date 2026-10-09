@@ -16402,6 +16402,84 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    WorkspaceCreateResponse:
+      oneOf:
+        - $ref: "#/components/schemas/WorkspaceQueryResponse"
+        - $ref: "#/components/schemas/WorkspaceFacetResponse"
+      x-go-type: api.WorkspaceCreateResponse
+      x-go-type-import:
+        name: api
+        path: go.kenn.io/docbank/internal/api
+    WorkspaceFacetResponse:
+      additionalProperties: false
+      properties:
+        coverage:
+          $ref: "#/components/schemas/WorkspaceQueryCoverage"
+        dependencies:
+          items:
+            $ref: "#/components/schemas/WorkspaceQueryDependency"
+          type: array
+        facets:
+          items:
+            additionalProperties: false
+            properties:
+              available:
+                type: boolean
+              dimension:
+                enum:
+                  - capture_day
+                type: string
+              missing:
+                anyOf:
+                  - minimum: 0
+                    type: integer
+                  - type: "null"
+              other:
+                anyOf:
+                  - minimum: 0
+                    type: integer
+                  - type: "null"
+              reason:
+                type: string
+              total:
+                anyOf:
+                  - minimum: 0
+                    type: integer
+                  - type: "null"
+              values:
+                items:
+                  $ref: "#/components/schemas/WorkspaceFacetValue"
+                maxItems: 250000
+                type: array
+            required:
+              - dimension
+              - available
+              - values
+            type: object
+          maxItems: 1
+          type: array
+        facets_only:
+          type: boolean
+        generation:
+          $ref: "#/components/schemas/WorkspaceQueryGeneration"
+        observed_at:
+          format: date-time
+          type: string
+        query:
+          $ref: "#/components/schemas/SavedQueryV1Schema"
+      required:
+        - facets_only
+        - query
+        - dependencies
+        - generation
+        - coverage
+        - observed_at
+        - facets
+      type: object
+      x-go-type: api.WorkspaceFacetResponse
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     WorkspaceFacetValue:
       additionalProperties: false
       properties:
@@ -16465,10 +16543,13 @@ components:
               - size
               - text_coverage
               - duplicates
+              - capture_day
             type: string
           maxItems: 8
           type: array
           uniqueItems: true
+        facets_only:
+          type: boolean
         page_size:
           default: 100
           enum:
@@ -16576,6 +16657,15 @@ components:
               available:
                 type: boolean
               dimension:
+                enum:
+                  - collections
+                  - tags
+                  - media_family
+                  - extension
+                  - modified
+                  - size
+                  - text_coverage
+                  - duplicates
                 type: string
               missing:
                 anyOf:
@@ -25161,7 +25251,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WorkspaceQueryResponse"
+                $ref: "#/components/schemas/WorkspaceCreateResponse"
           description: OK
         default:
           content:

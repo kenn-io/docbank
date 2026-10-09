@@ -36,6 +36,24 @@ Undated. The year buttons jump to the years loaded so far; scrolling loads
 more photos and reveals older years. Choose **Load more** to continue from
 the same position when further results remain.
 
+Choose **Timeline** to see counts for every recorded capture day in the current
+scope, including days beyond the loaded grid. The year ribbon shows each year's
+total and relative density. Choose a year, month, or day to open its photos.
+The grid pages within that range. Once its first page arrives, the grid clears
+selection and starts at the top. A failed date change keeps the previous photos,
+date, selection, and scroll position. **Retry** requests the chosen range again.
+**Clear date** restores the full scope. Counts stay tied to the full
+scope until you refresh.
+
+Dates use the selected display file's recorded calendar day, so a capture near
+midnight keeps its date regardless of the browser's timezone. A RAW/JPEG pair
+counts once. The Undated total includes photos without a readable capture date.
+Timeline counts each included photo asset under build limits, even in
+a vault with many ordinary documents. When the photos exceed those limits, it shows
+a limit message and offers Retry. Busy or occupied capacity asks you to retry
+after other work finishes. You can keep paging through Documents while the
+timeline loads.
+
 Choose Months or Capture sessions to group the grid. A session joins captures
 with gaps of four hours or less. Compact, Comfortable, and Large change the
 grid density. The browser remembers the density across reloads and fresh

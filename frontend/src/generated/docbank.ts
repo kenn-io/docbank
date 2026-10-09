@@ -5790,6 +5790,20 @@ export interface WorkspaceQueryDependency {
   revision: number;
 }
 
+export type WorkspaceQueryResponseFacetsItemDimension = typeof WorkspaceQueryResponseFacetsItemDimension[keyof typeof WorkspaceQueryResponseFacetsItemDimension];
+
+
+export const WorkspaceQueryResponseFacetsItemDimension = {
+  collections: 'collections',
+  tags: 'tags',
+  media_family: 'media_family',
+  extension: 'extension',
+  modified: 'modified',
+  size: 'size',
+  text_coverage: 'text_coverage',
+  duplicates: 'duplicates',
+} as const;
+
 export interface WorkspaceFacetValue {
   /** @minimum 0 */
   count: number;
@@ -5856,7 +5870,7 @@ export interface WorkspaceQueryRow {
 
 export type WorkspaceQueryResponseFacetsItem = {
   available: boolean;
-  dimension: string;
+  dimension: WorkspaceQueryResponseFacetsItemDimension;
   missing?: number | null;
   other?: number | null;
   reason?: string;
@@ -6520,6 +6534,37 @@ export interface WatchedInboxList {
   items: WatchedInbox[];
 }
 
+export type WorkspaceFacetResponseFacetsItemDimension = typeof WorkspaceFacetResponseFacetsItemDimension[keyof typeof WorkspaceFacetResponseFacetsItemDimension];
+
+
+export const WorkspaceFacetResponseFacetsItemDimension = {
+  capture_day: 'capture_day',
+} as const;
+
+export type WorkspaceFacetResponseFacetsItem = {
+  available: boolean;
+  dimension: WorkspaceFacetResponseFacetsItemDimension;
+  missing?: number | null;
+  other?: number | null;
+  reason?: string;
+  total?: number | null;
+  /** @maxItems 250000 */
+  values: WorkspaceFacetValue[];
+};
+
+export interface WorkspaceFacetResponse {
+  coverage: WorkspaceQueryCoverage;
+  dependencies: WorkspaceQueryDependency[];
+  /** @maxItems 1 */
+  facets: WorkspaceFacetResponseFacetsItem[];
+  facets_only: boolean;
+  generation: WorkspaceQueryGeneration;
+  observed_at: string;
+  query: SavedQueryV1Schema;
+}
+
+export type WorkspaceCreateResponse = WorkspaceQueryResponse | WorkspaceFacetResponse;
+
 export type WorkspaceQueryCreateRequestFacetsItem = typeof WorkspaceQueryCreateRequestFacetsItem[keyof typeof WorkspaceQueryCreateRequestFacetsItem];
 
 
@@ -6532,6 +6577,7 @@ export const WorkspaceQueryCreateRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
+  capture_day: 'capture_day',
 } as const;
 
 export type WorkspaceQueryCreateRequestPageSize = typeof WorkspaceQueryCreateRequestPageSize[keyof typeof WorkspaceQueryCreateRequestPageSize];
@@ -6548,6 +6594,7 @@ export interface WorkspaceQueryCreateRequest {
   readonly $schema?: string;
   /** @maxItems 8 */
   facets?: WorkspaceQueryCreateRequestFacetsItem[];
+  facets_only?: boolean;
   page_size?: WorkspaceQueryCreateRequestPageSize;
   /** @maxLength 128 */
   profile?: string;
@@ -16906,7 +16953,7 @@ export const createWorkspaceQuery = (workspaceQueryCreateRequest: NonReadonly<Wo
     }
     return headers;
   };
-return sessionResponse<WorkspaceQueryResponse>(getCreateWorkspaceQueryUrl(),
+return sessionResponse<WorkspaceCreateResponse>(getCreateWorkspaceQueryUrl(),
   {
     ...options,
     method: 'POST',

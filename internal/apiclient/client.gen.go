@@ -23648,7 +23648,7 @@ type ListWatchedInboxesResponse = api.WatchedInboxList
 
 type ListWatchedInboxesErrorResponse = Error
 
-type CreateWorkspaceQueryResponse = api.WorkspaceQueryResponse
+type CreateWorkspaceQueryResponse = api.WorkspaceCreateResponse
 
 type CreateWorkspaceQueryErrorResponse = Error
 
@@ -24955,6 +24955,10 @@ type WatchedInbox = api.WatchedInbox
 
 type WatchedInboxList = api.WatchedInboxList
 
+type WorkspaceCreateResponse = api.WorkspaceCreateResponse
+
+type WorkspaceFacetResponse = api.WorkspaceFacetResponse
+
 type WorkspaceFacetValue = api.WorkspaceFacetValue
 
 type WorkspaceQueryCoverage = api.WorkspaceQueryCoverage
@@ -24972,3 +24976,5 @@ type WorkspaceQueryResponse = api.WorkspaceQueryResponse
 type WorkspaceQueryRow = api.WorkspaceQueryRow
 
 type WorkspaceQueryTag = api.WorkspaceQueryTag
+
+// Workspace response decoding belongs to the API aliases.

@@ -146,11 +146,12 @@ func TestExportInspectionQueryPlans(t *testing.T) {
 	snapshot, err := f.connection.API().CreateWorkspaceQuery(t.Context(),
 		&apiclient.CreateWorkspaceQueryRequestOptions{Body: &snapshotRequest})
 	require.NoError(t, err)
+	require.NotNil(t, snapshot.Snapshot)
 	server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{}, f.lease)
 	for _, request := range []bundle.SourceRequest{
 		{Kind: "query", Query: &q},
 		{Kind: "saved_query", SavedQueryID: saved.ID, SavedQueryRevision: saved.Revision},
-		{Kind: "snapshot", SnapshotID: snapshot.SnapshotID, MemberHash: snapshot.MemberHash},
+		{Kind: "snapshot", SnapshotID: snapshot.Snapshot.SnapshotID, MemberHash: snapshot.Snapshot.MemberHash},
 	} {
 		t.Run(request.Kind, func(t *testing.T) {
 			request.OperationID = uuid.New().String()

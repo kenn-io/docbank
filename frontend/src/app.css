@@ -71,6 +71,18 @@ body .app-shell .kit-button--sm {
   padding: 5px 12px;
 }
 
+.photo-toggle {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-family: inherit; font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); line-height: normal;
+  border: var(--border-width) solid var(--border-default); border-radius: var(--kit-control-radius, var(--radius-md));
+  background: var(--bg-surface); color: var(--text-primary); cursor: pointer; white-space: nowrap;
+}
+.photo-toggle:hover { background: var(--bg-surface-hover); }
+.photo-toggle[aria-pressed="true"] {
+  color: color-mix(in srgb, var(--accent-blue) 72%, var(--text-primary));
+  border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border-default));
+}
+
 body .app-shell .kit-modal-panel:not([data-kit-tone="danger"]) .kit-modal-header,
 body .app-shell .kit-modal-panel .kit-modal-header {
   padding: var(--space-5) var(--space-6);

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -9,7 +10,115 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
 )
+
+func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	raw := browsePhotoNode(t, s, "pair.raw", browseHash("calendar-raw"), "application/octet-stream")
+	jpeg := browsePhotoNode(t, s, "pair.jpg", browseHash("calendar-jpeg"), "image/jpeg")
+	asset, err := s.PhotoAssetForNode(ctx, jpeg.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	asset, err = s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpeg.ID, PhotoRoleImage, nil)
+	require.NoError(t, err)
+	sidecar := browsePhotoNode(t, s, "pair.xmp", browseHash("calendar-sidecar"), "application/octet-stream")
+	rawID := fileByRole(asset.Files, PhotoRoleRAW).ID
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &rawID)
+	require.NoError(t, err)
+	for _, item := range []struct {
+		node Node
+		day  string
+	}{{raw, "2024-02-29"}, {jpeg, "2025-01-01"}} {
+		stamp := item.day + "T00:30:00"
+		browsePhotoMetadata(t, s, item.node, item.day, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOmitted, "")))
+	}
+	_, err = s.CreateSavedQuery(ctx, "Sidecars", "", SavedQueryKindQuery, []byte(`{"filters":{"extensions":["xmp"],"capture_before":"2025-01-01"}}`))
+	require.NoError(t, err)
+	tag, err := s.CreateTag(ctx, "Calendar")
+	require.NoError(t, err)
+	_, err = s.AssignTag(ctx, tag.ID, sidecar.ID, sidecar.Revision)
+	require.NoError(t, err)
+	album, err := s.CreatePhotoSet(ctx, "Calendar")
+	require.NoError(t, err)
+	_, err = s.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	for i := range 5 {
+		browsePhotoNode(t, s, fmt.Sprintf("unrelated-%d.txt", i), browseHash(fmt.Sprintf("unrelated-%d", i)), "text/plain")
+	}
+	_, err = s.materializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{}`)}, snapshotMaterializeOptions{MaxRows: 1})
+	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
+	outside := snapshotTestQuery(t, `{"syntax":"advanced","text":"saved:Sidecars AND capture_after:2025-01-01 AND capture_before:2025-01-02"}`)
+	photos, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: outside, Facets: []string{"capture_day"}})
+	require.NoError(t, err)
+	require.Zero(t, photos.Total)
+	require.Zero(t, *facetByDimension(t, photos, "capture_day").Total)
+	for _, value := range []string{`{}`, `{"filters":{"extensions":["xmp"]}}`, `{"syntax":"advanced","text":"saved:Sidecars AND capture_before:2025-01-01"}`, `{"filters":{"capture_after":"2024-02-29","capture_before":"2024-03-01"}}`, `{"filters":{"collapse_duplicates":true}}`, fmt.Sprintf(`{"filters":{"tag_ids":[%q]}}`, tag.ID), fmt.Sprintf(`{"filters":{"set_ids":[%q]}}`, album.ID), `{"sort":{"field":"capture_time","direction":"desc"}}`, `{"sort":{"field":"import_time","direction":"asc"}}`, fmt.Sprintf(`{"filters":{"set_ids":[%q]},"sort":{"field":"added_time","direction":"desc"}}`, album.ID)} {
+		projection, err := s.materializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, value), Facets: []string{"capture_day"}}, snapshotMaterializeOptions{MaxRows: 1})
+		require.NoError(t, err, value)
+		require.Empty(t, projection.Rows)
+		facet := facetByDimension(t, projection, "capture_day")
+		require.Equal(t, browsePhotoPage(t, s, value).Total, *facet.Total, value)
+		require.Equal(t, map[string]int64{"2024-02-29": 1}, facetCounts(facet), value)
+	}
+	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, new(fileByRole(asset.Files, PhotoRoleImage).ID))
+	require.NoError(t, err)
+	projection, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"}})
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"2025-01-01": 1}, facetCounts(facetByDimension(t, projection, "capture_day")))
+	browsePhotoMetadata(t, s, jpeg, "updated-jpeg", photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp("2026-01-01T12:00:00", "2026-01-01T12:00:00", document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOmitted, "")))
+	projection, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"}})
+	require.NoError(t, err)
+	require.Equal(t, map[string]int64{"2026-01-01": 1}, facetCounts(facetByDimension(t, projection, "capture_day")))
+	asset, err = s.PhotoAssetForNode(ctx, jpeg.ID)
+	require.NoError(t, err)
+	asset, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	projection, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"}})
+	require.NoError(t, err)
+	require.Zero(t, *facetByDimension(t, projection, "capture_day").Total)
+	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, jpeg.ID, jpeg.Revision)
+	require.NoError(t, err)
+	projection, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"}})
+	require.NoError(t, err)
+	require.Zero(t, *facetByDimension(t, projection, "capture_day").Total)
+	for i := range 120 {
+		day := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, i).Format("2006-01-02")
+		node := browsePhotoNode(t, s, fmt.Sprintf("day-%03d.jpg", i), browseHash(day), "image/jpeg")
+		stamp := day + "T23:30:00-12:00"
+		browsePhotoMetadata(t, s, node, day, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(stamp, stamp, document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOffset, "-12:00")))
+	}
+	browsePhotoNode(t, s, "undated.jpg", browseHash("undated-calendar"), "image/jpeg")
+	browsePhotoNode(t, s, "ordinary.txt", browseHash("ordinary-calendar"), "text/plain")
+	request := SnapshotRequest{FacetsOnly: true, Query: snapshotTestQuery(t, `{}`), Facets: []string{"capture_day"}}
+	projection, err = s.MaterializeQuerySnapshot(t.Context(), request)
+	require.NoError(t, err)
+	facet := facetByDimension(t, projection, "capture_day")
+	require.True(t, facet.Available)
+	require.Len(t, facet.Values, 120)
+	require.Equal(t, int64(121), *facet.Total)
+	require.Equal(t, int64(1), *facet.Missing)
+	require.Zero(t, *facet.Other)
+	require.Equal(t, "2024-04-29", facet.Values[0].Key)
+	require.Equal(t, int64(1), facetCounts(facet)["2024-02-29"])
+	page := browsePhotoPage(t, s, `{}`)
+	require.Equal(t, page.Total, *facet.Total)
+	for _, options := range []snapshotMaterializeOptions{{FacetMemberLimit: 1}} {
+		projection, err := s.materializeQuerySnapshot(t.Context(), request, options)
+		require.NoError(t, err)
+		facet := facetByDimension(t, projection, "capture_day")
+		require.False(t, facet.Available)
+		require.Nil(t, facet.Total)
+		require.Empty(t, facet.Values)
+	}
+}
 
 type snapshotFacetFixture struct {
 	store       *Store
