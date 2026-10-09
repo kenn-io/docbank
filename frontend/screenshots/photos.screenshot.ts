@@ -36,8 +36,6 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await page.locator(`[data-asset="${id}"]`).getByRole("button", { name: /^Select / }).click({ button: "right" });
     await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
     await expect(page.locator(`[data-asset="${id}"]`)).toHaveCount(0);
-    await page.route("**/api/v1/photos/hidden", route => route.abort("failed"), { times: 1 });
-    await expect(page.getByRole("alert")).toBeVisible({ timeout: 6000 });
     await expect(page.locator("[data-asset]")).toHaveCount(11);
     await expect(page.locator("[data-asset] img").first()).toBeVisible();
     await page.getByRole("button", { name: "Hidden", exact: true }).click();
@@ -117,7 +115,6 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     } finally { globalThis.fetch = fetcher; }
     await expect(page.getByText("The browser session expired or was rejected. Run `docbank web` again.")).toBeVisible({ timeout: 6000 });
     await expect(page.locator("[data-asset]")).toHaveCount(0);
-    await writeFile(path.join(output!, "hidden-proof.json"), JSON.stringify({ workspace, id, passcode: "synthetic-passcode", states: ["hide", "unlock", "lock", "unhide", "stale-unhide-error", "automatic-recovery", "browser-session-rejected", "cli-lock", "expiry", "tab-lock"] }, null, 2));
   } finally {
     if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {
       const previewURL = new URL(await run("web", "--no-browser"));

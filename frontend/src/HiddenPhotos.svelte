@@ -2,14 +2,16 @@
   import { onMount, tick } from "svelte";
   import { Button, FormField, Spinner } from "@kenn-io/kit-ui";
   import { getPhotoHiddenState, setupPhotoHidden, unlockPhotoHidden, lockPhotoHidden, changePhotoHidden, disablePhotoHidden, type PhotoHiddenState } from "./generated/docbank.js";
-  import { Photos, notifyPhotoPrivacy, photoPrivacyEvent, photoRevalidationErrorEvent, type PhotoPrivacyFeedback } from "./photos.svelte.js";
+  import { Photos } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import { APIError } from "./api-transport.js";
 
-  let { session, onauthfailure, photoActionError = "" }: { session: string; onauthfailure: (cause: unknown) => void; photoActionError?: string } = $props();
-  let hiddenState = $state<PhotoHiddenState>({ change_id: "", configured: false });
+  let { session, onauthfailure, photoActionError = "", ontrashed, onunhidden, onactionerror }: { session: string; onauthfailure: (cause: unknown) => void; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void } = $props();
+  let hiddenState = $state<PhotoHiddenState>({ configured: false });
   let workspace = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
+  let photoWorkspace = $state<{ refresh: () => Promise<void> }>();
+  export async function refresh() { await photoWorkspace?.refresh(); }
   let passcode = $state("");
   let currentPasscode = $state("");
   let nextPasscode = $state("");
@@ -29,10 +31,10 @@
   let refreshController = new AbortController();
   const actionController = new AbortController();
   let disposed = false;
-  const options = (signal = refreshController.signal) => ({ session, signal: AbortSignal.any([signal, AbortSignal.timeout(30_000)]) });
+  const options = (signal = refreshController.signal) => ({ session, signal: AbortSignal.any([signal, AbortSignal.timeout(signal === refreshController.signal ? 2000 : 30_000)]) });
 
   function clear() {
-    workspace?.photos.clearForPrivacy();
+    workspace?.photos.clearHidden();
     workspace?.photos.dispose();
     void workspace?.cache.dispose();
     workspace = undefined;
@@ -42,11 +44,10 @@
     clear();
     readError = cause instanceof Error ? cause.message : String(cause);
     if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
-    else void refresh();
+    else void checkAccess();
   }
   function applyState(result: PhotoHiddenState) {
-    const retain = workspace && result.change_id === hiddenState.change_id && result.configured === hiddenState.configured && result.expires_at === hiddenState.expires_at && !concealingAction;
-    if (!retain) clear();
+    if (workspace && (result.configured !== hiddenState.configured || result.expires_at !== hiddenState.expires_at)) clear();
     readError = "";
     lockoutError = "";
     hiddenState = result;
@@ -56,24 +57,23 @@
     if (!remaining || concealingAction) clear();
     else if (!workspace) workspace = { photos: new Photos(session, authorizationLost, true), cache: new PhotoPreviewCache(session, authorizationLost) };
   }
-  async function refresh() {
+  async function checkAccess() {
     refreshController.abort();
     refreshController = new AbortController();
     const controller = refreshController;
-    clear();
-    hiddenState.expires_at = undefined;
+    reading = true;
     try {
       const result = await getPhotoHiddenState(options());
       if (controller.signal.aborted || disposed) return;
       applyState(result);
-    } catch (cause) { if (!controller.signal.aborted && !disposed) { if (cause instanceof APIError && cause.status === 401) onauthfailure(cause); else readError = cause instanceof Error ? cause.message : String(cause); } }
+    } catch (cause) { if (!controller.signal.aborted && !disposed) { if (cause instanceof APIError && cause.status === 401) onauthfailure(cause); else readError = cause instanceof Error ? cause.message : String(cause); clear(); hiddenState.expires_at = undefined; } }
     finally { if (!controller.signal.aborted) reading = false; }
   }
   function passcodeValidation(value: string, empty: string) {
     return !value ? empty : new TextEncoder().encode(value).length > 1024 ? "Use 1 to 1,024 bytes." : "";
   }
   async function action(kind: "enter" | "lock" | "change" | "disable") {
-    if (busy) return;
+    if (actionPending || kind !== "lock" && reading) return;
     actionError = "";
     let invalidField: string | undefined;
     if (kind === "enter") {
@@ -117,41 +117,37 @@
     } finally {
       actionPending = false;
       concealingAction = false;
-      if (!disposed) { if (completed) notifyPhotoPrivacy(); else await refresh(); }
+      if (!disposed) { if (completed && kind === "disable") onunhidden?.(); await checkAccess(); }
       if (invalidField && !disposed) { await tick(); document.getElementById(invalidField)?.focus(); }
     }
   }
 
   onMount(() => {
-    void refresh();
-    const privacy = (event: Event) => {
-      const detail = (event as CustomEvent<PhotoHiddenState | PhotoPrivacyFeedback | undefined>).detail;
-      if (detail && "configured" in detail) { refreshController.abort(); applyState(detail); return; }
-      void refresh();
-    };
-    const failed = (event: Event) => { refreshController.abort(); clear(); hiddenState.expires_at = undefined; reading = false; readError = (event as CustomEvent<string>).detail; };
-    window.addEventListener(photoPrivacyEvent, privacy);
-    window.addEventListener(photoRevalidationErrorEvent, failed);
+    void checkAccess();
+    const poll = setInterval(() => { if (!reading) void checkAccess(); }, 2000);
+    const foreground = () => { if (document.visibilityState === "visible") void checkAccess(); };
+    document.addEventListener("visibilitychange", foreground);
     const timer = setInterval(() => {
       if (hiddenState.locked_until && Date.parse(hiddenState.locked_until) <= Date.now()) hiddenState.locked_until = undefined;
       if (!hiddenState.expires_at) return;
       remaining = Math.max(0, Math.ceil((Date.parse(hiddenState.expires_at) - Date.now()) / 1000));
-      if (!remaining) { clear(); hiddenState.expires_at = undefined; notifyPhotoPrivacy(); }
+      if (!remaining) { clear(); hiddenState.expires_at = undefined; }
     }, 250);
-    return () => { disposed = true; refreshController.abort(); actionController.abort(); clear(); clearInterval(timer); window.removeEventListener(photoPrivacyEvent, privacy); window.removeEventListener(photoRevalidationErrorEvent, failed); passcode = ""; currentPasscode = ""; nextPasscode = ""; };
+    return () => { disposed = true; refreshController.abort(); actionController.abort(); clear(); clearInterval(timer); clearInterval(poll); document.removeEventListener("visibilitychange", foreground); passcode = ""; currentPasscode = ""; nextPasscode = ""; };
   });
+
 </script>
 
 <section class="hidden-photos" aria-label="Hidden photos">
   <div class="hidden-boundary">Hidden photos stay out of Photos. Documents and document tools can still read the underlying files.</div>
   {#if photoActionError}<p role="alert">{photoActionError}</p>{/if}
   {#if actionError}<p role="alert">{actionError}</p>{/if}
-  {#if readError}<p role="alert">{readError}</p><Button size="sm" onclick={() => void refresh()}>Retry</Button>{/if}
+  {#if readError}<p role="alert">{readError}</p><Button size="sm" onclick={() => void checkAccess()}>Retry</Button>{/if}
   {#if !resolved}
     <div class="hidden-gate"><h1>Hidden</h1>{#if reading}<Spinner />{/if}</div>
   {:else if workspace && remaining}
-    <div class="hidden-controls"><span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span><Button size="sm" disabled={busy} onclick={() => void action("lock")}>Lock</Button></div>
-    {#each [workspace] as current (current)}<PhotosWorkspace photos={current.photos} cache={current.cache} title="Hidden" />{/each}
+    <div class="hidden-controls"><span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span><Button size="sm" disabled={actionPending} onclick={() => void action("lock")}>Lock</Button></div>
+    {#each [workspace] as current (current)}<PhotosWorkspace bind:this={photoWorkspace} photos={current.photos} cache={current.cache} title="Hidden" {ontrashed} onhidden={onunhidden} {onactionerror} />{/each}
   {:else}
     <div class="hidden-gate">
       <h1>Hidden</h1>

@@ -54,10 +54,8 @@ func registerJobRoutes(api huma.API, d Deps) {
 					Error:     errorDetail, OperationID: operation.ID, Kind: operation.Kind,
 					CompletedObjects: operation.CompletedObjects,
 					TotalObjects:     operation.TotalObjects,
+					FinishedAt:       storageOperationAPI(operation).FinishedAt,
 					CancelRequested:  operation.CancelRequested,
-				}
-				if operation.FinishedAt != nil {
-					job.FinishedAt = operation.FinishedAt.Format(time.RFC3339Nano)
 				}
 				job.CanCancel = operation.State == store.StorageOperationQueued || operation.State == store.StorageOperationRunning
 				out.Body.Items = append(out.Body.Items, job)
@@ -93,11 +91,7 @@ func registerJobRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		result, err := storageOperationAPI(ctx, d.Store, operation)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
-		return &operationOutput{Body: result}, nil
+		return &operationOutput{Body: storageOperationAPI(operation)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -122,10 +116,7 @@ func registerJobRoutes(api huma.API, d Deps) {
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		result, err := storageOperationAPI(ctx, d.Store, operation)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
+		result := storageOperationAPI(operation)
 		if browserSessionRequest(ctx) {
 			// Receipts and raw errors can name daemon-host paths.
 			result.Receipt = nil

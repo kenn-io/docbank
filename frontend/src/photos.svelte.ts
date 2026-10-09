@@ -21,6 +21,9 @@ export class Photos {
   cursor = $state<string | undefined>();
   loading = $state(false);
   trashing = $state(false);
+  hiding = $state(false);
+  actionError = $state("");
+  private actionController = new AbortController();
   trashError = $state("");
   trashTargets = $state<PhotoBrowseRow[]>([]);
   error = $state("");
@@ -30,7 +33,6 @@ export class Photos {
   selection = $state<SelectionState<string>>(clearSelection<string>());
   started = false;
   private expired = false;
-  private privacyCount = 0;
   private replacement: "refresh" | "expiry" | undefined;
   private controller = new AbortController();
   private disposed = false;
@@ -43,7 +45,7 @@ export class Photos {
   }
 
   async loadMore(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.disposed || this.loading || this.error || (this.started && !this.cursor)) return;
+    if (this.disposed || this.hiding || this.trashing || this.loading || this.error || (this.started && !this.cursor)) return;
     this.loading = true;
     const controller = this.controller;
     try {
@@ -70,37 +72,57 @@ export class Photos {
     }
   }
 
-  clearForPrivacy(preserve = false) {
-    const selection = this.selection;
-    if (preserve) this.privacyCount = Math.max(this.privacyCount, this.items.length);
+  clearHidden() {
     this.cancelPending();
+    this.actionController.abort();
     this.items = [];
     this.total = 0;
     this.cursor = undefined;
     this.started = false;
-    if (preserve) { this.selection = selection; this.replacement = "refresh"; } else this.clearSelection();
+    this.clearSelection();
     this.error = "";
   }
 
-  revalidateForPrivacy() {
+  async setHidden(id: string, preserve?: () => (() => Promise<void>) | undefined, onchanged?: (ids: string[]) => Promise<void>, onactionerror?: (error: string) => void) {
+    if (this.hiding || this.trashing || this.disposed) return;
+    const members = (this.selection.selectedIDs.has(id) ? this.items.filter(item => this.selection.selectedIDs.has(item.asset_id)) : this.items.filter(item => item.asset_id === id)).map(item => ({ ...item }));
+    if (!members.length) return;
     this.cancelPending();
-    this.replacement = "refresh";
-    this.error = "";
-  }
-
-  async setHidden(id: string) {
-    const members = this.selection.selectedIDs.has(id) ? this.items.filter(item => this.selection.selectedIDs.has(item.asset_id)) : this.items.filter(item => item.asset_id === id);
+    this.hiding = true;
+    this.actionError = "";
+    const successes: string[] = [];
     let failure = "";
     let failures = 0;
-    for (const member of members) {
-      try {
-        await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(member.asset_id, { "If-Match": JSON.stringify(String(member.revision)) }, { session: this.session });
-        this.items = this.items.filter(item => item.asset_id !== member.asset_id);
-        this.selection = reconcileIDSelection(this.selection, new Set(this.items.map(item => item.asset_id)));
-      } catch (cause) { failures++; failure = cause instanceof Error ? cause.message : String(cause); }
-    }
-    if (failures) failure = `${failures} photo${failures === 1 ? "" : "s"} failed: ${failure}`;
-    notifyPhotoPrivacy({ error: failure, hidden: this.hidden });
+    try {
+      for (const member of members) {
+        if (this.disposed) break;
+        try {
+          const signal = AbortSignal.any([this.actionController.signal, AbortSignal.timeout(60_000)]);
+          const receipt = await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(member.asset_id, { "If-Match": JSON.stringify(String(member.revision)) }, { session: this.session, signal });
+          if (signal.aborted) throw signal.reason;
+          if (receipt.id !== member.asset_id || receipt.revision <= member.revision) throw new Error("Photo response did not confirm the selected photo. Refresh and retry.");
+          this.cancelPending();
+          successes.push(member.asset_id);
+          const restore = preserve?.();
+          this.items = this.items.filter(item => item.asset_id !== member.asset_id);
+          this.total = Math.max(0, this.total - 1);
+          this.trashTargets = this.trashTargets.filter(item => item.asset_id !== member.asset_id);
+          const ids = new Set(this.selection.selectedIDs);
+          ids.delete(member.asset_id);
+          this.selection = { selectedIDs: ids, anchorID: undefined };
+          await restore?.();
+        } catch (cause) {
+          if (this.disposed) break;
+          failures++;
+          failure = cause instanceof Error ? cause.message : String(cause);
+          if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); break; }
+        }
+      }
+      this.actionError = failures ? `${failures} photo${failures === 1 ? "" : "s"} failed: ${failure}` : "";
+      onactionerror?.(this.actionError);
+      if (successes.length) await onchanged?.(successes);
+      await this.refresh(preserve);
+    } finally { this.hiding = false; }
   }
 
   cancelPending() {
@@ -136,7 +158,7 @@ export class Photos {
     this.replacement = mode;
     this.loading = true;
     this.error = "";
-    const count = this.privacyCount || this.items.length;
+    const count = this.items.length;
     const tail = this.items.at(-1)?.asset_id;
     const candidate = new Map<string, PhotoBrowseRow>();
     let cursor: string | undefined;
@@ -160,7 +182,6 @@ export class Photos {
       this.total = total;
       this.cursor = cursor;
       this.started = true;
-      this.privacyCount = 0;
       this.selection = reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...this.trashTargets.map(item => item.asset_id)]));
       this.expired = false;
       this.replacement = undefined;
@@ -175,7 +196,7 @@ export class Photos {
   }
 
   async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
-    if (this.trashing || this.disposed) return false;
+    if (this.trashing || this.hiding || this.disposed) return false;
     this.pruneTrashTargets();
     const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
     const resolved = [...this.selection.selectedIDs].map(id => rows.get(id));
@@ -185,16 +206,19 @@ export class Photos {
     }
     const selected = resolved.filter((item): item is PhotoBrowseRow => !!item).map(item => ({ ...item }));
     this.trashTargets = selected;
+    this.cancelPending();
     this.trashing = true;
     this.trashError = "";
     let successes = 0;
     try {
       for (const item of selected) {
         try {
-          const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
+          const options = { session: this.session, signal: AbortSignal.any([this.actionController.signal, AbortSignal.timeout(60_000)]) };
           const revision = item.revision;
           const receipt = await trashPhotoAsset(item.asset_id, { "If-Match": String(revision) }, options);
+          if (this.disposed || options.signal.aborted) break;
           if (receipt.id !== item.asset_id || receipt.revision <= revision) throw new Error("Photo trash response did not confirm the selected photo. Refresh and retry.");
+          this.cancelPending();
           successes++;
           const restore = preserve?.();
           this.items = this.items.filter(row => row.asset_id !== item.asset_id);
@@ -205,7 +229,7 @@ export class Photos {
           this.selection = { selectedIDs: ids, anchorID: undefined };
           await restore?.();
         } catch (cause) {
-          if (cause instanceof APIError && cause.status === 401) { this.onauthfailure(cause); break; }
+          if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); break; }
           this.trashError = cause instanceof Error ? cause.message : String(cause);
         }
       }
@@ -232,18 +256,5 @@ export class Photos {
 
   clearSelection() { this.selection = clearSelection<string>(); this.trashTargets = []; }
   selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
-  dispose() { this.disposed = true; this.controller.abort(); }
-}
-
-export const photoRevalidationErrorEvent = "docbank-photo-revalidation-error";
-export const photoPrivacyEvent = "docbank-photo-privacy";
-export const photoPrivacyOrigin = crypto.randomUUID();
-export interface PhotoPrivacyFeedback { error: string; hidden: boolean }
-export function notifyPhotoPrivacy(feedback?: PhotoPrivacyFeedback) {
-  window.dispatchEvent(new CustomEvent(photoPrivacyEvent, { detail: feedback }));
-  if (typeof BroadcastChannel !== "undefined") {
-    const channel = new BroadcastChannel(photoPrivacyEvent);
-    channel.postMessage({ origin: photoPrivacyOrigin });
-    channel.close();
-  }
+  dispose() { this.disposed = true; this.controller.abort(); this.actionController.abort(); }
 }

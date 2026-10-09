@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"encoding/json/v2"
 	"path/filepath"
 	"testing"
 	"time"
@@ -74,55 +73,6 @@ func photoImportTestMember(path, role, hash, mediaType string) PhotoImportMember
 
 func photoImportTestGroup(members ...PhotoImportMember) PhotoImportGroup {
 	return PhotoImportGroup{Members: members, DestinationID: 1}
-}
-
-func TestPhotoImportReceiptProjectionFailsClosed(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	node, err := s.CreateFile(ctx, s.RootID(), "receipt.jpg", fakeHash("receipt"), 4, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, node.ID)
-	require.NoError(t, err)
-	visibleNode, err := s.CreateFile(ctx, s.RootID(), "visible.jpg", fakeHash("visible receipt"), 4, "image/jpeg")
-	require.NoError(t, err)
-	visible, err := s.PhotoAssetForNode(ctx, visibleNode.ID)
-	require.NoError(t, err)
-	receipt := PhotoImportReceipt{Ambiguous: 1, Ambiguities: []PhotoImportAmbiguity{{Reason: PhotoImportSeparatePhotos, Files: []PhotoImportAmbiguousFile{
-		{SourcePath: "/camera/hidden.jpg", NodeID: node.ID, AssetID: asset.ID, Role: PhotoRoleImage},
-		{SourcePath: "/camera/visible.jpg", NodeID: visibleNode.ID, AssetID: visible.ID, Role: PhotoRoleImage},
-		{SourcePath: "/camera/hidden.xmp", NodeID: node.ID, AssetID: asset.ID, Role: PhotoRoleSidecar},
-	}}}}
-	encoded, err := json.Marshal(receipt)
-	require.NoError(t, err)
-	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
-	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	projected, err := s.PhotoImportReceiptResponse(ctx, string(encoded))
-	require.NoError(t, err)
-	var got PhotoImportReceipt
-	require.NoError(t, json.Unmarshal([]byte(projected), &got))
-	want := receipt
-	want.Ambiguities = []PhotoImportAmbiguity{{Reason: receipt.Ambiguities[0].Reason, Files: append([]PhotoImportAmbiguousFile(nil), receipt.Ambiguities[0].Files...)}}
-	want.Ambiguities[0].Files[0].AssetID = ""
-	want.Ambiguities[0].Files[2].AssetID = ""
-	require.Equal(t, want, got)
-	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
-	require.NoError(t, err)
-	unlocked := WithPhotoHiddenToken(ctx, token)
-	projected, err = s.PhotoImportReceiptResponse(unlocked, string(encoded))
-	require.NoError(t, err)
-	require.JSONEq(t, string(encoded), projected)
-	_, err = s.db.ExecContext(ctx, `DROP TABLE photo_files`)
-	require.NoError(t, err)
-	projected, err = s.PhotoImportReceiptResponse(unlocked, string(encoded))
-	require.NoError(t, err)
-	require.JSONEq(t, string(encoded), projected)
-	_, err = s.db.ExecContext(ctx, `ALTER TABLE photo_assets RENAME TO unavailable_photo_assets`)
-	require.NoError(t, err)
-	projected, err = s.PhotoImportReceiptResponse(unlocked, string(encoded))
-	require.Error(t, err)
-	require.Empty(t, projected)
 }
 
 func TestPhotoImportLateSidecarUpdatesLockedHiddenAsset(t *testing.T) {
@@ -847,14 +797,4 @@ func mustPhotoAsset(t *testing.T, s *Store, nodeID int64) PhotoAsset {
 	asset, err := s.PhotoAssetForNode(t.Context(), nodeID)
 	require.NoError(t, err)
 	return asset
-}
-
-func TestPhotoImportReceiptResponsePreservesUndecodableReceipts(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	for _, receipt := range []string{`invalid`, `{"added":"old-format","ambiguities":[]}`} {
-		got, err := s.PhotoImportReceiptResponse(t.Context(), receipt)
-		require.NoError(t, err)
-		require.Equal(t, receipt, got)
-	}
 }

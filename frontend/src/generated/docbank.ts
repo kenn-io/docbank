@@ -5005,7 +5005,6 @@ export interface PhotoHiddenPasscodeRequest {
 export interface PhotoHiddenState {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  change_id: string;
   configured: boolean;
   /** @nullable */
   expires_at?: string | null;
