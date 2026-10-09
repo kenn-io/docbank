@@ -141,18 +141,13 @@ it("keeps the original write rejection status through failed reads and clears it
   expect(albums.errorStatus).toBe(422); expect(albums.loadError).toBe("List unavailable");
   await albums.update(album, { name: "Corrected name" });
   expect(albums.errorStatus).toBeUndefined(); expect(albums.error).toBe("Failed to fetch");
-  albums.errorStatus = 422; albums.busy = true;
+  albums.error = ""; albums.errorStatus = 422; albums.busy = true;
   await albums.update(album, { name: "Corrected name" });
   expect(albums.errorStatus).toBeUndefined(); expect(fetcher).toHaveBeenCalledTimes(4);
+  expect(albums.error).toBe("Another album change is still running. Try again.");
   albums.errorStatus = 422; albums.busy = false; albums.dispose();
   await albums.update(album, { name: "Corrected name" });
   expect(albums.errorStatus).toBeUndefined(); expect(fetcher).toHaveBeenCalledTimes(4);
-});
-
-it("reports an album write attempted while another is running", async () => {
-  const albums = new PhotoAlbums("scoped", vi.fn()); albums.busy = true;
-  await albums.update(album, { starred: true });
-  expect(albums.error).toBe("Another album change is still running. Try again.");
 });
 
 it("shares selection scope for an in-app drag and rejects an external payload", async () => {
@@ -180,18 +175,6 @@ it("reports a deleted album without refreshing the source grid", async () => {
   expect(refresh).not.toHaveBeenCalled();
 });
 
-it("applies deletion before failed reads", async () => {
-  const fetcher = vi.fn()
-    .mockResolvedValueOnce(response({ ...album, revision: 2, deleted_at: "2025-01-01" }))
-    .mockImplementation(() => Promise.resolve(response({ detail: "List unavailable" }, 503)));
-  vi.stubGlobal("fetch", fetcher);
-  const albums = new PhotoAlbums("scoped", vi.fn()); albums.items = [album]; albums.targetID = album.id;
-  expect(await albums.delete(album)).toMatchObject({ deleted_at: "2025-01-01" });
-  await albums.load();
-  expect(albums.items).toEqual([]); expect(albums.targetID).toBe("");
-  expect(albums.error).toBe(""); expect(albums.loadError).toBe("List unavailable");
-});
-
 it("orders acknowledged properties by star, Unicode code point name and ID while retaining observations", async () => {
   const items = [photoAlbum({ id: "a", name: "apple" }), photoAlbum({ id: "b", name: "Zoo" }), photoAlbum({ id: "d", name: "Same" }), photoAlbum({ id: "c", name: "Same" }), photoAlbum({ id: "e", name: "\ue000" }), photoAlbum({ id: "f", name: "\u{10000}" })];
   const fetcher = vi.fn().mockResolvedValueOnce(response(items))
@@ -208,11 +191,13 @@ it("orders acknowledged properties by star, Unicode code point name and ID while
   expect(albums.items.map(item => item.id)).toEqual(["a", "b", "c", "d", "e", "f"]);
 });
 
-it.each(["create", "duplicate"])("keeps %s properties after a failed read with only justified observations", async operation => {
-  const created = { ...album, id: "new", name: "A" };
+it.each(["create", "duplicate", "delete"])("keeps acknowledged %s results after a failed read with only justified observations", async operation => {
+  const created = operation === "delete" ? { ...album, revision: 2, deleted_at: "2025-01-01" } : { ...album, id: "new", name: "A" };
   vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response(created)).mockResolvedValueOnce(response({ detail: "List unavailable" }, 503)));
-  const albums = new PhotoAlbums("scoped", vi.fn()); albums.items = [{ ...album, included_count: 10, cover_known: true }];
-  if (operation === "create") await albums.create("A"); else await albums.duplicate(album, "A");
+  const albums = new PhotoAlbums("scoped", vi.fn()); albums.targetID = album.id; albums.items = [{ ...album, included_count: 10, cover_known: true }];
+  if (operation === "create") await albums.create("A"); else if (operation === "duplicate") await albums.duplicate(album, "A"); else expect(await albums.delete(album)).toMatchObject({ deleted_at: "2025-01-01" });
+  expect(albums.error).toBe(""); expect(albums.loadError).toBe("List unavailable");
+  if (operation === "delete") { expect(albums.items).toEqual([]); expect(albums.targetID).toBe(""); return; }
   expect(albums.items.map(item => item.name)).toEqual(["A", "Trip"]);
   expect(albums.items[0]).toMatchObject({ included_count: operation === "create" ? 0 : undefined, cover_known: operation === "create" });
   expect(albums.items[0].effective_cover_asset_id).toBe(operation === "create" ? null : undefined);

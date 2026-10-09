@@ -34,23 +34,6 @@ it("selects loaded photos by ID when equally many selected photos are off-page",
   await screen.findByRole("button", { name: "Select all 10,000 photos" });
 });
 
-it.each(["uuid", "prefixed"])("creates an album with a %s existing-album ID as its name", async kind => {
-  const { photos, albums } = setup();
-  const name = kind === "uuid" ? album.id : `album:${album.id}`;
-  const created = { ...album, id: "created", name };
-  const create = vi.spyOn(albums, "create").mockResolvedValue(created);
-  const members = vi.spyOn(albums, "members").mockResolvedValue(created);
-  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Select loaded photos" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Select all 10,000 photos" }));
-  await fireEvent.click(screen.getByRole("button", { name: /Add to album/ }));
-  await fireEvent.input(screen.getByRole("combobox", { name: "Find or create an album" }), { target: { value: name } });
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: `Create album "${name}"` }));
-  await waitFor(() => expect(create).toHaveBeenCalledWith(name));
-  expect(members).toHaveBeenCalledWith(created, photos.scope(), photos, false, expect.any(Function));
-  expect(albums.targetID).toBe("created");
-});
-
 async function pendingAlbumWrite(operation: "picker add" | "picker create" | "index create" | "delete" | "duplicate") {
   let finish!: (response: Response) => void;
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve)).mockResolvedValue(new Response(JSON.stringify([album])));
@@ -192,10 +175,6 @@ it.each(["rename", "duplicate"] as const)("corrects a rejected %s name with its 
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve))
     .mockImplementationOnce(() => new Promise<Response>(resolve => reconcile = resolve))
     .mockResolvedValueOnce(new Response(JSON.stringify({ code: "stale_revision" }), { status: 412 }))
-    .mockResolvedValueOnce(new Response(JSON.stringify([current])))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Review rejected" }), { status: 422 }))
-    .mockResolvedValueOnce(new Response(JSON.stringify([current])))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ ...current, revision: 3, name: "Corrected name" })))
     .mockResolvedValueOnce(new Response(JSON.stringify([current])));
   vi.stubGlobal("fetch", fetcher);
   const { albums, photos } = setup(true);
@@ -219,19 +198,10 @@ it.each(["rename", "duplicate"] as const)("corrects a rejected %s name with its 
   expect(screen.queryByRole("button", { name: "Review current album" })).toBeNull();
   expect((input as HTMLInputElement).value).toBe("Corrected name");
   await fireEvent.click(submit);
-  await fireEvent.click(await screen.findByRole("button", { name: "Review current album" }));
+  await screen.findByRole("button", { name: "Review current album" });
   expect(fetcher.mock.calls.slice(0, 3).filter(([, init]) => init.method !== "GET").map(([, init]) => init.headers.get("If-Match"))).toEqual(['"1"', '"1"']);
   expect(JSON.parse(fetcher.mock.calls[2][1].body).name).toBe("Corrected name");
-  await screen.findByText("Review rejected");
-  await fireEvent.input(input, { target: { value: "Corrected name" } });
   expect((submit as HTMLButtonElement).disabled).toBe(true);
-  expect(fetcher.mock.calls.filter(([, init]) => init.method !== "GET")).toHaveLength(2);
-  await fireEvent.click(screen.getByRole("button", { name: "Review current album" }));
-  await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
-  await fireEvent.click(submit);
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(8));
-  expect(fetcher.mock.calls[6][1].headers.get("If-Match")).toBe('"2"');
-  expect(JSON.parse(fetcher.mock.calls[6][1].body).name).toBe("Corrected name");
 });
 
 it.each(["rename", "delete", "duplicate"] as const)("keeps the inspected revision for %s until current-state review and a separate retry", async operation => {
@@ -241,6 +211,7 @@ it.each(["rename", "delete", "duplicate"] as const)("keeps the inspected revisio
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve))
     .mockResolvedValueOnce(new Response(JSON.stringify({ code: "stale_revision" }), { status: 412 }))
     .mockResolvedValueOnce(new Response(JSON.stringify([current])))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Review rejected" }), { status: 422 }))
     .mockResolvedValueOnce(new Response(JSON.stringify([current])))
     .mockResolvedValueOnce(new Response(JSON.stringify(result)))
     .mockResolvedValueOnce(new Response(JSON.stringify(operation === "delete" ? [] : [result])));
@@ -259,17 +230,22 @@ it.each(["rename", "delete", "duplicate"] as const)("keeps the inspected revisio
   expect(albums.items[0].revision).toBe(2);
   expect((submit as HTMLButtonElement).disabled).toBe(true);
   await fireEvent.click(await screen.findByRole("button", { name: "Review current album" }));
+  await screen.findByText("Review rejected");
+  if (operation !== "delete") await fireEvent.input(screen.getByRole("textbox", { name: operation === "rename" ? "Album name" : "Copy name" }), { target: { value: "My draft" } });
+  expect((submit as HTMLButtonElement).disabled).toBe(true);
+  expect(fetcher.mock.calls.filter(([, init]) => init.method !== "GET")).toHaveLength(1);
+  await fireEvent.click(screen.getByRole("button", { name: "Review current album" }));
   await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
-  expect(fetcher).toHaveBeenCalledTimes(4);
-  expect(fetcher.mock.calls[3][1].method).toBe("GET");
+  expect(fetcher).toHaveBeenCalledTimes(5);
+  expect(fetcher.mock.calls[4][1].method).toBe("GET");
   if (operation === "delete") expect(screen.getByText('Delete "Updated Trip"? Its 3 photos stay in your library.')).toBeTruthy();
   else {
     expect(screen.getByText("Updated Trip · 3 photos")).toBeTruthy();
     expect((screen.getByRole("textbox", { name: operation === "rename" ? "Album name" : "Copy name" }) as HTMLInputElement).value).toBe("My draft");
   }
   await fireEvent.click(submit);
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(6));
-  expect(fetcher.mock.calls[4][1].headers.get("If-Match")).toBe('"2"');
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(7));
+  expect(fetcher.mock.calls[5][1].headers.get("If-Match")).toBe('"2"');
   await waitFor(() => expect(screen.queryByRole("button", { name: operation === "rename" ? "Save" : operation === "delete" ? "Delete album" : "Duplicate album" })).toBeNull());
 });
 
@@ -329,9 +305,10 @@ it("refreshes previews and summary counts inside an album", async () => {
   expect(load).toHaveBeenCalledTimes(1);
 });
 
-it("creates a new album for every explicit custom choice, including Unicode names after deletion", async () => {
+it.each(["uuid", "prefixed", "Unicode after deletion"])("creates albums for explicit custom choices: %s", async kind => {
   const { photos, albums } = setup();
-  const name = "😀".repeat(129);
+  const name = kind === "uuid" ? album.id : kind === "prefixed" ? `album:${album.id}` : "😀".repeat(129);
+  const attempts = kind === "Unicode after deletion" ? 3 : 1;
   let nextID = 0;
   const create = vi.spyOn(albums, "create").mockImplementation(async value => {
     const item = { ...album, id: `created-${++nextID}`, name: value };
@@ -340,7 +317,8 @@ it("creates a new album for every explicit custom choice, including Unicode name
   const members = vi.spyOn(albums, "members").mockResolvedValue(album);
   await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
   await fireEvent.click(screen.getByRole("button", { name: "Select loaded photos" }));
-  for (let i = 0; i < 3; i++) {
+  if (attempts === 1) await fireEvent.click(screen.getByRole("button", { name: "Select all 10,000 photos" }));
+  for (let i = 0; i < attempts; i++) {
     if (i > 0) await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
     if (i === 2) albums.items = [album];
     await fireEvent.click(await screen.findByRole("button", { name: /Add to album/ }));
@@ -349,9 +327,12 @@ it("creates a new album for every explicit custom choice, including Unicode name
     await fireEvent.input(input, { target: { value: name } });
     await fireEvent.mouseDown(await screen.findByRole("option", { name: `Create album "${name}"` }));
     await waitFor(() => expect(members).toHaveBeenCalledTimes(i + 1));
+    expect(members).toHaveBeenLastCalledWith(expect.objectContaining({ id: `created-${i + 1}` }), photos.scope(), photos, false, expect.any(Function));
   }
-  expect(create).toHaveBeenCalledTimes(3);
-  expect(members.mock.calls.map(([item]) => item.id)).toEqual(["created-1", "created-2", "created-3"]);
+  expect(create).toHaveBeenCalledTimes(attempts);
+  expect(create).toHaveBeenCalledWith(name);
+  expect(albums.targetID).toBe(`created-${attempts}`);
+  expect(members.mock.calls.map(([item]) => item.id)).toEqual(Array.from({ length: attempts }, (_, index) => `created-${index + 1}`));
 });
 
 it("waits for album initialization and delete completion before showing not found", async () => {
