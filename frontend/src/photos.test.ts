@@ -5,6 +5,22 @@ import { photo } from "./photo-test-fixtures.js";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
 
+it.each([
+  ["hidden_not_configured", 409, "Set a passcode in the Hidden view first."],
+  ["hidden_locked", 403, "This photo is already hidden."],
+])("explains a rejected hide with %s", async (code, status, message) => {
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ code, detail: "Server failure" }, { status: Number(status) }))
+    .mockResolvedValueOnce(response([photo(1)]));
+  vi.stubGlobal("fetch", fetcher);
+  const authFailure = vi.fn();
+  const photos = new Photos("scoped", authFailure);
+  photos.items = [photo(1)]; photos.started = true;
+  await photos.setHidden("photo-1");
+  expect(photos.actionError).toBe(`1 photo failed: ${message}`);
+  expect(authFailure).not.toHaveBeenCalled();
+  photos.dispose();
+});
+
 it.each([false, true])("removes confirmed trash successes when refresh fails, partial=%s", async partial => {
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })));
   if (partial) fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }));

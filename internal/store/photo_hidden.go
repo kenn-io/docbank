@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/text/unicode/norm"
 )
 
 const hiddenArgonParameters = "m=19456,t=2,p=1"
@@ -73,7 +74,7 @@ func hashHiddenPasscode(passcode string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("creating hidden passcode salt: %w", err)
 	}
-	hash := argon2.IDKey([]byte(passcode), salt, hiddenArgonTime, hiddenArgonMemory, hiddenArgonThreads, 32)
+	hash := argon2.IDKey(norm.NFC.Bytes([]byte(passcode)), salt, hiddenArgonTime, hiddenArgonMemory, hiddenArgonThreads, 32)
 	return "argon2id$" + hiddenArgonParameters + "$" + base64.RawURLEncoding.EncodeToString(salt) + "$" + base64.RawURLEncoding.EncodeToString(hash), nil
 }
 
@@ -193,7 +194,7 @@ func (s *Store) consumeHiddenPasscodeTx(ctx context.Context, tx *sql.Tx, passcod
 	if err != nil {
 		return nil, err
 	}
-	hash := argon2.IDKey([]byte(passcode), salt, hiddenArgonTime, hiddenArgonMemory, hiddenArgonThreads, 32)
+	hash := argon2.IDKey(norm.NFC.Bytes([]byte(passcode)), salt, hiddenArgonTime, hiddenArgonMemory, hiddenArgonThreads, 32)
 	if subtle.ConstantTimeCompare(hash, expected) == 1 {
 		if err := clearHiddenAuthTx(ctx, tx, false); err != nil {
 			return nil, err

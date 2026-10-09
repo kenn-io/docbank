@@ -74,6 +74,28 @@ func TestPhotoHiddenLifecycle(t *testing.T) {
 	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
 }
 
+func TestPhotoHiddenPasscodeNormalization(t *testing.T) {
+	t.Parallel()
+	for _, passcode := range []string{"caf\u00e9", "cafe\u0301"} {
+		t.Run(passcode, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			require.NoError(t, s.SetupPhotoHidden(ctx, passcode))
+			_, _, err := s.UnlockPhotoHidden(ctx, "caf\u00e9")
+			require.NoError(t, err)
+			_, _, err = s.UnlockPhotoHidden(ctx, "cafe\u0301")
+			require.NoError(t, err)
+			require.NoError(t, s.ChangePhotoHidden(ctx, "cafe\u0301", "re\u0301placement"))
+			_, _, err = s.UnlockPhotoHidden(ctx, "r\u00e9placement")
+			require.NoError(t, err)
+			_, _, err = s.UnlockPhotoHidden(ctx, "caf\u00e9")
+			require.ErrorIs(t, err, ErrHiddenPasscode)
+			require.NoError(t, s.DisablePhotoHidden(ctx, "r\u00e9placement"))
+		})
+	}
+}
+
 func TestPhotoHiddenTrashListsFilesAndRestorePreservesHidden(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

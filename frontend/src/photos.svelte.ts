@@ -99,7 +99,9 @@ export class Photos {
           await restore?.();
         } catch (cause) {
           failures++;
-          failure = cause instanceof Error ? cause.message : String(cause);
+          failure = cause instanceof APIError && cause.code === "hidden_not_configured" ? "Set a passcode in the Hidden view first."
+            : cause instanceof APIError && cause.code === "hidden_locked" && !this.hidden ? "This photo is already hidden."
+            : cause instanceof Error ? cause.message : String(cause);
           if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); break; }
         }
       }

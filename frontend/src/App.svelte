@@ -2072,7 +2072,7 @@
     </TopBar>
 
     {#if photoMode && photoState}
-      {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} session={webSession} onauthfailure={handleFailure} ontrashed={() => handleTrashed()} onunhidden={refreshLibrary} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else}
+      {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} session={webSession} onauthfailure={handleFailure} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { refreshLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else}
       {#key photoState}<PhotosWorkspace bind:this={libraryWorkspace} photos={photoState.photos} cache={photoState.cache} ontrashed={() => handleTrashed()} onhidden={() => void hiddenWorkspace?.refresh()} />{/key}
       {/if}
     {:else}
