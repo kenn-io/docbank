@@ -201,3 +201,28 @@ it("removes caches left by closed pages and releases its lock after disposal", a
     Reflect.deleteProperty(navigator, "locks");
   }
 });
+it("evicts only hidden assets and retains unrelated previews and requests", async () => {
+  const stored = storage();
+  let finish!: (response: Response) => void;
+  let pendingSignal: AbortSignal | undefined;
+  const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.includes("/pending/")) { pendingSignal = options?.signal ?? undefined; return new Promise<Response>(resolve => finish = resolve); }
+    return new Response("synthetic-jpeg");
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const cache = workspace();
+  await cache.get("hidden", "generation");
+  await cache.get("visible", "generation");
+  const pending = cache.get("pending", "generation");
+  await vi.waitFor(() => expect(pendingSignal).toBeDefined());
+  await cache.evict(["hidden"]);
+  expect(pendingSignal?.aborted).toBe(false);
+  const entries = [...stored.data.values()][0];
+  expect([...entries.keys()].some(key => key.includes("/hidden/"))).toBe(false);
+  expect([...entries.keys()].some(key => key.includes("/visible/"))).toBe(true);
+  const before = fetcher.mock.calls.length;
+  await cache.get("visible", "generation");
+  expect(fetcher).toHaveBeenCalledTimes(before);
+  finish(new Response("pending-preview"));
+  expect(await (await pending).text()).toBe("pending-preview");
+});

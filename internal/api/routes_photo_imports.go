@@ -68,10 +68,6 @@ func registerPhotoImportRoutes(api huma.API, d Deps, g *gate) {
 		if err := runner.Start(d.Jobs, operation.ID); err != nil {
 			d.Logger.Error("start queued photo import", "operation_id", operation.ID, "error", err)
 		}
-		result, err := storageOperationAPI(ctx, d.Store, operation)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
-		return &photoImportStartOutput{Body: result}, nil
+		return &photoImportStartOutput{Body: storageOperationAPI(operation)}, nil
 	})
 }

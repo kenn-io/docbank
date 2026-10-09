@@ -75,11 +75,7 @@ func registerStoragePlacementRoutes(api huma.API, d Deps, g *gate) {
 				"storage_job_unavailable",
 				fmt.Sprintf("placement is queued but could not start: %v", err))
 		}
-		result, err := storageOperationAPI(ctx, d.Store, operation)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
-		return &operationOutput{Body: result}, nil
+		return &operationOutput{Body: storageOperationAPI(operation)}, nil
 	})
 
 	huma.Register(api, huma.Operation{
@@ -144,11 +140,7 @@ func registerStoragePlacementRoutes(api huma.API, d Deps, g *gate) {
 				"storage_job_unavailable",
 				fmt.Sprintf("evacuation is queued but could not start: %v", err))
 		}
-		result, err := storageOperationAPI(ctx, d.Store, operation)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
-		return &operationOutput{Body: result}, nil
+		return &operationOutput{Body: storageOperationAPI(operation)}, nil
 	})
 	registerStorageRecoveryRoutes(api, d, g, previews, "repair")
 	registerStorageRecoveryRoutes(api, d, g, previews, "salvage")
@@ -227,11 +219,7 @@ func registerStorageRecoveryRoutes(
 				"storage_job_unavailable",
 				fmt.Sprintf("%s is queued but could not start: %v", kind, err))
 		}
-		result, err := storageOperationAPI(ctx, d.Store, operation)
-		if err != nil {
-			return nil, FromStoreError(err)
-		}
-		return &operationOutput{Body: result}, nil
+		return &operationOutput{Body: storageOperationAPI(operation)}, nil
 	})
 }
 
@@ -349,14 +337,7 @@ func placementPreviewAPI(
 	}
 }
 
-func storageOperationAPI(ctx context.Context, metadata *store.Store, operation store.StorageOperation) (StorageOperation, error) {
-	if operation.Kind == store.StorageOperationKindPhotoImport && operation.ReceiptJSON != "" {
-		receipt, err := metadata.PhotoImportReceiptResponse(ctx, operation.ReceiptJSON)
-		if err != nil {
-			return StorageOperation{}, err
-		}
-		operation.ReceiptJSON = receipt
-	}
+func storageOperationAPI(operation store.StorageOperation) StorageOperation {
 	result := StorageOperation{
 		ID: operation.ID, Kind: operation.Kind, State: string(operation.State),
 		PlanDigest: operation.RequestDigest, TotalObjects: operation.TotalObjects,
@@ -375,5 +356,5 @@ func storageOperationAPI(ctx context.Context, metadata *store.Store, operation s
 	if operation.FinishedAt != nil {
 		result.FinishedAt = operation.FinishedAt.Format(time.RFC3339Nano)
 	}
-	return result, nil
+	return result
 }

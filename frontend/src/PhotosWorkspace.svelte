@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { Button, EmptyState, Modal, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { Photos } from "./photos.svelte.js";
@@ -9,10 +9,20 @@
   import PhotoGrid from "./PhotoGrid.svelte";
   import SelectionDock from "./SelectionDock.svelte";
 
-  let { photos, cache, title = "Library", ontrashed }: { photos: Photos; cache: PhotoPreviewCache; title?: string; ontrashed?: () => void } = $props();
+  let { photos, cache, title = "Library", ontrashed, onhidden, onactionerror }: { photos: Photos; cache: PhotoPreviewCache; title?: string; ontrashed?: () => void; onhidden?: () => void; onactionerror?: (error: string) => void } = $props();
   let trashOpen = $state(false);
   let grid = $state<{ preservePosition: () => (() => Promise<void>); restoreScrollTop: (top: number) => Promise<void> }>();
   const preserve = () => grid?.preservePosition();
+  export function refresh() { return photos.refresh(preserve); }
+  async function setHidden(id: string) {
+    if (photos.hiding || photos.trashing) return;
+    onactionerror?.("");
+    await photos.setHidden(id, preserve, async ids => {
+      await tick();
+      if (!photos.hidden) await cache.evict(ids);
+      onhidden?.();
+    }, onactionerror);
+  }
   const groups = $derived(groupPhotos(photos.items, photos.grouping));
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));
   const densityOptions = [{ value: "compact", label: "Compact" }, { value: "comfortable", label: "Comfortable" }, { value: "large", label: "Large" }];
@@ -42,21 +52,22 @@
         <SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => relayout(() => photos.grouping = value as "months" | "sessions")} />
         <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => relayout(() => photos.setDensity(value as Density))} />
       </div>
-      <Button size="sm" disabled={photos.loading} onclick={() => void photos.refresh(preserve)}>Refresh previews</Button>
+      <Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing} onclick={() => void photos.refresh(preserve)}>Refresh previews</Button>
     </div>
   </div>
+  {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
   {#if photos.error}
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
   {/if}
   {#if photos.items.length}
-    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading} {cache} hidden={photos.hidden} onhidden={id => void photos.setHidden(id)} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} />
+    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading} {cache} hidden={photos.hidden} onhidden={id => void setHidden(id)} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} />
   {:else if !photos.loading && !photos.error}
     <EmptyState title={photos.hidden ? "No hidden photos" : "Your photo library is empty"} description={photos.hidden ? "Choose Hide from a photo's actions menu in Library." : "Import photos with docbank photos import to browse them here."}>
       {#snippet icon()}<ImageIcon size="24" />{/snippet}
     </EmptyState>
   {/if}
   <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
-  <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.loading} />
+  <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.hiding || photos.loading} />
 </main>
 
 {#if trashOpen}

@@ -16,9 +16,6 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-// SQLite's single MAX selects the receipt from the same unique rowid.
-const photoHiddenChangeSQL = `SELECT COALESCE((SELECT receipt_id FROM (SELECT MAX(rowid) AS latest,receipt_id FROM photo_change_receipts WHERE operation='hide' UNION ALL SELECT MAX(rowid) AS latest,receipt_id FROM photo_change_receipts WHERE operation='unhide') WHERE latest IS NOT NULL ORDER BY latest DESC LIMIT 1),'')`
-
 const hiddenArgonParameters = "m=19456,t=2,p=1"
 const hiddenArgonMemory, hiddenArgonTime, hiddenArgonThreads = 19456, 2, 1
 
@@ -43,7 +40,6 @@ func WithPhotoHiddenToken(ctx context.Context, token string) context.Context {
 }
 
 type PhotoHiddenState struct {
-	ChangeID    string  `json:"change_id"`
 	Configured  bool    `json:"configured"`
 	ExpiresAt   *string `json:"expires_at,omitzero"`
 	LockedUntil *string `json:"locked_until,omitzero"`
@@ -130,9 +126,6 @@ func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) 
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_hidden_credentials)`).Scan(&state.Configured); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, photoHiddenChangeSQL).Scan(&state.ChangeID); err != nil {
-			return err
-		}
 		var until string
 		err := tx.QueryRowContext(ctx, `SELECT locked_until FROM photo_hidden_lockout WHERE singleton=1`).Scan(&until)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -202,10 +195,8 @@ func (s *Store) consumeHiddenPasscodeTx(ctx context.Context, tx *sql.Tx, passcod
 	}
 	hash := argon2.IDKey([]byte(passcode), salt, hiddenArgonTime, hiddenArgonMemory, hiddenArgonThreads, 32)
 	if subtle.ConstantTimeCompare(hash, expected) == 1 {
-		for _, table := range []string{"photo_hidden_failures", "photo_hidden_lockout"} {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM `+table); err != nil {
-				return nil, err
-			}
+		if err := clearHiddenAuthTx(ctx, tx, false); err != nil {
+			return nil, err
 		}
 		return nil, nil //nolint:nilnil // The first error is a committed denial; the second aborts the transaction.
 	}

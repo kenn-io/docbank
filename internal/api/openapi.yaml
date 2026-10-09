@@ -11690,8 +11690,6 @@ components:
           format: uri
           readOnly: true
           type: string
-        change_id:
-          type: string
         configured:
           type: boolean
         expires_at:
@@ -11703,7 +11701,6 @@ components:
             - string
             - "null"
       required:
-        - change_id
         - configured
       type: object
       x-go-type: store.PhotoHiddenState

@@ -2222,7 +2222,6 @@ CREATE TABLE IF NOT EXISTS photo_change_receipts (
 CREATE INDEX IF NOT EXISTS photo_change_receipts_asset
     ON photo_change_receipts(asset_id, receipt_id);
 CREATE INDEX IF NOT EXISTS photo_change_receipts_set ON photo_change_receipts(set_id,receipt_id);
-CREATE INDEX IF NOT EXISTS photo_change_receipts_operation ON photo_change_receipts(operation);
 
 CREATE TABLE IF NOT EXISTS persons (
     person_id TEXT PRIMARY KEY NOT NULL,

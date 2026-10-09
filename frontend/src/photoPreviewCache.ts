@@ -73,7 +73,10 @@ export class PhotoPreviewCache {
       signal.throwIfAborted();
       try {
         // The network response varies by credentials; retained keys contain no credentials.
-        if (!noStore) await cache?.put(key, new Response(bytes, { headers: { "Content-Type": "image/jpeg" } }));
+        if (!noStore) {
+          await cache?.put(key, new Response(bytes, { headers: { "Content-Type": "image/jpeg" } }));
+          if (signal.aborted) await cache?.delete(key);
+        }
       } catch { signal.throwIfAborted(); }
       signal.throwIfAborted();
       return new Blob([bytes], { type: "image/jpeg" });
@@ -96,6 +99,15 @@ export class PhotoPreviewCache {
     const next = this.waiting.shift();
     if (next) next();
     else this.fetching--;
+  }
+
+  async evict(assetIDs: string[]) {
+    if (!this.cache) return;
+    const cache = await this.cache;
+    const paths = assetIDs.map(id => new URL(getReadPhotoPreviewUrl(id, ""), location.origin).pathname);
+    for (const key of await cache.keys()) {
+      if (paths.some(path => new URL(key.url).pathname.startsWith(path))) await cache.delete(key);
+    }
   }
 
   dispose(): Promise<void> {

@@ -286,26 +286,65 @@ it("times each replacement page separately", async () => {
   photos.dispose();
 });
 
-it("clears private rows and cancels late reads while preserving unaffected selection and scroll", async () => {
+it.each([false, true])("partial visibility writes keep failures, position and pending targets after failed refresh, hidden=%s", async hidden => {
   let finish!: (response: Response) => void;
-  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1), photo(2)]))
+  let writeSignal: AbortSignal | undefined;
+  let readSignal: AbortSignal | undefined;
+  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1), photo(2), photo(3)]))
+    .mockImplementationOnce((_url, options: RequestInit) => { readSignal = options.signal!; return new Promise(resolve => finish = resolve); })
+    .mockImplementationOnce(async (_url, options: RequestInit) => { writeSignal = options.signal!; return Response.json({ id: "photo-1", revision: 2 }); })
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Listing unavailable" }), { status: 503 }));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn(), hidden);
+  await photos.loadMore();
+  photos.selection = { selectedIDs: new Set(["photo-1", "photo-2"]), anchorID: "photo-1" };
+  photos.trashTargets = [photo(1), photo(2)];
+  photos.scrollTop = 480;
+  const oldRead = photos.refresh();
+  const restore = vi.fn(async () => {});
+  const changed = vi.fn(async () => {});
+  await photos.setHidden("photo-1", () => restore, changed);
+  expect(readSignal?.aborted).toBe(true);
+  expect(writeSignal).toBeDefined();
+  expect(writeSignal?.aborted).toBe(false);
+  finish(response([photo(1), photo(2), photo(3)])); await oldRead;
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2", "photo-3"]);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
+  expect(photos.trashTargets.map(item => item.asset_id)).toEqual(["photo-2"]);
+  expect(photos.total).toBe(2);
+  expect(photos.scrollTop).toBe(480);
+  expect(restore).toHaveBeenCalledOnce();
+  expect(changed).toHaveBeenCalledWith(["photo-1"]);
+  expect(photos.actionError).toBe("1 photo failed: Photo changed");
+  expect(photos.error).toBe("Listing unavailable");
+  fetcher.mockResolvedValueOnce(response([photo(2), photo(3)]));
+  await photos.retry();
+  expect(photos.actionError).toBe("1 photo failed: Photo changed");
+  fetcher.mockImplementationOnce(() => new Promise(resolve => finish = resolve));
+  const late = photos.refresh(); photos.clearHidden(); finish(response([photo(2), photo(3)])); await late;
+  expect(photos.items).toEqual([]); expect(photos.selection.selectedIDs.size).toBe(0); expect(photos.total).toBe(0);
+  photos.dispose();
+});
+
+it("bounds selection writes, rejects unconfirmed success and guards overlapping actions", async () => {
+  const timers: AbortController[] = [];
+  vi.spyOn(AbortSignal, "timeout").mockImplementation(() => { const timer = new AbortController(); timers.push(timer); return timer.signal; });
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1)]))
     .mockImplementationOnce(() => new Promise(resolve => finish = resolve))
-    .mockResolvedValueOnce(response([photo(2)]));
+    .mockResolvedValueOnce(response([photo(1)]));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
-  await photos.loadMore();
-  photos.check("photo-2", true, false, ["photo-1", "photo-2"]);
-  photos.scrollTop = 480;
-  const pending = photos.refresh();
-  photos.clearForPrivacy(true);
-  expect(photos.items).toEqual([]);
-  expect(photos.scrollTop).toBe(480);
-  finish(response([photo(1), photo(2)]));
-  await pending;
-  expect(photos.items).toEqual([]);
-  await photos.resume();
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
-  expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
-  expect(photos.scrollTop).toBe(480);
+  await photos.loadMore(); photos.selectLoaded();
+  const write = photos.setHidden("photo-1");
+  await photos.setHidden("photo-1");
+  expect(await photos.trashSelected()).toBe(false);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(timers).toHaveLength(1);
+  finish(Response.json({ id: "photo-2", revision: 2 })); await write;
+  expect(photos.items).toHaveLength(1);
+  expect(photos.actionError).toContain("did not confirm");
+  expect(photos.hiding).toBe(false);
   photos.dispose();
 });

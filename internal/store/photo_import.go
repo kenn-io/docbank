@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -79,53 +78,6 @@ type PhotoImportReceipt struct {
 	Ambiguous   int64                  `json:"ambiguous"`
 	Unsupported int64                  `json:"unsupported"`
 	Ambiguities []PhotoImportAmbiguity `json:"ambiguities,omitzero"`
-}
-
-// PhotoImportReceiptResponse conceals currently locked photo IDs without changing the stored receipt.
-func (s *Store) PhotoImportReceiptResponse(ctx context.Context, receiptJSON string) (string, error) {
-	var receipt PhotoImportReceipt
-	if err := json.Unmarshal([]byte(receiptJSON), &receipt); err != nil {
-		return receiptJSON, nil //nolint:nilerr // Preserve receipts from formats this decoder cannot read.
-	}
-	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
-		visible := make(map[string]bool)
-		sessionChecked, unlocked := false, false
-		for i := range receipt.Ambiguities {
-			for j := range receipt.Ambiguities[i].Files {
-				file := &receipt.Ambiguities[i].Files[j]
-				if file.AssetID == "" {
-					continue
-				}
-				if _, checked := visible[file.AssetID]; !checked {
-					var hidden bool
-					err := tx.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=?`, file.AssetID).Scan(&hidden)
-					if errors.Is(err, sql.ErrNoRows) {
-						visible[file.AssetID] = false
-					} else if err != nil {
-						return err
-					} else {
-						if hidden && !sessionChecked {
-							_, err := s.hiddenSession(ctx, tx)
-							if err != nil && !errors.Is(err, ErrHiddenLocked) {
-								return err
-							}
-							sessionChecked, unlocked = true, err == nil
-						}
-						visible[file.AssetID] = !hidden || unlocked
-					}
-				}
-				if !visible[file.AssetID] {
-					file.AssetID = ""
-				}
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	encoded, err := json.Marshal(receipt)
-	return string(encoded), err
 }
 
 func photoImportSourceKey(path string) (folder, stem string) {

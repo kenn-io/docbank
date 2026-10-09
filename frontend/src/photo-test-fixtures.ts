@@ -9,6 +9,8 @@ export function storage() {
     const entries = data.get(name) ?? new Map<string, Response>();
     data.set(name, entries);
     return {
+      keys: vi.fn(async () => [...entries.keys()].map(url => new Request(url))),
+      delete: vi.fn(async (key: Request) => entries.delete(key.url)),
       match: vi.fn(async (key: Request) => entries.get(key.url)?.clone()),
       put: vi.fn(async (key: Request, response: Response) => { entries.set(key.url, response.clone()); }),
     };

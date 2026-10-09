@@ -73,8 +73,7 @@
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import HiddenPhotos from "./HiddenPhotos.svelte";
   import { localPreferenceStorage } from "./browser-storage.js";
-  import { getPhotoHiddenState } from "./generated/docbank.js";
-  import { Photos, photoPrivacyEvent, photoPrivacyOrigin, photoRevalidationErrorEvent } from "./photos.svelte.js";
+  import { Photos } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { SelectionTarget } from "./selection.js";
@@ -185,65 +184,21 @@
   let stopSessionReporting: (() => Promise<void>) | undefined;
   let photoMode = $state(location.pathname.startsWith("/photos"));
   let hiddenMode = $state(location.pathname === "/photos/hidden");
-  let photoPrivacyError = $state("");
-  let photoActionError = $state("");
   let hiddenPhotoActionError = $state("");
+  let hiddenWorkspace = $state<{ refresh: () => Promise<void> }>();
+  let libraryWorkspace = $state<{ refresh: () => Promise<void> }>();
   let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
 
   $effect(() => {
     if (!webSession) return;
-    const state = { photos: new Photos(webSession, photoFailure), cache: new PhotoPreviewCache(webSession, photoFailure) };
+    const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
     photoState = state;
-    const privacy = (event: Event) => {
-      const detail = (event as CustomEvent<unknown>).detail;
-      if (detail && typeof detail === "object" && "hidden" in detail && detail.hidden === false) state.photos.revalidateForPrivacy();
-      else state.photos.clearForPrivacy(true);
-      void state.cache.dispose();
-      state.cache = new PhotoPreviewCache(webSession, photoFailure);
-      photoState = { ...state };
-      if (detail && typeof detail === "object" && "hidden" in detail && "error" in detail && typeof detail.error === "string") {
-        if (detail.hidden === false) photoActionError = detail.error;
-        else if (detail.hidden === true) hiddenPhotoActionError = detail.error;
-      }
-    };
-    window.addEventListener(photoPrivacyEvent, privacy);
-    const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(photoPrivacyEvent) : undefined;
-    if (channel) channel.onmessage = event => { if (event.data?.origin !== photoPrivacyOrigin) window.dispatchEvent(new Event(photoPrivacyEvent)); };
-    return () => { photoPrivacyStamp = undefined; photoActionError = hiddenPhotoActionError = ""; window.removeEventListener(photoPrivacyEvent, privacy); channel?.close(); state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
+    return () => { hiddenPhotoActionError = ""; state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
   });
-
-  let photoPrivacyStamp: string | undefined;
-  function photoFailure(cause: unknown) {
-    if (cause instanceof APIError && cause.status === 403) window.dispatchEvent(new Event(photoPrivacyEvent));
-    else handleFailure(cause);
+  function refreshLibrary() {
+    if (libraryWorkspace) void libraryWorkspace.refresh();
+    else if (photoState?.photos.started) void photoState.photos.refresh();
   }
-  $effect(() => {
-    if (!webSession || !photoMode) return;
-    const pollController = new AbortController();
-    let polling = false;
-    const revalidate = async () => {
-      if (polling || pollController.signal.aborted) return;
-      polling = true;
-      try {
-        const hidden = await getPhotoHiddenState({ session: webSession, signal: AbortSignal.any([pollController.signal, AbortSignal.timeout(2000)]) });
-        if (pollController.signal.aborted) return;
-        const recovered = photoPrivacyError !== "";
-        photoPrivacyError = "";
-        const next = JSON.stringify([hidden.change_id, hidden.configured, hidden.expires_at, hidden.locked_until]);
-        if (recovered || next !== photoPrivacyStamp) window.dispatchEvent(new CustomEvent(photoPrivacyEvent, { detail: hidden }));
-        photoPrivacyStamp = next;
-      } catch (cause) {
-        if (pollController.signal.aborted) return;
-        if (cause instanceof APIError && cause.status === 401) { handleFailure(cause); return; }
-        if (!pollController.signal.aborted) { photoPrivacyError = "Could not check Hidden access. Retry or wait for the next check."; window.dispatchEvent(new CustomEvent(photoRevalidationErrorEvent, { detail: photoPrivacyError })); }
-      } finally { polling = false; }
-    };
-    void revalidate();
-    const poll = setInterval(() => void revalidate(), 2000);
-    const foreground = () => { if (document.visibilityState === "visible") void revalidate(); };
-    document.addEventListener("visibilitychange", foreground);
-    return () => { pollController.abort(); clearInterval(poll); document.removeEventListener("visibilitychange", foreground); };
-  });
 
   function switchWorkspace(photos: boolean, hidden = false) {
     navOpen = false;
@@ -1664,7 +1619,8 @@
   }
 
   function handleRestored(_receipt: Node): void {
-    void photoState?.photos.refresh();
+    refreshLibrary();
+    void hiddenWorkspace?.refresh();
     selectNode(undefined);
 
     // Restore can advance an arbitrary destination parent and make every
@@ -2116,10 +2072,8 @@
     </TopBar>
 
     {#if photoMode && photoState}
-      {#if hiddenMode}<HiddenPhotos session={webSession} onauthfailure={handleFailure} photoActionError={hiddenPhotoActionError} />{:else}
-      {#if photoPrivacyError}<p role="alert">{photoPrivacyError}</p>{/if}
-      {#if photoActionError}<p role="alert">{photoActionError}</p>{/if}
-      {#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} ontrashed={() => handleTrashed()} />{/key}
+      {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} session={webSession} onauthfailure={handleFailure} ontrashed={() => handleTrashed()} onunhidden={refreshLibrary} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else}
+      {#key photoState}<PhotosWorkspace bind:this={libraryWorkspace} photos={photoState.photos} cache={photoState.cache} ontrashed={() => handleTrashed()} />{/key}
       {/if}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}

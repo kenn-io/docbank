@@ -224,9 +224,11 @@ Removing a photo from an album or deleting the album keeps every file. See
 [Albums](usage/photos.md#albums) for visibility, cover selection, and `set:`
 filters.
 
-### Photo imports
+### Hidden photos
 
 Hidden passcodes use protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks within that invocation. Disable returns all hidden photos to Library; reset preserves hidden flags while removing credentials. Passcode and hidden-flag changes require a writable vault. Unhide first to use other CLI or MCP photo commands on hidden assets. Documents and MCP document tools still expose their ordinary file nodes.
+
+### Photo imports
 
 `photos import` queues a background import of a folder on the daemon host and
 prints the operation ID. It creates one photo per same-folder, same-name group
