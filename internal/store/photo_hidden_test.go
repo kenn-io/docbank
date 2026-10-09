@@ -272,6 +272,7 @@ func TestPhotoHiddenMutationGateAndPrivacyStamp(t *testing.T) {
 		func() (PhotoAsset, error) { return s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, false) },
 		func() (PhotoAsset, error) { return s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true) },
 		func() (PhotoAsset, error) { return s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true) },
+		func() (PhotoAsset, error) { return s.TrashPhotoAsset(ctx, asset.ID, asset.Revision) },
 		func() (PhotoAsset, error) {
 			return s.PromotePhotoNode(ctx, asset.Files[0].NodeID, &asset.Revision, "", "")
 		},
