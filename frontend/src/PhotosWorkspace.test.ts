@@ -186,12 +186,13 @@ it("keeps loading pages that add no rows and keeps the top photo across density 
   const page = (rows: typeof items, cursor?: string) => new Response(JSON.stringify({ items: rows, total: 60, next_cursor: cursor }));
   const fetcher = vi.fn().mockResolvedValueOnce(page(items.slice(0, 2), "repeat")).mockResolvedValueOnce(page(items.slice(0, 2), "rest"))
     .mockResolvedValueOnce(page(items.slice(2)));
-  vi.stubGlobal("fetch", fetcher);
+  vi.stubGlobal("fetch", (url: string, init: RequestInit) => JSON.parse(init.body as string).facets.length ? Promise.resolve(new Response(JSON.stringify({ facets: [] }))) : fetcher(url, init));
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotosWorkspace, { photos, cache });
   await screen.findByText("60 photos · 60 loaded");
   expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(fetcher.mock.calls.map(call => JSON.parse(call[1].body).cursor)).toEqual([undefined, "repeat", "rest"]);
   await waitFor(() => expect(photos.loading).toBe(false));
   const scroll = screen.getByTestId("photo-scroll");
   scroll.scrollTop = 1000;

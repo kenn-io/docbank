@@ -407,7 +407,7 @@ Generations without those facts, such as PDFs and email, have no row. Its
 foreign key cascades with the generation, so it never becomes a second blob or
 version authority.
 
-`photo_metadata_fts` uses the stable integer `row_id` as its row key. Insert and delete triggers keep the index current; reads follow active metadata heads. Projection refresh and restore rebuild the index. See the [source metadata guide](https://docbank.ai/docs/architecture/source-metadata/) for the full contract.
+`photo_metadata_fts` maps search matches to the projection through `generation_id`. Insert and delete triggers keep the index current; reads follow active metadata heads. Projection refresh and restore rebuild the index. See the [source metadata guide](https://docbank.ai/docs/architecture/source-metadata/) for the full contract.
 
 An exact content-version read first follows `content_versions.blob_hash` to
 the selected `source_metadata_heads` generation, validates that generation's
