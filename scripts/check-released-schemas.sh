@@ -2,8 +2,11 @@
 # Fails when a release tag's storage schema has no upgrade path or fixture.
 # Every tagged schema version must appear in releasedStorageSchemaVersions,
 # and every tag from schema 3 onward must match an exact released-schema
-# fixture byte for byte. Requires full tag history (fetch-depth: 0).
+# fixture byte for byte. Tags before v0.10.0 have no explicit schema version;
+# every later tag must declare one. Requires full tag history (fetch-depth: 0).
 set -euo pipefail
+
+first_versioned_tag=v0.10.0
 
 repo_root=$(git rev-parse --show-toplevel)
 upgrade_go="$repo_root/internal/store/upgrade.go"
@@ -26,6 +29,11 @@ for tag in $tags; do
 	version=$(git show "$tag:internal/store/store.go" 2>/dev/null |
 		sed -nE 's/^const currentStorageSchemaVersion = ([0-9]+).*/\1/p')
 	if [[ -z $version ]]; then
+		if [[ $tag != "$first_versioned_tag" ]] && printf '%s\n' "$tag" "$first_versioned_tag" | sort -V -C; then
+			continue
+		fi
+		echo "error: cannot read currentStorageSchemaVersion from $tag:internal/store/store.go" >&2
+		failed=1
 		continue
 	fi
 	if [[ ",$released," != *",$version,"* ]]; then

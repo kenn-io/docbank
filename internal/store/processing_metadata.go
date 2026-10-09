@@ -261,21 +261,7 @@ var processingMetadataTables = []metadataRecordCodec{
 			OR EXISTS(SELECT 1 FROM processing_consent_revocations r WHERE r.incarnation_id=i.incarnation_id)
 			ORDER BY i.incarnation_id`,
 		validate: validateMetadataProcessingIncarnation,
-		insert: func(ctx context.Context, tx *sql.Tx, value metadataProcessingIncarnation) error {
-			if upgrade, _ := ctx.Value(upgradeMetadataImportKey{}).(*upgradeMetadataImport); upgrade != nil && !upgrade.incarnationImported {
-				var createdAt string
-				err := tx.QueryRowContext(ctx, `SELECT created_at FROM processing_incarnations WHERE incarnation_id=? AND incarnation_id=(SELECT incarnation_id FROM current_processing_incarnation WHERE singleton=1)`, value.ID).Scan(&createdAt)
-				if err == nil && createdAt == value.CreatedAt {
-					upgrade.incarnationImported = true
-					return nil
-				}
-				if err != nil && !errors.Is(err, sql.ErrNoRows) {
-					return err
-				}
-			}
-			_, err := tx.ExecContext(ctx, `INSERT INTO processing_incarnations(incarnation_id,created_at) VALUES(?,?)`, value.ID, value.CreatedAt)
-			return err
-		}}),
+		insert:   importMetadataProcessingIncarnation}),
 	processingConsentRevocationMetadata, processingConsentGrantMetadata,
 	newMetadataTable(metadataTable[metadataProcessingProfile]{
 		record: metadataProcessingProfile{Type: metadataProcessingProfileType}, table: "processing_profiles",
@@ -542,6 +528,29 @@ func importMetadataRenditionHead(ctx context.Context, tx *sql.Tx, value metadata
 	return insertMetadataRecord(ctx, tx, "rendition_heads", value)
 }
 
+// importMetadataProcessingIncarnation skips an incarnation the target already
+// holds with the same creation time. An upgrade target adopts the source's
+// current incarnation before import, and that incarnation is exported again
+// when it has consent records.
+func importMetadataProcessingIncarnation(ctx context.Context, tx *sql.Tx, value metadataProcessingIncarnation) error {
+	var createdAt string
+	err := tx.QueryRowContext(ctx, `SELECT created_at FROM processing_incarnations WHERE incarnation_id=?`,
+		value.ID).Scan(&createdAt)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		_, err = tx.ExecContext(ctx, `INSERT INTO processing_incarnations(incarnation_id,created_at) VALUES(?,?)`,
+			value.ID, value.CreatedAt)
+		return err
+	case err != nil:
+		return fmt.Errorf("reading processing incarnation %s: %w", value.ID, err)
+	case createdAt != value.CreatedAt:
+		return fmt.Errorf("processing incarnation %s already exists with created_at %s, not %s",
+			value.ID, createdAt, value.CreatedAt)
+	default:
+		return nil
+	}
+}
+
 func importMetadataRenditionJob(ctx context.Context, tx *sql.Tx, value metadataRenditionJob) error {
 	identityJSON, _, err := document.CanonicalRenditionExecutionIdentityV1(
 		value.ExecutionIdentity)
@@ -561,9 +570,8 @@ func importMetadataRenditionJob(ctx context.Context, tx *sql.Tx, value metadataR
 	authorizationGrantID := value.AuthorizationGrantID
 	authorizationIncarnationID := value.AuthorizationIncarnationID
 	authorizationRevocationFence := value.AuthorizationRevocationFence
-	upgrade, _ := ctx.Value(upgradeMetadataImportKey{}).(*upgradeMetadataImport)
-	if upgrade == nil && (value.State == RenditionJobQueued || value.State == RenditionJobRunning ||
-		value.State == RenditionJobRetryWait) {
+	if value.State == RenditionJobQueued || value.State == RenditionJobRunning ||
+		value.State == RenditionJobRetryWait {
 		// A restore keeps sealed provider and staged local work, but imported
 		// consent belongs to the old processing incarnation. Force selection
 		// and authorization through fresh consent before any resumed provider

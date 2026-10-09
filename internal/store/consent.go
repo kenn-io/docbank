@@ -102,7 +102,9 @@ type normalizedConsentAuthority struct {
 	inputsJSON, retainedJSON              string
 }
 
-func ensureProcessingIncarnationTx(tx *sql.Tx, source ...metadataProcessingIncarnation) error {
+// ensureProcessingIncarnationTx activates source, or a fresh incarnation when
+// source is nil, unless the store already has a current incarnation.
+func ensureProcessingIncarnationTx(tx *sql.Tx, source *metadataProcessingIncarnation) error {
 	var count int
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM current_processing_incarnation`).Scan(&count); err != nil {
 		return fmt.Errorf("checking processing incarnation: %w", err)
@@ -118,11 +120,11 @@ func ensureProcessingIncarnationTx(tx *sql.Tx, source ...metadataProcessingIncar
 		return fmt.Errorf("creating processing incarnation: %w", err)
 	}
 	createdAt := nowRFC3339()
-	if len(source) != 0 {
-		if err := validateMetadataProcessingIncarnation(source[0]); err != nil {
+	if source != nil {
+		if err := validateMetadataProcessingIncarnation(*source); err != nil {
 			return err
 		}
-		id, createdAt = source[0].ID, source[0].CreatedAt
+		id, createdAt = source.ID, source.CreatedAt
 	}
 	if _, err := tx.Exec(`INSERT INTO processing_incarnations(incarnation_id,created_at) VALUES(?,?)`,
 		id, createdAt); err != nil {

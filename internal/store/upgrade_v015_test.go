@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,10 @@ var schemaV0151SQL string
 // releasedSchemaFixtures holds the exact schema.sql of every release from
 // v0.15.0 on, keyed by storage schema version.
 var releasedSchemaFixtures = map[int]string{28: schemaV0150SQL, 29: schemaV0151SQL}
+
+// firstFixtureStorageSchemaVersion is the oldest schema in
+// releasedSchemaFixtures. Older releases have their own upgrade tests.
+const firstFixtureStorageSchemaVersion = 28
 
 const releasedFixtureVaultID = "10000000-0000-4000-8000-000000000028"
 
@@ -48,7 +53,7 @@ func newReleasedFixtureStore(t *testing.T, path string, driver docsqlite.Driver,
 	primary, err := ensurePrimaryBlobStoreTx(tx)
 	require.NoError(t, err)
 	require.NoError(t, initializeDocumentPeopleState(t.Context(), tx))
-	require.NoError(t, ensureProcessingIncarnationTx(tx))
+	require.NoError(t, ensureProcessingIncarnationTx(tx, nil))
 	require.NoError(t, tx.Commit())
 	return db, &Store{db: db, writeDB: db, rootID: 1, vaultID: releasedFixtureVaultID, primaryStoreID: primary.ID, driver: driver}
 }
@@ -56,7 +61,7 @@ func newReleasedFixtureStore(t *testing.T, path string, driver docsqlite.Driver,
 func dumpReleasedOperationalTables(t *testing.T, q metadataQuerier) string {
 	t.Helper()
 	var out strings.Builder
-	for _, table := range releasedOperationalTables {
+	for _, table := range slices.Concat(releasedStorageOperationTables, releasedPendingDeletionTables) {
 		dumpReleasedTable(t, q, table, &out)
 	}
 	return out.String()
@@ -82,7 +87,7 @@ func dumpReleasedTable(t *testing.T, q metadataQuerier, table string, out *strin
 }
 
 // seedV0150PendingWork records a photo, consent with a retrying rendition
-// job, a queued photo import, its cleanup record, and pending deletions.
+// job, a queued photo import, its cleanup record, and every pending deletion.
 func seedV0150PendingWork(t *testing.T, db *sql.DB, legacy *Store) (photoNodeID int64, jobID, operationID string) {
 	t.Helper()
 	ctx := t.Context()
@@ -139,6 +144,10 @@ func seedV0150PendingWork(t *testing.T, db *sql.DB, legacy *Store) (photoNodeID 
 		{`INSERT INTO gc_loose_retirements(store_id,blob_hash,loose_encoding) VALUES(?,?,0)`,
 			[]any{legacy.primaryStoreID, fakeHash("d4")}},
 		{`INSERT INTO derivative_blob_purge_pending(blob_hash) VALUES(?)`, []any{purged}},
+		{`INSERT INTO blob_packs(store_id,pack_id,entry_count,stored_bytes,created_at) VALUES(?,'purged-pack',0,0,?)`,
+			[]any{legacy.primaryStoreID, at}},
+		{`INSERT INTO derivative_pack_purge_pending(store_id,pack_id) VALUES(?,'purged-pack')`,
+			[]any{legacy.primaryStoreID}},
 	} {
 		_, err := db.Exec(statement.query, statement.args...)
 		require.NoError(t, err)
@@ -162,8 +171,8 @@ func TestUpgradeReleasedV0150PreservesAuthorityAndPendingWork(t *testing.T) {
 			pending := dumpReleasedOperationalTables(t, snapshot)
 			require.NoError(t, snapshot.Rollback())
 			require.NoError(t, db.Close())
-			require.Equal(t, len(releasedOperationalTables)-1, strings.Count(pending, "\n"),
-				"the fixture seeds every operational table except pack purges")
+			require.Equal(t, len(releasedStorageOperationTables)+len(releasedPendingDeletionTables),
+				strings.Count(pending, "\n"), "the fixture seeds one row in every copied table")
 
 			s, err := Open(path, driver.driver)
 			require.NoError(t, err)
@@ -228,7 +237,7 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 func TestReleasedSchemaFixturesMatchVersions(t *testing.T) {
 	t.Parallel()
 	for _, version := range releasedStorageSchemaVersions {
-		if version < 28 {
+		if version < firstFixtureStorageSchemaVersion {
 			continue
 		}
 		fixture, ok := releasedSchemaFixtures[version]
@@ -276,4 +285,28 @@ func TestOpenRejectsChangedReleasedV0150Layout(t *testing.T) {
 			assert.Equal(t, before, after, "a refused upgrade leaves the vault unchanged")
 		})
 	}
+}
+
+func TestImportMetadataProcessingIncarnationAcceptsOnlyIdenticalExistingRow(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	current := metadataProcessingIncarnation{Type: metadataProcessingIncarnationType}
+	require.NoError(t, s.db.QueryRow(`SELECT incarnation_id,created_at FROM processing_incarnations`).
+		Scan(&current.ID, &current.CreatedAt))
+	tx, err := s.db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, tx.Rollback()) }()
+
+	require.NoError(t, importMetadataProcessingIncarnation(t.Context(), tx, current))
+	changed := current
+	changed.CreatedAt = "2026-01-01T00:00:00.000000000Z"
+	require.ErrorContains(t, importMetadataProcessingIncarnation(t.Context(), tx, changed),
+		"processing incarnation "+current.ID+" already exists with created_at")
+	older := metadataProcessingIncarnation{Type: metadataProcessingIncarnationType,
+		ID: "60000000-0000-4000-8000-000000000001", CreatedAt: "2026-01-01T00:00:00.000000000Z"}
+	require.NoError(t, importMetadataProcessingIncarnation(t.Context(), tx, older))
+
+	var count int
+	require.NoError(t, tx.QueryRow(`SELECT COUNT(*) FROM processing_incarnations`).Scan(&count))
+	assert.Equal(t, 2, count)
 }

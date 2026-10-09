@@ -31,13 +31,17 @@ const (
 // fails CI when a release tag's schema is missing.
 var releasedStorageSchemaVersions = []int{1, 2, 3, 28, 29}
 
-// releasedOperationalTables hold unfinished storage work that metadata JSONL
-// does not carry. Versioned cutovers copy them verbatim so queued imports,
-// placements, and pending deletions survive an upgrade.
-var releasedOperationalTables = []string{
-	"storage_operations", "storage_operation_stores", "storage_operation_cleanup",
-	"gc_loose_retirements", "derivative_blob_purge_pending", "derivative_pack_purge_pending",
-}
+// Metadata JSONL does not carry unfinished storage work. Cutovers copy these
+// tables verbatim so queued imports, placements, evacuations, and pending
+// deletions survive an upgrade.
+var (
+	releasedStorageOperationTables = []string{
+		"storage_operations", "storage_operation_stores", "storage_operation_cleanup",
+	}
+	releasedPendingDeletionTables = []string{
+		"gc_loose_retirements", "derivative_blob_purge_pending", "derivative_pack_purge_pending",
+	}
+)
 
 type databaseSchema struct {
 	version int
@@ -47,12 +51,17 @@ type databaseSchema struct {
 }
 
 type releasedStorageSchema struct {
-	version         int
-	release         string
-	backupSuffix    string
-	validate        func(*sql.DB, []string, []string) error
-	exportMetadata  func(context.Context, *sql.Tx, io.Writer) error
-	restorePhysical func(context.Context, metadataQuerier, *Store) error
+	version        int
+	release        string
+	backupSuffix   string
+	validate       func(*sql.DB, []string, []string) error
+	exportMetadata func(context.Context, *sql.Tx, io.Writer) error
+	// restoreSourceState copies source state that metadata JSONL does not
+	// carry, such as the physical blob catalog, after the import.
+	restoreSourceState func(context.Context, metadataQuerier, *Store) error
+	// keepsProcessingIncarnation makes the target adopt the source's current
+	// processing incarnation, so existing consent stays valid.
+	keepsProcessingIncarnation bool
 }
 
 var releasedStorageSchemas = []releasedStorageSchema{
@@ -62,7 +71,7 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 1)
 		},
-		restorePhysical: restoreV090PhysicalCatalog,
+		restoreSourceState: restoreV090PhysicalCatalog,
 	},
 	{
 		version: 2, release: "schema v2 (v0.10.0–v0.11.0)", backupSuffix: v2BackupSuffix,
@@ -70,7 +79,7 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 2)
 		},
-		restorePhysical: restoreV2PhysicalCatalog,
+		restoreSourceState: restoreV2PhysicalCatalog,
 	},
 	{
 		version: 3, release: "schema v3 (v0.12.0–v0.14.0)", backupSuffix: v3BackupSuffix,
@@ -78,7 +87,7 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 3)
 		},
-		restorePhysical: restoreV3PhysicalCatalog,
+		restoreSourceState: restoreV3PhysicalCatalog,
 	},
 	{
 		version: 28, release: "v0.15.0", backupSuffix: v28BackupSuffix,
@@ -88,7 +97,8 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 28)
 		},
-		restorePhysical: restoreReleasedPhysicalCatalogAndOperations,
+		restoreSourceState:         restoreV28SourceState,
+		keepsProcessingIncarnation: true,
 	},
 }
 
@@ -189,7 +199,7 @@ func validateReleasedStorageSchemas() error {
 			return fmt.Errorf("duplicate released storage schema version %d", source.version)
 		}
 		if source.release == "" || source.backupSuffix == "" ||
-			source.validate == nil || source.exportMetadata == nil || source.restorePhysical == nil {
+			source.validate == nil || source.exportMetadata == nil || source.restoreSourceState == nil {
 			return fmt.Errorf("released storage schema version %d is incomplete", source.version)
 		}
 		if suffixes[source.backupSuffix] {
@@ -502,16 +512,17 @@ func cutoverReleasedDatabase(
 		_ = closeSource()
 		return err
 	}
-	var incarnation []metadataProcessingIncarnation
-	if sourceSchema.version >= 28 {
-		value := metadataProcessingIncarnation{Type: metadataProcessingIncarnationType}
-		if err := snapshot.QueryRow(`SELECT i.incarnation_id,i.created_at FROM processing_incarnations i JOIN current_processing_incarnation c ON c.incarnation_id=i.incarnation_id WHERE c.singleton=1`).Scan(&value.ID, &value.CreatedAt); err != nil {
+	var incarnation *metadataProcessingIncarnation
+	if sourceSchema.keepsProcessingIncarnation {
+		incarnation = &metadataProcessingIncarnation{Type: metadataProcessingIncarnationType}
+		if err := snapshot.QueryRow(`SELECT i.incarnation_id,i.created_at FROM processing_incarnations i
+			JOIN current_processing_incarnation c ON c.incarnation_id=i.incarnation_id WHERE c.singleton=1`,
+		).Scan(&incarnation.ID, &incarnation.CreatedAt); err != nil {
 			_ = closeSource()
-			return fmt.Errorf("reading source processing incarnation: %w", err)
+			return fmt.Errorf("reading %s processing incarnation: %w", sourceSchema.release, err)
 		}
-		incarnation = append(incarnation, value)
 	}
-	target, err := openCurrentStore(stagePath, driver, incarnation...)
+	target, err := openCurrentStore(stagePath, driver, incarnation)
 	if err != nil {
 		_ = closeSource()
 		return fmt.Errorf("creating current database for %s upgrade: %w", sourceSchema.release, err)
@@ -521,7 +532,7 @@ func cutoverReleasedDatabase(
 		_ = closeSource()
 		return err
 	}
-	if err := sourceSchema.restorePhysical(context.Background(), snapshot, target); err != nil {
+	if err := sourceSchema.restoreSourceState(context.Background(), snapshot, target); err != nil {
 		_ = target.Close()
 		_ = closeSource()
 		return err
@@ -614,7 +625,7 @@ func importUpgradeJSONL(target *Store, path string, sourceSchema releasedStorage
 	if err != nil {
 		return fmt.Errorf("opening %s upgrade metadata: %w", sourceSchema.release, err)
 	}
-	if err := target.importMetadata(context.Background(), f, sourceSchema.version >= 28); err != nil {
+	if err := target.ImportMetadata(context.Background(), f); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("importing %s metadata: %w", sourceSchema.release, err)
 	}
@@ -694,20 +705,60 @@ func restoreV3PhysicalCatalog(ctx context.Context, source metadataQuerier, targe
 	})
 }
 
-// restoreReleasedPhysicalCatalogAndOperations restores the v3-style blob
-// catalog, then copies unfinished storage work unchanged.
-func restoreReleasedPhysicalCatalogAndOperations(ctx context.Context, source metadataQuerier, target *Store) error {
+// restoreV28SourceState restores the v3-style blob catalog, copies unfinished
+// storage work, and returns unfinished rendition jobs their authorization.
+func restoreV28SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
 	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if err := restoreV3PhysicalCatalogTx(ctx, source, tx, target); err != nil {
 			return err
 		}
-		for _, table := range releasedOperationalTables {
-			if err := copyReleasedTable(ctx, source, tx, table); err != nil {
-				return err
-			}
+		if err := copyReleasedTables(ctx, source, tx, releasedStorageOperationTables); err != nil {
+			return err
 		}
-		return nil
+		if err := copyReleasedTables(ctx, source, tx, releasedPendingDeletionTables); err != nil {
+			return err
+		}
+		return restoreRenditionJobAuthorization(ctx, source, tx)
 	})
+}
+
+// restoreRenditionJobAuthorization puts back the authorization that metadata
+// import clears from unfinished rendition jobs. A restore needs fresh consent,
+// but an upgrade keeps the processing incarnation that authorized these jobs.
+func restoreRenditionJobAuthorization(ctx context.Context, source metadataQuerier, tx *sql.Tx) error {
+	rows, err := source.QueryContext(ctx, `SELECT job_id,selected_waiter_id,authorization_grant_id,
+		authorization_incarnation_id,authorization_revocation_fence FROM rendition_jobs
+		WHERE state IN (?,?,?) ORDER BY job_id`, RenditionJobQueued, RenditionJobRunning, RenditionJobRetryWait)
+	if err != nil {
+		return fmt.Errorf("reading released rendition job authorization: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var jobID string
+		var waiterID, grantID, incarnationID sql.NullString
+		var fence sql.NullInt64
+		if err := rows.Scan(&jobID, &waiterID, &grantID, &incarnationID, &fence); err != nil {
+			return fmt.Errorf("reading released rendition job authorization: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET selected_waiter_id=?,
+			authorization_grant_id=?,authorization_incarnation_id=?,authorization_revocation_fence=?
+			WHERE job_id=?`, waiterID, grantID, incarnationID, fence, jobID); err != nil {
+			return fmt.Errorf("restoring rendition job %s authorization: %w", jobID, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reading released rendition job authorization: %w", err)
+	}
+	return rows.Close()
+}
+
+func copyReleasedTables(ctx context.Context, source metadataQuerier, tx *sql.Tx, tables []string) error {
+	for _, table := range tables {
+		if err := copyReleasedTable(ctx, source, tx, table); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func copyReleasedTable(ctx context.Context, source metadataQuerier, tx *sql.Tx, table string) error {
@@ -1201,7 +1252,7 @@ func validateUpgradeStage(path string, driver docsqlite.Driver) error {
 	if !kind.current {
 		return errors.New("interrupted upgrade staging database does not use the current schema")
 	}
-	store, err := openCurrentStore(path, driver)
+	store, err := openCurrentStore(path, driver, nil)
 	if err != nil {
 		return fmt.Errorf("opening interrupted upgrade staging store: %w", err)
 	}

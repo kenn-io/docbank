@@ -936,16 +936,10 @@ func stringPtr(v sql.NullString) *string {
 // bytes: a restore must call VerifyRenditionBlobBytes after every loose or
 // packed blob is available and before publishing the target.
 func (s *Store) ImportMetadata(ctx context.Context, r io.Reader) error {
-	return s.importMetadata(ctx, r, false)
+	return s.importMetadata(ctx, r)
 }
 
-type upgradeMetadataImportKey struct{}
-type upgradeMetadataImport struct{ incarnationImported bool }
-
-func (s *Store) importMetadata(ctx context.Context, r io.Reader, upgrade bool) error {
-	if upgrade {
-		ctx = context.WithValue(ctx, upgradeMetadataImportKey{}, &upgradeMetadataImport{})
-	}
+func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 	rootID := int64(0)
 	vaultID := ""
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {

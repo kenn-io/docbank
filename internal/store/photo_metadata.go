@@ -85,20 +85,40 @@ type metadataPhotoReceiptV28 struct {
 	CreatedAt      string  `json:"created_at" db:"created_at"`
 }
 
+var (
+	photoAssetMetadata = newMetadataTable(metadataTable[metadataPhotoAsset]{
+		record: metadataPhotoAsset{Type: metadataPhotoAssetType}, table: "photo_assets", suffix: "ORDER BY asset_id",
+		validate: validatePhotoAssetMetadataRecord, checkExport: true})
+	photoFileMetadata = newMetadataTable(metadataTable[metadataPhotoFile]{
+		record: metadataPhotoFile{Type: metadataPhotoFileType}, table: "photo_files", suffix: "ORDER BY file_id",
+		validate: validatePhotoFileMetadataRecord, checkExport: true})
+	photoSettingsMetadata = newMetadataTable(metadataTable[metadataPhotoSettings]{
+		record: metadataPhotoSettings{Type: metadataPhotoSettingsType, Singleton: 1}, table: "photo_library_settings",
+		suffix: "WHERE singleton=1", validate: validatePhotoSettingsMetadataRecord, checkExport: true})
+)
+
 // photoMetadataTables exports the photo records in dependency order.
 var photoMetadataTables = []metadataRecordCodec{
-	newMetadataTable(metadataTable[metadataPhotoAsset]{record: metadataPhotoAsset{Type: metadataPhotoAssetType},
-		table: "photo_assets", suffix: "ORDER BY asset_id", validate: validatePhotoAssetMetadataRecord, checkExport: true}),
-	newMetadataTable(metadataTable[metadataPhotoFile]{record: metadataPhotoFile{Type: metadataPhotoFileType},
-		table: "photo_files", suffix: "ORDER BY file_id", validate: validatePhotoFileMetadataRecord, checkExport: true}),
-	newMetadataTable(metadataTable[metadataPhotoSettings]{
-		record: metadataPhotoSettings{Type: metadataPhotoSettingsType, Singleton: 1}, table: "photo_library_settings",
-		suffix: "WHERE singleton=1", validate: validatePhotoSettingsMetadataRecord, checkExport: true}),
+	photoAssetMetadata, photoFileMetadata, photoSettingsMetadata,
 	newMetadataTable(metadataTable[metadataPhotoSet]{record: metadataPhotoSet{Type: "photo_set"}, table: "photo_sets", suffix: "ORDER BY set_id", validate: validatePhotoSetRecord, checkExport: true}),
 	newMetadataTable(metadataTable[metadataPhotoSetMember]{record: metadataPhotoSetMember{Type: "photo_set_member"}, table: "photo_set_members", suffix: "ORDER BY set_id,added_at,asset_id", validate: validatePhotoSetMemberRecord, checkExport: true}),
 	newMetadataTable(metadataTable[metadataPhotoReceipt]{record: metadataPhotoReceipt{Type: metadataPhotoReceiptType},
 		table: "photo_change_receipts", suffix: "ORDER BY receipt_id", validate: validatePhotoReceiptMetadataRecord,
 		checkExport: true}),
+}
+
+// photoMetadataTablesV28 exports the photo records of v0.15.0, which predate
+// photo sets.
+var photoMetadataTablesV28 = []metadataRecordCodec{
+	photoAssetMetadata, photoFileMetadata, photoSettingsMetadata,
+	newMetadataTable(metadataTable[metadataPhotoReceiptV28]{record: metadataPhotoReceiptV28{Type: metadataPhotoReceiptType},
+		table: "photo_change_receipts", suffix: "ORDER BY receipt_id", validate: func(v metadataPhotoReceiptV28) error {
+			return validatePhotoReceiptMetadataRecord(metadataPhotoReceipt{
+				Type: v.Type, ReceiptID: v.ReceiptID, Operation: v.Operation, AssetID: v.AssetID,
+				SettingsKey: v.SettingsKey, BeforeRevision: v.BeforeRevision, AfterRevision: v.AfterRevision,
+				BeforeJSON: v.BeforeJSON, AfterJSON: v.AfterJSON, CreatedAt: v.CreatedAt,
+			})
+		}, checkExport: true}),
 }
 
 // photoSetsStorageSchemaVersion is the first schema with photo sets (v0.15.1).
@@ -109,17 +129,7 @@ func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
 	if version >= photoSetsStorageSchemaVersion {
 		return photoMetadataTables
 	}
-	return []metadataRecordCodec{
-		photoMetadataTables[0], photoMetadataTables[1], photoMetadataTables[2],
-		newMetadataTable(metadataTable[metadataPhotoReceiptV28]{record: metadataPhotoReceiptV28{Type: metadataPhotoReceiptType},
-			table: "photo_change_receipts", suffix: "ORDER BY receipt_id", validate: func(v metadataPhotoReceiptV28) error {
-				return validatePhotoReceiptMetadataRecord(metadataPhotoReceipt{
-					Type: v.Type, ReceiptID: v.ReceiptID, Operation: v.Operation, AssetID: v.AssetID,
-					SettingsKey: v.SettingsKey, BeforeRevision: v.BeforeRevision, AfterRevision: v.AfterRevision,
-					BeforeJSON: v.BeforeJSON, AfterJSON: v.AfterJSON, CreatedAt: v.CreatedAt,
-				})
-			}, checkExport: true}),
-	}
+	return photoMetadataTablesV28
 }
 
 func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
