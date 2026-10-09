@@ -109,6 +109,11 @@ Store code adds validation that SQL cannot express economically: Unicode NFC
 normalization, rejection of empty/dot/slash/NUL names, ancestry checks for
 cycle prevention, revision preconditions, and size agreement.
 
+Filename search results and collection member pages resolve the selected nodes'
+paths with one recursive query. Input positions preserve result order and
+repeated node IDs. Collection paths use the same read transaction as the summary
+and member page, so a concurrent move cannot mix old node data with new paths.
+
 ## Durable write ordering
 
 The ingest invariant is **bytes before reference**:
