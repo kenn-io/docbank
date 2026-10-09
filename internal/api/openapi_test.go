@@ -642,6 +642,7 @@ func TestOpenAPIDeclaresMutationPreconditions(t *testing.T) {
 		doc.Paths["/api/v1/collections/{id}/label"].Put,
 		doc.Paths["/api/v1/nodes/{id}"].Patch,
 		doc.Paths["/api/v1/nodes/{id}/trash"].Post,
+		doc.Paths["/api/v1/photos/assets/{asset_id}/trash"].Post,
 		doc.Paths["/api/v1/nodes/{id}/restore"].Post,
 		doc.Paths["/api/v1/nodes/{id}/verify"].Post,
 		doc.Paths["/api/v1/nodes/{id}/revert"].Post,

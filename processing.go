@@ -6,6 +6,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	internalprocessing "go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/retrieval"
 )
 
 var (
@@ -13,6 +14,7 @@ var (
 	ErrInvalidEvidenceRequest       = internalprocessing.ErrInvalidEvidenceRequest
 	ErrInvalidRenditionWindow       = internalprocessing.ErrInvalidRenditionWindow
 	ErrInvalidRenditionEncoding     = internalprocessing.ErrInvalidRenditionEncoding
+	ErrMediaSearchInvalid           = internalprocessing.ErrMediaSearchInvalid
 	ErrForeignVault                 = internalprocessing.ErrForeignVault
 	ErrProcessingProfileUnavailable = internalprocessing.ErrProfileNotConfigured
 	ErrProcessingPlanChanged        = internalprocessing.ErrPlanChanged
@@ -177,12 +179,23 @@ func (v *Vault) LookupFormat(_ context.Context, query string) (document.FormatLo
 	return v.processing.LookupFormat(query), nil
 }
 
+// SearchDocuments searches the request's source fence. Invalid MediaSources
+// selectors, or a mode or reranking choice they do not support, match
+// ErrMediaSearchInvalid.
 func (v *Vault) SearchDocuments(ctx context.Context, request DocumentSearchRequest) (DocumentSearchReport, error) {
 	if err := v.begin(); err != nil {
 		return DocumentSearchReport{}, err
 	}
 	defer v.lifecycle.RUnlock()
+	var sources []retrieval.MediaSourceSelector
+	if request.MediaSources != nil {
+		sources = make([]retrieval.MediaSourceSelector, len(request.MediaSources))
+		for i, source := range request.MediaSources {
+			sources[i] = retrieval.MediaSourceSelector(source)
+		}
+	}
 	report, err := v.processing.Search(ctx, internalprocessing.SearchRequest{Query: request.Query,
+		MediaSources: sources,
 		ContentFirst: request.ContentFirst,
 		Mode:         string(request.Mode), Limit: request.Limit, Profile: request.Profile,
 		BindingID: request.BindingID, Explain: request.Explain,
@@ -250,12 +263,19 @@ func fromCoverageClass(item internalprocessing.CoverageClass) CoverageClass {
 
 func fromSearchReport(report internalprocessing.SearchReport, explain bool) DocumentSearchReport {
 	result := DocumentSearchReport{RequestedMode: DocumentSearchMode(report.RequestedMode),
-		ActualMode: DocumentSearchMode(report.ActualMode),
+		ActualMode:           DocumentSearchMode(report.ActualMode),
+		MediaSourceSelection: report.MediaSourceSelection,
 		Coverage: DocumentSearchCoverage{BindingRequired: report.Coverage.BindingRequired,
 			ScopedDocuments:   report.Coverage.ScopedDocuments,
 			CompleteDocuments: report.Coverage.CompleteDocuments, State: string(report.Coverage.State)},
 		Truncated: report.Truncated, Results: make([]DocumentSearchResult, len(report.Results)),
 		Degradations: make([]string, len(report.Degradations))}
+	if report.MediaSelections != nil {
+		result.MediaSelections = make([]DocumentMediaSelection, len(report.MediaSelections))
+		for i, selection := range report.MediaSelections {
+			result.MediaSelections[i] = DocumentMediaSelection(selection)
+		}
+	}
 	for index, degradation := range report.Degradations {
 		result.Degradations[index] = string(degradation)
 	}
@@ -270,6 +290,10 @@ func fromSearchReport(report internalprocessing.SearchReport, explain bool) Docu
 				VectorSpaceID: evidence.VectorSpaceID, EmbeddingSetID: evidence.EmbeddingSetID,
 				InputGenerationID: evidence.InputGenerationID, InputID: evidence.InputID,
 				InputKind: string(evidence.InputKind), SourceManifestChecksum: evidence.SourceManifestChecksum}
+			for _, source := range evidence.MediaSources {
+				convertedEvidence.MediaSources = append(convertedEvidence.MediaSources,
+					DocumentMediaSource(source))
+			}
 			if evidence.TimeSpan != nil {
 				convertedEvidence.TimeSpan = &MediaTimeSpan{
 					StartMS: evidence.TimeSpan.StartMS, EndMS: evidence.TimeSpan.EndMS,

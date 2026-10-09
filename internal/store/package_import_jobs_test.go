@@ -498,7 +498,7 @@ func TestPackageImportDiscardRepairsPhotoAssets(t *testing.T) {
 			require.NoError(t, s.db.QueryRowContext(t.Context(),
 				`SELECT COUNT(*) FROM photo_change_receipts WHERE asset_id=? AND operation='purge'`, asset.ID).Scan(&purges))
 			require.Equal(t, 1, purges)
-			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db))
+			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion))
 		})
 	}
 }

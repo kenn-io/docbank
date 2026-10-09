@@ -30,16 +30,18 @@ func TestMediaRetryAdmissionOrderWithEqualClockTimes(t *testing.T) {
 				SourceID: sourceID, RequestSHA256: strings.Repeat("b", 64)}, receipt)
 			require.NoError(t, err)
 		}
-		receipts, err := s.mediaProcessingReceiptsForVersion(ctx, "operator", sourceID, sourceVersionID)
+		item, err := s.MediaSourceVersion(ctx, "operator", sourceID, sourceVersionID)
 		require.NoError(t, err)
+		receipts := item.ProcessingReceipts
 		require.Equal(t, []string{newer, older}, []string{receipts[0].OperationID, receipts[1].OperationID})
 
 		var exported bytes.Buffer
 		require.NoError(t, s.ExportMetadata(ctx, &exported))
 		restored := newTestStore(t)
 		require.NoError(t, restored.ImportMetadata(ctx, &exported))
-		receipts, err = restored.mediaProcessingReceiptsForVersion(ctx, "operator", sourceID, sourceVersionID)
+		item, err = restored.MediaSourceVersion(ctx, "operator", sourceID, sourceVersionID)
 		require.NoError(t, err)
+		receipts = item.ProcessingReceipts
 		require.Equal(t, []string{newer, older}, []string{receipts[0].OperationID, receipts[1].OperationID})
 	})
 }

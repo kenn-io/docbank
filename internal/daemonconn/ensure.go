@@ -1,6 +1,8 @@
 package daemonconn
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -39,6 +41,16 @@ const (
 // discovery but before its ownership-proven client was ready. A caller may
 // safely repeat the complete discovery/start/proof sequence.
 var ErrTransientDaemonAcquisition = errors.New("daemon acquisition was interrupted")
+
+var (
+	errOwnershipProofTimeout = errors.New("daemon ownership proof timed out")
+	errOwnershipChallenge    = errors.New("daemon ownership challenge failed")
+)
+
+const (
+	proofResponseLimit = 64 << 10
+	proofBodyLimit     = 4 << 10
+)
 
 type daemonStartError struct {
 	message string
@@ -112,37 +124,87 @@ func Find(ctx context.Context, root string) (kitdaemon.RuntimeRecord, kitdaemon.
 // config.toml. Before the key can cross the socket, the endpoint must prove it
 // owns that private record, and every later request stays on the proven socket.
 func newProvenClientFor(ctx context.Context, rec kitdaemon.RuntimeRecord) (*Connection, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, probeOptions().Timeout)
+	return newProvenClientForDial(ctx, rec, (&net.Dialer{}).DialContext)
+}
+
+func newProvenClientForDial(
+	ctx context.Context,
+	rec kitdaemon.RuntimeRecord,
+	dial func(context.Context, string, string) (net.Conn, error),
+) (*Connection, error) {
+	probeCtx, cancel := context.WithTimeoutCause(ctx, probeOptions().Timeout, errOwnershipProofTimeout)
 	defer cancel()
-	conn, err := (&net.Dialer{}).DialContext(probeCtx, kitdaemon.NetworkTCP, rec.Address)
+	conn, err := dial(probeCtx, kitdaemon.NetworkTCP, rec.Address)
 	if err != nil {
 		return nil, fmt.Errorf("dialing daemon for ownership proof: %w", err)
 	}
-	dialer := &singleConnDialer{conn: conn}
-	transport := &http.Transport{
-		Proxy:               nil,
-		DialContext:         dialer.DialContext,
-		MaxConnsPerHost:     1,
-		MaxIdleConnsPerHost: 1,
-	}
+	ready := false
+	defer func() {
+		if !ready {
+			_ = conn.Close()
+		}
+	}()
+	stop := context.AfterFunc(probeCtx, func() { _ = conn.Close() })
+	defer stop()
 	hc := &http.Client{
-		Transport: transport,
+		Transport: proofTransport{conn: conn},
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return errors.New("daemon requests must not redirect")
 		},
 	}
-	owned, proofErr := proveOwnershipWithClient(ctx, rec, hc)
-	if proofErr != nil || !owned {
-		transport.CloseIdleConnections()
-		_ = conn.Close()
-		if proofErr != nil {
-			return nil, proofErr
-		}
+	owned, proofErr := proveOwnershipWithClient(probeCtx, rec, hc)
+	if !stop() || probeCtx.Err() != nil {
+		return nil, fmt.Errorf("proving daemon ownership: %w", context.Cause(probeCtx))
+	}
+	if proofErr != nil {
+		return nil, proofErr
+	}
+	if !owned {
 		return nil, errors.New("daemon endpoint failed ownership proof")
+	}
+	dialer := &singleConnDialer{conn: conn}
+	hc.Transport = &provenTransport{
+		Transport: &http.Transport{
+			Proxy:               nil,
+			DialContext:         dialer.DialContext,
+			MaxConnsPerHost:     1,
+			MaxIdleConnsPerHost: 1,
+		},
+		dialer: dialer,
 	}
 	c := New("http://"+rec.Address, rec.Metadata[metaAPIKey])
 	c.hc = hc
+	ready = true
 	return c, nil
+}
+
+// proofTransport finishes the credential-free exchange before handing its socket away.
+type proofTransport struct{ conn net.Conn }
+
+func (t proofTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if err := req.Write(t.conn); err != nil {
+		return nil, fmt.Errorf("writing daemon ownership challenge: %w", err)
+	}
+	reader := bufio.NewReader(io.LimitReader(t.conn, proofResponseLimit))
+	resp, err := http.ReadResponse(reader, req)
+	if err != nil {
+		return nil, fmt.Errorf("reading daemon ownership response: %w", err)
+	}
+	if resp.Close {
+		return nil, errors.New("daemon ownership response closes its connection")
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, proofBodyLimit+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading daemon ownership body: %w", err)
+	}
+	if len(body) > proofBodyLimit || reader.Buffered() != 0 {
+		return nil, errors.New("daemon ownership response exceeds its framing bounds")
+	}
+	if err := resp.Body.Close(); err != nil {
+		return nil, fmt.Errorf("closing daemon ownership body: %w", err)
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return resp, nil
 }
 
 // singleConnDialer gives the HTTP transport exactly the socket that completed
@@ -151,6 +213,27 @@ func newProvenClientFor(ctx context.Context, rec kitdaemon.RuntimeRecord) (*Conn
 type singleConnDialer struct {
 	mu   sync.Mutex
 	conn net.Conn
+}
+
+func (d *singleConnDialer) close() {
+	d.mu.Lock()
+	conn := d.conn
+	d.conn = nil
+	d.mu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
+	}
+}
+
+type provenTransport struct {
+	*http.Transport
+
+	dialer *singleConnDialer
+}
+
+func (t *provenTransport) CloseIdleConnections() {
+	t.dialer.close()
+	t.Transport.CloseIdleConnections()
 }
 
 func (d *singleConnDialer) DialContext(
@@ -505,12 +588,18 @@ func discoverWithOptions(
 // without transmitting its API key or shutdown token. A listener that captured
 // the port during teardown can copy ping fields but cannot forge this response.
 func proveEndpointOwnership(ctx context.Context, rec kitdaemon.RuntimeRecord) (bool, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, probeOptions().Timeout)
+	defer cancel()
 	challengeClient := &http.Client{
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return errors.New("daemon ownership challenge must not redirect")
 		},
 	}
-	return proveOwnershipWithClient(ctx, rec, challengeClient)
+	owned, err := proveOwnershipWithClient(probeCtx, rec, challengeClient)
+	if errors.Is(err, errOwnershipChallenge) {
+		return false, nil
+	}
+	return owned, err
 }
 
 func proveOwnershipWithClient(
@@ -524,29 +613,26 @@ func proveOwnershipWithClient(
 	if _, err := rand.Read(nonce); err != nil {
 		return false, fmt.Errorf("generating daemon ownership challenge: %w", err)
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, probeOptions().Timeout)
-	defer cancel()
 	connection := New("http://"+rec.Address, "")
 	connection.hc = challengeClient
 	var responseHTTP *http.Response
-	_, err := connection.apiWithResponse(&responseHTTP).ChallengeDaemon(clientruntime.WithStreamingResponse(probeCtx), &apiclient.ChallengeDaemonRequestOptions{Query: &apiclient.ChallengeDaemonQuery{Nonce: hex.EncodeToString(nonce)}})
+	_, err := connection.apiWithResponse(&responseHTTP).ChallengeDaemon(clientruntime.WithStreamingResponse(ctx), &apiclient.ChallengeDaemonRequestOptions{Query: &apiclient.ChallengeDaemonQuery{Nonce: hex.EncodeToString(nonce)}})
 	if err != nil {
-		return false, nil
+		return false, fmt.Errorf("%w: %w", errOwnershipChallenge, err)
 	}
 	resp := responseHTTP
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, proofBodyLimit))
 		return false, nil
 	}
 	var result struct {
 		Proof string `json:"proof"`
 	}
-	limited := io.LimitReader(resp.Body, 4<<10)
+	limited := io.LimitReader(resp.Body, proofBodyLimit)
 	if err := json.UnmarshalRead(limited, &result); err != nil {
 		return false, nil
 	}
-	_, _ = io.Copy(io.Discard, limited)
 	return daemonauth.Verify(token, nonce, result.Proof), nil
 }
 

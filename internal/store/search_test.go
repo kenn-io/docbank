@@ -339,6 +339,49 @@ func TestRevalidateSearchCandidatesPreservesOrderAtTheCandidateLimit(t *testing.
 	}
 }
 
+func TestRevalidateSearchCandidatesRefreshesPathsAfterFiltering(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	parent, err := s.MkdirAll(ctx, "/before/資料")
+	require.NoError(t, err)
+	first, err := s.CreateFile(ctx, parent.ID, "first.txt", fakeHash("first"), 5, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, parent.ID, "second.txt", fakeHash("second"), 6, "text/plain")
+	require.NoError(t, err)
+	a := SearchCandidateIdentity{NodeID: first.ID, NodeRevision: first.Revision,
+		ContentVersionID: first.CurrentVersionID, Evidence: []SearchEvidenceIdentity{{Kind: "node_name"}}}
+	b := SearchCandidateIdentity{NodeID: second.ID, NodeRevision: second.Revision,
+		ContentVersionID: second.CurrentVersionID, Evidence: []SearchEvidenceIdentity{{Kind: "node_name"}}}
+	stale := a
+	stale.NodeRevision++
+	missing := a
+	missing.NodeID = second.ID + 100
+	requested := []SearchCandidateIdentity{stale, b, missing, a, a}
+	_, _, err = s.Move(ctx, parent.ID, s.RootID(), "moved", UnconditionalRev)
+	require.NoError(t, err)
+
+	result, err := s.RevalidateSearchCandidates(ctx, requested, SearchOptions{}, "", "")
+	require.NoError(t, err)
+	require.Equal(t, []RevalidatedSearchCandidate{
+		{SearchCandidateIdentity: b, Path: "/moved/second.txt"},
+		{SearchCandidateIdentity: a, Path: "/moved/first.txt"},
+		{SearchCandidateIdentity: a, Path: "/moved/first.txt"},
+	}, result.Candidates)
+
+	result, err = s.RevalidateSearchCandidates(ctx, requested[:3], SearchOptions{}, "", "")
+	require.NoError(t, err)
+	require.Equal(t, []RevalidatedSearchCandidate{
+		{SearchCandidateIdentity: b, Path: "/moved/second.txt"},
+	}, result.Candidates)
+
+	_, _, err = s.Trash(ctx, parent.ID, UnconditionalRev)
+	require.NoError(t, err)
+	result, err = s.RevalidateSearchCandidates(ctx, requested, SearchOptions{}, "", "")
+	require.NoError(t, err)
+	require.Empty(t, result.Candidates)
+}
+
 func TestRevalidateSearchCandidatesAppliesCurrentScopeAndBlobEvidence(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -2434,6 +2477,12 @@ func TestSearchContentFirstPriority(t *testing.T) {
 	}
 	require.Equal(t, "node_name", hits[2].EvidenceKind)
 	require.Equal(t, "mercury-tail.txt", hits[2].Node.Name)
+	for _, contentFirst := range []bool{false, true} {
+		selected, truncated, err := s.SearchExplainedLexicalCandidates(t.Context(), "mercury", 3, SearchOptions{SelectedBuilds: []SearchSelectedBuild{{ContentVersionID: versions[0], BuildID: build.ID}}}, contentFirst)
+		require.NoError(t, err)
+		require.False(t, truncated)
+		require.Equal(t, hits[:1], selected, "selected builds exclude filename matches in either ordering mode")
+	}
 }
 
 func TestSearchContentFirstGenerationSources(t *testing.T) {

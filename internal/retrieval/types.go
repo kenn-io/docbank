@@ -29,6 +29,7 @@ const (
 )
 
 type DocumentIdentity struct {
+	BuildID          string
 	VaultID          string
 	NodeID           int64
 	ContentVersionID string
@@ -41,6 +42,7 @@ type MediaTimeSpan struct {
 }
 
 type EvidenceReference struct {
+	MediaSources           []MediaSource
 	Kind                   string
 	VaultID                string
 	NodeID                 int64
@@ -56,6 +58,22 @@ type EvidenceReference struct {
 	BlobHash               string
 	SourceManifestChecksum string
 	TimeSpan               *MediaTimeSpan
+}
+
+type MediaSource struct {
+	SourceID         string
+	SourceVersionID  string
+	ContentVersionID string
+}
+
+type MediaSourceSelector struct {
+	SourceID, SourceVersionID, ContentVersionID string
+	SuppliedInputIDs                            []string
+}
+
+func (source MediaSourceSelector) Identity() MediaSource {
+	return MediaSource{SourceID: source.SourceID, SourceVersionID: source.SourceVersionID,
+		ContentVersionID: source.ContentVersionID}
 }
 
 type Candidate struct {
@@ -125,15 +143,22 @@ type TraceEvent struct {
 	Count int
 }
 
+type MediaSelection struct {
+	SourceID, SourceVersionID, ContentVersionID string
+	Origin, SuppliedInputID, Completeness       string
+}
+
 type Report struct {
-	RequestedMode Mode
-	ActualMode    Mode
-	Coverage      Coverage
-	Results       []Result
-	Truncated     bool
-	Trace         []TraceEvent
-	Degradations  []Degradation
-	Receipts      []ProviderReceipt
+	MediaSelections      []MediaSelection
+	MediaSourceSelection bool
+	RequestedMode        Mode
+	ActualMode           Mode
+	Coverage             Coverage
+	Results              []Result
+	Truncated            bool
+	Trace                []TraceEvent
+	Degradations         []Degradation
+	Receipts             []ProviderReceipt
 }
 
 type Query struct {

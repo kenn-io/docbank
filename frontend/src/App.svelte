@@ -1630,7 +1630,7 @@
     await loadDirectory(parent.id, true, exact.id, false, { node: exact, path });
   }
 
-  function handleTrashed(_receipt: Node): void {
+  function handleTrashed(_receipt?: Node): void {
     selectNode(undefined);
 
     // Cached views may contain the removed node or pre-trash parent revisions.
@@ -1651,7 +1651,14 @@
     void loadTagCatalog();
   }
 
+  // Album counts and the other photo list may hold photos that just moved to or from trash.
+  function refreshPhotoViews(source?: Photos): void {
+    void photoState?.albums.load();
+    for (const photos of [photoState?.photos, albumPhotos]) if (photos && photos !== source) void photos.refresh();
+  }
+
   function handleRestored(_receipt: Node): void {
+    refreshPhotoViews();
     selectNode(undefined);
 
     // Restore can advance an arbitrary destination parent and make every
@@ -1980,6 +1987,7 @@
         <div class="nav-group">
           <button type="button" class="nav-item" aria-current={photoPath === "/photos" ? "page" : undefined} onclick={() => navigatePhotos("/photos")}><LibraryIcon size="16" aria-hidden="true" />Library</button>
           <button type="button" class="nav-item" data-albums-nav aria-current={photoPath === "/photos/albums" ? "page" : undefined} onclick={() => navigatePhotos("/photos/albums")}><FoldersIcon size="16" aria-hidden="true" />Albums</button>
+          <button type="button" class="nav-item" aria-label="Recoverable trash" onclick={() => openPanel({ kind: "trash" })}><Trash2Icon size="16" aria-hidden="true" />Trash</button>
         </div>
         {#if photoState}
           <div class="nav-group album-targets"><h2>Albums</h2>
@@ -2117,8 +2125,8 @@
 
     {#if photoMode && photoState}
       {#if photoPath === "/photos/albums"}<PhotoAlbumsIndex albums={photoState.albums} cache={photoState.cache} onnavigate={navigatePhotos} />
-      {:else if albumID && albumPhotos}{#key albumPhotos}<PhotosWorkspace photos={albumPhotos} cache={photoState.cache} albums={photoState.albums} {albumID} onnavigate={navigatePhotos} />{/key}
-      {:else if !albumID}{#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} albums={photoState.albums} onnavigate={navigatePhotos} />{/key}{/if}
+      {:else if albumID && albumPhotos}{#key albumPhotos}<PhotosWorkspace photos={albumPhotos} cache={photoState.cache} albums={photoState.albums} {albumID} onnavigate={navigatePhotos} ontrashed={() => { handleTrashed(); refreshPhotoViews(albumPhotos); }} />{/key}
+      {:else if !albumID}{#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} albums={photoState.albums} onnavigate={navigatePhotos} ontrashed={() => { handleTrashed(); refreshPhotoViews(photoState?.photos); }} />{/key}{/if}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
     {#if savedQueryDraft}

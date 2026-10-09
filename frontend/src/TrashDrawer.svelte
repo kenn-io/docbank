@@ -69,13 +69,8 @@
   function handleRestored(receipt: Node): void {
     restoreTarget = null;
     restored = receipt;
-    if (page) {
-      page = {
-        ...page,
-        items: page.items.filter((item) => item.id !== receipt.id),
-        total: Math.max(0, page.total - 1),
-      };
-    }
+    page = null;
+    void refresh();
     onrestored(receipt);
   }
 </script>
@@ -85,10 +80,10 @@
     <div class="drawer-heading">
       <div>
         <span>Recoverable trash</span>
-        <strong>Trashed documents</strong>
+        <strong>Trashed items</strong>
         <small>
           {#if page}
-            {page.total} restorable root{page.total === 1 ? "" : "s"}
+            {page.total} restorable item{page.total === 1 ? "" : "s"}
           {:else}
             Items removed from the live tree
           {/if}
@@ -152,7 +147,7 @@
                   <div>
                     <strong>{node.name}</strong>
                     <Chip size="xs" tone="muted">
-                      {node.kind === "dir" ? "Folder" : "Document"}
+                      {node.photo_asset_id ? `Photo · ${node.photo_file_count} trashed file${node.photo_file_count === 1 ? "" : "s"}` : node.kind === "dir" ? "Folder" : "Document"}
                     </Chip>
                   </div>
                   <span>Trashed {formatDate(node.trashed_at ?? "")}</span>
@@ -185,7 +180,7 @@
         </div>
         {#if page.total > page.items.length}
           <p class="bounded">
-            Showing the newest {page.items.length} of {page.total} restorable roots.
+            Showing the newest {page.items.length} of {page.total} restorable items.
             Use the CLI or API for the complete listing.
           </p>
         {/if}
@@ -306,6 +301,7 @@
 
   dl {
     display: flex;
+    align-items: baseline;
     flex-wrap: wrap;
     gap: var(--space-2) var(--space-4);
     margin: 0;
@@ -313,7 +309,7 @@
 
   dl > div {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: var(--space-2);
   }
 
@@ -324,7 +320,7 @@
 
   dd {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: var(--space-1);
     margin: 0;
     color: var(--text-secondary);

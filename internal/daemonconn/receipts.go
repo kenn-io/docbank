@@ -350,9 +350,7 @@ func (policy APIKeyExclusionPolicy) Allows(c *Connection) bool {
 	return policy != nil && policy(c)
 }
 
-// Close releases idle transport connections owned by this client. It is most
-// useful to long-running callers that periodically reacquire a daemon client
-// after idle shutdown or process replacement.
+// Close releases pending and idle transport connections owned by this client.
 func (c *Connection) Close() error {
 	if c != nil && c.hc != nil && c.hc.Transport != nil {
 		if transport, ok := c.hc.Transport.(interface{ CloseIdleConnections() }); ok {

@@ -543,6 +543,9 @@ func (searcher *Searcher) collectLexical(ctx context.Context, query Query) ([]Ca
 			NodeID: hit.Node.ID, ContentVersionID: hit.Node.CurrentVersionID}, Lane: LaneLexical,
 			Rank: index + 1, Path: hit.Path, Excerpt: hit.Excerpt,
 			Evidence: []EvidenceReference{reference}}
+		if len(query.Scope.SelectedBuilds) != 0 {
+			candidates[index].Document.BuildID = hit.BuildID
+		}
 	}
 	return candidates, truncated, nil
 }

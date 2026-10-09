@@ -13,6 +13,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -2829,6 +2830,41 @@ func TestEmbeddedSearchContentFirst(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, control.Results, 1)
 	require.Equal(t, "node_name", control.Results[0].Evidence[0].Kind)
+	require.Nil(t, control.MediaSelections)
+	for _, tc := range []struct {
+		name    string
+		sources []docbank.DocumentMediaSourceSelector
+		invalid bool
+		mode    docbank.DocumentSearchMode
+	}{
+		{"empty", []docbank.DocumentMediaSourceSelector{}, true, docbank.DocumentSearchLexical},
+		{"empty_source_id", []docbank.DocumentMediaSourceSelector{{SourceVersionID: "unknown", ContentVersionID: ids[0]}}, true, docbank.DocumentSearchLexical},
+		{"supplied_input_count", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0], SuppliedInputIDs: slices.Repeat([]string{strings.Repeat("a", 64)}, 65)}}, true, docbank.DocumentSearchLexical},
+		{"invalid_utf8_source_version", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "\xff", ContentVersionID: ids[0]}}, true, docbank.DocumentSearchLexical},
+		{"selected", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}, false, docbank.DocumentSearchLexical},
+		{"semantic", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}, true, docbank.DocumentSearchSemantic},
+		{"hybrid", []docbank.DocumentMediaSourceSelector{{SourceID: "unknown", SourceVersionID: "unknown", ContentVersionID: ids[0]}}, true, docbank.DocumentSearchHybrid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			selected := request
+			selected.MediaSources = tc.sources
+			selected.Mode = tc.mode
+			report, err := vault.SearchDocuments(t.Context(), selected)
+			if tc.invalid {
+				require.ErrorIs(t, err, docbank.ErrMediaSearchInvalid)
+			} else {
+				require.NoError(t, err)
+				require.True(t, report.MediaSourceSelection)
+				require.NotNil(t, report.MediaSelections)
+				require.Empty(t, report.MediaSelections)
+				encoded, err := json.Marshal(report)
+				require.NoError(t, err)
+				require.Contains(t, string(encoded), `"media_selections":[]`)
+			}
+			require.Empty(t, report.Results, "explicit selection never returns ordinary filename hits")
+		})
+	}
+
 	request.ContentFirst = true
 	report, err := vault.SearchDocuments(t.Context(), request)
 	require.NoError(t, err)

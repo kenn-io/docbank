@@ -13,7 +13,7 @@
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
   import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
 
-  let { photos, cache, albums, albumID = "", onnavigate = () => {} }: { photos: Photos; cache: PhotoPreviewCache; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void } = $props();
+  let { photos, cache, albums, albumID = "", onnavigate = () => {}, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: () => void } = $props();
   const album = $derived(albums?.items.find(item => item.id === albumID));
   let alive = true;
   onDestroy(() => alive = false);
@@ -30,6 +30,7 @@
   let duplicateName = $state("");
   let renameInput = $state<HTMLInputElement>();
   const sortOptions = [{ value: "added_time", label: "Added" }, { value: "capture_time", label: "Captured" }, { value: "import_time", label: "Imported" }];
+  let trashOpen = $state(false);
   let grid = $state<{ preservePosition: () => (() => Promise<void>) }>();
   const preserve = () => grid?.preservePosition();
   const groups = $derived(groupPhotos(photos.items, albumID && photos.query.sort?.field !== "capture_time" ? "flat" : photos.grouping));
@@ -140,7 +141,7 @@
     </EmptyState>
   {/if}
   <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
-  <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} loadedSelected={photos.items.every(item => photos.selection.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.total} allResults={photos.allResults} onallresults={() => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()}>
+  <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} loadedSelected={photos.items.every(item => photos.selection.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.total} allResults={photos.allResults} onallresults={() => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.loading || photos.allResults}>
     {#snippet photoActions()}
       {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} {preserve} />{/if}
       {#if album && albums}<Button size="sm" disabled={albums.busy} onclick={() => void remove()}>Remove from album</Button><Button size="sm" disabled={albums.busy || photos.allResults || photos.selection.selectedIDs.size !== 1} onclick={() => void albums!.cover(album!, [...photos.selection.selectedIDs][0])}>Use as cover</Button>{/if}
@@ -153,6 +154,17 @@
     {#if modal === "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
     {#if modalError}<p role="alert">{modalError}</p>{/if}
     <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button>{#if reviewRequired(modal, modalError, modalStatus)}<Button disabled={albums.busy || albums.loading} onclick={() => void reviewAlbum()}>Review current album</Button>{/if}<Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || modal === "duplicate" && !!albums.unconfirmed || reviewRequired(modal, modalError, modalStatus) || modal === "duplicate" && !duplicateName.trim()} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
+  </Modal>
+{/if}
+
+{#if trashOpen}
+  <Modal title="Move selected photos to trash?" tone="danger" ariaLabel="Move selected photos to trash" onclose={() => { if (!photos.trashing) trashOpen = false; }} closeOnOverlayClick={!photos.trashing}>
+    <p>Move {photos.selection.selectedIDs.size} selected photo{photos.selection.selectedIDs.size === 1 ? "" : "s"} and every RAW, image, video, and sidecar member to recoverable trash. Stored files and album membership stay intact.</p>
+    {#if photos.trashError}<p role="alert">{photos.trashError} Failed photos remain selected for retry.</p>{/if}
+    {#snippet footer()}
+      <Button disabled={photos.trashing} onclick={() => trashOpen = false}>Keep in Docbank</Button>
+      <Button tone="danger" disabled={photos.trashing || photos.selection.selectedIDs.size === 0} onclick={async () => { if (await photos.trashSelected(preserve, ontrashed)) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
+    {/snippet}
   </Modal>
 {/if}
 

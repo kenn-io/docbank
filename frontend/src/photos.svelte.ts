@@ -1,4 +1,4 @@
-import { listPhotoAssets, type PhotoBrowseRow, type SavedQueryV1Schema, type PhotoAlbumMembersRequest } from "./generated/docbank.js";
+import { listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema, type PhotoAlbumMembersRequest } from "./generated/docbank.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
@@ -20,6 +20,9 @@ export class Photos {
   total = $state(0);
   cursor = $state<string | undefined>();
   loading = $state(false);
+  trashing = $state(false);
+  trashError = $state("");
+  trashTargets = $state<PhotoBrowseRow[]>([]);
   error = $state("");
   scrollTop = $state(0);
   grouping = $state<"months" | "sessions">("months");
@@ -168,7 +171,7 @@ export class Photos {
       this.total = total;
       this.cursor = cursor;
       this.started = true;
-      this.selection = this.allResults ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined } : reconcileIDSelection(this.selection, eligible);
+      this.selection = this.allResults ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined } : reconcileIDSelection(this.selection, new Set([...eligible, ...this.trashTargets.map(item => item.asset_id)]));
       if (!this.selection.selectedIDs.size) this.allResults = false;
       this.expired = false;
       this.replacement = undefined;
@@ -182,21 +185,66 @@ export class Photos {
     }
   }
 
+  async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
+    if (this.trashing || this.disposed) return false;
+    this.pruneTrashTargets();
+    const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
+    const resolved = [...this.selection.selectedIDs].map(id => rows.get(id));
+    if (!resolved.length || resolved.some(item => !item)) {
+      this.trashError = "Load and select the photos again before moving them to trash.";
+      return false;
+    }
+    const selected = resolved.filter((item): item is PhotoBrowseRow => !!item).map(item => ({ ...item }));
+    this.trashTargets = selected;
+    this.trashing = true;
+    this.trashError = "";
+    let successes = 0;
+    try {
+      for (const item of selected) {
+        try {
+          const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
+          const revision = item.revision;
+          const receipt = await trashPhotoAsset(item.asset_id, { "If-Match": String(revision) }, options);
+          if (receipt.id !== item.asset_id || receipt.revision <= revision) throw new Error("Photo trash response did not confirm the selected photo. Refresh and retry.");
+          successes++;
+          const restore = preserve?.();
+          this.items = this.items.filter(row => row.asset_id !== item.asset_id);
+          this.total = Math.max(0, this.total - 1);
+          this.trashTargets = this.trashTargets.filter(target => target.asset_id !== item.asset_id);
+          const ids = new Set(this.selection.selectedIDs);
+          ids.delete(item.asset_id);
+          this.selection = { selectedIDs: ids, anchorID: undefined };
+          await restore?.();
+        } catch (cause) {
+          if (cause instanceof APIError && cause.status === 401) { this.onauthfailure(cause); break; }
+          this.trashError = cause instanceof Error ? cause.message : String(cause);
+        }
+      }
+      if (successes) ontrashed?.();
+      await this.refresh(preserve);
+      return successes === selected.length;
+    } finally { this.trashing = false; }
+  }
+
   select(id: string, event: MouseEvent, orderedIDs: string[]) {
     if (event.button !== 0) return;
     this.allResults = false;
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
       this.selection = toggleIDSelection(this.selection, orderedIDs, id, event.shiftKey || !this.selection.selectedIDs.has(id), event.shiftKey);
     } else this.selection = { selectedIDs: new Set([id]), anchorID: id };
+    this.pruneTrashTargets();
   }
 
   check(id: string, checked: boolean, range: boolean, orderedIDs: string[]) {
     this.allResults = false;
     this.selection = toggleIDSelection(this.selection, orderedIDs, id, checked, range);
+    this.pruneTrashTargets();
   }
 
-  clearSelection() { this.allResults = false; this.selection = clearSelection<string>(); }
-  selectLoaded() { this.allResults = false; this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; }
+  private pruneTrashTargets() { this.trashTargets = this.trashTargets.filter(item => this.selection.selectedIDs.has(item.asset_id)); }
+
+  clearSelection() { this.allResults = false; this.selection = clearSelection<string>(); this.trashTargets = []; }
+  selectLoaded() { this.allResults = false; this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
   selectAllResults() { this.selectLoaded(); this.allResults = true; }
   dispose() { this.disposed = true; this.controller.abort(); }
 }

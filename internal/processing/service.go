@@ -338,6 +338,7 @@ type Coverage struct {
 }
 
 type SearchRequest struct {
+	MediaSources                    []retrieval.MediaSourceSelector
 	Query, Mode, Profile, BindingID string
 	Limit                           int
 	Fence                           SourceFence
@@ -1416,6 +1417,9 @@ func (service *Service) Search(ctx context.Context, request SearchRequest) (retr
 	if err != nil {
 		return retrieval.Report{}, err
 	}
+	if request.MediaSources != nil {
+		return service.searchMediaSources(ctx, request, ids, prepared)
+	}
 	if len(profile.portable.Embeddings) != 0 && (prepared.mode == retrieval.ModeSemantic || prepared.mode == retrieval.ModeHybrid) {
 		binding, err := selectEmbeddingBinding(profile.portable, prepared.bindingID)
 		if err != nil {
@@ -1473,6 +1477,10 @@ func (service *Service) prepareSearch(
 	mode := retrieval.Mode(request.Mode)
 	if mode == "" {
 		mode = retrieval.ModeAuto
+	}
+	if request.MediaSources != nil && (request.Rerank ||
+		(mode != retrieval.ModeLexical && mode != retrieval.ModeAuto)) {
+		return preparedSearch{}, ErrMediaSearchInvalid
 	}
 	limit := request.Limit
 	if limit == 0 {

@@ -1,11 +1,44 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { Photos } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photo } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
+
+it("keeps failed confirmation visible and closes after cancellation or success", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3)], total: 3 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-3", revision: 2 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(2)], total: 1 })));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const ontrashed = vi.fn();
+  render(PhotosWorkspace, { photos, cache, ontrashed });
+  await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+  const dialog = screen.getByRole("dialog", { name: "Move selected photos to trash" });
+  expect(within(dialog).getByText(/^Move 2 selected photos and/)).toBeTruthy();
+  await fireEvent.click(within(dialog).getByRole("button", { name: "Move to trash" }));
+  await within(dialog).findByText(/Photo changed/);
+  expect(ontrashed).toHaveBeenCalledTimes(1);
+  await fireEvent.click(await within(dialog).findByRole("button", { name: "Keep in Docbank" }));
+  expect(screen.queryByRole("dialog", { name: "Move selected photos to trash" })).toBeNull();
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 3.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+  const single = screen.getByRole("dialog", { name: "Move selected photos to trash" });
+  expect(within(single).getByText(/^Move 1 selected photo and/)).toBeTruthy();
+  await fireEvent.click(within(single).getByRole("button", { name: "Move to trash" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Move selected photos to trash" })).toBeNull());
+  expect(ontrashed).toHaveBeenCalledTimes(2);
+  photos.dispose(); await cache.dispose();
+});
 
 it("keeps loaded photos visible on paging failure and selects with touch checkboxes", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });

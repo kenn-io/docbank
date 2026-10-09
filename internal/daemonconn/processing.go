@@ -599,7 +599,8 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 			return errors.New("retrieval trace is invalid")
 		}
 	}
-	seenDocuments := make(map[string]struct{}, len(report.Results))
+	type resultIdentity struct{ contentVersionID, buildID string }
+	seenDocuments := make(map[resultIdentity]struct{}, len(report.Results))
 	seenLexicalRanks := make(map[int]struct{}, len(report.Results))
 	seenSemanticRanks := make(map[int]struct{}, len(report.Results))
 	for index, result := range report.Results {
@@ -615,31 +616,31 @@ func validateDocumentSearchReport(request api.DocumentSearchRequest, report api.
 		if !validDocumentSearchPath(result.Path) || !validDocumentSearchExcerpt(result.Excerpt) {
 			return fmt.Errorf("result %d has invalid path or excerpt", index)
 		}
-		if _, duplicate := seenDocuments[result.ContentVersionID]; duplicate {
+		identity := resultIdentity{contentVersionID: result.ContentVersionID}
+		if request.MediaSources != nil && len(result.Evidence) != 0 {
+			// Media source selection returns one result per selected content/build pair.
+			identity.buildID = result.Evidence[0].BuildID
+		}
+		if _, duplicate := seenDocuments[identity]; duplicate {
 			return fmt.Errorf("result %d duplicates a document identity", index)
 		}
-		seenDocuments[result.ContentVersionID] = struct{}{}
+		seenDocuments[identity] = struct{}{}
 		if err := validateDocumentLaneRanks(report.ActualMode, result, seenLexicalRanks, seenSemanticRanks); err != nil {
 			return fmt.Errorf("result %d: %w", index, err)
 		}
 		if len(result.Evidence) < 1 || len(result.Evidence) > 32 {
 			return fmt.Errorf("result %d has invalid evidence count", index)
 		}
-		type evidenceIdentity struct {
-			reference api.DocumentEvidenceReference
-			span      api.MediaTimeSpan
-		}
-		seenEvidence := make(map[evidenceIdentity]struct{}, len(result.Evidence))
+		seenEvidence := make(map[string]struct{}, len(result.Evidence))
 		for evidenceIndex, evidence := range result.Evidence {
-			identity := evidenceIdentity{reference: evidence}
-			if evidence.TimeSpan != nil {
-				identity.span = *evidence.TimeSpan
-				identity.reference.TimeSpan = nil
+			encoded, err := json.Marshal(evidence)
+			if err != nil {
+				return err
 			}
-			if _, duplicate := seenEvidence[identity]; duplicate {
+			if _, duplicate := seenEvidence[string(encoded)]; duplicate {
 				return fmt.Errorf("result %d has duplicate evidence", index)
 			}
-			seenEvidence[identity] = struct{}{}
+			seenEvidence[string(encoded)] = struct{}{}
 			if err := validateDocumentEvidenceIdentity(evidence); err != nil {
 				return fmt.Errorf("result %d evidence %d: %w", index, evidenceIndex, err)
 			}

@@ -445,12 +445,13 @@ const (
 )
 
 type DocumentSearchRequest struct {
-	Query     string              `json:"query"`
-	Mode      DocumentSearchMode  `json:"mode"`
-	Limit     int                 `json:"limit,omitzero"`
-	Profile   string              `json:"profile"`
-	BindingID string              `json:"binding_id,omitzero"`
-	Fence     DocumentSourceFence `json:"fence"`
+	MediaSources []DocumentMediaSourceSelector `json:"media_sources,omitzero"`
+	Query        string                        `json:"query"`
+	Mode         DocumentSearchMode            `json:"mode"`
+	Limit        int                           `json:"limit,omitzero"`
+	Profile      string                        `json:"profile"`
+	BindingID    string                        `json:"binding_id,omitzero"`
+	Fence        DocumentSourceFence           `json:"fence"`
 
 	Explain      bool `json:"explain,omitzero"`
 	ContentFirst bool `json:"content_first,omitzero"`
@@ -463,16 +464,30 @@ type MediaTimeSpan struct {
 }
 
 type DocumentEvidenceReference struct {
-	Kind                   string         `json:"kind"`
-	BuildID                string         `json:"build_id,omitzero"`
-	SegmentID              string         `json:"segment_id,omitzero"`
-	VectorSpaceID          string         `json:"vector_space_id,omitzero"`
-	EmbeddingSetID         string         `json:"embedding_set_id,omitzero"`
-	InputGenerationID      string         `json:"input_generation_id,omitzero"`
-	InputID                string         `json:"input_id,omitzero"`
-	InputKind              string         `json:"input_kind,omitzero"`
-	SourceManifestChecksum string         `json:"source_manifest_checksum,omitzero"`
-	TimeSpan               *MediaTimeSpan `json:"time_span,omitempty"`
+	MediaSources           []DocumentMediaSource `json:"media_sources,omitzero"`
+	Kind                   string                `json:"kind"`
+	BuildID                string                `json:"build_id,omitzero"`
+	SegmentID              string                `json:"segment_id,omitzero"`
+	VectorSpaceID          string                `json:"vector_space_id,omitzero"`
+	EmbeddingSetID         string                `json:"embedding_set_id,omitzero"`
+	InputGenerationID      string                `json:"input_generation_id,omitzero"`
+	InputID                string                `json:"input_id,omitzero"`
+	InputKind              string                `json:"input_kind,omitzero"`
+	SourceManifestChecksum string                `json:"source_manifest_checksum,omitzero"`
+	TimeSpan               *MediaTimeSpan        `json:"time_span,omitempty"`
+}
+
+type DocumentMediaSource struct {
+	SourceID         string `json:"source_id"`
+	SourceVersionID  string `json:"source_version_id"`
+	ContentVersionID string `json:"content_version_id"`
+}
+
+type DocumentMediaSourceSelector struct {
+	SourceID         string   `json:"source_id"`
+	SourceVersionID  string   `json:"source_version_id"`
+	ContentVersionID string   `json:"content_version_id"`
+	SuppliedInputIDs []string `json:"supplied_input_ids,omitzero"`
 }
 
 type DocumentSearchTrace struct {
@@ -500,14 +515,25 @@ type DocumentSearchCoverage struct {
 	State             string `json:"state"`
 }
 
+type DocumentMediaSelection struct {
+	SourceID         string `json:"source_id"`
+	SourceVersionID  string `json:"source_version_id"`
+	ContentVersionID string `json:"content_version_id"`
+	Origin           string `json:"origin"`
+	SuppliedInputID  string `json:"supplied_input_id,omitzero"`
+	Completeness     string `json:"completeness"`
+}
+
 type DocumentSearchReport struct {
-	RequestedMode DocumentSearchMode     `json:"requested_mode"`
-	ActualMode    DocumentSearchMode     `json:"actual_mode"`
-	Coverage      DocumentSearchCoverage `json:"coverage"`
-	Degradations  []string               `json:"degradations"`
-	Results       []DocumentSearchResult `json:"results"`
-	Truncated     bool                   `json:"truncated"`
-	Trace         []DocumentSearchTrace  `json:"trace"`
+	MediaSelections      []DocumentMediaSelection `json:"media_selections,omitzero"`
+	MediaSourceSelection bool                     `json:"media_source_selection,omitzero"`
+	RequestedMode        DocumentSearchMode       `json:"requested_mode"`
+	ActualMode           DocumentSearchMode       `json:"actual_mode"`
+	Coverage             DocumentSearchCoverage   `json:"coverage"`
+	Degradations         []string                 `json:"degradations"`
+	Results              []DocumentSearchResult   `json:"results"`
+	Truncated            bool                     `json:"truncated"`
+	Trace                []DocumentSearchTrace    `json:"trace"`
 }
 
 // ContentIdentity is the canonical identity of uncompressed document bytes.
@@ -711,17 +737,21 @@ type BatchMoveReceipt struct {
 // embedded or daemon operation.
 const MaxBatchMoves = store.MaxBatchMoves
 
-// TrashEmptyOptions bounds one trash-empty preview or execution. A zero
-// MaxRoots uses DefaultTrashEmptyMaxRoots. DryRun never deletes candidates.
+// TrashEmptyOptions sets the batch target for one trash-empty preview or execution.
+// Complete photo groups may exceed MaxRoots; zero uses DefaultTrashEmptyMaxRoots.
+// DryRun never deletes candidates.
 type TrashEmptyOptions struct {
 	OlderThan time.Duration `json:"older_than"`
 	MaxRoots  int           `json:"max_roots,omitzero"`
 	DryRun    bool          `json:"dry_run"`
 }
 
-// TrashEmptyReport summarizes one bounded batch of eligible trash roots.
+// TrashEmptyReport summarizes one bounded batch of eligible trash roots. Held
+// counts roots the batch reached but kept because a connected photo member is
+// live, too new, or retained.
 type TrashEmptyReport struct {
 	Candidates int64 `json:"candidates"`
+	Held       int64 `json:"held"`
 	Deleted    int64 `json:"deleted"`
 	More       bool  `json:"more"`
 	DryRun     bool  `json:"dry_run"`

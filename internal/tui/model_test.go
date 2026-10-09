@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -670,6 +671,72 @@ func TestModelConfirmsRevisionBoundTrashAndRestore(t *testing.T) {
 	assert.Empty(t, model.trashItems)
 }
 
+func TestPhotoRestoreConfirmationScope(t *testing.T) {
+	for _, width := range []int{100, 50} {
+		for _, kind := range []string{"photo", "folder"} {
+			t.Run(fmt.Sprintf("%s/%d", kind, width), func(t *testing.T) {
+				model, err := New(t.Context(), newFakeBackend())
+				require.NoError(t, err)
+				model.width, model.height = width, 30
+				node := api.Node{ID: 42, Name: "capture.jpg", Kind: nodeKindFile, Revision: 3, PhotoAssetID: "photo", PhotoFileCount: 2}
+				if kind == "folder" {
+					node.Kind, node.PhotoAssetID = nodeKindDir, ""
+				}
+				model.confirmation = &mutationConfirmation{action: mutationRestore, target: row{node: node}}
+				view := strings.Join(strings.Fields(strings.ReplaceAll(ansi.Strip(model.View().Content), "│", " ")), "")
+				if kind == "photo" {
+					assert.Contains(t, view, strings.ReplaceAll("Restore this photo?", " ", ""))
+					assert.Contains(t, view, strings.ReplaceAll("2 trashed member files together, including companions in other folders.", " ", ""))
+				} else {
+					assert.Contains(t, view, strings.ReplaceAll("Photo members inside also recover their companions in other folders.", " ", ""))
+				}
+				assert.Contains(t, view, strings.ReplaceAll("Companions inside trashed folders also restore those folders and their other contents, including other photos.", " ", ""))
+			})
+		}
+	}
+}
+
+func TestPhotoRestoreInvalidatesTrashBeforeFailedRefresh(t *testing.T) {
+	backend := newFakeBackend()
+	photo := api.Node{ID: 42, Name: "capture.jpg", Kind: nodeKindFile, Revision: 3, PhotoAssetID: "photo", PhotoFileCount: 2}
+	folder := api.Node{ID: 43, Name: "Companions", Kind: nodeKindDir, Revision: 2}
+	backend.trash = api.TrashPage{Items: []api.Node{photo, folder}, Total: 2}
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 30
+	model, load := updateModel(t, model, runeKey('T'))
+	model = runModelCommand(t, model, load)
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	model, mutation := updateModel(t, model, key(tea.KeyEnter))
+	model, refresh := updateModel(t, model, mutation())
+	require.NotNil(t, refresh)
+	assert.Empty(t, model.trashItems)
+	assert.Zero(t, model.trashTotal)
+	assert.Zero(t, model.trashCursor)
+	assert.Zero(t, model.trashOffset)
+	assert.True(t, model.trashChanged)
+	notice := model.notice
+	assert.Contains(t, notice, "/restored/capture.jpg")
+	backend.err = errors.New("listing unavailable")
+	model = runModelCommand(t, model, refresh)
+	require.ErrorContains(t, model.trashErr, "listing unavailable")
+	assert.Contains(t, model.View().Content, "Trash listing unavailable")
+	assert.NotContains(t, model.View().Content, "Trash is empty")
+	model, cmd := updateModel(t, model, key(tea.KeyEnter))
+	assert.Nil(t, cmd)
+	assert.Nil(t, model.confirmation)
+	assert.Equal(t, notice, model.notice)
+	backend.err = nil
+	remaining := api.Node{ID: 44, Name: "remaining.txt", Kind: nodeKindFile, Revision: 1}
+	backend.trash = api.TrashPage{Items: []api.Node{remaining}, Total: 1}
+	model, refresh = updateModel(t, model, runeKey('r'))
+	assert.Equal(t, notice, model.notice)
+	model = runModelCommand(t, model, refresh)
+	assert.Equal(t, []api.Node{remaining}, model.trashItems)
+	assert.Equal(t, 1, model.trashTotal)
+	assert.Equal(t, notice, model.notice)
+}
+
 func TestModelCancelsTrashConfirmationWithoutMutation(t *testing.T) {
 	backend := newFakeBackend()
 	model, err := New(t.Context(), backend)
@@ -806,9 +873,9 @@ func TestUnconfirmedMutationsInvalidateAuthority(t *testing.T) {
 		assert.True(t, model.trashChanged)
 		assert.True(t, model.trashLoading)
 		assert.Contains(t, model.notice, "restore outcome is unconfirmed")
-
-		model = runModelCommand(t, model, refresh)
 		assert.Empty(t, model.trashItems)
+		assert.Zero(t, model.trashTotal)
+		model = runModelCommand(t, model, refresh)
 		model, rootLoad := updateModel(t, model, key(tea.KeyEscape))
 		require.NotNil(t, rootLoad)
 		assert.Empty(t, model.rows)

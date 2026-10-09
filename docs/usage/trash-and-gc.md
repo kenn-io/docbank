@@ -53,11 +53,15 @@ permanently deleted, the node is restored under `/`.
 
 Trashing a subtree stamps every node with the same trash time, so a nested
 directory trashed *before* its parent keeps its own trash entry. Restoring the
-parent doesn't restore things you trashed separately.
+parent leaves separately trashed items in trash unless photo-group recovery includes them.
+
+Photos' **Move to trash** action and `docbank photos assets trash <asset-id>` move all asset members together with an asset revision check. The browser trash drawer and paginated TUI list group independently trashed photo members into one row. The CLI's unpaged list keeps its ordinary node listing. Restoring any photo member restores its whole group, including companions in other folders. If that member belongs to a trashed folder, restore also recovers the folder's original subtree.
+
+Recovery follows companions transitively. A recovered folder brings back the companions of every photo inside it, and any trashed folder holding one of those companions returns with all its contents. One restore can therefore recover several folders. The restore response and `docbank restore` report only the selected node; list the trash afterward to see what remains.
 
 `trash list --json` returns the roots under `items`. For maintenance
-automation, `trash empty --json` returns `candidate_roots`, `deleted`, and
-`run`. It remains a dry run unless `--run` is present.
+automation, `trash empty --json` returns `candidate_roots`, `retained_roots`,
+`held_roots`, `deleted`, and `run`. It remains a dry run unless `--run` is present.
 
 ## Stage 2: Empty the trash
 
@@ -71,6 +75,10 @@ The command is a dry run unless `--run` is present. An executed run permanently
 deletes the selected tree entries. The document bytes are still on disk and may
 still be referenced by another node or version. Only content with no remaining
 reference becomes a GC candidate.
+
+Trash previews and deletion serialize with mutations through the maintenance gate. Large photo cleanups keep other writes waiting or returning busy for longer, including during a dry run.
+
+Photo groups are deleted together. A live, too-new, or retained member protects every connected trash root, including folders containing members. Trash the remaining members with `docbank photos assets trash <asset-id>`, or detach live companions, to make a partial group eligible. The report's `held_roots` counts eligible roots kept this way, and `docbank trash empty` prints a `held` line when it is nonzero. Bounded maintenance finishes a complete group even when it exceeds the root budget; the dry run reports that expanded group, and `More` reports another eligible group. Photo and album relationships remain recoverable until permanent deletion; file bytes stay in place throughout trash and restore.
 
 ### Release email attachment references
 
@@ -146,8 +154,7 @@ thresholds.
 ## Embedded maintenance
 
 Embedded applications own the same lifecycle but schedule finite passes instead
-of asking the daemon to drain a full operation. `EmptyTrash` limits one preview
-or deletion to `MaxRoots`. Zero selects the finite `DefaultTrashEmptyMaxRoots`.
+of asking the daemon to drain a full operation. `EmptyTrash` uses `MaxRoots` as a batch target and finishes complete photo groups even when they exceed it. Zero selects `DefaultTrashEmptyMaxRoots`.
 `GarbageCollect`, `Verify`, and `Repack` accept a `WorkBudget`. Zero
 `MaxObjects` selects the finite `DefaultMaintenanceMaxObjects`, and explicit
 values are capped by `MaxMaintenanceObjects`. A positive `MaxBytes` is a soft

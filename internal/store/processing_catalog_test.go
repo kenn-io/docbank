@@ -668,11 +668,11 @@ func TestProcessingMetadataOpenAcceptsExactCurrentSchema(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "current.db")
 	driver := DefaultSQLiteDriver()
-	created, err := openCurrentStore(path, driver)
+	created, err := openCurrentStore(path, driver, nil)
 	require.NoError(t, err)
 	require.NoError(t, created.Close())
 
-	reopened, err := openCurrentStore(path, driver)
+	reopened, err := openCurrentStore(path, driver, nil)
 	require.NoError(t, err)
 	require.NoError(t, reopened.Close())
 }

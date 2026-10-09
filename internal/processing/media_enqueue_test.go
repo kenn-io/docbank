@@ -384,9 +384,9 @@ type mediaStateFixture struct {
 	selector Selector
 }
 
-func newMediaStateFixture(t *testing.T) mediaStateFixture {
-	t.Helper()
-	fixture := newPublicationFixture(t)
+func newMediaStateFixture(tb testing.TB) mediaStateFixture {
+	tb.Helper()
+	fixture := newPublicationFixture(tb)
 	descriptor, err := document.NewRenditionDescriptor(document.RenditionDescriptor{
 		ID: "synthetic.media-worker-v1", ContractVersion: document.RenditionProviderContractVersion,
 		PolicyFingerprint: processingHash("media-worker-policy"),
@@ -397,36 +397,36 @@ func newMediaStateFixture(t *testing.T) mediaStateFixture {
 		ReturnsStructured: true,
 		ArtifactRoles:     []document.EvidenceArtifactRole{document.EvidenceArtifactStructured},
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	provider := &mediaWorkerProvider{workerProvider: &workerProvider{descriptor: descriptor}}
-	record := workerProcessingProfile(t, provider.Descriptor())
+	record := workerProcessingProfile(tb, provider.Descriptor())
 	var portable document.ProcessingProfileV1
-	require.NoError(t, json.Unmarshal(record.CanonicalProfile, &portable))
+	require.NoError(tb, json.Unmarshal(record.CanonicalProfile, &portable))
 	portable.Rendition.TrustBoundary = string(provider.Descriptor().TrustBoundary)
 	service, err := NewService(ServiceConfig{
 		Catalog: fixture.catalog, Blobs: fixture.blobs, Gate: newWorkerTestGate(),
-		SpoolDirectory: t.TempDir(), Principal: "operator:synthetic", Scope: "document-processing",
+		SpoolDirectory: tb.TempDir(), Principal: "operator:synthetic", Scope: "document-processing",
 		Profiles: map[string]ProfileConfig{"speech": {Profile: portable, RenditionProvider: provider}},
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	f := mediaStateFixture{publicationFixture: fixture, service: service, provider: provider}
-	f.version, f.selector = f.addWAV(t, "source.wav", mediatest.WAV())
-	plan, err := service.Plan(t.Context(), f.selector)
-	require.NoError(t, err)
-	_, err = service.GrantConsent(t.Context(), ConsentGrantRequest{Selector: f.selector, PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err)
+	f.version, f.selector = f.addWAV(tb, "source.wav", mediatest.WAV())
+	plan, err := service.Plan(tb.Context(), f.selector)
+	require.NoError(tb, err)
+	_, err = service.GrantConsent(tb.Context(), ConsentGrantRequest{Selector: f.selector, PlanFingerprint: plan.Fingerprint})
+	require.NoError(tb, err)
 	return f
 }
 
-func (f mediaStateFixture) addWAV(t *testing.T, name string, raw []byte) (store.ContentVersion, Selector) {
-	t.Helper()
-	written, err := f.blobs.WriteDetailedContext(t.Context(), bytes.NewReader(raw))
-	require.NoError(t, err)
-	node, err := f.catalog.CreateFile(t.Context(), f.catalog.RootID(), name,
-		written.Hash, written.Size, "audio/wav", processingBlobPhysical(t, written))
-	require.NoError(t, err)
-	version, err := f.catalog.ContentVersionByID(t.Context(), node.CurrentVersionID)
-	require.NoError(t, err)
+func (f mediaStateFixture) addWAV(tb testing.TB, name string, raw []byte) (store.ContentVersion, Selector) {
+	tb.Helper()
+	written, err := f.blobs.WriteDetailedContext(tb.Context(), bytes.NewReader(raw))
+	require.NoError(tb, err)
+	node, err := f.catalog.CreateFile(tb.Context(), f.catalog.RootID(), name,
+		written.Hash, written.Size, "audio/wav", processingBlobPhysical(tb, written))
+	require.NoError(tb, err)
+	version, err := f.catalog.ContentVersionByID(tb.Context(), node.CurrentVersionID)
+	require.NoError(tb, err)
 	return version, Selector{NodeID: version.NodeID, ContentVersionID: version.ID, Profile: "speech"}
 }
 
@@ -446,16 +446,16 @@ func (f mediaStateFixture) enqueue(t *testing.T, selector Selector) Job {
 	return job
 }
 
-func (f mediaStateFixture) run(t *testing.T, jobID string) error {
-	t.Helper()
-	waiter, err := f.catalog.RenditionJobWaiterByID(t.Context(), jobID)
-	require.NoError(t, err)
+func (f mediaStateFixture) run(tb testing.TB, jobID string) error {
+	tb.Helper()
+	waiter, err := f.catalog.RenditionJobWaiterByID(tb.Context(), jobID)
+	require.NoError(tb, err)
 	worker, err := NewRenditionWorker(RenditionWorkerConfig{
 		Catalog: f.catalog, Blobs: f.blobs, Runtime: f.service.renditions, Gate: newWorkerTestGate(),
 		Owner: "media-state-worker", LeaseDuration: time.Minute, IdleDelay: time.Millisecond,
 	})
-	require.NoError(t, err)
-	_, err = worker.RunJob(t.Context(), waiter.JobID)
+	require.NoError(tb, err)
+	_, err = worker.RunJob(tb.Context(), waiter.JobID)
 	return err
 }
 
