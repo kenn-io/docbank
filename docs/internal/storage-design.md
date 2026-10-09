@@ -114,10 +114,15 @@ with one query, and loads metadata only for the final node. Nested paths use
 a recursive query. Reads use the caller's transaction when supplied. A missing
 ancestor takes precedence over an invalid name later in the path.
 
-Filename search results and collection member pages resolve the selected nodes'
-paths with one recursive query. Input positions preserve result order and
-repeated node IDs. Collection paths use the same read transaction as the summary
-and member page, so a concurrent move cannot mix old node data with new paths.
+Filename search results, collection member pages, and candidate revalidation
+for expanded or reranked document searches resolve the selected nodes' paths
+with one recursive query. Input positions preserve result order and repeated
+node IDs. Collection paths use the same read transaction as the summary and
+member page. Candidate revalidation refreshes only the surviving candidates'
+paths in its revalidation transaction,
+after checking current versions, scope, and evidence. A single survivor keeps
+the single-node path lookup. Concurrent moves cannot mix those checks with
+paths from a later snapshot.
 
 ## Durable write ordering
 
