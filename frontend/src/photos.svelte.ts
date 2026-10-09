@@ -7,13 +7,14 @@ import { clearSelection, reconcileIDSelection, toggleIDSelection, type Selection
 export const photoQuery: SavedQueryV1Schema = { v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "capture_time", direction: "desc" } };
 const densityKey = "docbank.photos.density";
 
-export function loadDensity(): Density {
+function storedDensity(): Density | undefined {
   try {
     const value = localPreferenceStorage()?.getItem(densityKey);
     if (value && Object.hasOwn(ROW_HEIGHTS, value)) return value as Density;
   } catch { /* Browsing also works when local storage is disabled. */ }
-  return "comfortable";
 }
+
+export function loadDensity(): Density { return storedDensity() ?? "comfortable"; }
 
 export class Photos {
   items = $state<PhotoBrowseRow[]>([]);
@@ -92,7 +93,7 @@ export class Photos {
     this.loading = false;
   }
 
-  syncDensity() { this.density = loadDensity(); }
+  syncDensity() { this.density = storedDensity() ?? this.density; }
 
   resume(preserve?: () => (() => Promise<void>) | undefined) {
     if (this.error) return;

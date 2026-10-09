@@ -318,6 +318,8 @@ it("remembers density with safe defaults for unknown or unavailable storage", as
   expect(loadDensity()).toBe("comfortable");
   expect(() => photos.setDensity("large")).not.toThrow();
   expect(photos.density).toBe("large");
+  photos.syncDensity();
+  expect(photos.density).toBe("large");
   photos.dispose();
 });
 
