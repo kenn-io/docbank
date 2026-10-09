@@ -22,7 +22,7 @@ Every public page is also published as raw Markdown at the route listed below.
 
 ## Work with documents
 - [Importing documents](https://docbank.ai/docs/usage/importing.md): Import folders, preview large sources, retry partial imports, and keep changing files up to date.
-- [Photo assets](https://docbank.ai/docs/usage/photos.md): Group camera files, browse photos in the web app, and organize albums through the CLI or HTTP API.
+- [Photo assets](https://docbank.ai/docs/usage/photos.md): Group camera files, browse photos, and organize albums in the web app, CLI, or HTTP API.
 - [People](https://docbank.ai/docs/usage/people.md): List and edit canonical people through the daemon API and CLI, and read them through MCP.
 - [Email PDFs](https://docbank.ai/docs/usage/email-pdf.md): Render one email version as a verified PDF kept alongside its original EML.
 - [Organizing and tagging](https://docbank.ai/docs/usage/organizing.md): Browse, move, rename, and tag documents in the virtual tree.

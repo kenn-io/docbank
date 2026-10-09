@@ -28,6 +28,18 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
     await page.goto(webURL.href);
     await expect(page.getByText("10,000 photos · 250 loaded", { exact: true })).toBeVisible();
     await expect(page.locator(".photo-cell img").first()).toBeVisible();
+    await page.locator(".photo-image").nth(0).click();
+    await page.locator(".photo-image").nth(1).click({ modifiers: ["Control"] });
+    await page.locator(".photo-image").nth(1).click({ modifiers: ["Control"] });
+    await page.getByRole("button", { name: "Refresh previews", exact: true }).click();
+    await expect(page.locator(".photo-loading")).not.toContainText("Loading");
+    await page.locator(".photo-image").nth(2).click({ modifiers: ["Shift"] });
+    await expect(page.getByText("3 selected photos", { exact: true })).toBeVisible();
+    for (const theme of ["dark", "light"]) {
+      await page.evaluate(theme => document.documentElement.classList.toggle("dark", theme === "dark"), theme);
+      await page.screenshot({ path: path.join(output!, `web-albums-refresh-range-${theme}.png`), animations: "disabled" });
+    }
+    await page.getByRole("button", { name: "Clear selection", exact: true }).click();
     await page.locator(".photo-image").first().click();
     await page.getByRole("button", { name: "Select loaded photos" }).click();
     await page.getByRole("button", { name: "Select all 10,000 photos" }).click();
@@ -100,6 +112,20 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
     await page.goto("about:blank");
     await page.goto(url.href);
     await expect(page.getByRole("heading", { name: "Trip", exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await expect(page.locator(".photo-cell img").first()).toBeVisible();
+    await page.locator(".photo-image").first().click();
+    await page.getByRole("button", { name: /Add to album/ }).click();
+    await page.getByRole("combobox", { name: "Find or create an album" }).fill(albumID);
+    const createUUID = page.getByRole("option", { name: `Create album "${albumID}"` });
+    await expect(createUUID).toBeVisible();
+    for (const theme of ["dark", "light"]) {
+      await page.evaluate(theme => document.documentElement.classList.toggle("dark", theme === "dark"), theme);
+      await page.screenshot({ path: path.join(output!, `web-albums-uuid-name-${theme}.png`), animations: "disabled" });
+    }
+    await createUUID.click();
+    await expect(page.getByText(`Added to ${albumID} · now 1 photo`, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Clear selection", exact: true }).click();
     await writeFile(path.join(output!, "albums-preview.json"), JSON.stringify({ url: url.href, workspace, adds, albumID }, null, 2));
   } finally {
     if (!process.env.DOCBANK_KEEP_ALBUM_PREVIEW) { await run("daemon", "stop"); await rm(workspace, { recursive: true, force: true }); }

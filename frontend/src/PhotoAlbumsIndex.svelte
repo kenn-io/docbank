@@ -3,7 +3,7 @@
   import { Button, EmptyState, Modal, Spinner, TextInput } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
-  import { validPhotoAlbumName, type PhotoAlbums } from "./photoAlbums.svelte.js";
+  import { type PhotoAlbums } from "./photoAlbums.svelte.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoAlbumCover from "./PhotoAlbumCover.svelte";
   let { albums, cache, onnavigate }: { albums: PhotoAlbums; cache: PhotoPreviewCache; onnavigate: (path: string) => void } = $props();
@@ -43,7 +43,7 @@
 </main>
 {#if creating}
   <Modal title="New album" onclose={() => { if (!albums.busy) creating = false; }}>
-    <form onsubmit={event => { event.preventDefault(); void create(); }}><TextInput ariaLabel="Album name" bind:value={name} /><div class="modal-actions"><Button disabled={albums.busy} onclick={() => creating = false}>Cancel</Button><Button type="submit" tone="info" disabled={albums.busy || !validPhotoAlbumName(name)}>Create album</Button></div></form>
+    <form onsubmit={event => { event.preventDefault(); void create(); }}><TextInput ariaLabel="Album name" bind:value={name} /><div class="modal-actions"><Button disabled={albums.busy} onclick={() => creating = false}>Cancel</Button><Button type="submit" tone="info" disabled={albums.busy || !name.trim()}>Create album</Button></div></form>
     {#if createError}<p role="alert">{createError}</p>{/if}
   </Modal>
 {/if}

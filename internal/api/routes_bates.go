@@ -283,7 +283,7 @@ func registerBatesRoutes(mux *http.ServeMux, api huma.API, d Deps, g *gate, down
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(data) // Hash-checked PDF bytes verified at publish; attachment is PDF with nosniff.
+		_, _ = w.Write(data) //nolint:gosec // Hash-checked PDF bytes verified at publish; attachment is PDF with nosniff.
 	})
 	api.OpenAPI().AddOperation(&huma.Operation{OperationID: "downloadBatesExportContent", Method: http.MethodGet,
 		Path: "/api/v1/bates/exports/{id}/content", Summary: "Download hash-checked Bates export bytes",

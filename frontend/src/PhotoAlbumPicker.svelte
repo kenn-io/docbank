@@ -2,7 +2,7 @@
   import { onDestroy } from "svelte";
   import { KbdBadge, Typeahead } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
-  import { validPhotoAlbumName, type PhotoAlbums } from "./photoAlbums.svelte.js";
+  import { type PhotoAlbums } from "./photoAlbums.svelte.js";
   import type { PhotoAlbum, PhotoAlbumMembersRequest } from "./generated/docbank.js";
   let { photos, albums, preserve }: { photos: Photos; albums: PhotoAlbums; preserve?: Parameters<Photos["refresh"]>[0] } = $props();
   let alive = true;
@@ -10,6 +10,8 @@
   let error = $state("");
   let element = $state<HTMLDivElement>();
   const target = $derived(albums.items.find(album => album.id === albums.targetID));
+  // Album names cannot contain NUL, so option keys cannot collide with valid names.
+  const choiceKey = (id: string) => `\0${id}`;
 
   export function focus() { if (alive) element?.querySelector<HTMLButtonElement>("button")?.click(); }
   async function add(album: PhotoAlbum | undefined, scope: PhotoAlbumMembersRequest) {
@@ -23,9 +25,8 @@
   async function choose(value: string) {
     error = "";
     const scope = photos.scope();
-    let album: PhotoAlbum | undefined = albums.items.find(item => item.id === value);
+    let album: PhotoAlbum | undefined = albums.items.find(item => choiceKey(item.id) === value);
     if (!album) {
-      if (!validPhotoAlbumName(value)) { error = "Album names can contain up to 256 characters."; return false; }
       album = await albums.create(value);
       if (!album) { if (alive) { error = albums.error; albums.error = ""; } return false; }
     }
@@ -35,7 +36,7 @@
 </script>
 
 <div class="album-picker" bind:this={element}>
-  <Typeahead options={albums.items.map(album => ({ name: album.id, label: album.name }))} value={albums.targetID} fallbackLabel="Add to album" triggerPrefix={target ? "Add to album · " : ""} placeholder="Find or create an album" title="Add to album" allowCustom customLabel={'Create album "{query}"'} placement="top" {error} loading={albums.loading || albums.busy} onselect={choose} />
+  <Typeahead options={albums.items.map(album => ({ name: choiceKey(album.id), label: album.name }))} value={albums.targetID ? choiceKey(albums.targetID) : ""} fallbackLabel="Add to album" triggerPrefix={target ? "Add to album · " : ""} placeholder="Find or create an album" title="Add to album" allowCustom customLabel={'Create album "{query}"'} placement="top" {error} loading={albums.loading || albums.busy} onselect={choose} />
   {#if target}<span class="target-hint"><KbdBadge keys={['B']} /> adds to {target.name}</span>{/if}
 </div>
 

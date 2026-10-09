@@ -10,7 +10,7 @@
   import PhotoGrid from "./PhotoGrid.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
-  import { validPhotoAlbumName, type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
+  import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
 
   let { photos, cache, albums, albumID = "", onnavigate = () => {} }: { photos: Photos; cache: PhotoPreviewCache; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void } = $props();
   const album = $derived(albums?.items.find(item => item.id === albumID));
@@ -56,7 +56,7 @@
     await albums.members(album, photos.scope(), photos, true, preserve);
   }
   async function rename() {
-    if (!albums || !album || !validPhotoAlbumName(name)) return;
+    if (!albums || !album || !name.trim()) return;
     const result = await albums.update(album, { name: name.trim() });
     if (alive && renaming && result) renaming = false;
   }
@@ -78,7 +78,7 @@
   <div class="photo-toolbar browser-toolbar">
     <div class="library-title">
       {#if albumID}<button type="button" class="album-back" onclick={() => onnavigate("/photos/albums")}>Albums</button>{/if}
-      {#if renaming}<form onsubmit={event => { event.preventDefault(); void rename(); }}><TextInput ariaLabel="Album name" bind:value={name} bind:inputEl={renameInput} onkeydown={event => { if (event.key === "Escape") { event.preventDefault(); renaming = false; } }} /><Button type="submit" size="sm" disabled={albums?.busy || !validPhotoAlbumName(name)}>Save</Button><Button size="sm" onclick={() => renaming = false}>Cancel</Button></form>
+      {#if renaming}<form onsubmit={event => { event.preventDefault(); void rename(); }}><TextInput ariaLabel="Album name" bind:value={name} bind:inputEl={renameInput} onkeydown={event => { if (event.key === "Escape") { event.preventDefault(); renaming = false; } }} /><Button type="submit" size="sm" disabled={albums?.busy || !name.trim()}>Save</Button><Button size="sm" onclick={() => renaming = false}>Cancel</Button></form>
       {:else}<h1>{albumID ? album?.name ?? "Album" : "Library"}</h1>{/if}
       <span>{photos.total.toLocaleString()} photos · {photos.items.length.toLocaleString()} loaded</span>
     </div>
@@ -111,7 +111,7 @@
     </EmptyState>
   {/if}
   <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
-  <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} wholeQueryCount={photos.total} allResults={photos.allResults} onallresults={() => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()}>
+  <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} loadedSelected={photos.items.every(item => photos.selection.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.total} allResults={photos.allResults} onallresults={() => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()}>
     {#snippet photoActions()}
       {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} {preserve} />{/if}
       {#if album && albums}<Button size="sm" disabled={albums.busy} onclick={() => void remove()}>Remove from album</Button><Button size="sm" disabled={albums.busy || photos.allResults || photos.selection.selectedIDs.size !== 1} onclick={() => void albums!.cover(album!, [...photos.selection.selectedIDs][0])}>Use as cover</Button>{/if}
@@ -122,7 +122,7 @@
   <Modal title={modal === "delete" ? "Delete album" : "Duplicate album"} onclose={() => { if (!albums.busy) modal = undefined; }}>
     {#if modal === "delete"}<p>Delete "{modalAlbum.name}"? Its {modalAlbum.included_count === undefined ? "" : `${modalAlbum.included_count.toLocaleString()} `}photos stay in your library.</p>{:else}<TextInput ariaLabel="Copy name" bind:value={duplicateName} />{/if}
     {#if modalError}<p role="alert">{modalError}</p>{/if}
-    <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button><Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || modal === "duplicate" && !validPhotoAlbumName(duplicateName)} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
+    <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button><Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || modal === "duplicate" && !duplicateName.trim()} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
   </Modal>
 {/if}
 

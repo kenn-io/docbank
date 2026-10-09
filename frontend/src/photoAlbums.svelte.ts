@@ -7,11 +7,6 @@ export const photoDragType = "application/x-docbank-photos";
 
 export type PhotoAlbumItem = api.PhotoAlbum & Partial<Pick<api.PhotoAlbumSummary, "member_count" | "included_count" | "effective_cover_asset_id" | "cover_generation_id">> & { cover_known?: boolean };
 
-export function validPhotoAlbumName(name: string) {
-  const length = [...name.trim()].length;
-  return length > 0 && length <= 256;
-}
-
 export class PhotoAlbums {
   items = $state<PhotoAlbumItem[]>([]);
   loading = $state(false);

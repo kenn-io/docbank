@@ -46,7 +46,7 @@ require the CLI or another API client.
 
 **Documents** and **Photos** at the top of the sidebar switch workspaces.
 Photos shows **Library**, **Albums**, and your album list in the sidebar.
-It keeps your place until the session locks. Open Library at `/photos`, the
+Documents/Photos switches keep your place until the session locks. Leaving an album resets its view; see [photo navigation](photos.md#browse-in-the-web-app). Open Library at `/photos`, the
 album index at `/photos/albums`, or an album at `/photos/albums/{id}`. See [Browse photos](photos.md#browse-in-the-web-app).
 
 Use the labeled sidebar for **All files**, **Saved queries**, **Collections**,

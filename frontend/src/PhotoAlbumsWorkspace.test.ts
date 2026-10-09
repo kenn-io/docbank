@@ -23,6 +23,31 @@ function setup(scoped = false, onnavigate = vi.fn()) {
   return { photos, albums, cache, view };
 }
 
+it("selects loaded photos by ID when equally many selected photos are off-page", async () => {
+  const { photos } = setup();
+  photos.selection = { selectedIDs: new Set(["photo-3", "photo-4"]), anchorID: undefined };
+  const button = await screen.findByRole("button", { name: "Select loaded photos" });
+  expect((button as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.queryByRole("button", { name: "Select all 10,000 photos" })).toBeNull();
+  await fireEvent.click(button);
+  expect([...photos.selection.selectedIDs]).toEqual(photos.items.map(item => item.asset_id));
+  await screen.findByRole("button", { name: "Select all 10,000 photos" });
+});
+
+it.each(["uuid", "prefixed"])("creates an album with a %s existing-album ID as its name", async kind => {
+  const { photos, albums } = setup();
+  const name = kind === "uuid" ? album.id : `album:${album.id}`;
+  const created = { ...album, id: "created", name };
+  const create = vi.spyOn(albums, "create").mockResolvedValue(created);
+  const members = vi.spyOn(albums, "members").mockResolvedValue(created);
+  photos.selectLoaded();
+  await fireEvent.click(await screen.findByRole("button", { name: /Add to album/ }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Find or create an album" }), { target: { value: name } });
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: `Create album "${name}"` }));
+  await waitFor(() => expect(create).toHaveBeenCalledWith(name));
+  expect(members).toHaveBeenCalledWith(created, photos.scope(), photos, false, expect.any(Function));
+});
+
 it.each(["picker add", "picker create", "index create", "delete", "duplicate"] as const)("keeps a delayed %s failure visible after navigation", async operation => {
   let finish!: (response: Response) => void;
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve)).mockResolvedValue(new Response(JSON.stringify([album])));

@@ -134,26 +134,35 @@ export class Photos {
         if (reachedPrefix && (mode === "refresh" || reachedPreviously)) break;
       } while (cursor);
       if (signal.aborted) throw signal.reason;
-      const absent = new Set([...this.selection.selectedIDs].filter(id => !candidate.has(id)));
-      if (!this.allResults && cursor && absent.size) {
-        signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
-        const missing = [...absent], filter = this.query.filters?.asset_ids;
-        for (let index = 0; index < missing.length; index += 64) {
-          const ids = missing.slice(index, index + 64).filter(id => !filter || filter.includes(id));
-          if (!ids.length) continue;
-          const query = { ...this.query, filters: { ...this.query.filters, asset_ids: ids } };
-          const page = await listPhotoAssets({ query, page_size: 250 }, { session: this.session, signal });
-          if (signal.aborted) throw signal.reason;
-          for (const item of page.items) absent.delete(item.asset_id);
+      const eligible = new Set(candidate.keys());
+      const checked = new Set(candidate.keys());
+      const filter = this.query.filters?.asset_ids;
+      while (!this.allResults && cursor) {
+        const retained = new Set(this.selection.selectedIDs);
+        if (this.selection.anchorID !== undefined) retained.add(this.selection.anchorID);
+        const missing = [...retained].filter(id => !checked.has(id));
+        if (!missing.length) break;
+        for (let index = 0; index < missing.length; index += 256) {
+          await Promise.all(Array.from({ length: Math.min(4, Math.ceil((missing.length - index) / 64)) }, async (_, batch) => {
+            const group = missing.slice(index + batch * 64, index + (batch + 1) * 64);
+            for (const id of group) checked.add(id);
+            const ids = group.filter(id => !filter || filter.includes(id));
+            if (!ids.length) return;
+            const batchSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
+            const query = { ...this.query, filters: { ...this.query.filters, asset_ids: ids } };
+            const page = await listPhotoAssets({ query, page_size: 250 }, { session: this.session, signal: batchSignal });
+            if (batchSignal.aborted) throw batchSignal.reason;
+            for (const item of page.items) eligible.add(item.asset_id);
+          }));
         }
       }
-      if (signal.aborted) throw signal.reason;
+      if (controller.signal.aborted) return;
       const restore = preserve?.();
       this.items = [...candidate.values()];
       this.total = total;
       this.cursor = cursor;
       this.started = true;
-      this.selection = this.allResults ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined } : reconcileIDSelection(this.selection, new Set([...this.selection.selectedIDs].filter(id => !absent.has(id))));
+      this.selection = this.allResults ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined } : reconcileIDSelection(this.selection, eligible);
       if (!this.selection.selectedIDs.size) this.allResults = false;
       this.expired = false;
       this.replacement = undefined;
@@ -161,7 +170,7 @@ export class Photos {
     } catch (cause) {
       if (controller.signal.aborted) return;
       if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
-      this.error = signal.aborted ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
+      this.error = signal.aborted || cause instanceof DOMException && cause.name === "TimeoutError" ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.loading = false;
     }
