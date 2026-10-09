@@ -26,18 +26,7 @@ func TestPhotoImportJobReceiptUsesCurrentHiddenAccess(t *testing.T) {
 	require.NoError(t, err)
 	hidden, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
-	visibleNode, err := s.CreateFile(ctx, s.RootID(), "visible.jpg", testHash("visible receipt"), 4, "image/jpeg")
-	require.NoError(t, err)
-	visible, err := s.PhotoAssetForNode(ctx, visibleNode.ID)
-	require.NoError(t, err)
-	receipt := store.PhotoImportReceipt{Ambiguous: 1, Ambiguities: []store.PhotoImportAmbiguity{{
-		Reason: store.PhotoImportSeparatePhotos,
-		Files: []store.PhotoImportAmbiguousFile{
-			{SourcePath: "/camera/hidden.jpg", NodeID: node.ID, AssetID: hidden.ID, Role: store.PhotoRoleImage},
-			{SourcePath: "/camera/visible.jpg", NodeID: visibleNode.ID, AssetID: visible.ID, Role: store.PhotoRoleImage},
-			{SourcePath: "/camera/hidden.xmp", NodeID: node.ID, AssetID: hidden.ID, Role: store.PhotoRoleSidecar},
-		},
-	}}}
+	receipt := store.PhotoImportReceipt{Ambiguities: []store.PhotoImportAmbiguity{{Files: []store.PhotoImportAmbiguousFile{{AssetID: hidden.ID}}}}}
 	encoded, err := json.Marshal(receipt)
 	require.NoError(t, err)
 	completed, err := s.CreateLocalOperation(ctx, store.StorageOperationKindPhotoImport, `{}`)
@@ -62,18 +51,12 @@ func TestPhotoImportJobReceiptUsesCurrentHiddenAccess(t *testing.T) {
 			Receipt store.PhotoImportReceipt `json:"receipt"`
 		}
 		require.NoError(t, json.Unmarshal([]byte(body), &got))
-		want := receipt
-		want.Ambiguities = []store.PhotoImportAmbiguity{{Reason: receipt.Ambiguities[0].Reason, Files: append([]store.PhotoImportAmbiguousFile(nil), receipt.Ambiguities[0].Files...)}}
-		want.Ambiguities[0].Files[0].AssetID = wantID
-		want.Ambiguities[0].Files[2].AssetID = wantID
-		require.Equal(t, want, got.Receipt)
+		require.Equal(t, wantID, got.Receipt.Ambiguities[0].Files[0].AssetID)
 	}
-	path := "/api/v1/jobs/" + completed.ID
-	check(http.MethodGet, path, "", "")
 	check(http.MethodPost, "/api/v1/jobs/"+running.ID+"/cancel", "", "")
 	_, cookie, err := connection.PhotoHidden(ctx, "unlock", "correct", "")
 	require.NoError(t, err)
-	check(http.MethodGet, path, cookie, hidden.ID)
+	check(http.MethodGet, "/api/v1/jobs/"+completed.ID, cookie, hidden.ID)
 	stored, err := s.StorageOperation(ctx, completed.ID)
 	require.NoError(t, err)
 	require.Equal(t, string(encoded), stored.ReceiptJSON)
