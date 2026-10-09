@@ -158,9 +158,11 @@ func nextFreeNameTx(tx *sql.Tx, parentID int64, name string) (string, error) {
 	}
 }
 
-// Restore returns a trash root to its original location (or the tree root if
+// Restore returns a trash root or photo member to its original location (or the tree root if
 // that location is gone), re-suffixing on conflict. Descendants trashed in
-// earlier separate operations stay trashed. Unless ifRev is
+// earlier separate operations stay trashed unless photo-group recovery includes them.
+// A photo member inside a trash folder also restores that folder and its other contents.
+// Unless ifRev is
 // UnconditionalRev, the mutation fails with ErrStaleRevision unless ifRev
 // matches the node's current revision. The returned canonical path is captured
 // in the restore transaction with the returned node.
@@ -176,22 +178,7 @@ func (s *Store) Restore(ctx context.Context, id, ifRev int64) (Node, string, err
 		if err != nil {
 			return err
 		}
-		if active {
-			restored, err = s.restoreAuditedTx(ctx, tx, n, ifRev)
-		} else {
-			if n.TrashedAt == nil {
-				return fmt.Errorf("node %d: %w", id, ErrNotTrashed)
-			}
-			if ifRev != UnconditionalRev && n.Revision != ifRev {
-				return fmt.Errorf("node %d at revision %d, expected %d: %w",
-					id, n.Revision, ifRev, ErrStaleRevision)
-			}
-			target, targetErr := s.restoreTargetTx(tx, n)
-			if targetErr != nil {
-				return targetErr
-			}
-			restored, err = s.restoreNodeTx(tx, n, target, nowRFC3339())
-		}
+		restored, err = s.restorePhotoGroupTx(ctx, tx, n, ifRev, active)
 		if err == nil {
 			restoredPath, err = pathOf(ctx, tx, restored.ID)
 		}
@@ -298,11 +285,20 @@ func (s *Store) TrashedRoots(ctx context.Context) ([]Node, error) {
 	return roots, nil
 }
 
+// TrashItem is one paginated trash row. A grouped photo row names its asset,
+// counts its trashed members, and carries the group's latest trash time.
+type TrashItem struct {
+	Node
+
+	PhotoAssetID   string
+	PhotoFileCount int
+}
+
 // TrashedRootsPage lists one bounded newest-first page of restorable trash
 // roots and the complete root count from the same read snapshot.
 func (s *Store) TrashedRootsPage(
 	ctx context.Context, limit, offset int,
-) ([]Node, int, error) {
+) ([]TrashItem, int, error) {
 	if limit < 1 || limit > maxTrashPageSize {
 		return nil, 0, fmt.Errorf(
 			"trash limit must be between 1 and %d", maxTrashPageSize)
@@ -317,29 +313,40 @@ func (s *Store) TrashedRootsPage(
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	const grouped = `WITH groups AS (
+        SELECT n.id, file.asset_id,
+        MAX(n.trashed_at) OVER (PARTITION BY COALESCE(file.asset_id, CAST(n.id AS TEXT))) AS latest_trash,
+        ROW_NUMBER() OVER (PARTITION BY COALESCE(file.asset_id, CAST(n.id AS TEXT)) ORDER BY (file.file_id=asset.display_file_id) DESC, n.trashed_at DESC, n.id DESC) AS representative
+        FROM nodes n LEFT JOIN photo_files file ON file.node_id=n.id
+        LEFT JOIN photo_assets asset ON asset.asset_id=file.asset_id
+        WHERE n.trash_name IS NOT NULL
+    ) `
 	var total int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM nodes WHERE trash_name IS NOT NULL`,
-	).Scan(&total); err != nil {
+	if err := tx.QueryRowContext(ctx, grouped+`SELECT COUNT(*) FROM groups WHERE representative=1`).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("counting trash: %w", err)
 	}
 	rows, err := tx.QueryContext(ctx,
-		`SELECT `+nodeCols+` FROM `+nodeFrom+`
-		 WHERE n.trash_name IS NOT NULL
-		 ORDER BY n.trashed_at DESC, n.id DESC LIMIT ? OFFSET ?`,
+		grouped+`SELECT `+nodeCols+`, COALESCE(g.asset_id, ''),
+(SELECT COUNT(*) FROM photo_files member JOIN nodes file ON file.id=member.node_id WHERE member.asset_id=g.asset_id AND file.trashed_at IS NOT NULL), g.latest_trash
+ FROM `+nodeFrom+` JOIN groups g ON g.id=n.id
+		 WHERE g.representative=1
+		 ORDER BY g.latest_trash DESC, n.id DESC LIMIT ? OFFSET ?`,
 		limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing trash page: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	roots := make([]Node, 0)
+	roots := make([]TrashItem, 0)
 	for rows.Next() {
-		node, err := scanNode(rows)
+		var item TrashItem
+		var latestTrash string
+		item.Node, err = scanNode(rows, &item.PhotoAssetID, &item.PhotoFileCount, &latestTrash)
 		if err != nil {
 			return nil, 0, err
 		}
-		roots = append(roots, node)
+		item.TrashedAt = &latestTrash
+		roots = append(roots, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("listing trash page: %w", err)
@@ -357,6 +364,7 @@ func (s *Store) TrashedRootsPage(
 type TrashEmptyResult struct {
 	Candidates int64
 	Retained   int64
+	Held       int64
 	Deleted    int64
 	More       bool
 	Run        bool
@@ -370,9 +378,10 @@ func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run boo
 	return s.trashEmpty(ctx, olderThan, 0, run)
 }
 
-// TrashEmptyBounded reports or deletes at most maxRoots eligible trash roots.
+// TrashEmptyBounded finishes the last complete photo group even if it exceeds maxRoots.
 // More reports whether another deletable root existed beyond this batch.
 // Retained counts all age-matching email-retained roots, outside the batch limit.
+// Held counts photo-held roots that the batch reached before it stopped.
 func (s *Store) TrashEmptyBounded(
 	ctx context.Context, olderThan time.Duration, maxRoots int, run bool,
 ) (TrashEmptyResult, error) {
@@ -430,13 +439,7 @@ func (s *Store) trashEmpty(
 		SELECT n.parent_id FROM nodes n JOIN retained r ON n.id=r.id WHERE n.parent_id IS NOT NULL
 	) SELECT id FROM retained`
 	deletable += ` AND id NOT IN (` + emailRetainedNodes + `)`
-	selection := `SELECT id FROM nodes WHERE ` + deletable + ` ORDER BY trashed_at ASC, id ASC`
-	selectionArgs := append([]any(nil), args...)
-	if maxRoots > 0 {
-		selection += ` LIMIT ?`
-		selectionArgs = append(selectionArgs, maxRoots)
-	}
-	runTx := s.withStorageTx
+	runTx := s.photoReadTx
 	if run {
 		runTx = s.withLogicalTx
 	}
@@ -444,17 +447,14 @@ func (s *Store) trashEmpty(
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes WHERE `+where+` AND id IN (`+emailRetainedNodes+`)`, args...).Scan(&rep.Retained); err != nil {
 			return fmt.Errorf("counting retained trash roots: %w", err)
 		}
-		if err := tx.QueryRow(`SELECT COUNT(*) FROM (`+selection+`)`, selectionArgs...).Scan(&rep.Candidates); err != nil {
-			return fmt.Errorf("counting trash-empty candidates: %w", err)
+		batch, err := photoTrashSelectionTx(ctx, tx, deletable, args, maxRoots)
+		if err != nil {
+			return err
 		}
-		if maxRoots > 0 {
-			moreArgs := append(append([]any(nil), args...), maxRoots)
-			if err := tx.QueryRow(
-				`SELECT EXISTS(SELECT 1 FROM nodes WHERE `+deletable+` ORDER BY trashed_at ASC, id ASC LIMIT 1 OFFSET ?)`,
-				moreArgs...,
-			).Scan(&rep.More); err != nil {
-				return fmt.Errorf("checking for more trash-empty candidates: %w", err)
-			}
+		selection, selectionArgs := batch.query, batch.args
+		rep.More, rep.Held = batch.more, batch.held
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+selection+`)`, selectionArgs...).Scan(&rep.Candidates); err != nil {
+			return err
 		}
 		if !run {
 			return nil

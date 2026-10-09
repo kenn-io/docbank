@@ -176,6 +176,18 @@ func (c *Connection) DetachPhotoFile(ctx context.Context, assetID string, revisi
 	return photoMutationAddressed(result, err, func(a api.PhotoAsset) error { return photoResponseLacksFile(a, fileID) })
 }
 
+func (c *Connection) TrashPhotoAsset(ctx context.Context, assetID string, revision int64) (api.PhotoAsset, error) {
+	if !validUUIDv4(assetID) || revision < 1 {
+		return api.PhotoAsset{}, errors.New("invalid photo trash identity or revision")
+	}
+	var response *http.Response
+	asset, err := c.apiWithResponse(&response).TrashPhotoAsset(ctx, &apiclient.TrashPhotoAssetRequestOptions{
+		PathParams: &apiclient.TrashPhotoAssetPath{AssetID: assetID},
+		Header:     &apiclient.TrashPhotoAssetHeaders{IfMatch: revisionIfMatch(revision)},
+	})
+	return photoMutationResponse(response, asset, err, assetID)
+}
+
 func (c *Connection) ExcludePhotoAsset(ctx context.Context, assetID string, revision int64, excluded bool) (api.PhotoAsset, error) {
 	if !validUUIDv4(assetID) || revision < 1 {
 		return api.PhotoAsset{}, errors.New("invalid photo exclusion identity or revision")

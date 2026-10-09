@@ -171,6 +171,7 @@ that returns it to the live tree.
 ```text
 docbank photos assets create <node-selector> [--kind photo|video] [--role ROLE]
 docbank photos assets inspect <asset-id|node-selector>
+docbank photos assets trash <asset-id> [--revision REV]
 docbank photos assets attach <asset-id> <node-selector> [--revision REV] [--role ROLE] [--sidecar-of-file-id ID]
 docbank photos assets detach <asset-id> <file-id> [--revision REV]
 docbank photos assets exclude <asset-id> [--revision REV] [--excluded=true]
@@ -889,6 +890,8 @@ original parent directory was itself permanently deleted, the node is restored
 under `/`. Human output prints `restored [id:<id>] <path>`. `--json` returns the
 complete restored node with its resulting path and revision.
 
+Selecting a photo member restores its whole group. Companions inside trashed folders also recover those folders and their other contents, including other photos. Output reports the selected node's path.
+
 ## docbank search
 
 ```
@@ -1207,9 +1210,9 @@ durations (`12h`, `30m`) plus a day suffix (`30d`); negative ages are
 rejected. Without that filter, every trash root is eligible.
 
 `list --json` emits `{"items": [...]}`. `empty --json` emits the same typed
-dry-run or execution report as the HTTP API: `candidate_roots`, `deleted`,
-and `run`. Human status lines are suppressed so stdout contains one JSON
-document.
+dry-run or execution report as the HTTP API: `candidate_roots`,
+`retained_roots`, `held_roots`, `deleted`, and `run`. Human status lines are
+suppressed so stdout contains one JSON document.
 
 ## docbank gc
 

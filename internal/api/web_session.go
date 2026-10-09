@@ -369,6 +369,14 @@ func webSessionRequestAllowed(r *http.Request) bool {
 		}
 	}
 	if method == http.MethodPost && r.URL.RawQuery == "" {
+		if after, ok := strings.CutPrefix(path, "/api/v1/photos/assets/"); ok {
+			parts := strings.Split(after, "/")
+			if len(parts) == 2 && parts[0] != "" && parts[1] == "trash" {
+				return true
+			}
+		}
+	}
+	if method == http.MethodPost && r.URL.RawQuery == "" {
 		const prefix = "/api/v1/nodes/"
 		if after, ok := strings.CutPrefix(path, prefix); ok {
 			parts := strings.Split(after, "/")

@@ -865,6 +865,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.notice = msg.err.Error()
 				if msg.action == mutationRestore {
 					m.trashChanged = true
+					m.clearTrashCache()
 					m.trashErr = msg.err
 					m.trashLoading = true
 					m.trashRequestID++
@@ -891,7 +892,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.action == mutationRestore {
 			m.trashChanged = true
 			m.notice = fmt.Sprintf("Restored %q to %q", msg.target.node.Name, msg.node.Path)
-			m.removeTrashItem(msg.target.node.ID)
+			m.clearTrashCache()
 			m.trashLoading = true
 			m.trashRequestID++
 			return m, tea.Batch(m.startSpinner(), m.loadTrash(m.trashRequestID))
@@ -1019,10 +1020,7 @@ func (m Model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "T":
 		m.trashOpen = true
-		m.trashItems = nil
-		m.trashTotal = 0
-		m.trashCursor = 0
-		m.trashOffset = 0
+		m.clearTrashCache()
 		m.trashChanged = false
 		m.trashLoading = true
 		m.trashErr = nil
@@ -1277,7 +1275,6 @@ func (m Model) updateTrashKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.trashLoading = true
 		m.trashErr = nil
-		m.notice = ""
 		m.trashRequestID++
 		return m, tea.Batch(m.startSpinner(), m.loadTrash(m.trashRequestID))
 	case "up", "k":
@@ -2669,16 +2666,10 @@ func (m Model) selectedTrash() (api.Node, bool) {
 	return m.trashItems[m.trashCursor], true
 }
 
-func (m *Model) removeTrashItem(nodeID int64) {
-	for index := range m.trashItems {
-		if m.trashItems[index].ID != nodeID {
-			continue
-		}
-		m.trashItems = append(m.trashItems[:index], m.trashItems[index+1:]...)
-		m.trashTotal = max(m.trashTotal-1, 0)
-		m.clampTrashSelection()
-		return
-	}
+func (m *Model) clearTrashCache() {
+	m.trashItems = nil
+	m.trashTotal = 0
+	m.trashCursor, m.trashOffset = 0, 0
 }
 
 func (m *Model) removeTrashedRows(target row) {

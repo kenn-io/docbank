@@ -9,6 +9,8 @@
     onselectvisible: () => void;
     ontags?: () => void;
     tagsDisabled?: boolean;
+    ontrash?: () => void;
+    trashDisabled?: boolean;
     oncsv?: () => void;
     context?: "live" | "snapshot" | "photos";
     wholeQueryCount?: number;
@@ -26,6 +28,8 @@
     onselectvisible,
     ontags,
     tagsDisabled = false,
+    ontrash,
+    trashDisabled = false,
     oncsv,
     context = "live",
     wholeQueryCount = 0,
@@ -69,6 +73,7 @@
     {#if context === "snapshot" && onwholequerytags}
       <Button size="sm" tone="info" disabled={tagsDisabled} onclick={onwholequerytags}>Tag whole query</Button>
     {/if}
+    {#if ontrash}<Button size="sm" tone="danger" disabled={trashDisabled} onclick={ontrash}>Move to trash</Button>{/if}
     {#if oncsv}<Button size="sm" onclick={oncsv}>Export page CSV</Button>{/if}
     {#if onreport}<Button size="sm" onclick={onreport}>Report selected documents</Button>{/if}
     {#if onexport}<Button size="sm" onclick={onexport}>Export selection</Button>{/if}

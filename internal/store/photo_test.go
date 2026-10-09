@@ -203,7 +203,7 @@ func TestPhotoNodeModesAndPurgeRepair(t *testing.T) {
 	rawID := fileByRole(group.Files, PhotoRoleRAW).ID
 	group, err = s.AttachPhotoFile(ctx, group.ID, group.Revision, sidecar.ID, PhotoRoleSidecar, &rawID)
 	require.NoError(t, err)
-	_, _, err = s.Trash(ctx, raw.ID, raw.Revision)
+	_, err = s.TrashPhotoAsset(ctx, group.ID, group.Revision)
 	require.NoError(t, err)
 	_, err = s.TrashEmpty(ctx, 0, true)
 	require.NoError(t, err)

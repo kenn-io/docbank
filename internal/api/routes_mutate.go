@@ -307,7 +307,7 @@ func registerMutateRoutes(api huma.API, d Deps, g *gate) {
 
 	huma.Register(api, huma.Operation{
 		OperationID: "restoreNode", Method: http.MethodPost, Path: "/api/v1/nodes/{id}/restore",
-		Summary: "Restore a trash root to its original location (root fallback, suffix on collision)",
+		Summary: "Restore a trash root or photo member, recovering its photo group and containing trash folders",
 	}, func(ctx context.Context, in *struct {
 		ID      int64  `path:"id"`
 		IfMatch string `header:"If-Match"`

@@ -292,6 +292,8 @@ export interface Node {
   name: string;
   parent_id?: number;
   path?: string;
+  photo_asset_id?: string;
+  photo_file_count?: number;
   revision: number;
   size: number;
   source_metadata?: SourceMetadata;
@@ -6363,6 +6365,7 @@ export interface TrashEmptyReport {
   readonly $schema?: string;
   candidate_roots: number;
   deleted: number;
+  held_roots: number;
   retained_roots: number;
   run: boolean;
 }
@@ -7308,6 +7311,10 @@ export type DetachPhotoFileHeaders = {
 
 export type ReadPhotoPreviewHeaders = {
 'If-None-Match'?: string;
+};
+
+export type TrashPhotoAssetHeaders = {
+'If-Match': string;
 };
 
 export type PromotePhotoNodeHeaders = {
@@ -11838,7 +11845,7 @@ export const getRestoreNodeUrl = (id: number,) => {
 }
 
 /**
- * @summary Restore a trash root to its original location (root fallback, suffix on collision)
+ * @summary Restore a trash root or photo member, recovering its photo group and containing trash folders
  */
 export const restoreNode = async (id: number,
     headers: RestoreNodeHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
@@ -14302,6 +14309,45 @@ return sessionPhotoPreview<Blob>(getReadPhotoPreviewUrl(assetId,generationId),
 
 
 
+export const getTrashPhotoAssetUrl = (assetId: string,) => {
+
+
+
+
+  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/trash`
+}
+
+/**
+ * @summary Move every photo asset member to recoverable trash
+ */
+export const trashPhotoAsset = async (assetId: string,
+    headers: TrashPhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAsset>(getTrashPhotoAssetUrl(assetId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
 export const getStartPhotoImportUrl = () => {
 
 
@@ -16560,7 +16606,7 @@ export const getListTrashUrl = (params?: ListTrashParams,) => {
 }
 
 /**
- * @summary List restorable trash roots, newest first, optionally paginated
+ * @summary List restorable trash roots, newest first; paginated results group photo members
  */
 export const listTrash = async (params?: ListTrashParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TrashPage> => {
 

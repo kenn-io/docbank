@@ -54,12 +54,14 @@ func TestPhotoSetMembershipSurvivesEmptyAssets(t *testing.T) {
 	require.Equal(t, int64(3), summary.IncludedCount)
 	require.Equal(t, live.ID, *summary.EffectiveCoverAssetID)
 	require.Equal(t, set, summary.PhotoSet)
-	for _, nodeID := range []int64{second.Files[0].NodeID, raw.ID} {
+	for _, nodeID := range []int64{second.Files[0].NodeID} {
 		node, err := s.NodeByID(ctx, nodeID)
 		require.NoError(t, err)
 		_, _, err = s.Trash(ctx, node.ID, node.Revision)
 		require.NoError(t, err)
 	}
+	_, err = s.DetachPhotoFile(ctx, pair.ID, pair.Revision, fileByRole(pair.Files, PhotoRoleRAW).ID, PhotoDetachOptions{})
+	require.NoError(t, err)
 	_, err = s.TrashEmpty(ctx, 0, true)
 	require.NoError(t, err)
 	summary, err = s.PhotoSet(ctx, set.ID, recipe)

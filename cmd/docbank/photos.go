@@ -131,6 +131,26 @@ var photoDetachCmd = &cobra.Command{
 	},
 }
 
+var photoTrashCmd = &cobra.Command{
+	Use: "trash <asset-id>", Short: "Move every asset member to recoverable trash", Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := checkPhotoRevisionFlag(cmd); err != nil {
+			return err
+		}
+		c, err := daemonconn.Ensure(cmd.Context())
+		if err != nil {
+			return err
+		}
+		asset, err := withPhotoRevision(cmd, photoAssetRevision(cmd, c, args[0]), func(revision *int64) (api.PhotoAsset, error) {
+			return c.TrashPhotoAsset(cmd.Context(), args[0], *revision)
+		})
+		if err != nil {
+			return err
+		}
+		return writeCLIJSON(cmd.OutOrStdout(), asset)
+	},
+}
+
 var photoExcludeCmd = &cobra.Command{
 	Use:   "exclude <asset-id>",
 	Short: "Exclude or include an asset",
@@ -339,7 +359,7 @@ func withPhotoRevision[T any](cmd *cobra.Command, current func() (*int64, error)
 
 func init() {
 	photoAssetsCmd.AddCommand(photoCreateCmd, photoInspectCmd, photoAttachCmd, photoDetachCmd,
-		photoExcludeCmd, photoPromoteCmd, photoDisplayCmd)
+		photoExcludeCmd, photoTrashCmd, photoPromoteCmd, photoDisplayCmd)
 	photoSettingsCmd.AddCommand(photoSettingsShowCmd, photoSettingsSetCmd, photoSettingsResetCmd)
 	photosCmd.AddCommand(photoAssetsCmd, photoSettingsCmd)
 	rootCmd.AddCommand(photosCmd)
@@ -352,7 +372,7 @@ func init() {
 	photoAttachCmd.Flags().StringVar(&photoSidecarOf, "sidecar-of-file-id", "", "same-asset RAW file ID for a sidecar")
 	photoDetachCmd.Flags().BoolVar(&photoClearDependentSidecars, "clear-dependent-sidecars", false, "detach dependent sidecars with a RAW file")
 	photoExcludeCmd.Flags().BoolVar(&photoExcluded, "excluded", true, "exclude the asset")
-	for _, command := range []*cobra.Command{photoAttachCmd, photoDetachCmd, photoExcludeCmd, photoDisplayCmd,
+	for _, command := range []*cobra.Command{photoAttachCmd, photoDetachCmd, photoExcludeCmd, photoTrashCmd, photoDisplayCmd,
 		photoSettingsSetCmd, photoSettingsResetCmd} {
 		command.Flags().Int64Var(&photoRevision, "revision", 0, "expected asset or settings revision (default: current, retried once)")
 	}

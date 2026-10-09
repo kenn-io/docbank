@@ -8949,6 +8949,11 @@ components:
           type: integer
         path:
           type: string
+        photo_asset_id:
+          type: string
+        photo_file_count:
+          format: int64
+          type: integer
         revision:
           format: int64
           type: integer
@@ -15927,6 +15932,9 @@ components:
         deleted:
           format: int64
           type: integer
+        held_roots:
+          format: int64
+          type: integer
         retained_roots:
           format: int64
           type: integer
@@ -15935,6 +15943,7 @@ components:
       required:
         - candidate_roots
         - retained_roots
+        - held_roots
         - deleted
         - run
       type: object
@@ -20330,7 +20339,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Restore a trash root to its original location (root fallback, suffix on collision)
+      summary: Restore a trash root or photo member, recovering its photo group and containing trash folders
   /api/v1/nodes/{id}/revert:
     post:
       description: "Reversion is metadata-only: it adopts the source version's existing blob authority and records a new content_revert history row under If-Match."
@@ -22813,6 +22822,38 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read verified bytes of an eligible exact photo preview
+  /api/v1/photos/assets/{asset_id}/trash:
+    post:
+      operationId: trashPhotoAsset
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Move every photo asset member to recoverable trash
   /api/v1/photos/imports:
     post:
       operationId: startPhotoImport
@@ -24752,7 +24793,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: List restorable trash roots, newest first, optionally paginated
+      summary: List restorable trash roots, newest first; paginated results group photo members
   /api/v1/trash/empty:
     post:
       operationId: emptyTrash

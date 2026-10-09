@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	kitdaemon "go.kenn.io/kit/daemon"
 
+	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemon"
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/version"
@@ -147,6 +148,54 @@ func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 	} {
 		rec := NewRecord("127.0.0.1:1", "key", "tok", address)
 		assert.False(t, webDiscoverOptions().Accept(rec, info), address)
+	}
+}
+
+func TestEnsureReplacesPrePhotoTrashDaemon(t *testing.T) {
+	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
+	for _, protocol := range []string{"66", "67"} {
+		t.Run(protocol, func(t *testing.T) {
+			root, rec := startUnresponsiveRuntime(t)
+			assetID := "00000000-0000-4000-8000-000000000001"
+			fileID := "00000000-0000-4000-8000-000000000010"
+			stamp := "2026-09-22T00:00:00Z"
+			started := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == kitdaemon.DefaultPingPath {
+					_ = json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: Service, Version: version.Version, PID: rec.PID})
+				} else if r.URL.Path == daemonauth.ChallengePath {
+					nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+					assert.NoError(t, err)
+					_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(rec.Metadata[metaShutdownToken], nonce)})
+				} else if started && r.URL.Path == "/api/v1/photos/assets/"+assetID+"/trash" {
+					assert.Equal(t, http.MethodPost, r.Method)
+					assert.Equal(t, `"1"`, r.Header.Get("If-Match"))
+					w.Header().Set("ETag", `"2"`)
+					_ = json.MarshalWrite(w, api.PhotoAsset{ID: assetID, Kind: "photo", Revision: 2, DisplayFileID: &fileID, DisplaySource: "default", CreatedAt: stamp, UpdatedAt: stamp,
+						Files: []api.PhotoFile{{ID: fileID, AssetID: assetID, NodeID: 1, Role: "image", CreatedAt: stamp}}})
+				} else {
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			rec.Address = strings.TrimPrefix(server.URL, "http://")
+			rec.Metadata[metaProtocolVersion] = protocol
+			_, err := RuntimeStore(root).Write(rec)
+			require.NoError(t, err)
+			result, err := ensureDaemon(t.Context(), root, func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {
+				assert.False(t, kitdaemon.ProcessAlive(rec.PID))
+				started = true
+				return NewRecord(rec.Address, "new-key", "new-token", ""), nil
+			})
+			require.NoError(t, err)
+			require.NotNil(t, result.Replaced)
+			assert.Equal(t, rec.PID, result.Replaced.PID)
+			asset, err := New("http://"+result.Record.Address, result.Record.Metadata[metaAPIKey]).TrashPhotoAsset(t.Context(), assetID, 1)
+			require.NoError(t, err)
+			assert.Equal(t, assetID, asset.ID)
+			assert.Equal(t, int64(2), asset.Revision)
+		})
 	}
 }
 

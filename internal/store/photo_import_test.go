@@ -499,7 +499,7 @@ func TestPhotoSidecarImageLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	purgeAsset, err = s.AttachPhotoFile(ctx, purgeAsset.ID, purgeAsset.Revision, purgeSidecar.ID, PhotoRoleSidecar, &purgeFile.ID)
 	require.NoError(t, err)
-	_, _, err = s.Trash(ctx, purgeImage.ID, purgeImage.Revision)
+	_, err = s.TrashPhotoAsset(ctx, purgeAsset.ID, purgeAsset.Revision)
 	require.NoError(t, err)
 	_, err = s.TrashEmpty(ctx, 0, true)
 	require.NoError(t, err)
@@ -507,7 +507,7 @@ func TestPhotoSidecarImageLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, purgedAsset.Files)
 	_, err = s.NodeByID(ctx, purgeSidecar.ID)
-	require.NoError(t, err)
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestPhotoImportNodeStates(t *testing.T) {

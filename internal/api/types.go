@@ -413,6 +413,8 @@ type DocumentSearchReport struct {
 // Node is the wire representation of a store.Node. Path is populated on live
 // single-node responses; lists and trashed nodes omit it.
 type Node struct {
+	PhotoAssetID     string          `json:"photo_asset_id,omitzero"`
+	PhotoFileCount   int             `json:"photo_file_count,omitzero"`
 	ID               int64           `json:"id"`
 	ParentID         *int64          `json:"parent_id,omitempty"`
 	Name             string          `json:"name"`
@@ -1027,6 +1029,7 @@ type IngestPreflightReport struct {
 type TrashEmptyReport struct {
 	CandidateRoots int64 `json:"candidate_roots"`
 	RetainedRoots  int64 `json:"retained_roots"`
+	HeldRoots      int64 `json:"held_roots"`
 	Deleted        int64 `json:"deleted"`
 	Run            bool  `json:"run"`
 }
