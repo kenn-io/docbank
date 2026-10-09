@@ -292,6 +292,8 @@ export interface Node {
   name: string;
   parent_id?: number;
   path?: string;
+  photo_asset_id?: string;
+  photo_file_count?: number;
   revision: number;
   size: number;
   source_metadata?: SourceMetadata;
@@ -1690,6 +1692,20 @@ export interface DocumentEventCoverage {
   unbound_provenance: number;
 }
 
+export interface DocumentMediaSource {
+  content_version_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  source_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  source_version_id: string;
+}
+
 export interface MediaTimeSpan {
   /** @minimum 1 */
   end_ms: number;
@@ -1704,6 +1720,7 @@ export interface DocumentEvidenceReference {
   input_id?: string;
   input_kind?: string;
   kind: string;
+  media_sources?: DocumentMediaSource[];
   segment_id?: string;
   source_manifest_checksum?: string;
   time_span?: MediaTimeSpan;
@@ -1715,6 +1732,34 @@ export interface DocumentIdentity {
   /** @minimum 1 */
   node_id: number;
   path: string;
+}
+
+export interface DocumentMediaSelection {
+  completeness: string;
+  content_version_id: string;
+  origin: string;
+  source_id: string;
+  source_version_id: string;
+  supplied_input_id?: string;
+}
+
+export interface DocumentMediaSourceSelector {
+  content_version_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  source_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  source_version_id: string;
+  /**
+     * @maxItems 64
+     * @items.pattern ^[0-9a-f]{64}$
+     */
+  supplied_input_ids?: string[];
 }
 
 export type DocumentMissingCoverageKind = typeof DocumentMissingCoverageKind[keyof typeof DocumentMissingCoverageKind];
@@ -1847,6 +1892,9 @@ export interface DocumentSearchReport {
   actual_mode: string;
   coverage: DocumentSearchCoverage;
   degradations: string[];
+  /** @maxItems 4096 */
+  media_selections?: DocumentMediaSelection[];
+  media_source_selection?: boolean;
   requested_mode: string;
   reranking?: DocumentSearchRerankingReceipt;
   results: DocumentSearchResult[];
@@ -1886,6 +1934,11 @@ export interface DocumentSearchRequest {
      * @maximum 100
      */
   limit?: number;
+  /**
+     * @minItems 1
+     * @maxItems 4096
+     */
+  media_sources?: DocumentMediaSourceSelector[];
   mode: DocumentSearchRequestMode;
   /**
      * @minLength 1
@@ -6510,6 +6563,7 @@ export interface TrashEmptyReport {
   readonly $schema?: string;
   candidate_roots: number;
   deleted: number;
+  held_roots: number;
   retained_roots: number;
   run: boolean;
 }
@@ -7459,6 +7513,10 @@ export type HidePhotoAssetHeaders = {
 
 export type ReadPhotoPreviewHeaders = {
 'If-None-Match'?: string;
+};
+
+export type TrashPhotoAssetHeaders = {
+'If-Match': string;
 };
 
 export type UnhidePhotoAssetHeaders = {
@@ -11993,7 +12051,7 @@ export const getRestoreNodeUrl = (id: number,) => {
 }
 
 /**
- * @summary Restore a trash root to its original location (root fallback, suffix on collision)
+ * @summary Restore a trash root or photo member, recovering its photo group and containing trash folders
  */
 export const restoreNode = async (id: number,
     headers: RestoreNodeHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
@@ -14490,6 +14548,45 @@ return sessionPhotoPreview<Blob>(getReadPhotoPreviewUrl(assetId,generationId),
     ...options,
     method: 'GET',
     headers: { 'Accept': `image/jpeg`,...headers, ...getHeaders(options?.headers) }
+
+  }
+);}
+
+
+
+export const getTrashPhotoAssetUrl = (assetId: string,) => {
+
+
+
+
+  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/trash`
+}
+
+/**
+ * @summary Move every photo asset member to recoverable trash
+ */
+export const trashPhotoAsset = async (assetId: string,
+    headers: TrashPhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoAsset>(getTrashPhotoAssetUrl(assetId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) }
 
   }
 );}
@@ -17045,7 +17142,7 @@ export const getListTrashUrl = (params?: ListTrashParams,) => {
 }
 
 /**
- * @summary List restorable trash roots, newest first, optionally paginated
+ * @summary List restorable trash roots, newest first; paginated results group photo members
  */
 export const listTrash = async (params?: ListTrashParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TrashPage> => {
 
@@ -17459,46 +17556,3 @@ export const health = async ( options?: Parameters<typeof sessionJSON>[1]): Prom
 
   }
 );}
-
-export type TrashPhotoAssetHeaders = {
-'If-Match': string;
-};
-
-
-export const getTrashPhotoAssetUrl = (assetId: string,) => {
-
-
-
-
-  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/trash`
-}
-
-
-export const trashPhotoAsset = async (assetId: string,
-    headers: TrashPhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
-
-    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
-return sessionJSON<PhotoAsset>(getTrashPhotoAssetUrl(assetId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { ...headers, ...getHeaders(options?.headers) }
-
-  }
-);}
-
-
-

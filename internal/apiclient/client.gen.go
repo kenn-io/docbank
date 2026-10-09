@@ -5722,7 +5722,7 @@ func (c *Client) AppendNodeProvenance(ctx context.Context, options *AppendNodePr
 	return responseParser(ctx, resp)
 }
 
-// RestoreNode Restore a trash root to its original location (root fallback, suffix on collision)
+// RestoreNode Restore a trash root or photo member, recovering its photo group and containing trash folders
 func (c *Client) RestoreNode(ctx context.Context, options *RestoreNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RestoreNodeResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -9065,6 +9065,52 @@ func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreview
 	}
 	if resp.Streaming {
 		return nil, c.acceptStream(resp, 200, 304)
+	}
+	return responseParser(ctx, resp)
+}
+
+// TrashPhotoAsset Move every photo asset member to recoverable trash
+func (c *Client) TrashPhotoAsset(ctx context.Context, options *TrashPhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashPhotoAssetResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/trash",
+		Method:     "POST",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*TrashPhotoAssetResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(TrashPhotoAssetResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "TrashPhotoAssetResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[TrashPhotoAssetErrorResponse](resp, "TrashPhotoAssetErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/trash")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
 	}
 	return responseParser(ctx, resp)
 }
@@ -12502,7 +12548,7 @@ func (c *Client) ReadTimelineRebuild(ctx context.Context, options *ReadTimelineR
 	return responseParser(ctx, resp)
 }
 
-// ListTrash List restorable trash roots, newest first, optionally paginated
+// ListTrash List restorable trash roots, newest first; paginated results group photo members
 func (c *Client) ListTrash(ctx context.Context, options *ListTrashRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTrashResponse, error) {
 	var err error
 
@@ -19218,6 +19264,44 @@ func (o *ReadPhotoPreviewRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
+// TrashPhotoAssetRequestOptions is the options needed to make a request to TrashPhotoAsset.
+type TrashPhotoAssetRequestOptions struct {
+	PathParams *TrashPhotoAssetPath
+	Header     *TrashPhotoAssetHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *TrashPhotoAssetRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *TrashPhotoAssetRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *TrashPhotoAssetRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *TrashPhotoAssetRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // UnhidePhotoAssetRequestOptions is the options needed to make a request to UnhidePhotoAsset.
 type UnhidePhotoAssetRequestOptions struct {
 	PathParams *UnhidePhotoAssetPath
@@ -22012,6 +22096,10 @@ type ReadPhotoPreviewHeaders struct {
 	IfNoneMatch *string `json:"If-None-Match,omitempty"`
 }
 
+type TrashPhotoAssetHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
 type UnhidePhotoAssetHeaders struct {
 	IfMatch *string `json:"If-Match,omitempty"`
 }
@@ -22474,6 +22562,10 @@ type HidePhotoAssetPath struct {
 type ReadPhotoPreviewPath struct {
 	AssetID      string `json:"asset_id"`
 	GenerationID string `json:"generation_id"`
+}
+
+type TrashPhotoAssetPath struct {
+	AssetID string `json:"asset_id"`
 }
 
 type UnhidePhotoAssetPath struct {
@@ -24039,6 +24131,10 @@ type HidePhotoAssetErrorResponse = Error
 
 type ReadPhotoPreviewResponse = []byte
 
+type TrashPhotoAssetResponse = api.PhotoAsset
+
+type TrashPhotoAssetErrorResponse = Error
+
 type UnhidePhotoAssetResponse = api.PhotoAsset
 
 type UnhidePhotoAssetErrorResponse = Error
@@ -24653,6 +24749,12 @@ type DocumentEventCoverage = api.DocumentEventCoverage
 type DocumentEvidenceReference = api.DocumentEvidenceReference
 
 type DocumentIdentity = api.DocumentIdentity
+
+type DocumentMediaSelection = api.DocumentMediaSelection
+
+type DocumentMediaSource = api.DocumentMediaSource
+
+type DocumentMediaSourceSelector = api.DocumentMediaSourceSelector
 
 type DocumentMissingCoverage = api.DocumentMissingCoverage
 
@@ -25716,103 +25818,3 @@ type WorkspaceQueryResponse = api.WorkspaceQueryResponse
 type WorkspaceQueryRow = api.WorkspaceQueryRow
 
 type WorkspaceQueryTag = api.WorkspaceQueryTag
-
-func (c *Client) TrashPhotoAsset(ctx context.Context, options *TrashPhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrashPhotoAssetResponse, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/trash",
-		Method:     "POST",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	responseParser := func(_ context.Context, resp *runtime.Response) (*TrashPhotoAssetResponse, error) {
-		switch resp.StatusCode {
-
-		case 200:
-
-			target := new(TrashPhotoAssetResponse)
-			if err := json.Unmarshal(resp.Content, target); err != nil {
-				return nil, &runtime.ResponseDecodeError{
-					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
-					ContentLength: len(resp.Content), TargetType: "TrashPhotoAssetResponse", Body: resp.Content, Err: err,
-				}
-			}
-
-			return target, nil
-
-		default:
-
-			return nil, decodeAPIError[TrashPhotoAssetErrorResponse](resp, "TrashPhotoAssetErrorResponse")
-
-		}
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/trash")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-	if resp.Streaming {
-		return nil, c.acceptStream(resp, 200)
-	}
-	return responseParser(ctx, resp)
-}
-
-
-type TrashPhotoAssetRequestOptions struct {
-	PathParams *TrashPhotoAssetPath
-	Header     *TrashPhotoAssetHeaders
-}
-
-
-func (o *TrashPhotoAssetRequestOptions) GetPathParams() (map[string]any, error) {
-	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var params map[string]any
-	err = json.Unmarshal(encoded, &params)
-	return params, err
-}
-
-
-func (o *TrashPhotoAssetRequestOptions) GetQuery() (map[string]any, error) {
-	return nil, nil
-}
-
-
-func (o *TrashPhotoAssetRequestOptions) GetBody() any {
-	return nil
-}
-
-
-func (o *TrashPhotoAssetRequestOptions) GetHeader() (map[string]string, error) {
-	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
-	if err != nil {
-		return nil, err
-	}
-	var headers map[string]string
-	err = json.Unmarshal(encoded, &headers)
-	return headers, err
-}
-
-
-type TrashPhotoAssetHeaders struct {
-	IfMatch string `json:"If-Match"`
-}
-
-
-type TrashPhotoAssetPath struct {
-	AssetID string `json:"asset_id"`
-}
-
-
-type TrashPhotoAssetResponse = api.PhotoAsset
-
-
-type TrashPhotoAssetErrorResponse = Error
-

@@ -3779,6 +3779,10 @@ components:
           type: string
         kind:
           type: string
+        media_sources:
+          items:
+            $ref: "#/components/schemas/DocumentMediaSource"
+          type: array
         segment_id:
           type: string
         source_manifest_checksum:
@@ -3812,6 +3816,84 @@ components:
         - path
       type: object
       x-go-type: api.DocumentIdentity
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentMediaSelection:
+      additionalProperties: false
+      properties:
+        completeness:
+          type: string
+        content_version_id:
+          type: string
+        origin:
+          type: string
+        source_id:
+          type: string
+        source_version_id:
+          type: string
+        supplied_input_id:
+          type: string
+      required:
+        - source_id
+        - source_version_id
+        - content_version_id
+        - origin
+        - completeness
+      type: object
+      x-go-type: api.DocumentMediaSelection
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentMediaSource:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          format: uuid
+          type: string
+        source_id:
+          maxLength: 256
+          minLength: 1
+          type: string
+        source_version_id:
+          maxLength: 256
+          minLength: 1
+          type: string
+      required:
+        - source_id
+        - source_version_id
+        - content_version_id
+      type: object
+      x-go-type: api.DocumentMediaSource
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    DocumentMediaSourceSelector:
+      additionalProperties: false
+      properties:
+        content_version_id:
+          format: uuid
+          type: string
+        source_id:
+          maxLength: 256
+          minLength: 1
+          type: string
+        source_version_id:
+          maxLength: 256
+          minLength: 1
+          type: string
+        supplied_input_ids:
+          items:
+            pattern: ^[0-9a-f]{64}$
+            type: string
+          maxItems: 64
+          type: array
+      required:
+        - source_id
+        - source_version_id
+        - content_version_id
+      type: object
+      x-go-type: api.DocumentMediaSourceSelector
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -3956,6 +4038,13 @@ components:
           items:
             type: string
           type: array
+        media_selections:
+          items:
+            $ref: "#/components/schemas/DocumentMediaSelection"
+          maxItems: 4096
+          type: array
+        media_source_selection:
+          type: boolean
         requested_mode:
           type: string
         reranking:
@@ -4007,6 +4096,12 @@ components:
           maximum: 100
           minimum: 1
           type: integer
+        media_sources:
+          items:
+            $ref: "#/components/schemas/DocumentMediaSourceSelector"
+          maxItems: 4096
+          minItems: 1
+          type: array
         mode:
           enum:
             - auto
@@ -8920,6 +9015,11 @@ components:
           type: integer
         path:
           type: string
+        photo_asset_id:
+          type: string
+        photo_file_count:
+          format: int64
+          type: integer
         revision:
           format: int64
           type: integer
@@ -16118,6 +16218,9 @@ components:
         deleted:
           format: int64
           type: integer
+        held_roots:
+          format: int64
+          type: integer
         retained_roots:
           format: int64
           type: integer
@@ -16126,6 +16229,7 @@ components:
       required:
         - candidate_roots
         - retained_roots
+        - held_roots
         - deleted
         - run
       type: object
@@ -20521,7 +20625,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Restore a trash root to its original location (root fallback, suffix on collision)
+      summary: Restore a trash root or photo member, recovering its photo group and containing trash folders
   /api/v1/nodes/{id}/revert:
     post:
       description: "Reversion is metadata-only: it adopts the source version's existing blob authority and records a new content_revert history row under If-Match."
@@ -23035,6 +23139,38 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Read verified bytes of an eligible exact photo preview
+  /api/v1/photos/assets/{asset_id}/trash:
+    post:
+      operationId: trashPhotoAsset
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Move every photo asset member to recoverable trash
   /api/v1/photos/assets/{asset_id}/unhide:
     post:
       operationId: unhidePhotoAsset
@@ -25188,7 +25324,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: List restorable trash roots, newest first, optionally paginated
+      summary: List restorable trash roots, newest first; paginated results group photo members
   /api/v1/trash/empty:
     post:
       operationId: emptyTrash
@@ -25661,35 +25797,3 @@ paths:
 security:
   - apiKey: []
   - bearer: []
-  /api/v1/photos/assets/{asset_id}/trash:
-    post:
-      operationId: trashPhotoAsset
-      parameters:
-        - in: path
-          name: asset_id
-          required: true
-          schema:
-            type: string
-        - in: header
-          name: If-Match
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PhotoAsset"
-          description: OK
-          headers:
-            ETag:
-              schema:
-                type: string
-        default:
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Error"
-          description: Error
-      summary: Move every photo asset member to recoverable trash
