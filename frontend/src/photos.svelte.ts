@@ -96,10 +96,10 @@ export class Photos {
         : cause instanceof Error ? cause.message : String(cause);
       if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); return true; }
       return false;
-    }, successes => {
+    }, () => {
       this.actionError = failures ? `${failures} photo${failures === 1 ? "" : "s"} failed: ${failure}` : "";
       onactionerror?.(this.actionError);
-      if (successes) onhidden?.();
+      onhidden?.();
     }, "hiding", preserve);
   }
 
@@ -190,17 +190,19 @@ export class Photos {
       if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); return true; }
       this.trashError = cause instanceof Error ? cause.message : String(cause);
       return false;
-    }, successes => {
-      if (successes) ontrashed?.();
+    }, () => {
+      ontrashed?.();
     }, "trashing", preserve);
     return successes === selected.length;
   }
 
-  private async mutateBatch(targets: PhotoBrowseRow[], request: (item: PhotoBrowseRow) => Promise<{ id: string; revision: number }>, onerror: (cause: unknown) => boolean, oncomplete: (successes: number) => void, action: "hiding" | "trashing", preserve?: () => (() => Promise<void>) | undefined) {
+  private async mutateBatch(targets: PhotoBrowseRow[], request: (item: PhotoBrowseRow) => Promise<{ id: string; revision: number }>, onerror: (cause: unknown) => boolean, oncomplete: () => void, action: "hiding" | "trashing", preserve?: () => (() => Promise<void>) | undefined) {
     let successes = 0;
+    let dispatched = false;
     try {
       for (const item of targets) {
         try {
+          dispatched = true;
           const receipt = await request(item);
           if (receipt.id !== item.asset_id || receipt.revision <= item.revision) throw new Error(`Photo${action === "trashing" ? " trash" : ""} response did not confirm the selected photo. Refresh and retry.`);
           this.cancelPending();
@@ -212,7 +214,7 @@ export class Photos {
           if (onerror(cause)) break;
         }
       }
-      oncomplete(successes);
+      if (dispatched) oncomplete();
       await this.refresh(preserve);
       return successes;
     } finally { this[action] = false; }

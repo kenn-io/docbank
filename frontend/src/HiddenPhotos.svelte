@@ -88,7 +88,7 @@
     if (invalidField) { await tick(); document.getElementById(invalidField)?.focus(); return; }
     actionPending = true;
     concealingAction = kind !== "enter";
-    let completed = false;
+    let disableDispatched = false;
     if (kind === "lock" || kind === "disable" || kind === "change") clear();
     try {
       if (kind === "enter") {
@@ -96,12 +96,11 @@
         await unlockPhotoHidden({ passcode }, options());
       } else if (kind === "lock") await lockPhotoHidden({}, options());
       else if (kind === "change") await changePhotoHidden({ passcode: currentPasscode, new_passcode: nextPasscode }, options());
-      else await disablePhotoHidden({ passcode: currentPasscode }, options());
+      else { disableDispatched = true; await disablePhotoHidden({ passcode: currentPasscode }, options()); }
       passcode = "";
       currentPasscode = "";
       nextPasscode = "";
       passcodeError = currentPasscodeError = nextPasscodeError = "";
-      completed = true;
       lockoutError = "";
     } catch (cause) {
       if (disposed) return;
@@ -115,7 +114,7 @@
     } finally {
       actionPending = false;
       concealingAction = false;
-      if (completed && kind === "disable") onunhidden?.();
+      if (disableDispatched) onunhidden?.();
       if (!disposed) await checkAccess();
       if (invalidField && !disposed) { await tick(); document.getElementById(invalidField)?.focus(); }
     }

@@ -391,9 +391,9 @@ var codeToTypedErr = map[string]error{
 	"invalid_photo_album":           store.ErrInvalidPhotoAlbum,
 	"photo_node_not_eligible":       store.ErrPhotoNodeNotEligible,
 	"photo_node_owned":              store.ErrPhotoNodeOwned,
-	"hidden_locked":                 fmt.Errorf("%w; unlock Hidden or unhide the photo before retrying", store.ErrHiddenLocked),
-	"hidden_not_configured":         fmt.Errorf("%w, then unlock or unhide the photo before retrying", store.ErrHiddenNotConfigured),
-	"hidden_passcode":               fmt.Errorf("%w; use the correct passcode to unlock or unhide the photo before retrying", store.ErrHiddenPasscode),
+	"hidden_locked":                 fmt.Errorf("%w; unlock Hidden before retrying", store.ErrHiddenLocked),
+	"hidden_not_configured":         store.ErrHiddenNotConfigured,
+	"hidden_passcode":               fmt.Errorf("%w; retry with the correct passcode", store.ErrHiddenPasscode),
 	"audit_already_enabled":         store.ErrAuditAlreadyEnabled,
 	"audit_scope_overlap":           store.ErrAuditScopeOverlap,
 	"audit_scope_limit":             store.ErrAuditScopeLimit,
@@ -446,7 +446,11 @@ func apiProblemError(e api.Error) error {
 		cause = &SourceFenceScopeTooLargeError{ObservedScopeCount: e.ObservedScopeCount, detail: e.Detail}
 		observedScopeCount = e.ObservedScopeCount
 	} else if target, ok := codeToTypedErr[e.Code]; ok {
-		cause = fmt.Errorf("%s: %w", e.Detail, target)
+		if e.Detail == "" || target.Error() == e.Detail || strings.HasPrefix(target.Error(), e.Detail+"; ") {
+			cause = target
+		} else {
+			cause = fmt.Errorf("%s: %w", e.Detail, target)
+		}
 	} else {
 		cause = fmt.Errorf("daemon error (%d %s): %s", e.Status, e.Code, e.Detail)
 	}

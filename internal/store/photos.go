@@ -418,10 +418,7 @@ func (s *Store) photoAssetCreateTx(ctx context.Context, tx *sql.Tx, nodeID int64
 	if owner, owned, err := photoAssetOwningNodeTx(ctx, tx, nodeID); err != nil {
 		return PhotoAsset{}, err
 	} else if owned {
-		if _, err := s.photoAssetReadQuery(ctx, tx, owner); err != nil {
-			return PhotoAsset{}, err
-		}
-		return PhotoAsset{}, fmt.Errorf("node %d belongs to asset %s: %w", nodeID, owner, ErrPhotoNodeOwned)
+		return PhotoAsset{}, s.photoOwnershipError(ctx, tx, owner, fmt.Errorf("node %d belongs to asset %s: %w", nodeID, owner, ErrPhotoNodeOwned))
 	}
 	role := explicitRole
 	if role == "" {
@@ -607,6 +604,13 @@ func commitPhotoAssetTx(ctx context.Context, tx *sql.Tx, before, asset PhotoAsse
 	return result, nil
 }
 
+func (s *Store) photoOwnershipError(ctx context.Context, tx *sql.Tx, owner string, conflict error) error {
+	if _, err := s.photoAssetReadQuery(ctx, tx, owner); err != nil {
+		return err
+	}
+	return conflict
+}
+
 func photoAssetOwningNodeTx(ctx context.Context, tx *sql.Tx, nodeID int64) (string, bool, error) {
 	var assetID string
 	err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=?`, nodeID).Scan(&assetID)
@@ -646,10 +650,7 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 			return err
 		}
 		if expectedRevision == nil {
-			if _, err := s.photoAssetReadQuery(ctx, tx, ownedID); err != nil {
-				return err
-			}
-			return fmt.Errorf("node %d already belongs to asset %s and needs its revision: %w", nodeID, ownedID, ErrStaleRevision)
+			return s.photoOwnershipError(ctx, tx, ownedID, fmt.Errorf("node %d already belongs to asset %s and needs its revision: %w", nodeID, ownedID, ErrStaleRevision))
 		}
 		result, err = s.mutatePhotoAssetTx(ctx, tx, ownedID, *expectedRevision, "promote", func(tx *sql.Tx, asset *PhotoAsset) (bool, error) {
 			for _, file := range asset.Files {
@@ -693,10 +694,7 @@ func (s *Store) AttachPhotoFile(ctx context.Context, assetID string, revision, n
 		if ownedID, owned, err := photoAssetOwningNodeTx(ctx, tx, nodeID); err != nil {
 			return false, err
 		} else if owned {
-			if _, err := s.photoAssetReadQuery(ctx, tx, ownedID); err != nil {
-				return false, err
-			}
-			return false, fmt.Errorf("node %d belongs to asset %s: %w", nodeID, ownedID, ErrPhotoNodeOwned)
+			return false, s.photoOwnershipError(ctx, tx, ownedID, fmt.Errorf("node %d belongs to asset %s: %w", nodeID, ownedID, ErrPhotoNodeOwned))
 		}
 		if role == "" {
 			if !facts.Qualifies {

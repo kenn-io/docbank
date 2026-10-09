@@ -75,10 +75,7 @@ func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set Phot
 	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m WHERE m.set_id=? AND EXISTS (SELECT 1 FROM photo_files f WHERE f.asset_id=m.asset_id)`, set.ID).Scan(&out.MemberCount); err != nil {
 		return out, err
 	}
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE m.set_id=? AND `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(false), set.ID).Scan(&out.IncludedCount); err != nil {
-		return out, err
-	}
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE m.set_id=? AND `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(true), set.ID).Scan(&out.HiddenCount); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN a.hidden_at IS NULL THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN a.hidden_at IS NOT NULL THEN 1 ELSE 0 END),0) FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE m.set_id=? AND `+photoBrowseLiveDisplay, set.ID).Scan(&out.IncludedCount, &out.HiddenCount); err != nil {
 		return out, err
 	}
 	var id, generation string
@@ -247,17 +244,19 @@ func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, n
 		}
 		if cover != nil {
 			if *cover != nil {
-				if _, err := s.photoAssetReadQuery(ctx, tx, **cover); err != nil {
-					if errors.Is(err, ErrNotFound) {
+				var hidden, member bool
+				if err := tx.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL, EXISTS(SELECT 1 FROM photo_set_members WHERE set_id=? AND asset_id=?) FROM photo_assets WHERE asset_id=?`, id, **cover, **cover).Scan(&hidden, &member); err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
 						return ErrInvalidPhotoAlbum
 					}
 					return err
 				}
-				var count int
-				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members WHERE set_id=? AND asset_id=?`, id, **cover).Scan(&count); err != nil {
-					return err
+				if hidden {
+					if _, err := s.hiddenSession(ctx, tx); err != nil {
+						return err
+					}
 				}
-				if count != 1 {
+				if !member {
 					return ErrInvalidPhotoAlbum
 				}
 			}
