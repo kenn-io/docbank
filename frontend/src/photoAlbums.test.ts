@@ -183,6 +183,21 @@ it("shares selection scope for an in-app drag and rejects an external payload", 
   expect(members).toHaveBeenCalledTimes(1);
   albums.startDrag("unselected", { dataTransfer: transfer } as unknown as DragEvent, photos);
   expect(albums.drag?.scope).toEqual({ asset_ids: ["unselected"] });
+  members.mockRestore();
+  const fetcher = vi.fn().mockResolvedValueOnce(response({ ...album, revision: 2 })).mockResolvedValueOnce(response([album]));
+  vi.stubGlobal("fetch", fetcher);
+  photos.query = { ...photoQuery, filters: { set_ids: [album.id] } };
+  let finish!: () => void;
+  vi.spyOn(photos, "refresh").mockImplementation(() => new Promise<void>(resolve => finish = resolve));
+  const first = albums.drop(album, { dataTransfer: transfer, preventDefault: vi.fn() } as unknown as DragEvent);
+  await vi.waitFor(() => expect(photos.refresh).toHaveBeenCalledOnce());
+  albums.startDrag("photo-0", { dataTransfer: transfer } as unknown as DragEvent, photos);
+  await albums.drop(album, { dataTransfer: transfer, preventDefault: vi.fn() } as unknown as DragEvent);
+  expect(albums.error).toBe("Another album change is still running. Try again.");
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  finish(); await first;
+  expect(albums.error).toBe("");
+  expect(albums.notice).toContain("Added to Trip");
 });
 
 it("reports a deleted album without refreshing the source grid", async () => {
