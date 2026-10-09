@@ -15837,6 +15837,9 @@ components:
         deleted:
           format: int64
           type: integer
+        held_roots:
+          format: int64
+          type: integer
         retained_roots:
           format: int64
           type: integer
@@ -15845,6 +15848,7 @@ components:
       required:
         - candidate_roots
         - retained_roots
+        - held_roots
         - deleted
         - run
       type: object

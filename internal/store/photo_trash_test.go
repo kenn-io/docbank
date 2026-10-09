@@ -83,6 +83,8 @@ func TestPhotoTrashAndRestoreMember(t *testing.T) {
 			require.NoError(t, err)
 			_, _, err = s.Restore(t.Context(), selected.ID, selected.Revision-1)
 			require.ErrorIs(t, err, ErrStaleRevision)
+			require.ErrorContains(t, err, fmt.Sprintf("node %d at revision %d, expected %d",
+				selected.ID, selected.Revision, selected.Revision-1))
 			_, _, err = s.Restore(t.Context(), selected.ID, selected.Revision)
 			require.NoError(t, err)
 			for _, before := range nodes {
@@ -267,6 +269,9 @@ func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, dry.Candidates, rep.Deleted)
 			assert.False(t, rep.More)
+			held := map[string]int64{"live peer": 1, "new peer": 2, "retained peer": 2}[mode]
+			assert.Equal(t, held, dry.Held)
+			assert.Equal(t, held, rep.Held)
 			if mode == "live peer" || mode == "new peer" || mode == "retained peer" {
 				assert.Zero(t, rep.Deleted)
 				for _, node := range nodes {
@@ -415,5 +420,45 @@ func TestPhotoTrashJSONLRecovery(t *testing.T) {
 		restored, err := target.NodeByID(t.Context(), node.ID)
 		require.NoError(t, err)
 		assert.Nil(t, restored.TrashedAt)
+	}
+}
+
+func TestPhotoRestoreFollowsCompanionsAcrossFolders(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	pair := func(rawDir, jpegDir Node, name string) {
+		raw, err := s.CreateFile(t.Context(), rawDir.ID, name+".raw", fakeHash(name+"1"), 1, "application/octet-stream")
+		require.NoError(t, err)
+		jpeg, err := s.CreateFile(t.Context(), jpegDir.ID, name+".jpg", fakeHash(name+"2"), 1, "image/jpeg")
+		require.NoError(t, err)
+		auto, err := s.PhotoAssetForNode(t.Context(), jpeg.ID)
+		require.NoError(t, err)
+		_, err = s.DetachPhotoFile(t.Context(), auto.ID, auto.Revision, auto.Files[0].ID, PhotoDetachOptions{})
+		require.NoError(t, err)
+		asset, err := s.CreatePhotoAsset(t.Context(), raw.ID, PhotoRoleRAW, PhotoKindPhoto)
+		require.NoError(t, err)
+		_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, jpeg.ID, PhotoRoleImage, nil)
+		require.NoError(t, err)
+	}
+	var folders []Node
+	for _, name := range []string{"a", "b", "c", "unrelated"} {
+		folder, err := s.Mkdir(t.Context(), s.RootID(), name)
+		require.NoError(t, err)
+		folders = append(folders, folder)
+	}
+	pair(folders[1], folders[0], "x")
+	pair(folders[2], folders[1], "y")
+	for _, folder := range folders {
+		_, _, err := s.Trash(t.Context(), folder.ID, UnconditionalRev)
+		require.NoError(t, err)
+	}
+	selected, err := s.NodeByID(t.Context(), folders[0].ID)
+	require.NoError(t, err)
+	_, _, err = s.Restore(t.Context(), selected.ID, selected.Revision)
+	require.NoError(t, err)
+	for index, folder := range folders {
+		current, err := s.NodeByID(t.Context(), folder.ID)
+		require.NoError(t, err)
+		assert.Equal(t, index == 3, current.TrashedAt != nil, folder.Name)
 	}
 }

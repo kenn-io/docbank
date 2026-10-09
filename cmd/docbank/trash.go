@@ -91,6 +91,10 @@ var trashEmptyCmd = &cobra.Command{
 		if rep.RetainedRoots > 0 {
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "retained %d trashed root(s) referenced by email publications\n", rep.RetainedRoots)
 		}
+		if rep.HeldRoots > 0 {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(),
+				"held %d trashed root(s) whose photo companions are live, newer, or retained\n", rep.HeldRoots)
+		}
 		if !rep.Run {
 			if rep.CandidateRoots > 0 {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "dry run — pass --run to delete")

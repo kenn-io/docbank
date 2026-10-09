@@ -60,7 +60,7 @@
 
 {#if trashOpen}
   <Modal title="Move selected photos to trash?" tone="danger" ariaLabel="Move selected photos to trash" onclose={() => { if (!photos.trashing) trashOpen = false; }} closeOnOverlayClick={!photos.trashing}>
-    <p>Move {photos.selection.selectedIDs.size} selected photos and every RAW, image, video, and sidecar member to recoverable trash. Stored files and album membership stay intact.</p>
+    <p>Move {photos.selection.selectedIDs.size} selected photo{photos.selection.selectedIDs.size === 1 ? "" : "s"} and every RAW, image, video, and sidecar member to recoverable trash. Stored files and album membership stay intact.</p>
     {#if photos.trashError}<p role="alert">{photos.trashError} Failed photos remain selected for retry.</p>{/if}
     {#snippet footer()}
       <Button disabled={photos.trashing} onclick={() => trashOpen = false}>Keep in Docbank</Button>

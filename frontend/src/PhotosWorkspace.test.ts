@@ -24,6 +24,7 @@ it("keeps failed confirmation visible and closes after cancellation or success",
   render(PhotosWorkspace, { photos, cache, ontrashed });
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
   const dialog = screen.getByRole("dialog", { name: "Move selected photos to trash" });
+  expect(within(dialog).getByText(/^Move 2 selected photos and/)).toBeTruthy();
   await fireEvent.click(within(dialog).getByRole("button", { name: "Move to trash" }));
   await within(dialog).findByText(/Photo changed/);
   expect(ontrashed).toHaveBeenCalledTimes(1);
@@ -31,7 +32,9 @@ it("keeps failed confirmation visible and closes after cancellation or success",
   expect(screen.queryByRole("dialog", { name: "Move selected photos to trash" })).toBeNull();
   await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 3.jpg" }));
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
-  await fireEvent.click(within(screen.getByRole("dialog", { name: "Move selected photos to trash" })).getByRole("button", { name: "Move to trash" }));
+  const single = screen.getByRole("dialog", { name: "Move selected photos to trash" });
+  expect(within(single).getByText(/^Move 1 selected photo and/)).toBeTruthy();
+  await fireEvent.click(within(single).getByRole("button", { name: "Move to trash" }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Move selected photos to trash" })).toBeNull());
   expect(ontrashed).toHaveBeenCalledTimes(2);
   photos.dispose(); await cache.dispose();

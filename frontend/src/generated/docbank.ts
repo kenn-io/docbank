@@ -6314,6 +6314,7 @@ export interface TrashEmptyReport {
   readonly $schema?: string;
   candidate_roots: number;
   deleted: number;
+  held_roots: number;
   retained_roots: number;
   run: boolean;
 }
@@ -11793,7 +11794,7 @@ export const getRestoreNodeUrl = (id: number,) => {
 }
 
 /**
- * @summary Restore a trash root to its original location (root fallback, suffix on collision)
+ * @summary Restore a trash root or photo member, recovering its photo group and containing trash folders
  */
 export const restoreNode = async (id: number,
     headers: RestoreNodeHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<Node> => {
@@ -16554,7 +16555,7 @@ export const getListTrashUrl = (params?: ListTrashParams,) => {
 }
 
 /**
- * @summary List restorable trash roots, newest first, optionally paginated
+ * @summary List restorable trash roots, newest first; paginated results group photo members
  */
 export const listTrash = async (params?: ListTrashParams, options?: Parameters<typeof sessionJSON>[1]): Promise<TrashPage> => {
 

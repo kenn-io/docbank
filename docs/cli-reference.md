@@ -1210,9 +1210,9 @@ durations (`12h`, `30m`) plus a day suffix (`30d`); negative ages are
 rejected. Without that filter, every trash root is eligible.
 
 `list --json` emits `{"items": [...]}`. `empty --json` emits the same typed
-dry-run or execution report as the HTTP API: `candidate_roots`, `deleted`,
-and `run`. Human status lines are suppressed so stdout contains one JSON
-document.
+dry-run or execution report as the HTTP API: `candidate_roots`,
+`retained_roots`, `held_roots`, `deleted`, and `run`. Human status lines are
+suppressed so stdout contains one JSON document.
 
 ## docbank gc
 

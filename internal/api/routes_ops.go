@@ -205,31 +205,33 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 		Limit  int `query:"limit" default:"0" minimum:"0" maximum:"1000"`
 		Offset int `query:"offset" default:"0" minimum:"0"`
 	}) (*trashListOutput, error) {
-		var (
-			roots []store.Node
-			total int
-			err   error
-		)
+		out := &trashListOutput{}
+		out.Body = TrashPage{Items: []Node{}, Limit: in.Limit, Offset: in.Offset}
 		if in.Limit == 0 {
 			if in.Offset != 0 {
 				return nil, NewError(http.StatusUnprocessableEntity, "validation",
 					"trash offset requires a positive limit")
 			}
-			roots, err = d.Store.TrashedRoots(ctx)
-			total = len(roots)
-		} else {
-			roots, total, err = d.Store.TrashedRootsPage(ctx, in.Limit, in.Offset)
+			roots, err := d.Store.TrashedRoots(ctx)
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
+			for _, n := range roots {
+				out.Body.Items = append(out.Body.Items, fromStoreNode(n))
+			}
+			out.Body.Total = len(roots)
+			return out, nil
 		}
+		items, total, err := d.Store.TrashedRootsPage(ctx, in.Limit, in.Offset)
 		if err != nil {
 			return nil, FromStoreError(err)
 		}
-		out := &trashListOutput{}
-		out.Body = TrashPage{
-			Items: []Node{}, Total: total, Limit: in.Limit, Offset: in.Offset,
+		for _, item := range items {
+			node := fromStoreNode(item.Node)
+			node.PhotoAssetID, node.PhotoFileCount = item.PhotoAssetID, item.PhotoFileCount
+			out.Body.Items = append(out.Body.Items, node)
 		}
-		for _, n := range roots {
-			out.Body.Items = append(out.Body.Items, fromStoreNode(n))
-		}
+		out.Body.Total = total
 		return out, nil
 	})
 
@@ -256,6 +258,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 			out.Body = TrashEmptyReport{
 				CandidateRoots: rep.Candidates,
 				RetainedRoots:  rep.Retained,
+				HeldRoots:      rep.Held,
 				Deleted:        rep.Deleted,
 				Run:            rep.Run,
 			}

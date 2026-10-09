@@ -5722,7 +5722,7 @@ func (c *Client) AppendNodeProvenance(ctx context.Context, options *AppendNodePr
 	return responseParser(ctx, resp)
 }
 
-// RestoreNode Restore a trash root to its original location (root fallback, suffix on collision)
+// RestoreNode Restore a trash root or photo member, recovering its photo group and containing trash folders
 func (c *Client) RestoreNode(ctx context.Context, options *RestoreNodeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RestoreNodeResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -12129,7 +12129,7 @@ func (c *Client) ReadTimelineRebuild(ctx context.Context, options *ReadTimelineR
 	return responseParser(ctx, resp)
 }
 
-// ListTrash List restorable trash roots, newest first, optionally paginated
+// ListTrash List restorable trash roots, newest first; paginated results group photo members
 func (c *Client) ListTrash(ctx context.Context, options *ListTrashRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListTrashResponse, error) {
 	var err error
 

@@ -77,7 +77,7 @@ func trashRootTx(ctx context.Context, tx *sql.Tx, node Node) (Node, error) {
 		}
 		node = parent
 	}
-	return Node{}, ErrNotTrashed
+	return Node{}, fmt.Errorf("node %d has no trash root: %w", node.ID, ErrNotTrashed)
 }
 
 func photoTrashGroupTx(ctx context.Context, tx *sql.Tx, root Node) (photoTrashGroup, error) {
@@ -155,10 +155,11 @@ func restoreRootTx(ctx context.Context, s *Store, tx *sql.Tx, node Node, active 
 
 func (s *Store) restorePhotoGroupTx(ctx context.Context, tx *sql.Tx, node Node, ifRev int64, active bool) (Node, error) {
 	if node.TrashedAt == nil {
-		return Node{}, ErrNotTrashed
+		return Node{}, fmt.Errorf("node %d: %w", node.ID, ErrNotTrashed)
 	}
 	if ifRev != UnconditionalRev && node.Revision != ifRev {
-		return Node{}, ErrStaleRevision
+		return Node{}, fmt.Errorf("node %d at revision %d, expected %d: %w",
+			node.ID, node.Revision, ifRev, ErrStaleRevision)
 	}
 	_, owned, err := photoAssetOwningNodeTx(ctx, tx, node.ID)
 	if err != nil {
@@ -234,7 +235,7 @@ func photoRestoreOrderTx(ctx context.Context, tx *sql.Tx, roots map[int64]Node) 
 			return nil
 		}
 		if state[id] == 1 {
-			return fmt.Errorf("cyclic trash parent dependency: %w", ErrNotTrashed)
+			return fmt.Errorf("trash root %d has a cyclic original-parent dependency", id)
 		}
 		state[id] = 1
 		if parent, ok := dependencies[id]; ok {
@@ -254,14 +255,23 @@ func photoRestoreOrderTx(ctx context.Context, tx *sql.Tx, roots map[int64]Node) 
 	return order, nil
 }
 
-func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string, args []any, maxRoots int) (string, []any, bool, error) {
+// photoTrashSelection is one trash-empty batch. Held counts eligible roots kept
+// because a connected photo member is live, too new, or retained.
+type photoTrashSelection struct {
+	query string
+	args  []any
+	more  bool
+	held  int64
+}
+
+func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string, args []any, maxRoots int) (photoTrashSelection, error) {
 	// Walk upward from photo members once, so ordinary folders need no inspection.
 	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE photo_nodes(id) AS (
  SELECT node_id FROM photo_files
  UNION SELECT n.parent_id FROM nodes n JOIN photo_nodes p ON n.id=p.id WHERE n.parent_id IS NOT NULL)
  SELECT id, id IN (SELECT id FROM photo_nodes) FROM nodes WHERE `+eligibleWhere+` ORDER BY trashed_at ASC, id ASC`, args...)
 	if err != nil {
-		return "", nil, false, err
+		return photoTrashSelection{}, err
 	}
 	defer func() { _ = rows.Close() }()
 	type candidate struct {
@@ -273,20 +283,21 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string
 	for rows.Next() {
 		var item candidate
 		if err := rows.Scan(&item.id, &item.photo); err != nil {
-			return "", nil, false, err
+			return photoTrashSelection{}, err
 		}
 		candidates = append(candidates, item)
 		eligible[item.id] = true
 	}
 	if err := rows.Err(); err != nil {
-		return "", nil, false, err
+		return photoTrashSelection{}, err
 	}
 	if err := rows.Close(); err != nil {
-		return "", nil, false, err
+		return photoTrashSelection{}, err
 	}
 	seen := map[int64]bool{}
 	var selected []int64
 	more := false
+	var held int64
 	for _, candidate := range candidates {
 		id := candidate.id
 		if seen[id] {
@@ -302,11 +313,11 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string
 		}
 		node, err := nodeByIDTx(tx, id)
 		if err != nil {
-			return "", nil, false, err
+			return photoTrashSelection{}, err
 		}
 		group, err := photoTrashGroupTx(ctx, tx, node)
 		if err != nil {
-			return "", nil, false, err
+			return photoTrashSelection{}, err
 		}
 		allowed := !group.live
 		for peer := range group.roots {
@@ -314,6 +325,11 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string
 			allowed = allowed && eligible[peer]
 		}
 		if !allowed {
+			for peer := range group.roots {
+				if eligible[peer] {
+					held++
+				}
+			}
 			continue
 		}
 		if maxRoots > 0 && len(selected) >= maxRoots {
@@ -326,7 +342,9 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string
 	}
 	encoded, err := json.Marshal(selected)
 	if err != nil {
-		return "", nil, false, err
+		return photoTrashSelection{}, err
 	}
-	return `SELECT value FROM json_each(?)`, []any{string(encoded)}, more, nil
+	return photoTrashSelection{
+		query: `SELECT value FROM json_each(?)`, args: []any{string(encoded)}, more: more, held: held,
+	}, nil
 }

@@ -285,11 +285,20 @@ func (s *Store) TrashedRoots(ctx context.Context) ([]Node, error) {
 	return roots, nil
 }
 
+// TrashItem is one paginated trash row. A grouped photo row names its asset,
+// counts its trashed members, and carries the group's latest trash time.
+type TrashItem struct {
+	Node
+
+	PhotoAssetID   string
+	PhotoFileCount int
+}
+
 // TrashedRootsPage lists one bounded newest-first page of restorable trash
 // roots and the complete root count from the same read snapshot.
 func (s *Store) TrashedRootsPage(
 	ctx context.Context, limit, offset int,
-) ([]Node, int, error) {
+) ([]TrashItem, int, error) {
 	if limit < 1 || limit > maxTrashPageSize {
 		return nil, 0, fmt.Errorf(
 			"trash limit must be between 1 and %d", maxTrashPageSize)
@@ -328,18 +337,16 @@ func (s *Store) TrashedRootsPage(
 	}
 	defer func() { _ = rows.Close() }()
 
-	roots := make([]Node, 0)
+	roots := make([]TrashItem, 0)
 	for rows.Next() {
-		var assetID string
-		var fileCount int
+		var item TrashItem
 		var latestTrash string
-		node, err := scanNode(rows, &assetID, &fileCount, &latestTrash)
-		node.PhotoAssetID, node.PhotoFileCount = assetID, fileCount
-		node.TrashedAt = &latestTrash
+		item.Node, err = scanNode(rows, &item.PhotoAssetID, &item.PhotoFileCount, &latestTrash)
 		if err != nil {
 			return nil, 0, err
 		}
-		roots = append(roots, node)
+		item.TrashedAt = &latestTrash
+		roots = append(roots, item)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("listing trash page: %w", err)
@@ -357,6 +364,7 @@ func (s *Store) TrashedRootsPage(
 type TrashEmptyResult struct {
 	Candidates int64
 	Retained   int64
+	Held       int64
 	Deleted    int64
 	More       bool
 	Run        bool
@@ -373,6 +381,7 @@ func (s *Store) TrashEmpty(ctx context.Context, olderThan time.Duration, run boo
 // TrashEmptyBounded finishes the last complete photo group even if it exceeds maxRoots.
 // More reports whether another deletable root existed beyond this batch.
 // Retained counts all age-matching email-retained roots, outside the batch limit.
+// Held counts photo-held roots that the batch reached before it stopped.
 func (s *Store) TrashEmptyBounded(
 	ctx context.Context, olderThan time.Duration, maxRoots int, run bool,
 ) (TrashEmptyResult, error) {
@@ -438,11 +447,12 @@ func (s *Store) trashEmpty(
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes WHERE `+where+` AND id IN (`+emailRetainedNodes+`)`, args...).Scan(&rep.Retained); err != nil {
 			return fmt.Errorf("counting retained trash roots: %w", err)
 		}
-		selection, selectionArgs, more, err := photoTrashSelectionTx(ctx, tx, deletable, args, maxRoots)
+		batch, err := photoTrashSelectionTx(ctx, tx, deletable, args, maxRoots)
 		if err != nil {
 			return err
 		}
-		rep.More = more
+		selection, selectionArgs := batch.query, batch.args
+		rep.More, rep.Held = batch.more, batch.held
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+selection+`)`, selectionArgs...).Scan(&rep.Candidates); err != nil {
 			return err
 		}

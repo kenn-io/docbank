@@ -981,6 +981,7 @@ type IngestPreflightReport struct {
 type TrashEmptyReport struct {
 	CandidateRoots int64 `json:"candidate_roots"`
 	RetainedRoots  int64 `json:"retained_roots"`
+	HeldRoots      int64 `json:"held_roots"`
 	Deleted        int64 `json:"deleted"`
 	Run            bool  `json:"run"`
 }
@@ -1337,7 +1338,6 @@ func fromStoreNode(n store.Node) Node {
 		CurrentVersionID: n.CurrentVersionID, BlobHash: n.BlobHash, MD5: n.MD5,
 		Size: n.Size, MimeType: n.MimeType, Revision: n.Revision,
 		CreatedAt: n.CreatedAt, ModifiedAt: n.ModifiedAt,
-		PhotoAssetID: n.PhotoAssetID, PhotoFileCount: n.PhotoFileCount,
 	}
 	if n.TrashedAt != nil {
 		out.TrashedAt = *n.TrashedAt

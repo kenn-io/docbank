@@ -976,6 +976,7 @@ func (v *Vault) EmptyTrash(
 	}
 	return TrashEmptyReport{
 		Candidates: result.Candidates,
+		Held:       result.Held,
 		Deleted:    result.Deleted,
 		More:       result.More,
 		DryRun:     opts.DryRun,

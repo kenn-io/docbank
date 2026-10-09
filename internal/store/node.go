@@ -16,9 +16,6 @@ const (
 
 // Node is a row of the virtual tree. IDs are canonical; paths are display.
 type Node struct {
-	// Photo metadata is populated only by the paginated trash listing.
-	PhotoAssetID     string
-	PhotoFileCount   int
 	ID               int64
 	ParentID         *int64
 	Name             string

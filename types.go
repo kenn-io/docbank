@@ -720,9 +720,12 @@ type TrashEmptyOptions struct {
 	DryRun    bool          `json:"dry_run"`
 }
 
-// TrashEmptyReport summarizes one bounded batch of eligible trash roots.
+// TrashEmptyReport summarizes one bounded batch of eligible trash roots. Held
+// counts roots the batch reached but kept because a connected photo member is
+// live, too new, or retained.
 type TrashEmptyReport struct {
 	Candidates int64 `json:"candidates"`
+	Held       int64 `json:"held"`
 	Deleted    int64 `json:"deleted"`
 	More       bool  `json:"more"`
 	DryRun     bool  `json:"dry_run"`
