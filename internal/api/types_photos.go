@@ -17,7 +17,7 @@ type PhotoAsset struct {
 	ID                    string      `json:"id" format:"uuid"`
 	Kind                  string      `json:"kind" enum:"photo,video"`
 	Revision              int64       `json:"revision" minimum:"1"`
-	HiddenAt              *string     `json:"hidden_at,omitzero"`
+	HiddenAt              *string     `json:"hidden_at,omitzero" format:"date-time"`
 	ExcludedAt            *string     `json:"excluded_at,omitzero" format:"date-time"`
 	DisplayFileID         *string     `json:"display_file_id,omitzero" format:"uuid"`
 	DisplayOverrideFileID *string     `json:"display_override_file_id,omitzero" format:"uuid"`

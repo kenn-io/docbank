@@ -226,3 +226,54 @@ it("evicts only hidden assets and retains unrelated previews and requests", asyn
   finish(new Response("pending-preview"));
   expect(await (await pending).text()).toBe("pending-preview");
 });
+
+it.each([false, true])("treats preview 403 as authorization loss only in Hidden, hidden=%s", async hidden => {
+  storage();
+  const auth = vi.fn();
+  const cache = new PhotoPreviewCache("scoped", auth, hidden); instances.push(cache);
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 403 })));
+  await expect(cache.get("asset", "generation")).rejects.toThrow("HTTP 403");
+  expect(auth).toHaveBeenCalledTimes(hidden ? 1 : 0);
+});
+
+it("evicts every in-flight generation of an asset before it can be cached", async () => {
+  const stored = storage();
+  const finishes: ((response: Response) => void)[] = [];
+  const fetcher = vi.fn(() => new Promise<Response>(resolve => finishes.push(resolve)));
+  vi.stubGlobal("fetch", fetcher);
+  const cache = workspace();
+  const reads = [cache.get("asset", "first"), cache.get("asset", "second")];
+  const rejected = reads.map(read => expect(read).rejects.toThrow());
+  await vi.waitFor(() => expect(finishes).toHaveLength(2));
+  await cache.evict(["asset"]);
+  await Promise.all(rejected);
+  for (const finish of finishes) finish(new Response("evicted-preview"));
+  const opened = await stored.open.mock.results[0].value;
+  await vi.waitFor(() => expect(fetcher.mock.calls).toHaveLength(2));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(opened.put).not.toHaveBeenCalled();
+  expect([...stored.data.values()][0].size).toBe(0);
+  fetcher.mockResolvedValueOnce(new Response("fresh-preview"));
+  expect(await (await cache.get("asset", "first")).text()).toBe("fresh-preview");
+});
+
+it("removes an evicted preview whose cache write was already in flight", async () => {
+  const stored = storage();
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("preview")));
+  const cache = workspace();
+  await cache.get("other", "generation");
+  const opened = await stored.open.mock.results[0].value;
+  const put = opened.put.getMockImplementation()!;
+  let finish!: () => Promise<void>;
+  opened.put.mockImplementationOnce((key: Request, response: Response) => new Promise<void>(resolve => {
+    finish = async () => { await put(key, response); resolve(); };
+  }));
+  const read = cache.get("asset", "generation");
+  const rejected = expect(read).rejects.toThrow();
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  await cache.evict(["asset"]);
+  await rejected;
+  await finish();
+  await vi.waitFor(() => expect([...stored.data.values()][0].size).toBe(1));
+  expect([...stored.data.values()][0].keys().next().value).toContain("/other/");
+});

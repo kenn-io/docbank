@@ -10,11 +10,12 @@ export class PhotoPreviewCache {
   private cache?: Promise<Cache>;
   private disposed?: Promise<void>;
   private releaseLock?: () => void;
+  private reads = new Map<string, Set<AbortController>>();
   private fetching = 0;
   private waiting: (() => void)[] = [];
   private pagehide = (event: PageTransitionEvent) => { if (!event.persisted) void this.dispose(); };
 
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void) {
+  constructor(private session: string, private onauthfailure: (cause: unknown) => void, private hidden = false) {
     window.addEventListener("pagehide", this.pagehide);
     void this.sweep().catch(cause => console.warn("Could not remove abandoned photo preview caches", cause));
   }
@@ -31,10 +32,17 @@ export class PhotoPreviewCache {
   }
 
   get(assetID: string, generationID: string, caller?: AbortSignal, reload = false): Promise<Blob> {
-    const signal = AbortSignal.any([this.controller.signal, ...(caller ? [caller] : [])]);
+    const controller = new AbortController();
+    const reads = this.reads.get(assetID) ?? new Set<AbortController>();
+    reads.add(controller);
+    this.reads.set(assetID, reads);
+    const signal = AbortSignal.any([this.controller.signal, controller.signal, ...(caller ? [caller] : [])]);
     return this.read(assetID, generationID, getReadPhotoPreviewUrl(assetID, generationID), signal, reload).catch(cause => {
-      if (!signal.aborted && cause instanceof APIError && (cause.status === 401 || cause.status === 403)) this.onauthfailure(cause);
+      if (!signal.aborted && cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
       throw cause;
+    }).finally(() => {
+      reads.delete(controller);
+      if (!reads.size) this.reads.delete(assetID);
     });
   }
 
@@ -102,6 +110,7 @@ export class PhotoPreviewCache {
   }
 
   async evict(assetIDs: string[]) {
+    for (const id of assetIDs) for (const controller of this.reads.get(id) ?? []) controller.abort();
     if (!this.cache) return;
     const cache = await this.cache;
     const paths = assetIDs.map(id => new URL(getReadPhotoPreviewUrl(id, ""), location.origin).pathname);

@@ -11431,6 +11431,7 @@ components:
           maxItems: 256
           type: array
         hidden_at:
+          format: date-time
           type:
             - string
             - "null"

@@ -85,8 +85,12 @@ export class Photos {
 
   async setHidden(id: string, preserve?: () => (() => Promise<void>) | undefined, onchanged?: (ids: string[]) => Promise<void>, onactionerror?: (error: string) => void) {
     if (this.hiding || this.trashing || this.disposed) return;
-    const members = (this.selection.selectedIDs.has(id) ? this.items.filter(item => this.selection.selectedIDs.has(item.asset_id)) : this.items.filter(item => item.asset_id === id)).map(item => ({ ...item }));
-    if (!members.length) return;
+    const members = this.resolveTargets(this.selection.selectedIDs.has(id) ? this.selection.selectedIDs : [id]);
+    if (!members) {
+      this.actionError = "Load and select the photos again before changing their visibility.";
+      onactionerror?.(this.actionError);
+      return;
+    }
     this.cancelPending();
     this.hiding = true;
     this.actionError = "";
@@ -104,12 +108,7 @@ export class Photos {
           this.cancelPending();
           successes.push(member.asset_id);
           const restore = preserve?.();
-          this.items = this.items.filter(item => item.asset_id !== member.asset_id);
-          this.total = Math.max(0, this.total - 1);
-          this.trashTargets = this.trashTargets.filter(item => item.asset_id !== member.asset_id);
-          const ids = new Set(this.selection.selectedIDs);
-          ids.delete(member.asset_id);
-          this.selection = { selectedIDs: ids, anchorID: undefined };
+          this.removeTarget(member.asset_id);
           await restore?.();
         } catch (cause) {
           if (this.disposed) break;
@@ -197,15 +196,11 @@ export class Photos {
 
   async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
     if (this.trashing || this.hiding || this.disposed) return false;
-    this.pruneTrashTargets();
-    const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
-    const resolved = [...this.selection.selectedIDs].map(id => rows.get(id));
-    if (!resolved.length || resolved.some(item => !item)) {
+    const selected = this.resolveTargets(this.selection.selectedIDs);
+    if (!selected) {
       this.trashError = "Load and select the photos again before moving them to trash.";
       return false;
     }
-    const selected = resolved.filter((item): item is PhotoBrowseRow => !!item).map(item => ({ ...item }));
-    this.trashTargets = selected;
     this.cancelPending();
     this.trashing = true;
     this.trashError = "";
@@ -221,12 +216,7 @@ export class Photos {
           this.cancelPending();
           successes++;
           const restore = preserve?.();
-          this.items = this.items.filter(row => row.asset_id !== item.asset_id);
-          this.total = Math.max(0, this.total - 1);
-          this.trashTargets = this.trashTargets.filter(target => target.asset_id !== item.asset_id);
-          const ids = new Set(this.selection.selectedIDs);
-          ids.delete(item.asset_id);
-          this.selection = { selectedIDs: ids, anchorID: undefined };
+          this.removeTarget(item.asset_id);
           await restore?.();
         } catch (cause) {
           if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); break; }
@@ -250,6 +240,25 @@ export class Photos {
   check(id: string, checked: boolean, range: boolean, orderedIDs: string[]) {
     this.selection = toggleIDSelection(this.selection, orderedIDs, id, checked, range);
     this.pruneTrashTargets();
+  }
+
+  private resolveTargets(ids: Iterable<string>): PhotoBrowseRow[] | undefined {
+    this.pruneTrashTargets();
+    const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
+    const resolved = [...ids].map(id => rows.get(id));
+    if (!resolved.length || resolved.some(item => !item)) return;
+    const targets = resolved.filter((item): item is PhotoBrowseRow => !!item).map(item => ({ ...item }));
+    this.trashTargets = [...new Map([...this.trashTargets, ...targets].map(item => [item.asset_id, item])).values()];
+    return targets;
+  }
+
+  private removeTarget(id: string) {
+    this.items = this.items.filter(item => item.asset_id !== id);
+    this.total = Math.max(0, this.total - 1);
+    this.trashTargets = this.trashTargets.filter(item => item.asset_id !== id);
+    const ids = new Set(this.selection.selectedIDs);
+    ids.delete(id);
+    this.selection = { selectedIDs: ids, anchorID: undefined };
   }
 
   private pruneTrashTargets() { this.trashTargets = this.trashTargets.filter(item => this.selection.selectedIDs.has(item.asset_id)); }
