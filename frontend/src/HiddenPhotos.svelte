@@ -19,11 +19,12 @@
   let resolved = $state(false);
   let readError = $state("");
   let actionError = $state("");
+  let lockoutError = $state("");
   let reading = $state(true);
   let actionPending = $state(false);
   let concealingAction = $state(false);
   const busy = $derived(reading || actionPending);
-  const lockoutDescription = $derived(hiddenState.locked_until ? "hidden-lockout" : undefined);
+  const lockoutDescription = $derived(hiddenState.locked_until || lockoutError ? "hidden-lockout" : undefined);
   let remaining = $state(0);
   let refreshController = new AbortController();
   const actionController = new AbortController();
@@ -47,6 +48,7 @@
     const retain = workspace && result.change_id === hiddenState.change_id && result.configured === hiddenState.configured && result.expires_at === hiddenState.expires_at && !concealingAction;
     if (!retain) clear();
     readError = "";
+    lockoutError = "";
     hiddenState = result;
     resolved = true;
     reading = false;
@@ -102,6 +104,7 @@
       nextPasscode = "";
       passcodeError = currentPasscodeError = nextPasscodeError = "";
       completed = true;
+      lockoutError = "";
     } catch (cause) {
       if (disposed) return;
       if (cause instanceof APIError && cause.status === 401) { onauthfailure(cause); return; }
@@ -109,7 +112,8 @@
         const message = "Incorrect passcode.";
         if (kind === "enter") { passcodeError = message; invalidField = "hidden-passcode"; }
         else { currentPasscodeError = message; invalidField = "hidden-current-passcode"; }
-      } else if (!(cause instanceof APIError && cause.code === "hidden_lockout")) actionError = cause instanceof Error ? cause.message : String(cause);
+      } else if (cause instanceof APIError && cause.code === "hidden_lockout") lockoutError = cause.message;
+      else actionError = cause instanceof Error ? cause.message : String(cause);
     } finally {
       actionPending = false;
       concealingAction = false;
@@ -152,7 +156,7 @@
     <div class="hidden-gate">
       <h1>Hidden</h1>
       {#if hiddenState.configured}<p>Unlocks for five minutes.</p>{/if}
-      {#if hiddenState.locked_until}<p id="hidden-lockout" class="lockout" role="status">Too many attempts. Try again after {new Date(hiddenState.locked_until).toLocaleTimeString()}.</p>{/if}
+      {#if lockoutDescription}<p id="hidden-lockout" class="lockout" role="status">{hiddenState.locked_until ? `Too many attempts. Try again after ${new Date(hiddenState.locked_until).toLocaleTimeString()}.` : lockoutError}</p>{/if}
       <form aria-describedby={lockoutDescription} onsubmit={event => { event.preventDefault(); void action("enter"); }}>
         <FormField type="password" field={{ id: "hidden-passcode", label: "Passcode", value: passcode, error: passcodeError, disabled: busy }} autocomplete={hiddenState.configured ? "current-password" : "new-password"} oninput={value => { passcode = value; passcodeError = ""; }} />
         <Button type="submit" disabled={busy} ariaDescribedby={lockoutDescription}>{hiddenState.configured ? "Unlock" : "Set passcode"}</Button>

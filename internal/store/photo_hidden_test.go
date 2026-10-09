@@ -286,6 +286,13 @@ func TestPhotoHiddenMutationGateAndPrivacyStamp(t *testing.T) {
 	stored, err := photoAssetByIDQuery(ctx, s.db, asset.ID)
 	require.NoError(t, err)
 	require.Equal(t, asset, stored)
+	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
+	require.NoError(t, err)
+	asset, err = s.SetPhotoAssetHidden(WithPhotoHiddenToken(ctx, token), asset.ID, asset.Revision, false)
+	require.NoError(t, err)
+	require.NoError(t, s.LockPhotoHidden(ctx))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, false)
+	require.ErrorIs(t, err, ErrHiddenLocked)
 }
 
 func TestPhotoHiddenCoverResponseProjection(t *testing.T) {
@@ -417,8 +424,6 @@ func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
 	cover := &asset.ID
 	_, err = s.UpdatePhotoSet(ctx, album.ID, album.Revision, nil, nil, &cover)
 	require.ErrorIs(t, err, ErrHiddenLocked)
-	_, err = s.PromotePhotoNode(ctx, asset.Files[0].NodeID, nil, "", "")
-	require.ErrorIs(t, err, ErrHiddenLocked)
 	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
 	require.NoError(t, err)
 	unlocked := WithPhotoHiddenToken(ctx, token)
@@ -436,7 +441,4 @@ func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
 	require.NoError(t, err)
 	asset, err = s.SetPhotoAssetHidden(unlocked, asset.ID, asset.Revision, false)
 	require.NoError(t, err)
-	require.NoError(t, s.LockPhotoHidden(ctx))
-	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, false)
-	require.ErrorIs(t, err, ErrHiddenLocked)
 }

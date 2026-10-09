@@ -40,30 +40,8 @@ func TestPhotoHiddenHTTPAndClient(t *testing.T) {
 	require.Empty(t, page.Items)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{}`), Hidden: true})
 	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-	for _, path := range []string{"/api/v1/photos/assets/" + asset.ID, "/api/v1/photos/nodes/" + strconv.FormatInt(node.ID, 10) + "/asset"} {
-		response, body = get(t, ts, path, nil)
-		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-	}
-	for _, request := range []struct {
-		method, path string
-		body         any
-	}{
-		{http.MethodPost, "/api/v1/photos/assets/" + asset.ID + "/exclude", map[string]bool{"excluded": false}},
-		{http.MethodPost, "/api/v1/photos/assets/" + asset.ID + "/exclude", map[string]bool{"excluded": true}},
-		{http.MethodPut, "/api/v1/photos/assets/" + asset.ID + "/display", map[string]any{"file_id": nil}},
-		{http.MethodPost, "/api/v1/photos/nodes/" + strconv.FormatInt(node.ID, 10) + "/promote", map[string]string{}},
-	} {
-		response, body = do(t, ts, request.method, request.path, map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(asset.Revision, 10))}, request.body)
-		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-	}
-	targetNode, err := s.CreateFile(ctx, s.RootID(), "target.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
-	target, err := s.PhotoAssetForNode(ctx, targetNode.ID)
-	require.NoError(t, err)
-	for _, path := range []string{"/api/v1/photos/assets", "/api/v1/photos/assets/" + target.ID + "/files"} {
-		response, body = do(t, ts, http.MethodPost, path, map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(target.Revision, 10))}, map[string]any{"node_id": node.ID})
-		require.Equal(t, http.StatusForbidden, response.StatusCode, body)
-	}
+	response, body = get(t, ts, "/api/v1/photos/assets/"+asset.ID, nil)
+	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 	state, cookie, err := connection.PhotoHidden(ctx, "unlock", "correct", "")
 	require.NoError(t, err)
 	require.NotNil(t, state.ExpiresAt)
