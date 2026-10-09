@@ -71,6 +71,10 @@
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
+  import PhotoAlbumsView from "./PhotoAlbumsIndex.svelte";
+  import { PhotoAlbums, photoDragType } from "./photoAlbums.svelte.js";
+  import StarIcon from "@lucide/svelte/icons/star";
+  import TargetIcon from "@lucide/svelte/icons/target";
   import { localPreferenceStorage } from "./browser-storage.js";
   import { Photos } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -181,21 +185,59 @@
 
   let webSession = $state("");
   let stopSessionReporting: (() => Promise<void>) | undefined;
-  let photoMode = $state(location.pathname === "/photos");
-  let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
+  let photoMode = $state(location.pathname.startsWith("/photos"));
+  let photoPath = $state(location.pathname);
+  let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache; albums: PhotoAlbums }>();
+  let albumPhotos = $state<Photos>();
+  let dragOver = $state("");
+  const albumID = $derived(photoPath.startsWith("/photos/albums/") ? photoPath.slice("/photos/albums/".length) : "");
 
   $effect(() => {
     if (!webSession) return;
-    const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
+    const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure), albums: new PhotoAlbums(webSession, handleFailure, async (id, source) => {
+      const current = albumPhotos;
+      if (current && current !== source && current.query.filters?.set_ids?.includes(id)) await current.refresh();
+    }) };
     photoState = state;
-    return () => { state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
+    return () => { state.photos.dispose(); state.albums.dispose(); void state.cache.dispose(); photoState = undefined; };
   });
 
-  function switchWorkspace(photos: boolean) {
+  $effect(() => {
+    const session = webSession;
+    const id = albumID;
+    if (!session || !id) { albumPhotos = undefined; return; }
+    const photos = new Photos(session, handleFailure, { v: 1, syntax: "advanced", mode: "lexical", text: "", filters: { set_ids: [id] }, sort: { field: "added_time", direction: "desc" } });
+    albumPhotos = photos;
+    return () => photos.dispose();
+  });
+
+  $effect(() => {
+    void photoPath;
+    const albums = photoState?.albums;
+    if (photoMode && albums) untrack(() => void albums.load());
+  });
+
+  function clearPhotoNotice() { if (photoState) { photoState.albums.notice = ""; photoState.albums.noticeID = ""; } }
+
+  function navigatePhotos(path: string) {
+    clearPhotoNotice();
     navOpen = false;
-    if (photoMode === photos) return;
+    photoMode = true;
+    photoPath = path;
+    history.pushState(null, "", `${path}${location.search}${location.hash}`);
+    if (path === "/photos/albums") void tick().then(() => document.querySelector<HTMLButtonElement>('[data-albums-nav]')?.focus());
+  }
+
+  function switchWorkspace(photos: boolean) {
+    clearPhotoNotice();
+    navOpen = false;
+    if (photoMode === photos) {
+      if (photos && photoPath !== "/photos") navigatePhotos("/photos");
+      return;
+    }
     photoMode = photos;
-    history.pushState(null, "", `${photos ? "/photos" : "/"}${location.search}${location.hash}`);
+    if (photos && !photoPath.startsWith("/photos")) photoPath = "/photos";
+    history.pushState(null, "", `${photos ? photoPath : "/"}${location.search}${location.hash}`);
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
@@ -1908,7 +1950,7 @@
   }
 </script>
 
-<svelte:window onpopstate={() => { photoMode = location.pathname === "/photos"; }} />
+<svelte:window onpopstate={() => { clearPhotoNotice(); photoMode = location.pathname.startsWith("/photos"); if (photoMode) photoPath = location.pathname; }} />
 {#if !webSession}
   <main class="unlock-shell">
     <Card level="raised" title="Open your Docbank">
@@ -1934,7 +1976,20 @@
         <button type="button" class="nav-item" aria-current={photoMode ? "page" : undefined} onclick={() => switchWorkspace(true)}><ImageIcon size="16" aria-hidden="true" />Photos</button>
       </div>
       {#if photoMode}
-        <div class="nav-group"><button type="button" class="nav-item" aria-current="page" onclick={() => navOpen = false}><LibraryIcon size="16" aria-hidden="true" />Library</button></div>
+        <div class="nav-group">
+          <button type="button" class="nav-item" aria-current={photoPath === "/photos" ? "page" : undefined} onclick={() => navigatePhotos("/photos")}><LibraryIcon size="16" aria-hidden="true" />Library</button>
+          <button type="button" class="nav-item" data-albums-nav aria-current={photoPath === "/photos/albums" ? "page" : undefined} onclick={() => navigatePhotos("/photos/albums")}><FoldersIcon size="16" aria-hidden="true" />Albums</button>
+        </div>
+        {#if photoState}
+          <div class="nav-group album-targets"><h2>Albums</h2>
+            {#if photoState.albums.loadError}<span class="sidebar-album-error">Albums unavailable</span><Button size="sm" disabled={photoState.albums.busy} onclick={() => void photoState?.albums.load()}>Retry</Button>{/if}
+            {#each photoState.albums.items as album (album.id)}
+              <button type="button" class="nav-item" class:album-drop={dragOver === album.id} title={album.name} aria-current={albumID === album.id ? "page" : undefined} onclick={() => navigatePhotos(`/photos/albums/${album.id}`)} ondragover={event => { if (event.dataTransfer?.types.includes(photoDragType) && photoState?.albums.drag) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; dragOver = album.id; } }} ondragleave={() => dragOver = ""} ondrop={event => { dragOver = ""; void photoState?.albums.drop(album, event); }}>
+                {#if album.starred}<StarIcon size="14" aria-hidden="true" />{/if}<span class="sidebar-album-name">{album.name}</span><span class="sidebar-album-count">{album.included_count === undefined ? "Count unavailable" : album.included_count.toLocaleString()}</span>{#if photoState.albums.targetID === album.id}<TargetIcon size="14" aria-label="B target" />{/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
       {:else}
       <div class="nav-group">
         <button type="button" class="nav-item"
@@ -2060,7 +2115,9 @@
     </TopBar>
 
     {#if photoMode && photoState}
-      {#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} />{/key}
+      {#if photoPath === "/photos/albums"}<PhotoAlbumsView albums={photoState.albums} cache={photoState.cache} onnavigate={navigatePhotos} />
+      {:else if albumID && albumPhotos}{#key albumPhotos}<PhotosWorkspace photos={albumPhotos} cache={photoState.cache} albums={photoState.albums} {albumID} onnavigate={navigatePhotos} />{/key}
+      {:else if !albumID}{#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} albums={photoState.albums} onnavigate={navigatePhotos} />{/key}{/if}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
     {#if savedQueryDraft}
@@ -3062,6 +3119,10 @@
 {/if}
 
 <style>
+  .sidebar-album-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .sidebar-album-count, .sidebar-album-error { color: var(--text-muted); font-size: var(--font-size-xs); }
+  .album-targets h2 { color: var(--text-muted); font-size: var(--font-size-xs); margin: var(--space-3); }
+  .album-drop { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
   .telemetry-note { display: grid; gap: var(--space-4); line-height: 1.5; }
   .telemetry-note p { margin: 0; }
   .telemetry-note code { overflow-wrap: anywhere; }

@@ -1,4 +1,4 @@
-import { listPhotoAssets, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { listPhotoAssets, type PhotoBrowseRow, type SavedQueryV1Schema, type PhotoAlbumMembersRequest } from "./generated/docbank.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
@@ -25,13 +25,28 @@ export class Photos {
   grouping = $state<"months" | "sessions">("months");
   density = $state<Density>(loadDensity());
   selection = $state<SelectionState<string>>(clearSelection<string>());
+  allResults = $state(false);
+  query = $state.raw<SavedQueryV1Schema>(photoQuery);
   started = false;
   private expired = false;
   private replacement: "refresh" | "expiry" | undefined;
   private controller = new AbortController();
   private disposed = false;
 
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void) {}
+  constructor(private session: string, private onauthfailure: (cause: unknown) => void, query: SavedQueryV1Schema = photoQuery) { this.query = query; }
+
+  setQuery(query: SavedQueryV1Schema) {
+    this.cancelPending();
+    this.query = query;
+    this.items = []; this.total = 0; this.cursor = undefined; this.scrollTop = 0;
+    this.started = false; this.expired = false; this.replacement = undefined; this.error = "";
+    this.clearSelection();
+    return this.loadMore();
+  }
+
+  scope(): PhotoAlbumMembersRequest {
+    return this.allResults ? { query: structuredClone(this.query) } : { asset_ids: [...this.selection.selectedIDs] };
+  }
 
   setDensity(density: Density) {
     this.density = density;
@@ -43,7 +58,7 @@ export class Photos {
     this.loading = true;
     const controller = this.controller;
     try {
-      const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
+      const page = await listPhotoAssets({ query: this.query, page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
       if (controller.signal.aborted) return;
       const seen = new Set(this.items.map(item => item.asset_id));
       const restore = preserve?.();
@@ -52,6 +67,7 @@ export class Photos {
         seen.add(item.asset_id);
         return true;
       })];
+      if (this.allResults) this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined };
       this.total = page.total;
       this.cursor = page.next_cursor;
       this.started = true;
@@ -108,7 +124,7 @@ export class Photos {
     try {
       do {
         signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
-        const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
+        const page = await listPhotoAssets({ query: this.query, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
         if (signal.aborted) throw signal.reason;
         const reachedPreviously = reachedPrefix;
         for (const item of page.items) candidate.set(item.asset_id, item);
@@ -118,12 +134,27 @@ export class Photos {
         if (reachedPrefix && (mode === "refresh" || reachedPreviously)) break;
       } while (cursor);
       if (signal.aborted) throw signal.reason;
+      const absent = new Set([...this.selection.selectedIDs].filter(id => !candidate.has(id)));
+      if (!this.allResults && cursor && absent.size) {
+        signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
+        const missing = [...absent], filter = this.query.filters?.asset_ids;
+        for (let index = 0; index < missing.length; index += 64) {
+          const ids = missing.slice(index, index + 64).filter(id => !filter || filter.includes(id));
+          if (!ids.length) continue;
+          const query = { ...this.query, filters: { ...this.query.filters, asset_ids: ids } };
+          const page = await listPhotoAssets({ query, page_size: 250 }, { session: this.session, signal });
+          if (signal.aborted) throw signal.reason;
+          for (const item of page.items) absent.delete(item.asset_id);
+        }
+      }
+      if (signal.aborted) throw signal.reason;
       const restore = preserve?.();
       this.items = [...candidate.values()];
       this.total = total;
       this.cursor = cursor;
       this.started = true;
-      this.selection = reconcileIDSelection(this.selection, new Set(candidate.keys()));
+      this.selection = this.allResults ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined } : reconcileIDSelection(this.selection, new Set([...this.selection.selectedIDs].filter(id => !absent.has(id))));
+      if (!this.selection.selectedIDs.size) this.allResults = false;
       this.expired = false;
       this.replacement = undefined;
       await restore?.();
@@ -138,16 +169,19 @@ export class Photos {
 
   select(id: string, event: MouseEvent, orderedIDs: string[]) {
     if (event.button !== 0) return;
+    this.allResults = false;
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
       this.selection = toggleIDSelection(this.selection, orderedIDs, id, event.shiftKey || !this.selection.selectedIDs.has(id), event.shiftKey);
     } else this.selection = { selectedIDs: new Set([id]), anchorID: id };
   }
 
   check(id: string, checked: boolean, range: boolean, orderedIDs: string[]) {
+    this.allResults = false;
     this.selection = toggleIDSelection(this.selection, orderedIDs, id, checked, range);
   }
 
-  clearSelection() { this.selection = clearSelection<string>(); }
-  selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; }
+  clearSelection() { this.allResults = false; this.selection = clearSelection<string>(); }
+  selectLoaded() { this.allResults = false; this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; }
+  selectAllResults() { this.selectLoaded(); this.allResults = true; }
   dispose() { this.disposed = true; this.controller.abort(); }
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import { BottomDock, Button } from "@kenn-io/kit-ui";
 
   interface Props {
@@ -16,6 +17,9 @@
     onexport?: () => void;
     onreport?: () => void;
     onexportquery?: () => void;
+    photoActions?: Snippet;
+    allResults?: boolean;
+    onallresults?: () => void;
   }
 
   let {
@@ -33,6 +37,9 @@
     onexport,
     onreport,
     onexportquery,
+    photoActions,
+    allResults = false,
+    onallresults,
   }: Props = $props();
 </script>
 
@@ -49,7 +56,7 @@
 >
   {#snippet header()}
     <div class="selection-summary">
-      <strong>{selectedCount} selected {context === "photos" ? (selectedCount === 1 ? "photo" : "photos") : `on this ${context === "snapshot" ? "frozen page" : "page"}`}</strong>
+      <strong>{allResults ? `All ${wholeQueryCount.toLocaleString()} photos selected` : `${selectedCount} selected ${context === "photos" ? (selectedCount === 1 ? "photo" : "photos") : `on this ${context === "snapshot" ? "frozen page" : "page"}`}`}</strong>
       {#if context === "snapshot"}
         <span>Visible selection only · whole query has {wholeQueryCount} documents</span>
       {:else if truncated && context !== "photos"}<span>More results exist beyond this page</span>{/if}
@@ -63,6 +70,8 @@
       onclick={onselectvisible}
     >{context === "photos" ? "Select loaded photos" : "Select visible documents"}</Button>
     <Button size="sm" onclick={onclear}>Clear selection</Button>
+    {#if context === "photos" && onallresults && !allResults && selectedCount === visibleDocumentCount && wholeQueryCount > visibleDocumentCount}<Button size="sm" tone="info" onclick={onallresults}>Select all {wholeQueryCount.toLocaleString()} photos</Button>{/if}
+    {#if photoActions}{@render photoActions()}{/if}
     {#if ontags}
       <Button size="sm" disabled={tagsDisabled} onclick={ontags}>{context === "snapshot" ? "Tag visible selection" : "Edit tags"}</Button>
     {/if}

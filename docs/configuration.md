@@ -163,7 +163,7 @@ exclude = [".DS_Store", "cache/"]
 - **`[web] enabled`**: serves the embedded web application at `/`.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
-  independent of a configured `api_port`. Disabling it 404s `/`, `/photos`, and `/assets/`.
+  independent of a configured `api_port`. Disabling it 404s `/`, `/photos`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
   The API and `/docs` are unaffected. See [Web application](usage/web.md).
 - **`[mcp.http] credential_binding`**: names the separate inbound credential
   used by `docbank mcp --transport http`. An empty value leaves stdio available

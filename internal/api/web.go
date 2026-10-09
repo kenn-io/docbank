@@ -4,7 +4,9 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"strings"
 
+	"go.kenn.io/docbank/internal/query"
 	docweb "go.kenn.io/docbank/internal/web"
 )
 
@@ -29,11 +31,27 @@ func registerWeb(mux *http.ServeMux, enabled bool, webURL string) {
 	}
 	mux.HandleFunc("GET /{$}", index)
 	mux.HandleFunc("GET /photos", index)
+	mux.HandleFunc("GET /photos/albums", index)
+	mux.HandleFunc("GET /photos/albums/{set_id}", func(w http.ResponseWriter, r *http.Request) {
+		if !isPhotoAlbumPage(r.URL.Path) {
+			http.NotFound(w, r)
+			return
+		}
+		index(w, r)
+	})
 	mux.Handle("GET /assets/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setWebHeaders(w, webURL)
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		static.ServeHTTP(w, r)
 	}))
+}
+
+func isPhotoAlbumPage(path string) bool {
+	if path == "/photos/albums" {
+		return true
+	}
+	id, ok := strings.CutPrefix(path, "/photos/albums/")
+	return ok && query.ValidateTextOperand("set", id) == nil
 }
 
 func setWebHeaders(w http.ResponseWriter, webURL string) {

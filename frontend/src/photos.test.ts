@@ -1,9 +1,27 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { Photos, loadDensity } from "./photos.svelte.js";
+import { Photos, loadDensity, photoQuery } from "./photos.svelte.js";
 import { photo } from "./photo-test-fixtures.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
+
+it("cancels the previous scope and carries album sort through paging and refresh", async () => {
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve)).mockResolvedValueOnce(response([photo(2)], "album-next")).mockResolvedValueOnce(response([photo(3)])).mockResolvedValueOnce(response([photo(2), photo(3)]));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  const pending = photos.loadMore();
+  photos.scrollTop = 1200; photos.selectLoaded(); photos.allResults = true;
+  const query = { ...photoQuery, filters: { set_ids: ["album"] }, sort: { field: "added_time" as const, direction: "desc" as const } };
+  await photos.setQuery(query);
+  finish(response([photo(1)])); await pending;
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
+  expect(photos.selection.selectedIDs.size).toBe(0); expect(photos.allResults).toBe(false); expect(photos.scrollTop).toBe(0);
+  await photos.loadMore(); await photos.refresh();
+  expect(fetcher.mock.calls.slice(1).map(([, init]) => JSON.parse(init.body).query)).toEqual([query, query, query]);
+  expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
+  photos.dispose();
+});
 
 it("keeps earlier pages on failure, waits for Retry, and reuses the failed cursor", async () => {
   const fetcher = vi.fn();
@@ -77,15 +95,15 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
   photos.selectLoaded();
   fetcher.mockResolvedValueOnce(response([photo(1)], "more"))
-    .mockResolvedValueOnce(response([photo(6), photo(7), photo(8), photo(9)], "bounded"));
+    .mockResolvedValueOnce(response([photo(6), photo(7), photo(8), photo(9)], "bounded")).mockResolvedValueOnce(response([]));
   await photos.refresh();
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-6", "photo-7", "photo-8", "photo-9"]);
   expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
   expect(photos.cursor).toBe("bounded");
   const boundedCalls = fetcher.mock.calls.length;
-  fetcher.mockResolvedValueOnce(response([photo(9)], "shortcut"));
+  fetcher.mockResolvedValueOnce(response([photo(9)], "shortcut")).mockResolvedValueOnce(response([]));
   await photos.refresh();
-  expect(fetcher).toHaveBeenCalledTimes(boundedCalls + 1);
+  expect(fetcher).toHaveBeenCalledTimes(boundedCalls + 2);
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-9"]);
   expect(photos.cursor).toBe("shortcut");
   let finishReplacement!: (response: Response) => void;
@@ -201,4 +219,52 @@ it("times each replacement page separately", async () => {
   expect(photos.error).toBe("");
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-2"]);
   photos.dispose();
+});
+
+it("verifies missing selections in bounded groups, intersects the asset filter, and retains newer choices", async () => {
+  let release!: (value: Response) => void;
+  const old = Array.from({ length: 66 }, (_, index) => photo(index));
+  const prefix = Array.from({ length: 66 }, (_, index) => photo(index + 1000));
+  const fetcher = vi.fn().mockResolvedValueOnce(response(prefix, "next"))
+    .mockResolvedValueOnce(response(old.slice(1, 64))).mockImplementationOnce(() => new Promise(resolve => release = resolve));
+  vi.stubGlobal("fetch", fetcher);
+  const query = { ...photoQuery, filters: { set_ids: ["album"], asset_ids: old.slice(1, 65).map(item => item.asset_id) } };
+  const photos = new Photos("scoped", vi.fn(), query); photos.items = old; photos.selectLoaded();
+  const refresh = photos.refresh(); await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+  photos.selection.selectedIDs.delete("photo-1"); photos.selection.selectedIDs.add("photo-2000");
+  release(response([photo(64)])); await refresh;
+  expect(photos.items).toEqual(prefix); expect(photos.cursor).toBe("next");
+  expect(photos.selection.selectedIDs.has("photo-1")).toBe(false); expect(photos.selection.selectedIDs.has("photo-65")).toBe(false);
+  expect(photos.selection.selectedIDs.has("photo-64")).toBe(true); expect(photos.selection.selectedIDs.has("photo-2000")).toBe(true);
+  expect(fetcher.mock.calls.slice(1).map(([, init]) => JSON.parse(init.body).query)).toEqual([
+    { ...query, filters: { ...query.filters, asset_ids: query.filters.asset_ids.slice(0, 63) } },
+    { ...query, filters: { ...query.filters, asset_ids: ["photo-64"] } },
+  ]);
+});
+
+it("retains rows and selection on verification failure, retries, and cancels verification on scope change", async () => {
+  let release!: (value: Response) => void;
+  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(2)], "next"))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Verification unavailable" }), { status: 503 }))
+    .mockResolvedValueOnce(response([photo(2)], "next")).mockResolvedValueOnce(response([photo(1)]));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn()); photos.items = [photo(1)]; photos.selectLoaded();
+  await photos.refresh(); expect(photos.items).toEqual([photo(1)]); expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  expect(photos.error).toBe("Verification unavailable"); await photos.retry(); expect(photos.items).toEqual([photo(2)]);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  fetcher.mockResolvedValueOnce(response([photo(3)], "next")).mockImplementationOnce(() => new Promise(resolve => release = resolve)).mockResolvedValueOnce(response([photo(4)]));
+  const old = photos.refresh(); await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(6));
+  await photos.setQuery({ ...photoQuery, filters: { set_ids: ["other"] } }); release(response([photo(1)])); await old;
+  expect(photos.items).toEqual([photo(4)]); expect(photos.selection.selectedIDs.size).toBe(0);
+});
+
+it("uses one deadline for all missing selection verification groups", async () => {
+  const deadline = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(new AbortController().signal).mockReturnValueOnce(deadline.signal).mockImplementation(() => new AbortController().signal);
+  const old = Array.from({ length: 65 }, (_, index) => photo(index));
+  const fetcher = vi.fn().mockResolvedValueOnce(response(Array.from({ length: 65 }, (_, index) => photo(index + 1000)), "next"))
+    .mockResolvedValueOnce(response(old.slice(0, 64))).mockImplementationOnce(async () => { deadline.abort(new DOMException("Timed out", "TimeoutError")); return response([photo(64)]); });
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn()); photos.items = old; photos.selectLoaded(); await photos.refresh();
+  expect(photos.items).toEqual(old); expect(photos.selection.selectedIDs.size).toBe(65); expect(photos.error).toContain("timed out");
 });
