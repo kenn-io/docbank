@@ -522,16 +522,24 @@ func (s *Store) RevalidateSearchCandidates(ctx context.Context, candidates []Sea
 		if err != nil {
 			return err
 		}
-		result.Candidates = make([]RevalidatedSearchCandidate, 0, len(allowedPositions))
-		for _, position := range allowedPositions {
+		result.Candidates = make([]RevalidatedSearchCandidate, len(allowedPositions))
+		ids := make([]int64, len(allowedPositions))
+		for i, position := range allowedPositions {
 			candidate := candidates[position]
-			currentPath, pathErr := pathOf(ctx, tx, candidate.NodeID)
-			if pathErr != nil {
-				return pathErr
-			}
-			result.Candidates = append(result.Candidates, RevalidatedSearchCandidate{
-				SearchCandidateIdentity: candidate, Path: currentPath,
-			})
+			ids[i] = candidate.NodeID
+			result.Candidates[i].SearchCandidateIdentity = candidate
+		}
+		// A single survivor needs no batch query or position mapping.
+		if len(ids) == 1 {
+			result.Candidates[0].Path, err = pathOf(ctx, tx, ids[0])
+			return err
+		}
+		paths, pathErr := pathsOf(ctx, tx, ids)
+		if pathErr != nil {
+			return pathErr
+		}
+		for i, path := range paths {
+			result.Candidates[i].Path = path
 		}
 		return nil
 	})
