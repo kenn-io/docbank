@@ -57,6 +57,16 @@ it("trashes a verified selection that refresh moved past the loaded pages", asyn
   photos.dispose();
 });
 
+it("reports a trash request whose response was lost", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch")).mockResolvedValueOnce(response([photo(1)])));
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
+  const ontrashed = vi.fn();
+  expect(await photos.trashSelected(undefined, ontrashed)).toBe(false);
+  expect(ontrashed).toHaveBeenCalledOnce();
+  photos.dispose();
+});
+
 it("binds retries to captured or displayed revisions", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))

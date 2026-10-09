@@ -205,6 +205,8 @@ export class Photos {
       this.trashTargets = selected;
       this.trashError = "";
       let successes = 0;
+      // A request without a server answer may still have moved the photo.
+      let uncertain = false;
       for (const item of selected) {
         try {
           const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
@@ -222,10 +224,11 @@ export class Photos {
           await restore?.();
         } catch (cause) {
           if (cause instanceof APIError && cause.status === 401) { this.onauthfailure(cause); break; }
+          if (!(cause instanceof APIError)) uncertain = true;
           this.trashError = cause instanceof Error ? cause.message : String(cause);
         }
       }
-      if (successes) ontrashed?.();
+      if (successes || uncertain) ontrashed?.();
       await this.refresh(preserve);
       return successes === selected.length;
     } finally { this.trashing = false; }
