@@ -125,12 +125,17 @@ func (c *Connection) PhotoAsset(ctx context.Context, id string, cookies ...strin
 	return *asset, nil
 }
 
-func (c *Connection) PhotoAssetForNode(ctx context.Context, nodeID int64) (api.PhotoAsset, error) {
+func (c *Connection) PhotoAssetForNode(ctx context.Context, nodeID int64, cookies ...string) (api.PhotoAsset, error) {
 	if nodeID < 1 {
 		return api.PhotoAsset{}, errors.New("photo node ID must be positive")
 	}
 	var response *http.Response
-	asset, err := c.apiWithResponse(&response).GetPhotoAssetByNode(ctx, &apiclient.GetPhotoAssetByNodeRequestOptions{PathParams: &apiclient.GetPhotoAssetByNodePath{NodeID: nodeID}})
+	asset, err := c.apiWithResponse(&response).GetPhotoAssetByNode(ctx, &apiclient.GetPhotoAssetByNodeRequestOptions{PathParams: &apiclient.GetPhotoAssetByNodePath{NodeID: nodeID}}, func(_ context.Context, request *http.Request) error {
+		if len(cookies) > 0 {
+			request.Header.Set("Cookie", cookies[0])
+		}
+		return nil
+	})
 	if err != nil {
 		return api.PhotoAsset{}, err
 	}

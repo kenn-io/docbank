@@ -5,6 +5,44 @@ import App from "./App.svelte";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it.each(["unhide", "trash"])("refreshes a remounted Hidden grid after a delayed %s", async kind => {
+  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  storage();
+  let changed = false;
+  let finish!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z" });
+    if (url.includes("/assets/query")) {
+      const hidden = JSON.parse(String(options?.body)).hidden;
+      const items = hidden && !changed ? [photo(1)] : [];
+      return Response.json({ items, total: items.length });
+    }
+    if (url.endsWith(`/assets/photo-1/${kind}`)) return new Promise<Response>(resolve => finish = resolve);
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  }));
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  if (kind === "unhide") {
+    await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "Unhide" }));
+  } else {
+    await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+    await fireEvent.click(within(screen.getByRole("dialog", { name: "Move selected photos to trash" })).getByRole("button", { name: "Move to trash" }));
+  }
+  await waitFor(() => expect(finish).toBeDefined());
+  await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull());
+  await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  changed = true;
+  finish(Response.json({ id: "photo-1", revision: 2 }));
+  await screen.findByText("No hidden photos");
+  expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
+});
+
 it("retains photo state and previews across sidebar switches until lock", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });

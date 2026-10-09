@@ -94,20 +94,39 @@ func init() {
 					return err
 				}
 			}
+			assetID := args[0]
+			if !hide && (strings.HasPrefix(assetID, nodeIDSelectorPrefix) || strings.HasPrefix(assetID, "/")) {
+				selector, err := parseNodeSelector(assetID)
+				if err != nil {
+					return err
+				}
+				node, err := selector.resolveIncludingTrash(cmd.Context(), connection)
+				if err != nil {
+					return err
+				}
+				asset, err := connection.PhotoAssetForNode(cmd.Context(), node.ID, cookie)
+				if err != nil {
+					return err
+				}
+				assetID = asset.ID
+			}
 			asset, err := withPhotoRevision(cmd, func() (*int64, error) {
-				asset, err := connection.PhotoAsset(cmd.Context(), args[0], cookie)
+				asset, err := connection.PhotoAsset(cmd.Context(), assetID, cookie)
 				if err != nil {
 					return nil, err
 				}
 				return &asset.Revision, nil
 			}, func(revision *int64) (api.PhotoAsset, error) {
-				return connection.SetPhotoAssetHidden(cmd.Context(), args[0], *revision, hide, cookie)
+				return connection.SetPhotoAssetHidden(cmd.Context(), assetID, *revision, hide, cookie)
 			})
 			if err != nil {
 				return err
 			}
 			return writeCLIJSON(cmd.OutOrStdout(), asset)
 		}}
+		if !hide {
+			command.Use = action + " <asset-id|node-selector>"
+		}
 		command.Flags().Int64Var(&photoRevision, "revision", 0, "Expected asset revision")
 		photosCmd.AddCommand(command)
 	}

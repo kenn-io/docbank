@@ -2,11 +2,17 @@ package main
 
 import (
 	"bufio"
+	"encoding/json/v2"
+	"image/color"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document/media/mediatest"
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonconn"
 )
 
 func TestPhotoHiddenPasscodeInput(t *testing.T) {
@@ -20,4 +26,38 @@ func TestPhotoHiddenPasscodeInput(t *testing.T) {
 	next, err := readPhotoPasscode(cmd, input, "New")
 	require.NoError(t, err)
 	require.Equal(t, "new passcode", next)
+}
+
+func TestPhotoHiddenCLIUnhideBySelector(t *testing.T) {
+	_ = setupVaultHome(t)
+	source := writeSourceFile(t, "synthetic-hidden.jpeg", string(mediatest.JPEG(2, 2, color.White)))
+	_, err := runCLI(t, "add", source, "--dest", "/inbox")
+	require.NoError(t, err)
+	out, err := runCLI(t, "photos", "assets", "inspect", "/inbox/synthetic-hidden.jpeg")
+	require.NoError(t, err)
+	var asset api.PhotoAsset
+	require.NoError(t, json.Unmarshal([]byte(out), &asset))
+	connection, err := daemonconn.Ensure(t.Context())
+	require.NoError(t, err)
+	_, _, err = connection.PhotoHidden(t.Context(), "setup", "synthetic-passcode", "")
+	require.NoError(t, err)
+	unhide, _, err := rootCmd.Find([]string{"photos", "unhide"})
+	require.NoError(t, err)
+	t.Cleanup(func() { unhide.SetIn(nil) })
+	for _, selector := range []string{"/inbox/synthetic-hidden.jpeg", "id:" + strconv.FormatInt(asset.Files[0].NodeID, 10), asset.ID} {
+		_, err = runCLI(t, "photos", "hide", asset.ID)
+		require.NoError(t, err)
+		_, err = runCLI(t, "photos", "assets", "inspect", "/inbox/synthetic-hidden.jpeg")
+		require.ErrorContains(t, err, "hidden_locked")
+		unhide.SetIn(strings.NewReader("incorrect-passcode\n"))
+		_, err = runCLI(t, "photos", "unhide", selector)
+		require.ErrorContains(t, err, "hidden_passcode")
+		unhide.SetIn(strings.NewReader("synthetic-passcode\n"))
+		out, err = runCLI(t, "photos", "unhide", selector)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal([]byte(out), &asset))
+		require.Nil(t, asset.HiddenAt)
+		_, err = runCLI(t, "photos", "assets", "inspect", "/inbox/synthetic-hidden.jpeg")
+		require.NoError(t, err)
+	}
 }
