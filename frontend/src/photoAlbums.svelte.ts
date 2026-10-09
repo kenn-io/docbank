@@ -81,7 +81,7 @@ export class PhotoAlbums {
       if (recovered && failure instanceof APIError && id && (failure.code === "stale_revision" || failure.status === 404)) {
         const album = this.items.find(item => item.id === id);
         if (!album) this.error = "This album was deleted.";
-        else if (failure.code === "stale_revision") this.error = `${album.name} changed elsewhere. Try again.`;
+        else if (failure.code === "stale_revision") this.error = `${album.name} changed. Try again.`;
       }
       await complete?.(result);
       return result;

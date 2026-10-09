@@ -38,7 +38,7 @@ it.each([412, 503])("preserves unfinished IDs and reports progress when a later 
   expect(await albums.members(album, photos.scope(), photos)).toBeUndefined();
   expect(photos.selection.selectedIDs.size).toBe(345);
   expect(albums.items[0]).toMatchObject({ revision, included_count: 1000, effective_cover_asset_id: "new-cover" });
-  expect(albums.error).toBe(`Added 1,000 of 1,345 photos. ${status === 412 ? "Trip changed elsewhere. Try again." : "Members unavailable"}`);
+  expect(albums.error).toBe(`Added 1,000 of 1,345 photos. ${status === 412 ? "Trip changed. Try again." : "Members unavailable"}`);
   expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/members/add"))).toHaveLength(2);
   await albums.members(albums.items[0], photos.scope(), photos);
   expect(fetcher.mock.calls[3][1].headers.get("If-Match")).toBe(`"${revision}"`);
@@ -55,7 +55,7 @@ it("sends the complete live query once and retains selection on a conflict", asy
   expect(fetcher).toHaveBeenCalledTimes(2);
   expect(photos.allResults).toBe(true);
   expect(photos.selection.selectedIDs.size).toBe(250);
-  expect(albums.error).toBe("Trip changed elsewhere. Try again.");
+  expect(albums.error).toBe("Trip changed. Try again.");
 });
 
 it("keeps server order and clears a session target after deletion", async () => {

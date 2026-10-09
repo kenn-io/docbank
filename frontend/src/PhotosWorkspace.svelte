@@ -19,6 +19,7 @@
   let picker = $state<{ focus: () => void; addToTarget: () => Promise<boolean> }>();
   let renaming = $state(false);
   let renameAlbum = $state<PhotoAlbumItem>();
+  let renameError = $state("");
   let name = $state("");
   let modal = $state<"delete" | "duplicate" | undefined>();
   let modalError = $state("");
@@ -57,28 +58,49 @@
     await albums.members(album, photos.scope(), photos, true, preserve);
   }
   async function rename() {
-    if (!albums || !renameAlbum || !name.trim()) return;
-    const result = await albums.update(renameAlbum, { name: name.trim() });
-    if (alive && renaming && result) renaming = false;
+    if (!albums || !renameAlbum || renameError || !name.trim()) return;
+    const inspected = renameAlbum;
+    const result = await albums.update(inspected, { name: name.trim() });
+    if (!alive || !renaming || renameAlbum !== inspected) return;
+    if (result) renaming = false;
+    else { renameError = albums.error; albums.error = ""; }
   }
-  function beginRename() { renameAlbum = album; name = album?.name ?? ""; renaming = true; }
+  function beginRename() { renameError = ""; renameAlbum = album; name = album?.name ?? ""; renaming = true; }
   function openModal(kind: "delete" | "duplicate") { modalError = ""; modalAlbum = album; modal = kind; duplicateName = `${album?.name ?? "Album"} copy`; }
   async function confirm() {
-    if (!albums || !modalAlbum) return;
+    if (!albums || !modalAlbum || modalError) return;
     const result = modal === "delete" ? await albums.delete(modalAlbum) : await albums.duplicate(modalAlbum, duplicateName);
     if (!alive || !modal) return;
     if (!result) { modalError = albums.error; albums.error = ""; }
     if (result) { const deleting = modal === "delete"; modal = undefined; onnavigate(deleting ? "/photos/albums" : `/photos/albums/${result.id}`); }
   }
+  async function reviewAlbum() {
+    if (!albums) return;
+    const kind = renaming ? "rename" : modal;
+    const inspected = kind === "rename" ? renameAlbum : modalAlbum;
+    const rejected = kind === "rename" ? renameError : modalError;
+    if (!kind || !inspected || !rejected) return;
+    const loaded = await albums.load();
+    if (!alive || (kind === "rename" ? !renaming || renameAlbum !== inspected || renameError !== rejected : modal !== kind || modalAlbum !== inspected || modalError !== rejected)) return;
+    if (!loaded && !albums.loadError) return;
+    const current = loaded ? albums.items.find(item => item.id === inspected.id) : undefined;
+    const error = loaded ? current ? "" : "This album was deleted." : albums.loadError;
+    if (kind === "rename") { if (current) renameAlbum = current; renameError = error; }
+    else { if (current) modalAlbum = current; modalError = error; }
+  }
   $effect(() => { if (renaming && renameInput) { renameInput.focus(); renameInput.select(); } });
 </script>
+
+{#snippet sourceSummary(source: PhotoAlbumItem)}
+  <span>{source.name}{#if source.included_count !== undefined}{" · "}{source.included_count.toLocaleString()} {source.included_count === 1 ? "photo" : "photos"}{/if}</span>
+{/snippet}
 
 <svelte:window onkeydown={escape} />
 <main class="photos-workspace" aria-label={albumID ? "Photo album" : "Photo library"}>
   <div class="photo-toolbar browser-toolbar">
     <div class="library-title">
       {#if albumID}<button type="button" class="album-back" onclick={() => onnavigate("/photos/albums")}>Albums</button>{/if}
-      {#if renaming}<form onsubmit={event => { event.preventDefault(); void rename(); }}><TextInput ariaLabel="Album name" bind:value={name} bind:inputEl={renameInput} onkeydown={event => { if (event.key === "Escape") { event.preventDefault(); renaming = false; } }} /><Button type="submit" size="sm" disabled={albums?.busy || !name.trim()}>Save</Button><Button size="sm" onclick={() => renaming = false}>Cancel</Button></form>
+      {#if renaming && renameAlbum}<form onsubmit={event => { event.preventDefault(); void rename(); }}>{@render sourceSummary(renameAlbum)}<TextInput ariaLabel="Album name" bind:value={name} bind:inputEl={renameInput} onkeydown={event => { if (event.key === "Escape") { event.preventDefault(); renaming = false; } }} /><Button type="submit" size="sm" disabled={albums?.busy || !!renameError || !name.trim()}>Save</Button><Button size="sm" onclick={() => renaming = false}>Cancel</Button>{#if renameError}<span role="alert">{renameError}</span><Button size="sm" disabled={albums?.busy || albums?.loading} onclick={() => void reviewAlbum()}>Review current album</Button>{/if}</form>
       {:else}<h1>{albumID ? album?.name ?? "Album" : "Library"}</h1>{/if}
       <span>{photos.total.toLocaleString()} photos · {photos.items.length.toLocaleString()} loaded</span>
     </div>
@@ -89,8 +111,8 @@
         <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => relayout(() => photos.setDensity(value as Density))} />
       </div>
       {#if album && albums}
-        <IconButton ariaLabel={album.starred ? "Unstar album" : "Star album"} title={album.starred ? "Unstar album" : "Star album"} ariaPressed={album.starred} disabled={albums.busy} onclick={() => void albums!.update(album!, { starred: !album!.starred })}><StarIcon size="16" fill={album.starred ? "currentColor" : "none"} /></IconButton>
-        <Menu align="end"><MenuTrigger ariaLabel="Album actions" disabled={albums.busy}>More</MenuTrigger><MenuContent ariaLabel="Album actions"><MenuItem onselect={beginRename}>Rename</MenuItem><MenuItem onselect={() => openModal("duplicate")}>Duplicate…</MenuItem><MenuItem tone="danger" onselect={() => openModal("delete")}>Delete album…</MenuItem></MenuContent></Menu>
+        <IconButton ariaLabel={album.starred ? "Unstar album" : "Star album"} title={album.starred ? "Unstar album" : "Star album"} ariaPressed={album.starred} disabled={albums.busy || renaming} onclick={() => void albums!.update(album!, { starred: !album!.starred })}><StarIcon size="16" fill={album.starred ? "currentColor" : "none"} /></IconButton>
+        <Menu align="end"><MenuTrigger ariaLabel="Album actions" disabled={albums.busy || renaming}>More</MenuTrigger><MenuContent ariaLabel="Album actions"><MenuItem onselect={beginRename}>Rename</MenuItem><MenuItem onselect={() => openModal("duplicate")}>Duplicate…</MenuItem><MenuItem tone="danger" onselect={() => openModal("delete")}>Delete album…</MenuItem></MenuContent></Menu>
       {/if}<Button size="sm" disabled={photos.loading || albums?.busy} onclick={() => void refresh()}>Refresh previews</Button>
     </div>
   </div>
@@ -120,9 +142,9 @@
 </main>
 {#if modal && modalAlbum && albums}
   <Modal title={modal === "delete" ? "Delete album" : "Duplicate album"} onclose={() => { if (!albums.busy) modal = undefined; }}>
-    {#if modal === "delete"}<p>Delete "{modalAlbum.name}"? Its {modalAlbum.included_count === undefined ? "" : `${modalAlbum.included_count.toLocaleString()} `}photos stay in your library.</p>{:else}<TextInput ariaLabel="Copy name" bind:value={duplicateName} />{/if}
+    {#if modal === "delete"}<p>Delete "{modalAlbum.name}"? Its {modalAlbum.included_count === undefined ? "" : `${modalAlbum.included_count.toLocaleString()} `}photos stay in your library.</p>{:else}{@render sourceSummary(modalAlbum)}<TextInput ariaLabel="Copy name" bind:value={duplicateName} />{/if}
     {#if modalError}<p role="alert">{modalError}</p>{/if}
-    <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button><Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || modal === "duplicate" && !duplicateName.trim()} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
+    <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button>{#if modalError}<Button disabled={albums.busy || albums.loading} onclick={() => void reviewAlbum()}>Review current album</Button>{/if}<Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || !!modalError || modal === "duplicate" && !duplicateName.trim()} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
   </Modal>
 {/if}
 

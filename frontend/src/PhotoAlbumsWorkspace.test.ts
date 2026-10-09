@@ -199,6 +199,8 @@ it("renders added order unchanged and saves or cancels inline rename", async () 
   const update = vi.spyOn(albums, "update").mockResolvedValue(album);
   await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
   await fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+  expect((screen.getByRole("button", { name: "Star album" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Album actions" }) as HTMLButtonElement).disabled).toBe(true);
   await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "Canceled" } });
   await fireEvent.keyDown(screen.getByRole("textbox", { name: "Album name" }), { key: "Escape" });
   expect(update).not.toHaveBeenCalled();
@@ -210,25 +212,90 @@ it("renders added order unchanged and saves or cancels inline rename", async () 
   expect(update).toHaveBeenCalledWith(album, { name: "Holiday" });
 });
 
-it.each(["rename", "delete", "duplicate"] as const)("keeps the inspected revision for %s when a newer list arrives before submission", async operation => {
+it.each(["rename", "delete", "duplicate"] as const)("keeps the inspected revision for %s until current-state review and a separate retry", async operation => {
   let finish!: (response: Response) => void;
-  const current = { ...album, revision: 2 };
+  const current = { ...album, revision: 2, name: "Updated Trip", included_count: 3 };
+  const result = { ...current, revision: 3, ...(operation === "delete" ? { deleted_at: "2025-01-01" } : { name: "My draft" }) };
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve))
     .mockResolvedValueOnce(new Response(JSON.stringify({ code: "stale_revision" }), { status: 412 }))
-    .mockResolvedValueOnce(new Response(JSON.stringify([current])));
+    .mockResolvedValueOnce(new Response(JSON.stringify([current])))
+    .mockResolvedValueOnce(new Response(JSON.stringify([current])))
+    .mockResolvedValueOnce(new Response(JSON.stringify(result)))
+    .mockResolvedValueOnce(new Response(JSON.stringify(operation === "delete" ? [] : [result])));
   vi.stubGlobal("fetch", fetcher);
   const { albums } = setup(true);
   await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
   await fireEvent.click(await screen.findByRole("menuitem", { name: operation === "rename" ? "Rename" : operation === "delete" ? "Delete album…" : "Duplicate…" }));
+  if (operation !== "delete") await fireEvent.input(screen.getByRole("textbox", { name: operation === "rename" ? "Album name" : "Copy name" }), { target: { value: "My draft" } });
   const reading = albums.load();
   finish(new Response(JSON.stringify([current]))); await reading;
   const submit = screen.getByRole("button", { name: operation === "rename" ? "Save" : operation === "delete" ? "Delete album" : "Duplicate album" });
   await fireEvent.click(submit);
-  await screen.findByText("Trip changed elsewhere. Try again.");
+  await screen.findByText("Updated Trip changed. Try again.");
   expect(screen.getAllByRole("alert")).toHaveLength(1);
   expect(fetcher.mock.calls[1][1].headers.get("If-Match")).toBe('"1"');
   expect(albums.items[0].revision).toBe(2);
-  expect(screen.getByRole("button", { name: operation === "rename" ? "Save" : operation === "delete" ? "Delete album" : "Duplicate album" })).toBeTruthy();
+  expect((submit as HTMLButtonElement).disabled).toBe(true);
+  await fireEvent.click(await screen.findByRole("button", { name: "Review current album" }));
+  await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
+  expect(fetcher).toHaveBeenCalledTimes(4);
+  expect(fetcher.mock.calls[3][1].method).toBe("GET");
+  if (operation === "delete") expect(screen.getByText('Delete "Updated Trip"? Its 3 photos stay in your library.')).toBeTruthy();
+  else {
+    expect(screen.getByText("Updated Trip · 3 photos")).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: operation === "rename" ? "Album name" : "Copy name" }) as HTMLInputElement).value).toBe("My draft");
+  }
+  await fireEvent.click(submit);
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(6));
+  expect(fetcher.mock.calls[4][1].headers.get("If-Match")).toBe('"2"');
+  await waitFor(() => expect(screen.queryByRole("button", { name: operation === "rename" ? "Save" : operation === "delete" ? "Delete album" : "Duplicate album" })).toBeNull());
+});
+
+it.each(["failed", "missing", "superseded", "dismissed", "changed after review"] as const)("keeps album recovery safe when its read is %s", async mode => {
+  let finish!: (response: Response) => void;
+  const current = { ...album, revision: 2, included_count: 3 }, newer = { ...current, revision: 3, included_count: 4 };
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ code: "stale_revision", detail: "Trip changed. Try again." }), { status: 412 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(mode === "dismissed" ? { detail: "List unavailable" } : [current]), { status: mode === "dismissed" ? 503 : 200 }))
+    .mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve));
+  vi.stubGlobal("fetch", fetcher);
+  const { albums } = setup(true);
+  const open = async () => {
+    await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+  };
+  await open();
+  await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "My draft" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText("Trip changed. Try again.");
+  await fireEvent.click(await screen.findByRole("button", { name: "Review current album" }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+  if (mode === "superseded") {
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify([newer]))); await albums.load();
+  }
+  if (mode === "dismissed") { await fireEvent.click(screen.getByRole("button", { name: "Cancel" })); await open(); }
+  finish(new Response(JSON.stringify(mode === "failed" ? { detail: "Review unavailable" } : mode === "missing" ? [] : [mode === "dismissed" ? newer : current]), { status: mode === "failed" ? 503 : 200 }));
+  if (mode === "failed" || mode === "missing" || mode === "superseded") {
+    await screen.findByText(mode === "failed" ? "Review unavailable" : mode === "missing" ? "This album was deleted." : "Trip changed. Try again.");
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("textbox", { name: "Album name" }) as HTMLInputElement).value).toBe("My draft");
+    expect(fetcher.mock.calls.filter(([, init]) => init.method !== "GET")).toHaveLength(1);
+  } else if (mode === "dismissed") {
+    await waitFor(() => expect(albums.items[0].revision).toBe(3));
+    expect(screen.getByText("Trip · 2 photos")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify(newer))).mockResolvedValueOnce(new Response(JSON.stringify([newer])));
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(5));
+    expect(fetcher.mock.calls[3][1].headers.get("If-Match")).toBe('"1"');
+  } else {
+    await waitFor(() => expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(false));
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify([newer]))); await albums.load();
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ code: "stale_revision" }), { status: 412 })).mockResolvedValueOnce(new Response(JSON.stringify([newer])));
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText("Trip changed. Try again.");
+    expect(fetcher.mock.calls[4][1].headers.get("If-Match")).toBe('"2"');
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  }
 });
 
 it("refreshes previews and summary counts inside an album", async () => {
