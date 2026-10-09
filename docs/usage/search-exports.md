@@ -142,6 +142,38 @@ the CLI received a valid summary, it cannot identify the result reliably.
 History can help an operator investigate, but it cannot prove which call created
 a receipt. Repeating create or revise may consume another slot.
 
+## Release a report after review
+
+Once you no longer need a live report, free its slot:
+
+```bash
+docbank search-export release <report-id>
+docbank search-export release <report-id> --json
+```
+
+Release discards that handle's packet and date-review evidence, including a
+report still awaiting review. History cannot reconstruct that evidence. Saved
+files, source documents, history receipts and already published child reports
+remain unchanged. A child keeps its original expiry. Shared evidence stays in
+memory while another report or in-flight operation uses it, so freeing a slot
+does not guarantee that all global build or memory capacity is available.
+
+An active download returns `409 report_retained`; retry deliberately after it
+closes. Even `download && release` can need a retry because the server closes
+its reader after sending the final bytes. The command does not retry for you.
+
+After an uncertain reply, run `search-export show <report-id>`. A successful
+read means the handle remains. `410 report_unavailable` means no live handle
+owned by this caller remains; it does not establish which call removed it.
+`503 report_unavailable` means reporting itself is unavailable and says nothing
+about release. Repeating release for an absent handle returns 410, not success.
+If printing the result fails after a successful release, the error says the
+report was released.
+
+JSON success is `{"report_id":"<report-id>","released":true}`. Invalid IDs or
+argument counts exit 2; release errors exit 1. Development builds using an older
+daemon that lacks this endpoint need an explicit daemon restart.
+
 ## Request and reviewed-date format
 
 Version 1 is stored in export history and evidence packets. Required fields
@@ -277,7 +309,8 @@ are lost on daemon restart. Handles belong to the requesting API or browser
 session. Ending a browser session invalidates its handles. Download the ZIP
 before expiry. CLI and MCP share eight live report slots, and every revision
 takes another slot. All descendants expire 30 minutes after the original
-observation. Downloading does not free a slot, and there is no release command.
+observation. Downloading does not free a slot. CLI and MCP can explicitly release
+unneeded handles; browser sessions cannot release them.
 
 History receipts survive backup and restore, but neither history nor a backup
 of history restores live artifacts or date-review pages. Source replacement,
