@@ -142,6 +142,31 @@ cutover rather than a sequence of in-place SQL mutations:
 5. Retain a version-identified source recovery copy and atomically publish the
    new database.
 
+Upgrades from schema v3 and later copy storage operations with their store
+and cleanup records unchanged, so queued or interrupted placements,
+evacuations, and photo imports resume after the upgrade. Upgrades from v0.15.0
+and later also copy pending loose-blob retirements and pending derivative
+purges. They keep the source processing incarnation, so existing processing
+consent and queued rendition jobs stay authorized. An upgrade is the same
+vault, so it also keeps state that a restore deliberately resets:
+
+- Export sources, plans, and jobs with their owners, so export handles still
+  resolve, interrupted exports resume, and completed archives are kept.
+- Embedding jobs, so failed or retry-exhausted jobs are not queued again with
+  a fresh retry budget.
+- Media receipts, so an admitted request that has no rendition job yet still
+  resumes.
+- Document event and people rebuild receipts with the epochs they count
+  against, so a rebuild can be looked up or replayed by its operation ID and
+  an unfinished one completes.
+- Unexpired package preflights and in-progress mailbox uploads with their
+  accepted chunks, so the user can continue within the 24-hour session instead
+  of starting again.
+
+A copied source table whose columns differ from the current schema stops the
+upgrade before the vault changes. Restoring a backup still requires fresh
+consent before provider work resumes.
+
 The cutover driver is shared by every released generation. A small source
 adapter describes how to export that generation's logical authority and
 restore its physical blob catalog. The v0.9.0 adapter recognizes the one

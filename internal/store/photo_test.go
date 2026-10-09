@@ -211,7 +211,7 @@ func TestPhotoNodeModesAndPurgeRepair(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, group.Files)
 	assert.Nil(t, group.DisplayFileID)
-	require.NoError(t, validatePhotoMetadataState(ctx, s.db))
+	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
 }
 
 func TestPhotoMetadataRoundTripAndInvalidReferences(t *testing.T) {
@@ -306,10 +306,10 @@ func TestPhotoMetadataRejectsRoleMediaAndAssetKindMismatch(t *testing.T) {
 			s := newTestStore(t)
 			_, err := s.CreateFile(t.Context(), s.RootID(), "mismatch.jpg", fakeHash(test.name), 1, "image/jpeg")
 			require.NoError(t, err)
-			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db))
+			require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion))
 			_, err = s.db.ExecContext(t.Context(), test.update)
 			require.NoError(t, err)
-			require.ErrorIs(t, validatePhotoMetadataState(t.Context(), s.db), ErrInvalidPhotoAsset)
+			require.ErrorIs(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion), ErrInvalidPhotoAsset)
 		})
 	}
 }
@@ -337,7 +337,7 @@ func TestPhotoMetadataAcceptsReceiptIndependentRevisionOneState(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET revision=1 WHERE asset_id=?`, asset.ID)
 	require.NoError(t, err)
-	require.NoError(t, validatePhotoMetadataState(ctx, s.db))
+	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
 }
 
 func TestPhotoMetadataRejectsOrphanReceipts(t *testing.T) {
@@ -513,7 +513,7 @@ func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 	originalVersionID := image.CurrentVersionID
 	updated, replacementVersion, err := s.ReplaceContent(ctx, image.ID, image.Revision, fakeHash("b2"), 1, "application/pdf")
 	require.NoError(t, err)
-	require.NoError(t, validatePhotoMetadataState(ctx, s.db))
+	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
 	assetAfter, err := s.PhotoAssetForNode(ctx, image.ID)
 	require.NoError(t, err)
 	assert.Equal(t, asset.ID, assetAfter.ID)
@@ -550,7 +550,7 @@ func TestPhotoVersionPrunePreservesChangedMediaMembership(t *testing.T) {
 	_, err = s.PruneContentVersions(ctx, image.ID, updated.Revision,
 		VersionPruneSelector{VersionIDs: []string{image.CurrentVersionID}}, true)
 	require.NoError(t, err)
-	require.NoError(t, validatePhotoMetadataState(ctx, s.db))
+	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
 	retained, err := s.PhotoAssetForNode(ctx, image.ID)
 	require.NoError(t, err)
 	assert.Equal(t, asset.ID, retained.ID)

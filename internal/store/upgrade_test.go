@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -275,8 +276,11 @@ func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
 			require.NoError(t, err)
 			_, err = s.db.Exec(`DROP TABLE provenance_version_bindings`)
 			require.NoError(t, err)
-			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=? WHERE singleton=1`,
-				currentStorageSchemaVersion-1)
+			unreleased := currentStorageSchemaVersion - 1
+			for slices.Contains(releasedStorageSchemaVersions, unreleased) {
+				unreleased--
+			}
+			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=? WHERE singleton=1`, unreleased)
 			require.NoError(t, err)
 			require.NoError(t, s.Close())
 			reopened, err := Open(path, test.driver)
@@ -688,6 +692,106 @@ func TestOpenCutsOverReleasedSchemaV3ThroughJSONL(t *testing.T) {
 	}
 }
 
+// seedV3Evacuation records a running evacuation of the fixture's archive
+// store with its store roles and one pending cleanup record.
+func seedV3Evacuation(t *testing.T, path string, driver docsqlite.Driver, fixture v3Fixture) string {
+	t.Helper()
+	const (
+		operationID = "50000000-0000-4000-8000-000000000004"
+		timestamp   = "2026-08-16T12:00:00.000000000Z"
+	)
+	db, err := driver.Open(path, docsqlite.OpenOptions{
+		Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+	})
+	require.NoError(t, err)
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO storage_operations(operation_id,kind,source_store_id,request_version,request_digest,
+			request_json,plan_json,state,cursor,total_objects,completed_objects,created_at,updated_at)
+			VALUES(?,'evacuate',?,1,?,'{}','{}','running',?,2,1,?,?)`,
+			[]any{operationID, fixture.secondaryStoreID, fakeHash("v3-request"), fixture.blobHash, timestamp, timestamp}},
+		{`INSERT INTO storage_operation_stores(operation_id,store_id,role) VALUES(?,?,'source')`,
+			[]any{operationID, fixture.secondaryStoreID}},
+		{`INSERT INTO storage_operation_stores(operation_id,store_id,role) VALUES(?,?,'destination')`,
+			[]any{operationID, fixture.primaryStoreID}},
+		{`INSERT INTO storage_operation_cleanup(operation_id,store_id,loose_hash) VALUES(?,?,?)`,
+			[]any{operationID, fixture.secondaryStoreID, fixture.blobHash}},
+	} {
+		_, err := db.Exec(statement.query, statement.args...)
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.Close())
+	return operationID
+}
+
+func dumpReleasedStorageOperations(t *testing.T, q metadataQuerier) string {
+	t.Helper()
+	var out strings.Builder
+	for _, table := range releasedStorageOperationTables {
+		dumpReleasedTable(t, q, table, &out)
+	}
+	return out.String()
+}
+
+func TestUpgradeReleasedSchemaV3KeepsStorageOperations(t *testing.T) {
+	t.Parallel()
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			fixture := createV3Fixture(t, dbPath, test.driver)
+			operationID := seedV3Evacuation(t, dbPath, test.driver, fixture)
+			source, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
+				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Deferred,
+			})
+			require.NoError(t, err)
+			released := dumpReleasedStorageOperations(t, source)
+			require.NoError(t, source.Close())
+			require.Equal(t, 4, strings.Count(released, "\n"))
+
+			s, err := Open(dbPath, test.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+			assert.Equal(t, released, dumpReleasedStorageOperations(t, s.db))
+			resumable, err := s.ResumableStorageOperations(t.Context())
+			require.NoError(t, err)
+			require.Len(t, resumable, 1)
+			assert.Equal(t, operationID, resumable[0].ID)
+			assert.Equal(t, fixture.secondaryStoreID, resumable[0].SourceStoreID)
+		})
+	}
+}
+
+func TestOpenRejectsChangedReleasedSchemaV3StorageOperations(t *testing.T) {
+	t.Parallel()
+	for _, test := range v090UpgradeDrivers() {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "docbank.db")
+			createV3Fixture(t, dbPath, test.driver)
+			db, err := test.driver.Open(dbPath, docsqlite.OpenOptions{
+				Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate,
+			})
+			require.NoError(t, err)
+			_, err = db.Exec(`ALTER TABLE storage_operations ADD COLUMN unexpected TEXT`)
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+			before, err := os.ReadFile(dbPath)
+			require.NoError(t, err)
+
+			s, err := Open(dbPath, test.driver)
+			if s != nil {
+				require.NoError(t, s.Close())
+			}
+			require.ErrorContains(t, err, "copying released storage_operations: columns")
+			after, err := os.ReadFile(dbPath)
+			require.NoError(t, err)
+			assert.Equal(t, before, after, "a refused upgrade leaves the vault unchanged")
+			assert.NoFileExists(t, dbPath+v3BackupSuffix)
+		})
+	}
+}
+
 // Coverage guard: the exact released v0.14 schema must carry its plain-text
 // search result through the one-authority cutover in both SQLite modes.
 func TestUpgradeReleasedV014MigratesPlainText(t *testing.T) {
@@ -891,10 +995,10 @@ func TestOpenCompletesInterruptedReleasedCutover(t *testing.T) {
 	snapshot, err := source.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)
 	require.NoError(t, writeUpgradeJSONL(snapshot, jsonlPath, sourceSchema))
-	target, err := openCurrentStore(stagePath, driver)
+	target, err := openCurrentStore(stagePath, driver, nil)
 	require.NoError(t, err)
 	require.NoError(t, importUpgradeJSONL(target, jsonlPath, sourceSchema))
-	require.NoError(t, sourceSchema.restorePhysical(t.Context(), snapshot, target))
+	require.NoError(t, sourceSchema.restoreSourceState(t.Context(), snapshot, target))
 	require.NoError(t, target.ValidateMetadata(t.Context()))
 	require.NoError(t, target.Checkpoint(t.Context()))
 	require.NoError(t, target.Close())
@@ -934,16 +1038,16 @@ func TestInterruptedUpgradeStageMigratesLegacyBeforePublication(t *testing.T) {
 			snapshot, err := source.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
 			require.NoError(t, err)
 			require.NoError(t, writeUpgradeJSONL(snapshot, jsonlPath, sourceSchema))
-			target, err := openCurrentStore(stagePath, test.driver)
+			target, err := openCurrentStore(stagePath, test.driver, nil)
 			require.NoError(t, err)
 			require.NoError(t, importUpgradeJSONL(target, jsonlPath, sourceSchema))
-			require.NoError(t, sourceSchema.restorePhysical(t.Context(), snapshot, target))
+			require.NoError(t, sourceSchema.restoreSourceState(t.Context(), snapshot, target))
 			require.NoError(t, target.Close())
 			require.NoError(t, snapshot.Rollback())
 			require.NoError(t, source.Close())
 
 			require.NoError(t, validateUpgradeStage(stagePath, test.driver))
-			stage, err := openCurrentStore(stagePath, test.driver)
+			stage, err := openCurrentStore(stagePath, test.driver, nil)
 			require.NoError(t, err)
 			var heads, legacyFTS int
 			require.NoError(t, stage.db.QueryRow(`SELECT COUNT(*) FROM rendition_heads`).Scan(&heads))

@@ -59,7 +59,7 @@ func Open(path string, drivers ...docsqlite.Driver) (*Store, error) {
 	if err := prepareReleasedSchemaUpgrade(path, driver); err != nil {
 		return nil, err
 	}
-	s, err := openCurrentStore(path, driver)
+	s, err := openCurrentStore(path, driver, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -81,10 +81,14 @@ func OpenForRestore(path string, driver docsqlite.Driver) (*Store, error) {
 	if err := docsqlite.Validate(driver); err != nil {
 		return nil, fmt.Errorf("opening restore database: %w", err)
 	}
-	return openCurrentStore(path, driver)
+	return openCurrentStore(path, driver, nil)
 }
 
-func openCurrentStore(path string, driver docsqlite.Driver) (*Store, error) {
+// openCurrentStore opens or creates a current-schema store. A new store adopts
+// incarnation when it is non-nil and otherwise starts a fresh one.
+func openCurrentStore(
+	path string, driver docsqlite.Driver, incarnation *metadataProcessingIncarnation,
+) (*Store, error) {
 	db, err := driver.Open(path, docsqlite.OpenOptions{
 		Access: docsqlite.Create, TransactionMode: docsqlite.Deferred,
 	})
@@ -101,7 +105,7 @@ func openCurrentStore(path string, driver docsqlite.Driver) (*Store, error) {
 	// Read snapshots use the separate deferred pool and do not reserve the writer.
 	writeDB.SetMaxOpenConns(1)
 	s := &Store{db: db, writeDB: writeDB, path: path, driver: driver}
-	if err := s.bootstrap(); err != nil {
+	if err := s.bootstrap(incarnation); err != nil {
 		_ = s.Close()
 		return nil, err
 	}
@@ -118,10 +122,10 @@ func openCurrentStore(path string, driver docsqlite.Driver) (*Store, error) {
 // idempotent, so retrying the whole transaction is safe. The root
 // insert-then-select stays a single atomic statement as extra insurance
 // against racing a read-then-insert into the one_root unique index.
-func (s *Store) bootstrap() error {
+func (s *Store) bootstrap(incarnation *metadataProcessingIncarnation) error {
 	deadline := time.Now().Add(5 * time.Second)
 	_, err := backoff.Retry(context.Background(), func() (struct{}, error) {
-		err := s.bootstrapTx()
+		err := s.bootstrapTx(incarnation)
 		if err == nil {
 			return struct{}{}, nil
 		}
@@ -136,7 +140,7 @@ func (s *Store) bootstrap() error {
 	return nil
 }
 
-func (s *Store) bootstrapTx() error {
+func (s *Store) bootstrapTx(incarnation *metadataProcessingIncarnation) error {
 	return s.withStorageTx(context.Background(), func(tx *sql.Tx) error {
 		if _, err := tx.Exec(schemaSQL); err != nil {
 			return fmt.Errorf("applying schema: %w", err)
@@ -175,7 +179,7 @@ func (s *Store) bootstrapTx() error {
 		if err := validateUUIDv4(s.vaultID); err != nil {
 			return fmt.Errorf("validating vault identity: %w", err)
 		}
-		if err := ensureProcessingIncarnationTx(tx); err != nil {
+		if err := ensureProcessingIncarnationTx(tx, incarnation); err != nil {
 			return err
 		}
 		primary, err := ensurePrimaryBlobStoreTx(tx)

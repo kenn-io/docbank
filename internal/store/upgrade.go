@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -18,11 +19,39 @@ import (
 )
 
 const (
-	v090BackupSuffix                 = ".v0.9.0.bak"
-	v2BackupSuffix                   = ".schema-v2.bak"
-	v3BackupSuffix                   = ".schema-v3.bak"
-	lastReleasedStorageSchemaVersion = 3
+	v090BackupSuffix = ".v0.9.0.bak"
+	v2BackupSuffix   = ".schema-v2.bak"
+	v3BackupSuffix   = ".schema-v3.bak"
+	v28BackupSuffix  = ".schema-v28.bak"
 )
+
+// releasedStorageSchemaVersions lists the storage schema of every public
+// release. Each version older than the current schema needs a cutover adapter.
+// Add a release's version here when it ships; scripts/check-released-schemas.sh
+// fails CI when a release tag's schema is missing.
+var releasedStorageSchemaVersions = []int{1, 2, 3, 28, 29}
+
+// Metadata JSONL does not carry unfinished storage work. Cutovers copy these
+// tables verbatim so queued imports, placements, evacuations, and pending
+// deletions survive an upgrade. Schema v3 has only the operation tables.
+var (
+	releasedStorageOperationTables = []string{
+		"storage_operations", "storage_operation_stores", "storage_operation_cleanup",
+	}
+	releasedPendingDeletionTables = []string{
+		"gc_loose_retirements", "derivative_blob_purge_pending", "derivative_pack_purge_pending",
+	}
+)
+
+// releasedExportTables lists the export state in foreign-key order. Metadata
+// import keeps only sealed sources and fingerprinted plans, without owners, so
+// a restored vault cannot resume another vault's exports. An upgrade replaces
+// that partial state with the source rows so existing export handles,
+// interrupted exports, and completed archives stay valid.
+var releasedExportTables = []string{
+	"export_sources", "export_chunks", "export_members", "export_plans",
+	"export_documents", "export_role_roots", "export_jobs",
+}
 
 type databaseSchema struct {
 	version int
@@ -32,12 +61,17 @@ type databaseSchema struct {
 }
 
 type releasedStorageSchema struct {
-	version         int
-	release         string
-	backupSuffix    string
-	validate        func(*sql.DB, []string, []string) error
-	exportMetadata  func(context.Context, *sql.Tx, io.Writer) error
-	restorePhysical func(context.Context, metadataQuerier, *Store) error
+	version        int
+	release        string
+	backupSuffix   string
+	validate       func(*sql.DB, []string, []string) error
+	exportMetadata func(context.Context, *sql.Tx, io.Writer) error
+	// restoreSourceState copies source state that metadata JSONL does not
+	// carry, such as the physical blob catalog, after the import.
+	restoreSourceState func(context.Context, metadataQuerier, *Store) error
+	// keepsProcessingIncarnation makes the target adopt the source's current
+	// processing incarnation, so existing consent stays valid.
+	keepsProcessingIncarnation bool
 }
 
 var releasedStorageSchemas = []releasedStorageSchema{
@@ -47,7 +81,7 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 1)
 		},
-		restorePhysical: restoreV090PhysicalCatalog,
+		restoreSourceState: restoreV090PhysicalCatalog,
 	},
 	{
 		version: 2, release: "schema v2 (v0.10.0–v0.11.0)", backupSuffix: v2BackupSuffix,
@@ -55,7 +89,7 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 2)
 		},
-		restorePhysical: restoreV2PhysicalCatalog,
+		restoreSourceState: restoreV2PhysicalCatalog,
 	},
 	{
 		version: 3, release: "schema v3 (v0.12.0–v0.14.0)", backupSuffix: v3BackupSuffix,
@@ -63,7 +97,18 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 3)
 		},
-		restorePhysical: restoreV3PhysicalCatalog,
+		restoreSourceState: restoreV3SourceState,
+	},
+	{
+		version: 28, release: "v0.15.0", backupSuffix: v28BackupSuffix,
+		validate: func(db *sql.DB, _, _ []string) error {
+			return validateReleasedLayout(db, "v0.15.0", schemaV28Layout)
+		},
+		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
+			return exportReleasedMetadataSnapshot(ctx, source, dst, 28)
+		},
+		restoreSourceState:         restoreV28SourceState,
+		keepsProcessingIncarnation: true,
 	},
 }
 
@@ -164,7 +209,7 @@ func validateReleasedStorageSchemas() error {
 			return fmt.Errorf("duplicate released storage schema version %d", source.version)
 		}
 		if source.release == "" || source.backupSuffix == "" ||
-			source.validate == nil || source.exportMetadata == nil || source.restorePhysical == nil {
+			source.validate == nil || source.exportMetadata == nil || source.restoreSourceState == nil {
 			return fmt.Errorf("released storage schema version %d is incomplete", source.version)
 		}
 		if suffixes[source.backupSuffix] {
@@ -173,10 +218,14 @@ func validateReleasedStorageSchemas() error {
 		versions[source.version] = true
 		suffixes[source.backupSuffix] = true
 	}
-	for version := 1; version <= lastReleasedStorageSchemaVersion; version++ {
-		if !versions[version] {
+	for _, version := range releasedStorageSchemaVersions {
+		if version < currentStorageSchemaVersion && !versions[version] {
 			return fmt.Errorf("released storage schema version %d adapter is missing", version)
 		}
+		delete(versions, version)
+	}
+	for version := range versions {
+		return fmt.Errorf("storage schema version %d has an adapter but no release", version)
 	}
 	return nil
 }
@@ -406,23 +455,7 @@ func validateV090Schema(db *sql.DB, blobs, packs []string) error {
 }
 
 func tableColumns(db *sql.DB, table string) ([]string, error) {
-	rows, err := db.Query(`SELECT name FROM pragma_table_info(?) ORDER BY name`, table)
-	if err != nil {
-		return nil, fmt.Errorf("reading %s schema: %w", table, err)
-	}
-	defer func() { _ = rows.Close() }()
-	var columns []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, fmt.Errorf("reading %s column: %w", table, err)
-		}
-		columns = append(columns, name)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading %s columns: %w", table, err)
-	}
-	return columns, nil
+	return queryTableColumns(context.Background(), db, table)
 }
 
 func requireV090Tables(db *sql.DB) error {
@@ -489,7 +522,17 @@ func cutoverReleasedDatabase(
 		_ = closeSource()
 		return err
 	}
-	target, err := openCurrentStore(stagePath, driver)
+	var incarnation *metadataProcessingIncarnation
+	if sourceSchema.keepsProcessingIncarnation {
+		incarnation = &metadataProcessingIncarnation{Type: metadataProcessingIncarnationType}
+		if err := snapshot.QueryRow(`SELECT i.incarnation_id,i.created_at FROM processing_incarnations i
+			JOIN current_processing_incarnation c ON c.incarnation_id=i.incarnation_id WHERE c.singleton=1`,
+		).Scan(&incarnation.ID, &incarnation.CreatedAt); err != nil {
+			_ = closeSource()
+			return fmt.Errorf("reading %s processing incarnation: %w", sourceSchema.release, err)
+		}
+	}
+	target, err := openCurrentStore(stagePath, driver, incarnation)
 	if err != nil {
 		_ = closeSource()
 		return fmt.Errorf("creating current database for %s upgrade: %w", sourceSchema.release, err)
@@ -499,7 +542,7 @@ func cutoverReleasedDatabase(
 		_ = closeSource()
 		return err
 	}
-	if err := sourceSchema.restorePhysical(context.Background(), snapshot, target); err != nil {
+	if err := sourceSchema.restoreSourceState(context.Background(), snapshot, target); err != nil {
 		_ = target.Close()
 		_ = closeSource()
 		return err
@@ -666,30 +709,268 @@ func restoreV2PhysicalCatalog(ctx context.Context, source metadataQuerier, targe
 	})
 }
 
-func restoreV3PhysicalCatalog(ctx context.Context, source metadataQuerier, target *Store) error {
+// restoreV3SourceState restores the blob catalog and copies unfinished storage
+// operations.
+func restoreV3SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
 	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
-		if err := resetImportedPhysicalCatalog(ctx, tx); err != nil {
+		if err := restoreV3PhysicalCatalogTx(ctx, source, tx, target); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM blob_stores`); err != nil {
-			return fmt.Errorf("resetting imported blob stores: %w", err)
+		return copyReleasedTables(ctx, source, tx, releasedStorageOperationTables)
+	})
+}
+
+// restoreV28SourceState restores the v3-style blob catalog and copies
+// unfinished storage work. It also puts back the export state, sessions,
+// embedding jobs, rebuild receipts, and processing authority that metadata
+// import drops for a restore.
+func restoreV28SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
+	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if err := restoreV3PhysicalCatalogTx(ctx, source, tx, target); err != nil {
+			return err
 		}
-		primaryStoreID, err := restoreV3BlobStores(ctx, source, tx)
+		if err := copyReleasedTables(ctx, source, tx, releasedStorageOperationTables); err != nil {
+			return err
+		}
+		if err := copyReleasedTables(ctx, source, tx, releasedPendingDeletionTables); err != nil {
+			return err
+		}
+		if err := replaceImportedTables(ctx, source, tx, releasedExportTables); err != nil {
+			return err
+		}
+		if err := restoreReleasedSessions(ctx, source, tx); err != nil {
+			return err
+		}
+		// Metadata JSONL omits embedding jobs. Reconciliation rebuilds them once
+		// consent is valid, which a restore must grant again. An upgrade keeps
+		// consent, so rebuilt jobs would reopen failed work with a fresh retry
+		// budget. Keep the source jobs instead.
+		if err := copyReleasedTable(ctx, source, tx, "embedding_jobs"); err != nil {
+			return err
+		}
+		if err := restoreRenditionJobAuthorization(ctx, source, tx); err != nil {
+			return err
+		}
+		if err := restoreRebuildReceipts(ctx, source, tx); err != nil {
+			return err
+		}
+		return restoreMediaReceipts(ctx, source, tx)
+	})
+}
+
+// restoreRebuildReceipts copies document event and people rebuild receipts
+// with the epochs their progress counts against. Metadata import leaves both
+// out and starts the epochs over, so an upgrade would otherwise lose replay by
+// operation ID and leave running rebuilds unable to finish. Import writes a
+// placeholder people state row, which the source row replaces.
+func restoreRebuildReceipts(ctx context.Context, source metadataQuerier, tx *sql.Tx) error {
+	if err := copyReleasedTables(ctx, source, tx,
+		[]string{"document_event_state", "document_event_builds", "document_people_builds"}); err != nil {
+		return err
+	}
+	return replaceImportedTables(ctx, source, tx, []string{"document_people_state"})
+}
+
+// restoreReleasedSessions copies short-lived sessions that a backup leaves
+// out: unexpired package preflights, and mailbox uploads with the chunks they
+// have accepted. An upgrade keeps them so the user can continue within the
+// session's lifetime instead of starting again.
+func restoreReleasedSessions(ctx context.Context, source metadataQuerier, tx *sql.Tx) error {
+	if err := copyReleasedTable(ctx, source, tx, "package_preflights"); err != nil {
+		return err
+	}
+	if err := copyReleasedRows(ctx, source, tx, "mailbox_containers", `state='uploading'`); err != nil {
+		return err
+	}
+	return copyReleasedRows(ctx, source, tx, "mailbox_chunks",
+		`container_id IN (SELECT id FROM mailbox_containers WHERE state='uploading')`)
+}
+
+// replaceImportedTables deletes what metadata import wrote to tables, in
+// reverse foreign-key order, and copies the source rows unchanged.
+func replaceImportedTables(ctx context.Context, source metadataQuerier, tx *sql.Tx, tables []string) error {
+	for _, table := range slices.Backward(tables) {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table); err != nil {
+			return fmt.Errorf("clearing imported %s: %w", table, err)
+		}
+	}
+	return copyReleasedTables(ctx, source, tx, tables)
+}
+
+// restoreMediaReceipts puts back media receipts unchanged. Metadata import
+// fails an admitted request that has no rendition job yet, because a restore
+// grants no provider authority. An upgrade keeps that authority, so the
+// request must stay queued for the startup continuation to finish.
+func restoreMediaReceipts(ctx context.Context, source metadataQuerier, tx *sql.Tx) error {
+	rows, err := source.QueryContext(ctx, `SELECT operation_id,receipt_json FROM media_operations ORDER BY operation_id`)
+	if err != nil {
+		return fmt.Errorf("reading released media receipts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var operationID, receipt string
+		if err := rows.Scan(&operationID, &receipt); err != nil {
+			return fmt.Errorf("reading released media receipt: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE media_operations SET receipt_json=? WHERE operation_id=?`,
+			receipt, operationID); err != nil {
+			return fmt.Errorf("restoring media receipt %s: %w", operationID, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reading released media receipts: %w", err)
+	}
+	return rows.Close()
+}
+
+// restoreRenditionJobAuthorization puts back the authorization that metadata
+// import clears from unfinished rendition jobs. A restore needs fresh consent,
+// but an upgrade keeps the processing incarnation that authorized these jobs.
+func restoreRenditionJobAuthorization(ctx context.Context, source metadataQuerier, tx *sql.Tx) error {
+	rows, err := source.QueryContext(ctx, `SELECT job_id,selected_waiter_id,authorization_grant_id,
+		authorization_incarnation_id,authorization_revocation_fence FROM rendition_jobs
+		WHERE state IN (?,?,?) ORDER BY job_id`, RenditionJobQueued, RenditionJobRunning, RenditionJobRetryWait)
+	if err != nil {
+		return fmt.Errorf("reading released rendition job authorization: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var jobID string
+		var waiterID, grantID, incarnationID sql.NullString
+		var fence sql.NullInt64
+		if err := rows.Scan(&jobID, &waiterID, &grantID, &incarnationID, &fence); err != nil {
+			return fmt.Errorf("reading released rendition job authorization: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE rendition_jobs SET selected_waiter_id=?,
+			authorization_grant_id=?,authorization_incarnation_id=?,authorization_revocation_fence=?
+			WHERE job_id=?`, waiterID, grantID, incarnationID, fence, jobID); err != nil {
+			return fmt.Errorf("restoring rendition job %s authorization: %w", jobID, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reading released rendition job authorization: %w", err)
+	}
+	return rows.Close()
+}
+
+func copyReleasedTables(ctx context.Context, source metadataQuerier, tx *sql.Tx, tables []string) error {
+	for _, table := range tables {
+		if err := copyReleasedTable(ctx, source, tx, table); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyReleasedTable(ctx context.Context, source metadataQuerier, tx *sql.Tx, table string) error {
+	return copyReleasedRows(ctx, source, tx, table, "")
+}
+
+// copyReleasedRows copies the source rows of table that match filter, a SQL
+// WHERE clause or "" for every row, after checking that the columns match.
+func copyReleasedRows(ctx context.Context, source metadataQuerier, tx *sql.Tx, table, filter string) error {
+	sourceColumns, err := queryTableColumns(ctx, source, table)
+	if err != nil {
+		return err
+	}
+	targetColumns, err := queryTableColumns(ctx, tx, table)
+	if err != nil {
+		return err
+	}
+	if len(sourceColumns) == 0 || !slices.Equal(sourceColumns, targetColumns) {
+		return fmt.Errorf("copying released %s: columns (%s) differ from current (%s)",
+			table, strings.Join(sourceColumns, ","), strings.Join(targetColumns, ","))
+	}
+	columns := strings.Join(sourceColumns, ",")
+	query := `SELECT ` + columns + ` FROM ` + table
+	if filter != "" {
+		query += ` WHERE ` + filter
+	}
+	rows, err := source.QueryContext(ctx, query+` ORDER BY rowid`)
+	if err != nil {
+		return fmt.Errorf("reading released %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	insert := `INSERT INTO ` + table + `(` + columns + `) VALUES(?` + strings.Repeat(",?", len(sourceColumns)-1) + `)`
+	values := make([]any, len(sourceColumns))
+	pointers := make([]any, len(values))
+	for i := range values {
+		pointers[i] = &values[i]
+	}
+	for rows.Next() {
+		if err := rows.Scan(pointers...); err != nil {
+			return fmt.Errorf("reading released %s row: %w", table, err)
+		}
+		if _, err := tx.ExecContext(ctx, insert, values...); err != nil {
+			return fmt.Errorf("copying released %s row: %w", table, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reading released %s rows: %w", table, err)
+	}
+	return rows.Close()
+}
+
+func queryTableColumns(ctx context.Context, q metadataQuerier, table string) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT name FROM pragma_table_info(?) ORDER BY name`, table)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s schema: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var columns []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("reading %s column: %w", table, err)
+		}
+		columns = append(columns, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading %s columns: %w", table, err)
+	}
+	return columns, nil
+}
+
+func validateReleasedLayout(db *sql.DB, release, layout string) error {
+	var columns map[string][]string
+	if err := json.Unmarshal([]byte(layout), &columns); err != nil {
+		return fmt.Errorf("reading released %s columns: %w", release, err)
+	}
+	for table, want := range columns {
+		got, err := tableColumns(db, table)
 		if err != nil {
 			return err
 		}
-		if err := restoreV3BlobLocations(ctx, source, tx); err != nil {
-			return err
+		if !slices.Equal(got, want) {
+			return fmt.Errorf("not a released %s database: unexpected %s columns (%s)",
+				release, table, strings.Join(got, ","))
 		}
-		if err := restoreV3BlobPacks(ctx, source, tx); err != nil {
-			return err
-		}
-		if err := restoreV3BlobPackEntries(ctx, source, tx); err != nil {
-			return err
-		}
-		target.primaryStoreID = primaryStoreID
-		return nil
-	})
+	}
+	return nil
+}
+
+func restoreV3PhysicalCatalogTx(ctx context.Context, source metadataQuerier, tx *sql.Tx, target *Store) error {
+	if err := resetImportedPhysicalCatalog(ctx, tx); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM blob_stores`); err != nil {
+		return fmt.Errorf("resetting imported blob stores: %w", err)
+	}
+	primaryStoreID, err := restoreV3BlobStores(ctx, source, tx)
+	if err != nil {
+		return err
+	}
+	if err := restoreV3BlobLocations(ctx, source, tx); err != nil {
+		return err
+	}
+	if err := restoreV3BlobPacks(ctx, source, tx); err != nil {
+		return err
+	}
+	if err := restoreV3BlobPackEntries(ctx, source, tx); err != nil {
+		return err
+	}
+	target.primaryStoreID = primaryStoreID
+	return nil
 }
 
 func restoreV3BlobStores(ctx context.Context, source metadataQuerier, tx *sql.Tx) (string, error) {
@@ -1082,7 +1363,7 @@ func validateUpgradeStage(path string, driver docsqlite.Driver) error {
 	if !kind.current {
 		return errors.New("interrupted upgrade staging database does not use the current schema")
 	}
-	store, err := openCurrentStore(path, driver)
+	store, err := openCurrentStore(path, driver, nil)
 	if err != nil {
 		return fmt.Errorf("opening interrupted upgrade staging store: %w", err)
 	}
@@ -1144,3 +1425,157 @@ func syncRegularFile(path string) error {
 	}
 	return nil
 }
+
+// schemaV28Layout freezes every table column of the released v0.15.0 schema.
+const schemaV28Layout = `{
+  "audit_authority": ["allocation_entry_count", "allocation_genesis_digest", "allocation_head", "lineage_id", "operation_sequence_high_water", "singleton"],
+  "audit_baselines": ["digest", "operation_id", "scope_id", "target_node_id"],
+  "audit_memberships": ["baseline_digest", "node_id", "scope_id"],
+  "audit_records": ["digest", "entry_count", "event_id", "event_ordinal", "kind", "node_id", "operation_id", "operation_sequence", "record_json", "scope_id"],
+  "audit_scopes": ["chain_head", "enable_operation_id", "entry_count", "scope_id", "target_node_id"],
+  "batch_tag_receipts": ["operation_id", "receipt_json", "request_digest"],
+  "bates_allocations": ["allocation_id", "committed_at", "created_at", "end_sequence", "namespace_id", "operation_id", "recipe_sha256", "request_sha256", "snapshot_id", "start_sequence", "state"],
+  "bates_artifact_pages": ["artifact_id", "label", "occurrence_id", "ordinal", "output_page", "source_blob_sha256", "source_page"],
+  "bates_artifacts": ["allocation_id", "artifact_id", "blob_hash", "created_at", "manifest_sha256", "media_type", "page_count", "recipe_json", "size", "state"],
+  "bates_namespace_cursors": ["namespace_id", "next_sequence"],
+  "bates_namespaces": ["created_at", "namespace_id", "padding", "prefix", "suffix"],
+  "bates_page_labels": ["allocation_id", "label", "namespace_id", "occurrence_id", "ordinal", "output_page", "sequence", "source_page"],
+  "blob_checksums": ["blob_sha256", "md5"],
+  "blob_locations": ["blob_hash", "encoding", "generation", "kind", "pack_eligible", "store_id", "stored_size"],
+  "blob_pack_entries": ["blob_hash", "crc32c", "flags", "pack_id", "pack_offset", "raw_len", "store_id", "stored_len"],
+  "blob_packs": ["created_at", "entry_count", "live_entries", "live_raw_bytes", "live_stored_bytes", "max_live_raw_len", "max_live_stored_len", "pack_id", "scan_hash", "store_id", "stored_bytes"],
+  "blob_stores": ["binding", "created_at", "kind", "lifecycle", "name", "ownership_epoch", "role", "store_id"],
+  "blobs": ["created_at", "hash", "size"],
+  "collection_labels": ["ingest_id", "label", "revision", "updated_at"],
+  "collection_snapshot_members": ["blob_sha256", "canonical_json", "checksum", "content_version_id", "display_name", "document_kind", "family_id", "family_order", "frozen_fields_json", "node_id", "occurrence_id", "ordinal", "parent_occurrence_id", "selected_pdf_sha256", "selected_source_pages_json", "size", "snapshot_id", "source_page_count"],
+  "collection_snapshot_representations": ["blob_sha256", "canonical_json", "checksum", "content_version_id", "lexical_generation_id", "media_type", "occurrence_id", "ordinal", "page_number", "recipe_sha256", "rendition_build_id", "role", "size", "snapshot_id", "status", "text_authority", "verified_page_count"],
+  "collection_snapshots": ["canonical_json", "checksum", "manifest_sha256", "member_count", "member_hash", "page_count", "predecessor_id", "sealed_at", "snapshot_id", "source_collection_ids_json", "vault_uid"],
+  "content_versions": ["blob_hash", "introduced_operation_id", "mime_type", "node_id", "node_revision", "recorded_at", "size", "source_version_id", "transition_kind", "version_id"],
+  "current_processing_incarnation": ["incarnation_id", "singleton"],
+  "current_rendition_roots": ["active", "expires_at", "fencing_token", "recorded_at", "released_at", "root_id", "root_kind", "target_id", "target_kind"],
+  "custodian_assignments": ["assignment_id", "basis", "content_version_id", "ingest_id", "node_id", "package_id", "package_record_id", "person_id", "rank", "raw_label", "raw_label_folded", "recorded_at", "retired_at", "revision", "scope_kind", "source_ref"],
+  "derivative_blob_purge_pending": ["blob_hash"],
+  "derivative_pack_purge_pending": ["pack_id", "store_id"],
+  "derivative_purge_suppressions": ["active", "build_id", "profile_fingerprint", "purged_at", "source_sha256", "superseded_at", "superseding_build_id"],
+  "document_event_actors": ["actor_key", "address", "claim_json", "display_name", "event_id", "evidence_id", "evidence_kind", "generation_id", "ordinal", "role", "sensitive"],
+  "document_event_attempts": ["attempted_at", "content_version_id", "diagnostic_json", "input_epoch", "input_revision", "inputs_sha256", "state"],
+  "document_event_builds": ["deriver_fingerprint", "failed", "finished_at", "operation_id", "published", "request_sha256", "scanned", "started_at", "state", "target_epoch", "unavailable", "updated_at"],
+  "document_event_dirty": ["content_version_id", "reason", "revision"],
+  "document_event_generations": ["canonical_json", "checksum", "content_version_id", "contract_version", "created_at", "deriver_fingerprint", "document_kind", "event_count", "generation_id", "inputs_sha256"],
+  "document_event_heads": ["content_version_id", "generation_id", "input_epoch", "published_at"],
+  "document_event_primaries": ["disclosure", "event_id", "generation_id", "reason", "rule_id", "scope_class"],
+  "document_event_state": ["contract_version", "deriver_fingerprint", "input_epoch", "publication_epoch", "singleton", "updated_at"],
+  "document_events": ["axis_key", "claim_basis", "date_kind", "date_value", "event_id", "evidence_id", "evidence_kind", "evidence_locator", "evidence_sha256", "fraction_digits", "generation_id", "offset_seconds", "parse_confidence", "precision", "raw_value", "sensitive", "source_key", "source_kind_raw", "timezone_kind", "utc_key", "zone_text"],
+  "document_people": ["actor_key", "basis", "claim_count", "confidence", "content_version_id", "evidence_id", "evidence_kind", "first_axis_key", "generation_id", "last_axis_key", "node_id", "person_id", "raw_label", "role", "sensitive"],
+  "document_people_builds": ["failed", "finished_at", "operation_id", "published", "request_sha256", "resolver_fingerprint", "scanned", "started_at", "state", "target_epoch", "updated_at"],
+  "document_people_generations": ["canonical_json", "checksum", "content_version_id", "created_at", "generation_id", "inputs_sha256", "resolver_fingerprint"],
+  "document_people_heads": ["binding_epoch", "candidate_overflow", "content_version_id", "edge_count", "event_generation_id", "failure_reason", "generation_id", "inputs_sha256", "node_revision", "published_at", "resolver_fingerprint", "state", "suppressed_actors", "unresolved_actors"],
+  "document_people_state": ["binding_epoch", "publication_epoch", "resolver_fingerprint", "singleton", "updated_at"],
+  "email_attachments": ["attached_at", "attachment_id", "content_version_id", "generation_id"],
+  "email_body_results": ["body_recipe_fingerprint", "email_attachment_id", "part_path", "reason", "rendition_attachment_id", "state"],
+  "email_document_publications": ["email_attachment_id", "operation_id", "parent_version_id", "receipt_json", "request_digest", "request_json"],
+  "email_document_relations": ["child_version_id", "occurrence_order", "operation_id"],
+  "email_generations": ["canonical_json", "checksum", "created_at", "generation_id", "recipe_fingerprint", "source_sha256", "source_size"],
+  "email_heads": ["attachment_id", "content_version_id", "published_at"],
+  "email_part_artifacts": ["blob_hash", "generation_id", "part_path", "role", "size"],
+  "embedding_failures": ["attachment_id", "binding_id", "content_version_id", "failed_at", "failure_code", "fencing_token", "input_kind", "profile_fingerprint"],
+  "embedding_generation_inputs": ["generation_id", "input_id", "input_order", "rendered_checksum"],
+  "embedding_heads": ["binding_id", "content_version_id", "embedding_set_id", "fencing_token", "input_kind", "profile_fingerprint", "published_at", "vector_space_id"],
+  "embedding_input_generations": ["attachment_context_fingerprint", "attachment_id", "chunk_policy_fingerprint", "created_at", "evidence_fingerprint", "formatter_fingerprint", "generation_blob_hash", "generation_checksum", "generation_encoded_size", "generation_id", "input_count", "profile_fingerprint", "source_version_id", "tokenizer_fingerprint"],
+  "embedding_jobs": ["authorization_grant_id", "authorization_incarnation_id", "authorization_revocation_fence", "available_at", "binding_id", "claim_count", "claim_epoch", "claim_owner", "content_version_id", "created_at", "failure_code", "generation_id", "input_kind", "job_id", "lease_expires_at", "principal", "profile_fingerprint", "receipt_json", "scope", "state", "updated_at", "vault_uid", "vector_space_id"],
+  "embedding_sets": ["binding_id", "content_version_id", "created_at", "embedding_input_fingerprint", "embedding_set_id", "input_generation_id", "input_kind", "profile_fingerprint", "vault_uid", "vector_set_id", "vector_space_id"],
+  "embedding_vector_rows": ["checksum", "dimensions", "input_id", "row_id", "row_order", "vector_set_id"],
+  "embedding_vector_sets": ["contract_version", "dimensions", "manifest_checksum", "payload_blob_hash", "payload_checksum", "payload_size", "row_count", "vector_set_id", "vector_space_id"],
+  "embedding_vector_spaces": ["compatibility_id", "contract_version", "descriptor_fingerprint", "descriptor_json", "dimensions", "document_formatter", "metric", "model_input_fingerprint", "normalization", "provider_descriptor", "provider_revision", "query_formatter", "scalar_encoding", "vector_space_id"],
+  "export_chunks": ["canonical_json", "chunk_index", "source_id"],
+  "export_documents": ["canonical_json", "ordinal", "plan_id"],
+  "export_jobs": ["archive_name", "canonical_json", "epoch", "expires_at", "id", "owner", "plan_id", "request_sha256", "state", "token"],
+  "export_members": ["blob_hash", "canonical_json", "node_id", "source_id", "version_id"],
+  "export_plans": ["canonical_json", "expires_at", "id", "owner", "request_sha256", "source_id"],
+  "export_role_roots": ["blob_hash", "plan_id"],
+  "export_sources": ["canonical_json", "expires_at", "id", "owner", "request_json", "request_sha256", "state"],
+  "extracted_text": ["attempts", "blob_hash", "error", "extracted_at", "extractor", "extractor_version", "id", "status", "text"],
+  "gc_loose_retirements": ["blob_hash", "loose_encoding", "store_id"],
+  "ingests": ["id", "source_desc", "source_kind", "started_at"],
+  "mailbox_archives": ["description", "id", "owner"],
+  "mailbox_chunks": ["blob_hash", "chunk_index", "container_id", "size"],
+  "mailbox_containers": ["created_at", "format", "id", "manifest_sha256", "owner", "sha256", "size", "state"],
+  "mailbox_jobs": ["claim", "container_id", "id", "job_json", "owner", "state"],
+  "mailbox_occurrences": ["job_id", "occurrence_json", "ordinal", "receipt_id"],
+  "mailbox_transfer_receipts": ["archive_id", "document_publication_id", "id", "receipt_json", "source_ref", "target_version_id"],
+  "media_input_artifacts": ["content_version_id", "created_at", "input_id", "input_sha256", "kind", "language", "occurrence_id", "origin", "provider", "source_id", "source_version_id"],
+  "media_occurrences": ["caller_filename", "caller_occurrence_ref", "caller_person_ref", "caller_principal", "caller_revision", "first_seen_at", "message_json", "occurrence_id", "revoked_at", "source_id", "source_version_id", "speaker_label", "visible"],
+  "media_operations": ["created_at", "operation_id", "principal", "receipt_json", "request_sha256", "source_id", "updated_at", "verb"],
+  "media_source_versions": ["capture_json", "content_version_id", "created_at", "revision", "source_id", "source_version_id"],
+  "media_sources": ["created_at", "identity_sha256", "kind", "origin_scope", "provider", "source_id"],
+  "node_tags": ["node_id", "tag_id"],
+  "nodes": ["created_at", "current_version_id", "id", "kind", "modified_at", "name", "parent_id", "revision", "trash_name", "trash_parent", "trashed_at"],
+  "package_import_jobs": ["claim_owner", "created_at", "epoch", "id", "job_json", "lease_expires_at", "operation_id", "owner", "package_id", "preflight_id", "request_sha256", "state", "token", "updated_at"],
+  "package_import_receipts": ["content_version_id", "occurrence_id", "package_id", "receipt_id", "receipt_json", "record_key", "recorded_at", "state"],
+  "package_labels": ["artifact_id", "content_version_id", "endpoint", "label", "label_set", "occurrence_id", "package_id", "page_number", "page_state", "provenance"],
+  "package_preflights": ["blocking", "canonical_json", "created_at", "diagnostics_blob_sha256", "diagnostics_json", "expires_at", "manifest_blob_sha256", "manifest_sha256", "mapping_json", "mapping_sha256", "owner", "preflight_id", "profile_json", "profile_sha256", "source_kind", "source_locator", "source_ref"],
+  "package_records": ["load_file", "occurrence_id", "package_id", "raw_json", "raw_sha256", "row_id", "row_ordinal", "sensitive"],
+  "package_volumes": ["declared_root", "mapped_root", "ordinal", "package_id", "resolved_root_sha256", "volume_name"],
+  "packages": ["completed_at", "created_at", "direction", "export_plan_id", "ingest_id", "manifest_blob_sha256", "manifest_sha256", "mapping_json", "mapping_sha256", "package_id", "package_name", "party_label", "predecessor_package_id", "produced_on", "profile_json", "profile_sha256", "relation", "snapshot_id", "state"],
+  "page_documents": ["canonical_json", "checksum", "version_id"],
+  "page_frames": ["canonical_json", "checksum", "page", "version_id"],
+  "page_images": ["blob_hash", "canonical_json", "checksum", "page", "recipe_sha256", "version_id"],
+  "page_recipes": ["canonical_json", "checksum"],
+  "page_render_jobs": ["created_at", "epoch", "failure_code", "id", "node_id", "request_json", "request_sha256", "results_json", "state", "token", "updated_at", "version_id"],
+  "person_aliases": ["reason", "retired_at", "retired_person_id", "surviving_person_id"],
+  "person_document_assertions": ["action", "assertion_id", "content_version_id", "note", "person_id", "recorded_at", "revision", "role"],
+  "person_external_identities": ["archive_id", "display_name_snapshot", "last_seen_revision", "linked_at", "person_id", "system", "uid", "uid_kind", "uid_state", "updated_at"],
+  "person_external_uid_aliases": ["archive_id", "observed_at", "retired_uid", "surviving_uid", "system"],
+  "person_identities": ["confidence", "evidence_id", "evidence_kind", "identity_id", "kind", "normalization", "origin", "person_id", "recorded_at", "scope_kind", "scope_value", "value_display", "value_normalized"],
+  "person_match_candidates": ["actor_key", "candidate_id", "created_at", "decided_at", "decided_person_id", "display_name", "evidence_json", "evidence_sha256", "occurrence_count", "reason", "revision", "state", "suggested_person_id"],
+  "person_merges": ["absorbed_display_name", "absorbed_person_id", "created_at", "merge_id", "moved_json", "operation_id", "request_sha256", "survivor_person_id", "survivor_revision_after", "survivor_revision_before"],
+  "person_splits": ["created_at", "operation_id", "receipt_json", "request_sha256"],
+  "persons": ["created_at", "display_name", "display_name_folded", "origin", "person_id", "revision", "state", "updated_at"],
+  "photo_assets": ["asset_id", "created_at", "display_file_id", "display_override_file_id", "excluded_at", "kind", "revision", "updated_at"],
+  "photo_change_receipts": ["after_json", "after_revision", "asset_id", "before_json", "before_revision", "created_at", "operation", "receipt_id", "settings_key"],
+  "photo_files": ["asset_id", "created_at", "file_id", "node_id", "role", "sidecar_of_file_id"],
+  "photo_library_settings": ["preference", "revision", "singleton", "updated_at"],
+  "photo_technical_metadata": ["camera_make", "camera_make_folded", "camera_model", "camera_model_folded", "capture_date", "capture_sort_key", "capture_time", "capture_time_offset", "capture_time_precision", "capture_time_raw", "capture_time_timezone", "exposure_bias_ev", "exposure_time_seconds", "f_number", "focal_length_mm", "generation_id", "height_px", "iso", "latitude", "lens_make", "lens_make_folded", "lens_model", "lens_model_folded", "location_label", "longitude", "orientation", "width_px"],
+  "photo_technical_metadata_state": ["projection_recipe", "singleton"],
+  "processing_consent_grants": ["consent_set_id", "disclosure_fingerprint", "expires_at", "grant_id", "incarnation_id", "input_classes_json", "issued_at", "principal", "profile_fingerprint", "retained_classes_json", "revocation_fence", "scope", "vault_uid"],
+  "processing_consent_revocations": ["fence", "incarnation_id", "principal", "revocation_id", "revoked_at", "scope", "vault_uid"],
+  "processing_incarnations": ["created_at", "incarnation_id"],
+  "processing_profiles": ["attachment_policy_fingerprint", "canonical_profile", "consent_fingerprint", "evidence_lexical_fingerprint", "profile_fingerprint", "rendition_disclosure_fingerprint", "rendition_request_fingerprint", "retention_disclosure_fingerprint", "trust_boundary"],
+  "provenance": ["identity", "ingest_id", "node_id", "original_mtime", "original_path", "supersedes"],
+  "provenance_version_bindings": ["basis_ref", "content_version_id", "observed_at", "provenance_identity"],
+  "rendition_artifacts": ["artifact_id", "blob_hash", "build_id", "checksum", "role", "size"],
+  "rendition_attachments": ["attached_at", "attachment_id", "attachment_policy_fingerprint", "build_id", "consent_fingerprint", "content_version_id", "profile_fingerprint", "rendition_disclosure_fingerprint", "retention_disclosure_fingerprint", "trust_boundary", "vault_uid"],
+  "rendition_blob_staging": ["blob_hash"],
+  "rendition_builds": ["authorization_checksum", "build_id", "captured_artifact_policy_fingerprint", "captured_artifact_policy_json", "completed_at", "completeness", "declared_artifact_count", "evidence_checksum", "evidence_lexical_fingerprint", "lexical_segment_count", "markdown_checksum", "partial_success", "provider_operation_id", "provider_receipt_json", "rendition_checksum", "rendition_request_fingerprint", "source_sha256", "truncated", "unit_count", "vault_uid", "warnings_json"],
+  "rendition_heads": ["attachment_id", "content_version_id", "profile_fingerprint", "published_at"],
+  "rendition_job_waiters": ["attachment_id", "authorization_grant_id", "authorization_incarnation_id", "authorization_revocation_fence", "content_version_id", "created_at", "disclosure_fingerprint", "failure_code", "input_classes_json", "job_id", "principal", "profile_fingerprint", "retained_classes_json", "scope", "state", "updated_at", "waiter_id"],
+  "rendition_jobs": ["authorization_grant_id", "authorization_incarnation_id", "authorization_revocation_fence", "available_at", "captured_artifact_policy_fingerprint", "captured_artifact_policy_json", "claim_epoch", "claim_owner", "created_at", "evidence_lexical_fingerprint", "execution_identity_fingerprint", "execution_identity_json", "execution_snapshot_json", "failure_code", "job_id", "lease_expires_at", "lexical_generation_id", "phase", "provider_attempts", "provider_resume_handle", "provider_started", "rendition_request_fingerprint", "selected_waiter_id", "source_sha256", "state", "updated_at", "vault_uid"],
+  "rendition_lexical_generation_builds": ["build_id", "generation_id"],
+  "rendition_lexical_generation_manifests": ["build_digest", "generation_id", "manifest_digest"],
+  "rendition_lexical_generations": ["build_count", "built_at", "generation_id", "segment_count"],
+  "rendition_lexical_heads": ["generation_id", "singleton"],
+  "rendition_lexical_index": ["build_id", "row_id", "segment_id", "text"],
+  "rendition_lexical_segments": ["build_id", "char_end", "char_start", "checksum", "segment_id", "segment_order", "text", "unit_id"],
+  "rendition_lexical_superseded": ["generation_id"],
+  "rendition_units": ["build_id", "checksum", "evidence_unit_id", "heading_path_json", "locator_json", "unit_id", "unit_order"],
+  "saved_queries": ["created_at", "description", "fingerprint", "id", "kind", "name", "payload", "revision", "updated_at"],
+  "saved_query_runs": ["expires_at", "member_hash", "previous_member_hash", "previous_query_fingerprint", "previous_run_id", "previous_total", "query_fingerprint", "ran_at", "run_id", "saved_query_id", "saved_query_revision", "snapshot_id", "total", "total_bytes"],
+  "source_metadata_generations": ["canonical_json", "checksum", "contract_version", "created_at", "extractor_fingerprint", "generation_id", "source_sha256"],
+  "source_metadata_heads": ["generation_id", "published_at", "source_sha256"],
+  "storage_operation_cleanup": ["loose_encoding", "loose_hash", "operation_id", "pack_id", "store_id"],
+  "storage_operation_stores": ["operation_id", "role", "store_id"],
+  "storage_operations": ["cancel_requested", "completed_objects", "copied_bytes", "copied_objects", "created_at", "cursor", "error", "finished_at", "kind", "operation_id", "plan_json", "receipt_json", "request_digest", "request_json", "request_version", "retention_until", "source_store_id", "state", "total_objects", "updated_at"],
+  "tags": ["id", "name", "revision"],
+  "term_report_history": ["id", "observed_at", "parent_id", "request_json", "summary_json"],
+  "text_extraction_queue": ["blob_hash", "next_attempt_at"],
+  "text_searchable_versions": ["version_id"],
+  "vault_metadata": ["schema_version", "singleton", "vault_uid"],
+  "vector_index_build_jobs": ["fencing_token", "lease_expires_at", "owner", "source_manifest_checksum", "vector_space_id"],
+  "vector_index_generations": ["built_at", "byte_size", "generation_bytes", "generation_id", "index_manifest_checksum", "row_count", "source_manifest_checksum", "vector_space_id"],
+  "vector_index_heads": ["generation_id", "source_manifest_checksum", "vector_space_id"],
+  "vector_index_reader_leases": ["fencing_token", "generation_id", "lease_expires_at", "lease_id", "owner"],
+  "vector_index_unavailable_coverage": ["embedding_set_id", "external_reembedding_required", "payload_blob_hash", "source_manifest_checksum", "vector_set_id", "vector_space_id"],
+  "visual_preview_generations": ["canonical_result", "checksum", "content_version_id", "contract_version", "created_at", "failure_code", "failure_detail", "generation_id", "output_blob_hash", "output_height", "output_media_type", "output_size", "output_width", "recipe_fingerprint", "source_sha256", "state", "vault_uid"],
+  "visual_preview_heads": ["content_version_id", "generation_id", "published_at"],
+  "watch_sources": ["blob_hash", "node_id", "size", "source_ref", "watch_name"]
+}`

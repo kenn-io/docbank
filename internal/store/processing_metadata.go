@@ -260,7 +260,8 @@ var processingMetadataTables = []metadataRecordCodec{
 		suffix: `i WHERE EXISTS(SELECT 1 FROM processing_consent_grants g WHERE g.incarnation_id=i.incarnation_id)
 			OR EXISTS(SELECT 1 FROM processing_consent_revocations r WHERE r.incarnation_id=i.incarnation_id)
 			ORDER BY i.incarnation_id`,
-		validate: validateMetadataProcessingIncarnation}),
+		validate: validateMetadataProcessingIncarnation,
+		insert:   importMetadataProcessingIncarnation}),
 	processingConsentRevocationMetadata, processingConsentGrantMetadata,
 	newMetadataTable(metadataTable[metadataProcessingProfile]{
 		record: metadataProcessingProfile{Type: metadataProcessingProfileType}, table: "processing_profiles",
@@ -525,6 +526,29 @@ func importMetadataRenditionHead(ctx context.Context, tx *sql.Tx, value metadata
 		return err
 	}
 	return insertMetadataRecord(ctx, tx, "rendition_heads", value)
+}
+
+// importMetadataProcessingIncarnation skips an incarnation the target already
+// holds with the same creation time. An upgrade target adopts the source's
+// current incarnation before import, and that incarnation is exported again
+// when it has consent records.
+func importMetadataProcessingIncarnation(ctx context.Context, tx *sql.Tx, value metadataProcessingIncarnation) error {
+	var createdAt string
+	err := tx.QueryRowContext(ctx, `SELECT created_at FROM processing_incarnations WHERE incarnation_id=?`,
+		value.ID).Scan(&createdAt)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		_, err = tx.ExecContext(ctx, `INSERT INTO processing_incarnations(incarnation_id,created_at) VALUES(?,?)`,
+			value.ID, value.CreatedAt)
+		return err
+	case err != nil:
+		return fmt.Errorf("reading processing incarnation %s: %w", value.ID, err)
+	case createdAt != value.CreatedAt:
+		return fmt.Errorf("processing incarnation %s already exists with created_at %s, not %s",
+			value.ID, createdAt, value.CreatedAt)
+	default:
+		return nil
+	}
 }
 
 func importMetadataRenditionJob(ctx context.Context, tx *sql.Tx, value metadataRenditionJob) error {
