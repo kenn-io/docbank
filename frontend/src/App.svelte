@@ -187,6 +187,7 @@
   let hiddenMode = $state(location.pathname === "/photos/hidden");
   let photoPrivacyError = $state("");
   let photoActionError = $state("");
+  let hiddenPhotoActionError = $state("");
   let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
 
   $effect(() => {
@@ -199,12 +200,15 @@
       state.cache = new PhotoPreviewCache(webSession, photoFailure);
       photoState = { ...state };
       const detail = (event as CustomEvent<unknown>).detail;
-      if (detail && typeof detail === "object" && "hidden" in detail && detail.hidden === false && "error" in detail && typeof detail.error === "string") photoActionError = detail.error;
+      if (detail && typeof detail === "object" && "hidden" in detail && "error" in detail && typeof detail.error === "string") {
+        if (detail.hidden === false) photoActionError = detail.error;
+        else if (detail.hidden === true) hiddenPhotoActionError = detail.error;
+      }
     };
     window.addEventListener(photoPrivacyEvent, privacy);
     const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(photoPrivacyEvent) : undefined;
     if (channel) channel.onmessage = event => { if (event.data?.origin !== photoPrivacyOrigin) window.dispatchEvent(new Event(photoPrivacyEvent)); };
-    return () => { photoPrivacyStamp = undefined; window.removeEventListener(photoPrivacyEvent, privacy); channel?.close(); state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
+    return () => { photoPrivacyStamp = undefined; photoActionError = hiddenPhotoActionError = ""; window.removeEventListener(photoPrivacyEvent, privacy); channel?.close(); state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
   });
 
   let photoPrivacyStamp: string | undefined;
@@ -2111,7 +2115,7 @@
     </TopBar>
 
     {#if photoMode && photoState}
-      {#if hiddenMode}<HiddenPhotos session={webSession} onauthfailure={handleFailure} />{:else}
+      {#if hiddenMode}<HiddenPhotos session={webSession} onauthfailure={handleFailure} photoActionError={hiddenPhotoActionError} />{:else}
       {#if photoPrivacyError}<p role="alert">{photoPrivacyError}</p>{/if}
       {#if photoActionError}<p role="alert">{photoActionError}</p>{/if}
       {#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} ontrashed={() => handleTrashed()} />{/key}

@@ -47,13 +47,20 @@ it("keeps management credentials independent and lets Disable ignore an invalid 
   const next = screen.getByLabelText("New passcode", { exact: true });
   await fireEvent.click(screen.getByRole("button", { name: "Change passcode" }));
   expect(requests).toHaveLength(0);
-  expect(document.activeElement).toBe(next);
+  expect(document.activeElement).toBe(current);
+  expect(current.getAttribute("aria-invalid")).toBe("true");
+  expect(next.getAttribute("aria-invalid")).toBe("true");
+  await fireEvent.input(current, { target: { value: "x".repeat(1025) } });
+  await fireEvent.input(next, { target: { value: "é".repeat(513) } });
+  await fireEvent.click(screen.getByRole("button", { name: "Change passcode" }));
+  expect(document.activeElement).toBe(current);
   await fireEvent.input(current, { target: { value: "current" } });
   await fireEvent.input(next, { target: { value: "é".repeat(513) } });
   await fireEvent.click(screen.getByRole("button", { name: "Change passcode" }));
   await screen.findByText("Use 1 to 1,024 bytes.");
   expect(next.getAttribute("aria-invalid")).toBe("true");
   expect(current.getAttribute("aria-invalid")).toBeNull();
+  expect(document.activeElement).toBe(next);
   expect(requests).toHaveLength(0);
   await fireEvent.input(next, { target: { value: "new" } });
   currentWrong = true;
@@ -112,20 +119,42 @@ it.each(["x".repeat(1024), "é".repeat(512)])("sends a valid 1,024-byte passcode
   expect(input.getAttribute("aria-invalid")).toBeNull();
 });
 
-it("shows lockout beside the submitted form without marking its field invalid", async () => {
+it("keeps one associated lockout visible outside management until its original deadline", async () => {
   let locked = false;
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const deadline = new Date(now + 300_000).toISOString();
+  let reads = 0;
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    if (url.endsWith("/unlock")) { locked = true; return problem(429, "Locked", "hidden_lockout"); }
-    return new Response(JSON.stringify({ ...state(false), ...(locked ? { locked_until: new Date(Date.now() + 300_000).toISOString() } : {}) }));
+    if (url.endsWith("/change")) { locked = true; return problem(429, "Locked", "hidden_lockout"); }
+    reads++;
+    return new Response(JSON.stringify({ ...state(false), ...(locked ? { locked_until: deadline } : {}) }));
   }));
   render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
   const passcode = await screen.findByLabelText("Passcode", { exact: true });
   await waitFor(() => expect((passcode as HTMLInputElement).disabled).toBe(false));
-  await fireEvent.input(passcode, { target: { value: "wrong" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+  await fireEvent.click(screen.getByText("Manage passcode"));
+  await fireEvent.input(screen.getByLabelText("Current passcode", { exact: true }), { target: { value: "wrong" } });
+  await fireEvent.input(screen.getByLabelText("New passcode", { exact: true }), { target: { value: "new" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Change passcode" }));
   await screen.findByText(/Too many attempts/);
   expect(screen.getAllByText(/Too many attempts/)).toHaveLength(1);
   expect(passcode.getAttribute("aria-invalid")).toBeNull();
+  expect(screen.getByLabelText("Current passcode", { exact: true }).getAttribute("aria-invalid")).toBeNull();
+  const notice = screen.getByRole("status");
+  expect(notice.closest("details")).toBeNull();
+  const details = screen.getByText("Manage passcode").closest("details")!;
+  details.open = false;
+  const controls = ["Unlock", "Change passcode", "Disable Hidden"].map(name => screen.getByRole("button", { name, hidden: true }));
+  for (const control of controls) expect(control.getAttribute("aria-describedby")).toBe("hidden-lockout");
+  const forms = document.querySelectorAll(".hidden-gate form");
+  for (const form of forms) expect(form.getAttribute("aria-describedby")).toBe("hidden-lockout");
+  const before = reads;
+  now += 300_001;
+  await waitFor(() => expect(screen.queryByText(/Too many attempts/)).toBeNull());
+  for (const control of controls) expect(control.getAttribute("aria-describedby")).toBeNull();
+  for (const form of forms) expect(form.getAttribute("aria-describedby")).toBeNull();
+  expect(reads).toBe(before);
 });
 
 it("waits for the initial privacy state and focuses locally rejected empty credentials", async () => {
@@ -204,16 +233,20 @@ it.each([false, true])("keeps a delayed photo action failure in its originating 
   await fireEvent.click(await screen.findByRole("button", { name: `Actions for Photo ${hidden ? 1 : 2}.jpg` }));
   await fireEvent.click(screen.getByRole("menuitem", { name: hidden ? "Unhide" : "Hide" }));
   await waitFor(() => expect(requested).toBe(true));
-  await fireEvent.click(screen.getByRole("button", { name: hidden ? "Library" : "Hidden", exact: true }));
+  await fireEvent.click(screen.getByRole("button", { name: hidden ? "Library" : "Hidden" }));
   await screen.findByRole("checkbox", { name: `Select photo Photo ${hidden ? 2 : 1}.jpg` });
   settle(problem(412, "Synthetic delayed revision failure"));
   await new Promise(resolve => setTimeout(resolve, 0));
   expect(screen.queryByText(/Synthetic delayed revision failure/)).toBeNull();
-  if (!hidden) {
-    await fireEvent(window, new CustomEvent(photoPrivacyEvent, { detail: { error: "", hidden: true } }));
+  {
+    await fireEvent(window, new CustomEvent(photoPrivacyEvent, { detail: { error: "", hidden: !hidden } }));
     await fireEvent(window, new CustomEvent(photoPrivacyEvent, { detail: state(true) }));
-    await fireEvent.click(screen.getByRole("button", { name: "Library", exact: true }));
+    await fireEvent.click(screen.getByRole("button", { name: hidden ? "Hidden" : "Library" }));
     await screen.findByText("1 photo failed: Synthetic delayed revision failure");
+    await fireEvent.click(screen.getByRole("button", { name: "Lock web session" }));
+    await waitFor(() => expect(screen.queryByText(/Synthetic delayed revision failure/)).toBeNull());
+    await fireEvent(window, new CustomEvent(photoPrivacyEvent, { detail: { error: "Late previous-session failure", hidden } }));
+    expect(screen.queryByText(/previous-session failure/)).toBeNull();
   }
 });
 
@@ -307,24 +340,35 @@ it("poll HTTP 401 reaches the shared browser session-expired screen", async () =
 
 it.each([false, true])("real Unhide retains stale revision failure with mixed success=%s", async mixed => {
   prepare();
+  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
   let items = mixed ? [photo(1), photo(2), photo(3)] : [photo(2)];
   let stale = true;
+  let settle!: (response: Response) => void;
+  let requested = false;
   const failure = `${mixed ? 2 : 1} photo${mixed ? "s" : ""} failed: Synthetic stale photo revision`;
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
     if (url.endsWith("/photos/hidden")) return new Response(JSON.stringify(state(true)));
-    if (url.includes("/assets/query")) return new Response(JSON.stringify({ items, total: items.length }));
+    if (url.includes("/assets/query")) return new Response(JSON.stringify(JSON.parse(String(options?.body)).hidden ? { items, total: items.length } : { items: [photo(4)], total: 1 }));
     if (url.endsWith("/unhide")) {
-      if ((url.includes("/photo-2/") || url.includes("/photo-3/")) && stale) return problem(412, "Synthetic stale photo revision");
+      if (url.includes("/photo-2/") && stale) { requested = true; return new Promise<Response>(resolve => { settle = resolve; }); }
+      if (url.includes("/photo-3/") && stale) return problem(412, "Synthetic stale photo revision");
       items = items.filter(item => !url.includes(`/${item.asset_id}/`));
       return new Response("{}");
     }
-    return new Response("{}");
+    return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
   }));
-  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  render(App);
   await screen.findByRole("checkbox", { name: "Select photo Photo 2.jpg" });
   if (mixed) { await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" })); await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" })); await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 3.jpg" })); }
   await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 2.jpg" }));
   await fireEvent.click(await screen.findByRole("menuitem", { name: "Unhide" }));
+  await waitFor(() => expect(requested).toBe(true));
+  await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  await screen.findByRole("checkbox", { name: "Select photo Photo 4.jpg" });
+  settle(problem(412, "Synthetic stale photo revision"));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(screen.queryByText(failure)).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
   await screen.findByText(failure);
   await screen.findByRole("checkbox", { name: "Select photo Photo 2.jpg" });
   expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
