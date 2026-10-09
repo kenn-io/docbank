@@ -49,7 +49,7 @@ func TestMediaMutationsWaitForMaintenance(t *testing.T) {
 			var before bytes.Buffer
 			require.NoError(t, fixture.catalog.ExportMetadata(t.Context(), &before))
 			require.NoError(t, gate.MaintainContext(t.Context(), func() error {
-				ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+				ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the held maintenance gate keeps the mutation waiting
 				defer cancel()
 				_, err := mutate(ctx)
 				require.ErrorIs(t, err, context.DeadlineExceeded)

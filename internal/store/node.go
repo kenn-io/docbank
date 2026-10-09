@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -157,26 +158,58 @@ type rowQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// rowsQuerier lets a multi-row read use either a database or a caller's snapshot.
+type rowsQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 // NodeByPath walks live nodes from the root along the given /-separated path.
 func (s *Store) NodeByPath(ctx context.Context, path string) (Node, error) {
 	return nodeByPath(ctx, s.db, s.rootID, path)
 }
 
 func nodeByPath(ctx context.Context, q rowQuerier, rootID int64, path string) (Node, error) {
-	row := q.QueryRowContext(ctx, `SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, rootID)
-	n, err := scanNode(row)
-	if err != nil {
-		return Node{}, fmt.Errorf("node %d: %w", rootID, err)
+	segments := splitPath(path)
+	var nameErr error
+	for i, segment := range segments {
+		segments[i], nameErr = NormalizeName(segment)
+		if nameErr != nil {
+			// Resolve the valid prefix first: /missing/.. is not found,
+			// while /existing/.. has an invalid name.
+			segments = segments[:i]
+			break
+		}
 	}
-	for _, seg := range splitPath(path) {
-		seg, err := NormalizeName(seg)
-		if err != nil {
-			return Node{}, fmt.Errorf("path %q: %w", path, err)
+	var n Node
+	var err error
+	switch len(segments) {
+	case 0:
+		n, err = nodeByIDQuery(ctx, q, rootID)
+	case 1:
+		n, err = childByName(ctx, q, rootID, segments[0])
+	default:
+		encoded, encodeErr := json.Marshal(segments)
+		if encodeErr != nil {
+			return Node{}, fmt.Errorf("encoding path %q: %w", path, encodeErr)
 		}
-		n, err = childByName(ctx, q, n.ID, seg)
-		if err != nil {
-			return Node{}, fmt.Errorf("path %q: %w", path, err)
-		}
+		// Walk the live-name index, then load metadata only for the final node.
+		n, err = scanNode(q.QueryRowContext(ctx, `
+			WITH RECURSIVE resolved(id, depth) AS (
+				SELECT ?, 0
+				UNION ALL
+				SELECT child.id, resolved.depth + 1
+				FROM resolved JOIN nodes child ON child.parent_id = resolved.id
+					AND child.name = json_extract(?, '$[' || resolved.depth || ']')
+				WHERE child.trashed_at IS NULL
+			)
+			SELECT `+nodeCols+` FROM `+nodeFrom+`
+			WHERE n.id = (SELECT id FROM resolved WHERE depth = ?)`, rootID, string(encoded), len(segments)))
+	}
+	if err != nil {
+		return Node{}, fmt.Errorf("path %q: %w", path, err)
+	}
+	if nameErr != nil {
+		return Node{}, fmt.Errorf("path %q: %w", path, nameErr)
 	}
 	return n, nil
 }
@@ -331,4 +364,50 @@ func pathOf(ctx context.Context, q rowQuerier, id int64) (string, error) {
 		return "/", nil
 	}
 	return path, nil
+}
+
+// pathsOf returns paths in input order, including repeated IDs. Every ID must exist.
+func pathsOf(ctx context.Context, q rowsQuerier, ids []int64) ([]string, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("encoding path nodes: %w", err)
+	}
+	// Resolve only the selected nodes and their ancestors in one snapshot.
+	// Positions preserve ranking even when results share nodes or ancestors.
+	rows, err := q.QueryContext(ctx, `
+		WITH RECURSIVE ancestry(position, id, parent_id, name, depth) AS (
+			SELECT selected.key, n.id, n.parent_id, n.name, 0
+			FROM json_each(?) selected JOIN nodes n ON n.id = selected.value
+			UNION ALL
+			SELECT a.position, n.id, n.parent_id, n.name, a.depth + 1
+			FROM nodes n JOIN ancestry a ON n.id = a.parent_id
+		)
+		SELECT position, COALESCE('/' || GROUP_CONCAT(name, '/' ORDER BY depth DESC)
+			FILTER (WHERE parent_id IS NOT NULL), '/')
+		FROM ancestry GROUP BY position`, string(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("querying node paths: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	paths := make([]string, len(ids))
+	count := 0
+	for rows.Next() {
+		var position int
+		var path string
+		if err := rows.Scan(&position, &path); err != nil {
+			return nil, fmt.Errorf("scanning node path: %w", err)
+		}
+		paths[position] = path
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading node paths: %w", err)
+	}
+	if count != len(ids) {
+		return nil, fmt.Errorf("computing node paths: %w", ErrNotFound)
+	}
+	return paths, nil
 }

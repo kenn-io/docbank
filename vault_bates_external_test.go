@@ -56,7 +56,7 @@ func TestEmbeddedBatesPlanningAndReservationAPI(t *testing.T) {
 		if status.State == "complete" || status.State == "partial" || status.State == "failed" {
 			break
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond) //nolint:kennlint // polls a background package import that runs SQLite and file I/O on the real clock
 	}
 	require.Equal(t, "complete", status.State)
 	packages, err := vault.Packages(t.Context(), docbank.PackageListRequest{Direction: "received", Limit: 10})

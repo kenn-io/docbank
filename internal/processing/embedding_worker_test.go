@@ -1368,7 +1368,7 @@ func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) { //nolin
 		cancel()
 		<-done
 		t.Fatalf("revocation crossed authorized provider boundary: %v", err)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the authorized provider fence keeps revocation blocked
 	}
 	close(proceed)
 	<-started
@@ -1377,7 +1377,7 @@ func TestEmbeddingWorkerFencesConsentThroughProviderCall(t *testing.T) { //nolin
 		cancel()
 		<-done
 		t.Fatalf("revocation crossed active provider call: %v", err)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the active provider call keeps revocation blocked
 	}
 	cancel()
 	require.ErrorIs(t, <-done, context.Canceled)

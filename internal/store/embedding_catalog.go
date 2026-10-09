@@ -1452,11 +1452,7 @@ func validateEmbeddingCatalogSchemaTx(ctx context.Context, tx *sql.Tx) error {
 	return validateEmbeddingCatalogSchema(ctx, tx)
 }
 
-type embeddingCatalogSchemaQuerier interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-}
-
-func validateEmbeddingCatalogSchema(ctx context.Context, query embeddingCatalogSchemaQuerier) error {
+func validateEmbeddingCatalogSchema(ctx context.Context, query rowsQuerier) error {
 	for _, table := range embeddingCatalogSchema {
 		got, err := embeddingCatalogSchemaColumns(ctx, query, table.name)
 		if err != nil {
@@ -1470,7 +1466,7 @@ func validateEmbeddingCatalogSchema(ctx context.Context, query embeddingCatalogS
 }
 
 func embeddingCatalogSchemaColumns(
-	ctx context.Context, query embeddingCatalogSchemaQuerier, table string,
+	ctx context.Context, query rowsQuerier, table string,
 ) (_ []string, retErr error) {
 	rows, err := query.QueryContext(ctx, `SELECT name FROM pragma_table_info(?) ORDER BY cid`, table)
 	if err != nil {

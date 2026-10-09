@@ -72,7 +72,7 @@ func TestProviderStagesHoldConsentThroughExecution(t *testing.T) {
 				case err := <-revoked:
 					t.Errorf("revocation completed between authorization and provider execution: %v", err)
 					early = true
-				case <-time.After(20 * time.Millisecond):
+				case <-time.After(20 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the authorized provider fence keeps revocation blocked
 				}
 				close(proceed)
 				<-started
@@ -81,7 +81,7 @@ func TestProviderStagesHoldConsentThroughExecution(t *testing.T) {
 					case err := <-revoked:
 						t.Errorf("revocation completed during provider execution: %v", err)
 						early = true
-					case <-time.After(20 * time.Millisecond):
+					case <-time.After(20 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the running provider keeps revocation blocked
 					}
 				}
 				if outcome == "canceled" {

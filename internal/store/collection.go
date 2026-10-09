@@ -179,6 +179,7 @@ func (s *Store) CollectionMembers(
 	}
 	defer func() { _ = rows.Close() }()
 	nodes := make([]Node, 0)
+	ids := make([]int64, 0)
 	for rows.Next() {
 		node, scanErr := scanNode(rows)
 		if scanErr != nil {
@@ -186,6 +187,7 @@ func (s *Store) CollectionMembers(
 			return CollectionMemberPage{}, scanErr
 		}
 		nodes = append(nodes, node)
+		ids = append(ids, node.ID)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -194,13 +196,13 @@ func (s *Store) CollectionMembers(
 	if err := rows.Close(); err != nil {
 		return CollectionMemberPage{}, fmt.Errorf("closing collection %q members: %w", id, err)
 	}
-	items := make([]NodeView, 0, len(nodes))
-	for _, node := range nodes {
-		path, pathErr := pathOf(ctx, tx, node.ID)
-		if pathErr != nil {
-			return CollectionMemberPage{}, pathErr
-		}
-		items = append(items, NodeView{Node: node, Path: path})
+	paths, err := pathsOf(ctx, tx, ids)
+	if err != nil {
+		return CollectionMemberPage{}, err
+	}
+	items := make([]NodeView, len(nodes))
+	for i, node := range nodes {
+		items[i] = NodeView{Node: node, Path: paths[i]}
 	}
 	if err := tx.Commit(); err != nil {
 		return CollectionMemberPage{}, fmt.Errorf("closing collection member snapshot: %w", err)

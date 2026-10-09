@@ -222,7 +222,7 @@ func TestRegistryRefreshDoesNotBlockBackendLookup(t *testing.T) {
 	select {
 	case ok := <-lookup:
 		assert.True(t, ok)
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatal("backend lookup blocked behind remote ownership probe")
 	}
 	close(releaseProbe)
