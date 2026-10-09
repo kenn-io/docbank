@@ -37,6 +37,7 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
     await expect(page.getByText("3 selected photos", { exact: true })).toBeVisible();
     for (const theme of ["dark", "light"]) {
       await page.evaluate(theme => document.documentElement.classList.toggle("dark", theme === "dark"), theme);
+      await page.waitForLoadState("networkidle");
       await page.screenshot({ path: path.join(output!, `web-albums-refresh-range-${theme}.png`), animations: "disabled" });
     }
     await page.getByRole("button", { name: "Clear selection", exact: true }).click();
@@ -121,6 +122,7 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
     await expect(createUUID).toBeVisible();
     for (const theme of ["dark", "light"]) {
       await page.evaluate(theme => document.documentElement.classList.toggle("dark", theme === "dark"), theme);
+      await page.waitForLoadState("networkidle");
       await page.screenshot({ path: path.join(output!, `web-albums-uuid-name-${theme}.png`), animations: "disabled" });
     }
     await createUUID.click();
