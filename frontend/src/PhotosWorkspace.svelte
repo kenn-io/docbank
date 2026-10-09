@@ -13,7 +13,7 @@
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
   import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
 
-  let { photos, cache, albums, albumID = "", onnavigate = () => {}, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: () => void } = $props();
+  let { photos, cache, albums, albumID = "", onnavigate = () => {}, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void } = $props();
   const album = $derived(albums?.items.find(item => item.id === albumID));
   let alive = true;
   onDestroy(() => alive = false);
@@ -165,7 +165,7 @@
     {#if photos.trashError}<p role="alert">{photos.trashError} Failed photos remain selected for retry.</p>{/if}
     {#snippet footer()}
       <Button disabled={photos.trashing} onclick={() => trashOpen = false}>Keep in Docbank</Button>
-      <Button tone="danger" disabled={photos.trashing || photos.selection.selectedIDs.size === 0} onclick={async () => { if (await photos.trashSelected(preserve, ontrashed)) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
+      <Button tone="danger" disabled={photos.trashing || photos.selection.selectedIDs.size === 0} onclick={async () => { if (await photos.trashSelected(preserve, () => ontrashed?.(photos))) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
     {/snippet}
   </Modal>
 {/if}

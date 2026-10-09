@@ -273,7 +273,8 @@ it.each(["members", "cover"])("invalidates %s observations before an uncertain w
   await albums.load(); expect(fetcher).toHaveBeenCalledTimes(4); expect(albums.busy).toBe(true);
   reconcile(response({ detail: "List unavailable" }, 503)); await pending;
   expect(albums.error).toBe("Failed to fetch");
-  await albums.load(); expect(albums.items[0]).toMatchObject({ included_count: 0, cover_known: true });
+  // The load asked for during the write runs once the write finishes.
+  await vi.waitFor(() => expect(albums.items[0]).toMatchObject({ included_count: 0, cover_known: true })); expect(fetcher).toHaveBeenCalledTimes(5);
 });
 
 it.each([false, true])("verifies an off-page selection after an uncertain removal, actually removed=%s", async removed => {

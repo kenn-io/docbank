@@ -44,10 +44,16 @@ export class PhotoAlbums {
   drag: { scope: api.PhotoAlbumMembersRequest; source: Photos; preserve?: Parameters<Photos["refresh"]>[0] } | undefined;
   private controller = new AbortController();
   private read = 0;
+  private stale = false;
 
   constructor(private session: string, private onauthfailure: (cause: unknown) => void, private onmemberschange?: (id: string, source: Photos) => Promise<void>) {}
 
-  load() { return this.busy ? Promise.resolve(undefined) : this.list(); }
+  load() {
+    if (!this.busy) return this.list();
+    // A write's own listing may already have run; reload once it finishes.
+    this.stale = true;
+    return Promise.resolve(undefined);
+  }
 
   private async list() {
     const read = ++this.read;
@@ -105,6 +111,7 @@ export class PhotoAlbums {
         failure = cause; this.error = this.failure(cause); this.errorStatus = cause instanceof APIError ? cause.status : undefined;
         if (creation && !(cause instanceof APIError && cause.status >= 400 && cause.status < 500)) { this.unconfirmed = creation; this.error = ""; }
       }
+      this.stale = false;
       const recovered = await this.list();
       if (recovered && failure instanceof APIError && id && (failure.code === "stale_revision" || failure.status === 404)) {
         const album = this.items.find(item => item.id === id);
@@ -115,7 +122,10 @@ export class PhotoAlbums {
       if (result) this.error = "";
       this.errorStatus = !this.controller.signal.aborted && failure instanceof APIError ? failure.status : undefined;
       return result;
-    } finally { this.busy = false; }
+    } finally {
+      this.busy = false;
+      if (this.stale && !this.controller.signal.aborted) { this.stale = false; void this.list(); }
+    }
   }
 
   create(name: string) {

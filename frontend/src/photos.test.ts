@@ -41,6 +41,22 @@ it.each([false, true])("removes confirmed trash successes when refresh fails, pa
   photos.dispose();
 });
 
+it("trashes a verified selection that refresh moved past the loaded pages", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(9)]))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-9", revision: 2 })))
+    .mockResolvedValueOnce(response([]));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.started = true;
+  photos.selection = { selectedIDs: new Set(["photo-1", "photo-9"]), anchorID: undefined };
+  expect(await photos.trashSelected()).toBe(true);
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters.asset_ids).toEqual(["photo-9"]);
+  expect(fetcher.mock.calls.slice(1, 3).map(call => call[0])).toEqual(["/api/v1/photos/assets/photo-1/trash", "/api/v1/photos/assets/photo-9/trash"]);
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  photos.dispose();
+});
+
 it("binds retries to captured or displayed revisions", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))

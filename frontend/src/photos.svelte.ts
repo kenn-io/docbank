@@ -184,18 +184,27 @@ export class Photos {
   async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
     if (this.trashing || this.disposed) return false;
     this.pruneTrashTargets();
-    const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
-    const resolved = [...this.selection.selectedIDs].map(id => rows.get(id));
-    if (!resolved.length || resolved.some(item => !item)) {
-      this.trashError = "Load and select the photos again before moving them to trash.";
-      return false;
-    }
-    const selected = resolved.filter((item): item is PhotoBrowseRow => !!item).map(item => ({ ...item }));
-    this.trashTargets = selected;
     this.trashing = true;
-    this.trashError = "";
-    let successes = 0;
     try {
+      const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
+      // A refresh keeps verified selections that moved past the loaded pages; fetch their current rows.
+      const missing = [...this.selection.selectedIDs].filter(id => !rows.has(id));
+      try {
+        for (let index = 0; index < missing.length; index += 64) {
+          const query = { ...this.query, filters: { ...this.query.filters, asset_ids: missing.slice(index, index + 64) } };
+          const page = await listPhotoAssets({ query, page_size: 250 }, { session: this.session, signal: AbortSignal.timeout(60_000) });
+          for (const item of page.items) rows.set(item.asset_id, item);
+        }
+      } catch (cause) { if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause); }
+      const resolved = [...this.selection.selectedIDs].map(id => rows.get(id));
+      if (!resolved.length || resolved.some(item => !item)) {
+        this.trashError = "Load and select the photos again before moving them to trash.";
+        return false;
+      }
+      const selected = resolved.filter((item): item is PhotoBrowseRow => !!item).map(item => ({ ...item }));
+      this.trashTargets = selected;
+      this.trashError = "";
+      let successes = 0;
       for (const item of selected) {
         try {
           const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
