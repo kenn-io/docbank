@@ -20,7 +20,7 @@ it("keeps failed confirmation visible and closes after cancellation or success",
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  const ontrashed = vi.fn(() => photos.refresh());
+  const ontrashed = vi.fn();
   render(PhotosWorkspace, { photos, cache, ontrashed });
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
   const dialog = screen.getByRole("dialog", { name: "Move selected photos to trash" });
@@ -223,4 +223,36 @@ it("keeps loading pages that add no rows and keeps the top photo across density 
   expect(moved.getBoundingClientRect().top).toBeCloseTo(offset);
   photos.dispose();
   await cache.dispose();
+});
+
+it("keeps the top photo when trash refreshes an album", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const cell = this.closest<HTMLElement>(".cell");
+    const scroll = this.closest<HTMLElement>(".photo-scroll");
+    return cell && scroll ? new DOMRect(0, Number.parseFloat(cell.style.top) + 56 - scroll.scrollTop, Number.parseFloat(cell.style.width), Number.parseFloat(cell.style.height)) : new DOMRect(0, 0, 1000, 400);
+  });
+  const photos = new Photos("scoped", vi.fn());
+  photos.query = { ...photos.query, filters: { set_ids: ["album"] }, sort: { field: "added_time", direction: "desc" } };
+  photos.items = Array.from({ length: 60 }, (_, index) => photo(index + 1)); photos.total = 60; photos.started = true;
+  const remaining = photos.items.slice(1);
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 }))).mockResolvedValueOnce(new Response(JSON.stringify({ items: remaining, total: 59 }))));
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const ontrashed = vi.fn();
+  render(PhotosWorkspace, { photos, cache, albumID: "album", ontrashed });
+  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  const scroll = screen.getByTestId("photo-scroll"); scroll.scrollTop = 1000;
+  await fireEvent.scroll(scroll);
+  const anchor = [...scroll.querySelectorAll<HTMLElement>("[data-asset]")].find(cell => cell.getBoundingClientRect().bottom > 56)!;
+  const offset = anchor.getBoundingClientRect().top;
+  photos.select("photo-1", new MouseEvent("click"), photos.items.map(item => item.asset_id));
+  await fireEvent.click(await screen.findByRole("button", { name: "Move to trash" }));
+  await fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Move to trash" }));
+  await waitFor(() => expect(photos.trashing).toBe(false));
+  expect(ontrashed).toHaveBeenCalledOnce();
+  expect(photos.items).toEqual(remaining);
+  expect(scroll.querySelector<HTMLElement>(`[data-asset="${anchor.dataset.asset}"]`)!.getBoundingClientRect().top).toBeCloseTo(offset);
+  photos.dispose(); await cache.dispose();
 });

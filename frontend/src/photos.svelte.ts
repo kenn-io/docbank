@@ -159,7 +159,7 @@ export class Photos {
     }
   }
 
-  async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => Promise<void> | void) {
+  async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
     if (this.trashing || this.disposed) return false;
     this.pruneTrashTargets();
     this.trashing = true;
@@ -194,8 +194,8 @@ export class Photos {
           this.trashError = cause instanceof Error ? cause.message : String(cause);
         }
       }
-      if (ontrashed) await ontrashed();
-      else await this.refresh(preserve);
+      ontrashed?.();
+      await this.refresh(preserve);
       return successes === selected.length;
     } finally { this.trashing = false; }
   }

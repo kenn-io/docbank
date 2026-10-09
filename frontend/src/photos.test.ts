@@ -62,7 +62,7 @@ it("binds retries to captured or displayed revisions", async () => {
   photos.items = [photo(1), photo(2)];
   photos.started = true;
   photos.selectLoaded();
-  const invalidateDocuments = vi.fn(() => photos.refresh());
+  const invalidateDocuments = vi.fn();
   expect(await photos.trashSelected(undefined, invalidateDocuments)).toBe(false);
   expect(invalidateDocuments).toHaveBeenCalledTimes(1);
   expect(fetcher.mock.calls[0][0]).toBe("/api/v1/photos/assets/photo-1/trash");

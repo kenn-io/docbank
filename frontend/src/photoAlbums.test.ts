@@ -6,18 +6,18 @@ import { photoAlbum, albumResponse as response } from "./photo-test-fixtures.js"
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const album = photoAlbum();
 
-it.each(["create", "update", "cover", "duplicate", "delete", "add", "remove"] as const)("refreshes after %s and holds busy until every refresh settles", async operation => {
+it.each(["create", "update", "cover", "duplicate", "delete", "add", "remove"] as const)("reloads after %s and holds busy until the list settles", async operation => {
   const result = { ...album, revision: 2 };
   const fetcher = vi.fn().mockResolvedValueOnce(response(result));
   vi.stubGlobal("fetch", fetcher);
   let finish!: () => void;
-  const changed = vi.fn(() => new Promise<void>(resolve => finish = resolve));
-  const albums = new PhotoAlbums("scoped", vi.fn(), changed);
+  fetcher.mockImplementationOnce(() => new Promise<Response>(resolve => finish = () => resolve(response([result]))));
+  const albums = new PhotoAlbums("scoped", vi.fn());
   const pending = operation === "create" ? albums.create(" Trip ") : operation === "update" ? albums.update(album, { starred: true }) : operation === "cover" ? albums.cover(album, album.id) : operation === "duplicate" ? albums.duplicate(album, " Copy ") : operation === "delete" ? albums.delete(album) : albums.members(album, { asset_ids: [album.id] }, operation === "remove");
-  await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
   expect(albums.busy).toBe(true);
   await albums.create("Blocked");
-  expect(fetcher).toHaveBeenCalledOnce();
+  expect(fetcher).toHaveBeenCalledTimes(2);
   finish();
   expect(await pending).toEqual(result);
   expect(albums.busy).toBe(false);
@@ -72,11 +72,14 @@ it("sends whole-query membership in one atomic write and links its feedback", as
   expect(albums.noticeID).toBe(album.id);
 });
 
-it("rejects more than 1,000 explicit IDs without starting a write", async () => {
-  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+it("shows the server error when 1,001 IDs are dropped", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(response({ detail: "Too many photos", code: "invalid_photo_album" }, 422)).mockResolvedValueOnce(response([album]));
+  vi.stubGlobal("fetch", fetcher);
   const albums = new PhotoAlbums("scoped", vi.fn());
-  await albums.members(album, { asset_ids: Array.from({ length: 1001 }, (_, id) => String(id)) });
-  expect(fetcher).not.toHaveBeenCalled();
+  albums.drag = { asset_ids: Array.from({ length: 1001 }, (_, id) => String(id)) };
+  await albums.drop(album, { dataTransfer: { types: [photoDragType] }, preventDefault: vi.fn() } as unknown as DragEvent);
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).asset_ids).toHaveLength(1001);
+  expect(albums.error).toBe("Too many photos");
 });
 
 it.each([{ ...album, id: "invalid" }, { ...album, id: "22222222-2222-4222-8222-000000000068" }, { ...album, updated_at: "invalid" }])("rejects malformed or mismatched records and refreshes", async body => {
@@ -101,4 +104,28 @@ it("uses the selection scope for an in-app drag and rejects external payloads", 
   albums.startDrag("unselected", { dataTransfer: transfer } as unknown as DragEvent, photos);
   expect(albums.drag).toEqual({ asset_ids: ["unselected"] });
   photos.dispose();
+});
+
+it.each([false, true])("keeps only the latest album list response, older failure=%s", async fails => {
+  const finishes: ((value: Response) => void)[] = [];
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => finishes.push(resolve))));
+  const albums = new PhotoAlbums("scoped", vi.fn()); albums.targetID = album.id;
+  const old = albums.load();
+  const latest = albums.load();
+  finishes[0](fails ? response({ detail: "Old error" }, 503) : response([]));
+  await old;
+  expect(albums.loading).toBe(true);
+  expect(albums.initialized).toBe(false);
+  expect(albums.targetID).toBe(album.id);
+  expect(albums.loadError).toBe("");
+  finishes[1](response([album])); await latest;
+  const late = albums.load();
+  await Promise.resolve();
+  const newest = albums.load();
+  finishes[3](response([{ ...album, revision: 3 }])); await newest;
+  finishes[2](fails ? response({ detail: "Old error" }, 503) : response([])); await late;
+  expect(albums.items).toEqual([{ ...album, revision: 3 }]);
+  expect(albums.targetID).toBe(album.id);
+  expect(albums.loadError).toBe("");
+  expect(albums.loading).toBe(false);
 });

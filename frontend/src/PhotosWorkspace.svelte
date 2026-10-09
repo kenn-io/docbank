@@ -12,7 +12,7 @@
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
   import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
 
-  let { photos, cache, albums, albumID = "", onnavigate = () => {}, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: () => Promise<void> } = $props();
+  let { photos, cache, albums, albumID = "", onnavigate = () => {}, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: () => void } = $props();
   const album = $derived(albums?.items.find(item => item.id === albumID));
   let alive = true;
   onDestroy(() => alive = false);
@@ -53,16 +53,18 @@
       else picker?.focus();
     }
   }
-  async function refresh() { await Promise.all([photos.refresh(preserve), albums?.load()]); }
+  export function refreshPhotos() { return photos.refresh(preserve); }
+  async function refresh() { await Promise.all([refreshPhotos(), albums?.load()]); }
   async function remove() {
     if (!albums || !album) return;
     await albums.members(album, photos.scope(), true);
+    if (alive) await refreshPhotos();
   }
   async function rename() {
     if (!albums || !renameAlbum || albums.busy || !name.trim()) return;
     const inspected = renameAlbum;
     renameError = "";
-    const result = await albums.update(albums.items.find(item => item.id === inspected.id) ?? inspected, { name: name.trim() });
+    const result = await albums.update(inspected, { name: name.trim() });
     if (!alive || !renaming || renameAlbum !== inspected) return;
     if (result) renaming = false;
     else { renameError = albums.error; albums.error = ""; }
@@ -72,7 +74,7 @@
   async function confirm() {
     if (!albums || !modal || !modalAlbum || albums.busy) return;
     modalError = "";
-    const result = modal === "delete" ? await albums.delete(albums.items.find(item => item.id === modalAlbum!.id) ?? modalAlbum) : await albums.duplicate(albums.items.find(item => item.id === modalAlbum!.id) ?? modalAlbum, duplicateName);
+    const result = modal === "delete" ? await albums.delete(modalAlbum) : await albums.duplicate(modalAlbum, duplicateName);
     if (!alive || !modal) return;
     if (!result) { modalError = albums.error; albums.error = ""; }
     if (result) { const deleting = modal === "delete"; modal = undefined; onnavigate(deleting ? "/photos/albums" : `/photos/albums/${result.id}`); }
@@ -124,7 +126,7 @@
   <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
   <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} loadedSelected={photos.items.every(item => photos.selection.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.total} allResults={photos.allResults} onallresults={() => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.loading || photos.allResults}>
     {#snippet photoActions()}
-      {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} />{/if}
+      {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} {preserve} />{/if}
       {#if album && albums}<Button size="sm" disabled={albums.busy || !photos.allResults && photos.selection.selectedIDs.size > 1000} onclick={() => void remove()}>Remove from album</Button><Button size="sm" disabled={albums.busy || photos.allResults || photos.selection.selectedIDs.size !== 1} onclick={() => void albums!.cover(album!, [...photos.selection.selectedIDs][0])}>Use as cover</Button>{/if}
     {/snippet}
   </SelectionDock>

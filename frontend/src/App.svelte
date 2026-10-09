@@ -189,12 +189,13 @@
   let photoPath = $state(location.pathname);
   let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache; albums: PhotoAlbums }>();
   let albumPhotos = $state<Photos>();
+  let photoWorkspace = $state<{ refreshPhotos: () => Promise<void> }>();
   let dragOver = $state("");
   const albumID = $derived(photoPath.startsWith("/photos/albums/") ? photoPath.slice("/photos/albums/".length) : "");
 
   $effect(() => {
     if (!webSession) return;
-    const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure), albums: new PhotoAlbums(webSession, handleFailure, photosChanged) };
+    const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure), albums: new PhotoAlbums(webSession, handleFailure) };
     photoState = state;
     return () => { state.photos.dispose(); state.albums.dispose(); void state.cache.dispose(); photoState = undefined; };
   });
@@ -1627,8 +1628,8 @@
     await loadDirectory(parent.id, true, exact.id, false, { node: exact, path });
   }
 
-  async function handleTrashed(_receipt?: Node): Promise<void> {
-    const changed = photosChanged();
+  function handleTrashed(_receipt?: Node, source?: Photos): void {
+    void photosChanged(source);
     selectNode(undefined);
 
     // Cached views may contain the removed node or pre-trash parent revisions.
@@ -1647,13 +1648,12 @@
     truncated = false;
     void loadRoot();
     void loadTagCatalog();
-    await changed;
   }
 
-  async function photosChanged(): Promise<void> {
+  async function photosChanged(source?: Photos): Promise<void> {
     await Promise.all([
       photoState?.albums.load(),
-      ...[photoState?.photos, albumPhotos].filter(photos => photos?.started).map(photos => photos!.refresh()),
+      ...[photoState?.photos, albumPhotos].filter(photos => photos?.started && photos !== source).map(photos => photoWorkspace && photos === (albumID ? albumPhotos : photoState?.photos) ? photoWorkspace.refreshPhotos() : photos!.refresh()),
     ]);
   }
 
@@ -2125,8 +2125,8 @@
 
     {#if photoMode && photoState}
       {#if photoPath === "/photos/albums"}<PhotoAlbumsIndex albums={photoState.albums} cache={photoState.cache} onnavigate={navigatePhotos} />
-      {:else if albumID && albumPhotos}{#key albumPhotos}<PhotosWorkspace photos={albumPhotos} cache={photoState.cache} albums={photoState.albums} {albumID} onnavigate={navigatePhotos} ontrashed={handleTrashed} />{/key}
-      {:else if !albumID}{#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} albums={photoState.albums} onnavigate={navigatePhotos} ontrashed={handleTrashed} />{/key}{/if}
+      {:else if albumID && albumPhotos}{#key albumPhotos}<PhotosWorkspace bind:this={photoWorkspace} photos={albumPhotos} cache={photoState.cache} albums={photoState.albums} {albumID} onnavigate={navigatePhotos} ontrashed={() => handleTrashed(undefined, albumPhotos)} />{/key}
+      {:else if !albumID}{#key photoState}<PhotosWorkspace bind:this={photoWorkspace} photos={photoState.photos} cache={photoState.cache} albums={photoState.albums} onnavigate={navigatePhotos} ontrashed={() => handleTrashed(undefined, photoState?.photos)} />{/key}{/if}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
     {#if savedQueryDraft}

@@ -302,7 +302,7 @@ function normalizeSet(values: readonly string[] | undefined, limit: number, vali
   return result.length ? result : undefined;
 }
 
-export function compareUnicodeScalars(left: string, right: string): number {
+function compareUnicodeScalars(left: string, right: string): number {
   const leftScalars = Array.from(left, (value) => value.codePointAt(0)!);
   const rightScalars = Array.from(right, (value) => value.codePointAt(0)!);
   for (let index = 0; index < Math.min(leftScalars.length, rightScalars.length); index++) {

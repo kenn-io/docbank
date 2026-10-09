@@ -36,20 +36,22 @@ export class PhotoAlbums {
   targetID = $state("");
   drag: api.PhotoAlbumMembersRequest | undefined;
   private controller = new AbortController();
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void, private photosChanged: () => Promise<unknown> = () => this.load()) {}
+  private generation = 0;
+  constructor(private session: string, private onauthfailure: (cause: unknown) => void) {}
 
   async load() {
+    const request = ++this.generation;
     this.loading = true;
     try {
       const items = await api.listPhotoAlbums(this.options());
-      if (this.controller.signal.aborted) return;
+      if (this.controller.signal.aborted || request !== this.generation) return;
       this.items = items;
       this.initialized = true;
       if (!items.some(album => album.id === this.targetID)) this.targetID = "";
       this.loadError = "";
       return true;
-    } catch (cause) { if (!this.controller.signal.aborted) this.loadError = this.failure(cause); }
-    finally { this.loading = false; }
+    } catch (cause) { if (!this.controller.signal.aborted && request === this.generation) this.loadError = this.failure(cause); }
+    finally { if (request === this.generation) this.loading = false; }
   }
 
   private options() { return { session: this.session, signal: this.controller.signal }; }
@@ -71,7 +73,7 @@ export class PhotoAlbums {
     try {
       try { result = await action(); }
       catch (cause) { this.error = this.failure(cause); }
-      await this.photosChanged();
+      await this.load();
       if (result) this.error = "";
       return result;
     } finally { this.busy = false; }
@@ -94,7 +96,6 @@ export class PhotoAlbums {
   }
 
   async members(album: api.PhotoAlbum, scope: api.PhotoAlbumMembersRequest, remove = false) {
-    if (scope.asset_ids && (scope.asset_ids.length === 0 || scope.asset_ids.length > 1000)) return;
     const result = await this.write(async () => readAlbum(await (remove ? api.removePhotoAlbumMembers : api.addPhotoAlbumMembers)(album.id, scope, { "If-Match": `"${album.revision}"` }, this.options()), album.id));
     if (result) {
       const refreshed = this.loadError ? undefined : this.items.find(item => item.id === album.id);

@@ -4,7 +4,7 @@
   import type { Photos } from "./photos.svelte.js";
   import { type PhotoAlbums } from "./photoAlbums.svelte.js";
   import type { PhotoAlbum, PhotoAlbumMembersRequest } from "./generated/docbank.js";
-  let { photos, albums }: { photos: Photos; albums: PhotoAlbums } = $props();
+  let { photos, albums, preserve }: { photos: Photos; albums: PhotoAlbums; preserve?: () => (() => Promise<void>) | undefined } = $props();
   let alive = true;
   onDestroy(() => alive = false);
   let error = $state("");
@@ -25,6 +25,7 @@
     if (!album) { error = "This album is no longer available. Choose another album."; return false; }
     const result = await albums.members(album, scope);
     if (!result && alive) { error = albums.error; albums.error = ""; }
+    if (alive && photos.query.filters?.set_ids?.includes(album.id)) await photos.refresh(preserve);
     return !!result;
   }
   export async function addToTarget() { const result = await add(target, photos.scope()); if (!result) focus(); return result; }
