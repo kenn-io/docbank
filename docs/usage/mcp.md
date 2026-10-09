@@ -176,7 +176,7 @@ Starting the server with `--allow-photo-edits` adds these write tools:
 Run `docbank photos unhide /path/to/photo.jpg` and enter the passcode before using MCP photo commands on a hidden asset. Ordinary MCP document tools retain access to its files.
 
 Photo writes make one daemon request. An ambiguous transport failure returns
-`processing_outcome_unknown`. Inspect the asset before retrying. A hide retry that returns `hidden_locked` already took effect. Display and
+`processing_outcome_unknown`. Inspect the asset before retrying. Display and
 vault settings writes remain HTTP and CLI operations.
 
 `list_documents` uses live keyset pagination, not a snapshot. A mutation

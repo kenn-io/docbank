@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestPhotoHiddenPasscodeInput(t *testing.T) {
@@ -48,10 +49,11 @@ func TestPhotoHiddenCLIUnhideBySelector(t *testing.T) {
 		_, err = runCLI(t, "photos", "hide", asset.ID)
 		require.NoError(t, err)
 		_, err = runCLI(t, "photos", "assets", "inspect", "/inbox/synthetic-hidden.jpeg")
-		require.ErrorContains(t, err, "hidden_locked")
+		require.ErrorIs(t, err, store.ErrHiddenLocked)
+		require.ErrorContains(t, err, "unlock Hidden or unhide")
 		unhide.SetIn(strings.NewReader("incorrect-passcode\n"))
 		_, err = runCLI(t, "photos", "unhide", selector)
-		require.ErrorContains(t, err, "hidden_passcode")
+		require.ErrorIs(t, err, store.ErrHiddenPasscode)
 		unhide.SetIn(strings.NewReader("synthetic-passcode\n"))
 		out, err = runCLI(t, "photos", "unhide", selector)
 		require.NoError(t, err)

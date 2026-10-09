@@ -75,6 +75,8 @@ docbank photos hidden reset
 
 Passcodes must be 1 to 1,024 bytes. Canonically equivalent Unicode spellings use the same passcode. CLI input uses protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks and forwards the cookie within that invocation. Unhide saves no client credential file. Run `docbank photos unhide /path/to/photo.jpg` and enter the passcode before using other CLI or MCP photo commands on a hidden asset. Unhide also accepts an asset ID or `id:<node-id>`; ordinary Documents and MCP document tools retain file access. HTTP operations live under `/api/v1/photos/hidden`; hide and unhide use `/api/v1/photos/assets/{asset_id}/hide` and `/unhide` with `If-Match`. Browser sessions can use the interactive operations. Reset requires the daemon API key.
 
+A hide retry that returns `hidden_locked` already took effect.
+
 ## Previews
 
 The daemon produces a grid preview with a 512-pixel maximum edge for each
