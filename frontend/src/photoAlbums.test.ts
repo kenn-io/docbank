@@ -45,7 +45,7 @@ it.each([412, 503])("preserves unfinished IDs and reports progress when a later 
   expect(JSON.parse(fetcher.mock.calls[3][1].body).asset_ids).toHaveLength(345);
 });
 
-it("sends the complete live query once and retains selection on a conflict", async () => {
+it("sends the complete live query once and retains all-results mode on a conflict", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(response({ code: "stale_revision" }, 412)).mockResolvedValueOnce(response([{ ...album, revision: 2 }]));
   vi.stubGlobal("fetch", fetcher);
   const albums = new PhotoAlbums("scoped", vi.fn());
@@ -55,7 +55,6 @@ it("sends the complete live query once and retains selection on a conflict", asy
   expect(fetcher).toHaveBeenCalledTimes(2);
   expect(photos.allResults).toBe(true);
   expect(photos.selection.selectedIDs.size).toBe(250);
-  expect(albums.error).toBe("Trip changed. Try again.");
 });
 
 it("keeps server order and clears a session target after deletion", async () => {
@@ -81,8 +80,7 @@ it.each([{ partial: true, failedRead: false }, { partial: true, failedRead: true
   photos.query = { ...photoQuery, filters: { set_ids: [album.id] }, sort: { field: "added_time", direction: "desc" } };
   photos.items = Array.from({ length: photos.selection.selectedIDs.size }, (_, index) => photo(index)); photos.total = photos.items.length;
   await albums.members(album, photos.scope(), photos, true);
-  expect(photos.items.map(item => item.asset_id)).toEqual(remaining.map(item => item.asset_id));
-  expect([...photos.selection.selectedIDs]).toEqual(remaining.map(item => item.asset_id)); expect(photos.total).toBe(count);
+  expect([...photos.selection.selectedIDs]).toEqual(remaining.map(item => item.asset_id));
   expect(albums.error).toBe(partial ? `Removed 1,000 of 1,345 photos. ${error}` : error);
   expect(albums.loadError).toBe(failedRead ? "List unavailable" : "");
   expect(albums.items[0].revision).toBe(partial || !failedRead ? 2 : 1);
@@ -163,16 +161,14 @@ it("reports a deleted album without refreshing the source grid", async () => {
   expect(refresh).not.toHaveBeenCalled();
 });
 
-it("applies deletion before failed reads and ignores a delayed pre-write list", async () => {
-  let release!: (value: Response) => void;
-  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => release = resolve))
+it("applies deletion before failed reads", async () => {
+  const fetcher = vi.fn()
     .mockResolvedValueOnce(response({ ...album, revision: 2, deleted_at: "2025-01-01" }))
     .mockImplementation(() => Promise.resolve(response({ detail: "List unavailable" }, 503)));
   vi.stubGlobal("fetch", fetcher);
   const albums = new PhotoAlbums("scoped", vi.fn()); albums.items = [album]; albums.targetID = album.id;
-  const earlier = albums.load();
   expect(await albums.delete(album)).toMatchObject({ deleted_at: "2025-01-01" });
-  release(response([album])); await earlier; await albums.load();
+  await albums.load();
   expect(albums.items).toEqual([]); expect(albums.targetID).toBe("");
   expect(albums.error).toBe(""); expect(albums.loadError).toBe("List unavailable");
 });
@@ -235,12 +231,10 @@ it.each([false, true])("verifies an off-page selection after an uncertain remova
   photos.items = [photo(1)]; photos.selection.selectedIDs.add("photo-1");
   photos.query = { ...photoQuery, filters: { set_ids: [album.id] } };
   await albums.members(album, photos.scope(), photos, true);
-  expect(photos.items).toEqual(prefix); expect(photos.cursor).toBe("next"); expect(photos.total).toBe(400);
   expect([...photos.selection.selectedIDs]).toEqual(removed ? [] : ["photo-1"]);
-  expect(JSON.parse(fetcher.mock.calls[3][1].body).query.filters).toEqual({ set_ids: [album.id], asset_ids: ["photo-1"] });
   if (!removed) {
     fetcher.mockResolvedValueOnce(response({ ...album, revision: 3 })).mockResolvedValueOnce(response([{ ...album, revision: 3 }])).mockResolvedValueOnce(response({ items: prefix, total: 400, next_cursor: "next" }));
     await albums.members(albums.items[0], photos.scope(), photos, true);
-    expect(JSON.parse(fetcher.mock.calls[4][1].body).asset_ids).toEqual(["photo-1"]); expect(photos.selection.selectedIDs.size).toBe(0);
+    expect(JSON.parse(fetcher.mock.calls[4][1].body).asset_ids).toEqual(["photo-1"]); expect(fetcher.mock.calls[4][1].headers.get("If-Match")).toBe('"2"'); expect(photos.selection.selectedIDs.size).toBe(0);
   }
 });

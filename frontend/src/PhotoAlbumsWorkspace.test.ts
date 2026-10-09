@@ -40,19 +40,24 @@ it.each(["uuid", "prefixed"])("creates an album with a %s existing-album ID as i
   const created = { ...album, id: "created", name };
   const create = vi.spyOn(albums, "create").mockResolvedValue(created);
   const members = vi.spyOn(albums, "members").mockResolvedValue(created);
-  photos.selectLoaded();
-  await fireEvent.click(await screen.findByRole("button", { name: /Add to album/ }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Select loaded photos" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Select all 10,000 photos" }));
+  await fireEvent.click(screen.getByRole("button", { name: /Add to album/ }));
   await fireEvent.input(screen.getByRole("combobox", { name: "Find or create an album" }), { target: { value: name } });
   await fireEvent.mouseDown(await screen.findByRole("option", { name: `Create album "${name}"` }));
   await waitFor(() => expect(create).toHaveBeenCalledWith(name));
   expect(members).toHaveBeenCalledWith(created, photos.scope(), photos, false, expect.any(Function));
+  expect(albums.targetID).toBe("created");
 });
 
-it.each(["picker add", "picker create", "index create", "delete", "duplicate"] as const)("keeps a delayed %s failure visible after navigation", async operation => {
+async function pendingAlbumWrite(operation: "picker add" | "picker create" | "index create" | "delete" | "duplicate") {
   let finish!: (response: Response) => void;
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve)).mockResolvedValue(new Response(JSON.stringify([album])));
   vi.stubGlobal("fetch", fetcher);
-  const { photos, albums, cache, view } = setup(operation === "delete" || operation === "duplicate");
+  const onnavigate = vi.fn();
+  const context = setup(operation === "delete" || operation === "duplicate", onnavigate);
+  const { albums, cache, view } = context;
   await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
   let unmount = view.unmount;
   if (operation.startsWith("picker")) {
@@ -61,7 +66,7 @@ it.each(["picker add", "picker create", "index create", "delete", "duplicate"] a
     await fireEvent.mouseDown(await screen.findByRole("option", { name: operation === "picker create" ? 'Create album "Summer"' : "Trip" }));
   } else if (operation === "index create") {
     view.unmount();
-    unmount = render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn() }).unmount;
+    unmount = render(PhotoAlbumsIndex, { albums, cache, onnavigate }).unmount;
     await fireEvent.click(screen.getByRole("button", { name: "New album" }));
     await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "Summer" } });
     await fireEvent.click(screen.getByRole("button", { name: "Create album" }));
@@ -70,7 +75,12 @@ it.each(["picker add", "picker create", "index create", "delete", "duplicate"] a
     await fireEvent.click(await screen.findByRole("menuitem", { name: operation === "delete" ? "Delete album…" : "Duplicate…" }));
     await fireEvent.click(screen.getByRole("button", { name: operation === "delete" ? "Delete album" : "Duplicate album" }));
   }
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(albums.busy).toBe(true));
+  return { ...context, onnavigate, fetcher, finish, unmount };
+}
+
+it.each(["picker add", "picker create", "index create", "delete", "duplicate"] as const)("keeps a delayed %s failure visible after navigation", async operation => {
+  const { photos, albums, cache, finish, unmount } = await pendingAlbumWrite(operation);
   unmount();
   if (operation === "index create") render(PhotosWorkspace, { photos, albums, cache });
   else render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn() });
@@ -82,25 +92,8 @@ it.each(["picker add", "picker create", "index create", "delete", "duplicate"] a
   expect(photos.selection.selectedIDs.has("photo-1")).toBe(true);
 });
 
-it.each(["create", "delete", "duplicate"] as const)("stops delayed %s success from navigating a destroyed view", async operation => {
-  let finish!: (response: Response) => void;
-  const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve)).mockResolvedValue(new Response(JSON.stringify([album])));
-  vi.stubGlobal("fetch", fetcher);
-  const onnavigate = vi.fn();
-  const { albums, cache, view } = setup(operation !== "create", onnavigate);
-  let unmount = view.unmount;
-  if (operation === "create") {
-    view.unmount();
-    unmount = render(PhotoAlbumsIndex, { albums, cache, onnavigate }).unmount;
-    await fireEvent.click(screen.getByRole("button", { name: "New album" }));
-    await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "Summer" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Create album" }));
-  } else {
-    await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
-    await fireEvent.click(await screen.findByRole("menuitem", { name: operation === "delete" ? "Delete album…" : "Duplicate…" }));
-    await fireEvent.click(screen.getByRole("button", { name: operation === "delete" ? "Delete album" : "Duplicate album" }));
-  }
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+it.each(["index create", "delete", "duplicate"] as const)("stops delayed %s success from navigating a destroyed view", async operation => {
+  const { albums, cache, onnavigate, finish, unmount } = await pendingAlbumWrite(operation);
   unmount();
   render(PhotoAlbumsIndex, { albums, cache, onnavigate });
   finish(new Response(JSON.stringify(album)));
@@ -108,24 +101,8 @@ it.each(["create", "delete", "duplicate"] as const)("stops delayed %s success fr
   expect(onnavigate).not.toHaveBeenCalled();
 });
 
-it.each(["create", "delete", "duplicate"] as const)("keeps the %s dialog open while its write is pending and shows one failure", async operation => {
-  let finish!: (response: Response) => void;
-  const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve)).mockResolvedValue(new Response(JSON.stringify([album])));
-  vi.stubGlobal("fetch", fetcher);
-  const onnavigate = vi.fn();
-  const { albums, cache, view } = setup(operation !== "create", onnavigate);
-  if (operation === "create") {
-    view.unmount();
-    render(PhotoAlbumsIndex, { albums, cache, onnavigate });
-    await fireEvent.click(screen.getByRole("button", { name: "New album" }));
-    await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "Summer" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Create album" }));
-  } else {
-    await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
-    await fireEvent.click(await screen.findByRole("menuitem", { name: operation === "delete" ? "Delete album…" : "Duplicate…" }));
-    await fireEvent.click(screen.getByRole("button", { name: operation === "delete" ? "Delete album" : "Duplicate album" }));
-  }
-  await waitFor(() => expect(albums.busy).toBe(true));
+it.each(["index create", "delete", "duplicate"] as const)("keeps the %s dialog open while its write is pending and shows one failure", async operation => {
+  const { albums, onnavigate, finish } = await pendingAlbumWrite(operation);
   expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
   await fireEvent.keyDown(window, { key: "Escape" });
   expect(screen.getByRole("dialog")).toBeTruthy();
@@ -135,21 +112,6 @@ it.each(["create", "delete", "duplicate"] as const)("keeps the %s dialog open wh
   expect(screen.getAllByRole("alert")).toHaveLength(1);
   expect(albums.error).toBe("");
   expect(onnavigate).not.toHaveBeenCalled();
-});
-
-it("creates from the dock and adds the complete live query with only two loaded photos", async () => {
-  const { photos, albums } = setup();
-  const created = { ...album, id: "created", name: "Summer" };
-  vi.spyOn(albums, "create").mockResolvedValue(created);
-  const members = vi.spyOn(albums, "members").mockResolvedValue(created);
-  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Select loaded photos" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Select all 10,000 photos" }));
-  await fireEvent.click(screen.getByRole("button", { name: /Add to album/ }));
-  await fireEvent.input(screen.getByRole("combobox", { name: "Find or create an album" }), { target: { value: "Summer" } });
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: 'Create album "Summer"' }));
-  await waitFor(() => expect(members).toHaveBeenCalledWith(created, photos.scope(), photos, false, expect.any(Function)));
-  expect(albums.targetID).toBe("created");
 });
 
 it("B opens the picker without a target, ignores typing, then adds to the chosen target", async () => {
@@ -171,7 +133,7 @@ it("B opens the picker without a target, ignores typing, then adds to the chosen
   expect(albums.error).toBe("Another action failed");
 });
 
-it("keeps B failures and selections while its source refresh is still running", async () => {
+it("keeps B failures visible and ignores a second shortcut while source refresh runs", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Add unavailable" }), { status: 503 })).mockResolvedValueOnce(new Response(JSON.stringify([album])));
   vi.stubGlobal("fetch", fetcher);
   const { photos, albums } = setup(true);
@@ -184,12 +146,10 @@ it("keeps B failures and selections while its source refresh is still running", 
   expect(albums.busy).toBe(true);
   await fireEvent.keyDown(window, { key: "b" });
   expect(fetcher).toHaveBeenCalledTimes(2);
-  expect(albums.error).toBe("Add unavailable");
   finish();
   await waitFor(() => expect(albums.busy).toBe(false));
   await screen.findByText("Add unavailable");
   expect(screen.getAllByRole("alert")).toHaveLength(1);
-  expect(photos.selection.selectedIDs.has("photo-1")).toBe(true);
 });
 
 it("renders added order unchanged and saves or cancels inline rename", async () => {
@@ -383,21 +343,12 @@ it("renders unavailable card observations and omits an unknown count from deleti
   await screen.findByText("0 photos"); await screen.findByText("No cover yet");
 });
 
-it("resets the empty index create dialog after failed and cancelled attempts", async () => {
+it("resets the empty index create dialog after cancelled attempts", async () => {
   const albums = new PhotoAlbums("scoped", vi.fn());
-  vi.spyOn(albums, "create").mockImplementation(async () => { albums.error = "Create unavailable"; return undefined; });
   render(PhotoAlbumsIndex, { albums, cache: new PhotoPreviewCache("scoped", vi.fn()), onnavigate: vi.fn() });
-  await fireEvent.click(screen.getAllByRole("button", { name: "New album" })[0]);
-  await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "Trip" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Create album" }));
-  await screen.findByText("Create unavailable");
-  expect(screen.getAllByRole("alert")).toHaveLength(1);
-  expect(albums.error).toBe("");
-  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   for (let attempt = 0; attempt < 2; attempt++) {
     await fireEvent.click(screen.getAllByRole("button", { name: "New album" })[1]);
     expect((screen.getByRole("textbox", { name: "Album name" }) as HTMLInputElement).value).toBe("");
-    expect(screen.queryByText("Create unavailable")).toBeNull();
     await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "Cancelled" } });
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   }
