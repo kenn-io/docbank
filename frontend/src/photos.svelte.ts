@@ -94,7 +94,7 @@ export class Photos {
       } catch (cause) { failures++; failure = cause instanceof Error ? cause.message : String(cause); }
     }
     if (failures) failure = `${failures} photo${failures === 1 ? "" : "s"} failed: ${failure}`;
-    notifyPhotoPrivacy(failure);
+    notifyPhotoPrivacy({ error: failure, hidden: this.hidden });
   }
 
   cancelPending() {
@@ -232,8 +232,9 @@ export class Photos {
 export const photoRevalidationErrorEvent = "docbank-photo-revalidation-error";
 export const photoPrivacyEvent = "docbank-photo-privacy";
 export const photoPrivacyOrigin = crypto.randomUUID();
-export function notifyPhotoPrivacy(error = "") {
-  window.dispatchEvent(new CustomEvent(photoPrivacyEvent, { detail: error }));
+export interface PhotoPrivacyFeedback { error: string; hidden: boolean }
+export function notifyPhotoPrivacy(feedback?: PhotoPrivacyFeedback) {
+  window.dispatchEvent(new CustomEvent(photoPrivacyEvent, { detail: feedback }));
   if (typeof BroadcastChannel !== "undefined") {
     const channel = new BroadcastChannel(photoPrivacyEvent);
     channel.postMessage({ origin: photoPrivacyOrigin });

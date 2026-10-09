@@ -51,22 +51,65 @@ it("keeps management credentials independent and lets Disable ignore an invalid 
   await fireEvent.input(current, { target: { value: "current" } });
   await fireEvent.input(next, { target: { value: "é".repeat(513) } });
   await fireEvent.click(screen.getByRole("button", { name: "Change passcode" }));
-  await screen.findByText("Use 1–1,024 bytes.");
+  await screen.findByText("Use 1 to 1,024 bytes.");
   expect(next.getAttribute("aria-invalid")).toBe("true");
   expect(current.getAttribute("aria-invalid")).toBeNull();
-  expect(requests[0]).toEqual({ passcode: "current", new_passcode: "é".repeat(513) });
+  expect(requests).toHaveLength(0);
   await fireEvent.input(next, { target: { value: "new" } });
   currentWrong = true;
   await fireEvent.click(screen.getByRole("button", { name: "Change passcode" }));
   await screen.findByText("Incorrect passcode.");
   expect(current.getAttribute("aria-describedby")).toBe("hidden-current-passcode-error");
-  await fireEvent.input(next, { target: { value: "" } });
+  await fireEvent.input(next, { target: { value: "x".repeat(1025) } });
   expect(screen.getByText("Incorrect passcode.")).toBeTruthy();
   await fireEvent.click(screen.getByRole("button", { name: "Disable Hidden" }));
   await screen.findByRole("button", { name: "Set passcode" });
   expect(requests.at(-1)).toEqual({ passcode: "current" });
   expect(screen.queryByText("Incorrect passcode.")).toBeNull();
   expect((screen.getByLabelText("Passcode", { exact: true }) as HTMLInputElement).value).toBe("");
+});
+
+it.each(["setup", "unlock", "current", "new"].flatMap(field => ["x".repeat(1025), "é".repeat(513)].map(value => ({ field, value }))))("rejects oversized $field credentials before sending a request", async ({ field, value }) => {
+  const mutations: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    if (options?.method === "POST") mutations.push(url);
+    return new Response(JSON.stringify({ configured: field !== "setup", change_id: "" }));
+  }));
+  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  let input: HTMLElement;
+  if (field === "setup" || field === "unlock") {
+    input = await screen.findByLabelText("Passcode", { exact: true });
+    await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
+    await fireEvent.input(input, { target: { value } });
+    await fireEvent.click(screen.getByRole("button", { name: field === "setup" ? "Set passcode" : "Unlock" }));
+  } else {
+    await screen.findByRole("button", { name: "Unlock" });
+    await fireEvent.click(screen.getByText("Manage passcode"));
+    input = screen.getByLabelText(field === "current" ? "Current passcode" : "New passcode", { exact: true });
+    await fireEvent.input(screen.getByLabelText("Current passcode", { exact: true }), { target: { value: field === "current" ? value : "current" } });
+    if (field === "new") await fireEvent.input(input, { target: { value } });
+    await fireEvent.click(screen.getByRole("button", { name: field === "current" ? "Disable Hidden" : "Change passcode" }));
+  }
+  await screen.findByText("Use 1 to 1,024 bytes.");
+  expect(input.getAttribute("aria-invalid")).toBe("true");
+  expect(document.activeElement).toBe(input);
+  expect(mutations).toHaveLength(0);
+});
+
+it.each(["x".repeat(1024), "é".repeat(512)])("sends a valid 1,024-byte passcode", async value => {
+  const mutations: unknown[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith("/unlock")) { mutations.push(JSON.parse(String(options?.body))); return problem(503, "Synthetic unavailable", "validation"); }
+    return new Response(JSON.stringify(state(false)));
+  }));
+  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  const input = await screen.findByLabelText("Passcode", { exact: true });
+  await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
+  await fireEvent.input(input, { target: { value } });
+  await fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+  await screen.findByRole("alert");
+  expect(mutations).toEqual([{ passcode: value }]);
+  expect(input.getAttribute("aria-invalid")).toBeNull();
 });
 
 it("shows lockout beside the submitted form without marking its field invalid", async () => {
@@ -117,11 +160,61 @@ it.each(["lock", "unlock"])("privacy read failure preserves pending %s and its e
   await waitFor(() => expect(actionSignal).toBeDefined());
   window.dispatchEvent(new CustomEvent(photoRevalidationErrorEvent, { detail: "Temporary privacy read failure" }));
   expect(actionSignal?.aborted).toBe(false);
-  window.dispatchEvent(new Event(photoPrivacyEvent));
+  window.dispatchEvent(new CustomEvent(photoPrivacyEvent, { detail: state(kind === "lock") }));
   await new Promise(resolve => setTimeout(resolve, 0));
   expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
   settle(problem(503, "Synthetic passcode action failed"));
   await screen.findByText("Synthetic passcode action failed");
+});
+
+it("applies fresh privacy state without another GET and ignores an older aborted result", async () => {
+  prepare();
+  let settle!: (response: Response) => void;
+  let readSignal: AbortSignal | undefined;
+  let reads = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith("/photos/hidden")) { reads++; readSignal = options?.signal ?? undefined; return new Promise<Response>(resolve => { settle = resolve; }); }
+    return new Response(JSON.stringify({ items: [photo(1)], total: 1 }));
+  }));
+  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  await fireEvent(window, new CustomEvent(photoRevalidationErrorEvent, { detail: "Temporary read failure" }));
+  await screen.findByText("Temporary read failure");
+  await fireEvent(window, new CustomEvent(photoPrivacyEvent, { detail: state(true) }));
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  expect(reads).toBe(1);
+  expect(readSignal?.aborted).toBe(true);
+  expect(screen.queryByText("Temporary read failure")).toBeNull();
+  settle(new Response(JSON.stringify(state(false))));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(screen.getByRole("button", { name: "Lock" })).toBeTruthy();
+});
+
+it.each([false, true])("keeps a delayed photo action failure in its originating view, hidden=%s", async hidden => {
+  prepare();
+  history.replaceState(null, "", `${hidden ? "/photos/hidden" : "/photos"}#web_session=synthetic&web_upload_secret=proof`);
+  let settle!: (response: Response) => void;
+  let requested = false;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith(hidden ? "/unhide" : "/hide")) { requested = true; return new Promise<Response>(resolve => { settle = resolve; }); }
+    if (url.endsWith("/photos/hidden")) return new Response(JSON.stringify(state(true)));
+    if (url.includes("/assets/query")) return new Response(JSON.stringify({ items: [photo(JSON.parse(String(options?.body)).hidden ? 1 : 2)], total: 1 }));
+    return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
+  }));
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: `Actions for Photo ${hidden ? 1 : 2}.jpg` }));
+  await fireEvent.click(screen.getByRole("menuitem", { name: hidden ? "Unhide" : "Hide" }));
+  await waitFor(() => expect(requested).toBe(true));
+  await fireEvent.click(screen.getByRole("button", { name: hidden ? "Library" : "Hidden", exact: true }));
+  await screen.findByRole("checkbox", { name: `Select photo Photo ${hidden ? 2 : 1}.jpg` });
+  settle(problem(412, "Synthetic delayed revision failure"));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(screen.queryByText(/Synthetic delayed revision failure/)).toBeNull();
+  if (!hidden) {
+    await fireEvent(window, new CustomEvent(photoPrivacyEvent, { detail: { error: "", hidden: true } }));
+    await fireEvent(window, new CustomEvent(photoPrivacyEvent, { detail: state(true) }));
+    await fireEvent.click(screen.getByRole("button", { name: "Library", exact: true }));
+    await screen.findByText("1 photo failed: Synthetic delayed revision failure");
+  }
 });
 
 it("preserves an unlocked selection when polling observes the same state", async () => {
@@ -236,6 +329,10 @@ it.each([false, true])("real Unhide retains stale revision failure with mixed su
   await screen.findByRole("checkbox", { name: "Select photo Photo 2.jpg" });
   expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
   await fireEvent(window, new Event(photoPrivacyEvent));
+  await screen.findByRole("button", { name: "Actions for Photo 2.jpg" });
+  expect(screen.getByText(failure)).not.toBeNull();
+  await fireEvent(window, new CustomEvent(photoPrivacyEvent, { detail: { error: "", hidden: false } }));
+  await fireEvent(window, new CustomEvent(photoPrivacyEvent, { detail: state(true) }));
   await screen.findByRole("button", { name: "Actions for Photo 2.jpg" });
   expect(screen.getByText(failure)).not.toBeNull();
   stale = false;
