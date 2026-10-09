@@ -129,48 +129,14 @@ func (s *Store) persistPhotoAuthoredAuditTx(ctx context.Context, tx *sql.Tx, pri
 }
 
 func (replay *auditedHistoryReplay) applyPhotoAuthored(vaultID string, mutation, allocation storedAuditRecord, scopeIDs []string, scopeEntries map[string]storedAuditRecord, deltas, events map[string]storedAuditRecord, usedDeltas, usedEvents map[string]bool) error {
-	operationID, err := auditUUIDField(mutation.record, auditOperationIDField)
+	operationID, err := replay.validateAttachmentMutation(vaultID, mutation.record)
 	if err != nil {
 		return err
 	}
-	if err := requireAuditUUID(mutation.record, auditVaultIDField, vaultID); err != nil {
-		return err
-	}
-	sequence, err := positiveAuditInteger("operation sequence", replay.allocationCount+1)
+	change, digest, err := validateAttachmentDelta(mutation.record, operationID, deltas, usedDeltas)
 	if err != nil {
 		return err
 	}
-	if err := requireAuditUnsigned(mutation.record, "operation_sequence", sequence); err != nil {
-		return err
-	}
-	if err := requireAuditAbsentFields(mutation.record, "grouping_id", auditTopologyDeltaField, "path_effect_digest", "witness_change_digest"); err != nil {
-		return err
-	}
-	for _, f := range []string{auditPathEffectCountField, auditWitnessChangeCountField} {
-		if err := requireAuditUnsigned(mutation.record, f, 0); err != nil {
-			return err
-		}
-	}
-	bindings, err := auditRecordListField(mutation.record, "baselines")
-	if err != nil || len(bindings) != 0 {
-		return errors.New("photo edit cannot enroll an audit scope")
-	}
-	digest, err := auditDigestField(mutation.record, "attached_metadata_change_digest")
-	if err != nil {
-		return err
-	}
-	delta, ok := deltas[digest]
-	if !ok || usedDeltas[digest] {
-		return errors.New("photo edit lacks a unique delta")
-	}
-	if err := requireAuditUUID(delta.record, auditOperationIDField, operationID); err != nil {
-		return err
-	}
-	changes, err := auditRecordListField(delta.record, "changes")
-	if err != nil || len(changes) != 1 {
-		return errors.New("photo edit must have one attachment change")
-	}
-	change := changes[0]
 	if err := requireAuditText(change, "record_kind", "photo_authored"); err != nil {
 		return err
 	}
@@ -269,25 +235,8 @@ func (replay *auditedHistoryReplay) applyPhotoAuthored(vaultID string, mutation,
 			}
 		}
 		ordinal++
-		state := replay.states[nodeID]
-		rev, err := auditUnsignedField(state, "node_revision")
-		if err != nil {
+		if err := replay.validateAttachmentEventState(event, nodeID); err != nil {
 			return err
-		}
-		current, err := auditOptionalUUIDField(state, "current_version_id")
-		if err != nil {
-			return err
-		}
-		if err := requireAuditUnsigned(event, "prior_node_revision", rev); err != nil {
-			return err
-		}
-		if err := requireAuditUnsigned(event, "resulting_node_revision", rev+1); err != nil {
-			return err
-		}
-		for _, f := range []string{auditPriorCurrentVersionIDField, auditResultingCurrentVersionIDField} {
-			if err := requireAuditOptionalUUID(event, f, current); err != nil {
-				return err
-			}
 		}
 		if err := requireAuditAbsentFields(event, "target_node_id", "source_version_id", auditTopologyDeltaField, "baseline_digest"); err != nil {
 			return err

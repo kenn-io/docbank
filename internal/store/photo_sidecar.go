@@ -25,10 +25,8 @@ const photoSidecarCandidatesSQL = `SELECT target.file_id,target.asset_id,sidecar
  JOIN nodes n ON n.id=sidecar.node_id JOIN nodes source ON source.id=target.node_id
  JOIN content_versions v ON v.version_id=n.current_version_id
  JOIN source_metadata_generations g ON g.source_sha256=v.blob_hash AND g.contract_version=? AND g.extractor_fingerprint=?
- WHERE sidecar.role='sidecar' AND target.revision=1 AND sidecar.asset_id=target.asset_id AND n.trashed_at IS NULL AND source.trashed_at IS NULL AND EXISTS (SELECT 1 FROM json_each(CAST(g.canonical_json AS TEXT),'$.fields') field WHERE json_extract(field.value,'$.key')='image.xmp.packet_valid' AND json_extract(field.value,'$.value.boolean')=1)
- AND EXISTS (SELECT 1 FROM json_each(CAST(g.canonical_json AS TEXT),'$.fields') field WHERE
- (json_extract(field.value,'$.key') IN ('image.xmp.rating','image.xmp.rotation') AND json_extract(field.value,'$.value.integer')>0)
- OR (json_extract(field.value,'$.key') IN ('image.xmp.flag','image.xmp.label','image.xmp.caption','image.xmp.creator','image.xmp.copyright') AND json_extract(field.value,'$.value.string')<>''))
+ WHERE sidecar.role='sidecar' AND target.revision=1 AND sidecar.asset_id=target.asset_id AND n.trashed_at IS NULL AND source.trashed_at IS NULL
+ AND NOT EXISTS (SELECT 1 FROM photo_sidecar_considered c WHERE c.sidecar_file_id=sidecar.file_id AND c.target_file_id=target.file_id AND c.version_id=n.current_version_id AND c.extractor_fingerprint=g.extractor_fingerprint)
  AND n.id>? ORDER BY n.id LIMIT ?`
 
 func (s *Store) MissingPhotoSidecarsAfter(ctx context.Context, fingerprint, after string, limit int) ([]PhotoSidecarTarget, error) {
@@ -109,7 +107,8 @@ func (s *Store) InitializePhotoSidecar(ctx context.Context, target PhotoSidecarT
 			return err
 		}
 		if !valid || values == (PhotoAuthored{}) {
-			return nil
+			_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO photo_sidecar_considered(sidecar_file_id,target_file_id,version_id,extractor_fingerprint) VALUES(?,?,?,?)`, target.SidecarFileID, target.FileID, target.VersionID, target.ExtractorFingerprint)
+			return err
 		}
 		v := values
 		patch := PhotoAuthoredPatch{&v.Rating, &v.Flag, &v.Label, &v.Caption, &v.Creator, &v.Copyright, &v.Rotation}

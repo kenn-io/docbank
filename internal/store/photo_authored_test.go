@@ -631,8 +631,10 @@ func TestPhotoSidecarListingUsesGenerationKey(t *testing.T) {
 	}
 	require.NoError(t, rows.Err())
 	plan := strings.Join(details, "\n")
-	assert.Contains(t, plan, "SEARCH g USING INDEX")
+	assert.Contains(t, plan, "SEARCH g USING COVERING INDEX")
 	assert.Contains(t, plan, "source_sha256=? AND contract_version=? AND extractor_fingerprint=?")
+	assert.Contains(t, plan, "SEARCH c USING COVERING INDEX")
+	assert.NotContains(t, plan, "json_each")
 	assert.NotContains(t, plan, "photo_change_receipts")
 }
 
@@ -665,4 +667,64 @@ func TestPhotoSidecarSharedEvidence(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, targets)
 	require.NoError(t, s.ValidateMetadata(ctx))
+}
+
+func TestPhotoSidecarIdleScanSkipsJudgedGeneration(t *testing.T) {
+	t.Parallel()
+	for _, valid := range []bool{true, false} {
+		t.Run(fmt.Sprintf("valid=%t", valid), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			asset := authoredPair(t, s)
+			f := asset.Files[0]
+			sidecar, err := s.CreateFile(ctx, s.RootID(), "empty.xmp", fakeHash("c3"), 4, "application/rdf+xml")
+			require.NoError(t, err)
+			_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &f.ID)
+			require.NoError(t, err)
+			canonical := photoCanonical(t, document.SourceMetadataFieldV1{Key: "image.xmp.packet_valid", Namespace: "image.xmp", SourceField: "packet", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(valid)}})
+			_, err = s.PublishSourceMetadata(ctx, sidecar.BlobHash, fakeHash("ee"), canonical)
+			require.NoError(t, err)
+			targets, err := s.MissingPhotoSidecarsAfter(ctx, fakeHash("ee"), "", 10)
+			require.NoError(t, err)
+			require.Len(t, targets, 1)
+			receipt, err := s.InitializePhotoSidecar(ctx, targets[0])
+			require.NoError(t, err)
+			assert.Empty(t, receipt.ReceiptID)
+			targets, err = s.MissingPhotoSidecarsAfter(ctx, fakeHash("ee"), "", 10)
+			require.NoError(t, err)
+			assert.Empty(t, targets)
+			file, err := photoFileByIDQuery(ctx, s.db, f.ID)
+			require.NoError(t, err)
+			assert.Equal(t, int64(1), file.Revision)
+			_, err = s.PublishSourceMetadata(ctx, sidecar.BlobHash, fakeHash("ff"), canonical)
+			require.NoError(t, err)
+			targets, err = s.MissingPhotoSidecarsAfter(ctx, fakeHash("ff"), "", 10)
+			require.NoError(t, err)
+			require.Len(t, targets, 1)
+		})
+	}
+}
+
+func TestPhotoAuthoredExpressionBrowse(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := authoredPair(t, s)
+	raw := fileByRole(asset.Files, PhotoRoleRAW)
+	jpg := fileByRole(asset.Files, PhotoRoleImage)
+	_, err := s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5), Flag: new("pick")}}, {jpg.ID, 1, PhotoAuthoredPatch{Rating: new(3), Label: new("red")}}})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		text  string
+		count int
+	}{
+		{"rating:5", 1}, {"rating_min:4", 1}, {"rating_max:3", 1}, {"flag:pick", 1}, {"label:red", 1}, {"rating:4", 0}, {"rating:5 AND label:red", 0}, {"rating:3 AND label:red", 1},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			q := snapshotTestQuery(t, `{"syntax":"advanced"}`)
+			q.Text = tc.text
+			page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: q}, nil)
+			require.NoError(t, err)
+			assert.Len(t, page.Items, tc.count)
+		})
+	}
 }

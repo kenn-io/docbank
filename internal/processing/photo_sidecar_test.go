@@ -34,7 +34,9 @@ func TestReadPhotoSidecar(t *testing.T) {
 		{name: "rdf text", packet: photoSidecarHeader + `><xmp:Rating>4</xmp:Rating><dc:description><rdf:Alt><rdf:li xml:lang="fr">Bonjour</rdf:li><rdf:li xml:lang="x-default">River &amp; sky</rdf:li></rdf:Alt></dc:description><dc:creator><rdf:Seq><rdf:li>Creator A</rdf:li><rdf:li>Creator B</rdf:li></rdf:Seq></dc:creator><dc:rights><rdf:Alt><rdf:li>Copyright example</rdf:li></rdf:Alt></dc:rights>` + photoSidecarFooter, want: store.PhotoAuthored{Rating: 4, Caption: "River & sky", Creator: "Creator A", Copyright: "Copyright example"}},
 		{name: "custom label", packet: photoSidecarHeader + ` xmp:Rating="4" xmp:Label="Approved"><dc:description>Caption</dc:description>` + photoSidecarFooter, want: store.PhotoAuthored{Rating: 4, Caption: "Caption"}},
 		{name: "bad rating", packet: photoSidecarHeader + ` xmp:Rating="6">` + photoSidecarFooter, invalid: true},
-		{name: "bad rotation", packet: photoSidecarHeader + ` ts:Rotation="45">` + photoSidecarFooter, invalid: true},
+		{name: "bad rotation", packet: photoSidecarHeader + ` xmp:Rating="4" ts:Rotation="45"><dc:description>River</dc:description>` + photoSidecarFooter, want: store.PhotoAuthored{Rating: 4, Caption: "River"}},
+		{name: "malformed rotation", packet: photoSidecarHeader + ` xmp:Rating="4" ts:Rotation="bad">` + photoSidecarFooter, want: store.PhotoAuthored{Rating: 4}},
+		{name: "authored whitespace", packet: photoSidecarHeader + `><dc:description>` + "\n  River\n" + `</dc:description><dc:creator><rdf:Seq><rdf:li>  Creator  </rdf:li></rdf:Seq></dc:creator><dc:rights><rdf:Alt><rdf:li xml:lang="x-default"> Copyright </rdf:li></rdf:Alt></dc:rights>` + photoSidecarFooter, want: store.PhotoAuthored{Caption: "\n  River\n", Creator: "  Creator  ", Copyright: " Copyright "}},
 		{name: "bad pick", packet: photoSidecarHeader + ` ts:Pick="yes">` + photoSidecarFooter, invalid: true},
 		{name: "malformed suffix", packet: photoSidecarHeader + ` xmp:Rating="5">` + photoSidecarFooter + `<`, invalid: true},
 		{name: "two roots", packet: photoSidecarHeader + `>` + photoSidecarFooter + `<empty/>`, invalid: true},
@@ -161,12 +163,15 @@ func TestPhotoSidecarSourceEvidence(t *testing.T) {
 					}
 				}
 			} else {
-				assert.Empty(t, next)
+				require.Len(t, next, 1)
 				unchanged, nodeErr := restored.NodeByID(ctx, photo.ID)
 				require.NoError(t, nodeErr)
 				assert.Equal(t, photo, unchanged)
 				_, applyErr := restored.InitializePhotoSidecar(ctx, target)
 				require.NoError(t, applyErr)
+				next, err = restored.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
+				require.NoError(t, err)
+				assert.Empty(t, next)
 				receiptBytes := backup.String()
 				assert.NotContains(t, receiptBytes, "sidecar_result")
 				assert.NotContains(t, receiptBytes, "authored_sidecar")
@@ -177,6 +182,8 @@ func TestPhotoSidecarSourceEvidence(t *testing.T) {
 				require.NoError(t, encodingErr)
 				_, _, replaceErr := catalog.ReplaceContent(ctx, sidecar.ID, sidecar.Revision, write.Hash, write.Size, "application/rdf+xml", store.BlobPhysical{Encoding: encoding, StoredBytes: write.StoredSize, PackEligible: write.PackEligible, Created: write.Created})
 				require.NoError(t, replaceErr)
+				_, applyErr = catalog.InitializePhotoSidecar(ctx, target)
+				require.ErrorIs(t, applyErr, store.ErrStaleRevision)
 				_, extractErr := BackfillSourceMetadataTargets(ctx, catalog, blobs, t.TempDir(), []store.SourceMetadataTarget{{SourceSHA256: write.Hash, Size: write.Size}})
 				require.NoError(t, extractErr)
 				next, listErr := catalog.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
@@ -248,4 +255,30 @@ func TestPhotoSidecarImportInitialization(t *testing.T) {
 			assert.Equal(t, int64(1), file.Revision)
 		}
 	}
+}
+
+func TestPhotoSidecarPreservesAuthoredTextThroughExtraction(t *testing.T) {
+	t.Parallel()
+	packet := []byte(photoSidecarHeader + `><dc:description>` + "\n  River\n" + `</dc:description><dc:creator><rdf:Seq><rdf:li> Creator </rdf:li></rdf:Seq></dc:creator><dc:rights> Copyright </dc:rights>` + photoSidecarFooter)
+	catalog, blobs, photo, sidecar, _ := photoSidecarFixture(t, packet)
+	_, err := BackfillSourceMetadataTargets(t.Context(), catalog, blobs, t.TempDir(), []store.SourceMetadataTarget{{SourceSHA256: sidecar.BlobHash, Size: sidecar.Size}})
+	require.NoError(t, err)
+	targets, err := catalog.MissingPhotoSidecarsAfter(t.Context(), SourceMetadataExtractorFingerprint, "", 10)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	receipt, err := catalog.InitializePhotoSidecar(t.Context(), targets[0])
+	require.NoError(t, err)
+	require.Len(t, receipt.After, 1)
+	assert.Equal(t, "\n  River\n", receipt.After[0].Values.Caption)
+	assert.Equal(t, " Creator ", receipt.After[0].Values.Creator)
+	assert.Equal(t, " Copyright ", receipt.After[0].Values.Copyright)
+	asset, err := catalog.PhotoAssetForNode(t.Context(), photo.ID)
+	require.NoError(t, err)
+	for _, file := range asset.Files {
+		if file.ID == targets[0].FileID {
+			assert.Equal(t, "\n  River\n", file.Caption)
+			return
+		}
+	}
+	t.Fatal("initialized photo file is missing from the asset")
 }

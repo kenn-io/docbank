@@ -35,6 +35,7 @@ func browsePhotoPage(t *testing.T, s *Store, raw string) PhotoBrowsePage {
 func TestCompilePhotoPredicates(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ typed, expression string }{
+		{`{"rating_min":5}`, `rating:5`}, {`{"rating_min":4}`, `rating_min:4`}, {`{"rating_max":3}`, `rating_max:3`}, {`{"flags":["pick"]}`, `flag:pick`}, {`{"labels":["red"]}`, `label:red`},
 		{`{"kinds":["photo"]}`, `kind:photo`}, {`{"cameras":["Camera A"]}`, `camera:"Camera A"`}, {`{"lenses":["Lens B"]}`, `lens:"Lens B"`}, {`{"iso_min":0}`, `iso_min:0`}, {`{"iso_max":400}`, `iso_max:400`}, {`{"capture_after":"2024-01-01"}`, `capture_after:2024-01-01`}, {`{"capture_before":"2025-01-01"}`, `capture_before:2025-01-01`}, {`{"gps_bounds":{"south":"-1","west":"170","north":"1","east":"-170"}}`, `gps:"-1,170,1,-170"`}, {`{"asset_ids":["00000000-0000-4000-8000-000000000001"]}`, `asset:00000000-0000-4000-8000-000000000001`},
 	} {
 		typed, err := compileQuery(t.Context(), snapshotTestQuery(t, `{"filters":`+tc.typed+`}`), nil)
@@ -44,7 +45,7 @@ func TestCompilePhotoPredicates(t *testing.T) {
 		require.Equal(t, typed.predicate.args, expression.predicate.args)
 		require.Contains(t, typed.predicate.sql, "?")
 	}
-	for _, text := range []string{`camera:A*`, `kind:image`, `iso:1.0`, `capture_after:2023-02-29`, `gps:"0,0,91,0"`, `asset:bad`, `camera:foo NEAR/2 lens:bar`} {
+	for _, text := range []string{`rating:6`, `rating:-1`, `rating:1.0`, `rating:5*`, `flag:yes`, `label:orange`, `camera:A*`, `kind:image`, `iso:1.0`, `capture_after:2023-02-29`, `gps:"0,0,91,0"`, `asset:bad`, `camera:foo NEAR/2 lens:bar`} {
 		_, err := compileQuery(t.Context(), query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Text: text, Sort: query.Sort{Field: "name", Direction: "asc"}}, nil)
 		require.Error(t, err)
 	}

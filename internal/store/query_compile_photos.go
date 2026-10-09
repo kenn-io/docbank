@@ -30,7 +30,7 @@ func (c queryCompiler) compilePhotoVersionPredicate(predicate func(alias string)
 }
 
 func isPhotoScalarField(field string) bool {
-	return query.IsQualityField(field) || slices.Contains([]string{"kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field)
+	return query.IsQualityField(field) || slices.Contains([]string{"rating", "rating_min", "rating_max", "flag", "label", "kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field)
 }
 
 func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
@@ -55,6 +55,24 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		return c.compilePhotoQualityPredicate(field, value)
 	}
 	switch field {
+	case "rating", "rating_min", "rating_max":
+		n, err := query.ParseSizeOperand(value)
+		if err != nil || n > 5 {
+			return compiledQueryFragment{}, errors.New("rating must be 0 through 5")
+		}
+		operator := "="
+		if field == "rating_min" {
+			operator = ">="
+		}
+		if field == "rating_max" {
+			operator = "<="
+		}
+		return compilePhotoAssetPredicate("pf.role<>'sidecar' AND pf.rating"+operator+"?", n), nil
+	case "flag", "label":
+		if err := query.ValidateTextOperand(field, value); err != nil {
+			return compiledQueryFragment{}, err
+		}
+		return compilePhotoAssetPredicate("pf.role<>'sidecar' AND pf."+field+"=?", value), nil
 	case "set":
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err

@@ -161,7 +161,7 @@ resource links, is capped at 1 MiB.
 | `list_package_members` | Pages through a package's immutable document occurrences. |
 | `get_package_record` | Reads one immutable sender row by its package-scoped record key. |
 | `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
-| `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. Returns the selected display source, `total_files`, `file_offset`, and a page of complete file decisions. Pass `next_file_offset` as `file_offset` to continue. Pages are live; restart if the asset revision changes. |
+| `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. Returns the selected display source, `total_files`, `file_offset`, and a page of complete file decisions. Pass `next_file_offset` as `file_offset` to continue. Pages are live; restart if the asset revision or a member's file revision changes. |
 
 Starting the server with `--allow-photo-edits` adds these write tools:
 
