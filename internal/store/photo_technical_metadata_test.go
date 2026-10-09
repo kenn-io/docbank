@@ -584,10 +584,14 @@ func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
 
 	var trigger string
 	require.NoError(t, s.db.QueryRow(`SELECT sql FROM sqlite_schema WHERE name='photo_metadata_fts_delete'`).Scan(&trigger))
-	deletion := strings.Split(strings.Split(trigger, "BEGIN")[1], ";")[0]
+	_, deletion, found := strings.Cut(trigger, "BEGIN")
+	require.True(t, found)
+	deletion, _, found = strings.Cut(deletion, ";")
+	require.True(t, found)
 	deletion = strings.ReplaceAll(deletion, "old.generation_id", "?")
 	rows, err := s.db.Query(`EXPLAIN QUERY PLAN `+deletion, generation.GenerationID)
 	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
 	var plan []string
 	for rows.Next() {
 		var id, parent, unused int
@@ -596,7 +600,6 @@ func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
 		plan = append(plan, detail)
 	}
 	require.NoError(t, rows.Err())
-	require.NoError(t, rows.Close())
 	require.Regexp(t, `VIRTUAL TABLE INDEX .*:M[0-9]+`, strings.Join(plan, "\n"))
 	var identity string
 	require.NoError(t, s.db.QueryRow(`SELECT generation_id FROM photo_technical_metadata`).Scan(&identity))

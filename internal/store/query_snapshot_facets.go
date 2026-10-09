@@ -36,14 +36,7 @@ func normalizeFacetDimensions(values, dimensions []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(values))
 	result := make([]string, 0, len(values))
 	for _, value := range values {
-		known := false
-		for _, dimension := range dimensions {
-			if value == dimension {
-				known = true
-				break
-			}
-		}
-		if !known {
+		if !slices.Contains(dimensions, value) {
 			return nil, errors.New("unknown snapshot facet dimension")
 		}
 		if _, duplicate := seen[value]; duplicate {
