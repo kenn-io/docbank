@@ -130,6 +130,23 @@ it("clears all-results mode after removing every member and links the operated a
   expect(albums.noticeID).toBe(album.id);
 });
 
+it.each(["create network", "duplicate server", "create invalid response"])("guards an unconfirmed %s through reads without blocking existing albums", async mode => {
+  const fetcher = vi.fn();
+  if (mode === "create network") fetcher.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+  else fetcher.mockResolvedValueOnce(mode === "duplicate server" ? response({ detail: "Unavailable" }, 503) : new Response("invalid JSON"));
+  fetcher.mockResolvedValueOnce(response({ detail: "List unavailable" }, 503)).mockResolvedValueOnce(response([album]))
+    .mockResolvedValueOnce(response({ ...album, starred: true, revision: 2 })).mockResolvedValueOnce(response([album]));
+  vi.stubGlobal("fetch", fetcher);
+  const albums = new PhotoAlbums("scoped", vi.fn());
+  if (mode === "duplicate server") await albums.duplicate(album, " Draft "); else await albums.create(" Draft ");
+  expect(albums.unconfirmed).toEqual({ kind: mode === "duplicate server" ? "duplicate" : "create", name: "Draft", ...(mode === "duplicate server" ? { sourceID: album.id } : {}) });
+  expect(albums.error).toBe(""); expect(albums.loadError).toBe("List unavailable");
+  await albums.create("Changed draft"); await albums.duplicate(album, "Changed draft");
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await albums.load(); await albums.members(album, { asset_ids: ["photo-1"] }, selected(1));
+  expect(albums.unconfirmed?.name).toBe("Draft"); expect(fetcher).toHaveBeenCalledTimes(5);
+});
+
 it("keeps the original write rejection status through failed reads and clears it for later writes", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(response({ detail: "Name too long" }, 422))
     .mockResolvedValueOnce(response({ detail: "List unavailable" }, 503))
@@ -137,16 +154,19 @@ it("keeps the original write rejection status through failed reads and clears it
     .mockResolvedValueOnce(response([album]));
   vi.stubGlobal("fetch", fetcher);
   const albums = new PhotoAlbums("scoped", vi.fn());
-  await albums.update(album, { name: "x".repeat(257) });
+  await albums.create("x".repeat(257));
+  expect(albums.unconfirmed).toBeUndefined();
   expect(albums.errorStatus).toBe(422); expect(albums.loadError).toBe("List unavailable");
   await albums.update(album, { name: "Corrected name" });
   expect(albums.errorStatus).toBeUndefined(); expect(albums.error).toBe("Failed to fetch");
   albums.error = ""; albums.errorStatus = 422; albums.busy = true;
-  await albums.update(album, { name: "Corrected name" });
+  await albums.create("Blocked");
+  expect(albums.unconfirmed).toBeUndefined();
   expect(albums.errorStatus).toBeUndefined(); expect(fetcher).toHaveBeenCalledTimes(4);
   expect(albums.error).toBe("Another album change is still running. Try again.");
   albums.errorStatus = 422; albums.busy = false; albums.dispose();
-  await albums.update(album, { name: "Corrected name" });
+  await albums.duplicate(album, "Blocked");
+  expect(albums.unconfirmed).toBeUndefined();
   expect(albums.errorStatus).toBeUndefined(); expect(fetcher).toHaveBeenCalledTimes(4);
 });
 
@@ -196,6 +216,7 @@ it.each(["create", "duplicate", "delete"])("keeps acknowledged %s results after 
   vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response(created)).mockResolvedValueOnce(response({ detail: "List unavailable" }, 503)));
   const albums = new PhotoAlbums("scoped", vi.fn()); albums.targetID = album.id; albums.items = [{ ...album, included_count: 10, cover_known: true }];
   if (operation === "create") await albums.create("A"); else if (operation === "duplicate") await albums.duplicate(album, "A"); else expect(await albums.delete(album)).toMatchObject({ deleted_at: "2025-01-01" });
+  expect(albums.unconfirmed).toBeUndefined();
   expect(albums.error).toBe(""); expect(albums.loadError).toBe("List unavailable");
   if (operation === "delete") { expect(albums.items).toEqual([]); expect(albums.targetID).toBe(""); return; }
   expect(albums.items.map(item => item.name)).toEqual(["A", "Trip"]);

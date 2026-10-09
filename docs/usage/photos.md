@@ -109,7 +109,7 @@ web app, CLI, or HTTP API.
 
 In the web app, open Photos, then Albums. Cards and sidebar entries show starred albums first, with included photo counts. Cards also show covers. Open an album to rename, star, duplicate, or delete it, or sort its photos by Added, Captured, or Imported. Select one photo and choose Use as cover. Removing photos from an album or deleting the album keeps the photos in Library.
 
-Select photos in Library or an album, then choose Add to album in the selection dock. Type to find an album or create one. B adds to the last album chosen until you reload or the session locks; the dock and sidebar show that target. Without a target, B opens the picker. You can also drag a photo or selection onto a sidebar album.
+Select photos in Library or an album, then choose Add to album in the selection dock. Type to find an album or create one. B adds to the last album chosen until you reload or the session locks; the dock and sidebar show that target. Without a target, B opens the picker. You can also drag a photo or selection onto a sidebar album. If a create or duplicate response is lost, review Albums and choose Allow another album before submitting another creation; the first album may already exist.
 
 Select loaded photos selects only the pages already loaded. Select all N photos selects the complete live query, including unloaded pages. Add to album, B, and drag use that same scope. The server resolves the query when you add, so the refreshed album count can reflect imports made since browsing. Explicit selections over 1,000 photos use successive batches. A failed batch leaves unfinished photos selected and reports progress; a revision conflict keeps your choice visible for retry.
 

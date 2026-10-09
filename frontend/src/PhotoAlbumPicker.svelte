@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import { KbdBadge, Typeahead } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
   import { type PhotoAlbums } from "./photoAlbums.svelte.js";
@@ -13,6 +13,13 @@
   // Album names cannot contain NUL, so option keys cannot collide with valid names.
   const choiceKey = (id: string) => `\0${id}`;
 
+  async function restoreName(event: FocusEvent) {
+    const input = event.target, pending = albums.unconfirmed;
+    if (!(input instanceof HTMLInputElement) || input.value || pending?.kind !== "create") return;
+    await tick();
+    if (!alive || albums.unconfirmed !== pending || !input.isConnected || input.value) return;
+    input.value = pending.name; input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
   export function focus() { if (alive) element?.querySelector<HTMLButtonElement>("button")?.click(); }
   async function add(album: PhotoAlbum | undefined, scope: PhotoAlbumMembersRequest) {
     error = "";
@@ -28,15 +35,15 @@
     let album: PhotoAlbum | undefined = albums.items.find(item => choiceKey(item.id) === value);
     if (!album) {
       album = await albums.create(value);
-      if (!album) { if (alive) { error = albums.error; albums.error = ""; } return false; }
+      if (!album) { if (alive) { error = albums.unconfirmed ? "" : albums.error; albums.error = ""; } return false; }
     }
     albums.targetID = album.id;
     return add(album, scope);
   }
 </script>
 
-<div class="album-picker" bind:this={element}>
-  <Typeahead options={albums.items.map(album => ({ name: choiceKey(album.id), label: album.name }))} value={albums.targetID ? choiceKey(albums.targetID) : ""} fallbackLabel="Add to album" triggerPrefix={target ? "Add to album · " : ""} placeholder="Find or create an album" title="Add to album" allowCustom customLabel={'Create album "{query}"'} placement="top" loading={albums.loading || albums.busy} onselect={choose} />
+<div class="album-picker" bind:this={element} onfocusin={event => void restoreName(event)}>
+  <Typeahead options={albums.items.map(album => ({ name: choiceKey(album.id), label: album.name }))} value={albums.targetID ? choiceKey(albums.targetID) : ""} fallbackLabel="Add to album" triggerPrefix={target ? "Add to album · " : ""} placeholder="Find or create an album" title="Add to album" allowCustom={!albums.unconfirmed} customLabel={'Create album "{query}"'} placement="top" loading={albums.loading || albums.busy} onselect={choose} />
   {#if error}<span role="alert">{error}</span>{/if}
   {#if target}<span class="target-hint"><KbdBadge keys={['B']} /> adds to {target.name}</span>{/if}
 </div>

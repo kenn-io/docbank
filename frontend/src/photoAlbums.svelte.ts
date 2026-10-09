@@ -7,6 +7,8 @@ export const photoDragType = "application/x-docbank-photos";
 
 export type PhotoAlbumItem = api.PhotoAlbum & Partial<Pick<api.PhotoAlbumSummary, "member_count" | "included_count" | "effective_cover_asset_id" | "cover_generation_id">> & { cover_known?: boolean };
 
+type UnconfirmedAlbum = { kind: "create" | "duplicate"; name: string; sourceID?: string };
+
 export class PhotoAlbums {
   items = $state<PhotoAlbumItem[]>([]);
   loading = $state(false);
@@ -14,6 +16,7 @@ export class PhotoAlbums {
   busy = $state(false);
   error = $state("");
   errorStatus = $state<number>();
+  unconfirmed = $state<UnconfirmedAlbum>();
   loadError = $state("");
   notice = $state("");
   noticeID = $state("");
@@ -69,7 +72,7 @@ export class PhotoAlbums {
     return true;
   }
 
-  private async write(action: () => Promise<api.PhotoAlbum>, id?: string, empty = false, complete?: (result: api.PhotoAlbum | undefined) => Promise<void>) {
+  private async write(action: () => Promise<api.PhotoAlbum>, id?: string, empty = false, complete?: (result: api.PhotoAlbum | undefined) => Promise<void>, creation?: UnconfirmedAlbum) {
     if (this.controller.signal.aborted) { this.errorStatus = undefined; return; }
     if (this.rejectBusy()) return;
     ++this.read; this.loading = false;
@@ -78,7 +81,10 @@ export class PhotoAlbums {
     let failure: unknown;
     try {
       try { result = await action(); this.remember(result, empty); }
-      catch (cause) { failure = cause; this.error = this.failure(cause); this.errorStatus = cause instanceof APIError ? cause.status : undefined; }
+      catch (cause) {
+        failure = cause; this.error = this.failure(cause); this.errorStatus = cause instanceof APIError ? cause.status : undefined;
+        if (creation && !(cause instanceof APIError && cause.status >= 400 && cause.status < 500)) { this.unconfirmed = creation; this.error = ""; }
+      }
       const recovered = await this.list();
       if (recovered && failure instanceof APIError && id && (failure.code === "stale_revision" || failure.status === 404)) {
         const album = this.items.find(item => item.id === id);
@@ -91,7 +97,11 @@ export class PhotoAlbums {
     } finally { this.busy = false; }
   }
 
-  create(name: string) { return this.write(() => api.createPhotoAlbum({ name: name.trim() }, this.options()), undefined, true); }
+  create(name: string) {
+    if (this.unconfirmed) return Promise.resolve(undefined);
+    name = name.trim();
+    return this.write(() => api.createPhotoAlbum({ name }, this.options()), undefined, true, undefined, { kind: "create", name });
+  }
   update(album: api.PhotoAlbum, changes: api.UpdatePhotoAlbumRequest) {
     return this.write(() => api.updatePhotoAlbum(album.id, changes, { "If-Match": `"${album.revision}"` }, this.options()), album.id);
   }
@@ -99,7 +109,9 @@ export class PhotoAlbums {
     return this.write(() => { this.invalidate(album.id, false); return api.setPhotoAlbumCover(album.id, { asset_id: assetID }, { "If-Match": `"${album.revision}"` }, this.options()); }, album.id);
   }
   duplicate(album: api.PhotoAlbum, name: string) {
-    return this.write(() => api.duplicatePhotoAlbum(album.id, { name: name.trim() }, { "If-Match": `"${album.revision}"` }, this.options()), album.id);
+    if (this.unconfirmed) return Promise.resolve(undefined);
+    name = name.trim();
+    return this.write(() => api.duplicatePhotoAlbum(album.id, { name }, { "If-Match": `"${album.revision}"` }, this.options()), album.id, false, undefined, { kind: "duplicate", name, sourceID: album.id });
   }
   delete(album: api.PhotoAlbum) {
     return this.write(() => api.deletePhotoAlbum(album.id, { "If-Match": `"${album.revision}"` }, this.options()), album.id);

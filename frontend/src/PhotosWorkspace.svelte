@@ -9,6 +9,7 @@
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoGrid from "./PhotoGrid.svelte";
   import SelectionDock from "./SelectionDock.svelte";
+  import PhotoAlbumPending from "./PhotoAlbumPending.svelte";
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
   import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
 
@@ -70,13 +71,13 @@
     else { renameError = albums.error; renameStatus = albums.errorStatus; albums.error = ""; }
   }
   function beginRename() { renameError = ""; renameStatus = undefined; renameAlbum = album; name = album?.name ?? ""; renaming = true; }
-  function openModal(kind: "delete" | "duplicate") { modalError = ""; modalStatus = undefined; modalAlbum = album; modal = kind; duplicateName = `${album?.name ?? "Album"} copy`; }
+  function openModal(kind: "delete" | "duplicate") { modalError = ""; modalStatus = undefined; modalAlbum = album; modal = kind; duplicateName = albums?.unconfirmed?.kind === "duplicate" && albums.unconfirmed.sourceID === album?.id ? albums.unconfirmed.name : `${album?.name ?? "Album"} copy`; }
   async function confirm() {
-    if (!albums || !modal || !modalAlbum || albums.busy || reviewRequired(modal, modalError, modalStatus)) return;
+    if (!albums || !modal || !modalAlbum || albums.busy || modal === "duplicate" && !!albums.unconfirmed || reviewRequired(modal, modalError, modalStatus)) return;
     modalError = ""; modalStatus = undefined;
     const result = modal === "delete" ? await albums.delete(modalAlbum) : await albums.duplicate(modalAlbum, duplicateName);
     if (!alive || !modal) return;
-    if (!result) { modalError = albums.error; modalStatus = albums.errorStatus; albums.error = ""; }
+    if (!result) { modalError = modal === "duplicate" && albums.unconfirmed ? "" : albums.error; modalStatus = albums.errorStatus; albums.error = ""; }
     if (result) { const deleting = modal === "delete"; modal = undefined; onnavigate(deleting ? "/photos/albums" : `/photos/albums/${result.id}`); }
   }
   async function reviewAlbum() {
@@ -121,6 +122,7 @@
       {/if}<Button size="sm" disabled={photos.loading || albums?.busy} onclick={() => void refresh()}>Refresh previews</Button>
     </div>
   </div>
+  {#if albums && modal !== "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
   {#if albums?.error}<div class="photo-error" role="alert">{albums.error}</div>{/if}
   {#if albums?.notice}<div class="photo-notice" role="status">{albums.notice}{#if albums.noticeID}<a href={`/photos/albums/${albums.noticeID}`} onclick={event => { event.preventDefault(); onnavigate(`/photos/albums/${albums!.noticeID}`); }}>Open album</a>{/if}</div>{/if}
   {#if photos.error}
@@ -148,8 +150,9 @@
 {#if modal && modalAlbum && albums}
   <Modal title={modal === "delete" ? "Delete album" : "Duplicate album"} onclose={() => { if (!albums.busy) modal = undefined; }}>
     {#if modal === "delete"}<p>Delete "{modalAlbum.name}"? Its {modalAlbum.included_count === undefined ? "" : `${modalAlbum.included_count.toLocaleString()} `}photos stay in your library.</p>{:else}{@render sourceSummary(modalAlbum)}<TextInput ariaLabel="Copy name" bind:value={duplicateName} />{/if}
+    {#if modal === "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
     {#if modalError}<p role="alert">{modalError}</p>{/if}
-    <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button>{#if reviewRequired(modal, modalError, modalStatus)}<Button disabled={albums.busy || albums.loading} onclick={() => void reviewAlbum()}>Review current album</Button>{/if}<Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || reviewRequired(modal, modalError, modalStatus) || modal === "duplicate" && !duplicateName.trim()} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
+    <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button>{#if reviewRequired(modal, modalError, modalStatus)}<Button disabled={albums.busy || albums.loading} onclick={() => void reviewAlbum()}>Review current album</Button>{/if}<Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || modal === "duplicate" && !!albums.unconfirmed || reviewRequired(modal, modalError, modalStatus) || modal === "duplicate" && !duplicateName.trim()} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
   </Modal>
 {/if}
 

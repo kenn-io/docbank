@@ -68,10 +68,11 @@ it.each(["picker add", "picker create", "index create", "delete", "duplicate"] a
   if (operation === "index create") render(PhotosWorkspace, { photos, albums, cache });
   else render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn() });
   finish(new Response(JSON.stringify({ detail: "Album change unavailable" }), { status: 503 }));
-  await screen.findByText("Album change unavailable");
+  const uncertain = operation === "picker create" || operation === "index create" || operation === "duplicate";
+  await screen.findByText(uncertain ? `An album named "${operation === "duplicate" ? "Trip copy" : "Summer"}" may already exist. Another attempt can create an extra album.` : "Album change unavailable");
   await waitFor(() => expect(albums.busy).toBe(false));
   expect(screen.getAllByRole("alert")).toHaveLength(1);
-  expect(albums.error).toBe("Album change unavailable");
+  expect(albums.error).toBe(uncertain ? "" : "Album change unavailable");
   expect(photos.selection.selectedIDs.has("photo-1")).toBe(true);
 });
 
@@ -103,11 +104,65 @@ it.each(["index create", "delete", "duplicate"] as const)("keeps the %s dialog o
   await fireEvent.keyDown(window, { key: "Escape" });
   expect(screen.getByRole("dialog")).toBeTruthy();
   finish(new Response(JSON.stringify({ detail: "Album change unavailable" }), { status: 503 }));
-  await screen.findByText("Album change unavailable");
+  await screen.findByText(operation === "delete" ? "Album change unavailable" : `An album named "${operation === "duplicate" ? "Trip copy" : "Summer"}" may already exist. Another attempt can create an extra album.`);
   await waitFor(() => expect(albums.busy).toBe(false));
   expect(screen.getAllByRole("alert")).toHaveLength(1);
   expect(albums.error).toBe("");
   expect(onnavigate).not.toHaveBeenCalled();
+});
+
+it.each(["index create", "picker create", "duplicate"] as const)("acknowledges unconfirmed %s without replay before a separate confirmation", async operation => {
+  const { photos, albums, cache, view } = setup(operation === "duplicate");
+  const committed = { ...album, id: "committed", name: operation === "duplicate" ? "Trip copy" : "Summer" };
+  const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch"))
+    .mockResolvedValueOnce(new Response(JSON.stringify([album, committed])))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "List unavailable" }), { status: 503 }));
+  vi.stubGlobal("fetch", fetcher);
+  let current = view;
+  if (operation === "index create") { view.unmount(); current = render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn() }); }
+  const open = async () => {
+    if (operation === "index create") await fireEvent.click(screen.getByRole("button", { name: "New album" }));
+    else if (operation === "duplicate") { await fireEvent.click(screen.getByRole("button", { name: "Album actions" })); await fireEvent.click(await screen.findByRole("menuitem", { name: "Duplicate…" })); }
+    else await fireEvent.click(await screen.findByRole("button", { name: /Add to album/ }));
+  };
+  if (operation === "picker create") photos.selectLoaded();
+  await open();
+  const inputName = operation === "index create" ? "Album name" : operation === "duplicate" ? "Copy name" : "Find or create an album";
+  const input = screen.getByRole(operation === "picker create" ? "combobox" : "textbox", { name: inputName });
+  await fireEvent.input(input, { target: { value: committed.name } });
+  if (operation === "picker create") await fireEvent.mouseDown(await screen.findByRole("option", { name: `Create album "${committed.name}"` }));
+  else await fireEvent.click(screen.getByRole("button", { name: operation === "index create" ? "Create album" : "Duplicate album" }));
+  await screen.findByText(`An album named "${committed.name}" may already exist. Another attempt can create an extra album.`);
+  await waitFor(() => expect(albums.busy).toBe(false));
+  await fireEvent.input(input, { target: { value: "Edited draft" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh albums" }));
+  await waitFor(() => expect(albums.loadError).toBe("List unavailable"));
+  expect(fetcher.mock.calls.filter(([, init]) => init.method !== "GET")).toHaveLength(1);
+  expect((input as HTMLInputElement).value).toBe("Edited draft");
+  if (operation !== "picker create") await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  else await fireEvent.keyDown(input, { key: "Escape" });
+  await open();
+  await waitFor(() => expect((screen.getByRole(operation === "picker create" ? "combobox" : "textbox", { name: inputName }) as HTMLInputElement).value).toBe(committed.name));
+  if (operation !== "picker create") await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  else await fireEvent.keyDown(screen.getByRole("combobox", { name: inputName }), { key: "Escape" });
+  current.unmount(); render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn() });
+  expect(screen.getByText(`An album named "${committed.name}" may already exist. Another attempt can create an extra album.`)).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Allow another album" }));
+  expect(albums.unconfirmed).toBeUndefined(); expect(fetcher).toHaveBeenCalledTimes(3);
+  cleanup();
+  if (operation === "index create") render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn() });
+  else render(PhotosWorkspace, { photos, albums, cache, albumID: operation === "duplicate" ? album.id : "", onnavigate: vi.fn() });
+  await open();
+  const retryInput = screen.getByRole(operation === "picker create" ? "combobox" : "textbox", { name: inputName });
+  await fireEvent.input(retryInput, { target: { value: committed.name } });
+  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ ...committed, id: "second" }))).mockResolvedValueOnce(new Response(JSON.stringify([album, committed])));
+  if (operation === "picker create") {
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ ...committed, id: "second", revision: 2 }))).mockResolvedValueOnce(new Response(JSON.stringify([album, committed])));
+    await fireEvent.mouseDown(await screen.findByRole("option", { name: `Create album "${committed.name}"` }));
+  } else await fireEvent.click(screen.getByRole("button", { name: operation === "index create" ? "Create album" : "Duplicate album" }));
+  await waitFor(() => expect(fetcher.mock.calls.filter(([, init]) => init.method !== "GET")).toHaveLength(operation === "picker create" ? 3 : 2));
+  if (operation === "duplicate") expect(fetcher.mock.calls[3][1].headers.get("If-Match")).toBe('"1"');
+  expect(photos.selection.selectedIDs.size).toBe(operation === "picker create" ? 2 : 0);
 });
 
 it("B opens the picker without a target, ignores typing, then adds to the chosen target", async () => {
