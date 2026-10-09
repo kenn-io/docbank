@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-09
 title: Document processing
 description: Preview, consent to, and run document processing. The original version is never changed.
 ---
@@ -180,8 +180,8 @@ version without starting processing:
 
 ```bash
 docbank stat /inbox/notes.txt --json
-docbank processing coverage <version-id> --profile <name> --json
-docbank rendition window /inbox/notes.txt --version <version-id> --profile <name>
+docbank processing coverage <version-uuid> --profile <name> --json
+docbank rendition window /inbox/notes.txt --version <version-uuid> --profile <name>
 ```
 
 Both commands require a profile listed by `docbank processing profiles --json`.
@@ -214,7 +214,7 @@ The human result prints a continuation command. Follow it to keep reading
 the same attachment:
 
 ```bash
-docbank rendition window id:<node-id> --version <version-id> --profile <name> \
+docbank rendition window id:<node-id> --version <version-uuid> --profile <name> \
   --attachment <attachment-id> --offset <next-offset> --max-chars 8000
 ```
 

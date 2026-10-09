@@ -19,12 +19,15 @@ type processingCoverageOutput struct {
 }
 
 func newProcessingCoverageCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "coverage <version-id>",
-		Short: "Inspect processing coverage for one exact version", Args: cobra.ExactArgs(1)}
+	cmd := &cobra.Command{
+		Example: `  docbank processing coverage <version-uuid> --profile <profile>`,
+		Use:     "coverage <version-uuid>",
+		Short:   "Inspect processing coverage for one exact version",
+		Args:    cobra.ExactArgs(1)}
 	var profile string
 	var asJSON bool
-	cmd.Flags().StringVar(&profile, "profile", "", "Executable processing profile (required)")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "Print coverage counters as JSON")
+	cmd.Flags().StringVar(&profile, "profile", "", "executable processing profile (required)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON to stdout")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := validateInspectionSelection(args[0], profile); err != nil {
 			return err

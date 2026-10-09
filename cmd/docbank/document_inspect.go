@@ -15,7 +15,7 @@ var inspectionProfilePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 func validateInspectionSelection(version, profile string) error {
 	if !daemonconn.IsCanonicalUUIDv4(version) {
-		return usageError(errors.New("version must be a canonical lowercase UUIDv4"))
+		return usageError(errors.New("version must be a canonical lowercase UUIDv4; use current_version_id from \"docbank stat <path-or-id> --json\""))
 	}
 	if len(profile) > 128 || !inspectionProfilePattern.MatchString(profile) {
 		return usageError(errors.New("--profile must match [a-z][a-z0-9_-]* (1–128 characters)"))

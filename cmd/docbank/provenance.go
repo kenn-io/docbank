@@ -22,9 +22,11 @@ var (
 )
 
 var provenanceCmd = &cobra.Command{
-	Use:   "provenance <path-or-id>",
-	Short: "Show where a document came from",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank provenance id:12 --json`,
+	GroupID: groupDocuments,
+	Use:     "provenance <path-or-id>",
+	Short:   "Show where a document came from",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if provenanceLimit < 1 || provenanceLimit > store.MaxProvenancePageSize {
 			return usageError(fmt.Errorf(
@@ -118,6 +120,6 @@ func init() {
 	provenanceCmd.Flags().IntVar(&provenanceOffset, "offset", 0,
 		"number of provenance records to skip")
 	provenanceCmd.Flags().BoolVar(&provenanceJSON, "json", false,
-		"emit machine-readable JSON")
+		"print JSON to stdout")
 	rootCmd.AddCommand(provenanceCmd)
 }

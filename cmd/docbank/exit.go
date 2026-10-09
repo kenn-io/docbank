@@ -2,6 +2,10 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/spf13/cobra"
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
@@ -82,4 +86,53 @@ func commandExitCode(err error, started bool) int {
 		return exitUsage
 	}
 	return exitGeneral
+}
+
+// Hints belong to the CLI process boundary, not the daemon's problem contract.
+func commandErrorHint(cmd *cobra.Command, err error, code int, started bool) string {
+	if err == nil || strings.Contains(err.Error(), "Did you mean") {
+		return ""
+	}
+	switch code {
+	case exitUsage:
+		if started {
+			return ""
+		}
+		if cmd == nil || cmd == rootCmd {
+			return `hint: run "docbank --help"`
+		}
+		usage := cmd.UseLine()
+		if len(usage) <= 120 && !strings.ContainsAny(usage, "\n\r") {
+			return "hint: usage: " + usage
+		}
+		return fmt.Sprintf("hint: run %q", cmd.CommandPath()+" --help")
+	case exitNotFound:
+		message := err.Error()
+		if strings.Contains(message, `": node is trashed:`) {
+			return `hint: list restorable nodes with "docbank trash list"`
+		}
+		if strings.HasPrefix(message, `resolving tag "`) {
+			return `hint: list tags with "docbank tag list"`
+		}
+		if strings.HasPrefix(message, `resolving "id:`) {
+			return ""
+		}
+		if strings.HasPrefix(message, `resolving "`) {
+			return `hint: list paths with "docbank tree" or find by name with "docbank search <name>"`
+		}
+		return ""
+	case exitBusy:
+		switch {
+		case errors.Is(err, backup.ErrRepoLocked):
+			return `hint: wait for the backup repository owner; use --force-unlock only when its owner is known to be gone`
+		case errors.Is(err, packstore.ErrPackRetirementDeferred):
+			return ""
+		case errors.Is(err, home.ErrVaultLocked), errors.Is(err, daemonconn.ErrMaintenanceBusy):
+			return `hint: wait and retry; "docbank jobs" shows active work`
+		default:
+			return ""
+		}
+	default:
+		return ""
+	}
 }

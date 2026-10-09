@@ -28,18 +28,28 @@ var (
 )
 
 var processingCmd = &cobra.Command{
-	Use:   "processing",
-	Short: "Preview and run document processing",
-	Args:  cobra.NoArgs,
+	Long: `Builds derived text (renditions) and embeddings for one document version
+using a named profile. Profiles come from $DOCBANK_HOME/config.toml; the
+default daemon offers only supplied-captions and supplied-transcript, so
+reading PDF/Office text needs a configured profile first. Providers may be
+hosted: plan shows what leaves the machine, and build needs --consent.
+Typical flow: processing profiles -> processing plan <path-or-id> --profile P
+-> processing build <path-or-id> --profile P --plan-fingerprint F --consent
+-> rendition window <path-or-id> --version V --profile P.`,
+	GroupID: groupSearch,
+	Use:     "processing",
+	Short:   "Preview and run document processing",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
 	},
 }
 
 var processingProfilesCmd = &cobra.Command{
-	Use:   "profiles",
-	Short: "List processing profiles this daemon can execute",
-	Args:  cobra.NoArgs,
+	Example: `  docbank processing profiles --json`,
+	Use:     "profiles",
+	Short:   "List processing profiles this daemon can execute",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -50,12 +60,13 @@ var processingProfilesCmd = &cobra.Command{
 }
 
 var processingPlanCmd = &cobra.Command{
-	Use:   "plan <path-or-id>",
-	Short: "Preview provider disclosure for one exact document version",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank processing plan id:12 --profile <profile> --json`,
+	Use:     "plan <path-or-id>",
+	Short:   "Preview provider disclosure for one exact document version",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if processingPlanProfile == "" {
-			return usageError(errors.New("--profile is required"))
+			return usageError(errors.New("--profile is required; list profiles with \"docbank processing profiles\""))
 		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -66,12 +77,13 @@ var processingPlanCmd = &cobra.Command{
 }
 
 var processingBuildCmd = &cobra.Command{
-	Use:   "build <path-or-id>",
-	Short: "Run one exact reviewed processing plan",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank processing build id:12 --profile <profile> --plan-fingerprint <sha256-from-plan> --consent`,
+	Use:     "build <path-or-id>",
+	Short:   "Run one exact reviewed processing plan",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if processingBuildProfile == "" {
-			return usageError(errors.New("--profile is required"))
+			return usageError(errors.New("--profile is required; list profiles with \"docbank processing profiles\""))
 		}
 		if err := validateProcessingBuild(processingBuildFingerprint, processingBuildConsent); err != nil {
 			return err
@@ -89,12 +101,13 @@ var processingBuildCmd = &cobra.Command{
 }
 
 var processingStatusCmd = &cobra.Command{
-	Use:   "status <job-id>",
-	Short: "Show aggregate processing status",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank processing status <job-id> --json`,
+	Use:     "status <job-id>",
+	Short:   "Show one processing job's status (ID from processing build)",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !canonicalSHA256(args[0]) {
-			return usageError(errors.New("job ID must be lowercase SHA-256"))
+			return usageError(errors.New("job ID must be lowercase SHA-256; the job ID is printed by \"docbank processing build\""))
 		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -338,16 +351,16 @@ func canonicalSHA256(value string) bool {
 
 func init() {
 	processingCmd.AddCommand(newProcessingCoverageCommand())
-	processingProfilesCmd.Flags().BoolVar(&processingProfilesJSON, "json", false, "emit machine-readable JSON")
+	processingProfilesCmd.Flags().BoolVar(&processingProfilesJSON, "json", false, "print JSON to stdout")
 	processingPlanCmd.Flags().StringVar(&processingPlanProfile, "profile", "", "named executable processing profile")
-	processingPlanCmd.Flags().BoolVar(&processingPlanJSON, "json", false, "emit machine-readable JSON")
+	processingPlanCmd.Flags().BoolVar(&processingPlanJSON, "json", false, "print JSON to stdout")
 	processingBuildCmd.Flags().StringVar(&processingBuildProfile, "profile", "", "named executable processing profile")
 	processingBuildCmd.Flags().StringVar(&processingBuildFingerprint, "plan-fingerprint", "", "exact reviewed plan fingerprint")
 	processingBuildCmd.Flags().BoolVar(&processingBuildConsent, "consent", false, "consent to the exact reviewed provider flow")
-	processingBuildCmd.Flags().BoolVar(&processingBuildJSON, "json", false, "emit machine-readable JSON")
+	processingBuildCmd.Flags().BoolVar(&processingBuildJSON, "json", false, "print JSON to stdout")
 	processingBuildCmd.Flags().BoolVar(&processingBuildNDJSON, "ndjson", false,
 		"emit one job record followed by one terminal status record")
-	processingStatusCmd.Flags().BoolVar(&processingStatusJSON, "json", false, "emit machine-readable JSON")
+	processingStatusCmd.Flags().BoolVar(&processingStatusJSON, "json", false, "print JSON to stdout")
 	processingCmd.AddCommand(processingProfilesCmd, processingPlanCmd, processingBuildCmd, processingStatusCmd)
 	rootCmd.AddCommand(processingCmd)
 }

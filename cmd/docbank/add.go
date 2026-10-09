@@ -28,9 +28,20 @@ var (
 )
 
 var addCmd = &cobra.Command{
-	Use:   "add <path>...",
-	Short: "Import files or directory trees into the vault",
-	Args:  cobra.MinimumNArgs(1),
+	Example: `  docbank add ./scans --dest /cases/acme
+  docbank add ./mail --include '*.eml' --exclude drafts --preflight
+  docbank add report.pdf --dest /cases/acme --replace --json`,
+	Long: `Copy local files or folders into the vault under --dest (default /inbox).
+Missing destination directories are created. A name collision adds a suffixed
+sibling unless --replace adds a new version of the existing file instead.
+Text search covers text/*, JSON and email bodies once indexed (seconds); other
+formats are stored and verified but need "docbank processing" for text.
+Output: progress on stderr; --json prints {ingest_id, added, skipped, excluded, failed}.
+Exit 1 if any file failed (each failure is listed).`,
+	GroupID: groupDocuments,
+	Use:     "add <path>...",
+	Short:   "Import files or directory trees into the vault",
+	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		abs := make([]string, len(args))
 		for i, a := range args {
@@ -125,7 +136,7 @@ func init() {
 	addCmd.Flags().BoolVar(&addPreflight, "preflight", false,
 		"inventory sources without opening content or changing the vault")
 	addCmd.Flags().BoolVar(&addJSON, "json", false,
-		"machine-readable terminal report (progress suppressed)")
+		"print JSON to stdout (progress suppressed)")
 	addCmd.Flags().StringVar(&addProgress, "progress", "auto",
 		"progress output mode: auto, bar, or plain (suppressed by --json)")
 	rootCmd.AddCommand(addCmd)

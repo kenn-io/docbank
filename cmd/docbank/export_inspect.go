@@ -12,8 +12,11 @@ import (
 )
 
 func newExportShowPlanCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "show-plan <plan-id>", Short: "Inspect a retained export plan",
-		Args: cobra.ExactArgs(1)}
+	cmd := &cobra.Command{
+		Example: `  docbank export show-plan <plan-id> --json`,
+		Use:     "show-plan <plan-id>",
+		Short:   "Inspect a retained export plan",
+		Args:    cobra.ExactArgs(1)}
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := validateExportID("plan ID", args[0]); err != nil {
 			return err
@@ -37,12 +40,14 @@ func newExportShowPlanCommand() *cobra.Command {
 
 func newExportProblemsCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use: "problems <plan-id>", Short: "Inspect one page of unavailable export outputs",
-		Args: cobra.ExactArgs(1),
+		Example: `  docbank export problems <plan-id> --json`,
+		Use:     "problems <plan-id>",
+		Short:   "Inspect one page of unavailable export outputs",
+		Args:    cobra.ExactArgs(1),
 	}
 	var after int64
 	cmd.Flags().Int64Var(&after, "after", 0,
-		fmt.Sprintf("Number of problems to skip (0–%d)", bundle.MaxOutputProblems))
+		fmt.Sprintf("number of problems to skip (0–%d)", bundle.MaxOutputProblems))
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := validateExportID("plan ID", args[0]); err != nil {
 			return err

@@ -24,16 +24,22 @@ type renditionWindowOptions struct {
 }
 
 func newRenditionWindowCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "window <path-or-id>",
-		Short: "Read a bounded window of retained text", Args: cobra.ExactArgs(1)}
+	cmd := &cobra.Command{
+		Example: `  docbank stat id:12 # version: <version-uuid>
+  docbank rendition window id:12 --version <version-uuid> --profile <profile>`,
+		Long: `--version is the current version UUID (docbank stat); --profile names the
+profile that built it. Prints a continuation command when more text remains.`,
+		Use:   "window <path-or-id>",
+		Short: "Read a bounded slice of a document's derived text",
+		Args:  cobra.ExactArgs(1)}
 	var options renditionWindowOptions
 	var version string
-	cmd.Flags().StringVar(&version, "version", "", "Exact content-version UUID (required)")
-	cmd.Flags().StringVar(&options.profile, "profile", "", "Executable processing profile (required)")
-	cmd.Flags().StringVar(&options.attachment, "attachment", "", "Pin an active rendition attachment")
-	cmd.Flags().IntVar(&options.offset, "offset", 0, "Unicode character offset (0–2147483647)")
-	cmd.Flags().IntVar(&options.maxChars, "max-chars", 8000, "Maximum characters to read (1–16000)")
-	cmd.Flags().BoolVar(&options.asJSON, "json", false, "Print text and rendition identity as JSON")
+	cmd.Flags().StringVar(&version, "version", "", "exact content-version UUID (required)")
+	cmd.Flags().StringVar(&options.profile, "profile", "", "executable processing profile (required)")
+	cmd.Flags().StringVar(&options.attachment, "attachment", "", "pin an active rendition attachment")
+	cmd.Flags().IntVar(&options.offset, "offset", 0, "unicode character offset (0–2147483647)")
+	cmd.Flags().IntVar(&options.maxChars, "max-chars", 8000, "maximum characters to read (1–16000)")
+	cmd.Flags().BoolVar(&options.asJSON, "json", false, "print JSON to stdout")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if err := validateInspectionSelection(version, options.profile); err != nil {
 			return err

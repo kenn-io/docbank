@@ -49,8 +49,24 @@ type documentSearchCLIOptions struct {
 }
 
 var searchCmd = &cobra.Command{
-	Use:   "search [<query>...]",
-	Short: "Search document names and extracted text",
+	Example: `  docbank search invoice 2026
+  docbank search merger plan --under /cases/acme --json
+  docbank search --tag urgent
+  docbank search report --mime-type application/pdf --modified-since 2026-01-01T00:00:00Z`,
+	Long: `Each word matches a word prefix; all words must match. Name hits rank before
+content hits. Only current versions of live nodes are searched.
+Text content is indexed for text/* (txt, md, csv), JSON/JSONL and email
+bodies. PDFs, images and Office files match by name only until a processing
+profile builds a rendition; then use --mode with --profile.
+Output: table of SELECTOR, MATCH (name|content|filter), PATH; --json prints
+{hits:[{node,path,match}], limit, truncated}.
+--mode (lexical|semantic|hybrid|auto) searches processing renditions and
+requires --profile (see "docbank processing profiles") and one or more
+--source-version UUIDs; it cannot be combined with --tag/--under/--mime-type/
+--modified-*.`,
+	GroupID: groupSearch,
+	Use:     "search [<query>...]",
+	Short:   "Find files and folders by name, text, tag, type, folder, or date",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("similar-to") {
 			if len(args) != 0 {
@@ -329,7 +345,7 @@ func validateDocumentSearchOptions(query string, options documentSearchCLIOption
 		return usageError(errors.New("--mode must be lexical, semantic, hybrid, or auto"))
 	}
 	if options.Profile == "" {
-		return usageError(errors.New("--profile is required for processing search"))
+		return usageError(errors.New("--profile is required for processing search; list profiles with \"docbank processing profiles\""))
 	}
 	if options.Limit < 1 || options.Limit > 100 {
 		return usageError(errors.New("--limit must be between 1 and 100 for processing search"))
@@ -338,7 +354,7 @@ func validateDocumentSearchOptions(query string, options documentSearchCLIOption
 		return usageError(errors.New("search query must not be empty"))
 	}
 	if len(options.ContentVersionIDs) == 0 {
-		return usageError(errors.New("at least one --source-version is required"))
+		return usageError(errors.New("at least one --source-version is required; use current_version_id from \"docbank stat <path-or-id> --json\""))
 	}
 	if len(options.ContentVersionIDs) > 4096 {
 		return usageError(errors.New("at most 4096 --source-version values are allowed"))
@@ -472,6 +488,6 @@ func init() {
 		"show bounded retrieval stages without raw similarities or vectors")
 	searchCmd.Flags().BoolVar(&searchRerank, "rerank", false,
 		"rerank the source-fenced processing search results")
-	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "emit machine-readable JSON")
+	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "print JSON to stdout")
 	rootCmd.AddCommand(searchCmd)
 }

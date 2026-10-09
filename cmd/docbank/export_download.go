@@ -12,10 +12,11 @@ import (
 )
 
 var exportDownloadCmd = &cobra.Command{
-	Use:   "download <job-id> <local-file>",
-	Short: "Verify and save a completed export",
-	Args:  cobra.ExactArgs(2),
-	RunE:  downloadNativeExport,
+	Example: `  docbank export download <job-id> ./out.zip`,
+	Use:     "download <job-id> <local-file>",
+	Short:   "Verify and save a completed export",
+	Args:    cobra.ExactArgs(2),
+	RunE:    downloadNativeExport,
 }
 
 func downloadNativeExport(cmd *cobra.Command, args []string) (retErr error) {

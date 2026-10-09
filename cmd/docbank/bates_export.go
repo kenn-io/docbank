@@ -13,7 +13,12 @@ import (
 )
 
 func newBatesExportCommand() *cobra.Command {
-	command := &cobra.Command{Use: "export", Short: "Run and inspect verified Bates exports"}
+	command := &cobra.Command{
+		Long: `run publishes PDFs for an allocation from bates reserve and a stamp recipe
+from bates plan --recipe-out. status and history show export IDs; download
+saves a hash-checked export to disk.`,
+		Use:   "export",
+		Short: "Run and inspect verified Bates exports"}
 	command.AddCommand(newBatesExportRunCommand(), newBatesExportStatusCommand(),
 		newBatesExportHistoryCommand(), newBatesExportDownloadCommand())
 	return command
@@ -22,7 +27,11 @@ func newBatesExportCommand() *cobra.Command {
 func newBatesExportRunCommand() *cobra.Command {
 	var recipePath string
 	var asJSON bool
-	command := &cobra.Command{Use: "run <allocation-id>", Short: "Apply a Bates stamp and publish a verified PDF", Args: cobra.ExactArgs(1),
+	command := &cobra.Command{
+		Example: `  docbank bates export run <allocation-id> --recipe r.json`,
+		Use:     "run <allocation-id>",
+		Short:   "Apply a Bates stamp and publish a verified PDF",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if recipePath == "" {
 				return usageError(errors.New("--recipe is required"))
@@ -55,13 +64,17 @@ func newBatesExportRunCommand() *cobra.Command {
 			return nil
 		}}
 	command.Flags().StringVar(&recipePath, "recipe", "", "path to the canonical Bates stamp recipe JSON")
-	command.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON")
+	command.Flags().BoolVar(&asJSON, "json", false, "print JSON to stdout")
 	return command
 }
 
 func newBatesExportStatusCommand() *cobra.Command {
 	var asJSON bool
-	command := &cobra.Command{Use: "status <allocation-id>", Short: "Read one verified Bates export", Args: cobra.ExactArgs(1),
+	command := &cobra.Command{
+		Example: `  docbank bates export status <allocation-id> --json`,
+		Use:     "status <allocation-id>",
+		Short:   "Read one verified Bates export",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			connection, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
@@ -81,7 +94,7 @@ func newBatesExportStatusCommand() *cobra.Command {
 			}
 			return nil
 		}}
-	command.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON")
+	command.Flags().BoolVar(&asJSON, "json", false, "print JSON to stdout")
 	return command
 }
 
@@ -89,7 +102,11 @@ func newBatesExportHistoryCommand() *cobra.Command {
 	var after string
 	var limit int
 	var asJSON bool
-	command := &cobra.Command{Use: "history", Short: "List verified Bates export history", Args: cobra.NoArgs,
+	command := &cobra.Command{
+		Example: `  docbank bates export history --json`,
+		Use:     "history",
+		Short:   "List verified Bates export history",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if limit < 1 || limit > 250 {
 				return usageError(errors.New("--limit must be between 1 and 250"))
@@ -123,13 +140,17 @@ func newBatesExportHistoryCommand() *cobra.Command {
 		}}
 	command.Flags().StringVar(&after, "after", "", "continue after an artifact ID")
 	command.Flags().IntVar(&limit, "limit", 100, "maximum exports to list (1-250)")
-	command.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON")
+	command.Flags().BoolVar(&asJSON, "json", false, "print JSON to stdout")
 	return command
 }
 
 func newBatesExportDownloadCommand() *cobra.Command {
 	var overwrite bool
-	command := &cobra.Command{Use: "download <allocation-id> <local-file>", Short: "Download a hash-checked Bates export", Args: cobra.ExactArgs(2),
+	command := &cobra.Command{
+		Example: `  docbank bates export download <allocation-id> ./stamped.pdf`,
+		Use:     "download <allocation-id> <local-file>",
+		Short:   "Download a hash-checked Bates export",
+		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			destination, err := prepareGetDestination(args[1], overwrite)
 			if err != nil {

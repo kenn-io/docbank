@@ -16,9 +16,14 @@ import (
 var mkdirJSON bool
 
 var mkdirCmd = &cobra.Command{
-	Use:   "mkdir <absolute-virtual-path>",
-	Short: "Create a directory in the virtual tree",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank mkdir /cases
+  docbank mkdir /cases/acme --json`,
+	Long: `The parent must exist (no -p). To create a nested folder while importing, use
+docbank add --dest, which creates parents.`,
+	GroupID: groupDocuments,
+	Use:     "mkdir <absolute-virtual-path>",
+	Short:   "Create a directory in the virtual tree",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateMkdirPathArgument(args[0]); err != nil {
 			return err
@@ -67,6 +72,6 @@ func validateMkdirPathArgument(path string) error {
 }
 
 func init() {
-	mkdirCmd.Flags().BoolVar(&mkdirJSON, "json", false, "emit machine-readable JSON")
+	mkdirCmd.Flags().BoolVar(&mkdirJSON, "json", false, "print JSON to stdout")
 	rootCmd.AddCommand(mkdirCmd)
 }

@@ -12,9 +12,12 @@ import (
 var revertJSON bool
 
 var revertCmd = &cobra.Command{
-	Use:   "revert <vault-path-or-id> <version-id>",
-	Short: "Create a new current version from an immutable prior version",
-	Args:  cobra.ExactArgs(2),
+	Example: `  docbank versions list id:12 # pick an older VERSION
+  docbank revert id:12 <version-uuid>`,
+	GroupID: groupDocuments,
+	Use:     "revert <path-or-id> <version-uuid>",
+	Short:   "Create a new current version from an immutable prior version",
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		selector, err := parseNodeSelector(args[0])
 		if err != nil {
@@ -56,6 +59,6 @@ var revertCmd = &cobra.Command{
 }
 
 func init() {
-	revertCmd.Flags().BoolVar(&revertJSON, "json", false, "emit a machine-readable reversion receipt")
+	revertCmd.Flags().BoolVar(&revertJSON, "json", false, "print JSON to stdout")
 	rootCmd.AddCommand(revertCmd)
 }

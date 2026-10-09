@@ -114,7 +114,7 @@ format and parent snapshot ID.
 ## Verify repository integrity
 
 ```bash
-docbank backup verify [SNAPSHOT] [--repo DIR] [--all] [--quick] [--jobs N]
+docbank backup verify [<snapshot>] [--repo DIR] [--all] [--quick] [--jobs N]
                       [--force-unlock] [--progress auto|bar|plain] [--json]
 ```
 
@@ -151,7 +151,7 @@ for retained records and rebuildable indexes.
 ## Restore and prove a snapshot
 
 ```bash
-docbank backup restore [SNAPSHOT] --target DIR [--repo DIR] [--overwrite]
+docbank backup restore [<snapshot>] --target DIR [--repo DIR] [--overwrite]
                        [--jobs N] [--force-unlock]
                        [--store-map OWNER_PRIVATE_FILE]
                        [--progress auto|bar|plain] [--json]

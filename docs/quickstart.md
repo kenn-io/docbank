@@ -101,8 +101,8 @@ Every imported file also has an immutable content version with its own UUID:
 
 ```bash
 docbank versions list /taxes/checklist.pdf
-docbank versions show <version-id> --json
-docbank versions cat <version-id> > /tmp/checklist-version.pdf
+docbank versions show <version-uuid> --json
+docbank versions cat <version-uuid> > /tmp/checklist-version.pdf
 ```
 
 The version ID survives node renames and moves. Replace the current content
@@ -117,11 +117,11 @@ docbank versions list /taxes/checklist.pdf
 and uploads it, showing separate progress for both file passes. The upload
 requires the target revision it just observed, so it fails if the target
 changed in the meantime instead of overwriting that change. The prior version
-remains available through `docbank versions cat <old-version-id>`. Adopt it as
+remains available through `docbank versions cat <old-version-uuid>`. Adopt it as
 current without erasing the replacement:
 
 ```bash
-docbank revert /taxes/checklist.pdf <old-version-id>
+docbank revert /taxes/checklist.pdf <old-version-uuid>
 ```
 
 Reverting creates a new current version that records the older version it

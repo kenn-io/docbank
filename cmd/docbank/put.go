@@ -33,9 +33,12 @@ var (
 )
 
 var putCmd = &cobra.Command{
-	Use:   "put <source-file> <vault-path-or-id>",
-	Short: "Replace a file's content while retaining its immutable history",
-	Args:  cobra.ExactArgs(2),
+	Example: `  docbank put ./invoice-v2.pdf id:12`,
+	Long:    `Adds a new current version; prior versions stay readable via docbank versions.`,
+	GroupID: groupDocuments,
+	Use:     "put <local-file> <path-or-id>",
+	Short:   "Replace a file's content while retaining its immutable history",
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validatePutSourcePath(args[0]); err != nil {
 			return usageError(err)
@@ -252,7 +255,7 @@ func (p *putProgressReader) render(final bool) {
 
 func init() {
 	putCmd.Flags().BoolVar(&putJSON, "json", false,
-		"emit a machine-readable replacement receipt (progress suppressed)")
+		"print JSON to stdout (progress suppressed)")
 	putCmd.Flags().StringVar(&putProgress, "progress", "auto",
 		"progress output mode: auto, bar, or plain (suppressed by --json)")
 	putCmd.Flags().StringVar(&putMIMEType, "mime-type", "",

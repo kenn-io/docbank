@@ -40,8 +40,8 @@ also creates no version.
 
 ```bash
 docbank versions list /taxes/2025/return.pdf
-docbank versions show <version-id> --json
-docbank versions cat <version-id> > return.pdf
+docbank versions show <version-uuid> --json
+docbank versions cat <version-uuid> > return.pdf
 docbank refs <sha256>
 ```
 
@@ -142,7 +142,7 @@ rather than falsely inviting a retry.
 ## Reverting content
 
 ```bash
-docbank revert /taxes/2025/return.pdf <prior-version-id>
+docbank revert /taxes/2025/return.pdf <prior-version-uuid>
 ```
 
 Reversion changes metadata only. The selected version must belong to the
@@ -178,7 +178,7 @@ a command that previews by default:
 ```bash
 docbank versions prune /taxes/2025/return.pdf --keep-newest 3
 docbank versions prune /taxes/2025/return.pdf --older-than 365d
-docbank versions prune /taxes/2025/return.pdf --version <version-id>
+docbank versions prune /taxes/2025/return.pdf --version <version-uuid>
 docbank versions prune /taxes/2025/return.pdf --all-prior
 ```
 

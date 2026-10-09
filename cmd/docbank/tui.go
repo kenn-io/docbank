@@ -23,8 +23,10 @@ import (
 )
 
 var tuiCmd = &cobra.Command{
-	Use:   "tui",
-	Short: "Browse and search the vault interactively",
+	Example: `  docbank tui`,
+	GroupID: groupInterfaces,
+	Use:     "tui",
+	Short:   "Browse and search the vault interactively",
 	Long: `Open a terminal browser backed by the authenticated daemon API.
 
 Navigation:

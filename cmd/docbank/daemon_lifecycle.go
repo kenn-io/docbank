@@ -14,8 +14,11 @@ import (
 )
 
 var daemonCmd = &cobra.Command{
-	Use:   "daemon",
-	Short: "Manage the docbank daemon",
+	Long: `Data commands start the daemon automatically and replace one from a different
+binary version. Use these only to inspect, stop, or debug it.`,
+	GroupID: groupOperations,
+	Use:     "daemon",
+	Short:   "Manage the docbank daemon",
 }
 
 // printEnsured reports what daemonconn.EnsureDaemon found or did.
@@ -35,8 +38,9 @@ func printEnsured(cmd *cobra.Command, res daemonconn.EnsureResult) {
 }
 
 var daemonStartCmd = &cobra.Command{
-	Use:   "start",
-	Short: "Start the daemon in the background",
+	Example: `  docbank daemon start`,
+	Use:     "start",
+	Short:   "Start the daemon in the background",
 	Long: "Start a daemon for this vault in the background, replacing a running daemon " +
 		"whose version or protocol does not match this binary. Same convergence as the data commands' " +
 		"auto-start: after `daemon start` succeeds, the one running daemon is current.",
@@ -58,9 +62,10 @@ var daemonStartCmd = &cobra.Command{
 var daemonStatusJSON bool
 
 var daemonStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Report the daemon's status (never starts one)",
-	Args:  cobra.NoArgs,
+	Example: `  docbank daemon status --json`,
+	Use:     "status",
+	Short:   "Report the daemon's status (never starts one)",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		layout, err := home.Resolve()
 		if err != nil {
@@ -92,9 +97,10 @@ var daemonStatusCmd = &cobra.Command{
 }
 
 var daemonStopCmd = &cobra.Command{
-	Use:   "stop",
-	Short: "Stop the running daemon (never starts one)",
-	Args:  cobra.NoArgs,
+	Example: `  docbank daemon stop`,
+	Use:     "stop",
+	Short:   "Stop the running daemon (never starts one)",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		layout, err := home.Resolve()
 		if err != nil {
@@ -114,10 +120,11 @@ var daemonStopCmd = &cobra.Command{
 }
 
 var daemonRestartCmd = &cobra.Command{
-	Use:   "restart",
-	Short: "Restart the daemon",
-	Long:  "Stop the daemon if one is running, then start it again. Tolerates the daemon not already running.",
-	Args:  cobra.NoArgs,
+	Example: `  docbank daemon restart`,
+	Use:     "restart",
+	Short:   "Restart the daemon",
+	Long:    "Stop the daemon if one is running, then start it again. Tolerates the daemon not already running.",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		layout, err := home.Resolve()
 		if err != nil {
@@ -144,7 +151,7 @@ var daemonRestartCmd = &cobra.Command{
 }
 
 func init() {
-	daemonStatusCmd.Flags().BoolVar(&daemonStatusJSON, "json", false, "machine-readable output")
+	daemonStatusCmd.Flags().BoolVar(&daemonStatusJSON, "json", false, "print JSON to stdout")
 	daemonCmd.AddCommand(daemonRunCmd, daemonStartCmd, daemonStatusCmd, daemonStopCmd, daemonRestartCmd)
 	rootCmd.AddCommand(daemonCmd)
 }

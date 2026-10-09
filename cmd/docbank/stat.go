@@ -16,9 +16,15 @@ import (
 var statJSON bool
 
 var statCmd = &cobra.Command{
-	Use:   "stat <path-or-id>",
-	Short: "Inspect one document or directory",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank stat /cases/acme/invoice.pdf
+  docbank stat id:12 --json`,
+	Long: `Show a node's path, id, revision, current version UUID, sha256, size, MIME and
+source metadata. The version UUID is what versions, rendition and processing
+commands ask for (JSON field current_version_id).`,
+	GroupID: groupDocuments,
+	Use:     "stat <path-or-id>",
+	Short:   "Inspect one document or directory",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		selector, err := parseNodeSelector(args[0])
 		if err != nil {
@@ -132,6 +138,6 @@ func nodeState(node api.Node) string {
 }
 
 func init() {
-	statCmd.Flags().BoolVar(&statJSON, "json", false, "emit machine-readable JSON")
+	statCmd.Flags().BoolVar(&statJSON, "json", false, "print JSON to stdout")
 	rootCmd.AddCommand(statCmd)
 }

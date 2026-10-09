@@ -22,9 +22,12 @@ var (
 )
 
 var referencesCmd = &cobra.Command{
-	Use:   "refs <sha256>",
-	Short: "Find document versions that retain a content hash",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank stat id:12 --json # sha256
+  docbank refs <sha256> --json`,
+	GroupID: groupDocuments,
+	Use:     "refs <sha256>",
+	Short:   "Find document versions that retain a content hash",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := packstore.ParseHash(args[0]); err != nil {
 			return usageError(errors.New("content hash must be canonical lowercase SHA-256"))
@@ -89,6 +92,6 @@ func init() {
 	referencesCmd.Flags().IntVar(&referencesOffset, "offset", 0,
 		"number of references to skip")
 	referencesCmd.Flags().BoolVar(&referencesJSON, "json", false,
-		"emit machine-readable JSON")
+		"print JSON to stdout")
 	rootCmd.AddCommand(referencesCmd)
 }

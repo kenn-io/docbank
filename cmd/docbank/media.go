@@ -31,11 +31,27 @@ var (
 	mediaPlanFile                                                string
 )
 
-var mediaCmd = &cobra.Command{Use: "media", Short: "Retain and inspect recordings",
-	Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+var mediaCmd = &cobra.Command{
+	Long: `Retain recordings and transcripts. Output: JSON receipts and pages.
+source ID: recording identity from submit or list.
+occurrence: one caller's reference and revision for that recording.
+origin: registered acquisition site from origins.
+consent: permission for one reviewed acquisition plan, granted with consent grant.
+acquisition plan: local recognition of a private reference, before network access.
+Typical flow: submit -> status -> transcript; acquisition-plan -> consent grant
+before acquiring a remote reference.`,
+	GroupID: groupSources,
+	Use:     "media",
+	Short:   "Retain and inspect recordings",
+	Args:    cobra.NoArgs,
+	RunE:    func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 
-var mediaSubmitCmd = &cobra.Command{Use: "submit", Short: "Retain supplied recording bytes or a private reference",
-	Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+var mediaSubmitCmd = &cobra.Command{
+	Example: `  docbank media submit --file ./recording.mp4 --operation-id <uuidv4> --occurrence-ref acme-meeting --revision 1`,
+	Use:     "submit",
+	Short:   "Retain supplied recording bytes or a private reference",
+	Args:    cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		if (mediaFile == "") == (mediaReferenceFile == "") {
 			return usageError(errors.New("use exactly one of --file or --reference-file"))
 		}
@@ -73,8 +89,12 @@ var mediaSubmitCmd = &cobra.Command{Use: "submit", Short: "Retain supplied recor
 		return writeCLIJSON(cmd.OutOrStdout(), receipt)
 	}}
 
-var mediaListCmd = &cobra.Command{Use: "list", Short: "List caller-visible recording sources",
-	Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+var mediaListCmd = &cobra.Command{
+	Example: `  docbank media list`,
+	Use:     "list",
+	Short:   "List caller-visible recording sources",
+	Args:    cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -86,8 +106,12 @@ var mediaListCmd = &cobra.Command{Use: "list", Short: "List caller-visible recor
 		return writeCLIJSON(cmd.OutOrStdout(), page)
 	}}
 
-var mediaStatusCmd = &cobra.Command{Use: "status <source-id>", Short: "Show current recording status",
-	Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+var mediaStatusCmd = &cobra.Command{
+	Example: `  docbank media status <source-id>`,
+	Use:     "status <source-id>",
+	Short:   "Show current recording status",
+	Args:    cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -99,8 +123,12 @@ var mediaStatusCmd = &cobra.Command{Use: "status <source-id>", Short: "Show curr
 		return writeCLIJSON(cmd.OutOrStdout(), receipt)
 	}}
 
-var mediaOperationCmd = &cobra.Command{Use: "operation <operation-id>", Short: "Show a saved recording-link receipt",
-	Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+var mediaOperationCmd = &cobra.Command{
+	Example: `  docbank media operation <operation-id>`,
+	Use:     "operation <operation-id>",
+	Short:   "Show a saved recording-link receipt",
+	Args:    cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
 		operationID, err := uuid.Parse(args[0])
 		if err != nil {
 			return usageError(fmt.Errorf("operation ID must be a UUID: %w", err))
@@ -116,8 +144,12 @@ var mediaOperationCmd = &cobra.Command{Use: "operation <operation-id>", Short: "
 		return writeCLIJSON(cmd.OutOrStdout(), receipt)
 	}}
 
-var mediaTranscriptCmd = &cobra.Command{Use: "transcript <source-id>", Short: "Read one exact retained transcript",
-	Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+var mediaTranscriptCmd = &cobra.Command{
+	Example: `  docbank media transcript <source-id> --source-version-id <source-version-id> --content-version-id <version-uuid>`,
+	Use:     "transcript <source-id>",
+	Short:   "Read one exact retained transcript",
+	Args:    cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if mediaSourceVersionID == "" || mediaContentVersionID == "" {
 			return usageError(errors.New("--source-version-id and --content-version-id are required"))
 		}
@@ -132,8 +164,12 @@ var mediaTranscriptCmd = &cobra.Command{Use: "transcript <source-id>", Short: "R
 		return writeCLIJSON(cmd.OutOrStdout(), transcript)
 	}}
 
-var mediaRetryCmd = &cobra.Command{Use: "retry <source-id>", Short: "Retry explicitly authorized transcript processing",
-	Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+var mediaRetryCmd = &cobra.Command{
+	Example: `  docbank media retry <source-id> --operation-id <uuidv4> --processing-profile <profile>`,
+	Use:     "retry <source-id>",
+	Short:   "Retry explicitly authorized transcript processing",
+	Args:    cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if mediaOperationID == "" || mediaProfile == "" {
 			return usageError(errors.New("--operation-id and --processing-profile are required"))
 		}
@@ -149,8 +185,12 @@ var mediaRetryCmd = &cobra.Command{Use: "retry <source-id>", Short: "Retry expli
 		return writeCLIJSON(cmd.OutOrStdout(), receipt)
 	}}
 
-var mediaImportCmd = &cobra.Command{Use: "import-artifact <source-id>", Short: "Retain a bounded original input artifact",
-	Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+var mediaImportCmd = &cobra.Command{
+	Example: `  docbank media import-artifact <source-id> --file ./captions.vtt --kind caption --occurrence-id <occurrence-id> --operation-id <uuidv4>`,
+	Use:     "import-artifact <source-id>",
+	Short:   "Retain a bounded original input artifact",
+	Args:    cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if mediaOperationID == "" || mediaFile == "" || mediaOccurrenceID == "" || mediaArtifactKind == "" {
 			return usageError(errors.New("--operation-id, --occurrence-id, --kind, and --file are required"))
 		}
@@ -174,11 +214,21 @@ var mediaImportCmd = &cobra.Command{Use: "import-artifact <source-id>", Short: "
 		return writeCLIJSON(cmd.OutOrStdout(), receipt)
 	}}
 
-var mediaOccurrencesCmd = &cobra.Command{Use: "occurrences", Short: "Inspect or revoke recording occurrences",
-	Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+var mediaOccurrencesCmd = &cobra.Command{
+	Long: `Occurrences bind a caller reference/revision to one recording source.
+list returns occurrence IDs; declare adds a revision; revoke withdraws one.
+Output: JSON.`,
+	Use:   "occurrences",
+	Short: "Inspect or revoke recording occurrences",
+	Args:  cobra.NoArgs,
+	RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 
-var mediaOccurrencesListCmd = &cobra.Command{Use: "list", Short: "List caller-visible occurrences",
-	Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+var mediaOccurrencesListCmd = &cobra.Command{
+	Example: `  docbank media occurrences list --source-id <source-id>`,
+	Use:     "list",
+	Short:   "List caller-visible occurrences",
+	Args:    cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -191,8 +241,12 @@ var mediaOccurrencesListCmd = &cobra.Command{Use: "list", Short: "List caller-vi
 		return writeCLIJSON(cmd.OutOrStdout(), page)
 	}}
 
-var mediaOccurrencesDeclareCmd = &cobra.Command{Use: "declare <source-id>", Short: "Declare an immutable occurrence revision",
-	Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+var mediaOccurrencesDeclareCmd = &cobra.Command{
+	Example: `  docbank media occurrences declare <source-id> --operation-id <uuidv4> --occurrence-ref acme-meeting --revision 2`,
+	Use:     "declare <source-id>",
+	Short:   "Declare an immutable occurrence revision",
+	Args:    cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireMediaMutationFlags(); err != nil {
 			return err
 		}
@@ -208,8 +262,12 @@ var mediaOccurrencesDeclareCmd = &cobra.Command{Use: "declare <source-id>", Shor
 		return writeCLIJSON(cmd.OutOrStdout(), receipt)
 	}}
 
-var mediaOccurrencesRevokeCmd = &cobra.Command{Use: "revoke <occurrence-id>", Short: "Revoke one occurrence revision",
-	Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+var mediaOccurrencesRevokeCmd = &cobra.Command{
+	Example: `  docbank media occurrences revoke <occurrence-id> --operation-id <uuidv4> --revision 2`,
+	Use:     "revoke <occurrence-id>",
+	Short:   "Revoke one occurrence revision",
+	Args:    cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
 		if mediaOperationID == "" || mediaOccurrenceRevision == "" {
 			return usageError(errors.New("--operation-id and --revision are required"))
 		}
@@ -225,7 +283,11 @@ var mediaOccurrencesRevokeCmd = &cobra.Command{Use: "revoke <occurrence-id>", Sh
 		return writeCLIJSON(cmd.OutOrStdout(), receipt)
 	}}
 
-var mediaOriginsCmd = &cobra.Command{Use: "origins", Short: "List registered acquisition origins", Args: cobra.NoArgs,
+var mediaOriginsCmd = &cobra.Command{
+	Example: `  docbank media origins`,
+	Use:     "origins",
+	Short:   "List registered acquisition origins",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -238,8 +300,12 @@ var mediaOriginsCmd = &cobra.Command{Use: "origins", Short: "List registered acq
 		return writeCLIJSON(cmd.OutOrStdout(), page)
 	}}
 
-var mediaAcquisitionPlanCmd = &cobra.Command{Use: "acquisition-plan", Short: "Recognize a private reference without egress",
-	Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+var mediaAcquisitionPlanCmd = &cobra.Command{
+	Example: `  docbank media acquisition-plan --reference-file ./reference.txt > plan.json`,
+	Use:     "acquisition-plan",
+	Short:   "Recognize a private reference without egress",
+	Args:    cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		if mediaReferenceFile == "" {
 			return usageError(errors.New("--reference-file is required"))
 		}
@@ -258,11 +324,21 @@ var mediaAcquisitionPlanCmd = &cobra.Command{Use: "acquisition-plan", Short: "Re
 		return writeCLIJSON(cmd.OutOrStdout(), plan)
 	}}
 
-var mediaConsentCmd = &cobra.Command{Use: "consent", Short: "Grant or revoke acquisition consent",
-	Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+var mediaConsentCmd = &cobra.Command{
+	Long: `Grant or revoke consent for a registered acquisition origin. Review the JSON
+from acquisition-plan before grant --plan-file. revoke uses the origin ID
+from that plan or origins. Output: JSON.`,
+	Use:   "consent",
+	Short: "Grant or revoke acquisition consent",
+	Args:  cobra.NoArgs,
+	RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 
-var mediaConsentGrantCmd = &cobra.Command{Use: "grant", Short: "Grant one exact acquisition plan",
-	Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+var mediaConsentGrantCmd = &cobra.Command{
+	Example: `  docbank media consent grant --plan-file ./plan.json --operation-id <uuidv4>`,
+	Use:     "grant",
+	Short:   "Grant one exact acquisition plan",
+	Args:    cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		if mediaOperationID == "" || mediaPlanFile == "" {
 			return usageError(errors.New("--operation-id and --plan-file are required"))
 		}
@@ -286,8 +362,12 @@ var mediaConsentGrantCmd = &cobra.Command{Use: "grant", Short: "Grant one exact 
 		return writeCLIJSON(cmd.OutOrStdout(), receipt)
 	}}
 
-var mediaConsentRevokeCmd = &cobra.Command{Use: "revoke", Short: "Revoke acquisition consent for one origin",
-	Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+var mediaConsentRevokeCmd = &cobra.Command{
+	Example: `  docbank media consent revoke --origin <origin-id> --operation-id <uuidv4>`,
+	Use:     "revoke",
+	Short:   "Revoke acquisition consent for one origin",
+	Args:    cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		if mediaOperationID == "" || mediaOrigin == "" {
 			return usageError(errors.New("--operation-id and --origin are required"))
 		}

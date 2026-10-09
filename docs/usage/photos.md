@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-07
+last_edited: 2026-10-09
 title: Photo assets
 description: Group camera files, browse photos in the web app, and organize albums through the CLI or HTTP API.
 ---
@@ -70,12 +70,12 @@ are stored as terminal results. Temporary storage or read failures retry.
 Inspect the asset created for a node or use a stable asset UUID:
 
 ```text
-docbank photos assets inspect <asset-id|node-selector>
-docbank photos assets create <node-selector> [--kind photo|video] [--role raw|image|video]
-docbank photos assets attach <asset-id> <node-selector> [--revision REV] [--role ROLE] [--sidecar-of-file-id ID]
+docbank photos assets inspect <asset-id|path-or-id>
+docbank photos assets create <path-or-id> [--kind photo|video] [--role raw|image|video]
+docbank photos assets attach <asset-id> <path-or-id> [--revision REV] [--role ROLE] [--sidecar-of-file-id ID]
 docbank photos assets detach <asset-id> <file-id> [--revision REV]
 docbank photos assets exclude <asset-id> [--revision REV] [--excluded=true]
-docbank photos assets promote <node-selector> [--revision REV] [--kind KIND] [--role ROLE]
+docbank photos assets promote <path-or-id> [--revision REV] [--kind KIND] [--role ROLE]
 docbank photos assets display <asset-id> [file-id] [--revision REV]
 ```
 

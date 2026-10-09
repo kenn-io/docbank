@@ -17,9 +17,11 @@ var (
 )
 
 var updateCmd = &cobra.Command{
-	Use:   "update",
-	Short: "Update docbank to the latest GitHub release",
-	Args:  cobra.NoArgs,
+	Example: `  docbank update --check`,
+	GroupID: groupOperations,
+	Use:     "update",
+	Short:   "Update docbank to the latest GitHub release",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return update.Run(cmd.Context(), cmd.OutOrStdout(), update.Options{
 			CheckOnly: updateCheck,

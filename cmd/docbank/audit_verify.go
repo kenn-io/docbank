@@ -19,9 +19,10 @@ var auditVerifyExpected string
 const maxAuditEvidenceFileBytes = 1 << 20
 
 var auditVerifyCmd = &cobra.Command{
-	Use:   "verify",
-	Short: "Replay audit authority and verify every protected blob",
-	Args:  cobra.NoArgs,
+	Example: `  docbank audit verify --json`,
+	Use:     "verify",
+	Short:   "Replay audit authority and verify every protected blob",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		var expected *api.AuditEvidence
 		if auditVerifyExpected != "" {
@@ -158,7 +159,7 @@ func readExpectedAuditEvidence(path string) (*api.AuditEvidence, error) {
 }
 
 func init() {
-	auditVerifyCmd.Flags().BoolVar(&auditVerifyJSON, "json", false, "machine-readable output")
+	auditVerifyCmd.Flags().BoolVar(&auditVerifyJSON, "json", false, "print JSON to stdout")
 	auditVerifyCmd.Flags().StringVar(&auditVerifyExpected, "expected", "",
 		"successful prior --json report to prove as an exact prefix")
 	auditCmd.AddCommand(auditVerifyCmd)

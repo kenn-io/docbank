@@ -1,0 +1,98 @@
+Docbank keeps documents in a local vault: a virtual folder tree (/cases/a.pdf)
+over immutable, hash-verified content versions. A background daemon owns the
+vault; data commands start it automatically ("docbank daemon stop" ends it).
+
+DOCBANK_HOME selects the vault (default ~/.docbank); the first data command creates
+it. Run "docbank info" to confirm the selected vault's path and identity.
+
+Start here:
+  docbank add ./scans --dest /cases/acme   import files/folders (creates dirs)
+  docbank tree /cases                      browse; shows id:N selectors
+  docbank search invoice 2026 --json       find by name or text content
+  docbank cat /cases/acme/notes.txt        print a file's original bytes
+  docbank get id:12 ./invoice.pdf          save a verified local copy
+  docbank backup init --repo ~/db-backup   then: backup create --repo ~/db-backup
+
+Concepts:
+  path-or-id  a node is "/abs/path" or "id:N"; id:N survives mv and rename
+  version     put/edit add an immutable version (UUID); revert restores one
+  text        search reads text/*, JSON and email bodies; PDFs and Office
+              files need a processing profile (see "docbank processing")
+  rendition   derived Markdown text made by a processing profile
+  deletion    rm -> trash empty -> gc -> storage repack; each step is explicit
+
+Most read commands accept --json. Exit codes: 0 ok, 1 error, 2 usage,
+3 not found, 4 stale revision, 5 busy/locked, 6 integrity failure.
+
+Usage:
+  docbank [command]
+
+Documents:
+  add  Import files or directory trees into the vault
+  cat  Print a file's original bytes to stdout
+  edit  Edit a file through a new immutable content version
+  get  Download one file with end-to-end verification
+  ls  List one virtual directory (default /)
+  mkdir  Create a directory in the virtual tree
+  mv  Move or rename a node (metadata only; bytes never move)
+  provenance  Show where a document came from
+  put  Replace a file's content while retaining its immutable history
+  refs  Find document versions that retain a content hash
+  restore  Restore a trashed node to its original location
+  revert  Create a new current version from an immutable prior version
+  rm  Move a node (and its subtree) to the trash
+  stat  Inspect one document or directory
+  tag  Define tags and organize nodes with them
+  trash  Inspect and empty the trash
+  tree  Print the virtual folder tree with id:N selectors
+  versions  Inspect and maintain immutable content versions
+
+Search and text:
+  formats  Report per-format capability coverage
+  processing  Preview and run document processing
+  rendition  Read retained document renditions
+  search  Find files and folders by name, text, tag, type, folder, or date
+  search-export  Export search counts and review saved evidence
+
+Email, media, photos, people:
+  email-documents  Inspect and release email attachment relationships
+  email-pdf  Render and download one exact email version as a verified PDF
+  mailbox  Import verified MBOX, Takeout ZIP, or explicitly identified EML
+  media  Retain and inspect recordings
+  people  Manage canonical people
+  photos  Manage photo assets
+  watch  Inspect configured watched inboxes
+
+Exports and productions:
+  bates  Plan and reserve Bates labels for exported PDFs
+  export  Export exact original versions as verified ZIP bundles
+  labels  Look up package-scoped received and assigned labels
+  package  Inspect and exchange load-file packages
+  transfer  Inspect portable transfer packages
+
+Vault operations:
+  audit  Protect permanent document history and inspect its evidence
+  backup  Create and inspect immutable vault snapshots
+  daemon  Manage the docbank daemon
+  gc  Reclaim unreachable blobs (dry-run unless --run)
+  info  Identify the selected vault and summarize its contents
+  jobs  List daemon background workers and storage operations
+  storage  Inspect and maintain physical blob storage
+  update  Update docbank to the latest GitHub release
+  verify  Validate metadata and re-hash every stored blob
+  version  Print the installed Docbank version
+
+Interfaces:
+  mcp  Serve the local vault over Model Context Protocol
+  openapi  Print the HTTP API's OpenAPI YAML document (no daemon needed)
+  tui  Browse and search the vault interactively
+  web  Open the local web application
+
+Additional Commands:
+  completion  Generate the autocompletion script for the specified shell
+  help  Help about any command
+
+Flags:
+  -h, --help   help for docbank
+
+Use "docbank [command] --help" for more information about a command.

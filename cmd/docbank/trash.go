@@ -18,14 +18,19 @@ type trashListing struct {
 }
 
 var trashCmd = &cobra.Command{
-	Use:   "trash",
-	Short: "Inspect and empty the trash",
+	Long: `rm moves nodes to the trash; list prints selectors you can pass to restore.
+empty previews or permanently removes eligible trashed metadata. Content is
+reclaimed separately by gc and storage repack.`,
+	GroupID: groupDocuments,
+	Use:     "trash",
+	Short:   "Inspect and empty the trash",
 }
 
 var trashListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List restorable trashed nodes",
-	Args:  cobra.NoArgs,
+	Example: `  docbank trash list --json`,
+	Use:     "list",
+	Short:   "List restorable trashed nodes",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -64,6 +69,8 @@ var (
 )
 
 var trashEmptyCmd = &cobra.Command{
+	Example: `  docbank trash empty --older-than 30d
+  docbank trash empty --older-than 30d --run`,
 	Use:   "empty",
 	Short: "Report or permanently delete trashed nodes",
 	Long: "Report or permanently delete trashed tree metadata. Content bytes remain " +
@@ -108,13 +115,13 @@ var trashEmptyCmd = &cobra.Command{
 
 func init() {
 	trashListCmd.Flags().BoolVar(&trashListJSON, "json", false,
-		"emit machine-readable JSON")
+		"print JSON to stdout")
 	trashEmptyCmd.Flags().StringVar(&trashOlderThan, "older-than", "",
 		"select only items trashed at least this long ago (e.g. 30d)")
 	trashEmptyCmd.Flags().BoolVar(&trashRun, "run", false,
-		"actually delete (default is dry-run)")
+		"apply the change (default is a dry run)")
 	trashEmptyCmd.Flags().BoolVar(&trashEmptyJSON, "json", false,
-		"emit a machine-readable report")
+		"print JSON to stdout")
 	trashCmd.AddCommand(trashListCmd, trashEmptyCmd)
 	rootCmd.AddCommand(trashCmd)
 }

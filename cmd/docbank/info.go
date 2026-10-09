@@ -13,9 +13,14 @@ import (
 var infoJSON bool
 
 var infoCmd = &cobra.Command{
-	Use:   "info",
-	Short: "Identify the selected vault and summarize its contents",
-	Args:  cobra.NoArgs,
+	Example: `  docbank info
+  DOCBANK_HOME=/tmp/scratch-vault docbank info --json`,
+	Long: `Prints the vault ID, home path and live/trash/history/storage counts.
+Creates an empty vault on first use of a new DOCBANK_HOME.`,
+	GroupID: groupOperations,
+	Use:     "info",
+	Short:   "Identify the selected vault and summarize its contents",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -52,6 +57,6 @@ var infoCmd = &cobra.Command{
 }
 
 func init() {
-	infoCmd.Flags().BoolVar(&infoJSON, "json", false, "machine-readable output")
+	infoCmd.Flags().BoolVar(&infoJSON, "json", false, "print JSON to stdout")
 	rootCmd.AddCommand(infoCmd)
 }

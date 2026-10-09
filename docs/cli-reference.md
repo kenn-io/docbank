@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-09
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -9,10 +9,16 @@ description: Every docbank command, with its flags, output formats, and error be
 Use this page to look up command syntax, flags, output, and failure behavior.
 For a first import, follow [Quickstart](quickstart.md).
 
+Run `docbank --help` for commands grouped by outcome, start-here examples,
+selectors, search scope, and exit codes. Follow with `docbank <command> --help`
+for its workflow and flags. Runnable commands include examples; prerequisite
+examples show where version, job, and snapshot IDs come from.
+
 Vault commands use `~/.docbank` unless `DOCBANK_HOME` selects another location.
 See [Configuration](configuration.md). Virtual paths are absolute,
 `/`-separated, and case-sensitive. Errors go to stderr and produce a nonzero
-exit code.
+exit code. Argument errors include usage or a help command; missing paths and
+busy work include a next-step hint. Hints stay on stderr.
 
 Data commands send HTTP requests to the daemon and start it in the background
 if needed. They never open the vault directly. `docbank daemon status` and
@@ -46,7 +52,7 @@ limits, explicit continuation, and the EML transfer retry contract.
 ## docbank package
 
 ```text
-docbank package preflight <directory> --profile dat-concordance-v1|csv-rfc4180-v1 --encoding utf-8|windows-1252 [--page-map-profile ID] [--map mapping.json] [--json]
+docbank package preflight <local-dir> --profile dat-concordance-v1|csv-rfc4180-v1 --encoding utf-8|windows-1252 [--page-map-profile ID] [--map mapping.json] [--json]
 docbank package import <preflight-id> --name NAME [--into /] [--party LABEL] [--operation-id UUID] [--accept-partial] [--index-supplied-text] [--json]
 docbank package import status <operation-id> [--json]
 docbank package import cancel <operation-id> [--json]
@@ -101,7 +107,7 @@ sender's load file; assigned labels come from Docbank's own productions.
 ## docbank email-pdf
 
 ```text
-docbank email-pdf <version-id> <local-file> [--paper A4|Letter] [--overwrite]
+docbank email-pdf <version-uuid> <local-file> [--paper A4|Letter] [--overwrite]
 ```
 
 Requests a retained PDF for one EML version through the daemon, waits for its
@@ -169,13 +175,13 @@ that returns it to the live tree.
 ## docbank photos
 
 ```text
-docbank photos assets create <node-selector> [--kind photo|video] [--role ROLE]
-docbank photos assets inspect <asset-id|node-selector>
+docbank photos assets create <path-or-id> [--kind photo|video] [--role ROLE]
+docbank photos assets inspect <asset-id|path-or-id>
 docbank photos assets trash <asset-id> [--revision REV]
-docbank photos assets attach <asset-id> <node-selector> [--revision REV] [--role ROLE] [--sidecar-of-file-id ID]
+docbank photos assets attach <asset-id> <path-or-id> [--revision REV] [--role ROLE] [--sidecar-of-file-id ID]
 docbank photos assets detach <asset-id> <file-id> [--revision REV]
 docbank photos assets exclude <asset-id> [--revision REV] [--excluded=true]
-docbank photos assets promote <node-selector> [--revision REV] [--kind KIND] [--role ROLE]
+docbank photos assets promote <path-or-id> [--revision REV] [--kind KIND] [--role ROLE]
 docbank photos assets display <asset-id> [file-id] [--revision REV]
 docbank photos settings show
 docbank photos settings set raw|image [--revision REV]
@@ -246,11 +252,13 @@ docbank people split <person-id> --revision REV --display-name NAME [--identity 
 
 Person commands use the daemon API and emit the same JSON records as the HTTP
 client. List accepts a folded display-name prefix. `show` includes identity,
-external UID, and revision data needed to choose split members. Mutations use
-the revision supplied by the caller. The merge and split operation IDs make
-retries replayable. When you omit one, the CLI generates it and prints it to
-stderr before the request. A split needs at least one identity, assignment,
-or external UID.
+external UID, and revision data, but not package custodian assignment IDs. Get
+assignment IDs from `GET /api/v1/packages/by-id/{package_id}/custodians` or MCP
+`list_package_custodians`. See [People](usage/people.md#create-and-inspect) for
+the full split rules. Mutations use the revision supplied by the caller. The
+merge and split operation IDs make retries replayable. When you omit one, the
+CLI generates it and prints it to stderr before the request. A split needs at
+least one identity, assignment, or external UID.
 
 ## docbank stat
 
@@ -485,7 +493,7 @@ selector while its content version is retained.
 ## docbank put
 
 ```text
-docbank put <source-file> <vault-path-or-id> [--mime-type <type>] [--progress auto|bar|plain] [--json]
+docbank put <local-file> <path-or-id> [--mime-type <type>] [--progress auto|bar|plain] [--json]
 ```
 
 Replaces one existing file's current content while retaining every prior
@@ -514,7 +522,7 @@ replacement bytes record a versioned operation, while sharing the existing blob.
 ## docbank edit
 
 ```text
-docbank edit <vault-path-or-id> [--editor <command>] [--mime-type <type>] [--progress auto|bar|plain]
+docbank edit <path-or-id> [--editor <command>] [--mime-type <type>] [--progress auto|bar|plain]
 ```
 
 Downloads the current immutable version into a private temporary directory,
@@ -566,7 +574,7 @@ successful `put` adds a `content_replace` row and each `revert` adds a
 ### docbank versions show
 
 ```text
-docbank versions show <version-id> [--json]
+docbank versions show <version-uuid> [--json]
 ```
 
 Inspects one immutable version by stable UUID, independent of the file's current
@@ -577,7 +585,7 @@ transition kind, blob hash, size, media type, and any reversion source.
 ### docbank versions cat
 
 ```text
-docbank versions cat <version-id>
+docbank versions cat <version-uuid>
 ```
 
 Writes that version's bytes to stdout. It exits successfully only after
@@ -589,7 +597,7 @@ rename it only after a successful exit.
 ### docbank versions prune
 
 ```text
-docbank versions prune <path-or-id> --version <version-id> [--version <version-id>...] [--run] [--json]
+docbank versions prune <path-or-id> --version <version-uuid> [--version <version-uuid>...] [--run] [--json]
 docbank versions prune <path-or-id> --keep-newest <n> [--run] [--json]
 docbank versions prune <path-or-id> --older-than <age> [--run] [--json]
 docbank versions prune <path-or-id> --all-prior [--run] [--json]
@@ -638,8 +646,8 @@ Earlier snapshots still contain their original history.
 
 ```text
 docbank email-documents show <operation-id>
-docbank email-documents relations --parent-version <version-id> [--limit <n>]
-docbank email-documents relations --child-version <version-id> [--limit <n>]
+docbank email-documents relations --parent-version <version-uuid> [--limit <n>]
+docbank email-documents relations --child-version <version-uuid> [--limit <n>]
 docbank email-documents release <operation-id> --request-digest <digest>
 ```
 
@@ -678,7 +686,7 @@ a match. The command reports `no authoritative references`.
 ## docbank revert
 
 ```text
-docbank revert <vault-path-or-id> <version-id> [--json]
+docbank revert <path-or-id> <version-uuid> [--json]
 ```
 
 Makes a prior version current by creating a new immutable `content_revert`
@@ -701,8 +709,8 @@ docbank tag list [--limit <n>] [--offset <n>] [--json]
 docbank tag show <name-or-id> [--json]
 docbank tag rename <name-or-id> <new-name> [--json]
 docbank tag delete <name-or-id> [--json]
-docbank tag assign <name-or-id> <path-or-node-id> [--json]
-docbank tag unassign <name-or-id> <path-or-node-id> [--json]
+docbank tag assign <name-or-id> <path-or-id> [--json]
+docbank tag unassign <name-or-id> <path-or-id> [--json]
 docbank tag nodes <name-or-id> [--limit <n>] [--offset <n>] [--json]
 ```
 
@@ -881,7 +889,7 @@ unreachable-content collection, and packed-space reclamation are the separate
 ## docbank restore
 
 ```
-docbank restore <id-or-selector> [--json]
+docbank restore <id:N> [--json]
 ```
 
 Returns a trashed node (by `id:N` selector; see `docbank trash list`) to its
@@ -1045,7 +1053,7 @@ version 1 request format, date choices, counts, and retention limits.
 
 ```
 docbank processing profiles [--json]
-docbank processing coverage <version-id> --profile <name> [--json]
+docbank processing coverage <version-uuid> --profile <name> [--json]
 docbank processing plan <path-or-id> --profile <name> [--json]
 docbank processing build <path-or-id> --profile <name> --plan-fingerprint <sha256> --consent [--json | --ndjson]
 docbank processing status <job-id> [--json]
@@ -1084,8 +1092,8 @@ expiry or revocation.
 ## docbank rendition
 
 ```
-docbank rendition get <attachment-id> [--max-bytes <n>]
-docbank rendition window <path-or-id> --version <version-id> --profile <name>
+docbank rendition get <attachment-sha256> [--max-bytes <n>]
+docbank rendition window <path-or-id> --version <version-uuid> --profile <name>
   [--attachment <attachment-id>] [--offset <n>] [--max-chars <n>] [--json]
 ```
 
@@ -1247,7 +1255,7 @@ docbank storage list [--refresh] [--json]
 docbank storage status [store] [--refresh] [--json]
 docbank storage add <name> --binding <profile> [--takeover]
 docbank storage add --run --token <preview-token>
-docbank storage place <path|id:N> --to <store> [--from <store>] [--move]
+docbank storage place <path-or-id> --to <store> [--from <store>] [--move]
 docbank storage place --run --token <preview-token>
 docbank storage evacuate <store>
 docbank storage evacuate --run --token <preview-token>
@@ -1388,9 +1396,9 @@ docbank backup init [--repo <dir>] [--json]
 docbank backup create [--repo <dir>] [--tag <label>] [--jobs <n>]
                       [--force-unlock] [--progress auto|bar|plain] [--json]
 docbank backup list [--repo <dir>] [--json]
-docbank backup verify [snapshot] [--repo <dir>] [--all] [--quick] [--jobs <n>]
+docbank backup verify [<snapshot>] [--repo <dir>] [--all] [--quick] [--jobs <n>]
                       [--force-unlock] [--progress auto|bar|plain] [--json]
-docbank backup restore [snapshot] --target <dir> [--repo <dir>] [--overwrite]
+docbank backup restore [<snapshot>] --target <dir> [--repo <dir>] [--overwrite]
                        [--store-map <owner-private-file>]
                        [--jobs <n>] [--force-unlock]
                        [--progress auto|bar|plain] [--json]

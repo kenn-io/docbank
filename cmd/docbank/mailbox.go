@@ -20,126 +20,153 @@ import (
 
 func init() { rootCmd.AddCommand(newMailboxCommand()) }
 func newMailboxCommand() *cobra.Command {
-	root := &cobra.Command{Use: "mailbox", Short: "Import verified MBOX, Takeout ZIP, or explicitly identified EML"}
+	root := &cobra.Command{
+		Long: `Import MBOX or Takeout ZIP asynchronously. import prints a job ID; follow with
+status or watch (NDJSON until terminal). resume restarts an interrupted job;
+continue advances a partially imported source. After --preview, rerun import
+without --preview, reusing its --id. EML uses register and then transfer.
+Output: JSON receipts; watch streams NDJSON, cancel prints no receipt.`,
+		GroupID: groupSources,
+		Use:     "mailbox",
+		Short:   "Import verified MBOX, Takeout ZIP, or explicitly identified EML"}
 	var dest, dialect, id, jobID string
 	var preview bool
 	var labelTags map[string]string
-	upload := &cobra.Command{Use: "import <mbox-or-zip>", Short: "Stream an archive to the daemon and start a resumable import", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		c, err := daemonconn.Ensure(cmd.Context())
-		if err != nil {
-			return err
-		}
-		dir, err := c.API().ResolvePath(cmd.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: dest}})
-		if err != nil {
-			return err
-		}
-		file, err := os.Open(args[0])
-		if err != nil {
-			return err
-		}
-		defer func() { _ = file.Close() }()
-		info, err := file.Stat()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > store.MailboxContainerBytes {
-			return store.ErrMailboxLimit
-		}
-		hash, err := hashMailboxSource(cmd.Context(), file, info.Size())
-		if err != nil {
-			return err
-		}
-		if id == "" {
-			id = rand.Text()
-		}
-		if jobID == "" {
-			jobID = id
-		}
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Mailbox source: %s; import: %s\n", id, jobID)
-		format := "mbox"
-		if strings.EqualFold(filepath.Ext(args[0]), ".zip") {
-			format = "zip"
-		}
-		request := store.MailboxContainerRequest{ID: id, Format: format, SHA256: hash, Size: info.Size()}
-		container, err := c.BeginMailboxContainer(cmd.Context(), request)
-		if err != nil {
-			return err
-		}
-		if err = uploadMailboxChunks(cmd.Context(), c, file, container, cmd.ErrOrStderr()); err != nil {
-			return fmt.Errorf("upload interrupted; retry with --id %s --job-id %s: %w", id, jobID, err)
-		}
-		if _, err = c.SealMailboxContainer(cmd.Context(), id); err != nil {
-			return err
-		}
-		sample, err := c.PreviewMailbox(cmd.Context(), id, dialect)
-		if err != nil {
-			return err
-		}
-		if preview {
-			return json.MarshalWrite(cmd.OutOrStdout(), struct {
-				ContainerID string `json:"container_id"`
-				SHA256      string `json:"sha256"`
-				Preview     any    `json:"preview"`
-			}{id, hash, sample})
-		}
-		job, err := c.BeginMailboxJob(cmd.Context(), store.MailboxJobRequest{ID: jobID, ContainerID: id, ContainerSHA256: hash, Settings: store.MailboxSettings{Dialect: dialect, DestinationID: dir.ID, LabelTags: labelTags}})
-		if err != nil {
-			return err
-		}
-		return json.MarshalWrite(cmd.OutOrStdout(), job)
-	}}
-	upload.Flags().StringVar(&dest, "dest", "/", "Destination virtual directory")
-	upload.Flags().StringVar(&dialect, "dialect", "mboxrd", "Explicit mailbox dialect: mboxrd or mboxo")
-	upload.Flags().StringVar(&id, "id", "", "Stable source upload identity for retries")
-	upload.Flags().StringVar(&jobID, "job-id", "", "Stable import identity (defaults to --id; change to import the source again)")
-	upload.Flags().BoolVar(&preview, "preview", false, "Retain the verified container and print a preview without importing messages")
-	upload.Flags().StringToStringVar(&labelTags, "label-tag", nil, "Explicit source-label=existing-tag-ID mapping (repeatable)")
-	root.AddCommand(upload)
-	for _, action := range []string{"status", "watch", "resume", "continue", "cancel", "receipts"} {
-		var after int64
-		var limit int
-		command := &cobra.Command{Use: action + " <job-id>", Short: strings.ToUpper(action[:1]) + action[1:] + " a mailbox import", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	upload := &cobra.Command{
+		Example: `  docbank mailbox import ./mail.mbox --dest /cases/acme
+  docbank mailbox import ./takeout.zip --preview --id acme-mail`,
+		Use:   "import <mbox-or-zip>",
+		Short: "Stream an archive to the daemon and start a resumable import",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
 			}
-			if action == "cancel" {
-				return c.CancelMailboxJob(cmd.Context(), args[0])
-			}
-			if action == "watch" {
-				return c.WatchMailboxJob(cmd.Context(), args[0], func(j store.MailboxJob) error {
-					if err := json.MarshalWrite(cmd.OutOrStdout(), j); err != nil {
-						return err
-					}
-					_, err := fmt.Fprintln(cmd.OutOrStdout())
-					if err != nil {
-						return fmt.Errorf("write mailbox event: %w", err)
-					}
-					return nil
-				})
-			}
-			if action == "receipts" {
-				out, err := c.MailboxOccurrences(cmd.Context(), args[0], after, limit)
-				if err != nil {
-					return err
-				}
-				return json.MarshalWrite(cmd.OutOrStdout(), out)
-			}
-			job, err := c.MailboxJob(cmd.Context(), args[0])
+			dir, err := c.API().ResolvePath(cmd.Context(), &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: dest}})
 			if err != nil {
 				return err
 			}
-			if action == "resume" || action == "continue" {
-				job, err = c.ResumeMailboxJob(cmd.Context(), job.MailboxJobRequest, action == "continue")
-				if err != nil {
-					return err
-				}
+			file, err := os.Open(args[0])
+			if err != nil {
+				return err
+			}
+			defer func() { _ = file.Close() }()
+			info, err := file.Stat()
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > store.MailboxContainerBytes {
+				return store.ErrMailboxLimit
+			}
+			hash, err := hashMailboxSource(cmd.Context(), file, info.Size())
+			if err != nil {
+				return err
+			}
+			if id == "" {
+				id = rand.Text()
+			}
+			if jobID == "" {
+				jobID = id
+			}
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Mailbox source: %s; import: %s\n", id, jobID)
+			format := "mbox"
+			if strings.EqualFold(filepath.Ext(args[0]), ".zip") {
+				format = "zip"
+			}
+			request := store.MailboxContainerRequest{ID: id, Format: format, SHA256: hash, Size: info.Size()}
+			container, err := c.BeginMailboxContainer(cmd.Context(), request)
+			if err != nil {
+				return err
+			}
+			if err = uploadMailboxChunks(cmd.Context(), c, file, container, cmd.ErrOrStderr()); err != nil {
+				return fmt.Errorf("upload interrupted; retry with --id %s --job-id %s: %w", id, jobID, err)
+			}
+			if _, err = c.SealMailboxContainer(cmd.Context(), id); err != nil {
+				return err
+			}
+			sample, err := c.PreviewMailbox(cmd.Context(), id, dialect)
+			if err != nil {
+				return err
+			}
+			if preview {
+				return json.MarshalWrite(cmd.OutOrStdout(), struct {
+					ContainerID string `json:"container_id"`
+					SHA256      string `json:"sha256"`
+					Preview     any    `json:"preview"`
+				}{id, hash, sample})
+			}
+			job, err := c.BeginMailboxJob(cmd.Context(), store.MailboxJobRequest{ID: jobID, ContainerID: id, ContainerSHA256: hash, Settings: store.MailboxSettings{Dialect: dialect, DestinationID: dir.ID, LabelTags: labelTags}})
+			if err != nil {
+				return err
 			}
 			return json.MarshalWrite(cmd.OutOrStdout(), job)
 		}}
+	upload.Flags().StringVar(&dest, "dest", "/", "destination virtual directory")
+	upload.Flags().StringVar(&dialect, "dialect", "mboxrd", "explicit mailbox dialect: mboxrd or mboxo")
+	upload.Flags().StringVar(&id, "id", "", "stable source upload identity for retries")
+	upload.Flags().StringVar(&jobID, "job-id", "", "stable import identity (defaults to --id; change to import the source again)")
+	upload.Flags().BoolVar(&preview, "preview", false, "retain the verified container and print a preview without importing messages")
+	upload.Flags().StringToStringVar(&labelTags, "label-tag", nil, "explicit source-label=existing-tag-ID mapping (repeatable)")
+	root.AddCommand(upload)
+	shorts := map[string]string{
+		"status":   "Show a mailbox import job's state",
+		"watch":    "Stream a mailbox import's progress as NDJSON until it finishes",
+		"resume":   "Resume an interrupted mailbox import",
+		"continue": "Advance a partially imported mailbox source",
+		"cancel":   "Cancel a mailbox import job",
+		"receipts": "List per-message receipts for a mailbox import",
+	}
+	for _, action := range []string{"status", "watch", "resume", "continue", "cancel", "receipts"} {
+		var after int64
+		var limit int
+		command := &cobra.Command{
+			Use:     action + " <job-id>",
+			Short:   shorts[action],
+			Example: "  docbank mailbox " + action + " <job-id>",
+			Args:    cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				c, err := daemonconn.Ensure(cmd.Context())
+				if err != nil {
+					return err
+				}
+				if action == "cancel" {
+					return c.CancelMailboxJob(cmd.Context(), args[0])
+				}
+				if action == "watch" {
+					return c.WatchMailboxJob(cmd.Context(), args[0], func(j store.MailboxJob) error {
+						if err := json.MarshalWrite(cmd.OutOrStdout(), j); err != nil {
+							return err
+						}
+						_, err := fmt.Fprintln(cmd.OutOrStdout())
+						if err != nil {
+							return fmt.Errorf("write mailbox event: %w", err)
+						}
+						return nil
+					})
+				}
+				if action == "receipts" {
+					out, err := c.MailboxOccurrences(cmd.Context(), args[0], after, limit)
+					if err != nil {
+						return err
+					}
+					return json.MarshalWrite(cmd.OutOrStdout(), out)
+				}
+				job, err := c.MailboxJob(cmd.Context(), args[0])
+				if err != nil {
+					return err
+				}
+				if action == "resume" || action == "continue" {
+					job, err = c.ResumeMailboxJob(cmd.Context(), job.MailboxJobRequest, action == "continue")
+					if err != nil {
+						return err
+					}
+				}
+				return json.MarshalWrite(cmd.OutOrStdout(), job)
+			}}
 		if action == "receipts" {
-			command.Flags().Int64Var(&after, "after", 0, "Return occurrences after this ordinal")
-			command.Flags().IntVar(&limit, "limit", 100, "Page size, at most 100")
+			command.Flags().Int64Var(&after, "after", 0, "return occurrences after this ordinal")
+			command.Flags().IntVar(&limit, "limit", 100, "page size, at most 100")
 		}
 		root.AddCommand(command)
 	}

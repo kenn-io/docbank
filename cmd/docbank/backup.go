@@ -18,8 +18,13 @@ import (
 )
 
 var backupCmd = &cobra.Command{
-	Use:   "backup",
-	Short: "Create and inspect immutable vault snapshots",
+	Long: `Snapshots go to a backup repository directory, given by --repo on every
+subcommand or once in $DOCBANK_HOME/config.toml ([backup] repo = "/path").
+Typical flow: backup init -> backup create -> backup list -> backup verify;
+backup restore writes a separate vault directory and proves it (never in place).`,
+	GroupID: groupOperations,
+	Use:     "backup",
+	Short:   "Create and inspect immutable vault snapshots",
 }
 
 var (
@@ -28,9 +33,10 @@ var (
 )
 
 var backupInitCmd = &cobra.Command{
-	Use:   "init",
-	Short: "Initialize a backup repository",
-	Args:  cobra.NoArgs,
+	Example: `  docbank backup init --repo ~/docbank-backup`,
+	Use:     "init",
+	Short:   "Initialize a backup repository",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		repo, err := absoluteBackupRepo(backupInitRepo)
 		if err != nil {
@@ -67,9 +73,10 @@ var (
 )
 
 var backupCreateCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create a verified snapshot of the live vault",
-	Args:  cobra.NoArgs,
+	Example: `  docbank backup create --repo ~/docbank-backup --tag weekly --json`,
+	Use:     "create",
+	Short:   "Create a verified snapshot of the live vault",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		repo, err := absoluteBackupRepo(backupCreateRepo)
 		if err != nil {
@@ -126,9 +133,10 @@ var (
 )
 
 var backupListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List backup snapshots",
-	Args:  cobra.NoArgs,
+	Example: `  docbank backup list --repo ~/docbank-backup --json`,
+	Use:     "list",
+	Short:   "List backup snapshots",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		repo, err := absoluteBackupRepo(backupListRepo)
 		if err != nil {
@@ -161,9 +169,10 @@ var (
 )
 
 var backupVerifyCmd = &cobra.Command{
-	Use:   "verify [SNAPSHOT]",
-	Short: "Verify backup repository integrity",
-	Args:  cobra.MaximumNArgs(1),
+	Example: `  docbank backup verify --repo ~/docbank-backup --all --quick`,
+	Use:     "verify [<snapshot>]",
+	Short:   "Verify backup repository integrity",
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if backupVerifyAll && len(args) > 0 {
 			return usageError(errors.New(
@@ -231,7 +240,11 @@ var (
 )
 
 var backupRestoreCmd = &cobra.Command{
-	Use:   "restore [SNAPSHOT]",
+	Example: `  docbank backup restore --repo ~/docbank-backup --target ~/restored-vault
+  DOCBANK_HOME=~/restored-vault docbank info`,
+	Long: `Restores the latest snapshot unless <snapshot> (from backup list) is given.
+The target must be empty unless --overwrite.`,
+	Use:   "restore [<snapshot>]",
 	Short: "Restore and prove a snapshot in a separate vault directory",
 	Args: func(cmd *cobra.Command, args []string) error {
 		if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
@@ -421,18 +434,18 @@ func writeBackupRestoreReport(w io.Writer, report api.BackupRestoreReport) error
 
 func init() {
 	backupInitCmd.Flags().StringVar(&backupInitRepo, "repo", "", "backup repository directory")
-	backupInitCmd.Flags().BoolVar(&backupInitJSON, "json", false, "machine-readable output")
+	backupInitCmd.Flags().BoolVar(&backupInitJSON, "json", false, "print JSON to stdout")
 	backupCreateCmd.Flags().StringVar(&backupCreateRepo, "repo", "", "backup repository directory")
 	backupCreateCmd.Flags().StringVar(&backupCreateTag, "tag", "", "label recorded on the snapshot")
 	backupCreateCmd.Flags().IntVar(&backupCreateJobs, "jobs", 0,
 		"concurrent blob readers (0 uses one per CPU; use 1 for spinning disks or NAS shares)")
 	backupCreateCmd.Flags().BoolVar(&backupCreateForceUnlock, "force-unlock", false,
 		"break a fresh repository lock only when its owner is known to be gone")
-	backupCreateCmd.Flags().BoolVar(&backupCreateJSON, "json", false, "machine-readable output")
+	backupCreateCmd.Flags().BoolVar(&backupCreateJSON, "json", false, "print JSON to stdout")
 	backupCreateCmd.Flags().StringVar(&backupCreateProgress, "progress", "auto",
 		"progress output mode: auto, bar, or plain (suppressed by --json)")
 	backupListCmd.Flags().StringVar(&backupListRepo, "repo", "", "backup repository directory")
-	backupListCmd.Flags().BoolVar(&backupListJSON, "json", false, "machine-readable output")
+	backupListCmd.Flags().BoolVar(&backupListJSON, "json", false, "print JSON to stdout")
 	backupVerifyCmd.Flags().StringVar(&backupVerifyRepo, "repo", "", "backup repository directory")
 	backupVerifyCmd.Flags().BoolVar(&backupVerifyAll, "all", false, "verify every snapshot")
 	backupVerifyCmd.Flags().BoolVar(&backupVerifyQuick, "quick", false,
@@ -441,7 +454,7 @@ func init() {
 		"concurrent blob readers (0 uses one per CPU; use 1 for spinning disks or NAS shares)")
 	backupVerifyCmd.Flags().BoolVar(&backupVerifyForceUnlock, "force-unlock", false,
 		"break a fresh repository lock only when its owner is known to be gone")
-	backupVerifyCmd.Flags().BoolVar(&backupVerifyJSON, "json", false, "machine-readable output")
+	backupVerifyCmd.Flags().BoolVar(&backupVerifyJSON, "json", false, "print JSON to stdout")
 	backupVerifyCmd.Flags().StringVar(&backupVerifyProgress, "progress", "auto",
 		"progress output mode: auto, bar, or plain (suppressed by --json)")
 	backupRestoreCmd.Flags().StringVar(&backupRestoreRepo, "repo", "", "backup repository directory")
@@ -452,7 +465,7 @@ func init() {
 		"concurrent pack readers (0 uses one per CPU; use 1 for spinning disks or NAS shares)")
 	backupRestoreCmd.Flags().BoolVar(&backupRestoreForceUnlock, "force-unlock", false,
 		"break a fresh repository lock only when its owner is known to be gone")
-	backupRestoreCmd.Flags().BoolVar(&backupRestoreJSON, "json", false, "machine-readable output")
+	backupRestoreCmd.Flags().BoolVar(&backupRestoreJSON, "json", false, "print JSON to stdout")
 	backupRestoreCmd.Flags().StringVar(&backupRestoreProgress, "progress", "auto",
 		"progress output mode: auto, bar, or plain (suppressed by --json)")
 	backupRestoreCmd.Flags().StringVar(&backupRestoreStoreMap, "store-map", "",

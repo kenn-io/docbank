@@ -9,12 +9,15 @@ import (
 )
 
 func newReportDownloadCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "download <report-id>", Short: "Save a verified report evidence ZIP",
-		Args: cobra.ExactArgs(1)}
+	cmd := &cobra.Command{
+		Example: `  docbank search-export download <report-id> --output out.zip`,
+		Use:     "download <report-id>",
+		Short:   "Save a verified report evidence ZIP",
+		Args:    cobra.ExactArgs(1)}
 	var output string
 	var overwrite bool
-	cmd.Flags().StringVar(&output, "output", "", "Destination for the evidence packet")
-	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "Replace an existing destination")
+	cmd.Flags().StringVar(&output, "output", "", "destination for the evidence packet")
+	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing destination")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		id := args[0]
 		if !daemonconn.IsTermReportID(id) {

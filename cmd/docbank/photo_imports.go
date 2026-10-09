@@ -17,9 +17,10 @@ var (
 )
 
 var photoImportCmd = &cobra.Command{
-	Use:   "import <source-root> [destination]",
-	Short: "Import grouped camera files from a folder",
-	Args:  cobra.RangeArgs(1, 2),
+	Example: `  docbank photos import ./photos /cases/acme/photos`,
+	Use:     "import <source-root> [destination]",
+	Short:   "Import grouped camera files from a folder",
+	Args:    cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		destination := photoImportDestination
 		if len(args) == 2 {
@@ -59,5 +60,5 @@ func writePhotoImportOutput(cmd *cobra.Command, operation api.StorageOperation) 
 func init() {
 	photosCmd.AddCommand(photoImportCmd)
 	photoImportCmd.Flags().StringVar(&photoImportDestination, "destination", "/", "vault destination path")
-	photoImportCmd.Flags().BoolVar(&photoImportJSON, "json", false, "emit machine-readable JSON")
+	photoImportCmd.Flags().BoolVar(&photoImportJSON, "json", false, "print JSON to stdout")
 }

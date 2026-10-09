@@ -115,13 +115,24 @@ func downloadReportPacket(ctx context.Context, connection *daemonconn.Connection
 }
 
 func init() {
-	root := &cobra.Command{Use: "search-export", Short: "Export search counts and review saved evidence"}
-	terms := &cobra.Command{Use: "create", Short: "Export search counts from the current vault", Args: cobra.NoArgs}
+	root := &cobra.Command{
+		Long: `Export per-term hit counts for a date range as an evidence ZIP.
+Typical flow: create --input req.json --output out.zip; csv and verify work
+offline on that ZIP. create returns a report ID for show, dates and revise;
+history lists recorded runs; download saves a retained report.`,
+		GroupID: groupSearch,
+		Use:     "search-export",
+		Short:   "Export search counts and review saved evidence"}
+	terms := &cobra.Command{
+		Example: `  docbank search-export create --input req.json --output out.zip`,
+		Use:     "create",
+		Short:   "Export search counts from the current vault",
+		Args:    cobra.NoArgs}
 	var input, output string
 	var overwrite bool
-	terms.Flags().StringVar(&input, "input", "", "Versioned report request JSON file")
-	terms.Flags().StringVar(&output, "output", "", "Destination for the evidence packet")
-	terms.Flags().BoolVar(&overwrite, "overwrite", false, "Replace an existing destination")
+	terms.Flags().StringVar(&input, "input", "", "versioned report request JSON file (required)")
+	terms.Flags().StringVar(&output, "output", "", "destination for the evidence packet (required)")
+	terms.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing destination")
 	terms.RunE = func(cmd *cobra.Command, _ []string) error {
 		if input == "" || output == "" {
 			return usageError(errors.New("search-export create requires --input and --output"))
@@ -165,7 +176,11 @@ func init() {
 		return nil
 	}
 
-	verify := &cobra.Command{Use: "verify <report.zip>", Short: "Check a report packet without opening a vault", Args: cobra.ExactArgs(1),
+	verify := &cobra.Command{
+		Example: `  docbank search-export verify out.zip`,
+		Use:     "verify <report.zip>",
+		Short:   "Check a report packet without opening a vault",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			result, err := verifyReportFile(cmd.Context(), args[0])
 			if err != nil {
@@ -178,11 +193,15 @@ func init() {
 			return nil
 		}}
 
-	csv := &cobra.Command{Use: "csv <report.zip>", Short: "Extract verified report counts without opening a vault", Args: cobra.ExactArgs(1)}
+	csv := &cobra.Command{
+		Example: `  docbank search-export csv out.zip --output counts.csv`,
+		Use:     "csv <report.zip>",
+		Short:   "Extract verified report counts without opening a vault",
+		Args:    cobra.ExactArgs(1)}
 	var csvOutput string
 	var csvOverwrite bool
-	csv.Flags().StringVar(&csvOutput, "output", "", "Destination for search-export.csv")
-	csv.Flags().BoolVar(&csvOverwrite, "overwrite", false, "Replace an existing destination")
+	csv.Flags().StringVar(&csvOutput, "output", "", "destination for search-export.csv")
+	csv.Flags().BoolVar(&csvOverwrite, "overwrite", false, "replace an existing destination")
 	csv.RunE = func(cmd *cobra.Command, args []string) error {
 		if csvOutput == "" {
 			return usageError(errors.New("search-export csv requires --output"))
@@ -211,11 +230,15 @@ func init() {
 		})
 	}
 
-	dates := &cobra.Command{Use: "dates <report-id>", Short: "Inspect frozen date candidates", Args: cobra.ExactArgs(1)}
+	dates := &cobra.Command{
+		Example: `  docbank search-export dates <report-id>`,
+		Use:     "dates <report-id>",
+		Short:   "Inspect frozen date candidates",
+		Args:    cobra.ExactArgs(1)}
 	var cursor string
 	var limit int
-	dates.Flags().StringVar(&cursor, "cursor", "", "Continue from a date-page cursor")
-	dates.Flags().IntVar(&limit, "limit", 50, "Maximum members on this page (1–100)")
+	dates.Flags().StringVar(&cursor, "cursor", "", "continue from a date-page cursor")
+	dates.Flags().IntVar(&limit, "limit", 50, "maximum members on this page (1–100)")
 	dates.RunE = func(cmd *cobra.Command, args []string) error {
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -228,12 +251,16 @@ func init() {
 		return json.MarshalWrite(cmd.OutOrStdout(), page)
 	}
 
-	revise := &cobra.Command{Use: "revise <report-id>", Short: "Apply reviewed dates to a frozen report", Args: cobra.ExactArgs(1)}
+	revise := &cobra.Command{
+		Example: `  docbank search-export revise <report-id> --choices choices.json --output revised.zip`,
+		Use:     "revise <report-id>",
+		Short:   "Apply reviewed dates to a frozen report",
+		Args:    cobra.ExactArgs(1)}
 	var choicesPath, revisionOutput string
 	var revisionOverwrite bool
 	revise.Flags().StringVar(&choicesPath, "choices", "", "JSON array of evidence-bound date choices")
-	revise.Flags().StringVar(&revisionOutput, "output", "", "Destination for the revised evidence packet")
-	revise.Flags().BoolVar(&revisionOverwrite, "overwrite", false, "Replace an existing destination")
+	revise.Flags().StringVar(&revisionOutput, "output", "", "destination for the revised evidence packet")
+	revise.Flags().BoolVar(&revisionOverwrite, "overwrite", false, "replace an existing destination")
 	revise.RunE = func(cmd *cobra.Command, args []string) error {
 		if choicesPath == "" || revisionOutput == "" {
 			return usageError(errors.New("search-export revise requires --choices and --output"))

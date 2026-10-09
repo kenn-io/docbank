@@ -20,14 +20,24 @@ var (
 )
 
 var exportCmd = &cobra.Command{
-	Use:   "export",
-	Short: "Export exact original versions as verified ZIP bundles",
+	Long: `Export exact original versions in a verified ZIP. Get version identities from
+stat --json. Save sel.json with this shape (use your own UUIDv4s and receipt):
+{"source_operation_id":"<uuid>","plan_operation_id":"<uuid>","members":[
+  {"node_id":12,"version_id":"<version-uuid>","sha256":"<sha256>","size":0}]}
+Typical flow: preview --request sel.json (plan ID and fingerprint) ->
+start <plan-id> --fingerprint F --operation-id <new-uuidv4> -> status <job-id>
+-> download <job-id> out.zip -> release <job-id>.
+Output: --json prints plans, jobs and verified download receipts.`,
+	GroupID: groupProductions,
+	Use:     "export",
+	Short:   "Export exact original versions as verified ZIP bundles",
 }
 
 var exportPreviewCmd = &cobra.Command{
-	Use:   "preview --request selection.json",
-	Short: "Freeze and review up to 1,000 exact original versions",
-	Args:  cobra.NoArgs,
+	Example: `  docbank export preview --request sel.json --json`,
+	Use:     "preview --request selection.json",
+	Short:   "Freeze and review up to 1,000 exact original versions",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		request, err := readExportRequest(exportRequestPath)
 		if err != nil {
@@ -70,9 +80,10 @@ var exportPreviewCmd = &cobra.Command{
 }
 
 var exportStartCmd = &cobra.Command{
-	Use:   "start <plan-id> --fingerprint <sha256> --operation-id <job-id>",
-	Short: "Start an export without waiting for completion",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank export start <plan-id> --fingerprint <sha256> --operation-id <new-uuidv4>`,
+	Use:     "start <plan-id> --fingerprint <sha256> --operation-id <job-id>",
+	Short:   "Start an export without waiting for completion",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateExportID("plan ID", args[0]); err != nil {
 			return err
@@ -100,9 +111,10 @@ var exportStartCmd = &cobra.Command{
 }
 
 var exportStatusCmd = &cobra.Command{
-	Use:   "status <job-id>",
-	Short: "Read export progress once",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank export status <job-id> --json`,
+	Use:     "status <job-id>",
+	Short:   "Read export progress once",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateExportID("job ID", args[0]); err != nil {
 			return err
@@ -123,9 +135,10 @@ var exportStatusCmd = &cobra.Command{
 }
 
 var exportCancelCmd = &cobra.Command{
-	Use:   "cancel <job-id>",
-	Short: "Request cancellation of an active export",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank export cancel <job-id>`,
+	Use:     "cancel <job-id>",
+	Short:   "Request cancellation of an active export",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateExportID("job ID", args[0]); err != nil {
 			return err
@@ -157,7 +170,8 @@ var exportCancelCmd = &cobra.Command{
 }
 
 var exportReleaseCmd = &cobra.Command{
-	Use: "release <job-id>",
+	Example: `  docbank export release <job-id>`,
+	Use:     "release <job-id>",
 	Long: "Remove a finished job and its retained archive to free a slot.\n" +
 		"If export_retained is returned, retry release after the download finishes.\n" +
 		"Even download && release can need a retry; unused tickets expire after two minutes.",
@@ -221,19 +235,19 @@ func writeExportJob(cmd *cobra.Command, job bundle.Job) error {
 }
 
 func init() {
-	exportCmd.PersistentFlags().BoolVar(&exportJSON, "json", false, "Write the result as JSON")
+	exportCmd.PersistentFlags().BoolVar(&exportJSON, "json", false, "print JSON to stdout")
 	exportPreviewCmd.Flags().StringVar(
 		&exportRequestPath, "request", "",
-		"Explicit document-version request JSON file (at most 1 MiB)",
+		"explicit document-version request JSON file (at most 1 MiB) (required)",
 	)
 	exportStartCmd.Flags().StringVar(
-		&exportFingerprint, "fingerprint", "", "Reviewed plan fingerprint",
+		&exportFingerprint, "fingerprint", "", "reviewed plan fingerprint (required)",
 	)
 	exportStartCmd.Flags().StringVar(
-		&exportOperationID, "operation-id", "", "Caller-chosen job UUIDv4; retain it for retries",
+		&exportOperationID, "operation-id", "", "caller-chosen job UUIDv4; retain it for retries (required)",
 	)
 	exportDownloadCmd.Flags().BoolVar(
-		&exportOverwrite, "overwrite", false, "Replace an existing destination after verification",
+		&exportOverwrite, "overwrite", false, "replace an existing destination after verification",
 	)
 	exportCmd.AddCommand(exportPreviewCmd, exportStartCmd, exportStatusCmd,
 		exportCancelCmd, exportDownloadCmd, exportReleaseCmd,

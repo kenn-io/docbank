@@ -41,14 +41,25 @@ var (
 )
 
 var packageCmd = &cobra.Command{
-	Use:   "package",
-	Short: "Inspect and exchange load-file packages",
+	Long: `A load-file package is a litigation production (DAT/OPT/LFP).
+Received: preflight <local-dir> -> import <preflight-id> -> import status.
+Produced: export <snapshot-id> out.zip.
+<snapshot-id> must be a sealed collection snapshot UUID. A package import
+creates one; read snapshot_id with docbank package list --json or
+docbank package show <package-id> --json. The CLI does not create a sealed
+snapshot from an arbitrary document selection; workspace query snapshots are
+temporary and cannot be used.
+Package and row IDs come from list, show and members.`,
+	GroupID: groupProductions,
+	Use:     "package",
+	Short:   "Inspect and exchange load-file packages",
 }
 
 var packagePreflightCmd = &cobra.Command{
-	Use:   "preflight <path>",
-	Short: "Validate a received load-file package without importing it",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank package preflight ./received --profile dat-concordance-v1 --encoding utf-8 --json`,
+	Use:     "preflight <local-dir>",
+	Short:   "Validate a received load-file package without importing it",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if packagePreflightProfile == "" {
 			return usageError(errors.New("--profile is required"))
@@ -89,6 +100,10 @@ var packagePreflightCmd = &cobra.Command{
 }
 
 var packageImportCmd = &cobra.Command{
+	Example: `  docbank package import <preflight-id> --name acme-production --into /cases/acme --json`,
+	Long: `Requires: successful package preflight ID, --name and an existing destination folder.
+Returns an operation ID; use import status <operation-id> until terminal,
+or import cancel <operation-id> to request cancellation.`,
 	Use:   "import <preflight-id>",
 	Short: "Start a durable load-file import from a successful preflight",
 	Args:  cobra.ExactArgs(1),
@@ -117,9 +132,10 @@ var packageImportCmd = &cobra.Command{
 }
 
 var packageImportStatusCmd = &cobra.Command{
-	Use:   "status <operation-id>",
-	Short: "Read load-file import progress",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank package import status <operation-id> --json`,
+	Use:     "status <operation-id>",
+	Short:   "Read load-file import progress",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -140,9 +156,10 @@ var packageImportStatusCmd = &cobra.Command{
 }
 
 var packageImportCancelCmd = &cobra.Command{
-	Use:   "cancel <operation-id>",
-	Short: "Cancel a queued or running load-file import",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank package import cancel <operation-id>`,
+	Use:     "cancel <operation-id>",
+	Short:   "Cancel a queued or running load-file import",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -163,9 +180,10 @@ var packageImportCancelCmd = &cobra.Command{
 }
 
 var packageExportCmd = &cobra.Command{
-	Use:   "export <snapshot-id> <local-file>",
-	Short: "Build and download a verified load-file export",
-	Args:  cobra.ExactArgs(2),
+	Example: `  docbank package export <snapshot-id> ./produced.zip --profile <profile>`,
+	Use:     "export <snapshot-id> <local-file>",
+	Short:   "Build and download a verified load-file export",
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 		if packageExportProfile == "" {
 			return usageError(errors.New("--profile is required"))
@@ -222,7 +240,10 @@ var packageExportCmd = &cobra.Command{
 }
 
 var packageListCmd = &cobra.Command{
-	Use: "list", Short: "List received and produced load-file packages", Args: cobra.NoArgs,
+	Example: `  docbank package list --json`,
+	Use:     "list",
+	Short:   "List received and produced load-file packages",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if err := validatePackageReadLimit(packageReadLimit); err != nil {
 			return usageError(err)
@@ -257,7 +278,10 @@ var packageListCmd = &cobra.Command{
 }
 
 var packageShowCmd = &cobra.Command{
-	Use: "show <package-id>", Short: "Show one load-file package", Args: cobra.ExactArgs(1),
+	Example: `  docbank package show <package-id> --json`,
+	Use:     "show <package-id>",
+	Short:   "Show one load-file package",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := uuid.Parse(args[0]); err != nil {
 			return usageError(errors.New("package ID must be a UUID"))
@@ -285,7 +309,10 @@ var packageShowCmd = &cobra.Command{
 }
 
 var packageMembersCmd = &cobra.Command{
-	Use: "members <package-id>", Short: "List immutable document occurrences in one package", Args: cobra.ExactArgs(1),
+	Example: `  docbank package members <package-id> --json`,
+	Use:     "members <package-id>",
+	Short:   "List immutable document occurrences in one package",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := uuid.Parse(args[0]); err != nil {
 			return usageError(errors.New("package ID must be a UUID"))
@@ -317,7 +344,10 @@ var packageMembersCmd = &cobra.Command{
 }
 
 var packageRecordCmd = &cobra.Command{
-	Use: "record <package-id> <row-id>", Short: "Read one immutable sender row", Args: cobra.ExactArgs(2),
+	Example: `  docbank package record <package-id> <row-id> --json`,
+	Use:     "record <package-id> <row-id>",
+	Short:   "Read one immutable sender row",
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := uuid.Parse(args[0]); err != nil {
 			return usageError(errors.New("package ID must be a UUID"))
@@ -378,25 +408,25 @@ func init() {
 	packagePreflightCmd.Flags().StringVar(&packagePreflightPageMapProfile, "page-map-profile", "", "page-map profile: opt-standard-v1 (OPT default), opt-pagecount5-v1, or lfp-ipro-v1 (LFP default)")
 	packagePreflightCmd.Flags().StringVar(&packagePreflightEncoding, "encoding", "", "declared source encoding")
 	packagePreflightCmd.Flags().StringVar(&packagePreflightMap, "map", "", "loadfile-mapping/v1 JSON file")
-	packagePreflightCmd.Flags().BoolVar(&packagePreflightJSON, "json", false, "emit machine-readable JSON")
+	packagePreflightCmd.Flags().BoolVar(&packagePreflightJSON, "json", false, "print JSON to stdout")
 	packageImportCmd.Flags().StringVar(&packageImportInto, "into", "/", "existing destination folder")
 	packageImportCmd.Flags().StringVar(&packageImportName, "name", "", "stable package name")
 	packageImportCmd.Flags().StringVar(&packageImportParty, "party", "", "sending party label")
 	packageImportCmd.Flags().StringVar(&packageImportOperation, "operation-id", "", "version-4 UUID for idempotent retry")
 	packageImportCmd.Flags().BoolVar(&packageImportPartial, "accept-partial", false, "retain supported records and report gaps")
 	packageImportCmd.Flags().BoolVar(&packageImportSuppliedText, "index-supplied-text", false, "index package-supplied text")
-	packageImportCmd.Flags().BoolVar(&packageImportJSON, "json", false, "emit machine-readable JSON")
-	packageImportStatusCmd.Flags().BoolVar(&packageImportJSON, "json", false, "emit machine-readable JSON")
-	packageImportCancelCmd.Flags().BoolVar(&packageImportJSON, "json", false, "emit machine-readable JSON")
+	packageImportCmd.Flags().BoolVar(&packageImportJSON, "json", false, "print JSON to stdout")
+	packageImportStatusCmd.Flags().BoolVar(&packageImportJSON, "json", false, "print JSON to stdout")
+	packageImportCancelCmd.Flags().BoolVar(&packageImportJSON, "json", false, "print JSON to stdout")
 	packageListCmd.Flags().StringVar(&packageListDirection, "direction", "", "filter by received or produced direction")
 	packageListCmd.Flags().StringVar(&packageListAfter, "after", "", "continue after the returned package UUID")
 	packageListCmd.Flags().IntVar(&packageReadLimit, "limit", 100, "page size: 50, 100, or 250")
-	packageListCmd.Flags().BoolVar(&packageReadJSON, "json", false, "emit machine-readable JSON")
-	packageShowCmd.Flags().BoolVar(&packageReadJSON, "json", false, "emit machine-readable JSON")
+	packageListCmd.Flags().BoolVar(&packageReadJSON, "json", false, "print JSON to stdout")
+	packageShowCmd.Flags().BoolVar(&packageReadJSON, "json", false, "print JSON to stdout")
 	packageMembersCmd.Flags().IntVar(&packageReadAfterOrdinal, "after-ordinal", 0, "continue after this member ordinal")
 	packageMembersCmd.Flags().IntVar(&packageReadLimit, "limit", 100, "page size: 50, 100, or 250")
-	packageMembersCmd.Flags().BoolVar(&packageReadJSON, "json", false, "emit machine-readable JSON")
-	packageRecordCmd.Flags().BoolVar(&packageReadJSON, "json", false, "emit machine-readable JSON")
+	packageMembersCmd.Flags().BoolVar(&packageReadJSON, "json", false, "print JSON to stdout")
+	packageRecordCmd.Flags().BoolVar(&packageReadJSON, "json", false, "print JSON to stdout")
 	packageExportCmd.Flags().StringVar(&packageExportProfile, "profile", "", "export profile ID")
 	packageExportCmd.Flags().StringVar(&packageExportSourcePackage, "source-package", "", "source package UUID for received labels")
 	packageExportCmd.Flags().StringVar(&packageExportBatesAllocation, "bates-allocation", "", "committed Bates allocation UUID to reuse")
