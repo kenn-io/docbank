@@ -80,6 +80,36 @@ describe("processing receipts", () => {
     expect(() => validateDocumentSearchReport(report, { ...request, rerank: false })).toThrow();
   });
 
+  it("allows one selected result per transcript build of a content version", () => {
+    const source = { source_id: "source", source_version_id: "version", content_version_id: versions[0] };
+    const request: DocumentSearchRequest = {
+      query: "synthetic phrase",
+      mode: "lexical",
+      limit: 20,
+      profile: "private",
+      fence: { vault_uid: vault, content_version_ids: [versions[0]] },
+      media_sources: [source],
+    };
+    const result = (rank: number, buildID: string) => ({ vault_uid: vault, node_id: 7,
+      content_version_id: versions[0], rank, score: 0.5, path: "/recording.wav", lexical_rank: rank,
+      evidence: [{ kind: "rendition_segment", build_id: buildID, segment_id: "segment-1", media_sources: [source] }] });
+    const report = (secondBuild: string) => ({
+      requested_mode: "lexical",
+      actual_mode: "lexical",
+      media_source_selection: true,
+      media_selections: [],
+      coverage: { binding_required: false, scoped_documents: 1, complete_documents: 1, state: "complete" },
+      degradations: [],
+      results: [result(1, "a".repeat(64)), result(2, secondBuild)],
+      truncated: false,
+      trace: [],
+    });
+    expect(validateDocumentSearchReport(report("b".repeat(64)), request).results).toHaveLength(2);
+    expect(() => validateDocumentSearchReport(report("a".repeat(64)), request)).toThrow();
+    const { media_sources: _, ...ordinary } = request;
+    expect(() => validateDocumentSearchReport(report("b".repeat(64)), ordinary)).toThrow();
+  });
+
   it("accepts the 4096-ID fence and rejects the 4097-ID boundary", () => {
     const ids = Array.from({ length: 4096 }, (_, index) =>
       `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`);
