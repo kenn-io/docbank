@@ -31,7 +31,13 @@ it("selects loaded photos by ID when equally many selected photos are off-page",
   expect(screen.queryByRole("button", { name: "Select all 10,000 photos" })).toBeNull();
   await fireEvent.click(button);
   expect([...photos.selection.selectedIDs]).toEqual(photos.items.map(item => item.asset_id));
-  await screen.findByRole("button", { name: "Select all 10,000 photos" });
+  await fireEvent.click(await screen.findByRole("button", { name: "Select all 10,000 photos" }));
+  expect(photos.scope()).toEqual({ query: photos.query });
+  expect((button as HTMLButtonElement).disabled).toBe(false);
+  await fireEvent.click(button);
+  expect(photos.allResults).toBe(false);
+  expect(photos.scope()).toEqual({ asset_ids: photos.items.map(item => item.asset_id) });
+  expect((button as HTMLButtonElement).disabled).toBe(true);
 });
 
 async function pendingAlbumWrite(operation: "picker add" | "picker create" | "index create" | "delete" | "duplicate") {
@@ -201,6 +207,30 @@ it("keeps B failures visible and ignores a second shortcut while source refresh 
   await waitFor(() => expect(albums.busy).toBe(false));
   await screen.findByText("Add unavailable");
   expect(screen.getAllByRole("alert")).toHaveLength(1);
+});
+
+it.each(["B", "drop"] as const)("clears a refused %s warning after a successful pending album write", async action => {
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ ...album, revision: 2 }))).mockResolvedValueOnce(new Response(JSON.stringify([album])));
+  vi.stubGlobal("fetch", fetcher);
+  const { photos, albums } = setup(true);
+  let finish!: () => void;
+  vi.spyOn(photos, "refresh").mockImplementation(() => new Promise<void>(resolve => finish = resolve));
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  albums.targetID = album.id;
+  await fireEvent.keyDown(window, { key: "b" });
+  await waitFor(() => expect(photos.refresh).toHaveBeenCalledTimes(1));
+  if (action === "B") await fireEvent.keyDown(window, { key: "b" });
+  else {
+    albums.drag = { source: photos, scope: photos.scope() };
+    await albums.drop(album, { preventDefault: vi.fn(), dataTransfer: { types: ["application/x-docbank-photos"] } } as unknown as DragEvent);
+  }
+  expect(albums.error).toBe("Another album change is still running. Try again.");
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  finish();
+  await waitFor(() => expect(albums.busy).toBe(false));
+  expect(albums.error).toBe("");
+  expect(albums.notice).toContain("Added to Trip");
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it("renders added order unchanged and saves or cancels inline rename", async () => {

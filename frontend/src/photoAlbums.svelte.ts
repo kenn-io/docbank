@@ -92,6 +92,7 @@ export class PhotoAlbums {
         else if (failure.code === "stale_revision") this.error = `${album.name} changed. Try again.`;
       }
       await complete?.(result);
+      if (result) this.error = "";
       this.errorStatus = !this.controller.signal.aborted && failure instanceof APIError ? failure.status : undefined;
       return result;
     } finally { this.busy = false; }

@@ -90,6 +90,12 @@ export class Photos {
   }
 
   resume(preserve?: () => (() => Promise<void>) | undefined) {
+    const density = loadDensity();
+    if (density !== this.density) {
+      const restore = preserve?.();
+      this.density = density;
+      void restore?.();
+    }
     if (this.error) return;
     if (this.replacement) return this.retry(preserve);
     if (!this.started) return this.loadMore(preserve);

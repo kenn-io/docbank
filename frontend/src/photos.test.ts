@@ -190,8 +190,20 @@ it("maps single, modifier and checkbox clicks to selection", () => {
   photos.dispose();
 });
 
-it("remembers density with safe defaults for unknown or unavailable storage", () => {
+it("remembers density with safe defaults for unknown or unavailable storage", async () => {
   const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.scrollTop = 750;
+  photos.items = [photo(1)];
+  const restore = vi.fn().mockResolvedValue(undefined);
+  const preserve = vi.fn(() => restore);
+  new Photos("scoped", vi.fn()).setDensity("large");
+  await photos.resume(preserve);
+  expect(photos.density).toBe("large");
+  expect(preserve).toHaveBeenCalledOnce();
+  expect(restore).toHaveBeenCalledOnce();
+  expect(photos.scrollTop).toBe(750);
+  expect(photos.items).toEqual([photo(1)]);
   photos.setDensity("compact");
   expect(new Photos("scoped", vi.fn()).density).toBe("compact");
   localStorage.setItem("docbank.photos.density", "__proto__");
