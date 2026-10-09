@@ -1694,7 +1694,7 @@ func (m Model) renderConfirmation(background string) string {
 		"",
 	}
 	for _, paragraph := range detail {
-		lines = appendWrapped(lines, paragraph, contentWidth, lipgloss.NewStyle())
+		lines = appendWrapped(lines, ansi.Wrap(paragraph, contentWidth, ""), contentWidth, lipgloss.NewStyle())
 	}
 	lines = append(lines, "", status)
 	for index := range lines {

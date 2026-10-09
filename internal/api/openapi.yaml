@@ -20240,7 +20240,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Restore a trash root to its original location (root fallback, suffix on collision)
+      summary: Restore a trash root or photo member, recovering its photo group and containing trash folders
   /api/v1/nodes/{id}/revert:
     post:
       description: "Reversion is metadata-only: it adopts the source version's existing blob authority and records a new content_revert history row under If-Match."
@@ -24694,7 +24694,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: List restorable trash roots, newest first, optionally paginated
+      summary: List restorable trash roots, newest first; paginated results group photo members
   /api/v1/trash/empty:
     post:
       operationId: emptyTrash

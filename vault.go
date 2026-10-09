@@ -86,7 +86,7 @@ const (
 	DefaultChildrenLimit = 500
 	// MaxChildrenLimit is the largest child page one embedded call may materialize.
 	MaxChildrenLimit = 5000
-	// DefaultTrashEmptyMaxRoots bounds one EmptyTrash call when MaxRoots is zero.
+	// DefaultTrashEmptyMaxRoots is the batch target when MaxRoots is zero; complete photo groups may exceed it.
 	DefaultTrashEmptyMaxRoots = 100
 	looseEncodingRawName      = "raw"
 	looseEncodingZstdName     = "zstd"
@@ -907,9 +907,9 @@ func (v *Vault) TrashPath(
 	return MutationReceipt{Node: fromStoreNode(node), Path: canonicalPath}, nil
 }
 
-// Restore returns a trash root to its recorded origin, or to the canonical
-// conflict-suffixed path selected by the store. A positive IfRevision must
-// match the trashed node exactly.
+// Restore returns a trash root or photo member to its recorded origin, suffixing conflicts.
+// Photo members recover their group and containing trash folders with their other contents.
+// A positive IfRevision must match the selected trashed node exactly.
 func (v *Vault) Restore(
 	ctx context.Context, nodeID int64, opts RevisionOptions,
 ) (MutationReceipt, error) {

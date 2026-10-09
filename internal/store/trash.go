@@ -158,9 +158,11 @@ func nextFreeNameTx(tx *sql.Tx, parentID int64, name string) (string, error) {
 	}
 }
 
-// Restore returns a trash root to its original location (or the tree root if
+// Restore returns a trash root or photo member to its original location (or the tree root if
 // that location is gone), re-suffixing on conflict. Descendants trashed in
-// earlier separate operations stay trashed. Unless ifRev is
+// earlier separate operations stay trashed unless photo-group recovery includes them.
+// A photo member inside a trash folder also restores that folder and its other contents.
+// Unless ifRev is
 // UnconditionalRev, the mutation fails with ErrStaleRevision unless ifRev
 // matches the node's current revision. The returned canonical path is captured
 // in the restore transaction with the returned node.

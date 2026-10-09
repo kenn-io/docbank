@@ -890,6 +890,8 @@ original parent directory was itself permanently deleted, the node is restored
 under `/`. Human output prints `restored [id:<id>] <path>`. `--json` returns the
 complete restored node with its resulting path and revision.
 
+Selecting a photo member restores its whole group. Companions inside trashed folders also recover those folders and their other contents, including other photos. Output reports the selected node's path.
+
 ## docbank search
 
 ```

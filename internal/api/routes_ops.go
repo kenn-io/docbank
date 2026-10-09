@@ -200,7 +200,7 @@ func registerOpsRoutes(api huma.API, d Deps, g *gate) {
 	}
 	huma.Register(api, huma.Operation{
 		OperationID: "listTrash", Method: http.MethodGet, Path: "/api/v1/trash",
-		Summary: "List restorable trash roots, newest first, optionally paginated",
+		Summary: "List restorable trash roots, newest first; paginated results group photo members",
 	}, func(ctx context.Context, in *struct {
 		Limit  int `query:"limit" default:"0" minimum:"0" maximum:"1000"`
 		Offset int `query:"offset" default:"0" minimum:"0"`

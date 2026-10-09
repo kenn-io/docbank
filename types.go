@@ -711,8 +711,9 @@ type BatchMoveReceipt struct {
 // embedded or daemon operation.
 const MaxBatchMoves = store.MaxBatchMoves
 
-// TrashEmptyOptions bounds one trash-empty preview or execution. A zero
-// MaxRoots uses DefaultTrashEmptyMaxRoots. DryRun never deletes candidates.
+// TrashEmptyOptions sets the batch target for one trash-empty preview or execution.
+// Complete photo groups may exceed MaxRoots; zero uses DefaultTrashEmptyMaxRoots.
+// DryRun never deletes candidates.
 type TrashEmptyOptions struct {
 	OlderThan time.Duration `json:"older_than"`
 	MaxRoots  int           `json:"max_roots,omitzero"`

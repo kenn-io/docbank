@@ -783,8 +783,7 @@ It releases the read transaction, dedicated connection, and vault lease.
 
 `MovePath`, `TrashPath`, and `Restore` return the resulting node and canonical
 path. Their optional positive `IfRevision` rejects stale mutations.
-`IfRevision == 0` is unconditional. `EmptyTrash` previews or deletes a limited
-number of trash roots: a zero `MaxRoots` uses `DefaultTrashEmptyMaxRoots`, and
+`IfRevision == 0` is unconditional. `Restore` accepts photo members inside trashed folders and recovers their group, those folders, and their other contents. `EmptyTrash` uses `MaxRoots` as a batch target, finishing complete photo groups even when they exceed it. Zero uses `DefaultTrashEmptyMaxRoots`, and
 `More` asks the owner to schedule another batch.
 
 Use `BatchMove` for an all-or-nothing reorganization of up to

@@ -53,7 +53,7 @@ permanently deleted, the node is restored under `/`.
 
 Trashing a subtree stamps every node with the same trash time, so a nested
 directory trashed *before* its parent keeps its own trash entry. Restoring the
-parent doesn't restore things you trashed separately.
+parent leaves separately trashed items in trash unless photo-group recovery includes them.
 
 Photos' **Move to trash** action and `docbank photos assets trash <asset-id>` move all asset members together with an asset revision check. The browser trash drawer and paginated TUI list group independently trashed photo members into one row. The CLI's unpaged list keeps its ordinary node listing. Restoring any photo member restores its whole group, including companions in other folders. If that member belongs to a trashed folder, restore also recovers the folder's original subtree.
 
@@ -150,8 +150,7 @@ thresholds.
 ## Embedded maintenance
 
 Embedded applications own the same lifecycle but schedule finite passes instead
-of asking the daemon to drain a full operation. `EmptyTrash` limits one preview
-or deletion to `MaxRoots`. Zero selects the finite `DefaultTrashEmptyMaxRoots`.
+of asking the daemon to drain a full operation. `EmptyTrash` uses `MaxRoots` as a batch target and finishes complete photo groups even when they exceed it. Zero selects `DefaultTrashEmptyMaxRoots`.
 `GarbageCollect`, `Verify`, and `Repack` accept a `WorkBudget`. Zero
 `MaxObjects` selects the finite `DefaultMaintenanceMaxObjects`, and explicit
 values are capped by `MaxMaintenanceObjects`. A positive `MaxBytes` is a soft
