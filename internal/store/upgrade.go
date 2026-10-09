@@ -33,7 +33,7 @@ var releasedStorageSchemaVersions = []int{1, 2, 3, 28, 29}
 
 // Metadata JSONL does not carry unfinished storage work. Cutovers copy these
 // tables verbatim so queued imports, placements, evacuations, and pending
-// deletions survive an upgrade.
+// deletions survive an upgrade. Schema v3 has only the operation tables.
 var (
 	releasedStorageOperationTables = []string{
 		"storage_operations", "storage_operation_stores", "storage_operation_cleanup",
@@ -87,7 +87,7 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
 			return exportReleasedMetadataSnapshot(ctx, source, dst, 3)
 		},
-		restoreSourceState: restoreV3PhysicalCatalog,
+		restoreSourceState: restoreV3SourceState,
 	},
 	{
 		version: 28, release: "v0.15.0", backupSuffix: v28BackupSuffix,
@@ -699,9 +699,14 @@ func restoreV2PhysicalCatalog(ctx context.Context, source metadataQuerier, targe
 	})
 }
 
-func restoreV3PhysicalCatalog(ctx context.Context, source metadataQuerier, target *Store) error {
+// restoreV3SourceState restores the blob catalog and copies unfinished storage
+// operations.
+func restoreV3SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
 	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
-		return restoreV3PhysicalCatalogTx(ctx, source, tx, target)
+		if err := restoreV3PhysicalCatalogTx(ctx, source, tx, target); err != nil {
+			return err
+		}
+		return copyReleasedTables(ctx, source, tx, releasedStorageOperationTables)
 	})
 }
 

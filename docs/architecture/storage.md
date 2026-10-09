@@ -142,14 +142,15 @@ cutover rather than a sequence of in-place SQL mutations:
 5. Retain a version-identified source recovery copy and atomically publish the
    new database.
 
-Upgrades from v0.15.0 and later keep the source processing incarnation, so
-existing processing consent and queued rendition jobs stay authorized. They
-also copy unfinished storage work unchanged: storage operations with their
-store and cleanup records, pending loose-blob retirements, and pending
-derivative purges. Queued or interrupted photo imports, placements, and
-evacuations resume after the upgrade. A source table whose columns differ from
-the current schema stops the upgrade before the vault changes. Restoring a
-backup still requires fresh consent before provider work resumes.
+Upgrades from schema v3 and later copy storage operations with their store
+and cleanup records unchanged, so queued or interrupted placements,
+evacuations, and photo imports resume after the upgrade. Upgrades from v0.15.0
+and later also copy pending loose-blob retirements and pending derivative
+purges. They keep the source processing incarnation, so existing processing
+consent and queued rendition jobs stay authorized. A copied source table whose
+columns differ from the current schema stops the upgrade before the vault
+changes. Restoring a backup still requires fresh consent before provider work
+resumes.
 
 The cutover driver is shared by every released generation. A small source
 adapter describes how to export that generation's logical authority and
