@@ -260,7 +260,8 @@ type embeddingRuntimeBlobStore interface {
 func configuredEmbeddingDescriptor(profile config.EmbeddingProfileConfig, modelInput document.ModelInputContract) document.EmbeddingDescriptor {
 	runtime := profile.Runtime
 	modes := []document.ModelInputMode{modelInput.Document.Mode}
-	supportsQuery := runtime.AdapterContract == openAIEmbeddingAdapter
+	supportsQuery := runtime.AdapterContract == openAIEmbeddingAdapter ||
+		(runtime.AdapterContract == voyageEmbeddingAdapter && profile.InputKind == string(document.EmbeddingInputRenditionChunk))
 	if supportsQuery && modelInput.Query.Mode != modelInput.Document.Mode {
 		modes = append(modes, modelInput.Query.Mode)
 	}
@@ -293,6 +294,9 @@ func finalizeOpenAIEmbeddingDescriptor(profile openaicompat.Profile) (document.E
 func configuredVoyageProvider(profile config.EmbeddingProfileConfig, modelInput document.ModelInputContract,
 	secrets environmentCredentialSecrets,
 ) (document.EmbeddingProvider, document.EmbeddingDescriptor, error) {
+	if profile.InputKind == string(document.EmbeddingInputRenditionChunk) {
+		return configuredVoyageTextProvider(profile, modelInput, secrets)
+	}
 	file, err := os.Open(profile.Runtime.CapabilityManifest)
 	if err != nil {
 		return nil, document.EmbeddingDescriptor{}, errors.New("voyage capability manifest is unavailable")
@@ -317,23 +321,12 @@ func configuredVoyageProvider(profile config.EmbeddingProfileConfig, modelInput 
 		MaxBatchItems: profile.MaxBatchItems, MaxInputBytes: profile.MaxInputBytes,
 		MaxRequestBytes: profile.Runtime.MaxRequestBytes, MaxResponseBytes: profile.MaxResponseBytes,
 		Policy: policy, CapabilityManifest: manifest}
-	temporary, err := document.NewEmbeddingDescriptor(descriptor)
+	configured, err = finalizeVoyageEmbeddingDescriptor(configured)
 	if err != nil {
 		return nil, document.EmbeddingDescriptor{}, err
 	}
-	configured.Descriptor = temporary
-	fingerprint, err := voyage.EmbeddingPolicyFingerprint(configured)
-	if err != nil {
-		return nil, document.EmbeddingDescriptor{}, err
-	}
-	temporary.PolicyFingerprint, temporary.Fingerprint = fingerprint, ""
-	final, err := document.NewEmbeddingDescriptor(temporary)
-	if err != nil {
-		return nil, document.EmbeddingDescriptor{}, err
-	}
-	configured.Descriptor = final
 	provider, err := voyage.NewEmbeddingProvider(configured, secrets, nil)
-	return provider, final, err
+	return provider, configured.Descriptor, err
 }
 
 // providerEgressPolicy converts config after Config.Validate has checked it.

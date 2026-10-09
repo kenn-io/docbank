@@ -594,10 +594,10 @@ and must be supplied separately after restoring a vault.
 
 | Fields | Meaning |
 | --- | --- |
-| `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks, or `docbank-voyage-embeddings/v1` for original files. |
+| `adapter_contract` | `docbank-openai-compatible-embeddings/v1` for rendition chunks, or `docbank-voyage-embeddings/v1` for rendition chunks and original files. |
 | `endpoint`, `model_revision` | Exact provider endpoint and pinned revision. OpenAI-compatible endpoints are origins without a path; Voyage uses `https://api.voyageai.com/v1`. |
-| `deployment_epoch`, `provider_revision_header` | OpenAI-compatible runtimes require exactly one. The epoch must equal `model_revision`; a revision header must echo the pinned revision in every response. |
-| `capability_manifest` | Voyage requires an absolute path to a capability manifest matching its model, media policy, and descriptor. |
+| `deployment_epoch`, `provider_revision_header` | OpenAI-compatible runtimes require exactly one. Voyage text runtimes require an epoch and forbid a revision header. The epoch must equal `model_revision`; an OpenAI-compatible revision header must echo the pinned revision in every response. |
+| `capability_manifest` | Voyage original-file runtimes require an absolute path to a capability manifest matching their model, media policy, and descriptor. Voyage text runtimes forbid this field. |
 | `request_timeout`, `max_request_bytes` | Bound each provider request. The profile's `max_batch_items`, `max_input_bytes`, and `max_response_bytes` supply the other request/response limits. |
 | `allowed_cidrs`, `spki_sha256`, `proxy_mode` | Explicit destination CIDRs, optional TLS public-key pins, and `proxy_mode = "disabled"`. The provider connection enforces this policy. |
 | `connect_timeout`, `keep_alive`, `tls_handshake_timeout` | Required positive transport durations, each at most five minutes. |
@@ -606,6 +606,61 @@ Request timeouts must also be positive and at most five minutes. Retry policy
 belongs to the worker, so runtime configuration has no retry-count or retry-delay
 fields. The worker handles transient failures and capacity-driven batch splits.
 It records malformed responses separately from rejected document input.
+
+#### Voyage text retrieval
+
+Use `docbank-voyage-embeddings/v1` with `input_kind = "rendition_chunk"`
+to embed retained rendition text, including Docling Markdown. It supports
+`voyage-3.5`, `voyage-4-large`, `voyage-4`, and `voyage-4-lite` at exactly
+256, 512, 1024, or 2048 dimensions. Set the binding's `descriptor_id` to
+`voyage.embeddings-v1`, `trust_boundary` to `hosted_provider`, `metric` to
+`cosine`, `normalization` to `unit_length`, and `scalar_encoding` to `float32`.
+Use `voyage/document/v1` and `voyage/query/v1` as the formatters.
+
+The custom model-input contract must use native document and query modes.
+For example, these sections belong to an otherwise complete embedding profile:
+
+```toml
+[embedding_profiles.voyage_text.model_input]
+profile = "custom/v1"
+compatibility_id = "voyage/retained-text/v1"
+
+[embedding_profiles.voyage_text.model_input.document]
+mode = "document"
+template = "{{content}}"
+
+[embedding_profiles.voyage_text.model_input.query]
+mode = "query"
+template = "{{content}}"
+
+[embedding_profiles.voyage_text.runtime]
+adapter_contract = "docbank-voyage-embeddings/v1"
+endpoint = "https://api.voyageai.com/v1"
+model_revision = "text-deployment-v1"
+deployment_epoch = "text-deployment-v1"
+# Supply the request bounds and sealed egress settings listed above.
+```
+
+Set the outer profile's `compatibility_id` to the same value. Supply its
+credential binding, chunk policy, disclosure policy, and exact descriptor
+fingerprint as for other retained text bindings. The fingerprint includes the
+model, dimensions, document/query formatting, deployment epoch, credential
+binding name, transport bounds, and egress policy. Credential values are excluded.
+A mismatched descriptor prevents the daemon from starting that runtime.
+
+The operator owns the epoch. It attests that stored document vectors and new
+query vectors use the same model deployment; Voyage does not return an immutable
+revision. Change the epoch and rebuild vectors when the hosted model changes.
+Never use `mutable-alias-export-only` as an epoch. Unpinned embedded Voyage
+profiles remain export-only. Contextual and original-file profiles do not accept
+a text deployment epoch.
+
+The adapter sends `input_type = "document"` for chunks and `"query"` for text
+queries. It pins `output_dimension`, requests float vectors, disables provider
+truncation, and omits `encoding_format`. It checks unit length without
+renormalizing the response. Semantic and hybrid searches can select this binding;
+lexical search does not send a query to Voyage. Consent and retained input
+requirements still apply.
 
 #### Model input
 

@@ -442,7 +442,7 @@ must supply matching profiles, authorization, and named credential resolution.
 | [`document/openaicompat`](https://github.com/kenn-io/docbank/tree/main/document/openaicompat) | Explicit operator-hosted OpenAI-compatible text embeddings; deployment identity is required |
 | [`document/openai`](https://github.com/kenn-io/docbank/tree/main/document/openai) | Fixed hosted `text-embedding-3-large` contract; separate from the operator-hosted adapter |
 | [`document/mistral`](https://github.com/kenn-io/docbank/blob/main/document/mistral/embedding.go) | Hosted `mistral-embed` text embeddings |
-| [`document/voyage`](https://github.com/kenn-io/docbank/blob/main/document/voyage/embedding.go) | Hosted `voyage-4`, `voyage-context-4`, and capability-authorized direct-file embeddings |
+| [`document/voyage`](https://github.com/kenn-io/docbank/blob/main/document/voyage/embedding.go) | Hosted Voyage 3.5/4 text, `voyage-context-4`, and capability-authorized direct-file embeddings |
 | [`document/cohere`](https://github.com/kenn-io/docbank/tree/main/document/cohere) | Hosted `embed-v4.0` text and inspected-image inputs; distinct document and query roles |
 | [`document/gemini`](https://github.com/kenn-io/docbank/tree/main/document/gemini) | Hosted `gemini-embedding-2` text and authorized image, audio, video, and PDF files |
 | [`document/zeroentropy`](https://github.com/kenn-io/docbank/tree/main/document/zeroentropy) | Hosted `zembed-1` text with explicit output encoding, latency policy, and dimensions |
@@ -460,10 +460,22 @@ The existing custom text contract also supports an optional
 Its configuration and synthetic transport checks do not qualify a live model
 deployment. The operator supplies the server and its immutable recipe.
 
-Voyage contextual requests contain one document's ordered chunks. The shared
-Voyage and Mistral adapters mark their mutable hosted aliases as export-only
-and do not advertise a serving-time text query encoder. Do not infer query
-compatibility from an equal vector dimension.
+Voyage text profiles can embed retained rendition chunks and serve text queries
+when the operator supplies `EmbeddingProfile.DeploymentEpoch`, sets the descriptor's
+`ModelRevision` to that epoch, and enables `SupportsTextQuery`. The native adapter
+sends document/query roles, pins dimensions, and requests float vectors without
+`encoding_format`. It accepts the optional string `text` response item member
+and discards it; all other unknown members still fail decoding. Other providers
+keep their existing strict schemas. Finite, nonzero vectors must match the pinned
+dimension. Retrieval profiles require cosine distance and unit-length vectors;
+the squared norm may differ from one by at most `1e-4`. The adapter never silently
+normalizes provider drift. See [Voyage text runtime configuration](configuration.md#voyage-text-retrieval)
+for supported models and the operator's epoch responsibilities.
+
+Voyage contextual requests contain one document's ordered chunks. Unpinned
+Voyage profiles and Mistral's mutable hosted aliases remain export-only and do
+not advertise a serving-time text query encoder. Do not infer query compatibility
+from an equal vector dimension.
 
 Gemini's profile selects inline bytes or the Files API. Direct-file requests
 need matching inspected capability and disclosure fingerprints. The Files API

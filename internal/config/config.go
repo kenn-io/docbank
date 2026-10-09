@@ -1005,9 +1005,14 @@ func validateEmbeddingProfileConfig(profile EmbeddingProfileConfig, prefix strin
 				return fmt.Errorf("%s OpenAI-compatible deployment epoch differs from model revision", prefix)
 			}
 		case "docbank-voyage-embeddings/v1":
-			if profile.InputKind != string(document.EmbeddingInputOriginalFile) ||
-				runtime.Endpoint != "https://api.voyageai.com/v1" || runtime.CapabilityManifest == "" ||
-				!filepath.IsAbs(runtime.CapabilityManifest) || runtime.DeploymentEpoch != "" || runtime.ProviderRevisionHeader != "" {
+			if runtime.Endpoint != "https://api.voyageai.com/v1" || runtime.ProviderRevisionHeader != "" {
+				return fmt.Errorf("%s Voyage runtime authority is invalid", prefix)
+			}
+			if profile.InputKind == string(document.EmbeddingInputRenditionChunk) {
+				if runtime.CapabilityManifest != "" || runtime.DeploymentEpoch == "" || runtime.DeploymentEpoch != runtime.ModelRevision {
+					return fmt.Errorf("%s Voyage text runtime requires a matching deployment epoch and no capability manifest", prefix)
+				}
+			} else if runtime.CapabilityManifest == "" || !filepath.IsAbs(runtime.CapabilityManifest) || runtime.DeploymentEpoch != "" {
 				return fmt.Errorf("%s Voyage runtime authority is invalid", prefix)
 			}
 		}

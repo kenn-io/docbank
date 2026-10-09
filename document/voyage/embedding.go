@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	json "encoding/json/v2"
 	"errors"
 	"fmt"
@@ -71,7 +72,11 @@ type SecretResolver interface {
 }
 
 type EmbeddingProfile struct {
-	Mode               EmbeddingMode
+	Mode EmbeddingMode
+
+	// DeploymentEpoch is an operator-managed text model identity. Empty keeps
+	// mutable hosted aliases export-only; retrieval requires a matching revision.
+	DeploymentEpoch    string
 	Endpoint           string
 	EgressPolicy       providerhttp.EgressPolicy
 	Descriptor         document.EmbeddingDescriptor
@@ -94,6 +99,7 @@ type embeddingPolicyIdentity struct {
 	Endpoint          string                       `json:"endpoint"`
 	Route             string                       `json:"route"`
 	Mode              EmbeddingMode                `json:"mode"`
+	DeploymentEpoch   string                       `json:"deployment_epoch,omitempty"`
 	Descriptor        document.EmbeddingDescriptor `json:"descriptor"`
 	ModelInput        document.ModelInputContract  `json:"model_input"`
 	CredentialBinding string                       `json:"credential_binding"`
@@ -138,9 +144,10 @@ type contextualWireRequest struct {
 }
 
 type embeddingWireItem struct {
-	Object    string    `json:"object"`
-	Embedding []float32 `json:"embedding"`
-	Index     *int      `json:"index"`
+	Object    string         `json:"object"`
+	Embedding []float32      `json:"embedding"`
+	Index     *int           `json:"index"`
+	Text      jsontext.Value `json:"text,omitempty"`
 }
 
 type embeddingWireResponse struct {
@@ -191,7 +198,7 @@ func EmbeddingPolicyFingerprint(profile EmbeddingProfile) (string, error) {
 	}
 	encoded, err := canonical.Marshal(embeddingPolicyIdentity{
 		AdapterContract: embeddingAdapterContract, Endpoint: normalized.Endpoint, Route: route,
-		Mode: normalized.Mode, Descriptor: descriptorIdentity, ModelInput: normalized.ModelInput,
+		Mode: normalized.Mode, DeploymentEpoch: normalized.DeploymentEpoch, Descriptor: descriptorIdentity, ModelInput: normalized.ModelInput,
 		CredentialBinding: normalized.SecretBinding, Egress: embeddingEgressPolicyIdentity(normalized.EgressPolicy), ChunkerVersion: normalized.ChunkerVersion,
 		RequestTimeout: int64(normalized.RequestTimeout), MaxRetries: normalized.MaxRetries,
 		RetryBaseDelay: int64(normalized.RetryBaseDelay), MaxBatchItems: normalized.MaxBatchItems,
@@ -225,7 +232,7 @@ func NewEmbeddingProvider(profile EmbeddingProfile, secrets SecretResolver, reso
 	if descriptor.PolicyFingerprint != fingerprint {
 		return nil, errors.New("voyage embedding: descriptor policy fingerprint does not match profile")
 	}
-	if descriptor.SupportsTextQuery {
+	if descriptor.SupportsTextQuery && normalized.DeploymentEpoch == "" {
 		return nil, errors.New("voyage embedding: hosted mutable alias is export-only")
 	}
 	if normalized.SecretBinding == "" || providerutil.IsNil(secrets) {
@@ -525,6 +532,11 @@ func (client *EmbeddingClient) decodeText(body []byte, want int) ([][]float32, e
 	if err := json.Unmarshal(body, &response, json.RejectUnknownMembers(true), json.WithUnmarshalers(json.UnmarshalFunc(providerutil.UnmarshalEmbeddingFloat32))); err != nil {
 		return nil, &ProviderError{Kind: ErrMalformedResponse}
 	}
+	for _, item := range response.Data {
+		if len(item.Text) != 0 && item.Text.Kind() != '"' {
+			return nil, &ProviderError{Kind: ErrMalformedResponse}
+		}
+	}
 	vectors, err := client.orderItems(response.Object, response.Model, response.Data, want)
 	if err != nil {
 		err = &ProviderError{Kind: ErrMalformedResponse, cause: err}
@@ -650,17 +662,29 @@ func normalizeEmbeddingProfile(profile EmbeddingProfile) (EmbeddingProfile, docu
 	if descriptorIdentity.ID != EmbeddingProviderID || descriptorIdentity.TrustBoundary != document.EmbeddingTrustHostedProvider || descriptorIdentity.ScalarEncoding != EmbeddingScalarFloat32 || descriptorIdentity.DocumentFormatter != EmbeddingDocumentFormatterV1 || descriptorIdentity.QueryFormatter != EmbeddingQueryFormatterV1 || descriptorIdentity.ModelInput != profile.ModelInput || descriptorIdentity.CompatibilityID != profile.ModelInput.CompatibilityID {
 		return EmbeddingProfile{}, document.EmbeddingDescriptor{}, "", errors.New("voyage embedding: descriptor does not match adapter contract")
 	}
-	if profile.Mode != EmbeddingModeDirectFile && descriptorIdentity.SupportsTextQuery {
+	if profile.Mode != EmbeddingModeDirectFile && descriptorIdentity.SupportsTextQuery && profile.DeploymentEpoch == "" {
 		return EmbeddingProfile{}, document.EmbeddingDescriptor{}, "", errors.New("voyage embedding: hosted mutable alias is export-only")
 	}
 	if profile.Mode != EmbeddingModeDirectFile && (!slices.Equal(descriptorIdentity.SupportedRequestModes, []document.ModelInputMode{document.ModelInputModeDocument, document.ModelInputModeQuery}) || profile.ModelInput.Document.Mode != document.ModelInputModeDocument || profile.ModelInput.Query.Mode != document.ModelInputModeQuery) {
 		return EmbeddingProfile{}, document.EmbeddingDescriptor{}, "", errors.New("voyage embedding: descriptor native role modes do not match document/query behavior")
 	}
+	if profile.DeploymentEpoch != "" && profile.Mode != EmbeddingModeText {
+		return EmbeddingProfile{}, document.EmbeddingDescriptor{}, "", errors.New("voyage embedding: deployment epoch is only supported for text retrieval")
+	}
 	route := textEmbeddingsPath
 	switch profile.Mode {
 	case EmbeddingModeText:
-		if !slices.Contains([]string{"voyage-4-large", TextModel, "voyage-4-lite"}, descriptorIdentity.Model) || descriptorIdentity.ModelRevision != HostedAliasRevision || descriptorIdentity.SupportsTextQuery || !slices.Contains([]int{2048, 1024, 512, 256}, descriptorIdentity.Dimension) || !slices.Equal(descriptorIdentity.InputKinds, []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}) || !slices.Equal(descriptorIdentity.SupportedRequestModes, []document.ModelInputMode{document.ModelInputModeDocument, document.ModelInputModeQuery}) || profile.ModelInput.Document.Mode != document.ModelInputModeDocument || profile.ModelInput.Query.Mode != document.ModelInputModeQuery {
-			return EmbeddingProfile{}, document.EmbeddingDescriptor{}, "", errors.New("voyage embedding: descriptor is not a pinned Voyage 4 text profile")
+		if profile.DeploymentEpoch == "" {
+			if descriptorIdentity.ModelRevision != HostedAliasRevision || descriptorIdentity.SupportsTextQuery {
+				return EmbeddingProfile{}, document.EmbeddingDescriptor{}, "", errors.New("voyage embedding: hosted mutable alias is export-only")
+			}
+		} else if !validEmbeddingToken(profile.DeploymentEpoch) || profile.DeploymentEpoch == HostedAliasRevision ||
+			profile.DeploymentEpoch != descriptorIdentity.ModelRevision || !descriptorIdentity.SupportsTextQuery ||
+			descriptorIdentity.Metric != document.VectorMetricCosine || descriptorIdentity.Normalization != document.VectorNormalizationUnitLength {
+			return EmbeddingProfile{}, document.EmbeddingDescriptor{}, "", errors.New("voyage embedding: text retrieval requires a matching deployment epoch, cosine metric and unit-length vectors")
+		}
+		if !slices.Contains([]string{"voyage-3.5", "voyage-4-large", TextModel, "voyage-4-lite"}, descriptorIdentity.Model) || !slices.Contains([]int{2048, 1024, 512, 256}, descriptorIdentity.Dimension) || !slices.Equal(descriptorIdentity.InputKinds, []document.EmbeddingInputKind{document.EmbeddingInputRenditionChunk}) || !slices.Equal(descriptorIdentity.SupportedRequestModes, []document.ModelInputMode{document.ModelInputModeDocument, document.ModelInputModeQuery}) || profile.ModelInput.Document.Mode != document.ModelInputModeDocument || profile.ModelInput.Query.Mode != document.ModelInputModeQuery {
+			return EmbeddingProfile{}, document.EmbeddingDescriptor{}, "", errors.New("voyage embedding: descriptor is not a pinned Voyage text profile")
 		}
 	case EmbeddingModeContextual:
 		route = contextualEmbeddingsPath
