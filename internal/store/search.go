@@ -98,35 +98,52 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		return nil, false, nil
 	}
 	filterSQL, filterArgs := searchFilterSQL(opts)
-	names, err := nameSearchCandidates(fq)
-	if err != nil {
-		return nil, false, err
+	selectedCTE, selectedJoin, attachmentSelection, selectedArgs := "", "", "", []any(nil)
+	if len(opts.SelectedBuilds) != 0 {
+		encoded, err := json.Marshal(opts.SelectedBuilds)
+		if err != nil {
+			return nil, false, err
+		}
+		selectedCTE = `WITH selected AS MATERIALIZED (
+			SELECT json_extract(value,'$.content_version_id') content_version_id,
+			json_extract(value,'$.build_id') build_id FROM json_each(?)) `
+		// Check each build's pairs before catalog joins to avoid repeating the fence scan.
+		selectedJoin = ` CROSS JOIN selected ON selected.build_id=rendition_lexical_fts.build_id `
+		attachmentSelection = ` AND a.content_version_id=selected.content_version_id `
+		selectedArgs = []any{string(encoded)}
 	}
-	nameArgs := names.Args
-	nameArgs = append(nameArgs, filterArgs...)
-	nameArgs = append(nameArgs, limit+1)
-	rows, err := s.db.QueryContext(ctx, `WITH name_matches AS (`+names.SQL+`)
+	var nameHits []SearchHit
+	if len(opts.SelectedBuilds) == 0 {
+		names, err := nameSearchCandidates(fq)
+		if err != nil {
+			return nil, false, err
+		}
+		nameArgs := names.Args
+		nameArgs = append(nameArgs, filterArgs...)
+		nameArgs = append(nameArgs, limit+1)
+		rows, err := s.db.QueryContext(ctx, `WITH name_matches AS (`+names.SQL+`)
 		SELECT `+nodeCols+` FROM `+nodeFrom+`
 		JOIN name_matches ON name_matches.doc_key=n.id
 		WHERE n.kind='file' AND cv.version_id IS NOT NULL AND n.trashed_at IS NULL `+filterSQL+`
 		ORDER BY name_matches.score DESC,n.name,n.id
 		LIMIT ?`, nameArgs...)
-	if err != nil {
-		return nil, false, err
-	}
-	nameHits, err := scanSearchRows(rows, SearchMatchName, query)
-	if err != nil {
-		return nil, false, err
-	}
-	if !contentFirst && len(nameHits) > limit {
-		nameHits = nameHits[:limit]
+		if err != nil {
+			return nil, false, err
+		}
+		nameHits, err = scanSearchRows(rows, SearchMatchName, query)
+		if err != nil {
+			return nil, false, err
+		}
+		if !contentFirst && len(nameHits) > limit {
+			nameHits = nameHits[:limit]
+			if err := s.addSearchPaths(ctx, nameHits); err != nil {
+				return nil, false, err
+			}
+			return explainedNameCandidates(nameHits), true, nil
+		}
 		if err := s.addSearchPaths(ctx, nameHits); err != nil {
 			return nil, false, err
 		}
-		return explainedNameCandidates(nameHits), true, nil
-	}
-	if err := s.addSearchPaths(ctx, nameHits); err != nil {
-		return nil, false, err
 	}
 	remaining := limit - len(nameHits)
 	if contentFirst {
@@ -138,6 +155,9 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	}
 	var content []ExplainedLexicalCandidate
 	queryContent := func(queryer metadataQuerier, generationID string) (retErr error) {
+		if len(opts.SelectedBuilds) != 0 && generationID == "" {
+			return errors.New("selected media builds have no lexical generation")
+		}
 		args := []any{fq}
 		contentQuery := `SELECT ` + nodeCols + `,'' AS build_id,'' AS segment_id,
 			 snippet(content_fts,2,char(1),char(2),' … ',24) AS excerpt,'' AS locator_json
@@ -148,16 +168,17 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 			WHERE content_fts MATCH ? AND n.trashed_at IS NULL ` + filterSQL + `
 			ORDER BY content_fts.rank,n.name,n.id,content_fts.rowid`
 		if generationID != "" {
-			contentQuery = `SELECT ` + nodeCols + `,rendition_lexical_fts.build_id,
+			contentQuery = selectedCTE + `SELECT ` + nodeCols + `,rendition_lexical_fts.build_id,
 				 rendition_lexical_fts.segment_id,snippet(rendition_lexical_fts,2,char(1),char(2),' … ',24),
 				 ru.locator_json
-				FROM rendition_lexical_fts
+				FROM rendition_lexical_fts ` + selectedJoin + `
 				JOIN rendition_lexical_generation_builds gb
 				 ON gb.build_id=rendition_lexical_fts.build_id
 				JOIN rendition_lexical_segments ls ON ls.build_id=rendition_lexical_fts.build_id
 				 AND ls.segment_id=rendition_lexical_fts.segment_id
 				JOIN rendition_units ru ON ru.build_id=ls.build_id AND ru.unit_id=ls.unit_id
-				JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
+				JOIN rendition_attachments a
+				 ON a.build_id=rendition_lexical_fts.build_id ` + attachmentSelection + `
 				JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id
 				 AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id
 				JOIN content_versions cv ON cv.version_id=a.content_version_id
@@ -166,7 +187,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 				 AND n.trashed_at IS NULL ` + filterSQL + `
 				ORDER BY rendition_lexical_fts.rank,n.name,n.id,
 				 rendition_lexical_fts.build_id,rendition_lexical_fts.segment_id`
-			args = append(args, generationID)
+			args = slices.Concat(selectedArgs, []any{fq, generationID})
 		}
 		args = append(args, filterArgs...)
 		rows, err := queryer.QueryContext(ctx, contentQuery, args...)
@@ -174,7 +195,11 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 			return err
 		}
 		defer func() { retErr = errors.Join(retErr, rows.Close()) }()
-		seenContent := make(map[int64]struct{}, remaining+1)
+		type candidateKey struct {
+			nodeID  int64
+			buildID string
+		}
+		seenContent := make(map[candidateKey]struct{}, remaining+1)
 		for rows.Next() {
 			var candidate ExplainedLexicalCandidate
 			node, err := scanExplainedLexicalRow(rows, &candidate)
@@ -185,10 +210,14 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 			if _, duplicate := nameSeen[node.ID]; duplicate && !contentFirst {
 				continue
 			}
-			if _, duplicate := seenContent[node.ID]; duplicate {
+			key := candidateKey{nodeID: node.ID}
+			if len(opts.SelectedBuilds) != 0 {
+				key.buildID = candidate.BuildID
+			}
+			if _, duplicate := seenContent[key]; duplicate {
 				continue
 			}
-			seenContent[node.ID] = struct{}{}
+			seenContent[key] = struct{}{}
 			if generationID == "" {
 				candidate.EvidenceKind = "content_blob"
 				candidate.BlobHash = node.BlobHash
@@ -288,12 +317,18 @@ func boundedExplainedSearchExcerpt(value string) string {
 // descendants of one live directory. ModifiedSince is inclusive and
 // ModifiedBefore is exclusive; both accept absolute RFC3339 timestamps.
 type SearchOptions struct {
+	SelectedBuilds    []SearchSelectedBuild
 	TagID             string
 	MIMEType          string
 	UnderNodeID       int64
 	ModifiedSince     string
 	ModifiedBefore    string
 	ContentVersionIDs []string
+}
+
+type SearchSelectedBuild struct {
+	ContentVersionID string `json:"content_version_id"`
+	BuildID          string `json:"build_id"`
 }
 
 // SearchNeedsQuery reports whether the normalized options leave an empty FTS

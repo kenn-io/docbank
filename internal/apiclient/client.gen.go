@@ -23927,6 +23927,12 @@ type DocumentEvidenceReference = api.DocumentEvidenceReference
 
 type DocumentIdentity = api.DocumentIdentity
 
+type DocumentMediaSelection = api.DocumentMediaSelection
+
+type DocumentMediaSource = api.DocumentMediaSource
+
+type DocumentMediaSourceSelector = api.DocumentMediaSourceSelector
+
 type DocumentMissingCoverage = api.DocumentMissingCoverage
 
 type DocumentPage = api.DocumentPage

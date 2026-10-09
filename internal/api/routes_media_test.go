@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -163,6 +164,30 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}}})
 	require.NoError(t, err)
 	require.NotEmpty(t, search.Results)
+	selectedRequest := api.DocumentSearchRequest{Query: "synthetic exact phrase",
+		Mode: "auto", Profile: processing.SuppliedMediaProfileName, Limit: 10,
+		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}},
+		MediaSources: []api.DocumentMediaSourceSelector{{SourceID: receipt.SourceID,
+			SourceVersionID: receipt.SourceVersionID, ContentVersionID: version.ID}}}
+	selectedSearch, err := c.SearchDocuments(t.Context(), selectedRequest)
+	require.NoError(t, err)
+	require.True(t, selectedSearch.MediaSourceSelection)
+	require.Equal(t, "auto", selectedSearch.RequestedMode)
+	require.Equal(t, "lexical", selectedSearch.ActualMode)
+	require.Len(t, selectedSearch.Results, 1)
+	require.Equal(t, receipt.SourceID, selectedSearch.Results[0].Evidence[0].MediaSources[0].SourceID)
+	require.Len(t, selectedSearch.MediaSelections, 1)
+	require.Equal(t, artifact.SuppliedInputID, selectedSearch.MediaSelections[0].SuppliedInputID)
+
+	emptyRequest := selectedRequest
+	emptyRequest.MediaSources[0].SuppliedInputIDs = []string{}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, emptyRequest)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var emptyReport api.DocumentSearchReport
+	require.NoError(t, json.Unmarshal([]byte(body), &emptyReport))
+	require.Empty(t, emptyReport.Results)
+	require.Equal(t, "auto", emptyReport.RequestedMode)
+	require.Equal(t, "lexical", emptyReport.ActualMode)
 	transcriptResult, err := c.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, "ready", transcriptResult.EvidenceState)
@@ -267,6 +292,8 @@ func TestDocumentSearchContentFirstTranscript(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(controlBody), &controlReport))
 	require.Len(t, controlReport.Results, 1)
 	require.Equal(t, "node_name", controlReport.Results[0].Evidence[0].Kind)
+	require.Nil(t, controlReport.MediaSelections)
+	require.NotContains(t, controlBody, "media_selections")
 	require.True(t, controlReport.Truncated)
 	falseResponse, falseBody := do(t, ts, http.MethodPost, "/api/v1/search", nil, map[string]any{
 		"query": request.Query, "mode": request.Mode, "profile": request.Profile,
@@ -290,6 +317,71 @@ func TestDocumentSearchContentFirstTranscript(t *testing.T) {
 	typedReport, err := c.SearchDocuments(t.Context(), request)
 	require.NoError(t, err)
 	require.Equal(t, report.Results, typedReport.Results)
+}
+
+func TestMediaSearchAdmitsCompleteSelectorBody(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, configureMediaTestService(t, 0))
+	request := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID()}}
+	for i := range 4096 {
+		id := fmt.Sprintf("00000000-0000-4000-8000-%012d", i)
+		request.Fence.ContentVersionIDs = append(request.Fence.ContentVersionIDs, id)
+		request.MediaSources = append(request.MediaSources, api.DocumentMediaSourceSelector{SourceID: strings.Repeat("\x01", 256), SourceVersionID: strings.Repeat("\x02", 256), ContentVersionID: id})
+	}
+	encoded, err := json.Marshal(request)
+	require.NoError(t, err)
+	require.Greater(t, len(encoded), 1<<20)
+	require.Less(t, len(encoded), 16<<20)
+	tooMany := request
+	tooMany.MediaSources = append(tooMany.MediaSources, request.MediaSources[0])
+	emptySelection := request
+	emptySelection.MediaSources = api.MediaSearchSources{}
+	id := request.Fence.ContentVersionIDs[0]
+	invalid := api.DocumentSearchRequest{Query: "cue", Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{id}}, MediaSources: []api.DocumentMediaSourceSelector{{SourceID: strings.Repeat("é", 129), SourceVersionID: "version", ContentVersionID: id}}}
+	unsupported := invalid
+	unsupported.MediaSources = api.MediaSearchSources{{SourceID: "source", SourceVersionID: "version", ContentVersionID: id}}
+	reranked := unsupported
+	reranked.Rerank = true
+	semantic := unsupported
+	semantic.Mode = "semantic"
+	hybrid := unsupported
+	hybrid.Mode = "hybrid"
+	rawInput := func(input any) any {
+		return map[string]any{"query": "cue", "mode": "lexical", "profile": processing.SuppliedMediaProfileName, "fence": invalid.Fence, "media_sources": []map[string]any{{"source_id": "source", "source_version_id": "version", "content_version_id": id, "supplied_input_ids": input}}}
+	}
+	for _, tc := range []struct {
+		name      string
+		body      any
+		status    int
+		errorText string
+	}{
+		{"complete_body", request, http.StatusOK, ""},
+		{"empty_selection", emptySelection, http.StatusUnprocessableEntity, "expected array length >= 1"},
+		{"null_selection", map[string]any{"query": "cue", "mode": "lexical", "profile": processing.SuppliedMediaProfileName, "fence": invalid.Fence, "media_sources": nil}, http.StatusUnprocessableEntity, ""},
+		{"selector_count", tooMany, http.StatusUnprocessableEntity, "expected array length <= 4096"},
+		{"UTF8_byte_bound", invalid, http.StatusUnprocessableEntity, `"code":"invalid_media_search"`},
+		{"reranking", reranked, http.StatusUnprocessableEntity, `"code":"invalid_media_search"`},
+		{"semantic", semantic, http.StatusUnprocessableEntity, `"code":"invalid_media_search"`},
+		{"hybrid", hybrid, http.StatusUnprocessableEntity, `"code":"invalid_media_search"`},
+		{"null_inputs", rawInput(nil), http.StatusUnprocessableEntity, ""},
+		{"invalid_input_identity", rawInput([]string{"invalid-input"}), http.StatusUnprocessableEntity, ""},
+		{"input_count", rawInput(slices.Repeat([]string{strings.Repeat("a", 64)}, 65)), http.StatusUnprocessableEntity, "expected array length <= 64"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response, body := do(t, ts, http.MethodPost, "/api/v1/search", nil, tc.body)
+			require.Equal(t, tc.status, response.StatusCode, body)
+			if tc.status == http.StatusOK {
+				var report api.DocumentSearchReport
+				require.NoError(t, json.Unmarshal([]byte(body), &report))
+				require.True(t, report.MediaSourceSelection)
+				require.NotNil(t, report.MediaSelections)
+				require.Empty(t, report.MediaSelections)
+				require.Contains(t, body, `"media_selections":[]`)
+			} else if tc.errorText != "" {
+				require.Contains(t, body, tc.errorText)
+			}
+		})
+	}
 }
 
 func TestMediaTranscriptHTTPReturnsUnavailableWithoutProcessing(t *testing.T) {

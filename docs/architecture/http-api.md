@@ -559,7 +559,8 @@ does not grant consent or start provider work.
 The `fence` object is the source fence: the vault UUID and the content
 versions the request is authorized to read. Use the actual vault UUID and
 1–4,096 distinct canonical UUIDv4 versions for both coverage and search. A
-foreign vault or invalid source fence is rejected.
+foreign vault or invalid source fence is rejected. `/api/v1/search` request
+bodies are bounded to 16 MiB.
 Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
 and accepts 1–100. `binding_id` selects the embedding binding. Omitting it uses
@@ -567,6 +568,34 @@ the profile's first binding. Set it explicitly for semantic/hybrid search when
 several are configured. The CLI requires that choice. `auto` uses lexical
 retrieval. See [processing consent](#processing-consent) before choosing a mode
 that embeds query text.
+
+For exact recording attribution, add `media_sources`, up to 4,096 distinct
+objects. Omission keeps ordinary search; empty arrays and `null` are rejected.
+Each object names `source_id`, `source_version_id`, and `content_version_id`. Every
+content version must belong to the fence. Optional `supplied_input_ids`, up to 64 IDs,
+permits the selected supplied transcript only when its exact input ID is in the set.
+Omitting the set permits any selected input; an empty array permits generated
+transcripts only. Generated transcripts remain eligible in every case. IDs are
+canonical lowercase SHA-256 identities; `null` is rejected. Excluded selections
+make coverage incomplete and consume no ranking budget. Constraints are not
+echoed in evidence source identities. Only selected transcripts contribute
+to results and coverage; fence members without a selector are excluded.
+Source and source-version IDs are nonempty UTF-8 bounded to 256 bytes. Use `lexical` or
+`auto` without reranking. Docbank selects each source's covering transcript
+before ranking and limits, including while a retry is pending.
+
+These reports include `media_source_selection: true`, even without matches.
+`media_selections` lists each final-stable eligible source tuple with its actual
+`origin`, `supplied_input_id` when supplied, and `completeness`, independent of
+query matches. Unready or input-excluded sources are omitted; an empty selection
+summary is `[]`. Ordinary search omits the summary.
+Each selected content/build pair has its own result. Its evidence carries
+`media_sources` and `build_id`, alongside the existing segment, excerpt and timing. Coverage counts
+content versions and is incomplete while any requested selection lacks
+ready evidence. Pending or unavailable transcripts leave ready matches usable.
+Unknown, hidden, deleted or changed selections contribute incomplete coverage;
+their associations are removed while healthy matches remain usable.
+Consumers require the selection marker to distinguish older producers.
 
 Set optional `content_first: true` to prefer retained content matches, including
 transcripts, before filename-only matches. Selection applies the source fence

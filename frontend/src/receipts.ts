@@ -367,7 +367,11 @@ export function validateDocumentSearchReport(value: unknown, request: DocumentSe
         !validDocumentSearchPath(result.path) ||
         (result.excerpt !== undefined && !boundedDocumentSearchExcerpt(result.excerpt))) invalid();
     const item = result as UnknownRecord;
-    const documentKey = String(item.content_version_id);
+    // Media source selection returns one result per selected content/build pair.
+    const firstEvidence = Array.isArray(item.evidence) ? item.evidence[0] : undefined;
+    const buildKey = request.media_sources !== undefined && isRecord(firstEvidence)
+      ? String(firstEvidence.build_id ?? "") : "";
+    const documentKey = JSON.stringify([item.content_version_id, buildKey]);
     if (documents.has(documentKey)) invalid();
     documents.add(documentKey);
     const rawLexicalRank = item.lexical_rank === undefined ? 0 : item.lexical_rank;

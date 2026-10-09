@@ -119,14 +119,21 @@ func (service *Service) RemoteRecordingReceipt(ctx context.Context, operationID 
 func (service *Service) mediaSourceReceipt(
 	ctx context.Context, item store.MediaSourceProjection,
 ) (MediaReceipt, error) {
+	processing, coverage, err := service.mediaProcessingAttempts(ctx, item.ProcessingReceipts)
+	if err != nil {
+		return MediaReceipt{}, err
+	}
+	return service.mediaSourceReceiptFromAttempts(ctx, item, processing, coverage)
+}
+
+func (service *Service) mediaSourceReceiptFromAttempts(
+	ctx context.Context, item store.MediaSourceProjection,
+	processing, coverage *store.MediaPublicationReceipt,
+) (MediaReceipt, error) {
 	receipt := mediaReceiptFromStore(item.Receipt)
 	if item.Kind == "remote_recording" && item.ContentVersionID != "" {
 		receipt.Outcome = "content_available"
 		receipt.CoverageState = "unprocessed"
-	}
-	processing, coverage, err := service.mediaProcessingAttempts(ctx, item.ProcessingReceipts)
-	if err != nil {
-		return MediaReceipt{}, err
 	}
 	if processing == nil {
 		return receipt, nil

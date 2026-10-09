@@ -438,6 +438,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 	huma.Register(api, huma.Operation{
 		OperationID: "searchDocuments", Method: http.MethodPost,
 		Path: "/api/v1/search", Summary: "Search exact source-fenced document versions",
+		MaxBodyBytes: 16 << 20,
 	}, func(ctx context.Context, input *searchInput) (*searchOutput, error) {
 		if d.Processing == nil {
 			return nil, processingUnavailable()
@@ -446,7 +447,7 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 			ContentFirst: input.Body.ContentFirst,
 			Mode:         input.Body.Mode, Limit: input.Body.Limit, Profile: input.Body.Profile,
 			BindingID: input.Body.BindingID, Explain: input.Body.Explain,
-			Rerank: input.Body.Rerank,
+			Rerank: input.Body.Rerank, MediaSources: toMediaSearchSources(input.Body.MediaSources),
 			Fence: processing.SourceFence{VaultUID: input.Body.Fence.VaultUID,
 				ContentVersionIDs: input.Body.Fence.ContentVersionIDs}})
 		if err != nil {
@@ -644,12 +645,32 @@ func fromProcessingCoverageClass(item processing.CoverageClass) CoverageClass {
 		PreviousGenerationServing: item.PreviousServing, Total: item.Total}
 }
 
+func toMediaSearchSources(sources []DocumentMediaSourceSelector) []retrieval.MediaSourceSelector {
+	if sources == nil {
+		return nil
+	}
+	result := make([]retrieval.MediaSourceSelector, len(sources))
+	for i, source := range sources {
+		result[i] = retrieval.MediaSourceSelector{SourceID: source.SourceID,
+			SourceVersionID: source.SourceVersionID, ContentVersionID: source.ContentVersionID,
+			SuppliedInputIDs: source.SuppliedInputIDs}
+	}
+	return result
+}
+
 func fromDocumentSearchReport(report processing.SearchReport, explain bool) DocumentSearchReport {
 	result := DocumentSearchReport{RequestedMode: string(report.RequestedMode), ActualMode: string(report.ActualMode),
+		MediaSourceSelection: report.MediaSourceSelection,
 		Coverage: DocumentSearchCoverage{BindingRequired: report.Coverage.BindingRequired,
 			ScopedDocuments: report.Coverage.ScopedDocuments, CompleteDocuments: report.Coverage.CompleteDocuments,
 			State: string(report.Coverage.State)}, Truncated: report.Truncated,
 		Results: make([]DocumentSearchResult, len(report.Results)), Degradations: make([]string, len(report.Degradations))}
+	if report.MediaSelections != nil {
+		result.MediaSelections = make([]DocumentMediaSelection, len(report.MediaSelections))
+		for i, selection := range report.MediaSelections {
+			result.MediaSelections[i] = DocumentMediaSelection(selection)
+		}
+	}
 	for index, degradation := range report.Degradations {
 		result.Degradations[index] = string(degradation)
 	}
@@ -664,6 +685,10 @@ func fromDocumentSearchReport(report processing.SearchReport, explain bool) Docu
 				VectorSpaceID: evidence.VectorSpaceID, EmbeddingSetID: evidence.EmbeddingSetID,
 				InputGenerationID: evidence.InputGenerationID, InputID: evidence.InputID,
 				InputKind: string(evidence.InputKind), SourceManifestChecksum: evidence.SourceManifestChecksum}
+			for _, source := range evidence.MediaSources {
+				convertedEvidence.MediaSources = append(convertedEvidence.MediaSources,
+					DocumentMediaSource(source))
+			}
 			if evidence.TimeSpan != nil {
 				convertedEvidence.TimeSpan = &MediaTimeSpan{
 					StartMS: evidence.TimeSpan.StartMS, EndMS: evidence.TimeSpan.EndMS,
@@ -755,6 +780,8 @@ func fromProcessingError(err error) error {
 		code   string
 		detail string
 	}{
+		{processing.ErrMediaSearchInvalid, http.StatusUnprocessableEntity, "invalid_media_search",
+			"media search selectors or mode are invalid"},
 		{processing.ErrRenditionFailed, http.StatusUnprocessableEntity, "rendition_failed", "document rendition failed"},
 		{processing.ErrRenditionOperatorRequired, http.StatusConflict, "rendition_operator_required", "document rendition requires operator intervention"},
 		{processing.ErrForeignVault, http.StatusUnprocessableEntity, "foreign_vault", "source fence belongs to another vault"},

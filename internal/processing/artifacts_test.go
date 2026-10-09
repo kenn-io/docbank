@@ -557,6 +557,7 @@ func TestPublishRenditionExcludesDerivativePurgeAcrossEveryStagingBoundary(t *te
 
 type publicationFixture struct {
 	catalog         *store.Store
+	databasePath    string
 	blobs           *blob.Store
 	profile         store.ProcessingProfileRecord
 	evidencePolicy  document.EvidencePolicy
@@ -568,33 +569,33 @@ type publicationIDs struct {
 	build, attachment, generation string
 }
 
-func newPublicationFixture(t *testing.T) publicationFixture {
-	t.Helper()
-	root := t.TempDir()
+func newPublicationFixture(tb testing.TB) publicationFixture {
+	tb.Helper()
+	root := tb.TempDir()
 	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, catalog.Close()) })
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, blobs.Close()) })
 
 	source := []byte("synthetic private-free source")
-	receipt, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(source))
-	require.NoError(t, err)
-	physical := processingBlobPhysical(t, receipt)
+	receipt, err := blobs.WriteDetailedContext(tb.Context(), bytes.NewReader(source))
+	require.NoError(tb, err)
+	physical := processingBlobPhysical(tb, receipt)
 	node, err := catalog.CreateFile(
-		t.Context(), catalog.RootID(), "source.pdf", receipt.Hash, receipt.Size,
+		tb.Context(), catalog.RootID(), "source.pdf", receipt.Hash, receipt.Size,
 		"application/pdf", physical,
 	)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	evidencePolicy, err := document.NewEvidencePolicy(100_000)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	renditionPolicy, err := document.NewRenditionPolicy(document.RenditionLimits{
 		MaxDocumentChars: 100_000, MaxUnitRunes: 1000, MaxSegmentRunes: 100,
 	})
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return publicationFixture{
-		catalog: catalog, blobs: blobs, profile: processingProfile(t),
+		catalog: catalog, databasePath: filepath.Join(root, "docbank.db"), blobs: blobs, profile: processingProfile(tb),
 		evidencePolicy: evidencePolicy, renditionPolicy: renditionPolicy,
 		versionID: node.CurrentVersionID,
 	}
@@ -718,8 +719,8 @@ func (f publicationFixture) mustSourceHash() string {
 	return node.BlobHash
 }
 
-func processingProfile(t *testing.T) store.ProcessingProfileRecord {
-	t.Helper()
+func processingProfile(tb testing.TB) store.ProcessingProfileRecord {
+	tb.Helper()
 	profile := document.ProcessingProfileV1{
 		ContractVersion: document.ProcessingProfileContractV1,
 		Rendition: &document.RenditionBindingV1{
@@ -745,7 +746,7 @@ func processingProfile(t *testing.T) store.ProcessingProfileRecord {
 		},
 	}
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return store.ProcessingProfileRecord{
 		Fingerprint: fingerprints.Profile, CanonicalProfile: jsontext.Value(canonical),
 		RenditionRequestFingerprint:    fingerprints.RenditionRequest,
@@ -783,10 +784,10 @@ func updateStagedProfile(
 	staged.Build.EvidenceLexicalFingerprint = fingerprints.EvidenceLexical
 }
 
-func processingBlobPhysical(t *testing.T, receipt blob.WriteReceipt) store.BlobPhysical {
-	t.Helper()
+func processingBlobPhysical(tb testing.TB, receipt blob.WriteReceipt) store.BlobPhysical {
+	tb.Helper()
 	encoding, err := receipt.EncodingName()
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return store.BlobPhysical{
 		Encoding: encoding, StoredBytes: receipt.StoredSize,
 		PackEligible: receipt.PackEligible, MD5: receipt.MD5, Created: receipt.Created,

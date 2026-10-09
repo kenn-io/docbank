@@ -1690,6 +1690,20 @@ export interface DocumentEventCoverage {
   unbound_provenance: number;
 }
 
+export interface DocumentMediaSource {
+  content_version_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  source_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  source_version_id: string;
+}
+
 export interface MediaTimeSpan {
   /** @minimum 1 */
   end_ms: number;
@@ -1704,6 +1718,7 @@ export interface DocumentEvidenceReference {
   input_id?: string;
   input_kind?: string;
   kind: string;
+  media_sources?: DocumentMediaSource[];
   segment_id?: string;
   source_manifest_checksum?: string;
   time_span?: MediaTimeSpan;
@@ -1715,6 +1730,34 @@ export interface DocumentIdentity {
   /** @minimum 1 */
   node_id: number;
   path: string;
+}
+
+export interface DocumentMediaSelection {
+  completeness: string;
+  content_version_id: string;
+  origin: string;
+  source_id: string;
+  source_version_id: string;
+  supplied_input_id?: string;
+}
+
+export interface DocumentMediaSourceSelector {
+  content_version_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  source_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 256
+     */
+  source_version_id: string;
+  /**
+     * @maxItems 64
+     * @items.pattern ^[0-9a-f]{64}$
+     */
+  supplied_input_ids?: string[];
 }
 
 export type DocumentMissingCoverageKind = typeof DocumentMissingCoverageKind[keyof typeof DocumentMissingCoverageKind];
@@ -1847,6 +1890,9 @@ export interface DocumentSearchReport {
   actual_mode: string;
   coverage: DocumentSearchCoverage;
   degradations: string[];
+  /** @maxItems 4096 */
+  media_selections?: DocumentMediaSelection[];
+  media_source_selection?: boolean;
   requested_mode: string;
   reranking?: DocumentSearchRerankingReceipt;
   results: DocumentSearchResult[];
@@ -1886,6 +1932,11 @@ export interface DocumentSearchRequest {
      * @maximum 100
      */
   limit?: number;
+  /**
+     * @minItems 1
+     * @maxItems 4096
+     */
+  media_sources?: DocumentMediaSourceSelector[];
   mode: DocumentSearchRequestMode;
   /**
      * @minLength 1

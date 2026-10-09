@@ -256,6 +256,13 @@ runner.
 Set `DocumentSearchRequest.ContentFirst` to prefer content matches, following the
 [HTTP search ordering contract](architecture/http-api.md#coverage-and-source-fenced-search).
 
+Set `DocumentSearchRequest.MediaSources` to search only the transcripts of exact
+recording sources. Reports then set `MediaSourceSelection` and list
+`MediaSelections`, and evidence names its `MediaSources`, following the
+[HTTP media source contract](architecture/http-api.md#coverage-and-source-fenced-search).
+Invalid selectors, or a mode or reranking choice they do not support, match
+`docbank.ErrMediaSearchInvalid`.
+
 ## Read exact evidence windows
 
 Use `ReadEvidenceWindow` to read a bounded excerpt from a rendition you already

@@ -1585,9 +1585,9 @@ func (provider *workerProvider) Render(
 }
 
 func workerProcessingProfile(
-	t *testing.T, descriptor document.RenditionDescriptor,
+	tb testing.TB, descriptor document.RenditionDescriptor,
 ) store.ProcessingProfileRecord {
-	t.Helper()
+	tb.Helper()
 	profile := document.ProcessingProfileV1{
 		ContractVersion: document.ProcessingProfileContractV1,
 		Rendition: &document.RenditionBindingV1{
@@ -1624,7 +1624,7 @@ func workerProcessingProfile(
 		},
 	}
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return store.ProcessingProfileRecord{
 		Fingerprint: fingerprints.Profile, CanonicalProfile: jsontext.Value(canonical),
 		RenditionRequestFingerprint:    fingerprints.RenditionRequest,
