@@ -166,6 +166,9 @@ func currentAuditAttachmentsForLayout(
 		appendAuditTagAssignments, appendAuditTagDefinitions,
 		appendAuditDerivativePurgeSuppressions,
 	)
+	if layout.schemaVersion >= 29 {
+		appenders = append(appenders, appendAuditPhotoAuthored)
+	}
 	for _, appendRecords := range appenders {
 		if err := appendRecords(ctx, tx, &records); err != nil {
 			return nil, err
@@ -373,6 +376,9 @@ func attachedAuditIdentity(record audit.Record) (audit.Record, error) {
 			{Name: "provenance_identity", Value: provenanceIdentity},
 			{Name: "content_version_id", Value: contentVersionID},
 		}}, err
+	case "photo_authored":
+		value, err := auditField(record, "file_id")
+		return audit.Record{Kind: "photo_authored_identity", Fields: []audit.Field{{Name: "file_id", Value: value}}}, err
 	case auditTagAssignmentKind:
 		tagID, err := auditField(record, "tag_id")
 		if err != nil {
@@ -436,6 +442,14 @@ func auditRecordsForNodes(records []audit.Record, members map[uint64]bool) ([]au
 					return nil, err
 				}
 				ingests[ingestID] = true
+			}
+		case "photo_authored":
+			nodeID, err := auditUnsignedField(record, metadataNodeIDField)
+			if err != nil {
+				return nil, err
+			}
+			if members[nodeID] {
+				selected = append(selected, record)
 			}
 		case auditTagAssignmentKind:
 			nodeID, err := auditUnsignedField(record, metadataNodeIDField)

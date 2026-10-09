@@ -614,7 +614,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 		}
 	}
 	if layout.schemaVersion >= 25 {
-		if err := exportMetadataTables(ctx, tx, write, photoMetadataTablesForSchema(layout.schemaVersion)); err != nil {
+		if err := exportMetadataTables(ctx, tx, write, photoMetadataTablesForLayout(layout)); err != nil {
 			return err
 		}
 	}
@@ -1105,6 +1105,13 @@ func (s *Store) importMetadataLines(
 func (s *Store) importMetadataRecord(
 	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value,
 ) error {
+	if kind == metadataPhotoFileType {
+		var err error
+		raw, err = normalizePhotoFileMetadata(raw)
+		if err != nil {
+			return err
+		}
+	}
 	required, ok := metadataRequiredFields[kind]
 	if !ok {
 		return fmt.Errorf("unknown record type %q", kind)
@@ -1553,7 +1560,7 @@ func validateMetadataStateWithVaultIdentity(
 			}
 		}
 		if layout.schemaVersion >= 25 {
-			if err := validatePhotoMetadataState(ctx, tx, layout.schemaVersion); err != nil {
+			if err := validatePhotoMetadataStateForLayout(ctx, tx, layout); err != nil {
 				return err
 			}
 		}

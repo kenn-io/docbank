@@ -168,7 +168,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT `+nodeCols+`, COALESCE(p.original_path, '')
 		FROM `+nodeFrom+`
-		LEFT JOIN photo_files pf ON pf.node_id=n.id
+		LEFT JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL
 		LEFT JOIN provenance p ON p.node_id=n.id
 		  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
 		WHERE n.trashed_at IS NULL AND `+photoFilter+` AND cv.blob_hash=?
@@ -241,7 +241,7 @@ func (s *Store) photoImportChangedSourceTx(
 		SELECT DISTINCT n.id FROM nodes n
 		JOIN provenance p ON p.node_id=n.id
 		  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
-		LEFT JOIN photo_files pf ON pf.node_id=n.id
+		LEFT JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL
 		WHERE n.kind='file' AND n.trashed_at IS NULL AND `+photoFilter+` AND p.original_path=?
 		  -- A node shared with another source path keeps its bytes; the edit becomes its own file.
 		  AND NOT EXISTS (SELECT 1 FROM provenance other

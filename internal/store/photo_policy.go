@@ -94,6 +94,15 @@ type PhotoNodeFacts struct {
 
 // PhotoFile is one role-bearing reference to an ordinary Docbank file node.
 type PhotoFile struct {
+	Revision  int64  `json:"revision"`
+	Rating    int    `json:"rating"`
+	Flag      string `json:"flag"`
+	Label     string `json:"label"`
+	Caption   string `json:"caption"`
+	Creator   string `json:"creator"`
+	Copyright string `json:"copyright"`
+	Rotation  int    `json:"rotation"`
+
 	ID          string  `json:"id"`
 	AssetID     string  `json:"asset_id"`
 	NodeID      int64   `json:"node_id"`
@@ -105,17 +114,18 @@ type PhotoFile struct {
 // PhotoAsset is the store-owned photo grouping state. Files are bounded to
 // keep inspection and receipts safe for daemon callers.
 type PhotoAsset struct {
-	ID                    string      `json:"id"`
-	Kind                  string      `json:"kind"`
-	Revision              int64       `json:"revision"`
-	HiddenAt              *string     `json:"hidden_at,omitzero"`
-	ExcludedAt            *string     `json:"excluded_at,omitzero"`
-	DisplayFileID         *string     `json:"display_file_id,omitzero"`
-	DisplayOverrideFileID *string     `json:"display_override_file_id,omitzero"`
-	DisplaySource         string      `json:"display_source"`
-	CreatedAt             string      `json:"created_at"`
-	UpdatedAt             string      `json:"updated_at"`
-	Files                 []PhotoFile `json:"files"`
+	Agreement             map[string]bool `json:"agreement"`
+	ID                    string          `json:"id"`
+	Kind                  string          `json:"kind"`
+	Revision              int64           `json:"revision"`
+	HiddenAt *string `json:"hidden_at,omitzero"`
+	ExcludedAt            *string         `json:"excluded_at,omitzero"`
+	DisplayFileID         *string         `json:"display_file_id,omitzero"`
+	DisplayOverrideFileID *string         `json:"display_override_file_id,omitzero"`
+	DisplaySource         string          `json:"display_source"`
+	CreatedAt             string          `json:"created_at"`
+	UpdatedAt             string          `json:"updated_at"`
+	Files                 []PhotoFile     `json:"files"`
 }
 
 // PhotoSettings is the vault preference fence. A missing row is the virtual
@@ -285,6 +295,13 @@ func selectPhotoDisplay(files []PhotoFile, preference *string, override *string)
 // validatePhotoGraph checks every asset. Import and settings fan-out use it;
 // single-asset mutations use validatePhotoAssetGraph.
 func validatePhotoGraph(ctx context.Context, q metadataQuerier) error {
+	var invalid int
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_files f LEFT JOIN nodes n ON n.id=f.node_id WHERE f.asset_id IS NULL AND (f.sidecar_of_file_id IS NOT NULL OR n.kind IS NOT 'file' OR n.current_version_id IS NULL)`).Scan(&invalid); err != nil {
+		return err
+	}
+	if invalid != 0 {
+		return ErrInvalidPhotoAsset
+	}
 	return validatePhotoGraphWhere(ctx, q, "")
 }
 

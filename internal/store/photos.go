@@ -39,6 +39,7 @@ func photoAssetByIDQuery(ctx context.Context, q metadataQuerier, id string) (Pho
 		return PhotoAsset{}, err
 	}
 	asset.Files = files
+	asset.Agreement = photoAgreement(files)
 	settings, err := photoSettingsTx(ctx, q)
 	if err != nil {
 		return PhotoAsset{}, err
@@ -113,7 +114,7 @@ func (s *Store) PhotoAssetForNode(ctx context.Context, nodeID int64) (PhotoAsset
 	var asset PhotoAsset
 	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		var id string
-		if err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=?`, nodeID).Scan(&id); errors.Is(err, sql.ErrNoRows) {
+		if err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=? AND asset_id IS NOT NULL`, nodeID).Scan(&id); errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return fmt.Errorf("finding photo asset for node %d: %w", nodeID, err)
@@ -245,6 +246,7 @@ func marshalPhotoState(value any) (string, error) {
 // photoReceipt is one before/after decision. An asset receipt sets AssetID;
 // the settings receipt sets SettingsKey.
 type photoReceipt struct {
+	ReceiptID      string
 	Operation      string
 	AssetID        string
 	SetID          string
@@ -256,17 +258,27 @@ type photoReceipt struct {
 }
 
 func writePhotoReceiptTx(ctx context.Context, tx *sql.Tx, receipt photoReceipt) error {
-	beforeJSON, err := marshalPhotoState(receipt.Before)
+	marshal := marshalPhotoState
+	if receipt.Operation == "authored" || receipt.Operation == "authored_undo" || receipt.Operation == "authored_sidecar" {
+		marshal = func(v any) (string, error) {
+			b, err := json.Marshal(v, json.Deterministic(true))
+			return string(b), err
+		}
+	}
+	beforeJSON, err := marshal(receipt.Before)
 	if err != nil {
 		return err
 	}
-	afterJSON, err := marshalPhotoState(receipt.After)
+	afterJSON, err := marshal(receipt.After)
 	if err != nil {
 		return err
 	}
-	receiptID, err := newUUIDv4()
-	if err != nil {
-		return fmt.Errorf("allocating photo receipt: %w", err)
+	receiptID := receipt.ReceiptID
+	if receiptID == "" {
+		receiptID, err = newUUIDv4()
+		if err != nil {
+			return fmt.Errorf("allocating photo receipt: %w", err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO photo_change_receipts(
@@ -307,7 +319,7 @@ func inferPhotoRole(facts PhotoNodeFacts) string {
 
 func loadPhotoFiles(ctx context.Context, q metadataQuerier, assetID string) ([]PhotoFile, error) {
 	rows, err := q.QueryContext(ctx, `
-		SELECT file_id, asset_id, node_id, role, sidecar_of_file_id, created_at
+		SELECT file_id, asset_id, node_id, role, sidecar_of_file_id, created_at, revision, rating, flag, label, caption, creator, copyright, rotation
 		FROM photo_files WHERE asset_id=? ORDER BY file_id LIMIT ?`, assetID, PhotoMaxFiles+1)
 	if err != nil {
 		return nil, fmt.Errorf("listing photo files: %w", err)
@@ -317,7 +329,7 @@ func loadPhotoFiles(ctx context.Context, q metadataQuerier, assetID string) ([]P
 	for rows.Next() {
 		var file PhotoFile
 		var sidecar sql.NullString
-		if err := rows.Scan(&file.ID, &file.AssetID, &file.NodeID, &file.Role, &sidecar, &file.CreatedAt); err != nil {
+		if err := rows.Scan(&file.ID, &file.AssetID, &file.NodeID, &file.Role, &sidecar, &file.CreatedAt, &file.Revision, &file.Rating, &file.Flag, &file.Label, &file.Caption, &file.Creator, &file.Copyright, &file.Rotation); err != nil {
 			return nil, fmt.Errorf("scanning photo file: %w", err)
 		}
 		if sidecar.Valid {
@@ -330,6 +342,9 @@ func loadPhotoFiles(ctx context.Context, q metadataQuerier, assetID string) ([]P
 	}
 	if len(files) > PhotoMaxFiles {
 		return nil, fmt.Errorf("%w: asset has more than %d files", ErrInvalidPhotoAsset, PhotoMaxFiles)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
 	}
 	return files, nil
 }
@@ -345,6 +360,15 @@ func nullablePhotoString(value *string) any {
 func (s *Store) insertPhotoFileTx(ctx context.Context, tx *sql.Tx, member PhotoFile) error {
 	if err := photoRoleValidOrError(member.Role); err != nil {
 		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=?,role=?,sidecar_of_file_id=? WHERE node_id=? AND asset_id IS NULL`, member.AssetID, member.Role, nullablePhotoString(member.SidecarOfID), member.NodeID)
+	if err != nil {
+		return s.classifyPhotoFileInsertError(err)
+	}
+	if count, err := result.RowsAffected(); err != nil {
+		return err
+	} else if count != 0 {
+		return nil
 	}
 	fileID, err := newUUIDv4()
 	if err != nil {
@@ -469,7 +493,7 @@ func (s *Store) insertPhotoAssetTx(ctx context.Context, tx *sql.Tx, nodeID int64
 	if err != nil {
 		return PhotoAsset{}, err
 	}
-	asset := PhotoAsset{ID: assetID, Kind: kind, Revision: 1, CreatedAt: now, UpdatedAt: now, Files: files}
+	asset := PhotoAsset{ID: assetID, Kind: kind, Revision: 1, CreatedAt: now, UpdatedAt: now, Files: files, Agreement: photoAgreement(files)}
 	settings, err := photoSettingsTx(ctx, tx)
 	if err != nil {
 		return PhotoAsset{}, err
@@ -570,6 +594,7 @@ func commitPhotoAssetTx(ctx context.Context, tx *sql.Tx, before, asset PhotoAsse
 		return PhotoAsset{}, err
 	}
 	asset.Files = files
+	asset.Agreement = photoAgreement(files)
 	if asset.DisplayOverrideFileID != nil {
 		if _, ok := photoFileByID(files, *asset.DisplayOverrideFileID); !ok {
 			asset.DisplayOverrideFileID = nil
@@ -613,7 +638,7 @@ func (s *Store) photoOwnershipError(ctx context.Context, tx *sql.Tx, owner strin
 
 func photoAssetOwningNodeTx(ctx context.Context, tx *sql.Tx, nodeID int64) (string, bool, error) {
 	var assetID string
-	err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=?`, nodeID).Scan(&assetID)
+	err := tx.QueryRowContext(ctx, `SELECT asset_id FROM photo_files WHERE node_id=? AND asset_id IS NOT NULL`, nodeID).Scan(&assetID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -746,11 +771,11 @@ func (s *Store) DetachPhotoFile(ctx context.Context, assetID string, revision in
 			if dependents > 0 && !options.ClearDependentSidecars {
 				return false, fmt.Errorf("%w: photo source has dependent sidecars", ErrInvalidPhotoAsset)
 			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE asset_id=? AND sidecar_of_file_id=?`, asset.ID, fileID); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE asset_id=? AND sidecar_of_file_id=?`, asset.ID, fileID); err != nil {
 				return false, err
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE file_id=? AND asset_id=?`, fileID, asset.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE file_id=? AND asset_id=?`, fileID, asset.ID); err != nil {
 			return false, err
 		}
 		return true, nil

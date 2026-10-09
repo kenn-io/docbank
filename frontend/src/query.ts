@@ -1,6 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import formatMetadata from "../../document/format_metadata.json";
+import { SavedQueryFiltersSchemaFlagsItem, SavedQueryFiltersSchemaLabelsItem } from "./generated/docbank.js";
 
 const maxInputBytes = 128 * 1024;
 const maxCanonicalBytes = 64 * 1024;
@@ -17,7 +18,7 @@ const optionalFilterFields = new Set([
   "paths", "exclude_paths", "collection_ids", "exclude_collection_ids", "tag_ids",
   "exclude_tag_ids", "no_tags", "media_families", "mime_types", "extensions",
   "modified_after", "modified_before", "size_min", "size_max", "text_coverage",
-  "has_duplicates", "collapse_duplicates", "kinds", "cameras", "lenses", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds", "asset_ids", "set_ids",
+  "rating_min", "rating_max", "flags", "labels", "has_duplicates", "collapse_duplicates", "kinds", "cameras", "lenses", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds", "asset_ids", "set_ids",
 ]);
 const uuidV4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const extensionPattern = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -53,6 +54,10 @@ export interface QueryFilters {
   color_blue_min?: string;
   color_blue_max?: string;
 
+  rating_min?: number;
+  rating_max?: number;
+  flags?: SavedQueryFiltersSchemaFlagsItem[];
+  labels?: SavedQueryFiltersSchemaLabelsItem[];
   kinds?: ("photo" | "video")[];
   cameras?: string[];
   lenses?: string[];
@@ -149,11 +154,11 @@ export function canonicalQuery(value: Query): string {
   if (normalized.filters.size_min) filters.size_min = normalized.filters.size_min;
   if (normalized.filters.tag_ids?.length) filters.tag_ids = normalized.filters.tag_ids;
   if (normalized.filters.text_coverage?.length) filters.text_coverage = normalized.filters.text_coverage;
-  for (const field of ["kinds", "cameras", "lenses", "asset_ids", "set_ids"] as const) {
+  for (const field of ["kinds", "cameras", "lenses", "asset_ids", "set_ids", "flags", "labels"] as const) {
     const values = normalized.filters[field];
     if (values?.length) filters[field] = values;
   }
-  for (const field of ["iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds"] as const) {
+  for (const field of ["rating_min", "rating_max", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds"] as const) {
     if (normalized.filters[field] !== undefined) filters[field] = normalized.filters[field];
   }
   const encoded = JSON.stringify({
@@ -214,6 +219,10 @@ function parseFilters(input: Record<string, unknown>): QueryFilters {
     asset_ids: optionalStringArray(input.asset_ids, "filters.asset_ids"),
     ...Object.fromEntries(qualityFields.map((field) => [field, optionalNullableString(input[field], `filters.${field}`)])),
     unevaluated: optionalBoolean(input.unevaluated, "filters.unevaluated"),
+    rating_min: optionalNullableInteger(input.rating_min, "filters.rating_min"),
+    rating_max: optionalNullableInteger(input.rating_max, "filters.rating_max"),
+    flags: normalizeSet(optionalStringArray(input.flags, "filters.flags"), 64, validPhotoFlag, "flags"),
+    labels: normalizeSet(optionalStringArray(input.labels, "filters.labels"), 64, validPhotoColorLabel, "labels"),
     iso_min: optionalNullableInteger(input.iso_min, "filters.iso_min"),
     iso_max: optionalNullableInteger(input.iso_max, "filters.iso_max"),
     capture_after: optionalNullableString(input.capture_after, "filters.capture_after"),
@@ -257,6 +266,10 @@ function normalizeQuery(value: Omit<Query, "v"> & { v: number }): Query {
 function normalizeFilters(value: QueryFilters): QueryFilters {
   const result: QueryFilters = {
     kinds: normalizeSet(value.kinds, 64, (v) => v === "photo" || v === "video", "kinds") as QueryFilters["kinds"],
+    rating_min: normalizeRating(value.rating_min),
+    rating_max: normalizeRating(value.rating_max),
+    flags: normalizeSet(value.flags, 64, validPhotoFlag, "flags"),
+    labels: normalizeSet(value.labels, 64, validPhotoColorLabel, "labels"),
     cameras: normalizeSet(value.cameras, 64, validPhotoLabel, "cameras"),
     lenses: normalizeSet(value.lenses, 64, validPhotoLabel, "lenses"),
     set_ids: normalizeSet(value.set_ids, 64, (v) => uuidV4Pattern.test(v), "set_ids"),
@@ -290,6 +303,7 @@ function normalizeFilters(value: QueryFilters): QueryFilters {
     const lo = result[qualityFields[i]], hi = result[qualityFields[i + 1]];
     if (lo !== undefined && hi !== undefined && lo > hi) throw new Error("quality minimum exceeds maximum");
   }
+  if (result.rating_min !== undefined && result.rating_max !== undefined && result.rating_min > result.rating_max) throw new Error("rating_min exceeds rating_max");
   if (result.iso_min !== undefined && result.iso_max !== undefined && result.iso_min > result.iso_max) throw new Error("iso_min exceeds iso_max");
   if (result.capture_after && result.capture_before && result.capture_after >= result.capture_before) throw new Error("capture_after must precede capture_before");
   if (result.no_tags && result.tag_ids?.length) throw new Error("no_tags conflicts with tag_ids");
@@ -320,6 +334,16 @@ function normalizeHighlightSet(value: Omit<HighlightSet, "v"> & { v: number }): 
   return { v, terms };
 }
 
+function validPhotoFlag(value: string): value is SavedQueryFiltersSchemaFlagsItem {
+  return Object.values(SavedQueryFiltersSchemaFlagsItem).some((flag) => flag === value);
+}
+
+function validPhotoColorLabel(value: string): value is SavedQueryFiltersSchemaLabelsItem {
+  return Object.values(SavedQueryFiltersSchemaLabelsItem).some((label) => label === value);
+}
+
+function normalizeSet<T extends string>(values: readonly string[] | undefined, limit: number, valid: (value: string) => value is T, field: string): T[] | undefined;
+function normalizeSet(values: readonly string[] | undefined, limit: number, valid: (value: string) => boolean, field: string): string[] | undefined;
 function normalizeSet(values: readonly string[] | undefined, limit: number, valid: (value: string) => boolean, field: string): string[] | undefined {
   if (values === undefined || values === null) return undefined;
   if (!Array.isArray(values) || values.length > limit) throw new Error(`${field} exceeds its supplied-entry bound`);
@@ -707,4 +731,9 @@ function normalizeQualityScore(value: string | undefined): string | undefined {
   }
   if (normalized !== "0" && normalized !== "1" && !normalized.startsWith("0.")) throw invalid;
   return normalized;
+}
+
+function normalizeRating(value: number | undefined): number | undefined {
+  if (value !== undefined && (!Number.isInteger(value) || value < 0 || value > 5)) throw new Error("rating must be 0 through 5");
+  return value;
 }

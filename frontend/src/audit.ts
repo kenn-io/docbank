@@ -78,4 +78,5 @@ function attachmentSummary(event: AuditEvent): string {
     case "provenance":
       return provenanceSummary(change.after ?? change.before);
   }
+  return `Revision ${event.prior_node_revision} → ${event.resulting_node_revision}`;
 }

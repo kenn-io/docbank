@@ -78,6 +78,10 @@ func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var created api.PhotoAsset
 	require.NoError(t, json.Unmarshal([]byte(body), &created))
+	assert.Equal(t, map[string]bool{"rating": true, "flag": true, "label": true, "caption": true, "creator": true, "copyright": true, "rotation": true}, created.Agreement)
+	inspected, err := fixture.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	assert.Equal(t, inspected.Agreement, created.Agreement)
 	assert.NotEmpty(t, created.CreatedAt)
 	assert.NotEmpty(t, created.UpdatedAt)
 	assert.Equal(t, strconv.Quote("1"), resp.Header.Get("ETag"))
@@ -107,9 +111,9 @@ func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 	require.NoError(t, err)
 	secondNode, err := fixture.CreateFile(t.Context(), fixture.RootID(), "second.bin", secondHash, secondSize, "application/octet-stream")
 	require.NoError(t, err)
-	secondResp, secondBody := do(t, ts, http.MethodPost, "/api/v1/photos/assets", nil,
-		map[string]any{"node_id": secondNode.ID, "role": "raw"})
-	assert.Equal(t, http.StatusCreated, secondResp.StatusCode, secondBody)
+	secondResp, secondBody := do(t, ts, http.MethodPost, "/api/v1/photos/nodes/"+strconv.FormatInt(secondNode.ID, 10)+"/promote", nil,
+		map[string]any{"role": "raw"})
+	assert.Equal(t, http.StatusOK, secondResp.StatusCode, secondBody)
 	var secondAsset api.PhotoAsset
 	require.NoError(t, json.Unmarshal([]byte(secondBody), &secondAsset))
 

@@ -647,6 +647,19 @@ func startProcessingJobs(
 	if err := supervisor.Start("extract:source-metadata", metadata.Run); err != nil {
 		return fmt.Errorf("starting source metadata backfill: %w", err)
 	}
+	sidecars := &processing.Backfill[store.PhotoSidecarTarget]{Name: "photo-sidecars", Page: 10, IdleDelay: time.Second, List: func(ctx context.Context, after string, limit int) ([]store.PhotoSidecarTarget, error) {
+		attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		return s.MissingPhotoSidecarsAfter(attempt, processing.SourceMetadataExtractorFingerprint, after, limit)
+	}, Key: func(t store.PhotoSidecarTarget) string { return strconv.FormatInt(t.NodeID, 10) }, Mutate: gate.MutateContext, Logger: logger, Process: func(ctx context.Context, t store.PhotoSidecarTarget) error {
+		attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		_, err := s.InitializePhotoSidecar(attempt, t)
+		return err
+	}}
+	if err := supervisor.Start("extract:photo-sidecars", sidecars.Run); err != nil {
+		return fmt.Errorf("starting photo sidecar backfill: %w", err)
+	}
 	previews, err := newVisualPreviewBackfill(s, blobs, gate, logger)
 	if err != nil {
 		return err

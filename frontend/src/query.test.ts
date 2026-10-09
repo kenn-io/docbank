@@ -53,6 +53,11 @@ describe("query identity", () => {
       '{"filters":{"tag_ids":["00000000-0000-3000-8000-000000000001"]}}',
       '{"filters":{"mime_types":["text/*"]}}',
       '{"filters":{"extensions":[".pdf"]}}',
+      '{"filters":{"rating_min":6}}',
+      '{"filters":{"rating_min":4,"rating_max":3}}',
+      '{"filters":{"rating_max":1.5}}',
+      '{"filters":{"flags":["yes"]}}',
+      '{"filters":{"labels":["orange"]}}',
       '{"v":0}',
       '{"syntax":""}',
       '{"sort":{"field":""}}',
@@ -157,4 +162,13 @@ describe("media classification", () => {
     expect(classifyMedia("", "main.GO")).toBe("source_code");
     expect(classifyMedia("application/vnd.synthetic-unknown", "report.pdf")).toBe("unknown");
   });
+});
+
+describe("authored photo filters", () => {
+ it("keeps decisions in canonical saved queries", () => {
+   const value = parseQuery('{"filters":{"rating_min":0,"rating_max":5,"flags":["pick",""],"labels":["red","blue","red"]}}');
+   expect(canonicalQuery(value)).toContain('"flags":["","pick"]');
+   expect(canonicalQuery(value)).toContain('"labels":["blue","red"]');
+   expect(canonicalQuery(value)).toContain('"rating_min":0');
+ });
 });

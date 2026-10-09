@@ -16,7 +16,7 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 	assetIDs := make(map[string]struct{})
 	var targetFileIDs []string
 	for _, nodeID := range nodeIDs {
-		rows, err := tx.QueryContext(ctx, `SELECT asset_id, file_id, role FROM photo_files WHERE node_id=?`, nodeID)
+		rows, err := tx.QueryContext(ctx, `SELECT asset_id, file_id, role FROM photo_files WHERE node_id=? AND asset_id IS NOT NULL`, nodeID)
 		if err != nil {
 			return fmt.Errorf("finding photo memberships for purged node %d: %w", nodeID, err)
 		}
@@ -60,9 +60,6 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 			return err
 		}
 	}
-	if len(assetIDs) == 0 {
-		return nil
-	}
 	before := make(map[string]PhotoAsset, len(assetIDs))
 	for assetID := range assetIDs {
 		asset, err := photoAssetByIDQuery(ctx, tx, assetID)
@@ -72,7 +69,7 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		before[assetID] = asset
 	}
 	for _, targetFileID := range targetFileIDs {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE sidecar_of_file_id=?`, targetFileID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE sidecar_of_file_id=?`, targetFileID); err != nil {
 			return fmt.Errorf("removing sidecars for purged photo source %s: %w", targetFileID, err)
 		}
 	}
