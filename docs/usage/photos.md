@@ -100,7 +100,8 @@ Edits allow up to 1,000 files and reserve enough of the 1 MiB receipt bound
 for both the edit and its inverse. Audited files record each changed node in the same transaction; a failed audit rolls back
 the whole edit. Grouping operations retain their existing audit restrictions.
 
-The daemon initializes linked photo files from imported XMP sidecars. It reads
+The daemon initializes each original file's decisions from the imported XMP
+sidecar linked to it. It reads
 rating, label, pick, rotation, caption, creator, and copyright, then records the
 sidecar node and content version in the receipt. XMP rating -1 means reject
 with rating 0. Unsupported custom color labels become empty; supported decisions
@@ -119,11 +120,12 @@ Whitespace-only caption, creator, and copyright values count as absent; meaningf
 text keeps its surrounding spaces and newlines. This slice doesn't import
 `dc:subject` as tags or `tiff:Orientation` as authored rotation.
 
-Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. Browse
-reads decisions from the selected display file, including under `NOT`. With a RAW
-rated 5/pick and a selected JPEG rated 3/red, `rating:3`, `label:red`, and
-`NOT rating:5` match; `rating_min:4` and `flag:pick` don't. Selecting the RAW
-reverses those results. Linked sidecars don't change decision matches.
+Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. In Photos,
+each decision filter matches when any non-sidecar member passes, and `NOT`
+matches when none does. With a RAW rated 5/pick and a displayed JPEG rated 3/red,
+`rating:5`, `rating:3`, `rating_min:4`, `flag:pick`, and `label:red` match.
+`NOT rating:5` excludes that photo, including when it has a linked XMP sidecar.
+Changing the display file preserves these decision matches.
 Documents queries read each file's own decisions. These
 values and complete receipts round-trip through JSONL backup and restore.
 Advanced expressions accept `rating:5`, `rating_min:4`, `rating_max:3`,
