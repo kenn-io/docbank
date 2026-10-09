@@ -121,6 +121,17 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		restoreSourceState:         restoreV28SourceState,
 		keepsProcessingIncarnation: true,
 	},
+	{
+		version: 30, release: "schema v30", backupSuffix: ".schema-v30.bak",
+		validate: func(db *sql.DB, _, _ []string) error {
+			return validateReleasedLayout(db, "schema v30", schemaV30Layout)
+		},
+		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
+			return exportReleasedMetadataSnapshot(ctx, source, dst, 30)
+		},
+		restoreSourceState:         restoreV30SourceState,
+		keepsProcessingIncarnation: true,
+	},
 }
 
 var (
@@ -236,6 +247,7 @@ func validateReleasedStorageSchemas() error {
 		}
 		delete(versions, version)
 	}
+	delete(versions, 30) // The quality-signals predecessor has not shipped.
 	for version := range versions {
 		return fmt.Errorf("storage schema version %d has an adapter but no release", version)
 	}
@@ -1598,3 +1610,16 @@ var schemaV29Layout = strings.Replace(schemaV28Layout,
 	`"photo_sets": ["cover_asset_id", "created_at", "deleted_at", "name", "revision", "set_id", "starred", "updated_at"],
   "photo_set_members": ["added_at", "asset_id", "set_id"],
   "photo_change_receipts": ["after_json", "after_revision", "asset_id", "before_json", "before_revision", "created_at", "operation", "receipt_id", "set_id", "settings_key"]`, 1)
+
+var schemaV30Layout = strings.TrimSuffix(schemaV29Layout, "}") + `,
+  "photo_quality_signals": ["aesthetics", "blur", "brightness", "color_blue", "color_green", "color_red", "content_version_id", "evaluator_fingerprint", "focus", "framing", "state"]
+}`
+
+func restoreV30SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
+	if err := restoreV28SourceState(ctx, source, target); err != nil {
+		return err
+	}
+	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return copyReleasedTable(ctx, source, tx, "photo_quality_signals")
+	})
+}

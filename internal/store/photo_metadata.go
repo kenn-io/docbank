@@ -20,7 +20,7 @@ type metadataPhotoAsset struct {
 	UpdatedAt             string  `json:"updated_at" db:"updated_at"`
 }
 
-type metadataPhotoAssetV29 struct {
+type metadataPhotoAssetBeforeHidden struct {
 	Type                  string  `json:"type"`
 	AssetID               string  `json:"asset_id" db:"asset_id"`
 	Kind                  string  `json:"kind" db:"kind"`
@@ -136,14 +136,6 @@ var photoMetadataTablesV28 = []metadataRecordCodec{
 
 // photoSetsStorageSchemaVersion is the first schema with photo sets (v0.15.1).
 const photoSetsStorageSchemaVersion = 29
-
-// photoMetadataTablesForSchema returns the photo records a released schema stores.
-func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
-	if version >= photoSetsStorageSchemaVersion {
-		return photoMetadataTables
-	}
-	return photoMetadataTablesV28
-}
 
 func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
 	if v.Type != metadataPhotoAssetType || validateUUIDv4(v.AssetID) != nil || !photoKindValid(v.Kind) || v.Revision < 1 {
@@ -289,11 +281,15 @@ func validatePhotoSetGraph(ctx context.Context, q metadataQuerier) error {
 }
 
 func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
-	if version >= 30 {
+	if version >= 31 {
 		return append(append([]metadataRecordCodec(nil), photoMetadataTables...), photoHiddenMetadataTables...)
 	}
-	tables := append([]metadataRecordCodec(nil), photoMetadataTables...)
-	legacy := newMetadataTable(metadataTable[metadataPhotoAssetV29]{record: metadataPhotoAssetV29{Type: metadataPhotoAssetType}, table: "photo_assets", suffix: "ORDER BY asset_id", validate: func(v metadataPhotoAssetV29) error {
+	tables := photoMetadataTables
+	if version < photoSetsStorageSchemaVersion {
+		tables = photoMetadataTablesV28
+	}
+	tables = append([]metadataRecordCodec(nil), tables...)
+	legacy := newMetadataTable(metadataTable[metadataPhotoAssetBeforeHidden]{record: metadataPhotoAssetBeforeHidden{Type: metadataPhotoAssetType}, table: "photo_assets", suffix: "ORDER BY asset_id", validate: func(v metadataPhotoAssetBeforeHidden) error {
 		return validatePhotoAssetMetadataRecord(metadataPhotoAsset{Type: v.Type, AssetID: v.AssetID, Kind: v.Kind, Revision: v.Revision, ExcludedAt: v.ExcludedAt, DisplayFileID: v.DisplayFileID, DisplayOverrideFileID: v.DisplayOverrideFileID, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
 	}, checkExport: true})
 	for i, table := range tables {
