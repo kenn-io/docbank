@@ -195,11 +195,12 @@
     const state = { photos: new Photos(webSession, photoFailure), cache: new PhotoPreviewCache(webSession, photoFailure) };
     photoState = state;
     const privacy = (event: Event) => {
-      state.photos.clearForPrivacy(true);
+      const detail = (event as CustomEvent<unknown>).detail;
+      if (detail && typeof detail === "object" && "hidden" in detail && detail.hidden === false) state.photos.revalidateForPrivacy();
+      else state.photos.clearForPrivacy(true);
       void state.cache.dispose();
       state.cache = new PhotoPreviewCache(webSession, photoFailure);
       photoState = { ...state };
-      const detail = (event as CustomEvent<unknown>).detail;
       if (detail && typeof detail === "object" && "hidden" in detail && "error" in detail && typeof detail.error === "string") {
         if (detail.hidden === false) photoActionError = detail.error;
         else if (detail.hidden === true) hiddenPhotoActionError = detail.error;
@@ -228,7 +229,7 @@
         if (pollController.signal.aborted) return;
         const recovered = photoPrivacyError !== "";
         photoPrivacyError = "";
-        const next = JSON.stringify([hidden.change_id, hidden.configured, hidden.expires_at]);
+        const next = JSON.stringify([hidden.change_id, hidden.configured, hidden.expires_at, hidden.locked_until]);
         if (recovered || next !== photoPrivacyStamp) window.dispatchEvent(new CustomEvent(photoPrivacyEvent, { detail: hidden }));
         photoPrivacyStamp = next;
       } catch (cause) {

@@ -82,6 +82,12 @@ export class Photos {
     this.error = "";
   }
 
+  revalidateForPrivacy() {
+    this.cancelPending();
+    this.replacement = "refresh";
+    this.error = "";
+  }
+
   async setHidden(id: string) {
     const members = this.selection.selectedIDs.has(id) ? this.items.filter(item => this.selection.selectedIDs.has(item.asset_id)) : this.items.filter(item => item.asset_id === id);
     let failure = "";

@@ -2511,7 +2511,3 @@ CREATE TABLE IF NOT EXISTS photo_hidden_failures (
     failure_id INTEGER PRIMARY KEY,
     occurred_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS photo_hidden_sessions (
-    token_sha256 TEXT PRIMARY KEY,
-    expires_at TEXT NOT NULL
-);

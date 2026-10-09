@@ -848,3 +848,13 @@ func mustPhotoAsset(t *testing.T, s *Store, nodeID int64) PhotoAsset {
 	require.NoError(t, err)
 	return asset
 }
+
+func TestPhotoImportReceiptResponsePreservesUndecodableReceipts(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for _, receipt := range []string{`invalid`, `{"added":"old-format","ambiguities":[]}`} {
+		got, err := s.PhotoImportReceiptResponse(t.Context(), receipt)
+		require.NoError(t, err)
+		require.Equal(t, receipt, got)
+	}
+}
