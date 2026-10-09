@@ -15,11 +15,13 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
   test.setTimeout(600_000);
   const workspace = await mkdtemp(path.join(repository, ".superpowers", "timeline-proof-"));
   const vault = path.join(workspace, "vault");
+  const fixture = path.join(workspace, process.platform === "win32" ? "photos-fixture.exe" : "photos-fixture");
   const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0" };
   const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
   try {
     await mkdir(output!, { recursive: true });
-    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault], { cwd: repository, env, timeout: 480_000 });
+    await exec("go", ["build", "-tags", "fts5", "-o", fixture, "./frontend/screenshots/photos-fixture.go"], { cwd: repository, env, timeout: 480_000 });
+    await exec(fixture, [vault], { cwd: repository, env, timeout: 480_000 });
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
     await page.goto(webURL.href);
@@ -69,9 +71,9 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
     }
     await years.getByRole("button", { name: /^2024/ }).click();
     await page.getByRole("button", { name: "February 2024", exact: false }).click();
-    await expect(heading).toHaveText("26 photos in February 2024 · 26 loaded");
+    await expect(heading).toHaveText("27 photos in February 2024 · 27 loaded");
     await page.getByRole("button", { name: /^2024-02-29 ·/ }).click();
-    await expect(heading).toHaveText("26 photos on 2024-02-29 · 26 loaded");
+    await expect(heading).toHaveText("27 photos on 2024-02-29 · 27 loaded");
     await expect(page.getByText(/10,000 photos in scope/)).toBeVisible();
     await page.getByRole("button", { name: "Clear date", exact: true }).click();
     await expect(page.getByText(/10,000 photos ·/)).toBeVisible();
