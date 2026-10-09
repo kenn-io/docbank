@@ -20,15 +20,18 @@ var schemaSQL string
 
 // Store is the single access path to the docbank database.
 type Store struct {
-	db               *sql.DB
-	writeDB          *sql.DB
-	path             string
-	rootID           int64
-	vaultID          string
-	primaryStoreID   string
-	driver           docsqlite.Driver
-	providerEgressMu sync.RWMutex
-	photoHiddenNow   func() time.Time
+	db                    *sql.DB
+	writeDB               *sql.DB
+	path                  string
+	rootID                int64
+	vaultID               string
+	primaryStoreID        string
+	driver                docsqlite.Driver
+	providerEgressMu      sync.RWMutex
+	photoHiddenNow        func() time.Time
+	photoHiddenAuthMu     sync.Mutex // Serialize session creation and revocation across database commits.
+	photoHiddenSessionsMu sync.Mutex
+	photoHiddenSessions   map[string]time.Time
 }
 
 // currentStorageSchemaVersion identifies the canonical SQLite layout created
@@ -105,7 +108,7 @@ func openCurrentStore(
 	// Queue writers in database/sql instead of racing SQLite's busy timeout.
 	// Read snapshots use the separate deferred pool and do not reserve the writer.
 	writeDB.SetMaxOpenConns(1)
-	s := &Store{db: db, writeDB: writeDB, path: path, driver: driver}
+	s := &Store{db: db, writeDB: writeDB, path: path, driver: driver, photoHiddenSessions: make(map[string]time.Time)}
 	if err := s.bootstrap(incarnation); err != nil {
 		_ = s.Close()
 		return nil, err
@@ -179,9 +182,6 @@ func (s *Store) bootstrapTx(incarnation *metadataProcessingIncarnation) error {
 		}
 		if err := validateUUIDv4(s.vaultID); err != nil {
 			return fmt.Errorf("validating vault identity: %w", err)
-		}
-		if _, err := tx.Exec(`DELETE FROM photo_hidden_sessions`); err != nil {
-			return err
 		}
 		if err := ensureProcessingIncarnationTx(tx, incarnation); err != nil {
 			return err

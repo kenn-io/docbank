@@ -26,7 +26,7 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos/hidden";
     await page.goto(webURL.href);
-    await page.getByRole("textbox", { name: "Passcode", exact: true }).fill("synthetic-passcode");
+    await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
     await page.getByRole("button", { name: "Set passcode", exact: true }).click();
     await expect(page.getByText(/Locks in/)).toBeVisible();
     await page.getByRole("button", { name: "Library", exact: true }).click();
@@ -50,12 +50,12 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await page.getByRole("button", { name: "Lock", exact: true }).click();
     await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
     await expect(page.locator("[data-asset]")).toHaveCount(0);
-    await expect(page.getByRole("textbox", { name: "Passcode", exact: true })).toBeEnabled();
+    await expect(page.getByLabel("Passcode", { exact: true })).toBeEnabled();
     for (const theme of ["light", "dark"]) {
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-hidden-locked-${theme}.png`), animations: "disabled" });
     }
-    await page.getByRole("textbox", { name: "Passcode", exact: true }).fill("synthetic-passcode");
+    await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
     await page.getByRole("button", { name: "Unlock", exact: true }).click();
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     for (const theme of ["light", "dark"]) {
@@ -84,7 +84,7 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await run("photos", "hidden", "lock");
     await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible({ timeout: 5000 });
     await expect(page.locator("[data-asset]")).toHaveCount(0);
-    await page.getByRole("textbox", { name: "Passcode", exact: true }).fill("synthetic-passcode");
+    await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
     await page.getByRole("button", { name: "Unlock", exact: true }).click();
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     await page.clock.install();
@@ -92,7 +92,7 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
     await expect(page.locator("[data-asset]")).toHaveCount(0);
     await page.clock.setSystemTime(Date.now());
-    await page.getByRole("textbox", { name: "Passcode", exact: true }).fill("synthetic-passcode");
+    await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
     await page.getByRole("button", { name: "Unlock", exact: true }).click();
     await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
     const tab = await page.context().newPage();

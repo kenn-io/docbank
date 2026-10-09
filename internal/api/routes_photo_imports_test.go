@@ -119,6 +119,24 @@ func TestPhotoImportCancelThroughJobs(t *testing.T) {
 	assert.False(t, jobs.Items[0].CanCancel)
 }
 
+func TestPhotoImportJobPreservesUndecodableReceipt(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, nil)
+	operation, err := catalog.CreateLocalOperation(t.Context(), store.StorageOperationKindPhotoImport, `{"source_root":"/camera","destination":"/photos"}`)
+	require.NoError(t, err)
+	_, err = catalog.ClaimStorageOperation(t.Context(), operation.ID)
+	require.NoError(t, err)
+	receipt := `{"added":"legacy-format"}`
+	require.NoError(t, catalog.AdvanceStorageOperation(t.Context(), operation.ID, "", 0, 0, 0, receipt))
+	response, body := get(t, ts, "/api/v1/jobs/"+operation.ID, nil)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var output api.StorageOperation
+	require.NoError(t, json.Unmarshal([]byte(body), &output))
+	encoded, err := json.Marshal(output.Receipt)
+	require.NoError(t, err)
+	require.JSONEq(t, receipt, string(encoded))
+}
+
 func TestPhotoImportJobsReceiptRedactsBrowserSession(t *testing.T) {
 	t.Parallel()
 	ts, catalog := newTestServer(t, nil)

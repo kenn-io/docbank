@@ -106,22 +106,22 @@ func (s *Store) hiddenSession(ctx context.Context, q metadataQuerier) (string, e
 	if digest == "" {
 		return "", ErrHiddenLocked
 	}
-	var expiry string
-	err := q.QueryRowContext(ctx, `SELECT expires_at FROM photo_hidden_sessions WHERE token_sha256=? AND EXISTS (SELECT 1 FROM photo_hidden_credentials WHERE singleton=1)`, digest).Scan(&expiry)
-	if errors.Is(err, sql.ErrNoRows) {
+	s.photoHiddenSessionsMu.Lock()
+	until := s.photoHiddenSessions[digest]
+	if !until.After(s.hiddenNow()) {
+		delete(s.photoHiddenSessions, digest)
+		s.photoHiddenSessionsMu.Unlock()
 		return "", ErrHiddenLocked
 	}
-	if err != nil {
+	s.photoHiddenSessionsMu.Unlock()
+	var configured bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_hidden_credentials WHERE singleton=1)`).Scan(&configured); err != nil {
 		return "", err
 	}
-	until, err := time.Parse(time.RFC3339Nano, expiry)
-	if err != nil {
-		return "", fmt.Errorf("reading hidden session expiry: %w", err)
-	}
-	if !until.After(s.hiddenNow()) {
+	if !configured {
 		return "", ErrHiddenLocked
 	}
-	return expiry, nil
+	return until.Format(timestampLayout), nil
 }
 
 func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) {
@@ -159,7 +159,7 @@ func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) 
 }
 
 func clearHiddenAuthTx(ctx context.Context, tx *sql.Tx, credentials bool) error {
-	tables := []string{"photo_hidden_sessions", "photo_hidden_failures", "photo_hidden_lockout"}
+	tables := []string{"photo_hidden_failures", "photo_hidden_lockout"}
 	if credentials {
 		tables = append(tables, "photo_hidden_credentials")
 	}
@@ -249,6 +249,8 @@ func (s *Store) SetupPhotoHidden(ctx context.Context, passcode string) error {
 }
 
 func (s *Store) UnlockPhotoHidden(ctx context.Context, passcode string) (string, time.Time, error) {
+	s.photoHiddenAuthMu.Lock()
+	defer s.photoHiddenAuthMu.Unlock()
 	if err := validHiddenPasscode(passcode); err != nil {
 		return "", time.Time{}, err
 	}
@@ -267,14 +269,20 @@ func (s *Store) UnlockPhotoHidden(ctx context.Context, passcode string) (string,
 		}
 		token = base64.RawURLEncoding.EncodeToString(bytes)
 		expiry = s.hiddenNow().Add(5 * time.Minute)
-		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_hidden_sessions WHERE expires_at<=?`, s.hiddenNow().Format(timestampLayout)); err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO photo_hidden_sessions(token_sha256,expires_at) VALUES(?,?)`, hiddenTokenDigest(token), expiry.Format(timestampLayout))
-		return err
+		return nil
 	})
 	if err != nil {
 		return "", time.Time{}, err
+	}
+	if denial == nil {
+		s.photoHiddenSessionsMu.Lock()
+		for digest, until := range s.photoHiddenSessions {
+			if !until.After(s.hiddenNow()) {
+				delete(s.photoHiddenSessions, digest)
+			}
+		}
+		s.photoHiddenSessions[hiddenTokenDigest(token)] = expiry
+		s.photoHiddenSessionsMu.Unlock()
 	}
 	return token, expiry, denial
 }
@@ -290,6 +298,8 @@ func (s *Store) DisablePhotoHidden(ctx context.Context, passcode string) error {
 	return s.editPhotoHidden(ctx, passcode, "disable", "")
 }
 func (s *Store) editPhotoHidden(ctx context.Context, passcode, operation, next string) error {
+	s.photoHiddenAuthMu.Lock()
+	defer s.photoHiddenAuthMu.Unlock()
 	if err := validHiddenPasscode(passcode); err != nil {
 		return err
 	}
@@ -345,16 +355,33 @@ func (s *Store) editPhotoHidden(ctx context.Context, passcode, operation, next s
 	if err != nil {
 		return err
 	}
+	if denial == nil {
+		s.clearHiddenSessions()
+	}
 	return denial
 }
 
 func (s *Store) ResetPhotoHidden(ctx context.Context) error {
-	return s.withLogicalTx(ctx, func(tx *sql.Tx) error { return clearHiddenAuthTx(ctx, tx, true) })
+	s.photoHiddenAuthMu.Lock()
+	defer s.photoHiddenAuthMu.Unlock()
+	if err := s.withLogicalTx(ctx, func(tx *sql.Tx) error { return clearHiddenAuthTx(ctx, tx, true) }); err != nil {
+		return err
+	}
+	s.clearHiddenSessions()
+	return nil
 }
 
 func (s *Store) LockPhotoHidden(ctx context.Context) error {
-	// Lock every tab in the same browser and revoke other active views too.
-	return s.withStorageTx(ctx, func(tx *sql.Tx) error { _, err := tx.ExecContext(ctx, `DELETE FROM photo_hidden_sessions`); return err })
+	s.photoHiddenAuthMu.Lock()
+	defer s.photoHiddenAuthMu.Unlock()
+	s.clearHiddenSessions()
+	return nil
+}
+
+func (s *Store) clearHiddenSessions() {
+	s.photoHiddenSessionsMu.Lock()
+	defer s.photoHiddenSessionsMu.Unlock()
+	clear(s.photoHiddenSessions)
 }
 
 func (s *Store) SetPhotoAssetHidden(ctx context.Context, id string, revision int64, hidden bool) (PhotoAsset, error) {
@@ -370,10 +397,6 @@ func (s *Store) SetPhotoAssetHidden(ctx context.Context, id string, revision int
 			}
 			if !exists {
 				return false, ErrHiddenNotConfigured
-			}
-		} else if asset.HiddenAt == nil {
-			if _, err := s.hiddenSession(ctx, tx); err != nil {
-				return false, err
 			}
 		}
 		if (asset.HiddenAt != nil) == hidden {

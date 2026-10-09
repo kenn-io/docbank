@@ -24,6 +24,9 @@ func TestPhotoHiddenLifecycleAndBackup(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
+	unchanged, err := s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, false)
+	require.NoError(t, err)
+	require.Equal(t, asset, unchanged)
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.ErrorIs(t, err, ErrHiddenNotConfigured)
 	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
@@ -189,9 +192,7 @@ func TestPhotoHiddenConcurrentResetCannotResurrectSession(t *testing.T) {
 	if unlockErr != nil {
 		require.ErrorIs(t, unlockErr, ErrHiddenNotConfigured)
 	}
-	var count int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_hidden_sessions`).Scan(&count))
-	require.Zero(t, count)
+	require.Empty(t, s.photoHiddenSessions)
 }
 
 func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
@@ -221,6 +222,11 @@ func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
 	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
 	require.NoError(t, err)
 	_, err = s.PhotoAssetByID(WithPhotoHiddenToken(ctx, token), asset.ID)
+	require.NoError(t, err)
+	reopen()
+	_, err = s.PhotoAssetByID(WithPhotoHiddenToken(ctx, token), asset.ID)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	token, _, err = s.UnlockPhotoHidden(ctx, "correct")
 	require.NoError(t, err)
 	require.NoError(t, s.LockPhotoHidden(ctx))
 	_, err = s.PhotoAssetByID(WithPhotoHiddenToken(ctx, token), asset.ID)
@@ -292,8 +298,9 @@ func TestPhotoHiddenMutationGateAndPrivacyStamp(t *testing.T) {
 	asset, err = s.SetPhotoAssetHidden(WithPhotoHiddenToken(ctx, token), asset.ID, asset.Revision, false)
 	require.NoError(t, err)
 	require.NoError(t, s.LockPhotoHidden(ctx))
-	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, false)
-	require.ErrorIs(t, err, ErrHiddenLocked)
+	unchanged, err := s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, false)
+	require.NoError(t, err)
+	require.Equal(t, asset, unchanged)
 }
 
 func TestPhotoHiddenCoverResponseProjection(t *testing.T) {
@@ -429,8 +436,7 @@ func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
 	require.NoError(t, err)
 	unlocked := WithPhotoHiddenToken(ctx, token)
 	checkOwner(unlocked, ErrPhotoNodeOwned)
-	_, err = s.db.Exec(`UPDATE photo_hidden_sessions SET expires_at='2000-01-01T00:00:00Z'`)
-	require.NoError(t, err)
+	s.photoHiddenSessions[hiddenTokenDigest(token)] = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 	checkOwner(unlocked, ErrHiddenLocked)
 	token, _, err = s.UnlockPhotoHidden(ctx, "correct")
 	require.NoError(t, err)

@@ -75,10 +75,10 @@ func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set Phot
 	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m WHERE m.set_id=? AND EXISTS (SELECT 1 FROM photo_files f WHERE f.asset_id=m.asset_id)`, set.ID).Scan(&out.MemberCount); err != nil {
 		return out, err
 	}
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE m.set_id=? AND `+photoBrowseLiveDisplay+` AND a.hidden_at IS NULL`, set.ID).Scan(&out.IncludedCount); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE m.set_id=? AND `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(false), set.ID).Scan(&out.IncludedCount); err != nil {
 		return out, err
 	}
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE m.set_id=? AND `+photoBrowseLiveDisplay+` AND a.hidden_at IS NOT NULL`, set.ID).Scan(&out.HiddenCount); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE m.set_id=? AND `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(true), set.ID).Scan(&out.HiddenCount); err != nil {
 		return out, err
 	}
 	var id, generation string
@@ -88,7 +88,7 @@ func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set Phot
  CROSS JOIN nodes n ON n.id=f.node_id
  CROSS JOIN content_versions v ON v.version_id=n.current_version_id
  CROSS JOIN visual_preview_generations g ON g.content_version_id=v.version_id AND g.source_sha256=v.blob_hash
- WHERE m.set_id=? AND ` + photoBrowseLiveDisplay + ` AND a.hidden_at IS NULL` + ` AND g.recipe_fingerprint=? AND g.state='ready' AND g.output_blob_hash IS NOT NULL`
+ WHERE m.set_id=? AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND g.recipe_fingerprint=? AND g.state='ready' AND g.output_blob_hash IS NOT NULL`
 	if set.CoverAssetID != nil {
 		err := q.QueryRowContext(ctx, coverSQL+` AND m.asset_id=?`, set.ID, recipe, *set.CoverAssetID).Scan(&id, &generation)
 		if err == nil {
@@ -394,7 +394,7 @@ func (s *Store) photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection 
 	if err != nil {
 		return nil, err
 	}
-	sql, args, err := bindQueryPopulation(compiledQueryFragment{sql: `SELECT a.asset_id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + photoBrowseLiveDisplay + ` AND a.hidden_at IS NULL` + ` AND ` + match.sql + ` ORDER BY a.asset_id`, args: match.args, relations: match.relations}, coverage, generation)
+	sql, args, err := bindQueryPopulation(compiledQueryFragment{sql: `SELECT a.asset_id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND ` + match.sql + ` ORDER BY a.asset_id`, args: match.args, relations: match.relations}, coverage, generation)
 	if err != nil {
 		return nil, err
 	}

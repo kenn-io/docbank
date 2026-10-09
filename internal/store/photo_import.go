@@ -85,7 +85,7 @@ type PhotoImportReceipt struct {
 func (s *Store) PhotoImportReceiptResponse(ctx context.Context, receiptJSON string) (string, error) {
 	var receipt PhotoImportReceipt
 	if err := json.Unmarshal([]byte(receiptJSON), &receipt); err != nil {
-		return "", err
+		return receiptJSON, nil //nolint:nilerr // Preserve receipts from formats this decoder cannot read.
 	}
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		visible := make(map[string]bool)

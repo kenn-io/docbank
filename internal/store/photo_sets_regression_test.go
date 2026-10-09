@@ -57,10 +57,10 @@ func TestPhotoSetResponseFailureRollsBack(t *testing.T) {
 			require.NoError(t, err)
 			token, _, err := s.UnlockPhotoHidden(ctx, "correct")
 			require.NoError(t, err)
-			_, err = s.db.ExecContext(ctx, `UPDATE photo_hidden_sessions SET expires_at='invalid'`)
-			require.NoError(t, err)
 			var before, after bytes.Buffer
 			require.NoError(t, s.ExportMetadata(ctx, &before))
+			_, err = s.db.ExecContext(ctx, `ALTER TABLE photo_hidden_credentials RENAME TO unavailable_hidden_credentials`)
+			require.NoError(t, err)
 			unlocked := WithPhotoHiddenToken(ctx, token)
 			switch operation {
 			case "rename":
@@ -70,7 +70,9 @@ func TestPhotoSetResponseFailureRollsBack(t *testing.T) {
 			case "add", "remove":
 				_, err = s.ChangePhotoSetMembers(unlocked, set.ID, set.Revision, operation == "add", PhotoSetSelection{AssetIDs: []string{member.ID}})
 			}
-			require.ErrorContains(t, err, "reading hidden session expiry")
+			require.ErrorContains(t, err, "photo_hidden_credentials")
+			_, err = s.db.ExecContext(ctx, `ALTER TABLE unavailable_hidden_credentials RENAME TO photo_hidden_credentials`)
+			require.NoError(t, err)
 			require.NoError(t, s.ExportMetadata(ctx, &after))
 			require.Equal(t, before.String(), after.String())
 		})
