@@ -322,9 +322,32 @@ it.each([false, true])("partial visibility writes keep failures, position and pe
   await photos.retry();
   expect(photos.actionError).toBe("1 photo failed: Photo changed");
   fetcher.mockImplementationOnce(() => new Promise(resolve => finish = resolve));
-  const late = photos.refresh(); photos.clearHidden(); finish(response([photo(2), photo(3)])); await late;
-  expect(photos.items).toEqual([]); expect(photos.selection.selectedIDs.size).toBe(0); expect(photos.total).toBe(0);
+  const items = photos.items;
+  const late = photos.refresh(); photos.dispose(); finish(response([photo(1)])); await late;
+  expect(photos.items).toBe(items);
   photos.dispose();
+});
+
+it.each(["unhide", "trash"])("notifies after a pending %s finishes on a disposed Hidden store", async kind => {
+  let finish!: (response: Response) => void;
+  let signal: AbortSignal | undefined;
+  const fetcher = vi.fn((_url: string, options: RequestInit) => {
+    signal = options.signal!;
+    return new Promise<Response>(resolve => finish = resolve);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn(), true);
+  photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();
+  const changed = vi.fn();
+  const write = kind === "unhide" ? photos.setHidden("photo-1", undefined, changed) : photos.trashSelected(undefined, changed);
+  photos.dispose();
+  expect(signal?.aborted).toBe(false);
+  finish(Response.json({ id: "photo-1", revision: 2 }));
+  await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  finish(Response.json({ id: "photo-2", revision: 2 }));
+  await write;
+  expect(changed).toHaveBeenCalledOnce();
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual([`/api/v1/photos/assets/photo-1/${kind}`, `/api/v1/photos/assets/photo-2/${kind}`]);
 });
 
 it("bounds selection writes, rejects unconfirmed success and guards overlapping actions", async () => {

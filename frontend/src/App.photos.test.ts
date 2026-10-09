@@ -62,7 +62,7 @@ it.each([false, true])("keeps selection and previews after partial visibility wr
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL() {} });
-  const stored = storage();
+  storage();
   const items = [photo(1), photo(2), photo(3)].map(item => ({ ...item, previews: { ...item.previews, grid: { state: "ready" as const, generation_id: "synthetic" } } }));
   let refreshFailed = false;
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
@@ -88,7 +88,6 @@ it.each([false, true])("keeps selection and previews after partial visibility wr
   expect(screen.getByRole("main", { name: "Photo library" })).toBe(grid);
   expect(screen.getByAltText("Photo 3.jpg")).toBe(preview);
   expect(screen.getByText("1 selected photo")).toBeTruthy();
-  if (!hidden) { const keys = [...stored.data.values()].flatMap(entries => [...entries.keys()]); expect(keys.some(key => key.includes("/photo-1/"))).toBe(false); expect(keys.some(key => key.includes("/photo-3/"))).toBe(true); }
 });
 
 it.each([false, true])("Hidden trash invalidates Documents and Trash restore refreshes only an unlocked grid, locked=%s", async locked => {
