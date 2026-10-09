@@ -363,8 +363,14 @@ func (s *Store) photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection 
 			if validateUUIDv4(id) != nil {
 				return nil, ErrInvalidPhotoAlbum
 			}
-			if _, err := s.photoAssetReadQuery(ctx, tx, id); err != nil {
+			hidden, err := photoAssetHiddenQuery(ctx, tx, id)
+			if err != nil {
 				return nil, err
+			}
+			if hidden {
+				if _, err := s.hiddenSession(ctx, tx); err != nil {
+					return nil, err
+				}
 			}
 			if !seen[id] {
 				ids = append(ids, id)
@@ -479,8 +485,8 @@ func (s *Store) photoSetResponse(ctx context.Context, q metadataQuerier, set Pho
 	if set.CoverAssetID == nil {
 		return set, nil
 	}
-	var hidden bool
-	if err := q.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=?`, *set.CoverAssetID).Scan(&hidden); err != nil {
+	hidden, err := photoAssetHiddenQuery(ctx, q, *set.CoverAssetID)
+	if err != nil {
 		return PhotoSet{}, err
 	}
 	if hidden {
@@ -491,4 +497,13 @@ func (s *Store) photoSetResponse(ctx context.Context, q metadataQuerier, set Pho
 		}
 	}
 	return set, nil
+}
+
+func photoAssetHiddenQuery(ctx context.Context, q metadataQuerier, id string) (bool, error) {
+	var hidden bool
+	err := q.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=?`, id).Scan(&hidden)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return hidden, err
 }

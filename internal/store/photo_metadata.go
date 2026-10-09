@@ -137,6 +137,8 @@ var photoMetadataTablesV28 = []metadataRecordCodec{
 // photoSetsStorageSchemaVersion is the first schema with photo sets (v0.15.1).
 const photoSetsStorageSchemaVersion = 29
 
+const photoHiddenStorageSchemaVersion = 31
+
 func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
 	if v.Type != metadataPhotoAssetType || validateUUIDv4(v.AssetID) != nil || !photoKindValid(v.Kind) || v.Revision < 1 {
 		return errors.New("invalid photo asset metadata")
@@ -281,7 +283,7 @@ func validatePhotoSetGraph(ctx context.Context, q metadataQuerier) error {
 }
 
 func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
-	if version >= 31 {
+	if version >= photoHiddenStorageSchemaVersion {
 		return append(append([]metadataRecordCodec(nil), photoMetadataTables...), photoHiddenMetadataTables...)
 	}
 	tables := photoMetadataTables
@@ -289,12 +291,9 @@ func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
 		tables = photoMetadataTablesV28
 	}
 	tables = append([]metadataRecordCodec(nil), tables...)
-	legacy := newMetadataTable(metadataTable[metadataPhotoAssetBeforeHidden]{record: metadataPhotoAssetBeforeHidden{Type: metadataPhotoAssetType}, table: "photo_assets", suffix: "ORDER BY asset_id", validate: func(v metadataPhotoAssetBeforeHidden) error {
-		return validatePhotoAssetMetadataRecord(metadataPhotoAsset{Type: v.Type, AssetID: v.AssetID, Kind: v.Kind, Revision: v.Revision, ExcludedAt: v.ExcludedAt, DisplayFileID: v.DisplayFileID, DisplayOverrideFileID: v.DisplayOverrideFileID, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
-	}, checkExport: true})
 	for i, table := range tables {
 		if table.kind() == metadataPhotoAssetType {
-			tables[i] = legacy
+			tables[i] = photoAssetMetadataBeforeHidden
 		}
 	}
 	return tables
@@ -309,3 +308,7 @@ type metadataHiddenCredential struct {
 var photoHiddenMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataHiddenCredential]{record: metadataHiddenCredential{Type: "photo_hidden_credential", Singleton: 1}, table: "photo_hidden_credentials", suffix: "WHERE singleton=1", validate: func(v metadataHiddenCredential) error { _, _, err := hiddenHashParts(v.Hash); return err }, checkExport: true}),
 }
+
+var photoAssetMetadataBeforeHidden = newMetadataTable(metadataTable[metadataPhotoAssetBeforeHidden]{record: metadataPhotoAssetBeforeHidden{Type: metadataPhotoAssetType}, table: "photo_assets", suffix: "ORDER BY asset_id", validate: func(v metadataPhotoAssetBeforeHidden) error {
+	return validatePhotoAssetMetadataRecord(metadataPhotoAsset{Type: v.Type, AssetID: v.AssetID, Kind: v.Kind, Revision: v.Revision, ExcludedAt: v.ExcludedAt, DisplayFileID: v.DisplayFileID, DisplayOverrideFileID: v.DisplayOverrideFileID, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
+}, checkExport: true})

@@ -1,20 +1,15 @@
 package api_test
 
 import (
-	"bytes"
 	"encoding/json/v2"
-	"image"
-	"image/jpeg"
 	"net/http"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -83,18 +78,7 @@ func TestPhotoHiddenPreviewChecksBeforeETag(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, node.ID)
 	require.NoError(t, err)
-	var encoded bytes.Buffer
-	require.NoError(t, jpeg.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 4, 3)), nil))
-	receipt, err := s.Blobs.WriteDetailedContext(ctx, bytes.NewReader(encoded.Bytes()))
-	require.NoError(t, err)
-	encoding, err := receipt.EncodingName()
-	require.NoError(t, err)
-	recipe, err := processing.VisualPreviewRecipeForSize("grid")
-	require.NoError(t, err)
-	canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{ContractVersion: document.VisualPreviewContractV1, SourceSHA256: hash, Recipe: recipe, State: document.VisualPreviewReady, Output: &document.VisualPreviewOutputV1{BlobSHA256: receipt.Hash, Size: receipt.Size, MediaType: "image/jpeg", Width: 4, Height: 3}})
-	require.NoError(t, err)
-	generation, err := s.PublishVisualPreviewGeneration(ctx, node.CurrentVersionID, canonical, &store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize, Created: receipt.Created, PackEligible: receipt.PackEligible})
-	require.NoError(t, err)
+	generation, data, _ := publishTestPhotoPreview(t, s, node)
 	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
@@ -111,7 +95,7 @@ func TestPhotoHiddenPreviewChecksBeforeETag(t *testing.T) {
 	delete(headers, "If-None-Match")
 	response, body = get(t, ts, path, headers)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.Equal(t, encoded.String(), body)
+	require.Equal(t, string(data), body)
 	require.NoError(t, s.LockPhotoHidden(ctx))
 	headers["If-None-Match"] = strconv.Quote(generation.GenerationID)
 	response, body = get(t, ts, path, headers)
@@ -142,4 +126,31 @@ func TestPhotoHiddenBrowserAllowlistAndCookie(t *testing.T) {
 	require.False(t, cookies[0].Secure)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/reset", headers, map[string]string{})
 	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
+}
+
+func TestPhotoHiddenLockDuringMaintenance(t *testing.T) {
+	t.Parallel()
+	gate := api.NewOperationGate()
+	ts, s := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
+	ctx := t.Context()
+	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
+	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
+	require.NoError(t, err)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- gate.MaintainContext(ctx, func() error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	t.Cleanup(func() { close(release); require.NoError(t, <-done) })
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/hidden/lock", map[string]string{"Cookie": "docbank-hidden=" + token}, map[string]string{})
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	state, err := s.PhotoHiddenState(store.WithPhotoHiddenToken(ctx, token))
+	require.NoError(t, err)
+	require.Nil(t, state.ExpiresAt)
 }

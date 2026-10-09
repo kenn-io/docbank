@@ -348,3 +348,59 @@ it("bounds selection writes, rejects unconfirmed success and guards overlapping 
   expect(photos.hiding).toBe(false);
   photos.dispose();
 });
+
+it.each([false, true])("changes visibility of retry targets outside the loaded page, hidden=%s", async hidden => {
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ detail: "Photo changed" }, { status: 412 }))
+    .mockResolvedValueOnce(response([photo(2)]))
+    .mockResolvedValueOnce(Response.json({ id: "photo-1", revision: 2 }))
+    .mockResolvedValueOnce(Response.json({ id: "photo-2", revision: 2 }))
+    .mockResolvedValueOnce(response([]));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn(), hidden);
+  photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
+  expect(await photos.trashSelected()).toBe(false);
+  photos.check("photo-2", true, false, ["photo-2"]);
+  await photos.setHidden("photo-2");
+  const action = hidden ? "unhide" : "hide";
+  expect(fetcher.mock.calls.slice(2, 4).map(call => call[0])).toEqual([`/api/v1/photos/assets/photo-1/${action}`, `/api/v1/photos/assets/photo-2/${action}`]);
+  expect(photos.actionError).toBe("");
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  expect(photos.trashTargets).toEqual([]);
+  photos.dispose();
+});
+
+it.each([false, true])("keeps failed visibility targets selected after a reorder and retries current revisions, hidden=%s", async hidden => {
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ detail: "Photo changed" }, { status: 412 }))
+    .mockResolvedValueOnce(response([photo(2)]))
+    .mockResolvedValueOnce(Response.json({ detail: "Photo changed again" }, { status: 412 }))
+    .mockResolvedValueOnce(response([{ ...photo(1), revision: 3 }]))
+    .mockResolvedValueOnce(Response.json({ id: "photo-1", revision: 4 }))
+    .mockResolvedValueOnce(response([]));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn(), hidden);
+  photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
+  await photos.setHidden("photo-1");
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  expect(photos.trashTargets.map(item => item.asset_id)).toEqual(["photo-1"]);
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
+  expect(photos.actionError).toBe("1 photo failed: Photo changed");
+  await photos.setHidden("photo-1");
+  expect(new Headers(fetcher.mock.calls[2][1].headers).get("If-Match")).toBe('"1"');
+  await photos.setHidden("photo-1");
+  expect(new Headers(fetcher.mock.calls[4][1].headers).get("If-Match")).toBe('"3"');
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  expect(photos.trashTargets).toEqual([]);
+  photos.dispose();
+});
+
+it("reports unresolved visibility selections before sending requests", async () => {
+  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.selectLoaded(); photos.selection.selectedIDs.add("unloaded");
+  const report = vi.fn();
+  await photos.setHidden("photo-1", undefined, undefined, report);
+  expect(photos.actionError).toContain("Load and select");
+  expect(report).toHaveBeenCalledWith(photos.actionError);
+  expect(fetcher).not.toHaveBeenCalled();
+  photos.dispose();
+});

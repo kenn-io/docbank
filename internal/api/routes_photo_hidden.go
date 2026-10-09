@@ -61,7 +61,7 @@ func registerPhotoHiddenRoutes(api huma.API, d Deps, g *gate) {
 		huma.Register(api, huma.Operation{OperationID: action + "PhotoHidden", Method: http.MethodPost, Path: "/api/v1/photos/hidden/" + action, Summary: action + " hidden photos access", MaxBodyBytes: 16 << 10}, func(ctx context.Context, in *struct{ Body PhotoHiddenPasscodeRequest }) (*photoHiddenOutput, error) {
 			var token string
 			var expiry time.Time
-			err := g.mutate(func() error {
+			mutate := func() error {
 				switch action {
 				case "setup":
 					return d.Store.SetupPhotoHidden(ctx, in.Body.Passcode)
@@ -71,15 +71,19 @@ func registerPhotoHiddenRoutes(api huma.API, d Deps, g *gate) {
 					return d.Store.DisablePhotoHidden(ctx, in.Body.Passcode)
 				case "reset":
 					return d.Store.ResetPhotoHidden(ctx)
-				case "lock":
-					return d.Store.LockPhotoHidden(ctx)
 				case "unlock":
 					var err error
 					token, expiry, err = d.Store.UnlockPhotoHidden(ctx, in.Body.Passcode)
 					return err
 				}
 				return nil
-			})
+			}
+			var err error
+			if action == "lock" {
+				err = d.Store.LockPhotoHidden(ctx)
+			} else {
+				err = g.mutate(mutate)
+			}
 			if err != nil {
 				return nil, hiddenError(err)
 			}

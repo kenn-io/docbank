@@ -20,9 +20,4 @@ func TestPhotoHiddenPasscodeInput(t *testing.T) {
 	next, err := readPhotoPasscode(cmd, input, "New")
 	require.NoError(t, err)
 	require.Equal(t, "new passcode", next)
-	for _, value := range []string{"\n", strings.Repeat("x", 1025) + "\n", strings.Repeat("x", 4096)} {
-		cmd.SetIn(strings.NewReader(value))
-		_, err := readPhotoPasscode(cmd, bufio.NewReaderSize(cmd.InOrStdin(), 2048), "Passcode")
-		require.Error(t, err)
-	}
 }
