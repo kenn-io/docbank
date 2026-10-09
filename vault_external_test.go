@@ -52,6 +52,12 @@ func TestVaultFormatCoverage(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, document.FormatLookupPending, lookup.Match)
 
+	xlsx, err := vault.LookupFormat(t.Context(), "xlsx")
+	require.NoError(t, err)
+	require.NotNil(t, xlsx.Format)
+	assert.Equal(t, document.CapabilityQualified,
+		xlsx.Format.Capabilities[document.CapabilityMetadata].State)
+
 	original := coverage.Formats[0].Capabilities[document.CapabilityDetect]
 	coverage.Formats[0].Capabilities[document.CapabilityDetect] = document.CapabilityStateV1{
 		State: document.CapabilityUnsupported,

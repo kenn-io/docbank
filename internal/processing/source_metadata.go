@@ -55,6 +55,11 @@ const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+x
 	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3:v17"
 
 var (
+	// SourceMetadataImplementationID identifies the parsers qualified by fixtures,
+	// independent of the Go toolchain used to execute those fixtures.
+	SourceMetadataImplementationID = sourceMetadataImplementationID(
+		sourceMetadataExtractorDescriptor, emailmime.Recipe())
+
 	// SourceMetadataExtractorFingerprint is the stable identity of the local
 	// parser bundle, including the shared email decoder recipe and Go version.
 	SourceMetadataExtractorFingerprint = fingerprintSourceMetadataExtractor(
@@ -85,6 +90,12 @@ func fingerprintSourceMetadataExtractor(descriptor string, recipe document.Email
 	}
 	digest := sha256.Sum256([]byte(descriptor + ":" + emailFingerprint))
 	return hex.EncodeToString(digest[:])
+}
+
+func sourceMetadataImplementationID(descriptor string, recipe document.EmailRecipeV1) string {
+	// Keep every recipe field except the toolchain in the qualification identity.
+	recipe.GoVersion = "toolchain-independent"
+	return fingerprintSourceMetadataExtractor(descriptor, recipe)
 }
 
 type sourceMetadataCatalog interface {

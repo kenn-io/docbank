@@ -307,83 +307,85 @@ func TestVoyageEmbeddingAttemptTimeouts(t *testing.T) {
 	for _, stage := range []string{"credentials", "headers", "body"} {
 		for _, outcome := range []string{"recover", "exhaust", "caller_cancel"} {
 			t.Run(stage+"/"+outcome, func(t *testing.T) {
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				var requests atomic.Int32
-				var resolutions int
-				response := voyageTextBody(t, voyage.TextModel, []int{0}, []int{1})
-				endpoint, egress, resolver := voyageFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					count := requests.Add(1)
-					_, _ = io.Copy(io.Discard, r.Body)
-					w.Header().Set("Content-Type", "application/json")
-					if stage != "credentials" && (outcome != "recover" || count < 3) {
-						if stage == "body" {
-							w.WriteHeader(http.StatusOK)
-							assert.NoError(t, http.NewResponseController(w).Flush())
+				// Virtual time keeps connection latency out of the attempt deadline.
+				synctest.Test(t, func(t *testing.T) {
+					ctx, cancel := context.WithCancel(t.Context())
+					defer cancel()
+					var requests atomic.Int32
+					var resolutions int
+					response := voyageTextBody(t, voyage.TextModel, []int{0}, []int{1})
+					secrets := embeddingSecretFunc(func(attemptCtx context.Context, _ string) (string, error) {
+						resolutions++
+						if stage == "credentials" && (outcome != "recover" || resolutions < 3) {
+							if outcome == "caller_cancel" {
+								cancel()
+							}
+							<-attemptCtx.Done()
+							return "", attemptCtx.Err()
 						}
-						if outcome == "caller_cancel" {
-							cancel()
-						}
-						select {
-						case <-r.Context().Done():
-						case <-time.After(2 * time.Second):
-						}
-						return
-					}
-					_, _ = w.Write(response)
-				}))
-				secrets := embeddingSecretFunc(func(attemptCtx context.Context, _ string) (string, error) {
-					resolutions++
-					if stage == "credentials" && (outcome != "recover" || resolutions < 3) {
-						if outcome == "caller_cancel" {
-							cancel()
-						}
-						<-attemptCtx.Done()
-						return "", attemptCtx.Err()
-					}
-					return "synthetic-secret", nil
-				})
-				profile := voyageTextProfile(t, voyage.EmbeddingModeText)
-				profile.Endpoint, profile.EgressPolicy = endpoint, egress
-				profile.RequestTimeout, profile.MaxRetries = 100*time.Millisecond, 3
-				if outcome == "caller_cancel" {
-					// A slow connect must not expire the attempt before the caller cancels.
-					profile.RequestTimeout = time.Minute
-				}
-				profile.RetryBaseDelay = time.Nanosecond
-				profile = refingerprintVoyageProfile(t, profile)
-				provider, err := newVoyageEmbeddingTestProvider(t, profile, secrets, resolver)
-				require.NoError(t, err)
-				result, err := provider.Embed(ctx, []document.EmbeddingInput{{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "first"}}, voyageAuthorization(profile.Descriptor))
-				switch outcome {
-				case "recover":
+						return "synthetic-secret", nil
+					})
+					profile := voyageTextProfile(t, voyage.EmbeddingModeText)
+					profile.RequestTimeout, profile.MaxRetries = 100*time.Millisecond, 3
+					profile.RetryBaseDelay = time.Nanosecond
+					profile = refingerprintVoyageProfile(t, profile)
+					provider, err := newVoyageEmbeddingTestProvider(t, profile, secrets, failingEmbeddingResolver{})
 					require.NoError(t, err)
-					require.Len(t, result.Vectors, 1)
-					require.Equal(t, 3, resolutions)
-					require.NoError(t, ctx.Err())
-				case "exhaust":
-					require.ErrorIs(t, err, voyage.ErrTransientResponse)
-					require.ErrorIs(t, err, context.DeadlineExceeded)
-					require.NoError(t, ctx.Err())
-					require.Equal(t, 3, resolutions)
-					require.Equal(t, 2, voyage.MetricsFromError(err).Retries)
-				case "caller_cancel":
-					require.ErrorIs(t, err, context.Canceled)
-					require.NotErrorIs(t, err, voyage.ErrTransientResponse)
-					require.Equal(t, 1, resolutions)
-					require.Zero(t, voyage.MetricsFromError(err).Retries)
-				}
-				wantRequests := resolutions
-				if stage == "credentials" {
-					wantRequests = 0
-					if outcome == "recover" {
-						wantRequests = 1
+					voyage.SetEmbeddingTestTransport(provider, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+						count := requests.Add(1)
+						defer func() { _ = r.Body.Close() }()
+						_, _ = io.Copy(io.Discard, r.Body)
+						if stage != "credentials" && (outcome != "recover" || count < 3) {
+							if stage == "headers" {
+								if outcome == "caller_cancel" {
+									cancel()
+								}
+								<-r.Context().Done()
+								return nil, r.Context().Err()
+							}
+							body, writer := io.Pipe()
+							go func() {
+								if outcome == "caller_cancel" {
+									cancel()
+								}
+								<-r.Context().Done()
+								_ = writer.CloseWithError(r.Context().Err())
+							}()
+							return &http.Response{StatusCode: http.StatusOK, Body: body, Header: http.Header{"Content-Type": {"application/json"}}}, nil
+						}
+						return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(response))), Header: http.Header{"Content-Type": {"application/json"}}}, nil
+					}))
+					result, err := provider.Embed(ctx, []document.EmbeddingInput{{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "first"}}, voyageAuthorization(profile.Descriptor))
+					switch outcome {
+					case "recover":
+						require.NoError(t, err)
+						require.Len(t, result.Vectors, 1)
+						require.Equal(t, 3, resolutions)
+						require.NoError(t, ctx.Err())
+					case "exhaust":
+						require.ErrorIs(t, err, voyage.ErrTransientResponse)
+						require.ErrorIs(t, err, context.DeadlineExceeded)
+						require.NoError(t, ctx.Err())
+						require.Equal(t, 3, resolutions)
+						require.Equal(t, 2, voyage.MetricsFromError(err).Retries)
+					case "caller_cancel":
+						require.ErrorIs(t, err, context.Canceled)
+						require.NotErrorIs(t, err, voyage.ErrTransientResponse)
+						require.Equal(t, 1, resolutions)
+						require.Zero(t, voyage.MetricsFromError(err).Retries)
 					}
-				}
-				require.EqualValues(t, wantRequests, requests.Load())
-				if err != nil {
-					require.Equal(t, wantRequests, voyage.MetricsFromError(err).Requests)
-				}
+					wantRequests := resolutions
+					if stage == "credentials" {
+						wantRequests = 0
+						if outcome == "recover" {
+							wantRequests = 1
+						}
+					}
+					require.EqualValues(t, wantRequests, requests.Load())
+					if err != nil {
+						require.Equal(t, wantRequests, voyage.MetricsFromError(err).Requests)
+					}
+				})
 			})
 		}
 	}

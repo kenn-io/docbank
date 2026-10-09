@@ -567,7 +567,7 @@ func NewService(config ServiceConfig) (*Service, error) {
 	slices.SortFunc(descriptors, func(left, right document.RenditionDescriptor) int {
 		return strings.Compare(left.Fingerprint, right.Fingerprint)
 	})
-	formatCoverage, err := formatcoverage.Compute(descriptors, SourceMetadataExtractorFingerprint)
+	formatCoverage, err := formatcoverage.Compute(descriptors, SourceMetadataImplementationID)
 	if err != nil {
 		return nil, fmt.Errorf("computing format coverage: %w", err)
 	}

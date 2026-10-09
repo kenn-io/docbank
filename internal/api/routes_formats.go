@@ -40,7 +40,7 @@ func registerFormatRoutes(api huma.API, d Deps) {
 	if d.Processing != nil {
 		snapshot = d.Processing.FormatCoverage()
 	} else {
-		snapshot, snapshotErr = internalformatcoverage.Compute(nil, processing.SourceMetadataExtractorFingerprint)
+		snapshot, snapshotErr = internalformatcoverage.Compute(nil, processing.SourceMetadataImplementationID)
 	}
 
 	type formatCoverageOutput struct{ Body FormatCoverageResponse }

@@ -686,9 +686,9 @@ The daemon validates its listening address at startup. An invalid setting makes
 ## Anonymous usage telemetry
 
 The daemon reports anonymous usage events so the Docbank team can count
-vaults whose daemon runs and vaults whose web app gets opened. Counts are per
-vault, not per person: one person with three vaults counts three times. The
-daemon sends events in HTTPS batches to PostHog's US ingest endpoint (PostHog
+active vaults, web app opens, and screens used in the browser and terminal UI.
+Counts are per vault, not per person: one person with three vaults counts three
+times. The daemon sends events in HTTPS batches to PostHog's US ingest endpoint (PostHog
 project 434713). The browser never contacts PostHog: the web app posts its
 event to its own daemon, which sends it.
 
@@ -709,7 +709,15 @@ Docbank sends these events:
   terminal browser counts the time from opening to exit, including idle time.
   A terminal browser left idle past the daemon's idle timeout reports nothing
   on exit because it sends the report only to a running daemon.
-- `screen_viewed` with a fixed `screen` name and `surface` of `web` or `tui`. Each screen counts once per vault per UTC day for each interface, browser and terminal, across daemon restarts. `surface` records the interface of the visit. The daemon rejects other names with 400. The daemon keeps daily claims in memory and saves them in `telemetry-screen-views.json` beside the install ID for daemon restarts. Rejected enqueue attempts remain eligible; remote delivery is best effort.
+- `screen_viewed` with a fixed `screen` name and `surface` of `web` or `tui`.
+  Each screen counts once per vault per UTC day for each interface, including
+  across daemon restarts. `surface` records which interface was used. The
+  daemon rejects other screen or surface names with HTTP 400.
+
+The daemon remembers which screen events it has queued today in memory and in
+`telemetry-screen-views.json` beside the install ID. If it cannot queue an
+event, that screen remains eligible for another attempt. Remote delivery is
+best effort.
 
 Allowed `screen` values are `browse`, `search`, `tags`, `snapshot`, `history`, `versions`, `provenance`, `jobs`, `audit_evidence`, `storage`, `backups`, `bates`, `export`, `saved_queries`, `collections`, `trash`, `tag_catalog`, `telemetry`, `term_reports`, `processing`, `rendition`, `upload`, `mailbox`, `load_file`, `snapshot_actions`, `help`, `document`, `packages`, `operations`.
 
