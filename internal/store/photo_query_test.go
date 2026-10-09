@@ -50,6 +50,22 @@ func TestCompilePhotoPredicates(t *testing.T) {
 	}
 }
 
+func TestCompilePhotoPredicatesReuseDocumentVersion(t *testing.T) {
+	t.Parallel()
+	for _, text := range []string{`camera:A`, `lens:B`, `iso:100`, `capture_after:2024-01-01`, `gps:"-1,-1,1,1"`, `focus_min:0.5`, `unevaluated:true`} {
+		for _, photos := range []bool{false, true} {
+			compiled, err := (queryCompiler{photoDisplayMetadata: photos}).compile(t.Context(), compilerQuery(t, text), nil)
+			require.NoError(t, err, text)
+			if photos {
+				require.Contains(t, compiled.predicate.sql, "JOIN content_versions v ON v.version_id=display_node.current_version_id", text)
+			} else {
+				require.NotContains(t, compiled.predicate.sql, "FROM content_versions", text)
+				require.Contains(t, compiled.predicate.sql, "cv.", text)
+			}
+		}
+	}
+}
+
 func TestPhotoBrowseISOAndAssetPredicates(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

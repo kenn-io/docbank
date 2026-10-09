@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -25,7 +26,11 @@ func (c queryCompiler) compilePhotoVersionPredicate(predicate string, args ...an
  JOIN content_versions v ON v.version_id=display_node.current_version_id
  WHERE member.node_id=n.id AND ` + predicate + `)`, args: args}
 	}
-	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM content_versions v WHERE v.version_id=cv.version_id AND ` + predicate + `)`, args: args}
+	return compiledQueryFragment{sql: strings.ReplaceAll(predicate, "v.", "cv."), args: args}
+}
+
+func isPhotoScalarField(field string) bool {
+	return query.IsQualityField(field) || slices.Contains([]string{"kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field)
 }
 
 func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {

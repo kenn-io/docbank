@@ -51,7 +51,7 @@ var photoQualityFingerprints = sync.OnceValues(func() (PhotoQualityFingerprints,
 	if err != nil {
 		return PhotoQualityFingerprints{}, fmt.Errorf("fingerprinting photo quality grid recipe: %w", err)
 	}
-	evaluator := sha256Hex(fmt.Appendf(nil, "photo-quality:%s:16x16:catmull-rom:focus-ceiling=%g:%s", photoQualityRevision, PhotoQualityFocusCeiling, grid))
+	evaluator := sha256Hex(fmt.Appendf(nil, "photo-quality:%s:16x16:catmull-rom:%s:focus-ceiling=%g:%s", photoQualityRevision, xImageDrawVersion, PhotoQualityFocusCeiling, grid))
 	return PhotoQualityFingerprints{GridRecipe: grid, Evaluator: evaluator}, nil
 })
 

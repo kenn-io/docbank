@@ -219,12 +219,17 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 	if syntax.Value == "" {
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "field operand cannot be empty")
 	}
-	switch field {
-	case "":
+	switch {
+	case isPhotoScalarField(field), slices.Contains([]string{"mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max", "text_coverage", "has_duplicates"}, field):
+		if syntax.Prefix {
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "scalar operands cannot use prefix matching")
+		}
+		return c.compileScalarPredicate(field, syntax.Value, syntax.Start, syntax.End)
+	case field == "":
 		return compileLexicalPredicate(quoteFTSOperand(syntax.Value, syntax.Prefix), true), nil
-	case compiledNameField:
+	case field == compiledNameField:
 		return compileLexicalPredicate(quoteFTSOperand(syntax.Value, syntax.Prefix), false), nil
-	case "path":
+	case field == "path":
 		if syntax.Prefix {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "path operands cannot use prefix matching")
 		}
@@ -232,31 +237,24 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, err.Error())
 		}
 		return compilePathPredicate(syntax.Value), nil
-	case "tag":
+	case field == "tag":
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved tag operand lacks a dependency")
 		}
 		return compileTagPredicate(expression.Dependency.ID), nil
-	case "collection":
+	case field == "collection":
 		if expression.Dependency == nil {
 			return compiledQueryFragment{}, errors.New("resolved collection operand lacks a dependency")
 		}
 		return compileCollectionPredicate(expression.Dependency.ID), nil
-	case "saved":
+	case field == "saved":
 		if expression.Saved == nil {
 			return compiledQueryFragment{}, errors.New("resolved saved operand lacks its query")
 		}
 		return c.compileSavedPredicate(expression)
-	case "mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max", "text_coverage", "has_duplicates", "kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set":
 	default:
-		if !query.IsQualityField(field) {
-			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "unsupported expression field")
-		}
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "unsupported expression field")
 	}
-	if syntax.Prefix {
-		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "scalar operands cannot use prefix matching")
-	}
-	return c.compileScalarPredicate(field, syntax.Value, syntax.Start, syntax.End)
 }
 
 func compileNearExpression(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
@@ -309,7 +307,7 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 }
 
 func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
-	if query.IsQualityField(field) || slices.Contains([]string{"kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field) {
+	if isPhotoScalarField(field) {
 		part, err := c.compilePhotoScalarPredicate(field, value)
 		if err != nil {
 			return compiledQueryFragment{}, compileExpressionError(start, end, err.Error())
