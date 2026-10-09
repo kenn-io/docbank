@@ -21,7 +21,8 @@
   export function focus() { if (alive) element?.querySelector<HTMLButtonElement>("button")?.click(); }
   async function add(album: PhotoAlbum | undefined, scope: PhotoAlbumMembersRequest) {
     error = "";
-    if (oversized) return false;
+    // Check the scope captured when the user chose, not the live selection.
+    if ((scope.asset_ids?.length ?? 0) > 1000) return false;
     if (!album) { error = "This album is no longer available. Choose another album."; return false; }
     const result = await albums.members(album, scope);
     if (!result && alive) { error = albums.error; albums.error = ""; }

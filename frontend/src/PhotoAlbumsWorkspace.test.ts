@@ -100,6 +100,23 @@ it("offers whole-query selection after every page is loaded", async () => {
   expect(photos.scope()).toEqual({ query: photos.query });
 });
 
+it("adds the photos chosen before a delayed create even if the selection grows past the limit", async () => {
+  const created = { ...album, id: "22222222-2222-4222-8222-000000000070", name: "Summer" };
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve)).mockResolvedValue(albumResponse([album, created]));
+  vi.stubGlobal("fetch", fetcher);
+  const { photos } = setup();
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: /Add to album/ }));
+  await fireEvent.input(screen.getByRole("combobox", { name: "Find or create an album" }), { target: { value: "Summer" } });
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: 'Create album "Summer"' }));
+  photos.selection = { selectedIDs: new Set(Array.from({ length: 1001 }, (_, index) => `photo-${index + 1}`)), anchorID: undefined };
+  finish(albumResponse(created));
+  await waitFor(() => expect(fetcher.mock.calls.some(([url]) => url === `/api/v1/photos/albums/${created.id}/members/add`)).toBe(true));
+  const add = fetcher.mock.calls.find(([url]) => url === `/api/v1/photos/albums/${created.id}/members/add`)!;
+  expect(JSON.parse(add[1].body).asset_ids).toEqual(["photo-1"]);
+});
+
 it("adds to the existing album when its exact name is typed and entered", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(albumResponse({ ...album, revision: 2 })).mockResolvedValue(albumResponse([album]));
   vi.stubGlobal("fetch", fetcher);
