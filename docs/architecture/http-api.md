@@ -1022,7 +1022,7 @@ Malformed expected evidence is a `422 validation` request error.
 
 ### Background-job status
 
-`GET /jobs` returns `{items: [...]}` with optional `lanes` in stable job-name order. Each item carries
+`GET /jobs` returns `{items: [...]}` with items in stable job-name order and optional `lanes`. `lanes` lists every controllable lane sorted by lane and is empty when controls cannot be read. Each item carries
 `name`, `status` (`queued`, `running`, `completed`, `failed`, or `cancelled`), and a UTC
 `started_at`. Terminal jobs add `finished_at`, and failures add a bounded
 `error`. Supervised task records describe this daemon run only and disappear

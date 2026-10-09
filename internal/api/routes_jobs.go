@@ -107,6 +107,9 @@ func registerJobRoutes(api huma.API, d Deps) {
 				if _, durable := operationNames[snapshot.Name]; durable {
 					continue
 				}
+				if id, storage := strings.CutPrefix(snapshot.Name, "storage:"); storage && validPageJobPathID(id) && snapshot.Status != jobs.StatusRunning {
+					continue
+				}
 				job := observableJob(snapshot)
 				applyControl(&job, controls, snapshot.Name, snapshot.Status == jobs.StatusRunning)
 				if redactErrors && job.Error != "" {

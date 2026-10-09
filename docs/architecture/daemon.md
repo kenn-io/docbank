@@ -166,9 +166,10 @@ Every daemon-owned task runs under one supervisor rooted in the daemon's
 shutdown context. Names are unique and stable for the lifetime of that daemon.
 A task panic is recovered and recorded as a failure, so it does not crash the
 process. `docbank jobs` and authenticated `GET /api/v1/jobs` expose running and
-terminal state in deterministic order. Supervisor records remain until restart.
-The list includes the newest 1,000 durable storage records. Their retention
-boundary protects pending cleanup.
+terminal state in deterministic order. Worker records remain until restart.
+The list includes the newest 1,000 durable storage records. Finished storage
+operations clear within an hour after their retention ends unless they still
+own pending cleanup.
 
 Every daemon runs three jobs that derive information from retained content:
 

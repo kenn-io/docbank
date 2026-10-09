@@ -865,8 +865,8 @@ operation shows its operation ID, which matches `docbank jobs`.
 The drawer refreshes every two seconds while open. If another client changes
 controls first, review the refreshed settings and try again. Controls survive
 daemon restarts. The list includes the newest 1,000 storage operations.
-Finished storage operations clear at their existing retention
-boundary unless they still own pending cleanup. Supervisor records disappear
+Finished storage operations clear within an hour after their retention ends
+unless they still own pending cleanup. Worker records disappear
 when the daemon restarts. Browser errors omit backend paths; use the CLI to
 inspect details.
 

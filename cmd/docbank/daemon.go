@@ -752,7 +752,7 @@ func startProcessingJobs(
 	if err := supervisor.Start("derive:document-people", documentPeople.Run); err != nil {
 		return fmt.Errorf("starting document people derivation: %w", err)
 	}
-	return startPackagePreflightMaintenance(supervisor, s, gate, logger)
+	return startRetentionMaintenance(supervisor, s, gate, logger)
 }
 
 func newVisualPreviewBackfill(
@@ -787,18 +787,21 @@ func newVisualPreviewBackfill(
 	}, nil
 }
 
-func startPackagePreflightMaintenance(
+func startRetentionMaintenance(
 	supervisor *jobs.Supervisor, s *store.Store, gate *api.OperationGate, logger *slog.Logger,
 ) error {
-	expirePackagePreflights := func(ctx context.Context) error {
+	pruneRetention := func(ctx context.Context) error {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
 		for {
 			if err := gate.MutateContext(ctx, func() error {
-				_, err := s.ExpirePackagePreflights(ctx, "")
+				if _, err := s.ExpirePackagePreflights(ctx, ""); err != nil {
+					return err
+				}
+				_, err := s.PruneExpiredStorageOperations(ctx, time.Now())
 				return err
 			}); err != nil && !errors.Is(err, context.Canceled) {
-				logger.Warn("expiring package preflights", "error", err)
+				logger.Warn("pruning expired retention records", "error", err)
 			}
 			select {
 			case <-ctx.Done():
@@ -807,8 +810,8 @@ func startPackagePreflightMaintenance(
 			}
 		}
 	}
-	if err := supervisor.Start("maintenance:package-preflights", expirePackagePreflights); err != nil {
-		return fmt.Errorf("starting package preflight expiry: %w", err)
+	if err := supervisor.Start("maintenance:retention", pruneRetention); err != nil {
+		return fmt.Errorf("starting retention maintenance: %w", err)
 	}
 	return nil
 }
