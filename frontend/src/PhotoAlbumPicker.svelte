@@ -13,6 +13,10 @@
   // Album names cannot contain NUL, so option keys cannot collide with valid names.
   const choiceKey = (id: string) => `\0${id}`;
 
+  // Keys aren't names, so Typeahead can't see an exact name match itself; hide Create for one.
+  let query = $state("");
+  const exactName = $derived(albums.items.some(album => album.name === query.trim()));
+
   async function restoreName(event: FocusEvent) {
     const input = event.target, pending = albums.unconfirmed;
     if (!(input instanceof HTMLInputElement) || input.value || pending?.kind !== "create") return;
@@ -43,7 +47,7 @@
 </script>
 
 <div class="album-picker" bind:this={element} onfocusin={event => void restoreName(event)}>
-  <Typeahead options={albums.items.map(album => ({ name: choiceKey(album.id), label: album.name }))} value={albums.targetID ? choiceKey(albums.targetID) : ""} fallbackLabel="Add to album" triggerPrefix={target ? "Add to album · " : ""} placeholder="Find or create an album" title="Add to album" allowCustom={!albums.unconfirmed} customLabel={'Create album "{query}"'} placement="top" loading={albums.loading || albums.busy} onselect={choose} />
+  <Typeahead options={albums.items.map(album => ({ name: choiceKey(album.id), label: album.name }))} value={albums.targetID ? choiceKey(albums.targetID) : ""} fallbackLabel="Add to album" triggerPrefix={target ? "Add to album · " : ""} placeholder="Find or create an album" title="Add to album" allowCustom={!albums.unconfirmed && !exactName} onquery={value => query = value} customLabel={'Create album "{query}"'} placement="top" loading={albums.loading || albums.busy} onselect={choose} />
   {#if error}<span role="alert">{error}</span>{/if}
   {#if target}<span class="target-hint"><KbdBadge keys={['B']} /> adds to {target.name}</span>{/if}
 </div>

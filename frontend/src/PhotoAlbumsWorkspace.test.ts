@@ -58,6 +58,19 @@ it("offers whole-query selection after every page is loaded", async () => {
   expect(photos.scope()).toEqual({ query: photos.query });
 });
 
+it("adds to the existing album when its exact name is typed and entered", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(albumResponse({ ...album, revision: 2 })).mockResolvedValue(albumResponse([album]));
+  vi.stubGlobal("fetch", fetcher);
+  setup();
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: /Add to album/ }));
+  const input = screen.getByRole("combobox", { name: "Find or create an album" });
+  await fireEvent.input(input, { target: { value: "Trip" } });
+  await fireEvent.keyDown(input, { key: "Enter" });
+  await waitFor(() => expect(fetcher).toHaveBeenCalled());
+  expect(fetcher.mock.calls[0][0]).toBe(`/api/v1/photos/albums/${album.id}/members/add`);
+});
+
 async function pendingAlbumWrite(operation: "picker add" | "picker create" | "index create" | "delete" | "duplicate") {
   let finish!: (response: Response) => void;
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve)).mockResolvedValue(albumResponse([album]));
@@ -189,12 +202,13 @@ it.each(["index create", "picker create", "duplicate"] as const)("acknowledges u
   await open();
   const retryInput = screen.getByRole(operation === "picker create" ? "combobox" : "textbox", { name: inputName });
   await fireEvent.input(retryInput, { target: { value: committed.name } });
-  fetcher.mockResolvedValueOnce(albumResponse({ ...committed, id: "22222222-2222-4222-8222-000000000066" })).mockResolvedValueOnce(albumResponse([album, committed]));
+  fetcher.mockResolvedValueOnce(albumResponse(operation === "picker create" ? { ...committed, revision: 2 } : { ...committed, id: "22222222-2222-4222-8222-000000000066" })).mockResolvedValueOnce(albumResponse([album, committed]));
+  // The committed album now exists, so the picker adds to it instead of offering another create.
   if (operation === "picker create") {
-    fetcher.mockResolvedValueOnce(albumResponse({ ...committed, id: "22222222-2222-4222-8222-000000000066", revision: 2 })).mockResolvedValueOnce(albumResponse([album, committed]));
-    await fireEvent.mouseDown(await screen.findByRole("option", { name: `Create album "${committed.name}"` }));
+    expect(screen.queryByRole("option", { name: `Create album "${committed.name}"` })).toBeNull();
+    await fireEvent.mouseDown(await screen.findByRole("option", { name: committed.name }));
   } else await fireEvent.click(screen.getByRole("button", { name: operation === "index create" ? "Create album" : "Duplicate album" }));
-  await waitFor(() => expect(fetcher.mock.calls.filter(([, init]) => init.method !== "GET")).toHaveLength(operation === "picker create" ? 3 : 2));
+  await waitFor(() => expect(fetcher.mock.calls.filter(([, init]) => init.method !== "GET")).toHaveLength(2));
   if (operation === "duplicate") expect(fetcher.mock.calls[2][1].headers.get("If-Match")).toBe('"1"');
   expect(photos.selection.selectedIDs.size).toBe(operation === "picker create" ? 2 : 0);
 });
@@ -416,7 +430,7 @@ it.each(["uuid", "prefixed", "Unicode after deletion"])("creates albums for expl
   if (attempts === 1) await fireEvent.click(screen.getByRole("button", { name: "Select all 10,000 photos" }));
   for (let i = 0; i < attempts; i++) {
     if (i > 0) await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
-    if (i === 2) albums.items = [album];
+    if (i > 0) albums.items = [album];
     await fireEvent.click(await screen.findByRole("button", { name: /Add to album/ }));
     const input = screen.getByRole("combobox", { name: "Find or create an album" });
     expect(input.hasAttribute("maxlength")).toBe(false);
