@@ -195,7 +195,9 @@
 
   $effect(() => {
     if (!webSession) return;
-    const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure), albums: new PhotoAlbums(webSession, handleFailure) };
+    const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure), albums: new PhotoAlbums(webSession, handleFailure, async id => {
+      await Promise.all([photoState?.photos, albumPhotos].filter(photos => photos?.started && photos.query.filters?.set_ids?.includes(id)).map(photos => photoWorkspace && photos === (albumID ? albumPhotos : photoState?.photos) ? photoWorkspace.refreshPhotos() : photos!.refresh()));
+    }) };
     photoState = state;
     return () => { state.photos.dispose(); state.albums.dispose(); void state.cache.dispose(); photoState = undefined; };
   });

@@ -5,6 +5,47 @@ import App from "./App.svelte";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it.each(["success", "network", "server"])("refreshes an album opened again during a delayed membership write with a %s response", async outcome => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  const album = photoAlbum();
+  let included = false;
+  let finish!: () => void;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/albums")) return albumResponse([{ ...album, included_count: included ? 1 : 0 }]);
+    if (url.endsWith("/photos/assets/query")) {
+      const scoped = JSON.parse(init.body as string).query.filters?.set_ids?.includes(album.id);
+      return albumResponse({ items: scoped && !included ? [] : [photo(1)], total: scoped && !included ? 0 : 1 });
+    }
+    if (url.endsWith(`/photos/albums/${album.id}/members/add`)) {
+      await new Promise<void>(resolve => finish = resolve);
+      included = true;
+      if (outcome === "network") throw new TypeError("Failed to fetch");
+      return outcome === "server" ? albumResponse({ detail: "Add unavailable" }, 503) : albumResponse({ ...album, revision: 2 });
+    }
+    if (url.includes("/nodes/1")) return albumResponse({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+    return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+  }));
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: /Add to album/ }));
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Trip" }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
+  await screen.findByText("This album is empty");
+  await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
+  await screen.findByText("This album is empty");
+  finish();
+  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  expect(screen.queryByText("This album is empty")).toBeNull();
+  await screen.findByText("1 photos · 1 loaded");
+});
+
 it("opens an album from the index, preserves its sort scope, and deletes only the album", async () => {
   history.replaceState(null, "", "/photos/albums#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });

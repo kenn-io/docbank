@@ -46,7 +46,7 @@ it("reloads after a lost create response so an existing album can be chosen", as
   const albums = new PhotoAlbums("scoped", vi.fn());
   expect(await albums.create("Trip")).toBeUndefined();
   expect(albums.items).toEqual([album]);
-  expect(albums.error).toBe("Failed to fetch");
+  expect(albums.unconfirmed).toEqual({ name: "Trip" });
 });
 
 it("keeps the loaded list when a reload fails and permits a later retry", async () => {

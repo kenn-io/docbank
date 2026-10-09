@@ -4,7 +4,7 @@
   import type { Photos } from "./photos.svelte.js";
   import { type PhotoAlbums } from "./photoAlbums.svelte.js";
   import type { PhotoAlbum, PhotoAlbumMembersRequest } from "./generated/docbank.js";
-  let { photos, albums, preserve }: { photos: Photos; albums: PhotoAlbums; preserve?: () => (() => Promise<void>) | undefined } = $props();
+  let { photos, albums }: { photos: Photos; albums: PhotoAlbums } = $props();
   let alive = true;
   onDestroy(() => alive = false);
   let error = $state("");
@@ -25,7 +25,6 @@
     if (!album) { error = "This album is no longer available. Choose another album."; return false; }
     const result = await albums.members(album, scope);
     if (!result && alive) { error = albums.error; albums.error = ""; }
-    if (photos.query.filters?.set_ids?.includes(album.id)) await photos.refresh(alive ? preserve : undefined);
     return !!result;
   }
   export async function addToTarget() { const result = await add(target, photos.scope()); if (!result) focus(); return result; }
@@ -44,7 +43,7 @@
 </script>
 
 <div class="album-picker" bind:this={element}>
-  <Typeahead options={albums.items.map(album => ({ name: choiceKey(album.id), label: album.name }))} value={albums.targetID ? choiceKey(albums.targetID) : ""} fallbackLabel="Add to album" triggerPrefix={target ? "Add to album · " : ""} placeholder="Find or create an album" title="Add to album" disabled={oversized || albums.busy} allowCustom={!exactName} onquery={value => query = value} customLabel={'Create album "{query}"'} placement="top" loading={albums.loading || albums.busy} onselect={choose} />
+  <Typeahead options={albums.items.map(album => ({ name: choiceKey(album.id), label: album.name }))} value={albums.targetID ? choiceKey(albums.targetID) : ""} fallbackLabel="Add to album" triggerPrefix={target ? "Add to album · " : ""} placeholder="Find or create an album" title="Add to album" disabled={oversized || albums.busy} allowCustom={!exactName && !albums.unconfirmed} onquery={value => query = value} customLabel={'Create album "{query}"'} placement="top" loading={albums.loading || albums.busy} onselect={choose} />
   {#if oversized}<span>Select all {photos.total.toLocaleString()} photos to add more than 1,000 at once.</span>{/if}
   {#if error}<span role="alert">{error}</span>{/if}
   {#if target}<span class="target-hint"><KbdBadge keys={['B']} /> adds to {target.name}</span>{/if}

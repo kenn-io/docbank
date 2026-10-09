@@ -30,6 +30,7 @@ export class PhotoAlbums {
   initialized = $state(false);
   busy = $state(false);
   error = $state("");
+  unconfirmed = $state<{ name: string }>();
   loadError = $state("");
   notice = $state("");
   noticeID = $state("");
@@ -37,7 +38,7 @@ export class PhotoAlbums {
   drag: api.PhotoAlbumMembersRequest | undefined;
   private controller = new AbortController();
   private generation = 0;
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void) {}
+  constructor(private session: string, private onauthfailure: (cause: unknown) => void, private onmemberschange?: (id: string) => Promise<void>) {}
 
   async load() {
     const request = ++this.generation;
@@ -66,21 +67,28 @@ export class PhotoAlbums {
     return true;
   }
 
-  private async write(action: () => Promise<api.PhotoAlbum>) {
+  private async write(action: () => Promise<api.PhotoAlbum>, creation?: string, membersID?: string) {
     if (this.controller.signal.aborted || this.rejectBusy()) return;
     this.busy = true; this.error = ""; this.notice = ""; this.noticeID = "";
     let result: api.PhotoAlbum | undefined;
+    let changed = false;
     try {
-      try { result = await action(); }
-      catch (cause) { this.error = this.failure(cause); }
+      try { result = await action(); changed = true; }
+      catch (cause) {
+        this.error = this.failure(cause);
+        changed = !(cause instanceof APIError && cause.status >= 400 && cause.status < 500);
+        if (creation !== undefined && changed) { this.unconfirmed = { name: creation }; this.error = ""; }
+      }
       await this.load();
+      if (membersID && changed) await this.onmemberschange?.(membersID);
       if (result) this.error = "";
       return result;
     } finally { this.busy = false; }
   }
 
   create(name: string) {
-    return this.write(async () => readAlbum(await api.createPhotoAlbum({ name: name.trim() }, this.options())));
+    if (this.unconfirmed) return Promise.resolve(undefined);
+    return this.write(async () => readAlbum(await api.createPhotoAlbum({ name: name.trim() }, this.options())), name.trim());
   }
   update(album: api.PhotoAlbum, changes: api.UpdatePhotoAlbumRequest) {
     return this.write(async () => readAlbum(await api.updatePhotoAlbum(album.id, changes, { "If-Match": `"${album.revision}"` }, this.options()), album.id));
@@ -89,14 +97,15 @@ export class PhotoAlbums {
     return this.write(async () => readAlbum(await api.setPhotoAlbumCover(album.id, { asset_id: assetID }, { "If-Match": `"${album.revision}"` }, this.options()), album.id));
   }
   duplicate(album: api.PhotoAlbum, name: string) {
-    return this.write(async () => readAlbum(await api.duplicatePhotoAlbum(album.id, { name: name.trim() }, { "If-Match": `"${album.revision}"` }, this.options())));
+    if (this.unconfirmed) return Promise.resolve(undefined);
+    return this.write(async () => readAlbum(await api.duplicatePhotoAlbum(album.id, { name: name.trim() }, { "If-Match": `"${album.revision}"` }, this.options())), name.trim());
   }
   delete(album: api.PhotoAlbum) {
     return this.write(async () => readAlbum(await api.deletePhotoAlbum(album.id, { "If-Match": `"${album.revision}"` }, this.options()), album.id));
   }
 
   async members(album: api.PhotoAlbum, scope: api.PhotoAlbumMembersRequest, remove = false) {
-    const result = await this.write(async () => readAlbum(await (remove ? api.removePhotoAlbumMembers : api.addPhotoAlbumMembers)(album.id, scope, { "If-Match": `"${album.revision}"` }, this.options()), album.id));
+    const result = await this.write(async () => readAlbum(await (remove ? api.removePhotoAlbumMembers : api.addPhotoAlbumMembers)(album.id, scope, { "If-Match": `"${album.revision}"` }, this.options()), album.id), undefined, album.id);
     if (result) {
       const refreshed = this.loadError ? undefined : this.items.find(item => item.id === album.id);
       this.notice = `${remove ? "Removed from" : "Added to"} ${album.name}${refreshed?.included_count !== undefined ? ` · now ${refreshed.included_count.toLocaleString()} ${refreshed.included_count === 1 ? "photo" : "photos"}` : ""}`;

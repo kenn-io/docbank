@@ -6,6 +6,7 @@
   import { type PhotoAlbums } from "./photoAlbums.svelte.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoAlbumCover from "./PhotoAlbumCover.svelte";
+  import PhotoAlbumPending from "./PhotoAlbumPending.svelte";
   let { albums, cache, onnavigate }: { albums: PhotoAlbums; cache: PhotoPreviewCache; onnavigate: (path: string) => void } = $props();
   let alive = true;
   onDestroy(() => alive = false);
@@ -14,7 +15,7 @@
   let name = $state("");
   function beginCreate() { creating = true; createError = ""; name = ""; }
   async function create() {
-    if (albums.busy) return;
+    if (albums.busy || albums.unconfirmed) return;
     const album = await albums.create(name);
     if (!alive || !creating) return;
     if (!album) { createError = albums.error; albums.error = ""; }
@@ -24,6 +25,7 @@
 
 <main class="albums-workspace" aria-label="Albums">
   <div class="browser-toolbar album-toolbar"><div><h1>Albums</h1><span>{albums.items.length.toLocaleString()} {albums.items.length === 1 ? "album" : "albums"}</span></div><Button size="sm" tone="info" onclick={beginCreate}>New album</Button></div>
+  {#if !creating}<PhotoAlbumPending {albums} {onnavigate} />{/if}
   {#if albums.error}<div class="album-error" role="alert">{albums.error}</div>{/if}
   {#if albums.loadError}<div class="album-error" role="alert">{albums.loadError}<Button size="sm" onclick={() => void albums.load()}>Retry</Button></div>{/if}
   {#if albums.loading && !albums.items.length}<div class="album-loading" role="status"><Spinner />Loading albums…</div>
@@ -44,7 +46,8 @@
 </main>
 {#if creating}
   <Modal title="New album" onclose={() => { if (!albums.busy) creating = false; }}>
-    <form onsubmit={event => { event.preventDefault(); void create(); }}><TextInput ariaLabel="Album name" bind:value={name} /><div class="modal-actions"><Button disabled={albums.busy} onclick={() => creating = false}>Cancel</Button><Button type="submit" tone="info" disabled={albums.busy || !name.trim()}>Create album</Button></div></form>
+    <form onsubmit={event => { event.preventDefault(); void create(); }}><TextInput ariaLabel="Album name" bind:value={name} /><div class="modal-actions"><Button disabled={albums.busy} onclick={() => creating = false}>Cancel</Button><Button type="submit" tone="info" disabled={albums.busy || !!albums.unconfirmed || !name.trim()}>Create album</Button></div></form>
+    <PhotoAlbumPending {albums} onnavigate={path => { creating = false; onnavigate(path); }} />
     {#if createError}<p role="alert">{createError}</p>{/if}
   </Modal>
 {/if}

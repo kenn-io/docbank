@@ -9,6 +9,47 @@ import { photo, photoAlbum, albumResponse } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const album = photoAlbum({ included_count: 2, member_count: 2 });
+
+it.each(["network", "server", "rejection"])("requires acknowledgement before retrying an album creation with a %s failure", async failure => {
+  const fetcher = vi.fn().mockImplementationOnce(async () => {
+    if (failure === "network") throw new TypeError("Failed to fetch");
+    return albumResponse({ detail: "Create unavailable" }, failure === "server" ? 503 : 400);
+  }).mockResolvedValue(albumResponse([album]));
+  vi.stubGlobal("fetch", fetcher);
+  const albums = new PhotoAlbums("scoped", vi.fn());
+  const onnavigate = vi.fn();
+  render(PhotoAlbumsIndex, { albums, cache: new PhotoPreviewCache("scoped", vi.fn()), onnavigate });
+  await fireEvent.click(screen.getAllByRole("button", { name: "New album" })[0]);
+  await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "Trip" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Create album" }));
+  await waitFor(() => expect(albums.busy).toBe(false));
+  if (failure !== "rejection") {
+    await screen.findByText('An album named "Trip" may already exist. Another attempt can create an extra album.');
+    expect((screen.getByRole("button", { name: "Create album" }) as HTMLButtonElement).disabled).toBe(true);
+    await albums.create("Trip");
+    await albums.duplicate(album, "Trip copy");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    await fireEvent.click(screen.getByRole("button", { name: "View Albums" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(onnavigate).toHaveBeenCalledWith("/photos/albums");
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh albums" }));
+    await waitFor(() => expect(albums.loading).toBe(false));
+    await albums.create("Trip");
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    await fireEvent.click(screen.getByRole("button", { name: "Allow another album" }));
+    await fireEvent.click(screen.getByRole("button", { name: "New album" }));
+    await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "Trip" } });
+  } else {
+    await screen.findByText("Create unavailable");
+    expect(albums.unconfirmed).toBeUndefined();
+  }
+  const before = fetcher.mock.calls.length;
+  fetcher.mockResolvedValueOnce(albumResponse(album));
+  await fireEvent.click(screen.getByRole("button", { name: "Create album" }));
+  await waitFor(() => expect(onnavigate).toHaveBeenCalledWith(`/photos/albums/${album.id}`));
+  expect(fetcher).toHaveBeenCalledTimes(before + 2);
+});
+
 function setup(scoped = false, onnavigate = vi.fn()) {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -18,7 +59,7 @@ function setup(scoped = false, onnavigate = vi.fn()) {
   photos.items = [photo(1, "2024-01-01"), photo(2, "2025-01-01")]; photos.started = true; photos.total = 10000;
   if (scoped) photos.query = { ...photos.query, filters: { set_ids: [album.id] }, sort: { field: "added_time", direction: "desc" } };
   vi.spyOn(photos, "refresh").mockResolvedValue();
-  const albums = new PhotoAlbums("scoped", vi.fn()); albums.items = [album];
+  const albums = new PhotoAlbums("scoped", vi.fn(), async id => { if (photos.started && photos.query.filters?.set_ids?.includes(id)) await photos.refresh(); }); albums.items = [album];
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const view = render(PhotosWorkspace, { photos, albums, cache, albumID: scoped ? album.id : "", onnavigate });
   return { photos, albums, cache, view };
@@ -311,5 +352,5 @@ it.each(["add", "remove"])("refreshes the affected album model after membership 
   view.unmount();
   finish(albumResponse({ ...album, revision: 2 }));
   await waitFor(() => expect(photos.refresh).toHaveBeenCalledOnce());
-  expect(photos.refresh).toHaveBeenCalledWith(undefined);
+  expect(photos.refresh).toHaveBeenCalledWith();
 });

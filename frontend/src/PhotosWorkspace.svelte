@@ -10,6 +10,7 @@
   import PhotoGrid from "./PhotoGrid.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
+  import PhotoAlbumPending from "./PhotoAlbumPending.svelte";
   import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
 
   let { photos, cache, albums, albumID = "", onnavigate = () => {}, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void } = $props();
@@ -58,7 +59,6 @@
   async function remove() {
     if (!albums || !album) return;
     await albums.members(album, photos.scope(), true);
-    await photos.refresh(alive ? preserve : undefined);
   }
   async function rename() {
     if (!albums || !renameAlbum || albums.busy || !name.trim()) return;
@@ -72,7 +72,7 @@
   function beginRename() { renameError = ""; renameAlbum = album; name = album?.name ?? ""; renaming = true; }
   function openModal(kind: "delete" | "duplicate") { modalError = ""; modalAlbum = album; modal = kind; duplicateName = `${album?.name ?? "Album"} copy`; }
   async function confirm() {
-    if (!albums || !modal || !modalAlbum || albums.busy) return;
+    if (!albums || !modal || !modalAlbum || albums.busy || modal === "duplicate" && albums.unconfirmed) return;
     modalError = "";
     const inspected = modalAlbum;
     const result = modal === "delete" ? await albums.delete(inspected) : await albums.duplicate(inspected, duplicateName);
@@ -108,6 +108,7 @@
       {/if}<Button size="sm" disabled={photos.loading || albums?.busy} onclick={() => void refresh()}>Refresh previews</Button>
     </div>
   </div>
+  {#if albums && modal !== "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
   {#if albums?.error}<div class="photo-error" role="alert">{albums.error}</div>{/if}
   {#if albums?.notice}<div class="photo-notice" role="status">{albums.notice}{#if albums.noticeID}<a href={`/photos/albums/${albums.noticeID}`} onclick={event => { event.preventDefault(); onnavigate(`/photos/albums/${albums!.noticeID}`); }}>Open album</a>{/if}</div>{/if}
   {#if photos.error}
@@ -127,7 +128,7 @@
   <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
   <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} loadedSelected={photos.items.every(item => photos.selection.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.total} allResults={photos.allResults} onallresults={() => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.loading || photos.allResults}>
     {#snippet photoActions()}
-      {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} {preserve} />{/if}
+      {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} />{/if}
       {#if album && albums}<Button size="sm" disabled={albums.busy || !photos.allResults && photos.selection.selectedIDs.size > 1000} onclick={() => void remove()}>Remove from album</Button><Button size="sm" disabled={albums.busy || photos.allResults || photos.selection.selectedIDs.size !== 1} onclick={() => void albums!.cover(album!, [...photos.selection.selectedIDs][0])}>Use as cover</Button>{/if}
     {/snippet}
   </SelectionDock>
@@ -136,7 +137,8 @@
   <Modal title={modal === "delete" ? "Delete album" : "Duplicate album"} onclose={() => { if (!albums.busy) modal = undefined; }}>
     {#if modal === "delete"}<p>Delete "{modalAlbum.name}"? Its {albums.loadError || modalAlbum.included_count === undefined ? "" : `${modalAlbum.included_count.toLocaleString()} `}photos stay in your library.</p>{:else}{@render sourceSummary(modalAlbum)}<TextInput ariaLabel="Copy name" bind:value={duplicateName} />{/if}
     {#if modalError}<p role="alert">{modalError}</p>{/if}
-    <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button><Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || modal === "duplicate" && !duplicateName.trim()} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
+    {#if modal === "duplicate"}<PhotoAlbumPending {albums} onnavigate={path => { modal = undefined; onnavigate(path); }} />{/if}
+    <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button><Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || modal === "duplicate" && (!!albums.unconfirmed || !duplicateName.trim())} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
   </Modal>
 {/if}
 
