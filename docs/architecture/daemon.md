@@ -128,6 +128,10 @@ belongs to the recorded PID. Discovery therefore checks the connection:
 3. Keep credential-bearing requests on that proven TCP connection. Requests
    fail instead of redirecting or reconnecting.
 
+Acquisition finishes proof on the socket before handing it to the authenticated
+client, within a two-second budget. After handoff, connection loss fails the
+request.
+
 The starter sends no secrets to a forged or pingless endpoint. It requests
 graceful process termination only after verifying the PID's create-time, waits
 for exit, then starts a replacement. A runtime record without create-time proof

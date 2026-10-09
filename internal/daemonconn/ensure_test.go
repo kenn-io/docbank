@@ -1,9 +1,12 @@
 package daemonconn
 
 import (
+	"bufio"
 	"context"
 	"encoding/hex"
 	"encoding/json/v2"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -222,37 +226,200 @@ func TestEnsureRejectsForgedPingWithoutSendingRuntimeSecrets(t *testing.T) {
 	assert.False(t, leaked.Load(), "forged endpoint must receive no runtime secret")
 }
 
-func TestProvenClientRefusesRedialAfterChallengeConnectionCloses(t *testing.T) {
-	const token = "connection-proof-token"
-	var leaked atomic.Bool
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Api-Key") != "" ||
-			r.Header.Get("X-Docbank-Daemon-Token") != "" {
-			leaked.Store(true)
-		}
-		if r.URL.Path != daemonauth.ChallengePath {
-			http.NotFound(w, r)
-			return
-		}
-		nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-		if err != nil {
-			http.Error(w, "bad nonce", http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Connection", "close")
-		_ = json.MarshalWrite(w, map[string]string{
-			"proof": daemonauth.Proof(token, nonce),
-		})
-	}))
-	t.Cleanup(ts.Close)
-	rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "private-api-key", token, "")
+func challengeResponse(t *testing.T, r *http.Request, token string) []byte {
+	t.Helper()
+	assert.Empty(t, r.Header.Get("X-Api-Key"))
+	assert.Empty(t, r.Header.Get("X-Docbank-Daemon-Token"))
+	nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+	if err != nil {
+		t.Errorf("decoding challenge nonce: %v", err)
+		return nil
+	}
+	body, err := json.Marshal(map[string]string{"proof": daemonauth.Proof(token, nonce)})
+	if err != nil {
+		t.Errorf("encoding challenge response: %v", err)
+		return nil
+	}
+	return body
+}
 
+type delayedProofWriteConn struct {
+	net.Conn
+
+	afterFirstWrite func()
+	first           atomic.Bool
+}
+
+func (c *delayedProofWriteConn) Write(p []byte) (int, error) {
+	n, err := c.Conn.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("writing proof request: %w", err)
+	}
+	if !c.first.Swap(true) {
+		c.afterFirstWrite()
+	}
+	return n, nil
+}
+
+func TestProvenClientDelayedChallengeWrite(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const token = "synthetic-proof-token"
+		clientConn, serverConn := net.Pipe()
+		challengeRead := make(chan struct{})
+		respond := func(body []byte, headers string) bool {
+			_, err := fmt.Fprintf(serverConn, "HTTP/1.1 200 OK\r\n%sContent-Type: application/json\r\n"+
+				"Content-Length: %d\r\n\r\n%s", headers, len(body), body)
+			if err != nil {
+				t.Errorf("writing daemon response: %v", err)
+			}
+			return err == nil
+		}
+		go func() {
+			defer func() { _ = serverConn.Close() }()
+			reader := bufio.NewReader(serverConn)
+			req, err := http.ReadRequest(reader)
+			if err != nil {
+				t.Errorf("reading challenge request: %v", err)
+				return
+			}
+			close(challengeRead)
+			if !respond(challengeResponse(t, req, token), "") {
+				return
+			}
+			req, err = http.ReadRequest(reader)
+			if err != nil {
+				t.Errorf("reading health request: %v", err)
+				return
+			}
+			assert.Equal(t, "synthetic-api-key", req.Header.Get("X-Api-Key"))
+			respond([]byte(`{"status":"ok"}`), "Connection: close\r\n")
+		}()
+		rec := NewRecord("127.0.0.1:1", "synthetic-api-key", token, "")
+		conn := &delayedProofWriteConn{Conn: clientConn, afterFirstWrite: func() {
+			<-challengeRead
+			// Finish the challenge write after net/http's 50 ms wait for write completion.
+			time.Sleep(100 * time.Millisecond)
+		}}
+		c, err := newProvenClientForDial(t.Context(), rec, func(context.Context, string, string) (net.Conn, error) {
+			return conn, nil
+		})
+		require.NoError(t, err)
+		defer func() { require.NoError(t, c.Close()) }()
+		_, err = c.API().Health(t.Context())
+		require.NoError(t, err)
+		_, err = c.API().Health(t.Context())
+		require.ErrorContains(t, err, "proven daemon connection is closed; refusing to redial")
+	})
+}
+
+func TestProvenClientCloseBeforeFirstRequest(t *testing.T) {
+	const token = "synthetic-proof-token"
+	closed := make(chan struct{}, 1)
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != daemonauth.ChallengePath {
+			return
+		}
+		_, _ = w.Write(challengeResponse(t, r, token))
+	}))
+	ts.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateClosed {
+			closed <- struct{}{}
+		}
+	}
+	ts.Start()
+	t.Cleanup(ts.Close)
+	rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "synthetic-api-key", token, "")
 	c, err := newProvenClientFor(t.Context(), rec)
 	require.NoError(t, err)
-	_, healthErr := c.API().Health(t.Context())
-	require.Error(t, healthErr,
-		"a closed proven connection must fail instead of redialing")
-	assert.False(t, leaked.Load(), "redial target must receive no runtime secret")
+	require.NoError(t, c.Close())
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not release the pending proven socket")
+	}
+	require.NoError(t, c.Close())
+}
+
+func TestProvenClientRejectsIncompleteProofHandoff(t *testing.T) {
+	for _, scenario := range []string{
+		"forged", "oversized body", "oversized headers", "truncated", "close", "leftover",
+		"redirect", "canceled", "deadline", "proof timeout",
+	} {
+		t.Run(scenario, func(t *testing.T) {
+			const token = "synthetic-proof-token"
+			var requests atomic.Int64
+			timeout := probeOptions().Timeout
+			switch scenario {
+			case "deadline":
+				timeout = 100 * time.Millisecond
+			case "proof timeout":
+				timeout = 2 * probeOptions().Timeout
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), timeout)
+			defer cancel()
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				body := challengeResponse(t, r, token)
+				switch scenario {
+				case "forged":
+					body = []byte(`{"proof":"forged"}`)
+				case "oversized body":
+					body = append(body, []byte(strings.Repeat(" ", proofBodyLimit))...)
+				case "oversized headers":
+					w.Header().Set("X-Proof-Padding", strings.Repeat("x", proofResponseLimit))
+				case "truncated":
+					w.Header().Set("Content-Length", strconv.Itoa(len(body)+1))
+				case "close":
+					w.Header().Set("Connection", "close")
+				case "leftover":
+					hijacker, ok := w.(http.Hijacker)
+					if !assert.True(t, ok) {
+						return
+					}
+					conn, buffered, err := hijacker.Hijack()
+					if !assert.NoError(t, err) {
+						return
+					}
+					defer func() { _ = conn.Close() }()
+					_, _ = fmt.Fprintf(buffered, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%sleftover", len(body), body)
+					assert.NoError(t, buffered.Flush())
+					return
+				case "redirect":
+					http.Redirect(w, r, "/other", http.StatusFound)
+					return
+				case "canceled":
+					cancel()
+					return
+				case "deadline", "proof timeout":
+					<-r.Context().Done()
+					return
+				}
+				_, _ = w.Write(body)
+			}))
+			t.Cleanup(ts.Close)
+			rec := NewRecord(strings.TrimPrefix(ts.URL, "http://"), "synthetic-api-key", token, "")
+			c, err := newProvenClientFor(ctx, rec)
+			require.Error(t, err)
+			require.Nil(t, c)
+			switch scenario {
+			case "canceled":
+				require.ErrorIs(t, err, context.Canceled)
+			case "deadline":
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+			case "proof timeout":
+				require.ErrorIs(t, err, errOwnershipProofTimeout)
+				require.NotErrorIs(t, err, context.DeadlineExceeded,
+					"the TUI retries an internal proof timeout but not caller deadlines")
+			case "forged":
+				require.ErrorContains(t, err, "daemon endpoint failed ownership proof")
+			case "close":
+				require.ErrorContains(t, err, "daemon ownership response closes its connection")
+			default:
+				require.ErrorIs(t, err, errOwnershipChallenge)
+			}
+			assert.Equal(t, int64(1), requests.Load(), "failed proof must not send another request")
+		})
+	}
 }
 
 func TestStopSignalsPinglessDaemonWithoutSendingSecrets(t *testing.T) {
