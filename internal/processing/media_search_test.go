@@ -162,6 +162,8 @@ func TestMediaSearchSelectsCoveringBuildBeforeLimits(t *testing.T) {
 		MediaSources: []retrieval.MediaSourceSelector{generatedSource, sources[100]}})
 	require.NoError(t, err)
 	require.Len(t, shared.Results, 2, "distinct selected builds on one node survive retrieval")
+	require.Equal(t, retrieval.ModeAuto, shared.RequestedMode)
+	require.Equal(t, retrieval.ModeLexical, shared.ActualMode)
 	require.NotEqual(t, shared.Results[0].Evidence[0].BuildID, shared.Results[1].Evidence[0].BuildID)
 
 	queueTranscript := func(receipt MediaReceipt, text string) MediaReceipt {

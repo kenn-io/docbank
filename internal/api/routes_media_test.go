@@ -165,13 +165,15 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, search.Results)
 	selectedRequest := api.DocumentSearchRequest{Query: "synthetic exact phrase",
-		Mode: "lexical", Profile: processing.SuppliedMediaProfileName, Limit: 10,
+		Mode: "auto", Profile: processing.SuppliedMediaProfileName, Limit: 10,
 		Fence: api.DocumentSourceFence{VaultUID: catalog.VaultID(), ContentVersionIDs: []string{version.ID}},
 		MediaSources: []api.DocumentMediaSourceSelector{{SourceID: receipt.SourceID,
 			SourceVersionID: receipt.SourceVersionID, ContentVersionID: version.ID}}}
 	selectedSearch, err := c.SearchDocuments(t.Context(), selectedRequest)
 	require.NoError(t, err)
 	require.True(t, selectedSearch.MediaSourceSelection)
+	require.Equal(t, "auto", selectedSearch.RequestedMode)
+	require.Equal(t, "lexical", selectedSearch.ActualMode)
 	require.Len(t, selectedSearch.Results, 1)
 	require.Equal(t, receipt.SourceID, selectedSearch.Results[0].Evidence[0].MediaSources[0].SourceID)
 	require.Len(t, selectedSearch.MediaSelections, 1)
@@ -184,6 +186,8 @@ func TestMediaRoutesAreAuthenticatedAndCoverTheTwelveContracts(t *testing.T) {
 	var emptyReport api.DocumentSearchReport
 	require.NoError(t, json.Unmarshal([]byte(body), &emptyReport))
 	require.Empty(t, emptyReport.Results)
+	require.Equal(t, "auto", emptyReport.RequestedMode)
+	require.Equal(t, "lexical", emptyReport.ActualMode)
 	transcriptResult, err := c.MediaTranscript(t.Context(), receipt.SourceID, receipt.SourceVersionID, receipt.ContentVersionID)
 	require.NoError(t, err)
 	require.Equal(t, "ready", transcriptResult.EvidenceState)

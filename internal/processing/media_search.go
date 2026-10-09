@@ -60,6 +60,7 @@ func (service *Service) searchMediaSources(
 		report.Results = report.Results[:prepared.limit]
 		report.Truncated = true
 	}
+	report.RequestedMode = prepared.mode
 	report.MediaSelections = plan.mediaSelections(request.MediaSources)
 	report.MediaSourceSelection, report.Coverage = true, plan.coverage()
 	return report, nil
