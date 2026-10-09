@@ -29,12 +29,10 @@
   const lockoutDescription = $derived(hiddenState.locked_until || lockoutError ? "hidden-lockout" : undefined);
   let remaining = $state(0);
   let refreshController = new AbortController();
-  const actionController = new AbortController();
   let disposed = false;
-  const options = (signal = refreshController.signal) => ({ session, signal: AbortSignal.any([signal, AbortSignal.timeout(signal === refreshController.signal ? 2000 : 30_000)]) });
+  const options = () => ({ session, signal: AbortSignal.timeout(30_000) });
 
   function clear() {
-    workspace?.photos.clearHidden();
     workspace?.photos.dispose();
     void workspace?.cache.dispose();
     workspace = undefined;
@@ -63,7 +61,7 @@
     const controller = refreshController;
     reading = true;
     try {
-      const result = await getPhotoHiddenState(options());
+      const result = await getPhotoHiddenState({ session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
       if (controller.signal.aborted || disposed) return;
       applyState(result);
     } catch (cause) { if (!controller.signal.aborted && !disposed) { if (cause instanceof APIError && cause.status === 401) onauthfailure(cause); else readError = cause instanceof Error ? cause.message : String(cause); clear(); hiddenState.expires_at = undefined; } }
@@ -94,11 +92,11 @@
     if (kind === "lock" || kind === "disable" || kind === "change") clear();
     try {
       if (kind === "enter") {
-        if (!hiddenState.configured) await setupPhotoHidden({ passcode }, options(actionController.signal));
-        await unlockPhotoHidden({ passcode }, options(actionController.signal));
-      } else if (kind === "lock") await lockPhotoHidden({}, options(actionController.signal));
-      else if (kind === "change") await changePhotoHidden({ passcode: currentPasscode, new_passcode: nextPasscode }, options(actionController.signal));
-      else await disablePhotoHidden({ passcode: currentPasscode }, options(actionController.signal));
+        if (!hiddenState.configured) await setupPhotoHidden({ passcode }, options());
+        await unlockPhotoHidden({ passcode }, options());
+      } else if (kind === "lock") await lockPhotoHidden({}, options());
+      else if (kind === "change") await changePhotoHidden({ passcode: currentPasscode, new_passcode: nextPasscode }, options());
+      else await disablePhotoHidden({ passcode: currentPasscode }, options());
       passcode = "";
       currentPasscode = "";
       nextPasscode = "";
@@ -117,7 +115,8 @@
     } finally {
       actionPending = false;
       concealingAction = false;
-      if (!disposed) { if (completed && kind === "disable") onunhidden?.(); await checkAccess(); }
+      if (completed && kind === "disable") onunhidden?.();
+      if (!disposed) await checkAccess();
       if (invalidField && !disposed) { await tick(); document.getElementById(invalidField)?.focus(); }
     }
   }
@@ -133,7 +132,7 @@
       remaining = Math.max(0, Math.ceil((Date.parse(hiddenState.expires_at) - Date.now()) / 1000));
       if (!remaining) { clear(); hiddenState.expires_at = undefined; }
     }, 250);
-    return () => { disposed = true; refreshController.abort(); actionController.abort(); clear(); clearInterval(timer); clearInterval(poll); document.removeEventListener("visibilitychange", foreground); passcode = ""; currentPasscode = ""; nextPasscode = ""; };
+    return () => { disposed = true; refreshController.abort(); clear(); clearInterval(timer); clearInterval(poll); document.removeEventListener("visibilitychange", foreground); passcode = ""; currentPasscode = ""; nextPasscode = ""; };
   });
 
 </script>
@@ -151,7 +150,7 @@
   {:else}
     <div class="hidden-gate">
       <h1>Hidden</h1>
-      {#if hiddenState.configured}<p>Unlocks for five minutes.</p>{:else}<p>Forgotten passcode? Run <code>docbank photos hidden reset</code>.</p>{/if}
+      {#if hiddenState.configured}<p>Forgotten passcode? Run <code>docbank photos hidden reset</code>.</p>{:else}<p>Unlocks for five minutes.</p>{/if}
       {#if lockoutDescription}<p id="hidden-lockout" class="lockout" role="status">{hiddenState.locked_until ? `Too many attempts. Try again after ${new Date(hiddenState.locked_until).toLocaleTimeString()}.` : lockoutError}</p>{/if}
       <form aria-describedby={lockoutDescription} onsubmit={event => { event.preventDefault(); void action("enter"); }}>
         <FormField type="password" field={{ id: "hidden-passcode", label: "Passcode", value: passcode, error: passcodeError, disabled: busy }} autocomplete={hiddenState.configured ? "current-password" : "new-password"} oninput={value => { passcode = value; passcodeError = ""; }} />

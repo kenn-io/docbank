@@ -21,6 +21,8 @@ it.each(["setup", "unlock", "current", "new"])("preserves %s input focus and val
   vi.stubGlobal("fetch", vi.fn(async () => ++reads === 1 ? Response.json(hidden) : new Promise<Response>(resolve => settle = resolve)));
   render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
   await screen.findByLabelText("Passcode", { exact: true });
+  if (field === "setup") expect(screen.getByText("Unlocks for five minutes.")).toBeTruthy();
+  else expect(screen.getByText("docbank photos hidden reset").parentElement?.textContent).toBe("Forgotten passcode? Run docbank photos hidden reset.");
   if (field === "current" || field === "new") await fireEvent.click(screen.getByText("Manage passcode"));
   const label = field === "current" ? "Current passcode" : field === "new" ? "New passcode" : "Passcode";
   const input = screen.getByLabelText(label, { exact: true }) as HTMLInputElement;
@@ -96,6 +98,28 @@ it("keeps management credentials independent and lets Disable ignore an invalid 
   await screen.findByRole("button", { name: "Set passcode" });
   expect(requests.at(-1)).toEqual({ passcode: "current" });
   expect((screen.getByLabelText("Passcode", { exact: true }) as HTMLInputElement).value).toBe("");
+});
+
+it("notifies Library when Disable finishes after unmount", async () => {
+  let settle!: (response: Response) => void;
+  let signal: AbortSignal | undefined;
+  const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith("/disable")) { signal = options?.signal ?? undefined; return new Promise<Response>(resolve => settle = resolve); }
+    return Response.json(state(false));
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const onunhidden = vi.fn();
+  const view = render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn(), onunhidden });
+  await screen.findByRole("button", { name: "Unlock" });
+  await fireEvent.click(screen.getByText("Manage passcode"));
+  await fireEvent.input(screen.getByLabelText("Current passcode", { exact: true }), { target: { value: "synthetic" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Disable Hidden" }));
+  expect(signal).toBeDefined();
+  view.unmount();
+  expect(signal?.aborted).toBe(false);
+  settle(Response.json({}));
+  await waitFor(() => expect(onunhidden).toHaveBeenCalledOnce());
+  expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
 it.each(["setup", "unlock", "current", "new"])("bounds $0 passcodes before sending them", async field => {
