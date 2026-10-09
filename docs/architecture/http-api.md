@@ -1416,8 +1416,7 @@ Because they grant "read any daemon-readable local path," `POST /ingest` and
 **restricted to loopback callers** regardless of bind address or API key. A
 non-loopback client gets `403` (`loopback_only`). There is no remote file-upload
 capability on this route: remote bytes use `POST /uploads`, while remote access
-to the loopback-bound daemon still terminates through the configured SSH/VPN
-tunnel.
+can also terminate through an SSH/VPN tunnel to a loopback listener.
 
 Each include or exclude pattern uses Go's `path.Match` grammar over a
 slash-separated source-relative path. Use `/` separators on every platform.
@@ -1746,7 +1745,8 @@ remote-daemon mode behind MCP.
 
 The MCP boundary implements exactly protocol `2026-07-28` through the official
 Go SDK v1.7.0. Stdio is newline framed. Its optional HTTP transport is
-stateless, POST-only, loopback-only, and separately authenticated. The MCP
+stateless, POST-only, and separately authenticated. Loopback remains the usual
+listen address. The MCP
 bearer is resolved from a named credential binding and cannot equal the
 daemon's configured, ephemeral, or runtime-discovered API key. The daemon API
 key is never accepted as an inbound MCP credential.
@@ -1758,7 +1758,11 @@ or replay an ambiguous start. Rendition resources bind the stable vault, node,
 content-version, and attachment tuple and expose only bounded windows of
 active sanitized Markdown. They do not expose source bytes or host paths.
 
-This fixed local HTTP bearer is not MCP OAuth. The listener has no OAuth
+An explicit network listen IP opts into trusting that network with plaintext
+MCP credentials and results. Host checks accept loopback, a concrete listen IP,
+and explicit allowed authorities; matching-origin checks remain mandatory when
+an Origin header is present. This fixed HTTP bearer is not MCP OAuth. The
+listener has no OAuth
 metadata, authorization-server discovery, client registration, scopes, or
 refresh. It also has no GET streams, sessions, resumption, prompts, roots,
 sampling, elicitation, or tasks. See [Model Context Protocol](../usage/mcp.md)
@@ -1771,12 +1775,15 @@ compares it in constant time against its effective key. The daemon always has
 one: with `[server] api_key` unset it generates a fresh key at startup and
 publishes it, inside the owner-private `$DOCBANK_HOME`, through the same runtime
 record the CLI already uses for discovery. It is readable only by the
-vault's owner, never sent over the network unencrypted, and never logged.
-Binds are loopback-only: the API is plain HTTP, so a non-loopback bind
-would expose the key and vault contents in cleartext, and
-`docbank daemon run` refuses to start on one. Remote access goes through an SSH
-tunnel or VPN (see [Configuration](../configuration.md)). `/health`,
-`/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
+vault's owner and never logged. Same-user discovery proves daemon ownership
+before sending credentials.
+Binds default to loopback. An explicit non-loopback IP requires a configured
+key and opts into plain HTTP across the selected network. The operator must
+provide a trusted network or encrypted transport (see [Configuration](../configuration.md#bind-validation)).
+Host checks precede authentication and accept loopback, the concrete bind IP,
+the dedicated browser origin, and explicit `allowed_hosts`; wildcard listeners
+do not accept arbitrary names. Server-path ingest remains loopback-peer only.
+`/health`, `/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
 `/`, `/photos`, and `/assets/` are auth-exempt. Everything else, including the shutdown
 route, requires the key.
 
@@ -1831,6 +1838,7 @@ include a `position` span:
 | `search_query_required` | 422 | blank search without a tag or modification-time filter |
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |
 | `precondition_required` | 428 | required `If-Match` header missing |
+| `host_forbidden` | 403 | Host is outside the configured authority allowlist |
 | `loopback_only` | 403 | server-path ingest or preflight called by a non-loopback peer |
 | `digest_mismatch` / `size_mismatch` | 422 | uploaded file bytes disagree with the required declaration; no node/blob authority committed |
 | `too_large` | 413 | upload exceeded its declared size plus bounded multipart overhead |

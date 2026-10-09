@@ -13,12 +13,15 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/httpboundary"
 )
 
 const requestTimeout = 60 * time.Second
 
 type authenticationContextKey struct{}
+type remoteAddressContextKey struct{}
 type workspaceSnapshotOwnerContextKey struct{}
 
 func workspaceSnapshotOwner(ctx context.Context) (string, bool) {
@@ -246,6 +249,7 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 // bind address or key.
 func loopbackMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(context.WithValue(r.Context(), remoteAddressContextKey{}, r.RemoteAddr))
 		if r.Method == http.MethodPost && isServerPathIngestRoute(r.URL.Path) && !isLoopbackRemote(r.RemoteAddr) {
 			writeError(w, NewError(http.StatusForbidden, "loopback_only",
 				"server-side path ingest is loopback-only; remote clients use POST /api/v1/uploads"))
@@ -267,6 +271,11 @@ func isLoopbackRemote(remoteAddr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+func isLoopbackContext(ctx context.Context) bool {
+	remoteAddr, _ := ctx.Value(remoteAddressContextKey{}).(string)
+	return isLoopbackRemote(remoteAddr)
 }
 
 func timeoutMiddleware(next http.Handler) http.Handler {
@@ -309,6 +318,22 @@ func recoverMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 				writeError(w, NewError(http.StatusInternalServerError, "internal", "internal server error"))
 			}
 		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// hostMiddleware rejects unconfigured authorities before authentication. The
+// daemon's dedicated browser origin remains available to local web sessions.
+func hostMiddleware(next http.Handler, cfg config.ServerConfig, webURL string) http.Handler {
+	hosts := append([]string(nil), cfg.AllowedHosts...)
+	if web, err := url.Parse(webURL); err == nil && web.Host != "" {
+		hosts = append(hosts, web.Host)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !httpboundary.Allowed(r.Host, cfg.BindAddr, hosts) {
+			writeError(w, NewError(http.StatusForbidden, "host_forbidden", "request Host is not configured"))
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

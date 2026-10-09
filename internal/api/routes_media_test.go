@@ -435,7 +435,7 @@ func TestMediaUploadsOutliveRequestTimeout(t *testing.T) {
 					_, writeErr := stream.Write(body.Bytes())
 					_ = stream.CloseWithError(writeErr)
 				}()
-				request := httptest.NewRequest(http.MethodPost, endpoint, reader)
+				request := httptest.NewRequest(http.MethodPost, "http://localhost"+endpoint, reader)
 				request.Header.Set("X-Api-Key", testAPIKey)
 				request.Header.Set("Content-Type", writer.FormDataContentType())
 				response := httptest.NewRecorder()

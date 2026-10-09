@@ -28,7 +28,7 @@ func TestTermReportRevisionHistoryWaitsForMaintenance(t *testing.T) {
 				ts, catalog := newTestServer(t, func(d *api.Deps) { d.Gate = gate })
 				ts.Close()
 				createFileWithContent(t, ts, catalog, "/synthetic-alpha.txt", "synthetic alpha")
-				create := httptest.NewRequest(http.MethodPost, "/api/v1/search-exports",
+				create := httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/search-exports",
 					strings.NewReader(`{"version":1,"all_documents":true,"timezone":"UTC","coverage_mode":"available_only",`+
 						`"terms":[{"number":1,"expression":"alpha","syntax":"simple",`+
 						`"dates":{"start":"2000-01-01","end":"2000-12-31"}}]}`))
@@ -55,7 +55,7 @@ func TestTermReportRevisionHistoryWaitsForMaintenance(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				request := httptest.NewRequestWithContext(ctx, http.MethodPost,
-					"/api/v1/search-exports/"+parent.ID+"/revisions", strings.NewReader(`{"choices":[]}`))
+					"http://localhost/api/v1/search-exports/"+parent.ID+"/revisions", strings.NewReader(`{"choices":[]}`))
 				request.Header.Set("X-Api-Key", testAPIKey)
 				request.Header.Set("Content-Type", "application/json")
 				revision := httptest.NewRecorder()
@@ -97,7 +97,7 @@ func TestTermReportRevisionHistoryWaitsForMaintenance(t *testing.T) {
 					require.ElementsMatch(t, []string{parent.ID, summary.ID},
 						[]string{history.Items[0].Summary.ID, history.Items[1].Summary.ID})
 				}
-				readParent := httptest.NewRequest(http.MethodGet, "/api/v1/search-exports/"+parent.ID, nil)
+				readParent := httptest.NewRequest(http.MethodGet, "http://localhost/api/v1/search-exports/"+parent.ID, nil)
 				readParent.Header.Set("X-Api-Key", testAPIKey)
 				retained := httptest.NewRecorder()
 				catalog.Server.Handler().ServeHTTP(retained, readParent)

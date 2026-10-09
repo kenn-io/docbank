@@ -192,7 +192,7 @@ func TestWorkspaceQueryRoutesReportCanceledAndExpiredRequests(t *testing.T) {
 				if strings.Contains(path, "saved-queries") {
 					payload = `{}`
 				}
-				req := httptest.NewRequestWithContext(ctx, http.MethodPost, path, strings.NewReader(payload))
+				req := httptest.NewRequestWithContext(ctx, http.MethodPost, "http://localhost"+path, strings.NewReader(payload))
 				req.Header.Set("X-Api-Key", testAPIKey)
 				req.Header.Set("Content-Type", "application/json")
 				req.Header.Set("If-Match", `"1"`)

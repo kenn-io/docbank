@@ -106,9 +106,12 @@ owns or creates the vault root.
 `$DOCBANK_HOME/config.toml` is read once, at daemon startup (`docbank
 daemon run` / `daemon start`). `docbank mcp --transport http` also reads and
 validates the whole file at startup, then resolves its named credential
-binding. The file is optional. There are no general per-field environment
-overrides. `DOCBANK_HOME` selects the vault, and named credential bindings can
-read the environment variables that the configuration names. Backup commands
+binding. The file is optional. Nonempty environment settings override the
+supported startup fields after TOML is loaded. Empty values preserve TOML,
+and overrides are never written back. `DOCBANK_HOME` selects the vault.
+Named credential bindings read their configured environment variables. MCP
+bindings also accept mounted files through corresponding `_FILE` variables.
+Backup commands
 can override their configured repository with `--repo`. The daemon treats an
 unrecognized key as a typo and rejects it at startup instead of ignoring it.
 
@@ -119,13 +122,15 @@ bind_addr = "127.0.0.1"
 api_port = 0          # 0 = ephemeral; clients discover the real port
                       # from the runtime record
 api_key = ""          # empty = ephemeral per-run key (loopback only)
+allowed_hosts = []   # additional Host names, optionally with a port
 idle_timeout = "30m"  # background daemons only; "0" = never
 
 [web]
 enabled = true
 
 [mcp.http]
-credential_binding = "" # empty = HTTP MCP cannot start
+credential_binding = "" # empty = HTTP MCP cannot start without an env binding
+allowed_hosts = []      # additional MCP HTTP Host names, optionally with ports
 
 [backup]
 repo = ""           # no implicit repository; set a path or pass --repo
@@ -145,13 +150,23 @@ scan_interval = "5s"
 exclude = [".DS_Store", "cache/"]
 ```
 
-- **`bind_addr`**: the interface the API listens on. Loopback only
-  (`127.0.0.1`, `::1`, `localhost`): the API is plain HTTP, so a
-  non-loopback bind would put the key and vault contents on the wire in
-  cleartext. Reach a remote Docbank through an SSH tunnel or VPN.
+- **`bind_addr`** — the interface the API listens on. Defaults to loopback.
+  An explicit non-loopback IP, including a wildcard, requires a configured
+  `api_key`. This opts into plain HTTP on the selected network; use a trusted
+  network, encrypted tunnel, or HTTPS proxy. See [Bind validation](#bind-validation).
+- **`allowed_hosts`** — additional accepted HTTP Host values. Use an IP or
+  ASCII DNS name, optionally with a port, such as `docbank:8485`. An entry
+  without a port permits that name on any port. Loopback hosts, the concrete
+  bind IP, and the daemon's dedicated browser origin are also accepted.
+  Wildcard bind addresses do not permit arbitrary Host names. URLs, wildcard
+  names, zero ports, and IPv6 zone identifiers are rejected.
 - **`api_port`**: `0` picks an ephemeral port. The CLI does not need to
-  know it in advance, because it discovers the bound address from the
-  daemon's runtime record.
+  know it in advance, because it discovers a loopback endpoint from the
+  daemon's runtime record. A concrete non-loopback bind adds a separate
+  ephemeral loopback listener for local CLI and MCP clients. Both listeners
+  enforce the same authentication and server-path import rules. The record's
+  `network_address` metadata carries the concrete network endpoint and its
+  assigned port. Use a fixed port for remote clients that cannot read the record.
 - **`api_key`**: the daemon checks `X-Api-Key` or `Authorization: Bearer`
   on every authenticated request. An empty setting makes the daemon generate
   a key at startup and publish it to same-user clients in the runtime record.
@@ -167,7 +182,10 @@ exclude = [".DS_Store", "cache/"]
   The API and `/docs` are unaffected. See [Web application](usage/web.md).
 - **`[mcp.http] credential_binding`**: names the separate inbound credential
   used by `docbank mcp --transport http`. An empty value leaves stdio available
-  but makes HTTP startup fail. See [MCP HTTP credential](#mcp-http-credential).
+  but makes HTTP startup fail unless an environment binding is selected.
+  See [MCP HTTP credential](#mcp-http-credential).
+- **`[mcp.http] allowed_hosts`**: additional accepted MCP HTTP authorities.
+  See [MCP network access](usage/mcp.md#connect-over-a-trusted-network).
 - **`[backup] repo`**: default snapshot repository used when a backup
   command or API request omits `repo`. `~/...` expands against the daemon
   user's home. A relative path is resolved beneath `$DOCBANK_HOME`.
@@ -197,8 +215,8 @@ reclamation operations.
 ### MCP HTTP credential
 
 The MCP HTTP listener requires a named credential binding. Configuration keeps
-only the environment-variable name. The bearer value stays in the MCP process
-environment:
+only the environment-variable name. Supply the bearer to the MCP process
+through that variable or its `_FILE` counterpart:
 
 ```toml
 [mcp.http]
@@ -214,6 +232,13 @@ environment-variable name must use ordinary shell-variable syntax. The bearer
 is non-empty, contains no spaces or control bytes, and is capped at 4,096
 bytes.
 
+For startup without TOML, set `DOCBANK_MCP_HTTP_TOKEN` or
+`DOCBANK_MCP_HTTP_TOKEN_FILE`. This selects a process-local named binding and
+overrides `[mcp.http] credential_binding`; the daemon does not resolve its
+value. It does not replace existing entries in `[credential_bindings]`; when
+the preferred internal name is already used, Docbank chooses an unused name.
+See [MCP network access](usage/mcp.md#connect-over-a-trusted-network).
+
 Docbank resolves the bearer once when the MCP HTTP process starts. Changing
 the environment does not rotate a running process. The bearer must differ from
 `[server] api_key` and from an ephemeral daemon key published in the runtime
@@ -224,7 +249,7 @@ MCP process reacquires it.
 There is no raw bearer field in `config.toml`, command-line token flag, URL
 credential, or runtime-record publication. Supply the environment variable to
 the MCP child through an owner-controlled secret or process manager. This is a
-fixed local bearer, not OAuth. See [Model Context Protocol](usage/mcp.md) for
+fixed bearer, not OAuth. See [Model Context Protocol](usage/mcp.md) for
 the complete transport boundary.
 
 ### Watched inboxes
@@ -748,23 +773,48 @@ encryption and access policy.
 The daemon validates its listening address at startup. An invalid setting makes
 `docbank daemon run` fail immediately:
 
-- A **loopback** `bind_addr` (`127.0.0.1`, `::1`, `localhost`) is the
-  only accepted value. An empty `api_key` is fine there: the daemon
-  generates one at startup instead.
-- Every non-loopback address (wildcard, private-network, or public,
-  keyed or not) is rejected. The API is plain HTTP, so a key sent in
-  cleartext is not protection. Remote access goes through an SSH tunnel
-  or VPN to the loopback listener until the daemon grows TLS.
+- A **loopback** `bind_addr` (`127.0.0.1`, `::1`, `localhost`) accepts an
+  empty `api_key`: the daemon generates one at startup.
+- A **non-loopback IP**, including `0.0.0.0` or `::`, requires an explicit
+  `api_key` from TOML, `DOCBANK_API_KEY`, or `DOCBANK_API_KEY_FILE`. Authentication
+  remains mandatory. Choosing this address opts into sending the key and vault
+  contents over the selected network in cleartext. Use a trusted network,
+  encrypted tunnel, or HTTPS proxy; Docbank provides no TLS or remote server
+  identity verification. See [Run in a container](usage/containers.md).
+- `api_port` must be between `0` and `65535`. Keys contain 1–4096 bytes without
+  whitespace or control bytes. Invalid Host allowlist entries fail startup.
+
+Server-path ingest and preflight remain restricted to a loopback `RemoteAddr`.
+Host allowlists and forwarding headers do not change that peer check.
 
 ## Environment variables
 
 | Variable | Effect |
 |----------|--------|
+| `DOCBANK_BIND_ADDR` | Override `[server] bind_addr`. |
+| `DOCBANK_API_PORT` | Override `[server] api_port`; `0` selects an ephemeral port. |
+| `DOCBANK_ALLOWED_HOSTS` | Comma-separated replacement for `[server] allowed_hosts`; spaces around entries are stripped. |
+| `DOCBANK_API_KEY` | Override `[server] api_key` with an explicit key. |
+| `DOCBANK_API_KEY_FILE` | Read the key from a mounted regular file instead of `DOCBANK_API_KEY`. |
+| `DOCBANK_MCP_HTTP_TOKEN` | Select an environment-backed MCP HTTP binding. Overrides the TOML binding; resolved only by MCP. |
+| `DOCBANK_MCP_HTTP_TOKEN_FILE` | Supply that MCP bearer through a mounted regular file. |
+| `DOCBANK_MCP_HTTP_ALLOWED_HOSTS` | Comma-separated replacement for `[mcp.http] allowed_hosts`. |
 | `DOCBANK_HOME` | Vault location; see [Vault location](#vault-location) above. |
 | `DOCBANK_LOCK_DIR` | Absolute lock-registry directory for an isolated environment whose account home is unwritable. Defaults to the operating-system account home's `.local/state/docbank/target-locks`, independent of `HOME` and XDG settings. All processes sharing or restoring overlapping vault trees must use the same directory; stop them before changing this setting. Keep it outside vaults and restore targets. Never delete it while any participating process runs. |
 | `DOCBANK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) for `docbank daemon run` and `docbank mcp`, foreground or background. Invalid values are ignored and fall back to `info`. |
 | `DOCBANK_TELEMETRY_ENABLED` | `0`, `false`, `no` or `off` turns off anonymous usage telemetry. Read when the daemon starts; restart the daemon after changing it. |
 | `TELEMETRY_ENABLED` | The same values have the same effect; shared with other Kenn tools. |
+
+Nonempty startup overrides take precedence over TOML; empty variables keep
+its values. `DOCBANK_API_KEY` and `DOCBANK_API_KEY_FILE` cannot both be
+nonempty. A selected file must be a readable, non-symlink regular file owned
+by the process user and contain a valid nonempty key. On Unix, its mode must be
+`0400` or `0600`. On Windows, its protected ACL must grant access only to the
+current user or token owner and trusted system administrators. Owner-only
+read access is sufficient.
+Missing, unreadable, empty, or oversized files fail startup instead of falling
+back. One trailing LF or CRLF is stripped. File keys are bounded before parsing.
+Secrets are resolved once per process; restart to rotate them.
 
 ## Anonymous usage telemetry
 

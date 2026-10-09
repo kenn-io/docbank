@@ -1,0 +1,42 @@
+name: Container
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Stock image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Build nonroot image and check startup
+        run: |
+          trap 'docker rm -f docbank-smoke >/dev/null 2>&1 || true' EXIT
+          docker build --build-arg VERSION=dev -t docbank:smoke .
+          docker run --rm docbank:smoke version
+          test "$(docker run --rm --entrypoint id docbank:smoke -u)" = 1000
+          if timeout --kill-after=5s 30s docker run --rm --name docbank-smoke docbank:smoke > startup.log 2>&1; then
+            echo 'A network daemon without an explicit key must refuse startup' >&2
+            exit 1
+          else
+            status=$?
+            if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+              echo 'An unkeyed network daemon did not refuse startup in time' >&2
+              exit 1
+            fi
+          fi
+          grep -F 'requires an explicit api_key' startup.log

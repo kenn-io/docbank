@@ -163,7 +163,10 @@ Do not infer fork eligibility or network/cache isolation from this setting.
   and daemon ownership share the same exclusive hierarchy lock; never create a
   privileged path into a daemon-owned vault.
 - The daemon always enforces an API key (ephemeral per-run when none is
-  configured, published via the runtime record). Binds are loopback-only.
+  configured, published via the runtime record). Binds default to loopback;
+  explicit non-loopback IPs require a configured key
+  and an operator-controlled trusted network or encrypted transport. Host
+  validation never treats a wildcard bind as an arbitrary-Host allowance.
 - Packed storage is managed, not a user-selected format. The ordinary operator
   surface is status, pack, and repack. Do not expose Kit's unpack primitive as
   a general API or CLI command; reserve it for tests, migrations, or a

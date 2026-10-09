@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/httpboundary"
 )
 
 const (
@@ -54,21 +55,23 @@ type httpLimits struct {
 // HTTPOptions configures the authenticated stateless HTTP boundary. The bearer
 // value must already have been resolved from the named config binding.
 type HTTPOptions struct {
-	BearerToken string
-	Logger      *slog.Logger
-	limits      httpLimits
+	BearerToken  string
+	AllowedHosts []string
+	ListenHost   string
+	Logger       *slog.Logger
+	limits       httpLimits
 }
 
-// ValidateHTTPListenAddress rejects hostnames, wildcards, missing ports, and
-// non-loopback addresses before a listener is opened.
+// ValidateHTTPListenAddress requires an explicit IP and port. Authentication
+// is mandatory for every listener; choosing a network IP opts into plain HTTP.
 func ValidateHTTPListenAddress(address string) error {
 	host, portText, err := net.SplitHostPort(address)
 	if err != nil || host == "" || portText == "" {
-		return errors.New("MCP HTTP listen address must be an explicit loopback IP and port")
+		return errors.New("MCP HTTP listen address must be an explicit IP and port")
 	}
 	ip, err := netip.ParseAddr(host)
-	if err != nil || ip.Zone() != "" || !ip.IsLoopback() {
-		return errors.New("MCP HTTP listen address must use a loopback IP")
+	if err != nil || ip.Zone() != "" {
+		return errors.New("MCP HTTP listen address must use an explicit IP")
 	}
 	port, err := strconv.ParseUint(portText, 10, 16)
 	if err != nil {
@@ -86,7 +89,9 @@ func (server *Server) HTTPTransportHandler(options HTTPOptions) (http.Handler, e
 	}
 	// SDK diagnostics can contain transport internals. Docbank owns the stable,
 	// redacted telemetry outside this handler instead.
-	inner := server.HTTPHandler()
+	// The outer guard owns explicit Host validation, including Docker service
+	// names on loopback connections. Keep the public protocol handler protected.
+	inner := server.httpHandler(true)
 	return wrapHTTPTransport(inner, options)
 }
 
@@ -109,6 +114,9 @@ func wrapHTTPTransport(inner http.Handler, options HTTPOptions) (http.Handler, e
 	if inner == nil || !ValidHTTPBearerToken(options.BearerToken) {
 		return nil, errHTTPConfiguration
 	}
+	if err := httpboundary.ValidateHosts(options.AllowedHosts); err != nil {
+		return nil, err
+	}
 	limits, err := normalizeHTTPLimits(options.limits)
 	if err != nil {
 		return nil, err
@@ -120,6 +128,7 @@ func wrapHTTPTransport(inner http.Handler, options HTTPOptions) (http.Handler, e
 	guard := &httpTransportGuard{
 		inner: inner, tokenHash: sha256.Sum256([]byte(options.BearerToken)),
 		logger: logger, limits: limits,
+		listenHost: options.ListenHost, allowedHosts: append([]string(nil), options.AllowedHosts...),
 	}
 	return guard, nil
 }
@@ -174,10 +183,12 @@ func normalizeHTTPLimits(limits httpLimits) (httpLimits, error) {
 }
 
 type httpTransportGuard struct {
-	inner     http.Handler
-	tokenHash [sha256.Size]byte
-	logger    *slog.Logger
-	limits    httpLimits
+	listenHost   string
+	allowedHosts []string
+	inner        http.Handler
+	tokenHash    [sha256.Size]byte
+	logger       *slog.Logger
+	limits       httpLimits
 
 	activityMu  sync.Mutex
 	activeTotal int
@@ -202,7 +213,7 @@ func (guard *httpTransportGuard) ServeHTTP(response http.ResponseWriter, request
 		http.Error(observed, "request headers too large", http.StatusRequestHeaderFieldsTooLarge)
 		return
 	}
-	if !safeLocalOrigin(request) {
+	if !guard.safeOrigin(request) {
 		errorCode = "origin_forbidden"
 		http.Error(observed, "forbidden origin", http.StatusForbidden)
 		return
@@ -313,14 +324,8 @@ func headersWithin(header http.Header, maxFields, maxBytes int) bool {
 	return true
 }
 
-type localHTTPAuthority struct {
-	host string
-	port uint16
-}
-
-func safeLocalOrigin(request *http.Request) bool {
-	requestAuthority, ok := parseLocalHTTPAuthority(request.Host)
-	if !ok {
+func (guard *httpTransportGuard) safeOrigin(request *http.Request) bool {
+	if !httpboundary.Allowed(request.Host, guard.listenHost, guard.allowedHosts) {
 		return false
 	}
 	values := request.Header.Values("Origin")
@@ -336,63 +341,7 @@ func safeLocalOrigin(request *http.Request) bool {
 		origin.ForceQuery || origin.Fragment != "" || origin.Opaque != "" {
 		return false
 	}
-	originAuthority, ok := parseLocalHTTPAuthority(origin.Host)
-	return ok && originAuthority == requestAuthority
-}
-
-func parseLocalHTTPAuthority(value string) (localHTTPAuthority, bool) {
-	if value == "" || strings.TrimSpace(value) != value ||
-		strings.ContainsAny(value, "/@?#\\") {
-		return localHTTPAuthority{}, false
-	}
-	host := value
-	portText := ""
-	hasPort := false
-	if strings.HasPrefix(value, "[") {
-		closing := strings.IndexByte(value, ']')
-		if closing < 0 {
-			return localHTTPAuthority{}, false
-		}
-		host = value[1:closing]
-		remainder := value[closing+1:]
-		if remainder != "" {
-			if !strings.HasPrefix(remainder, ":") || len(remainder) == 1 {
-				return localHTTPAuthority{}, false
-			}
-			hasPort = true
-			portText = remainder[1:]
-		}
-	} else if strings.Count(value, ":") > 1 {
-		return localHTTPAuthority{}, false
-	} else if before, after, found := strings.Cut(value, ":"); found {
-		hasPort = true
-		host, portText = before, after
-	}
-	if host == "" {
-		return localHTTPAuthority{}, false
-	}
-	port := uint64(80)
-	if hasPort {
-		if portText == "" {
-			return localHTTPAuthority{}, false
-		}
-		parsed, err := strconv.ParseUint(portText, 10, 16)
-		if err != nil || parsed == 0 {
-			return localHTTPAuthority{}, false
-		}
-		port = parsed
-	}
-	if strings.EqualFold(host, "localhost") {
-		return localHTTPAuthority{host: "localhost", port: uint16(port)}, true
-	}
-	address, err := netip.ParseAddr(host)
-	if err != nil || address.Zone() != "" {
-		return localHTTPAuthority{}, false
-	}
-	if !address.Unmap().IsLoopback() {
-		return localHTTPAuthority{}, false
-	}
-	return localHTTPAuthority{host: address.String(), port: uint16(port)}, true
+	return httpboundary.Same(origin.Host, request.Host)
 }
 
 func (guard *httpTransportGuard) authenticated(header http.Header) bool {
@@ -630,11 +579,12 @@ func (writer *boundedResponseWriter) Flush() {
 	}
 }
 
-// ServeHTTP listens on one explicit loopback address until ctx is cancelled.
+// ServeHTTP listens on one explicitly selected address until ctx is cancelled.
 func ServeHTTP(ctx context.Context, server *Server, address string, options HTTPOptions) error {
 	if err := ValidateHTTPListenAddress(address); err != nil {
 		return err
 	}
+	options.ListenHost, _, _ = net.SplitHostPort(address)
 	if err := server.prepareHTTP(ctx, options.BearerToken); err != nil {
 		return err
 	}

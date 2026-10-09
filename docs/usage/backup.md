@@ -229,6 +229,12 @@ both `remote_only` and `allow_audited_remote_only`. See
 [Multi-store storage](storage.md#backup-and-restore) for the file format and
 trust boundary.
 
+The mapping path is resolved on the daemon host, not on the caller's host. The
+restore API accepts `store_map` only from loopback clients because the daemon
+opens that server-local file. A remote client can restore with default local
+placement by omitting `--store-map`; there is no mapping-file upload route.
+Mapping-file read and parse errors never include the file contents.
+
 Backups exclude `config.toml`. Reconfigure processing profiles and other local
 settings on the restored target before using them. Preserve the target's
 storage bindings described below.

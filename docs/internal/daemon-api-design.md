@@ -49,9 +49,11 @@ archive state.
 
 The daemon always has an API key. An empty configured key means generate a new
 per-run key and publish it in the same-user runtime record; it never means
-unauthenticated. Binds are loopback-only because plain HTTP on a LAN would
-expose both key and content. Remote access terminates an external secure tunnel
-at loopback rather than expanding the daemon's trust model.
+unauthenticated. Binds default to loopback. An explicit non-loopback IP
+requires a configured key and opts into trusting the selected network with plaintext credentials and
+content. Host validation accepts explicit authorities without treating a
+wildcard
+bind as a wildcard Host. Server-path ingest remains loopback-peer only.
 
 Auth-exempt health, ping, docs, and OpenAPI routes establish discovery and
 contract access only. Every data route and the hidden shutdown route requires

@@ -104,7 +104,7 @@ func TestRealPageAPIBackupRestoreAndGC(t *testing.T) {
 	for _, dpi := range []float64{0.5, 1201} {
 		body, err := json.Marshal(api.PageRenderRequest{OperationID: uuid.New().String(), Selection: selection, Pages: []int{1}, DPI: dpi})
 		require.NoError(t, err)
-		request := httptest.NewRequest(http.MethodPost, "/api/v1/pages/jobs", bytes.NewReader(body))
+		request := httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/pages/jobs", bytes.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("X-Api-Key", cfg.Server.APIKey)
 		response := httptest.NewRecorder()

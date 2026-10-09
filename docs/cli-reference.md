@@ -1147,7 +1147,7 @@ contains a live scoped browser session and must be handled as a secret. See the
 ## docbank mcp
 
 ```text
-docbank mcp [--transport stdio|http] [--listen <loopback-ip:port>]
+docbank mcp [--transport stdio|http] [--listen <ip:port>] [--allowed-host <host[:port]>]
             [--allow-processing] [--allow-package-writes] [--allow-export-writes]
 ```
 
@@ -1156,12 +1156,14 @@ the local daemon. `--transport` defaults to `stdio`. Stdio accepts one JSON-RPC
 message per line, reserves stdout for protocol frames, and writes only redacted
 diagnostics to stderr. `--listen` is invalid for stdio.
 
-HTTP requires `--transport http`, an explicit IPv4 or IPv6 loopback
-`--listen`, and `[mcp.http] credential_binding` in
-`$DOCBANK_HOME/config.toml`. The binding resolves one fixed bearer from its
-named environment variable when the MCP process starts. It must differ from
-the daemon's effective API key. There is no token flag, remote-daemon option,
-or non-loopback listener.
+HTTP requires `--transport http`, an explicit IPv4 or IPv6 `--listen`, and
+a separate named credential binding, from TOML or
+`DOCBANK_MCP_HTTP_TOKEN`/`DOCBANK_MCP_HTTP_TOKEN_FILE`. Network addresses opt
+into plain HTTP and require a trusted network or encrypted transport.
+`--allowed-host` adds accepted client authorities and can be repeated; it is
+invalid for stdio. The bearer is resolved once at startup and must differ from
+the daemon's effective API key. There is no token flag or remote-daemon option.
+See [MCP network access](usage/mcp.md#connect-over-a-trusted-network).
 
 The catalog contains 20 read tools by default, including `get_photo_asset`.
 `--allow-processing` adds only the guarded `start_processing` tool. The agent

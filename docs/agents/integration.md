@@ -146,9 +146,9 @@ Restart after changing config:
 docbank daemon restart
 ```
 
-The daemon rejects non-loopback binds and has no separate remote-access mode.
-For remote access, use an SSH tunnel or VPN that terminates at the daemon
-host's loopback listener, and protect the API key as a vault credential.
+The daemon defaults to loopback. Network clients use an explicitly configured
+keyed listener and allowed Host, or a trusted tunnel. Protect the API key as a
+vault credential; see [Bind validation](../configuration.md#bind-validation).
 
 Examples below assume:
 

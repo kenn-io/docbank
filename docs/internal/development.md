@@ -247,7 +247,8 @@ design-specific checks are:
 ## Review posture
 
 Review against Docbank's [trust boundary](../architecture/integrity.md): local
-operation, loopback-only service, one user, one owner per vault, and personal
+operation, loopback by default with opt-in authenticated network listeners,
+one user, one owner per vault, and personal
 archive scale. Focus on authentication gaps, non-loopback exposure, data loss,
 incompatible daemons, crash ordering, and incorrect authority decisions.
 Multi-tenant controls require a separate product decision.

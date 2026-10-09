@@ -35,6 +35,7 @@ Every public page is also published as raw Markdown at the route listed below.
 
 ## Protect and operate
 - [Vault lifecycle](https://docbank.ai/docs/usage/lifecycle.md): Operate a Docbank vault safely from first import through maintenance, upgrades, snapshots, and recovery.
+- [Run in a container](https://docbank.ai/docs/usage/containers.md): Build and run stock Docbank with environment settings, mounted secrets, and a persistent vault.
 - [Permanent audited history](https://docbank.ai/docs/usage/audited-history.md): Keep every version and recorded change under a directory permanently, after reviewing what the scope covers.
 - [Trash, garbage collection, repack, and verify](https://docbank.ai/docs/usage/trash-and-gc.md): How deletion and space reclamation work, from trash through garbage collection and repack.
 - [Multi-store storage](https://docbank.ai/docs/usage/storage.md): Keep document bytes local first, add filesystem or S3-compatible stores, and move verified content between them.

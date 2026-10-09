@@ -32,3 +32,6 @@ docs/.zensical-build.*
 # Custom golangci-lint build with kit analyzers
 /custom-gcl
 /.cache/golangci-lint/
+
+# Mounted keys used by the container guide
+/secrets/

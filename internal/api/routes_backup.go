@@ -49,7 +49,7 @@ type backupRestoreRequest struct {
 	Overwrite   bool   `json:"overwrite,omitzero"`
 	Jobs        int    `json:"jobs,omitzero" minimum:"0"`
 	ForceUnlock bool   `json:"force_unlock,omitzero"`
-	StoreMap    string `json:"store_map,omitzero"`
+	StoreMap    string `json:"store_map,omitzero" doc:"Loopback-only server-local path to an owner-private TOML restore mapping file."`
 }
 
 func registerBackupRoutes(api huma.API, d Deps, g *gate) {
@@ -242,6 +242,9 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct {
 		Body backupRestoreRequest
 	}) (*restoreOutput, error) {
+		if err := validateBackupRestoreStoreMapPeer(ctx, in.Body.StoreMap); err != nil {
+			return nil, err
+		}
 		repo, target, err := prepareBackupRestore(d, in.Body)
 		if err != nil {
 			return nil, err
@@ -273,9 +276,12 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 				},
 			},
 		},
-	}, func(_ context.Context, in *struct {
+	}, func(ctx context.Context, in *struct {
 		Body backupRestoreRequest
 	}) (*huma.StreamResponse, error) {
+		if err := validateBackupRestoreStoreMapPeer(ctx, in.Body.StoreMap); err != nil {
+			return nil, err
+		}
 		repo, target, err := prepareBackupRestore(d, in.Body)
 		if err != nil {
 			return nil, err
@@ -306,6 +312,14 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 			stream.send(BackupRestoreEvent{Type: "result", Report: &report})
 		}}, nil
 	})
+}
+
+func validateBackupRestoreStoreMapPeer(ctx context.Context, storeMap string) error {
+	if storeMap != "" && !isLoopbackContext(ctx) {
+		return NewError(http.StatusForbidden, "loopback_only",
+			"backup restore store-map paths are loopback-only")
+	}
+	return nil
 }
 
 func openBackupRepository(d Deps, requested string) (*backup.Repo, error) {
@@ -459,7 +473,8 @@ func restoreBackupSnapshot(
 		mapping, err := backupapp.LoadRestoreStoreMap(in.StoreMap)
 		if err != nil {
 			return BackupRestoreReport{}, NewError(
-				http.StatusUnprocessableEntity, "restore_store_map_invalid", err.Error(),
+				http.StatusUnprocessableEntity, "restore_store_map_invalid",
+				"restore store map could not be loaded",
 			)
 		}
 		placement.Map = &mapping

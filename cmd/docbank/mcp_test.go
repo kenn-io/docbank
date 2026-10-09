@@ -18,7 +18,9 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/kit/safefileio"
 )
 
 func TestMCPStdioCancellationWithInheritedPipes(t *testing.T) {
@@ -91,7 +93,7 @@ func TestMCPCommandExposesTransportAndCapabilityFlags(t *testing.T) {
 	command.Flags().VisitAll(func(flag *pflag.Flag) { names = append(names, flag.Name) })
 	assert.ElementsMatch(t, []string{
 		"allow-report-writes", "allow-export-writes", "allow-photo-edits", "allow-processing",
-		"allow-package-writes", "listen", "transport",
+		"allow-package-writes", "allowed-host", "listen", "transport",
 	}, names)
 	for _, forbidden := range []string{"token", "api-key", "daemon", "url", "remote"} {
 		assert.Nil(t, command.Flags().Lookup(forbidden))
@@ -175,7 +177,8 @@ func TestMCPCommandValidatesTransportSpecificOptionsBeforeStarting(t *testing.T)
 	}{
 		{args: []string{"mcp", "--transport", "invalid"}, want: "stdio or http"},
 		{args: []string{"mcp", "--transport", "http"}, want: "--listen is required"},
-		{args: []string{"mcp", "--transport", "http", "--listen", "0.0.0.0:7341"}, want: "loopback"},
+		{args: []string{"mcp", "--transport", "http", "--listen", "localhost:7341"}, want: "explicit IP"},
+		{args: []string{"mcp", "--allowed-host", "docbank:7341"}, want: "only valid"},
 		{args: []string{"mcp", "--transport", "stdio", "--listen", "127.0.0.1:7341"}, want: "only valid"},
 	}
 	for _, test := range tests {
@@ -294,4 +297,23 @@ environment_variable = "DOCBANK_TEST_MCP_HTTP_TOKEN"
 			assert.True(t, running)
 		})
 	}
+}
+
+func TestMCPBearerCanStartFromMountedSecretWithoutTOML(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(t.TempDir(), "mcp-key")
+	file, err := safefileio.CreatePrivateFile(path)
+	require.NoError(t, err)
+	_, err = file.WriteString("synthetic-mcp-key\n")
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+	t.Setenv("DOCBANK_MCP_HTTP_TOKEN", "")
+	t.Setenv("DOCBANK_MCP_HTTP_TOKEN_FILE", path)
+	token, err := resolveMCPHTTPBearer(root)
+	require.NoError(t, err)
+	require.Equal(t, "synthetic-mcp-key", token)
+	t.Setenv("DOCBANK_MCP_HTTP_TOKEN", "conflicting-key")
+	_, err = resolveMCPHTTPBearer(root)
+	require.ErrorContains(t, err, "cannot both")
+	require.NotContains(t, err.Error(), "conflicting-key")
 }

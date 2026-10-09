@@ -30,7 +30,7 @@ func TestTermReportRoutesWithoutStoreReturnUnavailable(t *testing.T) {
 		{http.MethodGet, "/api/v1/search-exports/example/bundle", ""},
 	} {
 		t.Run(request.method+request.path, func(t *testing.T) {
-			req := httptest.NewRequest(request.method, request.path, strings.NewReader(request.body))
+			req := httptest.NewRequest(request.method, "http://localhost"+request.path, strings.NewReader(request.body))
 			req.Header.Set("X-Api-Key", testAPIKey)
 			req.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()

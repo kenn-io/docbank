@@ -12,12 +12,14 @@ import (
 
 	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/home"
+	"go.kenn.io/docbank/internal/httpboundary"
 	docmcp "go.kenn.io/docbank/internal/mcp"
 )
 
 var (
 	mcpTransport          string
 	mcpListen             string
+	mcpAllowedHosts       []string
 	mcpAllowProcessing    bool
 	mcpAllowPackageWrites bool
 	mcpAllowPhotoEdits    bool
@@ -35,6 +37,12 @@ var mcpCmd = &cobra.Command{
 }
 
 func runMCP(cmd *cobra.Command) (retErr error) {
+	if err := httpboundary.ValidateHosts(mcpAllowedHosts); err != nil {
+		return err
+	}
+	if mcpTransport != "http" && len(mcpAllowedHosts) > 0 {
+		return errors.New("--allowed-host is only valid with --transport http")
+	}
 	if err := validateMCPCommandOptions(mcpTransport, mcpListen); err != nil {
 		return err
 	}
@@ -81,12 +89,20 @@ func runMCP(cmd *cobra.Command) (retErr error) {
 		if err != nil {
 			return err
 		}
-		token, err := resolveMCPHTTPBearer(layout.Root)
+		cfg, err := config.Load(layout.Root)
+		if err != nil {
+			return err
+		}
+		if err := cfg.Validate(); err != nil {
+			return err
+		}
+		token, err := resolveMCPHTTPBearerConfig(cfg)
 		if err != nil {
 			return err
 		}
 		return docmcp.ServeHTTP(ctx, server, mcpListen, docmcp.HTTPOptions{
 			BearerToken: token, Logger: logger,
+			AllowedHosts: append(append([]string(nil), cfg.MCP.HTTP.AllowedHosts...), mcpAllowedHosts...),
 		})
 	default:
 		panic("validated MCP transport became invalid")
@@ -118,6 +134,10 @@ func resolveMCPHTTPBearer(root string) (string, error) {
 	if err := cfg.Validate(); err != nil {
 		return "", err
 	}
+	return resolveMCPHTTPBearerConfig(cfg)
+}
+
+func resolveMCPHTTPBearerConfig(cfg config.Config) (string, error) {
 	reference := cfg.MCP.HTTP.CredentialBinding
 	if reference == "" {
 		return "", errors.New("[mcp.http] credential_binding is required for HTTP")
@@ -127,8 +147,11 @@ func resolveMCPHTTPBearer(root string) (string, error) {
 	if !ok {
 		return "", errors.New("MCP HTTP credential binding is not configured")
 	}
-	token, ok := os.LookupEnv(binding.EnvironmentVariable)
-	if !ok || !docmcp.ValidHTTPBearerToken(token) {
+	token, selected, err := config.EnvironmentSecret(binding.EnvironmentVariable)
+	if err != nil {
+		return "", err
+	}
+	if !selected || !docmcp.ValidHTTPBearerToken(token) {
 		return "", errors.New("MCP HTTP credential is unavailable")
 	}
 	return token, nil
@@ -136,7 +159,8 @@ func resolveMCPHTTPBearer(root string) (string, error) {
 
 func init() {
 	mcpCmd.Flags().StringVar(&mcpTransport, "transport", "stdio", "transport: stdio or http")
-	mcpCmd.Flags().StringVar(&mcpListen, "listen", "", "explicit loopback IP and port for HTTP")
+	mcpCmd.Flags().StringVar(&mcpListen, "listen", "", "explicit IP and port for authenticated HTTP (plain HTTP requires a trusted network)")
+	mcpCmd.Flags().StringSliceVar(&mcpAllowedHosts, "allowed-host", nil, "additional HTTP Host values, optionally with ports (repeatable)")
 	mcpCmd.Flags().BoolVar(&mcpAllowProcessing, "allow-processing", false,
 		"expose guarded start_processing (still requires prior operator consent)")
 	mcpCmd.Flags().BoolVar(&mcpAllowPackageWrites, "allow-package-writes", false,
