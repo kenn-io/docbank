@@ -177,11 +177,15 @@ physical identity column deliberately differs from the mandatory v0.9 startup
 query, so the unversioned released binary also fails closed rather than
 silently writing with obsolete storage rules.
 
-For a v0.9.0 source the recovery copy is `<database>.v0.9.0.bak`. It contains
-private vault metadata and inherits the vault's owner-private boundary. Keep it
-until the upgraded vault and a fresh backup have been verified. It may then be
-removed while the daemon is stopped. Blob files are neither duplicated nor
-recompressed by this cutover.
+For a v0.9.0 source the recovery copy is `<database>.v0.9.0.bak`. For a
+v0.15.0 source it is `<database>.schema-v28.bak`. If v0.15.1 refused that vault
+with `schema version 28 has no supported JSONL cutover`, open it with v0.15.2
+or later to complete the upgrade.
+
+The recovery copy contains private vault metadata and inherits the vault's
+owner-private boundary. Keep it until the upgraded vault and a fresh backup
+have been verified. It may then be removed while the daemon is stopped. Blob
+files are neither duplicated nor recompressed by this cutover.
 
 File nodes and content versions cross-reference one another: a file must have a
 current version belonging to that node, while directories cannot carry one.

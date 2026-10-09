@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-09
 title: Agent integration guide
 description: Connect an agent to Docbank using its OpenAPI contract, authenticated HTTP API, revisions, and dry-run maintenance operations.
 ---
@@ -77,6 +77,22 @@ can discover them before authentication is configured.
 The rendered documentation is available to people at directory routes such as
 `/agents/integration/`. The same maintained source is published for agents at
 the sibling `/agents/integration.md` URL.
+
+## Search transcripts for exact recordings
+
+Use `POST /api/v1/search` with `media_sources` when a transcript match must
+identify a particular recording, such as an audio message. Each selector names
+`source_id`, `source_version_id`, and `content_version_id`; include its content
+version in the request's `fence`. Use `lexical` or `auto` mode without reranking.
+The [search API reference](../architecture/http-api.md#coverage-and-source-fenced-search)
+defines the selector limits and optional supplied-input restrictions.
+
+Require `media_source_selection: true` in the response. Use the evidence's
+`media_sources` to open the selected recording, since shared audio can belong
+to more than one source. Docbank selects the covering transcripts before
+ranking and limits. Removed or changed recordings leave coverage incomplete
+without crowding out valid matches. Read the exact transcript below to verify
+the evidence's build and supplied-input identity.
 
 ## Read an exact media transcript
 

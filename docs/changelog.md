@@ -10,6 +10,50 @@ pre-1.0, so public interfaces may still evolve, but vaults created by v0.9.0 and
 later are within the
 [storage compatibility boundary](architecture/storage.md#released-upgrades).
 
+## [v0.15.2](https://github.com/kenn-io/docbank/releases/tag/v0.15.2) — Unreleased
+
+### New features
+
+- Search transcripts for exact recordings through `/api/v1/search`. When
+  recordings share the same audio, matches identify the selected recording so
+  callers open the right message. Removed or changed recordings no longer crowd
+  out valid results. See [exact-recording search](agents/integration.md#search-transcripts-for-exact-recordings).
+- Anonymous usage reporting now includes active session duration in four
+  buckets: under 1 minute, 1 to 5 minutes, 5 to 30 minutes, and over 30 minutes.
+  Time spent in background browser tabs does not count.
+
+### Improvements
+
+- Resolve nested document paths faster in CLI and HTTP requests.
+- Load collection member pages faster, with larger gains for documents stored
+  at the root.
+- Expanded and reranked document searches spend less time checking result paths.
+- Import identical content under different filenames faster while keeping the
+  documents distinct.
+- Follow a new [configuration recipe for optional EmbeddingGemma 2 text retrieval](configuration.md#optional-embeddinggemma-2-text-recipe)
+  with a separately provisioned model service. Actual model inference remains
+  untested.
+
+### Bug fixes
+
+- Open document stores created with v0.15.0 again after the v0.15.1 upgrade
+  error. The upgrade keeps a `.schema-v28.bak` recovery copy and preserves
+  existing processing consent and pending work. Upgrades from v0.12.0 through
+  v0.14.0 also retain pending storage moves and cleanup records. See
+  [released upgrades](architecture/storage.md#released-upgrades).
+- Backup and restore read existing packed content larger than 512 MiB on 64-bit
+  systems without rewriting it.
+- Format inventory keeps metadata extraction marked as qualified when Docbank
+  is built with a newer Go toolchain. Tested parsers no longer lose that status
+  solely because the Go version changes.
+
+### Contributors
+
+Thank you to [Rod Boev (@rodboev)](https://github.com/rodboev),
+[Rusty Shackleford (@salmonumbrella)](https://github.com/salmonumbrella), and
+[Wes McKinney (@wesm)](https://github.com/wesm) for their contributions to v0.15.2.
+See the [full contribution history](https://github.com/kenn-io/docbank/compare/v0.15.1...v0.15.2).
+
 ## [v0.15.1](https://github.com/kenn-io/docbank/releases/tag/v0.15.1) — 2026-10-08
 
 ### New features

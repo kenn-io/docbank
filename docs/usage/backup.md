@@ -11,6 +11,10 @@ their retained derivatives, whether stored individually or in a pack. It
 excludes unreferenced bytes waiting for garbage collection. Restore verifies
 the snapshot before publishing a usable vault at a separate target.
 
+On 64-bit systems, backup and restore can read existing packed content larger
+than 512 MiB without rewriting the packs. Reading older compressed content can
+require memory proportional to the full uncompressed file size.
+
 A repository is a directory of backup files that Docbank adds to without
 changing existing files. Each snapshot has a manifest, the record of which
 files belong to it. Repeated captures reuse unchanged content by hash.
