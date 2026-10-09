@@ -7,7 +7,7 @@ export interface TimelineYear { key: string; count: number; months: TimelineMont
 
 export function timelineYears(facet: CaptureDayFacet): TimelineYear[] {
   const years = new Map<string, TimelineYear>();
-  for (const day of [...facet.values].sort((a, b) => b.key.localeCompare(a.key))) {
+  for (const day of facet.values) {
     const yearKey = day.key.slice(0, 4);
     let year = years.get(yearKey);
     if (!year) { year = { key: yearKey, count: 0, months: [] }; years.set(yearKey, year); }

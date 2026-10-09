@@ -39,8 +39,10 @@ the same position when further results remain.
 Choose **Timeline** to see counts for every recorded capture day in the current
 scope, including days beyond the loaded grid. The year ribbon shows each year's
 total and relative density. Choose a year, month, or day to open its photos.
-The grid pages within that range. Each choice clears selection and starts at
-the top. **Clear date** restores the full scope. Counts stay tied to the full
+The grid pages within that range. Once its first page arrives, the grid clears
+selection and starts at the top. A failed date change keeps the previous photos,
+date, selection, and scroll position. **Retry** requests the chosen range again.
+**Clear date** restores the full scope. Counts stay tied to the full
 scope until you refresh.
 
 Dates use the selected display file's recorded calendar day, so a capture near

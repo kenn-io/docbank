@@ -1,11 +1,74 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
-import { Photos } from "./photos.svelte.js";
+import { Photos, photoQuery } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photo } from "./photo-test-fixtures.js";
+import { captureDateQuery } from "./photoTimeline.js";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
+
+it.each([
+  ["2024", "2025-12-15", /^2024/, "2024-01-01", "2025-01-01", "in 2024"],
+  ["2024-02", "2024-02-28", /^February 2024/, "2024-02-01", "2024-03-01", "in February 2024"],
+  ["2024-02-29", "2024-02-28", /^2024-02-29 ·/, "2024-02-29", "2024-03-01", "on 2024-02-29"],
+  ["2025-12", "2025-12-15", /^December 2025/, "2025-12-01", "2026-01-01", "in December 2025"],
+  ["9999", "2025-12-15", /^9999/, "9999-01-01", undefined, "in 9999"],
+])("stages timeline period %s, retains the grid on failure and restarts paging on Retry", async (date, previous, name, after, before, label) => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true; photos.view = "timeline"; photos.date = previous; photos.query = captureDateQuery(photoQuery, previous);
+  photos.items = Array.from({ length: 60 }, (_, index) => photo(index + 1)); photos.total = 100; photos.cursor = "old-page";
+  photos.timeline = { dimension: "capture_day", available: true, total: 210, missing: 10, other: 0, values: [
+    { key: "9999-12-31", label: "9999-12-31", count: 10, selected: false },
+    { key: "2025-12-15", label: "2025-12-15", count: 100, selected: false },
+    { key: "2024-02-29", label: "2024-02-29", count: 100, selected: false },
+  ] };
+  let finish!: (response: Response) => void;
+  const replacement = Array.from({ length: 60 }, (_, index) => photo(index + 101, `${after}T12:00:00`));
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: replacement, total: 100, next_cursor: "new-page" })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(200)], total: 100 })));
+  vi.stubGlobal("fetch", fetcher);
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const view = render(PhotosWorkspace, { photos, cache });
+  const cell = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  await fireEvent.click(cell);
+  const scroll = screen.getByTestId("photo-scroll");
+  scroll.scrollTop = 500; await fireEvent.scroll(scroll);
+  const heading = document.querySelector(".library-title span")!.textContent;
+  const button = screen.getByRole(date.length === 4 ? "navigation" : "region", { name: date.length === 4 ? "Timeline years" : "Photo timeline" });
+  await fireEvent.click([...button.querySelectorAll("button")].find(button => name.test(button.textContent!.trim()))!);
+  expect(document.querySelector(".library-title span")!.textContent).toBe(heading);
+  expect(photos.date).toBe(previous);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  expect(scroll.scrollTop).toBe(500);
+  const filters = { capture_after: after, ...(before ? { capture_before: before } : {}) };
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ query: { filters } });
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).cursor).toBeUndefined();
+  finish(new Response(JSON.stringify({ detail: "Date unavailable" }), { status: 503 }));
+  await screen.findByText("Date unavailable");
+  expect(document.querySelector(".library-title span")!.textContent).toBe(heading);
+  expect(photos.items[0].asset_id).toBe("photo-1");
+  expect(photos.cursor).toBe("old-page");
+  expect(photos.date).toBe(previous);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  expect(scroll.scrollTop).toBe(500);
+  await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await screen.findByText(`100 photos ${label} · 60 loaded`);
+  expect(photos.date).toBe(date);
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  expect(scroll.scrollTop).toBe(0);
+  expect(screen.getByText("210 photos in scope · 10 undated")).toBeTruthy();
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(JSON.parse(fetcher.mock.calls[1][1].body).cursor).toBeUndefined();
+  await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+  await screen.findByText(`100 photos ${label} · 61 loaded`);
+  expect(JSON.parse(fetcher.mock.calls[2][1].body)).toMatchObject({ cursor: "new-page", query: { filters } });
+  view.unmount(); photos.dispose(); await cache.dispose();
+});
 
 it("keeps loaded photos visible on paging failure and selects with touch checkboxes", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -194,11 +257,13 @@ it("switches Grid and Timeline, seeks an empty day and clears its date", async (
   await fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
   expect(screen.getByRole("button", { name: "Timeline", pressed: true })).toBeTruthy();
   await fireEvent.click(screen.getByRole("navigation", { name: "Timeline years" }).querySelector("button")!);
-  expect(screen.getByText("Loading photos in 2024")).toBeTruthy();
+  expect(screen.getByText("1 photos · 1 loaded")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Select Photo 1.jpg" })).toBeTruthy();
   expect(screen.queryByText("0 photos in 2024 · 0 loaded")).toBeNull();
   finish(new Response(JSON.stringify({ detail: "Try again" }), { status: 503 }));
   await screen.findByText("Try again");
-  expect(screen.getByText("Photos in 2024")).toBeTruthy();
+  expect(screen.getByText("1 photos · 1 loaded")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Select Photo 1.jpg" })).toBeTruthy();
   expect(screen.queryByText("0 photos in 2024 · 0 loaded")).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: /^Retry$/ }));
   expect(await screen.findByText("No photos in this year")).toBeTruthy();

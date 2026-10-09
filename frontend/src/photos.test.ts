@@ -145,6 +145,36 @@ it("keeps earlier pages on failure, waits for Retry, and reuses the failed curso
   photos.dispose();
 });
 
+it.each(["2024", undefined])("resumes interrupted date navigation to %s and keeps the accepted date on failure", async date => {
+  let finish!: (value: Response) => void;
+  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1)], "old"))
+    .mockImplementationOnce(() => new Promise(resolve => finish = resolve))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Try again" }), { status: 503 }))
+    .mockResolvedValueOnce(response([photo(2)], "new"));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.selectDate("2025-01-01");
+  photos.selectLoaded(); photos.scrollTop = 500;
+  const interrupted = photos.selectDate(date);
+  photos.cancelPending();
+  await photos.resume();
+  finish(response([photo(99)])); await interrupted;
+  expect(photos.error).toBe("Try again");
+  expect(photos.date).toBe("2025-01-01");
+  expect(photos.items[0].asset_id).toBe("photo-1");
+  expect(photos.cursor).toBe("old");
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  expect(photos.scrollTop).toBe(500);
+  await photos.retry();
+  expect(photos.date).toBe(date);
+  expect(photos.items[0].asset_id).toBe("photo-2");
+  expect(photos.cursor).toBe("new");
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  expect(photos.scrollTop).toBe(0);
+  expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual(JSON.parse(fetcher.mock.calls[3][1].body));
+  photos.dispose();
+});
+
 it("stages multiple replacement pages and preserves accepted rows on a failed refresh", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1), photo(2)], "next"))
     .mockResolvedValueOnce(response([photo(3)], "old-tail"))

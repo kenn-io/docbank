@@ -37,7 +37,8 @@ export class Photos {
   selection = $state<SelectionState<string>>(clearSelection<string>());
   started = $state(false);
   private expired = false;
-  private replacement: "refresh" | "expiry" | undefined;
+  private replacement: "refresh" | "expiry" | "date" | undefined;
+  private replacementDate: string | undefined;
   private controller = new AbortController();
   private disposed = false;
 
@@ -93,7 +94,7 @@ export class Photos {
   }
 
   retry(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.replacement || this.expired) return this.replace(this.replacement ?? "expiry", preserve);
+    if (this.replacement || this.expired) return this.replace(this.replacement ?? "expiry", preserve, this.replacementDate);
     this.error = "";
     this.expired = false;
     return this.loadMore(preserve);
@@ -134,31 +135,18 @@ export class Photos {
   }
 
   selectDate(date?: string) {
-    const query = captureDateQuery(photoQuery, date);
-    this.controller.abort();
-    this.controller = new AbortController();
-    this.query = query;
-    this.date = date;
-    this.items = [];
-    this.total = 0;
-    this.cursor = undefined;
-    this.started = false;
-    this.loading = false;
-    this.error = "";
-    this.expired = false;
-    this.replacement = undefined;
-    this.scrollTop = 0;
-    this.clearSelection();
-    return this.loadMore();
+    return this.replace("date", undefined, date);
   }
 
-  private async replace(mode: "refresh" | "expiry", preserve?: () => (() => Promise<void>) | undefined) {
+  private async replace(mode: "refresh" | "expiry" | "date", preserve?: () => (() => Promise<void>) | undefined, date?: string) {
     if (this.disposed) return;
     this.controller.abort();
     this.controller = new AbortController();
     const controller = this.controller;
     let signal = controller.signal;
     this.replacement = mode;
+    this.replacementDate = date;
+    const query = mode === "date" ? captureDateQuery(photoQuery, date) : this.query;
     this.loading = true;
     this.error = "";
     const count = this.items.length;
@@ -170,22 +158,27 @@ export class Photos {
     try {
       do {
         signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
-        const page = await listPhotoAssets({ query: this.query, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
+        const page = await listPhotoAssets({ query, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
         if (signal.aborted) throw signal.reason;
         const reachedPreviously = reachedPrefix;
         for (const item of page.items) candidate.set(item.asset_id, item);
         reachedPrefix ||= (!!tail && candidate.has(tail)) || candidate.size >= count;
         total = page.total;
         cursor = page.next_cursor;
-        if (reachedPrefix && (mode === "refresh" || reachedPreviously)) break;
+        if (mode === "date" || reachedPrefix && (mode === "refresh" || reachedPreviously)) break;
       } while (cursor);
       if (signal.aborted) throw signal.reason;
-      const restore = preserve?.();
+      const restore = mode === "date" ? undefined : preserve?.();
       this.items = [...candidate.values()];
       this.total = total;
       this.cursor = cursor;
       this.started = true;
-      this.selection = reconcileIDSelection(this.selection, new Set(candidate.keys()));
+      if (mode === "date") {
+        this.query = query;
+        this.date = date;
+        this.scrollTop = 0;
+        this.clearSelection();
+      } else this.selection = reconcileIDSelection(this.selection, new Set(candidate.keys()));
       this.expired = false;
       this.replacement = undefined;
       await restore?.();

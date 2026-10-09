@@ -35,8 +35,20 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
     const years = page.getByRole("navigation", { name: "Timeline years" });
     await years.getByRole("button", { name: /^2026/ }).click();
     await expect(heading).toHaveText("108 photos in 2026 · 108 loaded");
+    const scroll = page.getByTestId("photo-scroll");
+    await scroll.getByRole("checkbox").first().check();
+    await scroll.evaluate(element => element.scrollTop = 400);
+    await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBe(400);
+    await page.route("**/api/v1/photos/assets/query", route => route.abort(), { times: 1 });
     await years.getByRole("button", { name: /^2025/ }).click();
+    await expect(page.locator(".photo-error")).toBeVisible();
+    await expect(heading).toHaveText("108 photos in 2026 · 108 loaded");
+    await expect(page.getByText("1 selected photo", { exact: true })).toBeVisible();
+    await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBe(400);
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
     await expect(heading).toHaveText("106 photos in 2025 · 106 loaded");
+    await expect(page.getByText("1 selected photo", { exact: true })).toHaveCount(0);
+    await expect.poll(() => scroll.evaluate(element => element.scrollTop)).toBe(0);
     await page.getByRole("button", { name: "December 2025", exact: false }).click();
     await expect(heading).toHaveText("27 photos in December 2025 · 27 loaded");
     await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
@@ -55,6 +67,12 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-timeline-day-${theme}.png`), clip: { x: 0, y: 0, width: 1440, height: 640 }, animations: "disabled" });
     }
+    await years.getByRole("button", { name: /^2024/ }).click();
+    await page.getByRole("button", { name: "February 2024", exact: false }).click();
+    await expect(heading).toHaveText("26 photos in February 2024 · 26 loaded");
+    await page.getByRole("button", { name: /^2024-02-29 ·/ }).click();
+    await expect(heading).toHaveText("26 photos on 2024-02-29 · 26 loaded");
+    await expect(page.getByText(/10,000 photos in scope/)).toBeVisible();
     await page.getByRole("button", { name: "Clear date", exact: true }).click();
     await expect(page.getByText(/10,000 photos ·/)).toBeVisible();
     await page.getByRole("button", { name: "Grid", exact: true }).click();

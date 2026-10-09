@@ -8,8 +8,8 @@ afterEach(cleanup);
 
 it("uses recorded days and full counts for years and months", () => {
   const years = timelineYears({ dimension: "capture_day", available: true, total: 904, missing: 4, other: 0, values: [
-    { key: "2024-02-29", label: "2024-02-29", count: 300, selected: false },
     { key: "2025-01-01", label: "2025-01-01", count: 500, selected: false },
+    { key: "2024-02-29", label: "2024-02-29", count: 300, selected: false },
     { key: "2024-02-28", label: "2024-02-28", count: 100, selected: false },
   ] });
   expect(years.map(year => [year.key, year.count])).toEqual([["2025", 500], ["2024", 400]]);
