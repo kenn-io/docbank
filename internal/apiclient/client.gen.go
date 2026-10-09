@@ -21830,11 +21830,30 @@ const (
 	VerifiedEmpty                            RenditionTextReceiptState = "verified_empty"
 )
 
+type SavedQueryFiltersSchemaFlags string
+
+const (
+	Empty  SavedQueryFiltersSchemaFlags = ""
+	Pick   SavedQueryFiltersSchemaFlags = "pick"
+	Reject SavedQueryFiltersSchemaFlags = "reject"
+)
+
 type SavedQueryFiltersSchemaKinds string
 
 const (
 	SavedQueryFiltersSchemaKindsPhoto SavedQueryFiltersSchemaKinds = "photo"
 	SavedQueryFiltersSchemaKindsVideo SavedQueryFiltersSchemaKinds = "video"
+)
+
+type SavedQueryFiltersSchemaLabels string
+
+const (
+	Blue                               SavedQueryFiltersSchemaLabels = "blue"
+	Green                              SavedQueryFiltersSchemaLabels = "green"
+	Purple                             SavedQueryFiltersSchemaLabels = "purple"
+	Red                                SavedQueryFiltersSchemaLabels = "red"
+	SavedQueryFiltersSchemaLabelsEmpty SavedQueryFiltersSchemaLabels = ""
+	Yellow                             SavedQueryFiltersSchemaLabels = "yellow"
 )
 
 type SavedQueryFiltersSchemaMediaFamilies string
@@ -25268,6 +25287,10 @@ type PhotoAlbumSummary = api.PhotoAlbumSummary
 
 type PhotoAsset = api.PhotoAsset
 
+type PhotoAuthored = store.PhotoAuthored
+
+type PhotoAuthoredSnapshot = store.PhotoAuthoredSnapshot
+
 type PhotoBrowsePage = api.PhotoBrowsePage
 
 type PhotoBrowseRequest = api.PhotoBrowseRequest
@@ -25576,6 +25599,7 @@ type SavedQueryFiltersSchema struct {
 	ExcludePaths         []string                               `json:"exclude_paths,omitempty"`
 	ExcludeTagIds        []uuid.UUID                            `json:"exclude_tag_ids,omitempty"`
 	Extensions           []string                               `json:"extensions,omitempty"`
+	Flags                []SavedQueryFiltersSchemaFlags         `json:"flags,omitempty"`
 	FocusMax             *string                                `json:"focus_max,omitempty"`
 	FocusMin             *string                                `json:"focus_min,omitempty"`
 	FramingMax           *string                                `json:"framing_max,omitempty"`
@@ -25585,6 +25609,7 @@ type SavedQueryFiltersSchema struct {
 	IsoMax               *int64                                 `json:"iso_max,omitempty"`
 	IsoMin               *int64                                 `json:"iso_min,omitempty"`
 	Kinds                []SavedQueryFiltersSchemaKinds         `json:"kinds,omitempty"`
+	Labels               []SavedQueryFiltersSchemaLabels        `json:"labels,omitempty"`
 	Lenses               []string                               `json:"lenses,omitempty"`
 	MediaFamilies        []SavedQueryFiltersSchemaMediaFamilies `json:"media_families,omitempty"`
 	MimeTypes            []string                               `json:"mime_types,omitempty"`
@@ -25592,6 +25617,8 @@ type SavedQueryFiltersSchema struct {
 	ModifiedBefore       *time.Time                             `json:"modified_before,omitempty"`
 	NoTags               *bool                                  `json:"no_tags,omitempty"`
 	Paths                []string                               `json:"paths,omitempty"`
+	RatingMax            *int64                                 `json:"rating_max,omitempty"`
+	RatingMin            *int64                                 `json:"rating_min,omitempty"`
 	SetIds               []uuid.UUID                            `json:"set_ids,omitempty"`
 	SizeMax              *int64                                 `json:"size_max,omitempty"`
 	SizeMin              *int64                                 `json:"size_min,omitempty"`

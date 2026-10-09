@@ -194,7 +194,7 @@ func (s *Store) EditPhotoAuthored(ctx context.Context, targets []PhotoAuthoredTa
 func (s *Store) EditPhotoPair(ctx context.Context, assetID string, revision int64, targets []PhotoAuthoredTarget) (PhotoAuthoredReceipt, error) {
 	var result PhotoAuthoredReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		asset, err := photoAssetForMutationTx(ctx, tx, assetID, revision)
+		asset, err := s.photoAssetForMutationTx(ctx, tx, assetID, revision)
 		if err != nil {
 			return err
 		}

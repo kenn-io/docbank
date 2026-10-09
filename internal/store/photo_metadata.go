@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -50,6 +51,43 @@ type metadataPhotoFile struct {
 	Role        string  `json:"role" db:"role"`
 	SidecarOfID *string `json:"sidecar_of_file_id" db:"sidecar_of_file_id"`
 	CreatedAt   string  `json:"created_at" db:"created_at"`
+}
+
+type metadataPhotoFileBeforeAuthored struct {
+	Type        string  `json:"type"`
+	FileID      string  `json:"file_id" db:"file_id"`
+	AssetID     string  `json:"asset_id" db:"asset_id"`
+	NodeID      int64   `json:"node_id" db:"node_id"`
+	Role        string  `json:"role" db:"role"`
+	SidecarOfID *string `json:"sidecar_of_file_id" db:"sidecar_of_file_id"`
+	CreatedAt   string  `json:"created_at" db:"created_at"`
+}
+
+func (v metadataPhotoFileBeforeAuthored) current() metadataPhotoFile {
+	return metadataPhotoFile{Type: v.Type, FileID: v.FileID, AssetID: new(v.AssetID), NodeID: v.NodeID, Role: v.Role, SidecarOfID: v.SidecarOfID, CreatedAt: v.CreatedAt, Revision: 1}
+}
+
+var photoFileBeforeAuthoredMetadata = newMetadataTable(metadataTable[metadataPhotoFileBeforeAuthored]{record: metadataPhotoFileBeforeAuthored{Type: metadataPhotoFileType}, table: "photo_files", suffix: "ORDER BY file_id", validate: func(v metadataPhotoFileBeforeAuthored) error { return validatePhotoFileMetadataRecord(v.current()) }, checkExport: true})
+
+func normalizePhotoFileMetadata(raw jsontext.Value) (jsontext.Value, error) {
+	var fields map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	for _, name := range []string{"revision", "rating", "flag", "label", "caption", "creator", "copyright", "rotation"} {
+		if _, exists := fields[name]; exists {
+			return raw, nil
+		}
+	}
+	required, nullable := photoFileBeforeAuthoredMetadata.fields()
+	if err := requireMetadataFields(raw, required, nullable); err != nil {
+		return nil, err
+	}
+	var old metadataPhotoFileBeforeAuthored
+	if err := json.Unmarshal(raw, &old, json.RejectUnknownMembers(true)); err != nil {
+		return nil, err
+	}
+	return json.Marshal(old.current(), json.Deterministic(true))
 }
 
 type metadataPhotoSettings struct {
@@ -112,7 +150,7 @@ var photoMetadataTables = []metadataRecordCodec{
 // photoMetadataTablesV28 exports the photo records of v0.15.0, which predate
 // photo sets.
 var photoMetadataTablesV28 = []metadataRecordCodec{
-	photoAssetMetadata, photoFileMetadata, photoSettingsMetadata,
+	photoAssetMetadata, photoFileBeforeAuthoredMetadata, photoSettingsMetadata,
 	newMetadataTable(metadataTable[metadataPhotoReceiptV28]{record: metadataPhotoReceiptV28{Type: metadataPhotoReceiptType},
 		table: "photo_change_receipts", suffix: "ORDER BY receipt_id", validate: func(v metadataPhotoReceiptV28) error {
 			return validatePhotoReceiptMetadataRecord(metadataPhotoReceipt{
@@ -257,7 +295,7 @@ func validatePhotoMetadataStateForLayout(ctx context.Context, tx metadataQuerier
 			return fmt.Errorf("validating photo metadata: %w", err)
 		}
 	}
-	if layout.schemaVersion >= 30 {
+	if layout.schemaVersion >= 32 {
 		if err := validatePhotoAuthoredReferences(ctx, tx); err != nil {
 			return err
 		}
@@ -342,14 +380,17 @@ func validatePhotoSetGraph(ctx context.Context, q metadataQuerier) error {
 }
 
 func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
-	if version >= photoHiddenStorageSchemaVersion {
-		return append(append([]metadataRecordCodec(nil), photoMetadataTables...), photoHiddenMetadataTables...)
-	}
 	tables := photoMetadataTables
 	if version < photoSetsStorageSchemaVersion {
 		tables = photoMetadataTablesV28
 	}
 	tables = append([]metadataRecordCodec(nil), tables...)
+	if version < 32 {
+		tables[1] = photoFileBeforeAuthoredMetadata
+	}
+	if version >= 31 {
+		return append(tables, photoHiddenMetadataTables...)
+	}
 	for i, table := range tables {
 		if table.kind() == metadataPhotoAssetType {
 			tables[i] = photoAssetMetadataBeforeHidden
