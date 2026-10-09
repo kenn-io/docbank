@@ -162,7 +162,7 @@ func TestEnsureReplacesPrePhotoTrashDaemon(t *testing.T) {
 					_ = json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: Service, Version: version.Version, PID: rec.PID})
 				} else if r.URL.Path == daemonauth.ChallengePath {
 					nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
-					require.NoError(t, err)
+					assert.NoError(t, err)
 					_ = json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(rec.Metadata[metaShutdownToken], nonce)})
 				} else if started && r.URL.Path == "/api/v1/photos/assets/"+assetID+"/trash" {
 					assert.Equal(t, http.MethodPost, r.Method)

@@ -263,6 +263,7 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string
 	if err != nil {
 		return "", nil, false, err
 	}
+	defer rows.Close()
 	type candidate struct {
 		id    int64
 		photo bool
@@ -272,14 +273,12 @@ func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string
 	for rows.Next() {
 		var item candidate
 		if err := rows.Scan(&item.id, &item.photo); err != nil {
-			_ = rows.Close()
 			return "", nil, false, err
 		}
 		candidates = append(candidates, item)
 		eligible[item.id] = true
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
 		return "", nil, false, err
 	}
 	if err := rows.Close(); err != nil {
