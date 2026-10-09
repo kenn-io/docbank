@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,11 +13,23 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-const photoHiddenCookie = "docbank-hidden"
+func photoHiddenCookie(host string) string {
+	return fmt.Sprintf("docbank-hidden-%x", sha256.Sum256([]byte(host)))
+}
 
 type PhotoHiddenPasscodeRequest struct {
 	Passcode    string `json:"passcode,omitempty" maxLength:"1024"`
 	NewPasscode string `json:"new_passcode,omitempty" maxLength:"1024"`
+}
+
+type photoHiddenInput struct {
+	Body PhotoHiddenPasscodeRequest
+	host string
+}
+
+func (in *photoHiddenInput) Resolve(ctx huma.Context) []error {
+	in.host = ctx.Host()
+	return nil
 }
 
 type photoHiddenOutput struct {
@@ -24,8 +37,8 @@ type photoHiddenOutput struct {
 	Body      store.PhotoHiddenState
 }
 
-func hiddenCookie(token string, expires time.Time) string {
-	cookie := &http.Cookie{Name: photoHiddenCookie, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 300, Expires: expires} //nolint:gosec // The daemon serves loopback HTTP, which cannot deliver Secure cookies.
+func hiddenCookie(host, token string, expires time.Time) string {
+	cookie := &http.Cookie{Name: photoHiddenCookie(host), Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 300, Expires: expires} //nolint:gosec // The daemon serves loopback HTTP, which cannot deliver Secure cookies.
 	if token == "" {
 		cookie.MaxAge = -1
 	}
@@ -41,7 +54,7 @@ func hiddenError(err error) error {
 
 func photoHiddenMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if cookie, err := r.Cookie(photoHiddenCookie); err == nil {
+		if cookie, err := r.Cookie(photoHiddenCookie(r.Host)); err == nil {
 			r = r.WithContext(store.WithPhotoHiddenToken(r.Context(), cookie.Value))
 		}
 		if len(r.URL.Path) >= len("/api/v1/photos/") && r.URL.Path[:len("/api/v1/photos/")] == "/api/v1/photos/" {
@@ -58,7 +71,7 @@ func registerPhotoHiddenRoutes(api huma.API, d Deps, g *gate) {
 		return &photoHiddenOutput{Body: state}, hiddenError(err)
 	})
 	for _, action := range []string{"setup", "change", "disable", "unlock", "lock", "reset"} {
-		huma.Register(api, huma.Operation{OperationID: action + "PhotoHidden", Method: http.MethodPost, Path: "/api/v1/photos/hidden/" + action, Summary: action + " hidden photos access", MaxBodyBytes: 16 << 10}, func(ctx context.Context, in *struct{ Body PhotoHiddenPasscodeRequest }) (*photoHiddenOutput, error) {
+		huma.Register(api, huma.Operation{OperationID: action + "PhotoHidden", Method: http.MethodPost, Path: "/api/v1/photos/hidden/" + action, Summary: action + " hidden photos access", MaxBodyBytes: 16 << 10}, func(ctx context.Context, in *photoHiddenInput) (*photoHiddenOutput, error) {
 			var token string
 			var expiry time.Time
 			mutate := func() error {
@@ -93,7 +106,7 @@ func registerPhotoHiddenRoutes(api huma.API, d Deps, g *gate) {
 			}
 			out := &photoHiddenOutput{Body: state}
 			if action == "unlock" || action == "lock" || action == "change" || action == "disable" || action == "reset" {
-				out.SetCookie = hiddenCookie(token, expiry)
+				out.SetCookie = hiddenCookie(in.host, token, expiry)
 			}
 			return out, nil
 		})

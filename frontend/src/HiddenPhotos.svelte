@@ -25,7 +25,7 @@
   let reading = $state(true);
   let actionPending = $state(false);
   let concealingAction = $state(false);
-  const busy = $derived(reading || actionPending);
+  const busy = $derived(actionPending);
   const lockoutDescription = $derived(hiddenState.locked_until || lockoutError ? "hidden-lockout" : undefined);
   let remaining = $state(0);
   let refreshController = new AbortController();
@@ -73,7 +73,7 @@
     return !value ? empty : new TextEncoder().encode(value).length > 1024 ? "Use 1 to 1,024 bytes." : "";
   }
   async function action(kind: "enter" | "lock" | "change" | "disable") {
-    if (actionPending || kind !== "lock" && reading) return;
+    if (actionPending) return;
     actionError = "";
     let invalidField: string | undefined;
     if (kind === "enter") {

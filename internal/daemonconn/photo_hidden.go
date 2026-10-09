@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -47,7 +48,7 @@ func (c *Connection) PhotoHidden(ctx context.Context, action, passcode, next str
 	var cookie string
 	if action == "unlock" {
 		for _, value := range response.Cookies() {
-			if value.Name == "docbank-hidden" {
+			if strings.HasPrefix(value.Name, "docbank-hidden-") {
 				cookie = value.Name + "=" + value.Value
 				break
 			}
