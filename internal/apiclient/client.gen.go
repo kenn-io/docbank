@@ -24555,7 +24555,7 @@ type PhotoPreviewSlot = api.PhotoPreviewSlot
 
 type PhotoPreviewSlots = api.PhotoPreviewSlots
 
-type PhotoQuality = api.PhotoQuality
+type PhotoQualitySignals = document.PhotoQualitySignals
 
 type PhotoSettings = api.PhotoSettings
 

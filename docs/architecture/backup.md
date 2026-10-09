@@ -87,7 +87,7 @@ rebuilds document–person links from those records after rebuilding document
 events. In audited vaults, this rebuild does not create people or candidates.
 Actors without a retained match remain unresolved.
 
-It omits rebuildable full-text and vector indexes and physical pack mappings.
+It omits rebuildable full-text and vector indexes, `photo_quality_signals`, and physical pack mappings.
 Restore rebuilds full-text search and vector indexes from retained records.
 When a vector source cannot be rebuilt locally, restore records that missing
 coverage instead of calling an external provider. Restore grants physical

@@ -1,10 +1,6 @@
 package document
 
-import (
-	"crypto/sha256"
-	"encoding/hex"
-	"fmt"
-)
+import "fmt"
 
 const (
 	// VisualPreviewMaxEdgePixels bounds the large built-in preview.
@@ -30,11 +26,6 @@ func BuiltInVisualPreviewRecipe(size string) (VisualPreviewRecipeV1, error) {
 		return VisualPreviewRecipeV1{}, fmt.Errorf("unknown visual preview size %q", size)
 	}
 	descriptor := fmt.Sprintf(VisualPreviewProcessorDescriptor, recipe.MaxEdgePixels, VisualPreviewJPEGQuality)
-	recipe.ProcessorFingerprint = previewProcessorFingerprint(descriptor)
+	recipe.ProcessorFingerprint = sha256Hex([]byte(descriptor))
 	return recipe, nil
-}
-
-func previewProcessorFingerprint(value string) string {
-	digest := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(digest[:])
 }

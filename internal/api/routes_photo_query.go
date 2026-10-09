@@ -238,5 +238,5 @@ func photoQualityWire(row store.PhotoBrowseRow) *PhotoQuality {
 		preview.State == "unsupported" || preview.State == "failed" {
 		state = "unavailable"
 	}
-	return &PhotoQuality{State: state, Signals: (*PhotoQualitySignals)(row.Quality)}
+	return &PhotoQuality{State: state, Signals: row.Quality}
 }

@@ -384,7 +384,7 @@ overrides remain unchanged. Human graph, display, exclusion, and preference
 changes append bounded immutable `photo_change_receipts` rows. No-op mutations
 keep their revision and append no receipt.
 
-Schema version 29 exports assets, files, settings, albums, album members, and receipts in stable
+Schema version 30 exports assets, files, settings, albums, album members, and receipts in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, receipt JSON, and the complete graph before commit. Released
@@ -393,6 +393,8 @@ metadata streams remain readable and restore an empty photo authority.
 `photo_sets` owns album UUID, name, star, revision, optional member cover, and timestamps. `photo_set_members` owns each asset's added date. Membership survives exclusion, trash, detach, and purge. Empty assets retain album choices and added dates; counts, browsing, and effective covers skip them until a file is attached again. Only explicit album operations change album revisions and receipts. Deleting an album clears membership and cover but retains its identity and deletion timestamp for receipt references. Album decisions use the existing logical transaction and audit refusal. Query selection reuses the photo browse compiler, coverage binding, and complete matching population inside that transaction. All changed IDs are recorded in chunks of 256 in `photo_change_receipts` with optional `set_id`; every chunk shares one revision transition. Restore validates structural references, member covers, and deleted-album emptiness. Metadata JSONL remains v1, and older receipts can omit `set_id`.
 
 ### Photo technical projection
+
+Schema 30 adds `photo_quality_signals`, a derived row per content version and evaluator fingerprint. It records focus, blur, brightness, color, framing, and aesthetics from the verified grid preview, or an unavailable result. It stays out of metadata JSONL and backups; the quality worker rebuilds it from ready previews.
 
 `photo_technical_metadata` stores one derived row for each source metadata
 generation that has at least one photo fact. The row keeps typed camera, lens,

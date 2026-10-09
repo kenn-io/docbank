@@ -11562,7 +11562,22 @@ components:
         previews:
           $ref: "#/components/schemas/PhotoPreviewSlots"
         quality:
-          $ref: "#/components/schemas/PhotoQuality"
+          additionalProperties: false
+          properties:
+            signals:
+              anyOf:
+                - $ref: "#/components/schemas/PhotoQualitySignals"
+                - type: "null"
+            state:
+              enum:
+                - pending
+                - unavailable
+                - ready
+              type: string
+          required:
+            - state
+            - signals
+          type: object
         revision:
           format: int64
           minimum: 1
@@ -11715,78 +11730,6 @@ components:
         - large
       type: object
       x-go-type: api.PhotoPreviewSlots
-      x-go-type-import:
-        path: go.kenn.io/docbank/internal/api
-        name: api
-    PhotoQuality:
-      additionalProperties: false
-      properties:
-        signals:
-          additionalProperties: false
-          properties:
-            aesthetics:
-              format: double
-              maximum: 1
-              minimum: 0
-              type: number
-            blur:
-              format: double
-              maximum: 1
-              minimum: 0
-              type: number
-            brightness:
-              format: double
-              maximum: 1
-              minimum: 0
-              type: number
-            color_blue:
-              format: double
-              maximum: 1
-              minimum: 0
-              type: number
-            color_green:
-              format: double
-              maximum: 1
-              minimum: 0
-              type: number
-            color_red:
-              format: double
-              maximum: 1
-              minimum: 0
-              type: number
-            focus:
-              format: double
-              maximum: 1
-              minimum: 0
-              type: number
-            framing:
-              format: double
-              maximum: 1
-              minimum: 0
-              type: number
-          required:
-            - focus
-            - blur
-            - brightness
-            - color_red
-            - color_green
-            - color_blue
-            - framing
-            - aesthetics
-          type:
-            - object
-            - "null"
-        state:
-          enum:
-            - pending
-            - unavailable
-            - ready
-          type: string
-      required:
-        - state
-        - signals
-      type: object
-      x-go-type: api.PhotoQuality
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api

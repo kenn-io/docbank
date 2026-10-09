@@ -39,7 +39,13 @@ const (
 	visualPreviewWebPICCProfile      = 1 << 5
 )
 
-var visualPreviewRecipe, _ = document.BuiltInVisualPreviewRecipe("large")
+var visualPreviewRecipe = func() document.VisualPreviewRecipeV1 {
+	recipe, err := document.BuiltInVisualPreviewRecipe("large")
+	if err != nil {
+		panic(err)
+	}
+	return recipe
+}()
 
 // VisualPreviewRecipeForSize returns a canonical built-in size recipe.
 func VisualPreviewRecipeForSize(size string) (document.VisualPreviewRecipeV1, error) {

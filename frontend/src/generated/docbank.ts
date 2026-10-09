@@ -4880,19 +4880,7 @@ export interface PhotoPreviewSlots {
   large: PhotoPreviewSlot;
 }
 
-export type PhotoQualityState = typeof PhotoQualityState[keyof typeof PhotoQualityState];
-
-
-export const PhotoQualityState = {
-  pending: 'pending',
-  unavailable: 'unavailable',
-  ready: 'ready',
-} as const;
-
-/**
- * @nullable
- */
-export type PhotoQualitySignalsProperty = {
+export interface PhotoQualitySignals {
   /**
      * @minimum 0
      * @maximum 1
@@ -4933,13 +4921,21 @@ export type PhotoQualitySignalsProperty = {
      * @maximum 1
      */
   framing: number;
-} | null;
-
-export interface PhotoQuality {
-  /** @nullable */
-  signals: PhotoQualitySignalsProperty;
-  state: PhotoQualityState;
 }
+
+export type PhotoBrowseRowQualityState = typeof PhotoBrowseRowQualityState[keyof typeof PhotoBrowseRowQualityState];
+
+
+export const PhotoBrowseRowQualityState = {
+  pending: 'pending',
+  unavailable: 'unavailable',
+  ready: 'ready',
+} as const;
+
+export type PhotoBrowseRowQuality = {
+  signals: PhotoQualitySignals | null;
+  state: PhotoBrowseRowQualityState;
+};
 
 export interface PhotoBrowseRow {
   asset_id: string;
@@ -4962,7 +4958,7 @@ export interface PhotoBrowseRow {
   /** @minimum 1 */
   node_id: number;
   previews: PhotoPreviewSlots;
-  quality?: PhotoQuality;
+  quality?: PhotoBrowseRowQuality;
   /** @minimum 1 */
   revision: number;
   /** @nullable */
@@ -5005,49 +5001,6 @@ export interface PhotoImportStartRequest {
      * @maxLength 4096
      */
   source_root: string;
-}
-
-export interface PhotoQualitySignals {
-  /**
-     * @minimum 0
-     * @maximum 1
-     */
-  aesthetics: number;
-  /**
-     * @minimum 0
-     * @maximum 1
-     */
-  blur: number;
-  /**
-     * @minimum 0
-     * @maximum 1
-     */
-  brightness: number;
-  /**
-     * @minimum 0
-     * @maximum 1
-     */
-  color_blue: number;
-  /**
-     * @minimum 0
-     * @maximum 1
-     */
-  color_green: number;
-  /**
-     * @minimum 0
-     * @maximum 1
-     */
-  color_red: number;
-  /**
-     * @minimum 0
-     * @maximum 1
-     */
-  focus: number;
-  /**
-     * @minimum 0
-     * @maximum 1
-     */
-  framing: number;
 }
 
 /**

@@ -63,6 +63,18 @@ func TestOpenAPIDocumentOffline(t *testing.T) {
 	}
 }
 
+func TestOpenAPIPhotoQualitySignals(t *testing.T) {
+	t.Parallel()
+	schemas := api.NewOfflineServer().API().OpenAPI().Components.Schemas
+	row := schemas.Map()["PhotoBrowseRow"]
+	require.NotNil(t, row)
+	signals := row.Properties["quality"].Properties["signals"]
+	require.Len(t, signals.AnyOf, 2)
+	assert.Equal(t, "#/components/schemas/PhotoQualitySignals", signals.AnyOf[0].Ref)
+	assert.Equal(t, "null", signals.AnyOf[1].Type)
+	require.NotNil(t, schemas.SchemaFromRef(signals.AnyOf[0].Ref))
+}
+
 func TestOpenAPITelemetryResponses(t *testing.T) {
 	t.Parallel()
 	op := api.NewOfflineServer().API().OpenAPI().Paths["/api/daemon/telemetry/events"].Post

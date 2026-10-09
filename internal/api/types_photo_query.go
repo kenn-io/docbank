@@ -1,9 +1,10 @@
 package api
 
 import (
+	"reflect"
+
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document"
-	"reflect"
 )
 
 // PhotoBrowseRequest carries strict QueryV1 JSON and live-page options.
@@ -32,8 +33,8 @@ type PhotoPreviewSlots struct {
 }
 
 type PhotoQuality struct {
-	State   string               `json:"state" enum:"pending,unavailable,ready"`
-	Signals *PhotoQualitySignals `json:"signals" nullable:"true"`
+	State   string                        `json:"state" enum:"pending,unavailable,ready"`
+	Signals *document.PhotoQualitySignals `json:"signals"`
 }
 
 type PhotoBrowseRow struct {
@@ -62,11 +63,13 @@ type PhotoBrowsePage struct {
 	NextCursor string           `json:"next_cursor,omitempty"`
 }
 
-// PhotoQualitySignals keeps missing measurements nullable in the wire schema.
-type PhotoQualitySignals document.PhotoQualitySignals
-
-func (PhotoQualitySignals) Schema(r huma.Registry) *huma.Schema {
-	schema := *r.Schema(reflect.TypeFor[document.PhotoQualitySignals](), false, "")
-	schema.Nullable = true
-	return &schema
+// Schema makes missing measurements nullable while sharing the signals definition.
+func (PhotoQuality) Schema(r huma.Registry) *huma.Schema {
+	type qualitySchema PhotoQuality
+	schema := huma.SchemaFromType(r, reflect.TypeFor[qualitySchema]())
+	schema.Properties["signals"] = &huma.Schema{AnyOf: []*huma.Schema{
+		r.Schema(reflect.TypeFor[document.PhotoQualitySignals](), true, ""),
+		{Type: "null"},
+	}}
+	return schema
 }

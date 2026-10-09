@@ -66,6 +66,32 @@ func TestPhotoQualityCalibration(t *testing.T) {
 	require.InDelta(t, s.Focus*0.35+(1-2*(0.5-s.Brightness))*0.25+s.Framing*0.2, s.Aesthetics, 1e-12)
 }
 
+func TestPhotoQualityGoldenVector(t *testing.T) {
+	t.Parallel()
+	img := image.NewRGBA(image.Rect(0, 0, 32, 24))
+	for y := range 24 {
+		for x := range 32 {
+			p := color.RGBA{uint8(20 + 3*x + y), uint8(10 + x + 4*y), uint8(5 + 2*x + 2*y), 255}
+			if x >= 20 && y < 10 {
+				p.R += 40
+				p.G += 20
+				p.B += 10
+			}
+			img.SetRGBA(x, y, p)
+		}
+	}
+	// Changing this output requires bumping the evaluator label in document/photo_quality.go.
+	s := measurePhotoQuality(img)
+	require.InDelta(t, 0.1134902069716774, s.Focus, 1e-12)
+	require.InDelta(t, 0.8865097930283226, s.Blur, 1e-12)
+	require.InDelta(t, 0.2953981341911764, s.Brightness, 1e-12)
+	require.InDelta(t, 0.32990196078431394, s.ColorRed, 1e-12)
+	require.InDelta(t, 0.2911611519607846, s.ColorGreen, 1e-12)
+	require.InDelta(t, 0.23576899509803928, s.ColorBlue, 1e-12)
+	require.InDelta(t, 0.5775685412207165, s.Framing, 1e-12)
+	require.InDelta(t, 0.3217609409170735, s.Aesthetics, 1e-12)
+}
+
 func TestPhotoQualityPreviewPipeline(t *testing.T) {
 	t.Parallel()
 	catalog, err := store.Open(filepath.Join(t.TempDir(), "docbank.db"))

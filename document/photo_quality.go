@@ -1,8 +1,6 @@
 package document
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -48,8 +46,8 @@ var photoQualityFingerprints = sync.OnceValues(func() (PhotoQualityFingerprints,
 	if err != nil {
 		return PhotoQualityFingerprints{}, fmt.Errorf("fingerprinting photo quality grid recipe: %w", err)
 	}
-	digest := sha256.Sum256([]byte("photo-quality:v2:16x16:catmull-rom:focus-ceiling=0.15:" + grid))
-	return PhotoQualityFingerprints{GridRecipe: grid, Evaluator: hex.EncodeToString(digest[:])}, nil
+	evaluator := sha256Hex([]byte("photo-quality:v2:16x16:catmull-rom:focus-ceiling=0.15:" + grid))
+	return PhotoQualityFingerprints{GridRecipe: grid, Evaluator: evaluator}, nil
 })
 
 // CurrentPhotoQualityFingerprints returns the fingerprints computed once per process.
