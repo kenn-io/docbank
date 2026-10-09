@@ -28,7 +28,7 @@ describe("background jobs drawer", () => {
     render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
     expect(await screen.findByText("No background jobs")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toBe("Lane controls are unavailable");
-    expect(screen.getByText("0 running · 0 lanes")).toBeTruthy();
+    expect(screen.getByText("0 running · 0 active lanes")).toBeTruthy();
   });
 
   it("shows unavailable lane controls while keeping progress and cancellation", async () => {
@@ -66,7 +66,7 @@ describe("background jobs drawer", () => {
       expect(screen.getByText("Paused").parentElement?.textContent).toBe("Paused Idle");
       expect(screen.getByRole("button", { name: "Pause Storage repair" })).toBeTruthy();
       expect(screen.getAllByText("Idle")).toHaveLength(2);
-      expect(screen.getByText("0 running · 0 lanes")).toBeTruthy();
+      expect(screen.getByText("0 running · 0 active lanes")).toBeTruthy();
       expect(screen.queryByText("No background jobs")).toBeNull();
       expect(screen.queryByText("Started")).toBeNull();
       expect(screen.queryByRole("progressbar")).toBeNull();
@@ -127,7 +127,7 @@ describe("background jobs drawer", () => {
     expect(screen.getAllByText("Photo import")).toHaveLength(1);
     expect(screen.getByRole("progressbar", { name: "Photo import progress" }).getAttribute("aria-valuemax")).toBe("2");
     expect(screen.getByText("2 operations")).toBeTruthy();
-    expect(screen.getByText("0 running · 1 lanes")).toBeTruthy();
+    expect(screen.getByText("0 running · 1 active lanes")).toBeTruthy();
     expect(screen.getAllByText("Queued")).toHaveLength(3);
     expect(screen.getAllByText("Status")).toHaveLength(2);
     expect(screen.queryByText("Finished")).toBeNull();

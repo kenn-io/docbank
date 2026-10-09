@@ -795,13 +795,11 @@ func startRetentionMaintenance(
 		defer ticker.Stop()
 		for {
 			if err := gate.MutateContext(ctx, func() error {
-				if _, err := s.ExpirePackagePreflights(ctx, ""); err != nil {
-					return err
-				}
-				_, err := s.PruneExpiredStorageOperations(ctx, time.Now())
-				return err
+				_, preflightErr := s.ExpirePackagePreflights(ctx, "")
+				_, storageErr := s.PruneExpiredStorageOperations(ctx, time.Now())
+				return errors.Join(preflightErr, storageErr)
 			}); err != nil && !errors.Is(err, context.Canceled) {
-				logger.Warn("pruning expired retention records", "error", err)
+				logger.Warn("retention maintenance failed", "error", err)
 			}
 			select {
 			case <-ctx.Done():

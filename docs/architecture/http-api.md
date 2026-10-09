@@ -1022,8 +1022,10 @@ Malformed expected evidence is a `422 validation` request error.
 
 ### Background-job status
 
-`GET /jobs` returns `{items: [...]}` with items in stable job-name order and optional `lanes`. `lanes` lists every controllable lane sorted by lane and is empty when controls cannot be read. Each item carries
-`name`, `status` (`queued`, `running`, `completed`, `failed`, or `cancelled`), and a UTC
+`GET /jobs` returns `{items: [...]}` with items in stable job-name order and
+optional `lanes`. `lanes` lists every controllable lane sorted by lane and is
+empty when controls cannot be read. Each item carries `name`, `status`
+(`queued`, `running`, `completed`, `failed`, or `cancelled`), and a UTC
 `started_at`. Terminal jobs add `finished_at`, and failures add a bounded
 `error`. Supervised task records describe this daemon run only and disappear
 when it restarts. Stopping one requires stopping or reconfiguring the daemon
@@ -1049,7 +1051,8 @@ backups; restored vaults use unpaused lanes with concurrency 1 and revision 1.
 When that file cannot be read, the job list still returns every job without
 control fields and adds `lane_controls_error`; browser sessions get a generic
 message. Lane-control reads require the daemon API key. Browser sessions read
-settings through `GET /jobs` and may `PUT` supported lanes without query parameters.
+settings through `GET /jobs` and may `PUT` supported lanes without query
+parameters.
 
 Durable storage operations, such as placement and photo imports, also appear as
 `storage:<operation_id>` items with `operation_id`, `kind`, object progress,

@@ -174,7 +174,7 @@
       <div>
         <span>Daemon activity</span>
         <strong>Background jobs</strong>
-        <small>{running} running · {occupiedLanes.length} lanes</small>
+        <small>{running} running · {occupiedLanes.length} active lanes</small>
       </div>
       <div class="drawer-actions">
         <IconButton
