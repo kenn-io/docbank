@@ -905,6 +905,8 @@ func (m Model) renderTrashList(height int) string {
 		message := " Trash is empty"
 		if m.trashLoading {
 			message = " Loading..."
+		} else if m.trashErr != nil {
+			message = " Trash listing unavailable · r retry"
 		}
 		lines = append(lines, m.styles.muted.Render(pad(fit(message, width), width)))
 	}
@@ -1663,6 +1665,19 @@ func (m Model) renderConfirmation(background string) string {
 			"Docbank reports the actual restored path after resolving",
 			"name collisions or missing origin parents.",
 		}
+		if node.PhotoAssetID != "" {
+			title = "Restore this photo?"
+			plural := "s"
+			if node.PhotoFileCount == 1 {
+				plural = ""
+			}
+			detail = append(detail, fmt.Sprintf("Recovers %d trashed member file%s together, including companions in other folders.", node.PhotoFileCount, plural))
+		} else if node.Kind == nodeKindDir {
+			detail = append(detail, "Photo members inside also recover their companions in other folders.")
+		}
+		if node.PhotoAssetID != "" || node.Kind == nodeKindDir {
+			detail = append(detail, "Companions inside trashed folders also restore those folders and their other contents, including other photos.")
+		}
 	}
 	status := "Enter " + strings.ToLower(action) + " · Esc cancel"
 	if m.mutationRunning {
@@ -1678,7 +1693,9 @@ func (m Model) renderConfirmation(background string) string {
 		fmt.Sprintf(" Bound revision: %d", node.Revision),
 		"",
 	}
-	lines = append(lines, detail...)
+	for _, paragraph := range detail {
+		lines = appendWrapped(lines, paragraph, contentWidth, lipgloss.NewStyle())
+	}
 	lines = append(lines, "", status)
 	for index := range lines {
 		lines[index] = fit(lines[index], contentWidth)
