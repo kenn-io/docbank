@@ -170,14 +170,13 @@ type filtersInput struct {
 	CollapseDuplicates   *bool     `json:"collapse_duplicates"`
 }
 
-var optionalFilterFields = map[string]struct{}{
-	"unevaluated": {}, "focus_min": {}, "focus_max": {}, "blur_min": {}, "blur_max": {}, "brightness_min": {}, "brightness_max": {}, "framing_min": {}, "framing_max": {}, "aesthetics_min": {}, "aesthetics_max": {}, "color_red_min": {}, "color_red_max": {}, "color_green_min": {}, "color_green_max": {}, "color_blue_min": {}, "color_blue_max": {},
+var optionalFilterFields = withQualityFields(map[string]struct{}{
 	"paths": {}, "exclude_paths": {}, "collection_ids": {}, "exclude_collection_ids": {},
 	"tag_ids": {}, "exclude_tag_ids": {}, "no_tags": {}, "media_families": {},
 	"mime_types": {}, "extensions": {}, "modified_after": {}, "modified_before": {},
 	"size_min": {}, "size_max": {}, "text_coverage": {}, "has_duplicates": {},
 	"collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {}, "set_ids": {},
-}
+})
 
 // Parse validates and normalizes one bounded QueryV1 JSON value.
 func Parse(raw []byte) (Query, error) {

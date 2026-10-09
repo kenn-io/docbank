@@ -16,26 +16,27 @@ func compilePhotoAssetPredicate(predicate string, args ...any) compiledQueryFrag
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files pf JOIN photo_assets pa ON pa.asset_id=pf.asset_id WHERE pf.node_id=n.id AND ` + predicate + `)`, args: args}
 }
 
-func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
+func (c queryCompiler) compilePhotoVersionPredicate(predicate string, args ...any) compiledQueryFragment {
 	if c.photoDisplayMetadata {
 		return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member
  JOIN photo_assets asset ON asset.asset_id=member.asset_id
  JOIN photo_files display ON display.file_id=asset.display_file_id
  JOIN nodes display_node ON display_node.id=display.node_id
- JOIN content_versions display_version ON display_version.version_id=display_node.current_version_id
- JOIN source_metadata_heads h ON h.source_sha256=display_version.blob_hash
- JOIN photo_technical_metadata p ON p.generation_id=h.generation_id
+ JOIN content_versions v ON v.version_id=display_node.current_version_id
  WHERE member.node_id=n.id AND ` + predicate + `)`, args: args}
 	}
-	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=cv.blob_hash AND ` + predicate + `)`, args: args}
+	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM content_versions v WHERE v.version_id=cv.version_id AND ` + predicate + `)`, args: args}
+}
+
+func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
+	return c.compilePhotoVersionPredicate(`EXISTS (SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=v.blob_hash AND `+predicate+`)`, args...)
 }
 
 func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compiledQueryFragment, error) {
-	switch field {
-	case "focus_min", "focus_max", "blur_min", "blur_max", "brightness_min", "brightness_max", "framing_min", "framing_max", "aesthetics_min", "aesthetics_max", "color_red_min", "color_red_max", "color_green_min", "color_green_max", "color_blue_min", "color_blue_max", "unevaluated":
+	if query.IsQualityField(field) {
 		if field == "unevaluated" {
-			if value != "true" && value != "false" {
-				return compiledQueryFragment{}, errors.New("unevaluated must be true or false")
+			if value != "true" {
+				return compiledQueryFragment{}, errors.New("unevaluated must be true")
 			}
 		} else {
 			normalized, err := query.NormalizeQualityOperand(value)
@@ -45,6 +46,8 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 			value = normalized
 		}
 		return c.compilePhotoQualityPredicate(field, value)
+	}
+	switch field {
 	case "set":
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
@@ -176,15 +179,6 @@ func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int
 }
 
 func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compiledQueryFragment, error) {
-	from := `content_versions v`
-	binding := `v.version_id=cv.version_id`
-	if c.photoDisplayMetadata {
-		from = `photo_files member JOIN photo_assets asset ON asset.asset_id=member.asset_id
- JOIN photo_files display ON display.file_id=asset.display_file_id
- JOIN nodes display_node ON display_node.id=display.node_id
- JOIN content_versions v ON v.version_id=display_node.current_version_id`
-		binding = `member.node_id=n.id`
-	}
 	fingerprints, err := document.CurrentPhotoQualityFingerprints()
 	if err != nil {
 		return compiledQueryFragment{}, err
@@ -193,11 +187,7 @@ func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compil
  AND q.evaluator_fingerprint=? AND q.state='ready'`
 	args := []any{fingerprints.Evaluator}
 	if field == "unevaluated" {
-		quality += `)`
-		if value == "true" {
-			quality = `NOT ` + quality
-		}
-		return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM ` + from + ` WHERE ` + binding + ` AND ` + liveIncludedPhotoDisplayPredicate + ` AND ` + quality + `)`, args: args}, nil
+		return c.compilePhotoVersionPredicate(liveIncludedPhotoDisplayPredicate+` AND NOT `+quality+`)`, args...), nil
 	}
 	number, err := strconv.ParseFloat(value, 64)
 	if err != nil {
@@ -209,5 +199,5 @@ func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compil
 		operator = "<="
 	}
 	args = append(args, number)
-	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM ` + from + ` WHERE ` + binding + ` AND ` + quality + ` AND q.` + column + operator + ` ?))`, args: args}, nil
+	return c.compilePhotoVersionPredicate(quality+` AND q.`+column+operator+` ?)`, args...), nil
 }

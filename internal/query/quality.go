@@ -7,6 +7,22 @@ import (
 
 var errQualityScore = errors.New("quality score must be a decimal string within 0..1")
 
+var qualityFields = withQualityFields(map[string]struct{}{})
+
+func withQualityFields(fields map[string]struct{}) map[string]struct{} {
+	for _, bound := range QualityBounds(Filters{}) {
+		fields[bound.Field] = struct{}{}
+	}
+	fields["unevaluated"] = struct{}{}
+	return fields
+}
+
+// IsQualityField identifies scalar quality bounds and the unevaluated filter.
+func IsQualityField(field string) bool {
+	_, ok := qualityFields[field]
+	return ok
+}
+
 // NormalizeQualityOperand retains exact decimal identity on the 0..1 scale.
 func NormalizeQualityOperand(value string) (string, error) {
 	if strings.HasPrefix(value, "-") {

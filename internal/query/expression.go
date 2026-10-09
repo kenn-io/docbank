@@ -79,7 +79,25 @@ func ParseExpression(text, syntax string) (*Expression, error) {
 	if parser.current.kind != expressionTokenEOF {
 		return nil, expressionError(parser.current.start, parser.current.end, "unexpected token")
 	}
+	if err := validateUnevaluatedExpression(expr, ""); err != nil {
+		return nil, err
+	}
 	return expr, nil
+}
+
+func validateUnevaluatedExpression(expr *Expression, field string) error {
+	if expr.Kind == ExpressionField {
+		field = expr.Field
+	}
+	if field == "unevaluated" && expr.Value == "false" {
+		return expressionError(expr.Start, expr.End, "unevaluated:false is not supported; use focus_min:0 for measured photos")
+	}
+	for _, child := range expr.Children {
+		if err := validateUnevaluatedExpression(child, field); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func parseSimpleExpression(text string) (*Expression, error) {
@@ -562,13 +580,12 @@ func expressionTokenStartsOperand(kind expressionTokenKind) bool {
 		kind == expressionTokenLeftParen || kind == expressionTokenNot
 }
 
-var expressionFields = map[string]struct{}{
-	"focus_min": {}, "focus_max": {}, "blur_min": {}, "blur_max": {}, "brightness_min": {}, "brightness_max": {}, "framing_min": {}, "framing_max": {}, "aesthetics_min": {}, "aesthetics_max": {}, "color_red_min": {}, "color_red_max": {}, "color_green_min": {}, "color_green_max": {}, "color_blue_min": {}, "color_blue_max": {}, "unevaluated": {},
+var expressionFields = withQualityFields(map[string]struct{}{
 	"name": {}, "path": {}, "tag": {}, "collection": {}, "saved": {},
 	"mime": {}, "extension": {}, "media_family": {},
 	"modified_after": {}, "modified_before": {}, "size_min": {}, "size_max": {},
 	"text_coverage": {}, "has_duplicates": {}, "kind": {}, "camera": {}, "lens": {}, "iso": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps": {}, "asset": {}, "set": {},
-}
+})
 
 func expressionError(start, end int, message string) *ExpressionError {
 	return &ExpressionError{Offset: start, End: end, Message: message}

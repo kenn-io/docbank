@@ -18,3 +18,18 @@ func TestNormalizeQualityOperand(t *testing.T) {
 		require.EqualError(t, err, "quality score must be a decimal string within 0..1", value)
 	}
 }
+
+func TestQualityUnevaluatedFalse(t *testing.T) {
+	t.Parallel()
+	for _, text := range []string{`unevaluated:false`, `unevaluated:"false"`, `unevaluated:(true OR false)`} {
+		_, err := ParseExpression(text, "advanced")
+		expressionErr := requireExpressionError(t, text, err)
+		require.Contains(t, expressionErr.Message, "use focus_min:0")
+		require.Contains(t, text[expressionErr.Offset:expressionErr.End], "false")
+	}
+	value, err := Parse([]byte(`{"filters":{"unevaluated":false}}`))
+	require.NoError(t, err)
+	omitted, err := Parse([]byte(`{}`))
+	require.NoError(t, err)
+	require.Equal(t, omitted, value)
+}

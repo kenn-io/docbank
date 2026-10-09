@@ -43,6 +43,10 @@ describe("query identity", () => {
     expect(canonicalQuery(parseQuery('{"filters":{"focus_min":"0.70"}}'))).toContain('"focus_min":"0.7"');
   });
 
+  it("treats structured unevaluated false as omission", () => {
+    expect(canonicalQuery(parseQuery('{"filters":{"unevaluated":false}}'))).toBe(canonicalQuery(parseQuery('{}')));
+  });
+
   it("rejects invalid values and bounds", () => {
     const invalid = [
       '{"filters":{"paths":["relative"]}}',

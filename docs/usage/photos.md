@@ -92,10 +92,13 @@ Scores can differ slightly from other tools because of image sampling difference
 Each scalar supports `_min` and `_max` query filters. JSON bounds are decimal
 strings, such as `"brightness_min":"0.4"`, to preserve QueryV1's integer-only
 JSON number contract. Advanced search accepts `brightness_min:0.4 color_blue_min:0.5`.
-`unevaluated:true` includes both pending and unavailable measurements. Missing
-measurements fail numeric comparisons. Photo queries use the selected display
-version; document queries use each document's own version. Saved queries keep
-these filters. Signals rebuild after restore and stay out of backups.
+Quality filters follow the same version as other photo metadata filters. Photos
+uses the asset's selected display; Documents uses each document's own version.
+`unevaluated:true` selects versions eligible for measurement with pending or
+unavailable measurements. Expressions reject `unevaluated:false`; use
+`focus_min:0` for measured photos. Structured `"unevaluated":false` acts as omission.
+Missing measurements fail numeric comparisons. Saved queries keep these filters.
+Signals rebuild after restore and stay out of backups.
 
 ## CLI
 

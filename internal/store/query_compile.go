@@ -247,14 +247,16 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 			return compiledQueryFragment{}, errors.New("resolved saved operand lacks its query")
 		}
 		return c.compileSavedPredicate(expression)
-	case "mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max", "text_coverage", "has_duplicates", "kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set", "focus_min", "focus_max", "blur_min", "blur_max", "brightness_min", "brightness_max", "framing_min", "framing_max", "aesthetics_min", "aesthetics_max", "color_red_min", "color_red_max", "color_green_min", "color_green_max", "color_blue_min", "color_blue_max", "unevaluated":
-		if syntax.Prefix {
-			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "scalar operands cannot use prefix matching")
-		}
-		return c.compileScalarPredicate(field, syntax.Value, syntax.Start, syntax.End)
+	case "mime", "extension", "media_family", "modified_after", "modified_before", "size_min", "size_max", "text_coverage", "has_duplicates", "kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set":
 	default:
-		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "unsupported expression field")
+		if !query.IsQualityField(field) {
+			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "unsupported expression field")
+		}
 	}
+	if syntax.Prefix {
+		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "scalar operands cannot use prefix matching")
+	}
+	return c.compileScalarPredicate(field, syntax.Value, syntax.Start, syntax.End)
 }
 
 func compileNearExpression(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
@@ -307,13 +309,14 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 }
 
 func (c queryCompiler) compileScalarPredicate(field, value string, start, end int) (compiledQueryFragment, error) {
-	switch field {
-	case "kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set", "focus_min", "focus_max", "blur_min", "blur_max", "brightness_min", "brightness_max", "framing_min", "framing_max", "aesthetics_min", "aesthetics_max", "color_red_min", "color_red_max", "color_green_min", "color_green_max", "color_blue_min", "color_blue_max", "unevaluated":
+	if query.IsQualityField(field) || slices.Contains([]string{"kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field) {
 		part, err := c.compilePhotoScalarPredicate(field, value)
 		if err != nil {
 			return compiledQueryFragment{}, compileExpressionError(start, end, err.Error())
 		}
 		return part, nil
+	}
+	switch field {
 	case "mime", "extension", "media_family":
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, compileExpressionError(start, end, err.Error())

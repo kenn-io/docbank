@@ -76,7 +76,7 @@ func TestPhotoQualityPendingDisplayOwnership(t *testing.T) {
 			want  []int64
 		}{
 			{`{"filters":{"unevaluated":true}}`, pending},
-			{`{"syntax":"advanced","text":"unevaluated:false"}`, ready},
+			{`{"syntax":"advanced","text":"focus_min:0"}`, ready},
 		} {
 			value := snapshotTestQuery(t, tc.query)
 			snapshot, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: value})
@@ -98,6 +98,38 @@ func TestPhotoQualityPendingDisplayOwnership(t *testing.T) {
 	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(missingMIME), document.PhotoQualitySignals{}))
 	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(genericMIME), document.PhotoQualitySignals{}))
 	check([]int64{missing.ID, unsupported.ID}, []int64{jpg.ID, missingMIME.ID, genericMIME.ID})
+}
+
+func TestPhotoQualityFiltersFollowMetadataVersion(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	raw := browsePhotoNode(t, s, "quality.raw", browseHash("quality-raw"), "application/octet-stream")
+	jpeg := browsePhotoNode(t, s, "quality.jpg", browseHash("quality-jpeg"), "image/jpeg")
+	jpegAsset, err := s.PhotoAssetForNode(ctx, jpeg.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, jpegAsset.ID, jpegAsset.Revision, jpegAsset.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	asset, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpeg.ID, PhotoRoleImage, nil)
+	require.NoError(t, err)
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(raw), document.PhotoQualitySignals{Focus: 0.8}))
+	_, err = s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, new(fileByRole(asset.Files, PhotoRoleImage).ID))
+	require.NoError(t, err)
+	snapshot, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"filters":{"focus_min":"0.7"}}`)})
+	require.NoError(t, err)
+	require.Len(t, snapshot.Rows, 1)
+	require.Equal(t, raw.ID, snapshot.Rows[0].NodeID)
+	require.Empty(t, browsePhotoPage(t, s, `{"filters":{"focus_min":"0.7"}}`).Items)
+	page := browsePhotoPage(t, s, `{"filters":{"unevaluated":true}}`)
+	require.Len(t, page.Items, 1)
+	require.Equal(t, asset.ID, page.Items[0].AssetID)
+	require.Equal(t, jpeg.ID, page.Items[0].NodeID)
+	snapshot, err = s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{"filters":{"unevaluated":true}}`)})
+	require.NoError(t, err)
+	require.Len(t, snapshot.Rows, 1)
+	require.Equal(t, jpeg.ID, snapshot.Rows[0].NodeID)
 }
 
 func TestPhotoQualityUnavailableIsTerminal(t *testing.T) {
