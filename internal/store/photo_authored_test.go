@@ -218,7 +218,11 @@ func TestPhotoAuthoredLegacyAuditDefaults(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.EnableInitialAudit(ctx, plan)
 	require.NoError(t, err)
-	_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{file.ID, 1, PhotoAuthoredPatch{Rating: new(5)}}})
+	human, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{file.ID, 1, PhotoAuthoredPatch{Rating: new(0)}}})
+	require.NoError(t, err)
+	require.NotEmpty(t, human.ReceiptID)
+	require.NoError(t, s.ValidateMetadata(ctx))
+	_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{file.ID, 2, PhotoAuthoredPatch{Rating: new(5)}}})
 	require.NoError(t, err)
 	require.NoError(t, s.ValidateMetadata(ctx))
 }
@@ -283,8 +287,8 @@ func TestPhotoAuthoredAuditRoundTripAndRollback(t *testing.T) {
 
 func TestPhotoSidecarInitializationFences(t *testing.T) {
 	t.Parallel()
-	for _, humanFirst := range []bool{false, true} {
-		t.Run(fmt.Sprintf("human first=%t", humanFirst), func(t *testing.T) {
+	for _, humanRating := range []int{-1, 0, 4} {
+		t.Run(fmt.Sprintf("human rating=%d", humanRating), func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
 			asset := authoredPair(t, s)
@@ -298,15 +302,20 @@ func TestPhotoSidecarInitializationFences(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, targets, 1)
 			assert.Equal(t, sidecar.ID, targets[0].NodeID)
-			if humanFirst {
-				_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(4)}}})
+			if humanRating >= 0 {
+				human, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(humanRating)}}})
 				require.NoError(t, err)
+				require.NotEmpty(t, human.ReceiptID)
+				require.Len(t, human.After, 1)
+				assert.Equal(t, int64(2), human.After[0].Revision)
 				receipt, err := s.InitializePhotoSidecar(ctx, targets[0])
 				require.NoError(t, err)
 				assert.Empty(t, receipt.ReceiptID)
 				got, err := photoFileByIDQuery(ctx, s.db, raw.ID)
 				require.NoError(t, err)
-				assert.Equal(t, 4, got.Rating)
+				assert.Equal(t, humanRating, got.Rating)
+				assert.Equal(t, int64(2), got.Revision)
+				require.NoError(t, s.ValidateMetadata(ctx))
 				return
 			}
 			second, err := s.CreateFile(ctx, s.RootID(), "another.xmp", fakeHash("d4"), 4, "application/rdf+xml")

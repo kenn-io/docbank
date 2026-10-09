@@ -858,8 +858,11 @@ func photoAssetOutputSchema() schema {
 		schemaCreatedAtField:       dateTimeSchema(),
 		"updated_at":               dateTimeSchema(),
 		"files":                    arraySchema(photoFileSchema(), 256),
+		"total_files":              integerSchema(0, 256),
+		"file_offset":              integerSchema(0, 256),
+		"next_file_offset":         integerSchema(1, 256),
 		"agreement":                objectSchema(schema{"rating": booleanSchema(), "flag": booleanSchema(), "label": booleanSchema(), "caption": booleanSchema(), "creator": booleanSchema(), "copyright": booleanSchema(), "rotation": booleanSchema()}),
-	}), "id", "kind", schemaRevisionField, "display_source", schemaCreatedAtField, "updated_at", "files", "ttlMs", "cacheScope")
+	}), "id", "kind", schemaRevisionField, "display_source", schemaCreatedAtField, "updated_at", "files", "total_files", "file_offset", "ttlMs", "cacheScope")
 }
 
 func photoAssetMutationSchemas(properties schema, required ...string) (schema, schema) {
@@ -869,8 +872,9 @@ func photoAssetMutationSchemas(properties schema, required ...string) (schema, s
 
 func getPhotoAssetSchemas() (schema, schema) {
 	return photoAssetMutationSchemas(schema{
-		"asset_id": uuidSchema(),
-		"node_id":  integerSchema(1, 0),
+		"asset_id":    uuidSchema(),
+		"node_id":     integerSchema(1, 0),
+		"file_offset": integerSchema(0, 256),
 	})
 }
 
