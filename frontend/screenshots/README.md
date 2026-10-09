@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-08
 ---
 
 # Documentation screenshots
@@ -78,6 +78,20 @@ fixtures. Their setup is defined in the corresponding spec or Go test. They are
 not substitutes for the complete public image set.
 
 The 10,000-photo grid proof uses `DOCBANK_PHOTOS_SCREENSHOT_DIR`. It creates a synthetic vault and checks paging, selection, retained previews, recovery, and bounded image URLs. It runs separately from ordinary screenshot publication.
+
+`photo-search.screenshot.ts` uses the same output variable and synthetic fixture
+to check ranked search, whole-library counts, continuation and rows before counts.
+Run either photo spec with the Playwright command above and its filename.
+
+| Variable | Photo proof behavior |
+| --- | --- |
+| `DOCBANK_SCREENSHOT_BINARY` | Absolute branch binary; defaults to the built binary in `bin/`. |
+| `DOCBANK_PHOTO_PROOF_WORKSPACE` | Reuse an existing synthetic workspace; omit to seed one. |
+| `DOCBANK_KEEP_PHOTO_PREVIEW` | Retain the daemon and vault, and write its preview URL receipt beside the images. |
+| `DOCBANK_SCREENSHOT_SCALE` | Search proof device scale factor; defaults to 1. |
+
+Preview receipts contain synthetic session credentials. Keep them local. Stop
+retained daemons before removing their workspaces.
 
 ## Report and original-export qualification
 

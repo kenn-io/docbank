@@ -77,6 +77,7 @@
       if (range) return new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "long", year: "numeric" }).format(new Date(range.after));
     }
     if (dimension === "size" && sizeRanges[value.key]) return sizeRanges[value.key].label;
+    if (["camera", "lens", "location", "set"].includes(dimension)) return value.label;
     return value.label.replaceAll("_", " ");
   }
 
