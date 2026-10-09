@@ -47,7 +47,7 @@
 {#if creating}
   <Modal title="New album" onclose={() => { if (!albums.busy) creating = false; }}>
     <form onsubmit={event => { event.preventDefault(); void create(); }}><TextInput ariaLabel="Album name" bind:value={name} /><div class="modal-actions"><Button disabled={albums.busy} onclick={() => creating = false}>Cancel</Button><Button type="submit" tone="info" disabled={albums.busy || !!albums.unconfirmed || !name.trim()}>Create album</Button></div></form>
-    <PhotoAlbumPending {albums} {onnavigate} />
+    <PhotoAlbumPending {albums} onnavigate={path => { creating = false; onnavigate(path); }} />
     {#if createError}<p role="alert">{createError}</p>{/if}
   </Modal>
 {/if}

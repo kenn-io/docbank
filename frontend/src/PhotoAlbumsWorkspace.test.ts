@@ -116,6 +116,21 @@ it.each(["index create", "delete", "duplicate"] as const)("keeps the %s dialog o
   expect(albums.error).toBe("");
 });
 
+it("closes the new album dialog when View Albums is chosen after an unconfirmed create", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(albumResponse({})));
+  const albums = new PhotoAlbums("scoped", vi.fn()); albums.items = [album];
+  const onnavigate = vi.fn();
+  render(PhotoAlbumsIndex, { albums, cache: new PhotoPreviewCache("scoped", vi.fn()), onnavigate });
+  await fireEvent.click(screen.getByRole("button", { name: "New album" }));
+  await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "Summer" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Create album" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "View Albums" }));
+  expect(onnavigate).toHaveBeenCalledWith("/photos/albums");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(screen.getByRole("link", { name: /Trip/ })).toBeTruthy();
+  expect(screen.getByText('An album named "Summer" may already exist. Another attempt can create an extra album.')).toBeTruthy();
+});
+
 it.each(["index create", "picker create", "duplicate"] as const)("acknowledges unconfirmed %s without replay before a separate confirmation", async operation => {
   const { photos, albums, cache, view } = setup(operation === "duplicate");
   const committed = { ...album, id: "22222222-2222-4222-8222-000000000065", name: operation === "duplicate" ? "Trip copy" : "Summer" };
