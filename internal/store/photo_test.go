@@ -11,6 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPhotoMutationMissingAssetBeforeInvalidRevision(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	_, err := s.SetPhotoAssetExcluded(ctx, "00000000-0000-4000-8000-000000000001", 0, true)
+	require.ErrorIs(t, err, ErrNotFound)
+	asset := albumAsset(t, s, "synthetic.jpg")
+	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, 0, true)
+	require.ErrorIs(t, err, ErrStaleRevision)
+}
+
 func TestClassifyPhotoMediaMatrix(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

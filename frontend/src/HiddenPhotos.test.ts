@@ -100,11 +100,12 @@ it("keeps management credentials independent and lets Disable ignore an invalid 
   expect((screen.getByLabelText("Passcode", { exact: true }) as HTMLInputElement).value).toBe("");
 });
 
-it("notifies Library when Disable finishes after unmount", async () => {
+it.each([false, true])("notifies Library when Disable finishes after unmount, lost reply=%s", async lost => {
   let settle!: (response: Response) => void;
+  let reject!: (cause: Error) => void;
   let signal: AbortSignal | undefined;
   const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
-    if (url.endsWith("/disable")) { signal = options?.signal ?? undefined; return new Promise<Response>(resolve => settle = resolve); }
+    if (url.endsWith("/disable")) { signal = options?.signal ?? undefined; return new Promise<Response>((resolve, fail) => { settle = resolve; reject = fail; }); }
     return Response.json(state(false));
   });
   vi.stubGlobal("fetch", fetcher);
@@ -117,7 +118,7 @@ it("notifies Library when Disable finishes after unmount", async () => {
   expect(signal).toBeDefined();
   view.unmount();
   expect(signal?.aborted).toBe(false);
-  settle(Response.json({}));
+  if (lost) reject(new TypeError("Reply lost after commit")); else settle(Response.json({}));
   await waitFor(() => expect(onunhidden).toHaveBeenCalledOnce());
   expect(fetcher).toHaveBeenCalledTimes(2);
 });

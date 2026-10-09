@@ -5,6 +5,27 @@ import { photo } from "./photo-test-fixtures.js";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
 
+it.each(["hide", "unhide", "trash"])("reconciles other views after a lost %s reply and retains uncertain targets", async kind => {
+  const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Reply lost after commit"))
+    .mockRejectedValueOnce(new Error("Refresh unavailable"));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn(), kind === "unhide");
+  photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
+  const changed = vi.fn();
+  if (kind === "trash") expect(await photos.trashSelected(undefined, changed)).toBe(false);
+  else await photos.setHidden("photo-1", undefined, changed);
+  expect(changed).toHaveBeenCalledOnce();
+  expect(photos.items).toEqual([photo(1)]);
+  expect(photos.trashTargets).toEqual([photo(1)]);
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  photos.clearSelection();
+  if (kind === "trash") await photos.trashSelected(undefined, changed);
+  else await photos.setHidden("missing", undefined, changed);
+  expect(changed).toHaveBeenCalledOnce();
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  photos.dispose();
+});
+
 it.each([
   ["hidden_not_configured", 409, "Set a passcode in the Hidden view first."],
   ["hidden_locked", 403, "This photo is already hidden."],
