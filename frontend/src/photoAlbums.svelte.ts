@@ -107,10 +107,8 @@ export class PhotoAlbums {
     const batches = ids ? Array.from({ length: Math.ceil(ids.length / 1000) }, (_, index) => ({ asset_ids: ids.slice(index * 1000, (index + 1) * 1000) })) : [scope];
     if (!batches.length) return;
     let completed = 0;
-    let ran = false;
     let missingPhoto = false;
     return this.write(async () => {
-      ran = true;
       let revision = album.revision;
       let result: api.PhotoAlbum = album;
       for (const batch of batches) {
@@ -133,7 +131,7 @@ export class PhotoAlbums {
         this.notice = `${remove ? "Removed from" : "Added to"} ${album.name}${refreshed?.included_count !== undefined ? ` · now ${refreshed.included_count.toLocaleString()} ${refreshed.included_count === 1 ? "photo" : "photos"}` : ""}`;
         this.noticeID = album.id;
       }
-      if (ran && source.query.filters?.set_ids?.includes(album.id) || missingPhoto && !this.loadError && this.items.some(item => item.id === album.id)) await source.refresh(preserve);
+      if (source.query.filters?.set_ids?.includes(album.id) || missingPhoto && !this.loadError && this.items.some(item => item.id === album.id)) await source.refresh(preserve);
       await this.onmemberschange?.(album.id, source);
     });
   }

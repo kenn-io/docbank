@@ -18,6 +18,7 @@
   onDestroy(() => alive = false);
   let picker = $state<{ focus: () => void; addToTarget: () => Promise<boolean> }>();
   let renaming = $state(false);
+  let renameAlbum = $state<PhotoAlbumItem>();
   let name = $state("");
   let modal = $state<"delete" | "duplicate" | undefined>();
   let modalError = $state("");
@@ -56,16 +57,15 @@
     await albums.members(album, photos.scope(), photos, true, preserve);
   }
   async function rename() {
-    if (!albums || !album || !name.trim()) return;
-    const result = await albums.update(album, { name: name.trim() });
+    if (!albums || !renameAlbum || !name.trim()) return;
+    const result = await albums.update(renameAlbum, { name: name.trim() });
     if (alive && renaming && result) renaming = false;
   }
-  function beginRename() { name = album?.name ?? ""; renaming = true; }
+  function beginRename() { renameAlbum = album; name = album?.name ?? ""; renaming = true; }
   function openModal(kind: "delete" | "duplicate") { modalError = ""; modalAlbum = album; modal = kind; duplicateName = `${album?.name ?? "Album"} copy`; }
   async function confirm() {
     if (!albums || !modalAlbum) return;
-    const current = albums.items.find(item => item.id === modalAlbum!.id) ?? modalAlbum;
-    const result = modal === "delete" ? await albums.delete(current) : await albums.duplicate(current, duplicateName);
+    const result = modal === "delete" ? await albums.delete(modalAlbum) : await albums.duplicate(modalAlbum, duplicateName);
     if (!alive || !modal) return;
     if (!result) { modalError = albums.error; albums.error = ""; }
     if (result) { const deleting = modal === "delete"; modal = undefined; onnavigate(deleting ? "/photos/albums" : `/photos/albums/${result.id}`); }

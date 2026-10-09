@@ -223,6 +223,7 @@
     clearPhotoNotice();
     navOpen = false;
     photoMode = true;
+    if (path === photoPath && path === location.pathname) return;
     photoPath = path;
     history.pushState(null, "", `${path}${location.search}${location.hash}`);
     if (path === "/photos/albums") void tick().then(() => document.querySelector<HTMLButtonElement>('[data-albums-nav]')?.focus());

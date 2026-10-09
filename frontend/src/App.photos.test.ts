@@ -73,6 +73,8 @@ it("retains photo state and previews across sidebar switches until lock", async 
   const historyLength = history.length;
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
   expect(history.length).toBe(historyLength);
+  await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  expect(history.length).toBe(historyLength);
   await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   expect(location.pathname).toBe("/");
   expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();

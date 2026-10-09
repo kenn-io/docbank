@@ -108,11 +108,12 @@ it.each(["create", "delete", "duplicate"] as const)("stops delayed %s success fr
   expect(onnavigate).not.toHaveBeenCalled();
 });
 
-it.each(["create", "delete", "duplicate"] as const)("leaves delayed %s feedback in the workspace after its dialog is dismissed", async operation => {
-  let finish!: () => void;
+it.each(["create", "delete", "duplicate"] as const)("keeps the %s dialog open while its write is pending and shows one failure", async operation => {
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve)).mockResolvedValue(new Response(JSON.stringify([album])));
+  vi.stubGlobal("fetch", fetcher);
   const onnavigate = vi.fn();
   const { albums, cache, view } = setup(operation !== "create", onnavigate);
-  vi.spyOn(albums, operation).mockImplementation(() => new Promise<typeof album | undefined>(resolve => finish = () => { albums.error = "Album change unavailable"; resolve(undefined); }));
   if (operation === "create") {
     view.unmount();
     render(PhotoAlbumsIndex, { albums, cache, onnavigate });
@@ -124,11 +125,15 @@ it.each(["create", "delete", "duplicate"] as const)("leaves delayed %s feedback 
     await fireEvent.click(await screen.findByRole("menuitem", { name: operation === "delete" ? "Delete album…" : "Duplicate…" }));
     await fireEvent.click(screen.getByRole("button", { name: operation === "delete" ? "Delete album" : "Duplicate album" }));
   }
-  await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  finish();
+  await waitFor(() => expect(albums.busy).toBe(true));
+  expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
+  await fireEvent.keyDown(window, { key: "Escape" });
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  finish(new Response(JSON.stringify({ detail: "Album change unavailable" }), { status: 503 }));
   await screen.findByText("Album change unavailable");
+  await waitFor(() => expect(albums.busy).toBe(false));
   expect(screen.getAllByRole("alert")).toHaveLength(1);
-  expect(albums.error).toBe("Album change unavailable");
+  expect(albums.error).toBe("");
   expect(onnavigate).not.toHaveBeenCalled();
 });
 
@@ -205,18 +210,25 @@ it("renders added order unchanged and saves or cancels inline rename", async () 
   expect(update).toHaveBeenCalledWith(album, { name: "Holiday" });
 });
 
-it.each(["delete", "duplicate"] as const)("retries %s with the refreshed revision without reopening the dialog", async operation => {
+it.each(["rename", "delete", "duplicate"] as const)("keeps the inspected revision for %s when a newer list arrives before submission", async operation => {
+  let finish!: (response: Response) => void;
+  const current = { ...album, revision: 2 };
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ code: "stale_revision" }), { status: 412 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([current])));
+  vi.stubGlobal("fetch", fetcher);
   const { albums } = setup(true);
-  vi.spyOn(albums, operation).mockImplementationOnce(async () => { albums.error = "Trip changed elsewhere. Try again."; return undefined; }).mockResolvedValue(album);
   await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
-  await fireEvent.click(await screen.findByRole("menuitem", { name: operation === "delete" ? "Delete album…" : "Duplicate…" }));
-  const submit = screen.getByRole("button", { name: operation === "delete" ? "Delete album" : "Duplicate album" });
+  await fireEvent.click(await screen.findByRole("menuitem", { name: operation === "rename" ? "Rename" : operation === "delete" ? "Delete album…" : "Duplicate…" }));
+  const reading = albums.load();
+  finish(new Response(JSON.stringify([current]))); await reading;
+  const submit = screen.getByRole("button", { name: operation === "rename" ? "Save" : operation === "delete" ? "Delete album" : "Duplicate album" });
   await fireEvent.click(submit);
   await screen.findByText("Trip changed elsewhere. Try again.");
   expect(screen.getAllByRole("alert")).toHaveLength(1);
-  expect(albums.error).toBe("");
-  await fireEvent.click(submit);
-  await waitFor(() => expect(screen.queryByRole("button", { name: operation === "delete" ? "Delete album" : "Duplicate album" })).toBeNull());
+  expect(fetcher.mock.calls[1][1].headers.get("If-Match")).toBe('"1"');
+  expect(albums.items[0].revision).toBe(2);
+  expect(screen.getByRole("button", { name: operation === "rename" ? "Save" : operation === "delete" ? "Delete album" : "Duplicate album" })).toBeTruthy();
 });
 
 it("refreshes previews and summary counts inside an album", async () => {
