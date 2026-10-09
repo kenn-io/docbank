@@ -238,18 +238,18 @@ func (s *Store) PruneExpiredStorageOperations(
 	return pruned, err
 }
 
-const expiredStorageOperationPredicate = `state IN (?,?,?)
-	AND retention_until IS NOT NULL
-	AND retention_until<=?
-	AND NOT EXISTS (
-		SELECT 1 FROM storage_operation_cleanup cleanup
-		WHERE cleanup.operation_id=storage_operations.operation_id
-	)`
-
 func pruneExpiredStorageOperationsTx(
 	ctx context.Context, tx *sql.Tx, now time.Time,
 ) (int64, error) {
-	result, err := tx.ExecContext(ctx, `DELETE FROM storage_operations WHERE `+expiredStorageOperationPredicate,
+	result, err := tx.ExecContext(ctx, `
+		DELETE FROM storage_operations
+		WHERE state IN (?,?,?)
+		  AND retention_until IS NOT NULL
+		  AND retention_until<=?
+		  AND NOT EXISTS (
+			SELECT 1 FROM storage_operation_cleanup cleanup
+			WHERE cleanup.operation_id=storage_operations.operation_id
+		  )`,
 		StorageOperationCompleted, StorageOperationFailed,
 		StorageOperationCancelled, now.Format(timestampLayout),
 	)
@@ -516,6 +516,20 @@ func (s *Store) StorageOperation(ctx context.Context, id string) (StorageOperati
 		` WHERE operation_id=?`, id))
 }
 
+func (s *Store) StorageOperations(
+	ctx context.Context, limit int,
+) ([]StorageOperation, error) {
+	if limit < 1 || limit > 1000 {
+		return nil, errors.New("storage operation limit must be between 1 and 1000")
+	}
+	rows, err := s.db.QueryContext(ctx, storageOperationSelect+
+		` ORDER BY created_at DESC,operation_id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("listing storage operations: %w", err)
+	}
+	return scanStorageOperations(rows)
+}
+
 func (s *Store) ResumableStorageOperations(ctx context.Context) ([]StorageOperation, error) {
 	rows, err := s.db.QueryContext(ctx, storageOperationSelect+
 		` WHERE state IN (?,?) ORDER BY created_at,operation_id`,
@@ -524,42 +538,6 @@ func (s *Store) ResumableStorageOperations(ctx context.Context) ([]StorageOperat
 		return nil, fmt.Errorf("listing resumable storage operations: %w", err)
 	}
 	return scanStorageOperations(rows)
-}
-
-// RetainedStorageOperations returns job list fields for active work and retained history.
-func (s *Store) RetainedStorageOperations(ctx context.Context) ([]StorageOperation, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT operation_id,kind,state,total_objects,completed_objects,
-		       cancel_requested,error,created_at,finished_at
-		FROM storage_operations
-		WHERE NOT (`+expiredStorageOperationPredicate+`)
-		ORDER BY created_at DESC,operation_id DESC`,
-		StorageOperationCompleted, StorageOperationFailed, StorageOperationCancelled, nowRFC3339())
-	if err != nil {
-		return nil, fmt.Errorf("listing retained storage operations: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var result []StorageOperation
-	for rows.Next() {
-		var operation StorageOperation
-		var createdAt string
-		var finishedAt sql.NullString
-		if err := rows.Scan(&operation.ID, &operation.Kind, &operation.State,
-			&operation.TotalObjects, &operation.CompletedObjects, &operation.CancelRequested,
-			&operation.Error, &createdAt, &finishedAt); err != nil {
-			return nil, fmt.Errorf("reading retained storage operation: %w", err)
-		}
-		operation.CreatedAt = parseStoredTime(createdAt)
-		if finishedAt.Valid {
-			value := parseStoredTime(finishedAt.String)
-			operation.FinishedAt = &value
-		}
-		result = append(result, operation)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing retained storage operations: %w", err)
-	}
-	return result, nil
 }
 
 func recordStorageOperationCleanupTx(

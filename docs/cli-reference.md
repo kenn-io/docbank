@@ -1481,10 +1481,8 @@ docbank jobs concurrency derive:visual-previews <1-4>
 
 Shows daemon-owned background tasks in stable name order, including status,
 start and finish timestamps, and the bounded error recorded for a failed task.
-Running tasks have no finish timestamp. Supervisor records remain visible until
-the daemon restarts. Durable storage records follow their retention boundary
-while pending cleanup stays protected. `--json` emits `{"items": [...], "lanes": [...]}` for automation.
-Plain `jobs` lists task records; `jobs --json` also includes idle lane settings.
+Running tasks have no finish timestamp. Terminal task records remain visible
+until the daemon restarts. `--json` emits `{"items": [...]}` for automation.
 The CONTROL column shows `read-only`, `active`, or `paused`; previews add
 `limit=N`, and controllable storage jobs add `lane=NAME` for pause and resume.
 Controllable lanes are `derive:visual-previews`, `photo_import`,

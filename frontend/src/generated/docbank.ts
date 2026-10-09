@@ -3248,7 +3248,7 @@ export interface JobList {
   readonly $schema?: string;
   items: Job[];
   lane_controls_error?: string;
-  lanes: LaneControl[];
+  lanes?: LaneControl[];
 }
 
 export interface JobRequest {

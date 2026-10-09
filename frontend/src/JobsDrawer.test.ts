@@ -28,7 +28,7 @@ describe("background jobs drawer", () => {
     let available = false;
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => available
       ? jobsResponse([item], [{ lane: "photo_import", paused: true, concurrency: 1, revision: 2, can_set_concurrency: false }])
-      : new Response(JSON.stringify({ items: [item], lanes: [], lane_controls_error: "Lane controls are unavailable" }), { headers: { "Content-Type": "application/json" } }));
+      : new Response(JSON.stringify({ items: [item], lane_controls_error: "Lane controls are unavailable" }), { headers: { "Content-Type": "application/json" } }));
     render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
     expect((await screen.findByRole("alert")).textContent).toBe("Lane controls are unavailable");
     expect(screen.queryByText("Read-only")).toBeNull();

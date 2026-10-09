@@ -857,14 +857,15 @@ unavailable. Each operation keeps its status, times, error and cancel button.
 Pause or resume photo imports, visual previews, and the storage lanes `place`,
 `evacuate`, `repair`, and `salvage`. Pause takes effect at the next safe item
 boundary. Visual preview concurrency accepts 1 through 4. Document workers
-remain read-only. Pausing a finished lane keeps its last outcome visible until retention clears it.
+remain read-only. Pausing a finished lane keeps its last listed outcome visible.
 A paused lane keeps its Resume control after its last operation disappears.
 Idle lanes show their controls, so you can pause one before it has work. Each
 operation shows its operation ID, which matches `docbank jobs`.
 
 The drawer refreshes every two seconds while open. If another client changes
 controls first, review the refreshed settings and try again. Controls survive
-daemon restarts. Finished storage operations clear at their existing retention
+daemon restarts. The list includes the newest 1,000 storage operations.
+Finished storage operations clear at their existing retention
 boundary unless they still own pending cleanup. Supervisor records disappear
 when the daemon restarts. Browser errors omit backend paths; use the CLI to
 inspect details.

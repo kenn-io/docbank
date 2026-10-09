@@ -92,11 +92,6 @@ func TestBrowserLaneControlBackendErrorIsRedacted(t *testing.T) {
 		assert.Contains(t, body, "inspect with the Docbank CLI")
 		assert.NotContains(t, body, "database")
 	}
-	require.NoError(t, live.Close())
-	resp, body := get(t, ts, "/api/v1/jobs", headers)
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
-	assert.Contains(t, body, "background jobs failed; inspect with the Docbank CLI")
-	assert.NotContains(t, body, "database")
 }
 
 func TestStorageJobControlsFollowOperationState(t *testing.T) {

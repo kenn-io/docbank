@@ -62,7 +62,7 @@
       const next = await generated.listJobs({ session });
       if (request !== generation) return;
       items = next.items;
-      controls = next.lanes;
+      controls = next.lanes ?? [];
       loadError = next.lane_controls_error ?? "";
     } catch (cause) {
       if (request !== generation) return;

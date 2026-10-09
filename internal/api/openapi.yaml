@@ -7563,7 +7563,6 @@ components:
           type: array
       required:
         - items
-        - lanes
       type: object
       x-go-type: api.JobList
       x-go-type-import:

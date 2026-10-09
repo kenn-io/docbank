@@ -167,8 +167,8 @@ shutdown context. Names are unique and stable for the lifetime of that daemon.
 A task panic is recovered and recorded as a failure, so it does not crash the
 process. `docbank jobs` and authenticated `GET /api/v1/jobs` expose running and
 terminal state in deterministic order. Supervisor records remain until restart.
-Durable storage records follow their retention boundary while pending cleanup
-stays protected.
+The list includes the newest 1,000 durable storage records. Their retention
+boundary protects pending cleanup.
 
 Every daemon runs three jobs that derive information from retained content:
 

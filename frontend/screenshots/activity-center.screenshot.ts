@@ -84,9 +84,7 @@ test("activity lanes and controls use the real daemon", async ({ browser }) => {
       }
     }
     await page.setViewportSize({ width: 1440, height: 960 });
-    // A kept review instance stays paused with known progress; skipping the
-    // extra Resume/Pause round trip avoids redundant lane-control writes.
-    if (!before && process.env.DOCBANK_ACTIVITY_KEEP !== "1") {
+    if (!before) {
       await page.getByRole("button", { name: "Resume Storage placement" }).click();
       await expect(page.getByRole("button", { name: "Pause Storage placement" })).toBeVisible();
       await page.getByRole("button", { name: "Resume Photo import" }).click();
@@ -109,13 +107,8 @@ test("activity lanes and controls use the real daemon", async ({ browser }) => {
         await writeFile(controlsPath, settings);
       }
     }
-    if (process.env.DOCBANK_ACTIVITY_KEEP === "1") {
-      await writeFile(path.join(output, "review-instance.json"), JSON.stringify({ url, workspace, binary, env: { DOCBANK_HOME: env.DOCBANK_HOME, DOCBANK_LOCK_DIR: env.DOCBANK_LOCK_DIR } }, null, 2));
-    }
   } finally {
     await context.close();
-    if (process.env.DOCBANK_ACTIVITY_KEEP !== "1") {
-      try { await run("daemon", "stop"); } finally { await rm(workspace, { recursive: true, force: true }); }
-    }
+    try { await run("daemon", "stop"); } finally { await rm(workspace, { recursive: true, force: true }); }
   }
 });

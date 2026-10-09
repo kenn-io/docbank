@@ -344,9 +344,8 @@ func storageOperationAPI(operation store.StorageOperation) StorageOperation {
 		CompletedObjects: operation.CompletedObjects,
 		CopiedObjects:    operation.CopiedObjects, CopiedBytes: operation.CopiedBytes,
 		CancelRequested: operation.CancelRequested, Error: operation.Error,
-		CreatedAt:  operation.CreatedAt.Format(time.RFC3339Nano),
-		UpdatedAt:  operation.UpdatedAt.Format(time.RFC3339Nano),
-		FinishedAt: formatOptionalTimestamp(operation.FinishedAt),
+		CreatedAt: operation.CreatedAt.Format(time.RFC3339Nano),
+		UpdatedAt: operation.UpdatedAt.Format(time.RFC3339Nano),
 	}
 	if operation.ReceiptJSON != "" {
 		var receipt any
@@ -354,12 +353,8 @@ func storageOperationAPI(operation store.StorageOperation) StorageOperation {
 			result.Receipt = receipt
 		}
 	}
-	return result
-}
-
-func formatOptionalTimestamp(value *time.Time) string {
-	if value == nil {
-		return ""
+	if operation.FinishedAt != nil {
+		result.FinishedAt = operation.FinishedAt.Format(time.RFC3339Nano)
 	}
-	return value.Format(time.RFC3339Nano)
+	return result
 }

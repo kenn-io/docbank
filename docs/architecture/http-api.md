@@ -1022,7 +1022,7 @@ Malformed expected evidence is a `422 validation` request error.
 
 ### Background-job status
 
-`GET /jobs` returns `{items: [...], lanes: [...]}` in stable job-name order. Each item carries
+`GET /jobs` returns `{items: [...]}` with optional `lanes` in stable job-name order. Each item carries
 `name`, `status` (`queued`, `running`, `completed`, `failed`, or `cancelled`), and a UTC
 `started_at`. Terminal jobs add `finished_at`, and failures add a bounded
 `error`. Supervised task records describe this daemon run only and disappear
@@ -1053,7 +1053,8 @@ session; browser sessions may access supported lanes without query parameters.
 
 Durable storage operations, such as placement and photo imports, also appear as
 `storage:<operation_id>` items with `operation_id`, `kind`, object progress,
-`cancel_requested`, and `can_cancel` while queued or running.
+`cancel_requested`, and `can_cancel` while queued or running. The list includes
+the newest 1,000 durable storage records.
 `GET /jobs/{operation_id}` returns the full operation and its receipt.
 `POST /jobs/{operation_id}/cancel` requests cancellation at the next durable
 object boundary and returns `409` once the operation is terminal or finalizing.

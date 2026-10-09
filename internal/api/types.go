@@ -1257,7 +1257,7 @@ type SetLaneControlRequest struct {
 // without changing a top-level JSON array.
 type JobList struct {
 	Items []Job         `json:"items"`
-	Lanes []LaneControl `json:"lanes"`
+	Lanes []LaneControl `json:"lanes,omitzero"`
 	// LaneControlsError reports why lane controls could not be read. Jobs are
 	// still listed, without control fields, so operations stay discoverable.
 	LaneControlsError string `json:"lane_controls_error,omitzero"`
