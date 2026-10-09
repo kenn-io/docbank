@@ -174,9 +174,10 @@ it("renders added order unchanged and saves or cancels inline rename", async () 
 
 it.each(["rename", "duplicate"] as const)("corrects a rejected %s name with its original revision, then requires review for a conflict", async operation => {
   let finish!: (response: Response) => void;
+  let reconcile!: (response: Response) => void;
   const current = { ...album, revision: 2 };
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "List unavailable" }), { status: 503 }))
+    .mockImplementationOnce(() => new Promise<Response>(resolve => reconcile = resolve))
     .mockResolvedValueOnce(new Response(JSON.stringify({ code: "stale_revision" }), { status: 412 }))
     .mockResolvedValueOnce(new Response(JSON.stringify([current])))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Review rejected" }), { status: 422 }))
@@ -184,7 +185,8 @@ it.each(["rename", "duplicate"] as const)("corrects a rejected %s name with its 
     .mockResolvedValueOnce(new Response(JSON.stringify({ ...current, revision: 3, name: "Corrected name" })))
     .mockResolvedValueOnce(new Response(JSON.stringify([current])));
   vi.stubGlobal("fetch", fetcher);
-  const { albums } = setup(true);
+  const { albums, photos } = setup(true);
+  photos.selectLoaded();
   await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
   await fireEvent.click(await screen.findByRole("menuitem", { name: operation === "rename" ? "Rename" : "Duplicate…" }));
   const input = screen.getByRole("textbox", { name: operation === "rename" ? "Album name" : "Copy name" });
@@ -194,7 +196,11 @@ it.each(["rename", "duplicate"] as const)("corrects a rejected %s name with its 
   await waitFor(() => expect(albums.busy).toBe(true));
   await fireEvent.input(input, { target: { value: "Corrected name" } });
   finish(new Response(JSON.stringify({ detail: "Name too long" }), { status: 422 }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  if (operation === "rename") await fireEvent.keyDown(window, { key: "b" });
+  reconcile(new Response(JSON.stringify({ detail: "List unavailable" }), { status: 503 }));
   await screen.findByText("Name too long");
+  await waitFor(() => expect(albums.error).toBe(""));
   await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
   expect(albums.loadError).toBe("List unavailable");
   expect(screen.queryByRole("button", { name: "Review current album" })).toBeNull();
