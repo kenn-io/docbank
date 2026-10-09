@@ -59,7 +59,9 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 		if _, exists := values[key]; exists {
 			return fmt.Errorf("duplicate XMP property %s", key)
 		}
-		if key != "description" && key != "creator" && key != "rights" {
+		if strings.TrimSpace(value) == "" {
+			value = ""
+		} else if key != "description" && key != "creator" && key != "rights" {
 			value = strings.TrimSpace(value)
 		}
 		values[key] = value

@@ -1651,7 +1651,7 @@ func (replay *auditedHistoryReplay) reconcileCurrentState(
 	if err != nil {
 		return err
 	}
-	if layout.schemaVersion >= 29 {
+	if layout.schemaVersion >= 32 {
 		currentAttachments, err = withoutImplicitPhotoDefaults(currentAttachments, replay.attachments)
 		if err != nil {
 			return err

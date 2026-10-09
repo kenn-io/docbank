@@ -362,7 +362,7 @@ func loadPhotoAuthoredReceipt(ctx context.Context, q metadataQuerier, id string)
 	if err != nil {
 		return PhotoAuthoredReceipt{}, err
 	}
-	if !slices.Contains([]string{"authored", "authored_undo", "authored_sidecar"}, operation) || len(encoded) > maxBatchTagReceiptJSONBytes {
+	if !slices.Contains([]string{"authored", "authored_undo", "authored_sidecar"}, operation) {
 		return PhotoAuthoredReceipt{}, ErrInvalidPhotoAsset
 	}
 	return decodePhotoAuthoredReceipt(before, encoded, id)

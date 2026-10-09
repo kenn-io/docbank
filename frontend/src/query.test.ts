@@ -165,6 +165,10 @@ describe("media classification", () => {
 });
 
 describe("authored photo filters", () => {
+ it.each(["flags", "labels"])("rejects invalid %s during normalization", (field) => {
+   expect(() => parseQuery(JSON.stringify({ filters: { [field]: ["unknown"] } }))).toThrow();
+   expect(() => parseQuery(JSON.stringify({ filters: { [field]: [3] } }))).toThrow();
+ });
  it("keeps decisions in canonical saved queries", () => {
    const value = parseQuery('{"filters":{"rating_min":0,"rating_max":5,"flags":["pick",""],"labels":["red","blue","red"]}}');
    expect(canonicalQuery(value)).toContain('"flags":["","pick"]');
