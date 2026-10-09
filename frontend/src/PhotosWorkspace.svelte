@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import { Button, EmptyState, Modal, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { Photos } from "./photos.svelte.js";
@@ -17,11 +17,7 @@
   async function setHidden(id: string) {
     if (photos.hiding || photos.trashing) return;
     onactionerror?.("");
-    await photos.setHidden(id, preserve, async ids => {
-      await tick();
-      if (!photos.hidden) await cache.evict(ids);
-      onhidden?.();
-    }, onactionerror);
+    await photos.setHidden(id, preserve, onhidden, onactionerror);
   }
   const groups = $derived(groupPhotos(photos.items, photos.grouping));
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));

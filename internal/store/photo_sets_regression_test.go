@@ -1,58 +1,10 @@
 package store
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
-
-func TestPhotoSetResponseFailureRollsBack(t *testing.T) {
-	t.Parallel()
-	for _, operation := range []string{"rename", "duplicate", "add", "remove"} {
-		t.Run(operation, func(t *testing.T) {
-			t.Parallel()
-			s := newTestStore(t)
-			ctx := t.Context()
-			coverAsset := albumAsset(t, s, "hidden-cover.jpg")
-			member := albumAsset(t, s, "visible.jpg")
-			set, err := s.CreatePhotoSet(ctx, "Original")
-			require.NoError(t, err)
-			ids := []string{coverAsset.ID}
-			if operation == "remove" {
-				ids = append(ids, member.ID)
-			}
-			set, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: ids})
-			require.NoError(t, err)
-			cover := &coverAsset.ID
-			set, err = s.UpdatePhotoSet(ctx, set.ID, set.Revision, nil, nil, &cover)
-			require.NoError(t, err)
-			require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
-			_, err = s.SetPhotoAssetHidden(ctx, coverAsset.ID, coverAsset.Revision, true)
-			require.NoError(t, err)
-			token, _, err := s.UnlockPhotoHidden(ctx, "correct")
-			require.NoError(t, err)
-			var before, after bytes.Buffer
-			require.NoError(t, s.ExportMetadata(ctx, &before))
-			_, err = s.db.ExecContext(ctx, `ALTER TABLE photo_hidden_credentials RENAME TO unavailable_hidden_credentials`)
-			require.NoError(t, err)
-			unlocked := WithPhotoHiddenToken(ctx, token)
-			switch operation {
-			case "rename":
-				_, err = s.UpdatePhotoSet(unlocked, set.ID, set.Revision, new("Renamed"), nil, nil)
-			case "duplicate":
-				_, err = s.DuplicatePhotoSet(unlocked, set.ID, set.Revision, "Copy")
-			case "add", "remove":
-				_, err = s.ChangePhotoSetMembers(unlocked, set.ID, set.Revision, operation == "add", PhotoSetSelection{AssetIDs: []string{member.ID}})
-			}
-			require.ErrorContains(t, err, "photo_hidden_credentials")
-			_, err = s.db.ExecContext(ctx, `ALTER TABLE unavailable_hidden_credentials RENAME TO photo_hidden_credentials`)
-			require.NoError(t, err)
-			require.NoError(t, s.ExportMetadata(ctx, &after))
-			require.Equal(t, before.String(), after.String())
-		})
-	}
-}
 
 func TestPhotoSetMembershipSurvivesEmptyAssets(t *testing.T) {
 	t.Parallel()

@@ -10,7 +10,6 @@ export class PhotoPreviewCache {
   private cache?: Promise<Cache>;
   private disposed?: Promise<void>;
   private releaseLock?: () => void;
-  private reads = new Map<string, Set<AbortController>>();
   private fetching = 0;
   private waiting: (() => void)[] = [];
   private pagehide = (event: PageTransitionEvent) => { if (!event.persisted) void this.dispose(); };
@@ -32,17 +31,10 @@ export class PhotoPreviewCache {
   }
 
   get(assetID: string, generationID: string, caller?: AbortSignal, reload = false): Promise<Blob> {
-    const controller = new AbortController();
-    const reads = this.reads.get(assetID) ?? new Set<AbortController>();
-    reads.add(controller);
-    this.reads.set(assetID, reads);
-    const signal = AbortSignal.any([this.controller.signal, controller.signal, ...(caller ? [caller] : [])]);
+    const signal = AbortSignal.any([this.controller.signal, ...(caller ? [caller] : [])]);
     return this.read(assetID, generationID, getReadPhotoPreviewUrl(assetID, generationID), signal, reload).catch(cause => {
       if (!signal.aborted && cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
       throw cause;
-    }).finally(() => {
-      reads.delete(controller);
-      if (!reads.size) this.reads.delete(assetID);
     });
   }
 
@@ -83,7 +75,6 @@ export class PhotoPreviewCache {
         // The network response varies by credentials; retained keys contain no credentials.
         if (!noStore) {
           await cache?.put(key, new Response(bytes, { headers: { "Content-Type": "image/jpeg" } }));
-          if (signal.aborted) await cache?.delete(key);
         }
       } catch { signal.throwIfAborted(); }
       signal.throwIfAborted();
@@ -107,16 +98,6 @@ export class PhotoPreviewCache {
     const next = this.waiting.shift();
     if (next) next();
     else this.fetching--;
-  }
-
-  async evict(assetIDs: string[]) {
-    for (const id of assetIDs) for (const controller of this.reads.get(id) ?? []) controller.abort();
-    if (!this.cache) return;
-    const cache = await this.cache;
-    const paths = assetIDs.map(id => new URL(getReadPhotoPreviewUrl(id, ""), location.origin).pathname);
-    for (const key of await cache.keys()) {
-      if (paths.some(path => new URL(key.url).pathname.startsWith(path))) await cache.delete(key);
-    }
   }
 
   dispose(): Promise<void> {
