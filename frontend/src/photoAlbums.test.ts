@@ -101,22 +101,25 @@ it.each([{ partial: true, failedRead: false }, { partial: true, failedRead: true
   }
 });
 
-it.each([false, true])("preserves a missing-photo error with failed reconciliation=%s", async failedRead => {
+it.each(["available", "read fails", "deleted"])("reconciles a missing-photo response when the album is %s", async mode => {
   const fetcher = vi.fn().mockResolvedValueOnce(response({ detail: "A selected photo is no longer available", code: "not_found" }, 404))
-    .mockResolvedValueOnce(failedRead ? response({ detail: "List unavailable" }, 503) : response([album]))
-    .mockResolvedValueOnce(failedRead ? response([album]) : response({ items: [photo(1)], total: 1 }));
+    .mockResolvedValueOnce(mode === "read fails" ? response({ detail: "List unavailable" }, 503) : response(mode === "deleted" ? [] : [album]))
+    .mockResolvedValueOnce(mode === "read fails" ? response([album]) : response({ items: [photo(1)], total: 1 }));
   vi.stubGlobal("fetch", fetcher);
   const albums = new PhotoAlbums("scoped", vi.fn()); const photos = selected(2); photos.items = [photo(0), photo(1)];
   const restore = vi.fn().mockResolvedValue(undefined), preserve = vi.fn(() => restore);
+  const refresh = vi.spyOn(photos, "refresh");
   await albums.members(album, photos.scope(), photos, false, preserve);
-  if (failedRead) {
+  if (mode === "read fails") {
     expect(albums.loadError).toBe("List unavailable");
     await albums.load(); expect(albums.loadError).toBe("");
+  } else if (mode === "deleted") {
+    expect(refresh).not.toHaveBeenCalled();
   } else {
     expect(preserve).toHaveBeenCalled(); expect(restore).toHaveBeenCalled();
     expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]); expect(photos.total).toBe(1);
   }
-  expect(albums.error).toBe("A selected photo is no longer available");
+  expect(albums.error).toBe(mode === "deleted" ? "This album was deleted." : "A selected photo is no longer available");
 });
 
 it("clears all-results mode after removing every member and links the operated album", async () => {
@@ -222,16 +225,6 @@ it("shares selection scope for an in-app drag and rejects an external payload", 
   finish(); await first;
   expect(albums.error).toBe("");
   expect(albums.notice).toContain("Added to Trip");
-});
-
-it("reports a deleted album without refreshing the source grid", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response({ code: "not_found" }, 404)).mockResolvedValueOnce(response([])));
-  const albums = new PhotoAlbums("scoped", vi.fn());
-  const photos = selected(2);
-  const refresh = vi.spyOn(photos, "refresh").mockResolvedValue();
-  await albums.members(album, photos.scope(), photos);
-  expect(albums.error).toBe("This album was deleted.");
-  expect(refresh).not.toHaveBeenCalled();
 });
 
 it("orders acknowledged properties by star, Unicode code point name and ID while retaining observations", async () => {

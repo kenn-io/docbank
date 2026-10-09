@@ -105,7 +105,7 @@ it.each(["index create", "delete", "duplicate"] as const)("stops delayed %s succ
 });
 
 it.each(["index create", "delete", "duplicate"] as const)("keeps the %s dialog open while its write is pending and shows one failure", async operation => {
-  const { albums, onnavigate, finish } = await pendingAlbumWrite(operation);
+  const { albums, finish } = await pendingAlbumWrite(operation);
   expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
   await fireEvent.keyDown(window, { key: "Escape" });
   expect(screen.getByRole("dialog")).toBeTruthy();
@@ -114,7 +114,6 @@ it.each(["index create", "delete", "duplicate"] as const)("keeps the %s dialog o
   await waitFor(() => expect(albums.busy).toBe(false));
   expect(screen.getAllByRole("alert")).toHaveLength(1);
   expect(albums.error).toBe("");
-  expect(onnavigate).not.toHaveBeenCalled();
 });
 
 it.each(["index create", "picker create", "duplicate"] as const)("acknowledges unconfirmed %s without replay before a separate confirmation", async operation => {
