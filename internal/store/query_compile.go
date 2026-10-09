@@ -565,7 +565,7 @@ func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) 
 		)`,
 		args: []any{marker, fts, marker, compiledProfileArgument{}, compiledProfileArgument{}, fts, marker},
 	}
-	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{fts}}
+	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{"text : (" + fts + ")"}}
 	parts := []compiledQueryFragment{name, content}
 	if c.photoDisplayMetadata {
 		parts = append(parts, metadata)

@@ -2457,7 +2457,7 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
 	if err != nil {
 		return sqlquery.Query{}, fmt.Errorf("creating photo metadata search: %w", err)
 	}
-	metadata, err := helper.Build(sqlitefts.Request{Match: textMatch, CandidateLimit: math.MaxInt})
+	metadata, err := helper.Build(sqlitefts.Request{Match: "text : (" + textMatch + ")", CandidateLimit: math.MaxInt})
 	if err != nil {
 		return sqlquery.Query{}, fmt.Errorf("building photo metadata search: %w", err)
 	}

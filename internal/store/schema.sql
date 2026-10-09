@@ -561,9 +561,9 @@ CREATE INDEX IF NOT EXISTS photo_technical_metadata_capture_date
 CREATE INDEX IF NOT EXISTS photo_technical_metadata_location
     ON photo_technical_metadata(latitude, longitude);
 
--- Searchable photo facts are derived from retained metadata generations.
+-- Generation terms give delete triggers an indexed lookup.
 CREATE VIRTUAL TABLE IF NOT EXISTS photo_metadata_fts USING fts5(
-    generation_id UNINDEXED, text,
+    generation_id, text,
     tokenize='unicode61'
 );
 CREATE TRIGGER IF NOT EXISTS photo_metadata_fts_insert AFTER INSERT ON photo_technical_metadata BEGIN
@@ -571,7 +571,7 @@ CREATE TRIGGER IF NOT EXISTS photo_metadata_fts_insert AFTER INSERT ON photo_tec
         trim(COALESCE(new.camera_make,'') || ' ' || COALESCE(new.camera_model,'') || ' ' || COALESCE(new.lens_make,'') || ' ' || COALESCE(new.lens_model,'') || ' ' || COALESCE(new.location_label,'')));
 END;
 CREATE TRIGGER IF NOT EXISTS photo_metadata_fts_delete AFTER DELETE ON photo_technical_metadata BEGIN
-    DELETE FROM photo_metadata_fts WHERE generation_id=old.generation_id;
+    DELETE FROM photo_metadata_fts WHERE photo_metadata_fts MATCH ('generation_id : "' || old.generation_id || '"');
 END;
 
 -- The projection recipe last applied to every source generation, including

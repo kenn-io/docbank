@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -581,13 +582,35 @@ func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_metadata_fts WHERE generation_id=?`, generation.GenerationID).Scan(&projections))
 	require.Zero(t, projections)
 
+	var trigger string
+	require.NoError(t, s.db.QueryRow(`SELECT sql FROM sqlite_schema WHERE name='photo_metadata_fts_delete'`).Scan(&trigger))
+	deletion := strings.Split(strings.Split(trigger, "BEGIN")[1], ";")[0]
+	deletion = strings.ReplaceAll(deletion, "old.generation_id", "?")
+	rows, err := s.db.Query(`EXPLAIN QUERY PLAN `+deletion, generation.GenerationID)
+	require.NoError(t, err)
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		plan = append(plan, detail)
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	require.Regexp(t, `VIRTUAL TABLE INDEX .*:M[0-9]+`, strings.Join(plan, "\n"))
 	var identity string
 	require.NoError(t, s.db.QueryRow(`SELECT generation_id FROM photo_technical_metadata`).Scan(&identity))
+	for _, sort := range []string{"name", "relevance"} {
+		require.Zero(t, browsePhotoPage(t, s, fmt.Sprintf(`{"text":%q,"sort":{"field":%q}}`, identity, sort)).Total)
+	}
 	_, err = s.db.Exec(`VACUUM`)
 	require.NoError(t, err)
 	var after string
 	require.NoError(t, s.db.QueryRow(`SELECT generation_id FROM photo_technical_metadata`).Scan(&after))
 	require.Equal(t, identity, after)
+	for _, sort := range []string{"name", "relevance"} {
+		require.Zero(t, browsePhotoPage(t, s, fmt.Sprintf(`{"text":%q,"sort":{"field":%q}}`, identity, sort)).Total)
+	}
 	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Survivor","sort":{"field":"relevance"}}`).Total)
 	_, err = s.db.Exec(`DELETE FROM source_metadata_generations WHERE generation_id=(SELECT generation_id FROM source_metadata_heads WHERE source_sha256=?)`, survivor.BlobHash)
 	require.NoError(t, err)

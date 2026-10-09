@@ -677,8 +677,7 @@ Existing `/search` requests do not gain advanced syntax through this endpoint.
 200 with its first page. The request accepts `query`, an optional configured
 processing `profile`, `page_size` of 50, 100, or 250 (default 100), and any
 subset of `collections`, `tags`, `media_family`, `extension`, `modified`,
-`size`, `text_coverage`, `duplicates`, `camera`, `lens`, `year`, `location`,
-and `set` facets, up to eight dimensions.
+`size`, `text_coverage`, and `duplicates` facets, up to eight dimensions.
 
 The response freezes the canonical query, dependency revisions, selected
 lexical generation and processing coverage, ordered row metadata, and exact
@@ -699,9 +698,8 @@ its matching outer structured filter so clients can see alternative values.
 Expression operands and nested saved-query scope stay in force. `total` counts
 distinct documents in that self-excluded population, `missing` counts documents
 without a value, and `other` sums value counts omitted from the response. A
-document with several tags, collections, album memberships, or camera/lens
-make and model labels contributes once to each value, so those value counts
-need not sum to `total`. Photo dimensions here retain the document count unit.
+document with several tags or collections contributes once to each value,
+so those value counts can exceed `total`.
 [Photo browse](../usage/photos.md) counts distinct assets instead.
 
 Each available facet keeps its leading 50 values plus selected QueryV1 values
