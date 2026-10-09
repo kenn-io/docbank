@@ -45,13 +45,16 @@ func TestMCPReportOptIn(t *testing.T) {
 				require.Equal(t, "daemon_unavailable", objectField(t, result, "structuredContent")["code"])
 			}
 			tools := listedToolsByName(t, listed)
-			for _, name := range []string{"create_report", "revise_report", "download_report"} {
+			for _, name := range []string{
+				"create_report", "revise_report", "download_report", "release_report",
+			} {
 				if options.AllowReportWrites {
 					require.Contains(t, names, name)
 					annotations := objectField(t, tools[name], "annotations")
 					require.Equal(t, false, annotations["readOnlyHint"])
 					require.Equal(t, false, annotations["idempotentHint"])
-					require.Equal(t, name == "download_report", annotations["destructiveHint"])
+					require.Equal(t, name == "download_report" || name == "release_report",
+						annotations["destructiveHint"])
 				} else {
 					require.NotContains(t, names, name)
 					before := calls.Load()

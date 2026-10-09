@@ -85,8 +85,8 @@ Both transports have the fixed read catalog described below.
 `--allow-package-writes` permits load-file preflight, import, and custodian
 changes. `--allow-photo-edits` permits photo asset mutations.
 `--allow-export-writes` enables native export jobs and local downloads.
-`--allow-report-writes` enables frozen report creation, revision, and local
-delivery. Each flag is independent. Enable the combination you need at startup.
+`--allow-report-writes` enables frozen report creation, revision, local delivery,
+and explicit release. Each flag is independent. Enable the combination you need at startup.
 
 ## Exact protocol contract
 
@@ -515,8 +515,8 @@ with overwrite.
 
 ## Frozen search reports
 
-Enable report writes to capture exact current versions, review dates, and save
-an evidence ZIP on the machine running MCP:
+Enable report writes to capture exact current versions, review dates, save an
+evidence ZIP on the machine running MCP, and release unneeded live reports:
 
 ```bash
 docbank mcp --allow-report-writes
@@ -529,6 +529,7 @@ docbank mcp --allow-report-writes --allow-export-writes
 | `create_report` | Takes a version 1 `request` with `selected_documents`, `timezone`, and `terms`. Captures 1–1,000 current document identities and 1–128 term rows. |
 | `revise_report` | Takes `report_id` and 1–1,000 reviewed date `choices`. Creates a child, retaining unmentioned parent choices and the original expiration. |
 | `download_report` | Takes `report_id`, an absolute `destination_path`, and optional `overwrite` (default false). Saves a verified ZIP outside the data directory. |
+| `release_report` | Takes `report_id`. Discards this live packet and date-review evidence and frees its handle slot. History, saved files and published children remain. |
 
 These writes require the report flag. The two inspection tools remain available
 without it and can inspect CLI-created whole-vault or collection reports too.
@@ -580,19 +581,35 @@ you. For a larger batch, the existing HTTP/CLI revision path accepts 8 MiB.
 CLI and MCP share eight report handles. Every revision uses another slot. An
 initial report plus seven revisions fills those slots if no other reports are
 retained. All descendants expire 30 minutes after the original observation.
-Download frees no slot, and there is no report release operation. Wait for
-expiry when capacity is full. The engine also permits two simultaneous builds
+Download frees no slot. Release unneeded handles explicitly with `release_report`,
+or wait for expiry when capacity is full. The engine also permits two simultaneous builds
 and 64 handles or pending builds globally. A restart loses live handles, and
 history receipts do not restore their artifacts.
 
 Writes are never automatically replayed. `report_outcome_unknown` means a
-create or revise call may have succeeded without a usable reply. Inspect
+report write may have succeeded without a usable reply. For create or revise, inspect
 history with the operator using `docbank search-export history --json`, or
 through web/HTTP. History records requests and outcomes but does not establish
 live availability or reliably identify a lost reply. There is no idempotent
 replay. A deliberate retry creates another observation or child and uses
 another slot. The first write after a daemon restart may also return this error
 on a stale connection.
+
+`release_report` is destructive and requires `--allow-report-writes`. It can
+release complete or review-pending reports; pending date evidence is lost.
+Success returns `report_id`, `released: true`, `ttlMs: 0`, and
+`cacheScope: "private"`. Child reports keep their original expiry. Shared memory
+remains while a child or in-flight operation uses it, so releasing one handle
+does not guarantee global build or memory capacity.
+
+An active download returns `report_retained`; retry deliberately after its
+server reader closes, even if the download call has already returned. After
+an uncertain release reply, inspect `get_report_summary` for the same ID. A
+successful read proves the handle remains. `report_unavailable` alone is
+inconclusive: MCP omits HTTP status, and the code can mean either a missing
+handle or an unavailable reporting service. History does not prove release.
+Repeating release for an absent handle returns unavailable. A deliberate retry
+uses the same ID and cannot create a new handle.
 
 Downloads compare the summary, stream size and digest, and independently
 verified packet before publication. The CLI uses the same verification path.

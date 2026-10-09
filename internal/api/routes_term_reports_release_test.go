@@ -15,7 +15,9 @@ import (
 	"go.kenn.io/docbank/report"
 )
 
-func createReleaseReport(t *testing.T, ts *httptest.Server, catalog *testStore, review bool) report.Summary {
+func createReleaseReport(t *testing.T, ts *httptest.Server,
+	catalog *testStore, review bool,
+) report.Summary {
 	t.Helper()
 	content := "alpha. Document dated 2024-05-06."
 	if review {

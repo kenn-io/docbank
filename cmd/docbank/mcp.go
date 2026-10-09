@@ -146,6 +146,6 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpAllowExportWrites, "allow-export-writes", false,
 		"allow native export preview, start, cancel, local download, and explicit release")
 	mcpCmd.Flags().BoolVar(&mcpAllowReportWrites, "allow-report-writes", false,
-		"allow frozen report creation, reviewed revisions, and verified local downloads")
+		"allow frozen report creation, reviewed revisions, verified downloads, and explicit release")
 	rootCmd.AddCommand(mcpCmd)
 }

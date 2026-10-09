@@ -27,12 +27,14 @@ var reportDatesTool = toolDefinition{name: "get_report_dates", title: "Get repor
 var reportCreateTool = toolDefinition{name: "create_report", title: "Create report", write: true,
 	description: "Capture a report for exact current document versions. " +
 		"Review scope with the operator. " +
-		"Does not process documents. A lost reply must not be retried automatically.",
+		"Does not process documents. Never retry automatically after a lost reply; " +
+		"a deliberate retry may consume another handle.",
 	schemas: createReportSchemas}
 var reportReviseTool = toolDefinition{name: "revise_report", title: "Revise report", write: true,
 	description: "Apply operator-reviewed date choices to a frozen report. " +
 		"Creates a child and consumes " +
-		"another shared handle without extending expiry. Never retry automatically after a lost reply.",
+		"another shared handle without extending expiry. Never retry automatically after a lost reply; " +
+		"a deliberate retry may consume another handle.",
 	schemas: reviseReportSchemas}
 
 type reportTools struct {
@@ -93,6 +95,8 @@ func (r *reportTools) handler(name string, validator *jsonschema.Resolved) sdkmc
 			output, err = r.create(ctx, request.Params.Arguments)
 		case reportReviseTool.name:
 			output, err = r.revise(ctx, request.Params.Arguments)
+		case reportReleaseTool.name:
+			output, err = r.release(ctx, request.Params.Arguments)
 		default:
 			err = errors.New("unknown report tool")
 		}
@@ -122,7 +126,7 @@ func (r *reportTools) handler(name string, validator *jsonschema.Resolved) sdkmc
 // Encoding happens after the daemon mutation; a rejected reply is not a rejected write.
 func reportResultError(name string, err error) error {
 	switch name {
-	case reportCreateTool.name, reportReviseTool.name:
+	case reportCreateTool.name, reportReviseTool.name, reportReleaseTool.name:
 		return errReportOutcomeUnknown
 	case reportSummaryTool.name, reportDatesTool.name:
 		if errors.Is(err, errToolResultTooLarge) {
