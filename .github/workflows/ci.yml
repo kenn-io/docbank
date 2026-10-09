@@ -2,6 +2,7 @@ name: CI
 
 on:
   workflow_call:
+  workflow_dispatch:
   push:
     branches: [main]
 permissions:
@@ -46,7 +47,7 @@ jobs:
       - name: Install browser test dependencies
         run: |
           npm ci --prefix frontend
-          node frontend/node_modules/@playwright/test/cli.js install chromium webkit
+          node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium webkit
 
       - name: Verify documentation sources and assets
         run: |
