@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-06
+last_edited: 2026-10-07
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -442,7 +442,7 @@ api_key = { env = "DOCBANK_EMBEDDING_PRIMARY_KEY" }
 `base_url` ends in `/v1` or `/v1/embeddings`. Public-IP HTTP endpoints are
 rejected. Plaintext private-network endpoints require
 `trust_private_network = true`. The existing CIDR and proxy controls still
-apply. The `fingerprint_salt` pins the model revision. Unless a
+apply. The `fingerprint_salt` records the configured model revision. Unless a
 `provider_revision_header` is configured, it also supplies the deployment epoch.
 
 The API key may be a literal string, `{ env = "NAME" }`, or
@@ -472,8 +472,91 @@ This adapter keeps Docbank's document/query formatting and chunk preparation.
 `input_type_mode` must be `"none"`. Configure roles in `model_input`.
 `model_context_tokens` and `max_batch_tokens` must remain zero. Nonzero values
 are rejected because this adapter does not use Kit token packing. The
-profile's normalization setting still decides normalization: adopting Kit's
-schema does not normalize returned vectors.
+profile's normalization setting still decides validation: adopting Kit's
+schema does not normalize returned vectors. `unit_length` requires the server
+to return unit vectors; Docbank rejects squared norms that differ from one by
+more than `1e-4`.
+
+#### Optional EmbeddingGemma 2 text recipe
+
+Use the existing OpenAI-compatible adapter with a `custom/v1` model-input
+contract for optional EmbeddingGemma 2 text retrieval. The
+[Google model card](https://ai.google.dev/gemma/docs/embeddinggemma/model_card_2)
+specifies native 768-dimensional output and separate search-query and document
+prefixes. The recipe below targets Google's
+[pinned checkpoint](https://huggingface.co/google/embeddinggemma-2/tree/914f7f89142e33e77833254d9c9b90c3cef7303b),
+`google/embeddinggemma-2@914f7f89142e33e77833254d9c9b90c3cef7303b`.
+
+This is a fragment for a separately provisioned embedding profile. Retain its
+credential binding, egress policy, input and response bounds, chunk policy,
+descriptor ID, and formatter IDs. Set activation to `optional` if processing
+may continue without these embeddings. Recompute the immutable descriptor,
+authorization and disclosure fingerprints for the complete new profile;
+copied fingerprints from another model will fail daemon startup. Select the
+profile in a processing profile and review its processing plan before granting
+consent. See [document processing configuration](usage/configuration.md) and
+the [embedding runtime settings](#runtime-settings).
+
+```toml
+[embedding_profiles.semantic]
+normalization = "unit_length"
+compatibility_id = "embeddinggemma2/search/native768/v1"
+
+[embedding_profiles.semantic.embedder]
+base_url = "http://127.0.0.1:11434/v1"
+model = "embeddinggemma2-text-f32-768-v1"
+dims = 768
+fingerprint_salt = "914f7f89142e33e77833254d9c9b90c3cef7303b-text-f32-mean-native768-v1"
+input_type_mode = "none"
+batch_size = 8
+timeout_seconds = 30
+
+[embedding_profiles.semantic.model_input]
+profile = "custom/v1"
+compatibility_id = "embeddinggemma2/search/native768/v1"
+
+[embedding_profiles.semantic.model_input.document]
+mode = "text"
+template = "title: none | text: {{content}}"
+
+[embedding_profiles.semantic.model_input.query]
+mode = "text"
+template = "task: search result | query: {{content}}"
+```
+
+The loopback endpoint and serving alias are examples. Provision the service
+separately. Its operator must bind the alias and deployment epoch to the exact
+weights, tokenizer, pooling, precision or quantization, and output-width
+recipe. `fingerprint_salt` records that assertion in the immutable revision and
+policy; it does not verify which weights the server loaded. Replace both the
+alias and epoch when that recipe changes, then create a matching descriptor
+and embedding generation. Keep the epoch equal to the resolved model revision,
+or use the existing revision-header contract instead.
+
+Docbank applies each template once and preserves its space before
+`{{content}}`. The server must accept these already formatted strings without
+adding prompts again. Require mean pooling including the prompts, L2-normalized
+output, and `bfloat16` or `float32` activations, never `float16`. The server must
+enforce the shared 8,192-token input window, including formatting, and the
+agreed truncation policy. Reserve prompt overhead in the chunk budget. A
+character limit, batch size, or byte limit does not enforce tokenizer admission.
+
+`dims` declares the expected response width. This adapter sends neither
+`dimensions` nor `input_type`, and it never slices or normalizes the result.
+Wrong-width, nonfinite, zero-norm cosine, and non-unit vectors are rejected.
+Reduced 512-, 256-, or 128-dimensional output requires an explicit custom
+serving contract that truncates and then L2-renormalizes both documents and
+queries, plus a new matching descriptor, compatibility identity and generation.
+The current adapter has no `request_dimensions` option. Put literal formatting
+in `model_input`; unsupported `embedder` affix keys are rejected at load time.
+
+The native model recipe is verified against primary sources, and synthetic
+HTTP tests exercise configuration, literal formatting, identity and vector
+validation. Actual model inference, checkpoint loading, tokenizer admission,
+pooling, precision, server prompt behavior and retrieval quality remain
+untested. This recipe transports rendition text and text queries only; it
+does not advertise original-file image, audio or video support. No default
+model or existing generation changes when this fragment is staged.
 
 #### Legacy text-service configuration
 
