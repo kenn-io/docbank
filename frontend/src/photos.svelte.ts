@@ -82,34 +82,25 @@ export class Photos {
     this.cancelPending();
     this.hiding = true;
     this.actionError = "";
-    let successes = 0;
     let failure = "";
     let failures = 0;
-    try {
-      for (const member of members) {
-        try {
-          const signal = AbortSignal.timeout(60_000);
-          const receipt = await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(member.asset_id, { "If-Match": String(member.revision) }, { session: this.session, signal });
-          if (signal.aborted) throw signal.reason;
-          if (receipt.id !== member.asset_id || receipt.revision <= member.revision) throw new Error("Photo response did not confirm the selected photo. Refresh and retry.");
-          this.cancelPending();
-          successes++;
-          const restore = preserve?.();
-          this.removeTarget(member.asset_id);
-          await restore?.();
-        } catch (cause) {
-          failures++;
-          failure = cause instanceof APIError && cause.code === "hidden_not_configured" ? "Set a passcode in the Hidden view first."
-            : cause instanceof APIError && cause.code === "hidden_locked" && !this.hidden ? "This photo is already hidden."
-            : cause instanceof Error ? cause.message : String(cause);
-          if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); break; }
-        }
-      }
+    await this.mutateBatch(members, async member => {
+      const signal = AbortSignal.timeout(60_000);
+      const receipt = await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(member.asset_id, { "If-Match": String(member.revision) }, { session: this.session, signal });
+      if (signal.aborted) throw signal.reason;
+      return receipt;
+    }, cause => {
+      failures++;
+      failure = cause instanceof APIError && cause.code === "hidden_not_configured" ? "Set a passcode in the Hidden view first."
+        : cause instanceof APIError && cause.code === "hidden_locked" && !this.hidden ? "This photo is already hidden."
+        : cause instanceof Error ? cause.message : String(cause);
+      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); return true; }
+      return false;
+    }, successes => {
       this.actionError = failures ? `${failures} photo${failures === 1 ? "" : "s"} failed: ${failure}` : "";
       onactionerror?.(this.actionError);
       if (successes) onhidden?.();
-      await this.refresh(preserve);
-    } finally { this.hiding = false; }
+    }, "hiding", preserve);
   }
 
   cancelPending() {
@@ -192,28 +183,39 @@ export class Photos {
     this.cancelPending();
     this.trashing = true;
     this.trashError = "";
+    const successes = await this.mutateBatch(selected, item => {
+      const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
+      return trashPhotoAsset(item.asset_id, { "If-Match": String(item.revision) }, options);
+    }, cause => {
+      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); return true; }
+      this.trashError = cause instanceof Error ? cause.message : String(cause);
+      return false;
+    }, successes => {
+      if (successes) ontrashed?.();
+    }, "trashing", preserve);
+    return successes === selected.length;
+  }
+
+  private async mutateBatch(targets: PhotoBrowseRow[], request: (item: PhotoBrowseRow) => Promise<{ id: string; revision: number }>, onerror: (cause: unknown) => boolean, oncomplete: (successes: number) => void, action: "hiding" | "trashing", preserve?: () => (() => Promise<void>) | undefined) {
     let successes = 0;
     try {
-      for (const item of selected) {
+      for (const item of targets) {
         try {
-          const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
-          const revision = item.revision;
-          const receipt = await trashPhotoAsset(item.asset_id, { "If-Match": String(revision) }, options);
-          if (receipt.id !== item.asset_id || receipt.revision <= revision) throw new Error("Photo trash response did not confirm the selected photo. Refresh and retry.");
+          const receipt = await request(item);
+          if (receipt.id !== item.asset_id || receipt.revision <= item.revision) throw new Error(`Photo${action === "trashing" ? " trash" : ""} response did not confirm the selected photo. Refresh and retry.`);
           this.cancelPending();
           successes++;
           const restore = preserve?.();
           this.removeTarget(item.asset_id);
           await restore?.();
         } catch (cause) {
-          if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); break; }
-          this.trashError = cause instanceof Error ? cause.message : String(cause);
+          if (onerror(cause)) break;
         }
       }
-      if (successes) ontrashed?.();
+      oncomplete(successes);
       await this.refresh(preserve);
-      return successes === selected.length;
-    } finally { this.trashing = false; }
+      return successes;
+    } finally { this[action] = false; }
   }
 
   select(id: string, event: MouseEvent, orderedIDs: string[]) {
