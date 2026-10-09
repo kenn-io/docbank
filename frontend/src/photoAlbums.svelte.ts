@@ -1,5 +1,5 @@
 import * as api from "./generated/docbank.js";
-import { compareUnicodeScalars } from "./query.js";
+import { compareUnicodeScalars, uuidV4Pattern as uuid } from "./query.js";
 import { APIError } from "./api-transport.js";
 import type { Photos } from "./photos.svelte.js";
 
@@ -9,7 +9,6 @@ export type PhotoAlbumItem = api.PhotoAlbum & Partial<Pick<api.PhotoAlbumSummary
 
 type UnconfirmedAlbum = { kind: "create" | "duplicate"; name: string; sourceID?: string };
 
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const timestamp = (value: unknown) => typeof value === "string" && Number.isFinite(Date.parse(value));
 
 async function readAlbum(response: Response, expected?: api.PhotoAlbum, creation = false, deletion = false): Promise<api.PhotoAlbum> {

@@ -1654,8 +1654,8 @@
 
   // Album counts and the other photo list may hold photos that just moved to or from trash.
   function refreshPhotoViews(source?: Photos): void {
-    void photoState?.albums.load();
-    for (const photos of [photoState?.photos, albumPhotos]) if (photos && photos !== source) void photos.refresh();
+    if (photoState?.albums.initialized) void photoState.albums.load();
+    for (const photos of [photoState?.photos, albumPhotos]) if (photos?.started && photos !== source) void photos.refresh();
   }
 
   function handleRestored(_receipt: Node): void {

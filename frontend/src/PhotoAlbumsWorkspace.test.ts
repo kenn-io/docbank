@@ -50,6 +50,14 @@ it("lets loaded photos narrow a selection that also holds off-page photos", asyn
   expect((button as HTMLButtonElement).disabled).toBe(true);
 });
 
+it("offers whole-query selection after every page is loaded", async () => {
+  const { photos } = setup();
+  photos.total = 2; photos.cursor = undefined;
+  photos.selectLoaded();
+  await fireEvent.click(await screen.findByRole("button", { name: "Select all 2 photos" }));
+  expect(photos.scope()).toEqual({ query: photos.query });
+});
+
 async function pendingAlbumWrite(operation: "picker add" | "picker create" | "index create" | "delete" | "duplicate") {
   let finish!: (response: Response) => void;
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve)).mockResolvedValue(albumResponse([album]));

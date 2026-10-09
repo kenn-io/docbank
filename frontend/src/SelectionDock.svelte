@@ -77,7 +77,7 @@
       onclick={onselectvisible}
     >{context === "photos" ? "Select loaded photos" : "Select visible documents"}</Button>
     <Button size="sm" onclick={onclear}>Clear selection</Button>
-    {#if context === "photos" && onallresults && !allResults && visibleSelected && wholeQueryCount > visibleDocumentCount}<Button size="sm" tone="info" onclick={onallresults}>Select all {wholeQueryCount.toLocaleString()} photos</Button>{/if}
+    {#if context === "photos" && onallresults && !allResults && visibleSelected && wholeQueryCount > 0}<Button size="sm" tone="info" onclick={onallresults}>Select all {wholeQueryCount.toLocaleString()} photos</Button>{/if}
     {#if photoActions}{@render photoActions()}{/if}
     {#if ontags}
       <Button size="sm" disabled={tagsDisabled} onclick={ontags}>{context === "snapshot" ? "Tag visible selection" : "Edit tags"}</Button>
