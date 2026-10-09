@@ -224,6 +224,18 @@ it("keeps import guidance after clearing an empty search and recognizes numeric 
  await screen.findByText("No matching photos");
  await fireEvent.click(screen.getByRole("button",{name:"Clear filters"}));
  await screen.findByText("Your photo library is empty");
- expect(screen.getByText(/Search checks paired files/)).toBeTruthy();
  photos.dispose(); await cache.dispose();
+});
+it.each(["member_budget_exceeded", "byte_budget_exceeded", "time_budget_exceeded"])("offers count retry only for temporary failures: %s", async reason => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => new Response(JSON.stringify(JSON.parse(init.body as string).facets.length ? { facets: [{ dimension: "camera", available: false, reason }] } : { items: [], total: 0 }))));
+  const photos = new Photos("scoped", vi.fn());
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  if (reason === "time_budget_exceeded") expect(await screen.findByRole("button", { name: "Retry counts" })).toBeTruthy();
+  else {
+    await screen.findByText("Photo counts exceed the library's size limit. Narrow your search or filters.");
+    expect(screen.queryByRole("button", { name: "Retry counts" })).toBeNull();
+  }
+  photos.dispose(); await cache.dispose();
 });

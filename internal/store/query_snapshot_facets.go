@@ -18,7 +18,7 @@ import (
 )
 
 var snapshotFacetDimensions = [...]string{
-	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, "duplicates", compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField,
+	"collections", snapshotFacetTags, snapshotFacetMediaFamily, "extension", "modified", "size", snapshotFacetTextCoverage, "duplicates",
 }
 
 const (
@@ -29,11 +29,15 @@ const (
 )
 
 func normalizeSnapshotFacets(values []string) ([]string, error) {
+	return normalizeFacetDimensions(values, snapshotFacetDimensions[:])
+}
+
+func normalizeFacetDimensions(values, dimensions []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(values))
 	result := make([]string, 0, len(values))
 	for _, value := range values {
 		known := false
-		for _, dimension := range snapshotFacetDimensions {
+		for _, dimension := range dimensions {
 			if value == dimension {
 				known = true
 				break
@@ -131,7 +135,7 @@ func materializeSnapshotFacet(
 	coverage CoverageSelection, dimension string, snapshotRows []SnapshotRow, memberLimit int64,
 ) (SnapshotFacet, error) {
 	facetQuery := queryWithoutSnapshotFacet(compiled.Query, dimension)
-	if !isPhotoFacet(dimension) && dimension != "duplicates" && reflect.DeepEqual(facetQuery.Filters, compiled.Query.Filters) {
+	if dimension != "duplicates" && reflect.DeepEqual(facetQuery.Filters, compiled.Query.Filters) {
 		return materializeSnapshotFacetFromRows(ctx, q, compiled.Query, dimension, snapshotRows, memberLimit)
 	}
 	facetCompiled, err := compileQuery(ctx, facetQuery, queryResolver{q: q})
@@ -148,8 +152,6 @@ func materializeSnapshotFacet(
 	}
 	ctes, join, key, label := "", "", `''`, `''`
 	switch dimension {
-	case compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField:
-		join, key, label = photoFacetProjection(dimension)
 	case "collections":
 		ctes = `, ` + CollectionMembershipCTE
 		join = `LEFT JOIN collection_members cm ON cm.node_id=n.id LEFT JOIN collection_labels cl ON cl.ingest_id=cm.ingest_id`
@@ -180,7 +182,7 @@ func materializeSnapshotFacet(
 		var nodeID, size int64
 		var name, mimeType, modifiedAt, value, label string
 		err := rows.Scan(&nodeID, &name, &mimeType, &size, &modifiedAt, &value, &label)
-		if !isPhotoFacet(dimension) && dimension != "collections" && dimension != snapshotFacetTags && dimension != snapshotFacetTextCoverage && dimension != "duplicates" {
+		if dimension != "collections" && dimension != snapshotFacetTags && dimension != snapshotFacetTextCoverage && dimension != "duplicates" {
 			value = snapshotFacetScalarValue(dimension, name, mimeType, modifiedAt, size)
 			label = value
 		}
@@ -506,31 +508,6 @@ func finalizeSnapshotFacetValues(
 		values = make([]SnapshotFacetValue, 0)
 	}
 	return values, other
-}
-
-func isPhotoFacet(dimension string) bool {
-	return slices.Contains([]string{compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField}, dimension)
-}
-
-func photoFacetProjection(dimension string) (join, key, label string) {
-	join = `LEFT JOIN source_metadata_heads photo_head ON photo_head.source_sha256=cv.blob_hash LEFT JOIN photo_technical_metadata p ON p.generation_id=photo_head.generation_id`
-	switch dimension {
-	case compiledCameraField, compiledLensField:
-		join += ` LEFT JOIN (SELECT 0 choice UNION ALL SELECT 1) photo_label ON (photo_label.choice=0 AND COALESCE(p.` + dimension + `_model,'')<>'') OR (photo_label.choice=1 AND COALESCE(p.` + dimension + `_make,'')<>'')`
-		key = `COALESCE(CASE WHEN photo_label.choice=0 THEN p.` + dimension + `_model_folded ELSE p.` + dimension + `_make_folded END,'')`
-		label = `COALESCE(CASE WHEN photo_label.choice=0 THEN p.` + dimension + `_model ELSE p.` + dimension + `_make END,'')`
-	case snapshotFacetYear:
-		key = `substr(COALESCE(p.capture_date,''),1,4)`
-		label = key
-	case compiledLocationField:
-		key = `COALESCE(p.location_label,'')`
-		label = key
-	case compiledSetField:
-		join = `LEFT JOIN photo_files pf ON pf.node_id=n.id LEFT JOIN (photo_set_members sm JOIN photo_sets ps ON ps.set_id=sm.set_id AND ps.deleted_at IS NULL) ON sm.asset_id=pf.asset_id`
-		key = `COALESCE(ps.set_id,'')`
-		label = `COALESCE(ps.name,'')`
-	}
-	return
 }
 
 func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions) ([]SnapshotFacet, error) {

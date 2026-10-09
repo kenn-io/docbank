@@ -14788,11 +14788,6 @@ components:
               - size
               - text_coverage
               - duplicates
-              - camera
-              - lens
-              - year
-              - location
-              - set
             type: string
           maxItems: 8
           type: array
@@ -16955,11 +16950,6 @@ components:
               - size
               - text_coverage
               - duplicates
-              - camera
-              - lens
-              - year
-              - location
-              - set
             type: string
           maxItems: 8
           type: array

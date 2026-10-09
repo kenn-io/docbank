@@ -159,3 +159,48 @@ it.each([false, true])("Hidden trash invalidates Documents and Trash restore ref
   await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   await screen.findByRole("cell", { name: "Photo 1.jpg" });
 });
+
+it.each(["page failure", "count retry"])("recovers pending photo counts after workspace switches during %s", async scenario => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  storage();
+  const counts: { signal: AbortSignal; finish: (response: Response) => void }[] = [];
+  let pages = 0;
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.includes("/photos/assets/query")) {
+      const request = JSON.parse(init!.body as string);
+      if (request.facets.length) return new Promise<Response>(finish => counts.push({ signal: init!.signal!, finish }));
+      pages++;
+      if (pages === 2) return new Response(JSON.stringify({ detail: "Temporary page failure" }), { status: 503 });
+      return new Response(JSON.stringify({ items: [photo(pages)], total: 3, next_cursor: pages === 1 ? "next" : undefined }));
+    }
+    if (url.includes("/nodes/1")) return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", revision: 1, path: "/" }));
+    return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
+  });
+  render(App);
+  await waitFor(() => expect(counts).toHaveLength(1));
+  if (scenario === "page failure") {
+    await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
+    await screen.findByText("Temporary page failure");
+  } else {
+    counts[0].finish(new Response(JSON.stringify({ facets: [{ dimension: "camera", available: false, reason: "time_budget_exceeded" }] })));
+    await fireEvent.click(await screen.findByRole("button", { name: "Retry counts" }));
+    await waitFor(() => expect(counts).toHaveLength(2));
+  }
+  const canceled = counts.at(-1)!;
+  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  expect(canceled.signal.aborted).toBe(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  await waitFor(() => expect(counts).toHaveLength(scenario === "page failure" ? 2 : 3));
+  canceled.finish(new Response(JSON.stringify({ facets: [] })));
+  counts.at(-1)!.finish(new Response(JSON.stringify({ facets: [{ dimension: "camera", available: true, total: 3, missing: 0, other: 0, values: [{ key: "Synthetic Camera", label: "Synthetic Camera", count: 3, selected: false }] }] })));
+  await screen.findByRole("button", { name: "Synthetic Camera, 3 photos" });
+  if (scenario === "page failure") {
+    await fireEvent.click(screen.getByRole("button", { name: "Retry", exact: true }));
+    await waitFor(() => expect(pages).toBe(3));
+    expect(screen.getByRole("button", { name: "Synthetic Camera, 3 photos" })).toBeTruthy();
+  }
+  expect(screen.queryByRole("button", { name: "Retry counts" })).toBeNull();
+});

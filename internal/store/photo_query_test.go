@@ -806,6 +806,8 @@ func TestPhotoHiddenSavedDuplicateScope(t *testing.T) {
 	compiled := compileFixtureQuery(t, s, `saved:"Photo duplicates"`, query.Filters{})
 	require.Equal(t, []int64{older.ID}, compiledFixtureIDs(t, s.db, compiled, ""),
 		"document queries retain the hidden photo as their duplicate representative")
+}
+
 func TestPhotoBrowseRelevanceAndFacets(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -893,11 +895,12 @@ func TestPhotoFacetsFoldIdentityAndCountEachUnitOnce(t *testing.T) {
 	page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: value, Facets: []string{"camera", "lens"}}, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), page.Total)
-	snapshot, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value, Facets: []string{"camera", "lens", "year", "location", "set"}})
-	require.NoError(t, err)
-	require.Len(t, snapshot.Rows, 2)
-	require.Len(t, snapshot.Facets, 5)
-	for _, facets := range [][]SnapshotFacet{page.Facets, snapshot.Facets[:2]} {
+	for _, dimension := range []string{"camera", "lens", "year", "location", "set"} {
+		_, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value, Facets: []string{dimension}})
+		require.Error(t, err)
+	}
+	{
+		facets := page.Facets
 		require.Equal(t, []SnapshotFacetValue{{Key: "SONY", Label: "SONY", Count: 2, Selected: true}}, facets[0].Values)
 		require.Equal(t, []SnapshotFacetValue{{Key: "STRASSE", Label: "STRASSE", Count: 2, Selected: true}}, facets[1].Values)
 		for _, facet := range facets {
@@ -1266,22 +1269,13 @@ func TestPhotoFacetRawOperandsAndBudgets(t *testing.T) {
 	node := browsePhotoNode(t, s, "oversized.jpg", browseHash("oversized"), "image/jpeg")
 	browsePhotoMetadata(t, s, node, "oversized", photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString(oversized)), photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp("2025-01-01", "2025-01-01", document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
 	value := snapshotTestQuery(t, `{}`)
-	for _, photos := range []bool{true, false} {
-		var facets []SnapshotFacet
-		if photos {
-			page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: value, Facets: []string{"camera", "year"}}, nil)
-			require.NoError(t, err)
-			facets = page.Facets
-		} else {
-			page, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value, Facets: []string{"camera", "year"}})
-			require.NoError(t, err)
-			facets = page.Facets
-		}
-		require.Equal(t, SnapshotFacetValue{Key: raw, Label: raw, Count: 2}, facets[0].Values[0])
-		require.NoError(t, query.ValidateTextOperand("camera", facets[0].Values[0].Key))
-		require.Equal(t, int64(3), *facets[1].Total)
-	}
-	page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: value, Facets: []string{"camera"}}, nil)
+	page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: value, Facets: []string{"camera", "year"}}, nil)
+	require.NoError(t, err)
+	facets := page.Facets
+	require.Equal(t, SnapshotFacetValue{Key: raw, Label: raw, Count: 2}, facets[0].Values[0])
+	require.NoError(t, query.ValidateTextOperand("camera", facets[0].Values[0].Key))
+	require.Equal(t, int64(3), *facets[1].Total)
+	page, err = s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: value, Facets: []string{"camera"}}, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), page.Facets[0].Values[0].Count)
 	require.Equal(t, raw, page.Facets[0].Values[0].Key)
@@ -1289,7 +1283,7 @@ func TestPhotoFacetRawOperandsAndBudgets(t *testing.T) {
 	require.Zero(t, *page.Facets[0].Missing)
 	options := defaultSnapshotMaterializeOptions()
 	options.FacetMemberLimit = 1
-	facets, err := materializeSharedPhotoFacets(t.Context(), s.db, mustPhotoCompiled(t, s, value), "", CoverageSelection{}, []string{"camera", "year"}, options)
+	facets, err = materializeSharedPhotoFacets(t.Context(), s.db, mustPhotoCompiled(t, s, value), "", CoverageSelection{}, []string{"camera", "year"}, options)
 	require.NoError(t, err)
 	require.False(t, facets[0].Available)
 	require.Equal(t, "member_budget_exceeded", facets[0].Reason)
@@ -1301,20 +1295,11 @@ func TestPhotoFacetRawOperandsAndBudgets(t *testing.T) {
 	require.Equal(t, int64(2), browsePhotoPage(t, s, fmt.Sprintf(`{"filters":{"cameras":[%q]}}`, raw)).Total)
 	for _, tc := range []struct{ dimension, filter string }{{"camera", "cameras"}, {"lens", "lenses"}} {
 		selected := snapshotTestQuery(t, fmt.Sprintf(`{"filters":{"asset_ids":[%q],%q:[%q]}}`, invalidAssetID, tc.filter, raw))
-		for _, photos := range []bool{true, false} {
-			var facets []SnapshotFacet
-			if photos {
-				page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: selected, Facets: []string{tc.dimension}}, nil)
-				require.NoError(t, err)
-				facets = page.Facets
-			} else {
-				page, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: selected, Facets: []string{tc.dimension}})
-				require.NoError(t, err)
-				facets = page.Facets
-			}
-			require.Equal(t, SnapshotFacetValue{Key: raw, Label: raw, Count: 1, Selected: true}, facets[0].Values[0])
-			require.Equal(t, int64(1), browsePhotoPage(t, s, fmt.Sprintf(`{"filters":{"asset_ids":[%q],%q:[%q]}}`, invalidAssetID, tc.filter, facets[0].Values[0].Key)).Total)
-		}
+		page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: selected, Facets: []string{tc.dimension}}, nil)
+		require.NoError(t, err)
+		facets := page.Facets
+		require.Equal(t, SnapshotFacetValue{Key: raw, Label: raw, Count: 1, Selected: true}, facets[0].Values[0])
+		require.Equal(t, int64(1), browsePhotoPage(t, s, fmt.Sprintf(`{"filters":{"asset_ids":[%q],%q:[%q]}}`, invalidAssetID, tc.filter, facets[0].Values[0].Key)).Total)
 	}
 }
 

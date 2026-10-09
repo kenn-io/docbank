@@ -6069,11 +6069,6 @@ export const SavedQueryRunRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
-  camera: 'camera',
-  lens: 'lens',
-  year: 'year',
-  location: 'location',
-  set: 'set',
 } as const;
 
 export type SavedQueryRunRequestPageSize = typeof SavedQueryRunRequestPageSize[keyof typeof SavedQueryRunRequestPageSize];
@@ -6837,11 +6832,6 @@ export const WorkspaceQueryCreateRequestFacetsItem = {
   size: 'size',
   text_coverage: 'text_coverage',
   duplicates: 'duplicates',
-  camera: 'camera',
-  lens: 'lens',
-  year: 'year',
-  location: 'location',
-  set: 'set',
 } as const;
 
 export type WorkspaceQueryCreateRequestPageSize = typeof WorkspaceQueryCreateRequestPageSize[keyof typeof WorkspaceQueryCreateRequestPageSize];

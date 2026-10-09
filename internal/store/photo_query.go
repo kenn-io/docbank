@@ -93,14 +93,9 @@ func (s *Store) ListPhotoAssets(
 	if request.PageSize < 1 || request.PageSize > MaxDocumentCatalogPageSize {
 		return PhotoBrowsePage{}, ErrInvalidPhotoQuery
 	}
-	dimensions, err := normalizeSnapshotFacets(request.Facets)
+	dimensions, err := normalizeFacetDimensions(request.Facets, []string{compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField})
 	if err != nil {
 		return PhotoBrowsePage{}, fmt.Errorf("%w: %w", ErrInvalidPhotoQuery, err)
-	}
-	for _, dimension := range dimensions {
-		if !isPhotoFacet(dimension) {
-			return PhotoBrowsePage{}, ErrInvalidPhotoQuery
-		}
 	}
 	coverage, err := normalizeCoverageSelection(request.Coverage)
 	if err != nil {

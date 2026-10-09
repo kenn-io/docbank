@@ -23,6 +23,7 @@ export class Photos {
   facets = $state<SnapshotPage["facets"]>([]);
   facetsLoading = $state(false);
   facetsError = $state("");
+  facetsRetryable = $state(true);
   items = $state<PhotoBrowseRow[]>([]);
   total = $state(0);
   cursor = $state<string | undefined>();
@@ -134,10 +135,11 @@ export class Photos {
   }
 
   resume(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.error) return;
+    const counts = this.needsFacets && !this.facetsError ? this.retryFacets() : undefined;
+    if (this.error) return counts;
     if (this.replacement) return this.retry(preserve);
     if (!this.started) return this.loadMore(preserve);
-    if (this.needsFacets && !this.facetsError) return this.retryFacets();
+    return counts;
   }
 
   retry(preserve?: () => (() => Promise<void>) | undefined) {
@@ -249,7 +251,8 @@ export class Photos {
     if (this.disposed || !this.started || this.facetsLoading) return;
     this.facetsController.abort();
     const controller = this.facetsController = new AbortController();
-    this.facetsLoading = true; this.facetsError = "";
+    this.needsFacets = true;
+    this.facetsLoading = true; this.facetsError = ""; this.facetsRetryable = true;
     const query = parseQuery(canonicalQuery(this.query));
     query.sort = { field: "capture_time", direction: "desc" };
     try {
@@ -257,10 +260,15 @@ export class Photos {
       if (controller.signal.aborted) return;
       this.facets = (page.facets ?? []) as SnapshotPage["facets"];
       this.needsFacets = false;
-      if (this.facets.some(facet => !facet.available)) this.facetsError = "Some photo counts couldn't be loaded.";
+      const unavailable = this.facets.filter(facet => !facet.available);
+      if (unavailable.length) {
+        this.facetsRetryable = unavailable.some(facet => facet.reason !== "member_budget_exceeded" && facet.reason !== "byte_budget_exceeded");
+        this.facetsError = this.facetsRetryable ? "Some photo counts couldn't be loaded." : "Photo counts exceed the library's size limit. Narrow your search or filters.";
+      }
     } catch (cause) {
       if (controller.signal.aborted) return;
       if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
+      this.needsFacets = false;
       this.facetsError = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.facetsLoading = false;

@@ -43,7 +43,7 @@ return to date browsing. Relevance keeps the ranked order across loaded
 pages and uses asset IDs to break equal-score ties. The first ranked page counts its complete ranked scope. Ranked retrieval has a ten-second deadline; Retry repeats a timed-out read while retaining earlier pages.
 
 Camera, Lens, Year, Location, and Albums narrow the grid. Counts cover the
-whole matching library, including photos beyond the loaded page. The grid loads before optional counts; Retry counts reloads failed summaries while paging stays available. Each facet
+whole matching library, including photos beyond the loaded page. The grid loads before optional counts; Retry counts reloads temporary failures while paging stays available. Counts that exceed fixed member or byte limits require a narrower search or filters. Each facet
 omits its own selected filter while retaining search and the other filters.
 Camera, lens, year, and location describe the selected display file; year
 uses its recorded local capture date. Text may match any live member of a

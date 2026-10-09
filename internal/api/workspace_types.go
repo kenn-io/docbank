@@ -17,7 +17,7 @@ type WorkspaceQueryCreateRequest struct {
 	Query    QueryPayload `json:"query"`
 	Profile  string       `json:"profile,omitempty" maxLength:"128"`
 	PageSize int          `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
-	Facets   []string     `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates,camera,lens,year,location,set"`
+	Facets   []string     `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
 }
 
 // WorkspaceQueryPageRequest reads one page using only the opaque cursor minted
@@ -31,7 +31,7 @@ type WorkspaceQueryPageRequest struct {
 type SavedQueryRunRequest struct {
 	Profile  string   `json:"profile,omitempty" maxLength:"128"`
 	PageSize int      `json:"page_size,omitempty" enum:"50,100,250" default:"100"`
-	Facets   []string `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates,camera,lens,year,location,set"`
+	Facets   []string `json:"facets,omitempty" maxItems:"8" uniqueItems:"true" enum:"collections,tags,media_family,extension,modified,size,text_coverage,duplicates"`
 }
 
 // WorkspaceQueryDependency is the explicit snake-case wire form of an

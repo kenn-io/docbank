@@ -2453,7 +2453,7 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
 	if textMatch == "" {
 		return result, nil
 	}
-	helper, err := sqlitefts.New(sqlitefts.WithIndexTable("photo_metadata_fts"), sqlitefts.WithIndexKey("rowid"), sqlitefts.WithSourceTable("photo_technical_metadata"), sqlitefts.WithSourceKey("row_id"))
+	helper, err := sqlitefts.New(sqlitefts.WithIndexTable("photo_metadata_fts"), sqlitefts.WithIndexKey("generation_id"), sqlitefts.WithSourceTable("photo_technical_metadata"), sqlitefts.WithSourceKey("generation_id"))
 	if err != nil {
 		return sqlquery.Query{}, fmt.Errorf("creating photo metadata search: %w", err)
 	}
@@ -2462,7 +2462,7 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
 		return sqlquery.Query{}, fmt.Errorf("building photo metadata search: %w", err)
 	}
 	result.SQL += ` UNION ALL SELECT n.id node_id,2 tier,matched.score FROM (` + metadata.SQL + `) matched
-  JOIN photo_technical_metadata p ON p.row_id=matched.doc_key JOIN source_metadata_heads h ON h.generation_id=p.generation_id
+  JOIN photo_technical_metadata p ON p.generation_id=matched.doc_key JOIN source_metadata_heads h ON h.generation_id=p.generation_id
   JOIN content_versions cv ON cv.blob_hash=h.source_sha256 JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`
 	result.Args = append(result.Args, metadata.Args...)
 	cte, _, rank, args := contentSearchMatches(textMatch, generation, profile)

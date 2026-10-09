@@ -395,14 +395,11 @@ func TestWorkspaceQueryPageKeepsFrozenVersionAcrossConcurrentReplacement(t *test
 	assert.Equal(t, last.CurrentVersionID, refreshedLast.Rows[0].ContentVersionID)
 }
 
-func TestWorkspaceQueryRoutesAcceptPhotoFacetDimensions(t *testing.T) {
+func TestWorkspaceQueryRoutesRejectPhotoFacetDimensions(t *testing.T) {
 	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	_, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.jpg", testHash("snapshot-photo"), 10, "image/jpeg")
-	require.NoError(t, err)
-	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, `{"query":{},"facets":["camera","lens","year","location","set"]}`)
-	require.Equal(t, http.StatusOK, resp.StatusCode, body)
-	var page api.WorkspaceQueryResponse
-	require.NoError(t, json.Unmarshal([]byte(body), &page))
-	require.Len(t, page.Facets, 5)
+	ts, _ := newTestServer(t, nil)
+	for _, dimension := range []string{"camera", "lens", "year", "location", "set"} {
+		resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, "/api/v1/workspace/queries", map[string]string{"X-Api-Key": testAPIKey}, fmt.Sprintf(`{"query":{},"facets":[%q]}`, dimension))
+		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
+	}
 }

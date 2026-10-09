@@ -581,12 +581,12 @@ func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_metadata_fts WHERE generation_id=?`, generation.GenerationID).Scan(&projections))
 	require.Zero(t, projections)
 
-	var identity int64
-	require.NoError(t, s.db.QueryRow(`SELECT row_id FROM photo_technical_metadata`).Scan(&identity))
+	var identity string
+	require.NoError(t, s.db.QueryRow(`SELECT generation_id FROM photo_technical_metadata`).Scan(&identity))
 	_, err = s.db.Exec(`VACUUM`)
 	require.NoError(t, err)
-	var after int64
-	require.NoError(t, s.db.QueryRow(`SELECT row_id FROM photo_technical_metadata`).Scan(&after))
+	var after string
+	require.NoError(t, s.db.QueryRow(`SELECT generation_id FROM photo_technical_metadata`).Scan(&after))
 	require.Equal(t, identity, after)
 	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Survivor","sort":{"field":"relevance"}}`).Total)
 	_, err = s.db.Exec(`DELETE FROM source_metadata_generations WHERE generation_id=(SELECT generation_id FROM source_metadata_heads WHERE source_sha256=?)`, survivor.BlobHash)
