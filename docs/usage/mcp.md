@@ -161,7 +161,7 @@ resource links, is capped at 1 MiB.
 | `list_package_members` | Pages through a package's immutable document occurrences. |
 | `get_package_record` | Reads one immutable sender row by its package-scoped record key. |
 | `lookup_bates_label` | Finds bounded package-scoped matches for an exact received or assigned label. |
-| `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. The response has at most 256 files and includes the selected display source. |
+| `get_photo_asset` | Reads one photo asset by asset UUID or positive node ID. Returns the selected display source, `total_files`, `file_offset`, and a page of complete file decisions. Pass `next_file_offset` as `file_offset` to continue. Pages are live; restart if the asset revision changes. |
 
 Starting the server with `--allow-photo-edits` adds these write tools:
 
@@ -175,7 +175,7 @@ Starting the server with `--allow-photo-edits` adds these write tools:
 
 Run `docbank photos unhide /path/to/photo.jpg` and enter the passcode before using MCP photo commands on a hidden asset. Ordinary MCP document tools retain access to its files.
 
-Photo writes make one daemon request. An ambiguous transport failure returns
+Photo writes return the first file page with the committed asset revision. Continue through `get_photo_asset` when `next_file_offset` is present. Photo writes make one daemon request. An ambiguous transport failure returns
 `processing_outcome_unknown`. Inspect the asset before retrying. Display and
 vault settings writes remain HTTP and CLI operations.
 

@@ -261,7 +261,9 @@ func (s *Store) applyPhotoAuthoredTx(ctx context.Context, tx *sql.Tx, targets []
 		if err := ValidatePhotoAuthored(v); err != nil {
 			return result, err
 		}
-		if v == f.Authored() && !force {
+		// Revision one is still eligible for sidecar initialization until a person makes a decision.
+		claim := sidecar == nil && f.Revision == 1 && t.Patch != (PhotoAuthoredPatch{})
+		if v == f.Authored() && !force && !claim {
 			continue
 		}
 		if f.Revision == math.MaxInt64 || node.Revision == math.MaxInt64 {

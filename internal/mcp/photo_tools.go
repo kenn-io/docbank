@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,6 +27,9 @@ type photoAssetToolOutput struct {
 	UpdatedAt             string          `json:"updated_at"`
 	Agreement             map[string]bool `json:"agreement"`
 	Files                 []api.PhotoFile `json:"files"`
+	TotalFiles            int             `json:"total_files"`
+	FileOffset            int             `json:"file_offset"`
+	NextFileOffset        *int            `json:"next_file_offset,omitzero"`
 }
 
 func photoWriteTool(name string) bool {
@@ -39,8 +43,9 @@ func photoWriteTool(name string) bool {
 
 func getPhotoAsset(ctx context.Context, lease *daemonLease, raw []byte) (photoAssetToolOutput, error) {
 	var input struct {
-		AssetID string `json:"asset_id"`
-		NodeID  int64  `json:"node_id"`
+		AssetID    string `json:"asset_id"`
+		NodeID     int64  `json:"node_id"`
+		FileOffset int    `json:"file_offset"`
 	}
 	if err := decodeReadArguments(raw, &input); err != nil {
 		return photoAssetToolOutput{}, err
@@ -57,11 +62,14 @@ func getPhotoAsset(ctx context.Context, lease *daemonLease, raw []byte) (photoAs
 	if err != nil {
 		return photoAssetToolOutput{}, err
 	}
-	return photoAssetOutput(asset), nil
+	return photoAssetOutput(asset, input.FileOffset)
 }
 
-func photoAssetOutput(asset api.PhotoAsset) photoAssetToolOutput {
-	return photoAssetToolOutput{
+func photoAssetOutput(asset api.PhotoAsset, offset int) (photoAssetToolOutput, error) {
+	if offset < 0 || offset > 256 {
+		return photoAssetToolOutput{}, invalidToolArgumentsError()
+	}
+	output := photoAssetToolOutput{
 		privateCache:          newPrivateCache(),
 		ID:                    asset.ID,
 		Kind:                  asset.Kind,
@@ -72,9 +80,30 @@ func photoAssetOutput(asset api.PhotoAsset) photoAssetToolOutput {
 		DisplaySource:         asset.DisplaySource,
 		CreatedAt:             asset.CreatedAt,
 		UpdatedAt:             asset.UpdatedAt,
-		Files:                 asset.Files,
+		Files:                 []api.PhotoFile{},
+		TotalFiles:            len(asset.Files),
+		FileOffset:            offset,
 		Agreement:             asset.Agreement,
 	}
+	// Each file appears in structured JSON and escaped text, with space left for the envelope.
+	const fileBudget = maxToolResponseBytes/3 - 8<<10
+	bytes := 0
+	for _, file := range asset.Files[min(offset, len(asset.Files)):] {
+		encoded, err := json.Marshal(file)
+		if err != nil {
+			return photoAssetToolOutput{}, err
+		}
+		if bytes+len(encoded)+1 > fileBudget {
+			if len(output.Files) == 0 {
+				return photoAssetToolOutput{}, errToolResultTooLarge
+			}
+			output.NextFileOffset = new(offset + len(output.Files))
+			break
+		}
+		output.Files = append(output.Files, file)
+		bytes += len(encoded) + 1
+	}
+	return output, nil
 }
 
 func photoWriteToolHandler(
@@ -170,7 +199,11 @@ func executePhotoWriteTool(
 	if err != nil {
 		return nil, err
 	}
-	result, err := boundedToolSuccess(validator, photoAssetOutput(output), nil)
+	page, err := photoAssetOutput(output, 0)
+	var result *sdkmcp.CallToolResult
+	if err == nil {
+		result, err = boundedToolSuccess(validator, page, nil)
+	}
 	if err != nil {
 		return nil, sanitizedDaemonError(errProcessingOutcomeUnknown,
 			fmt.Errorf("photo mutation response failed output validation: %w", err))
