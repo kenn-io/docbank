@@ -28,7 +28,7 @@ describe("background jobs drawer", () => {
     render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
     expect(await screen.findByText("No background jobs")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toBe("Lane controls are unavailable");
-    expect(screen.getByText("0 running · 0 active lanes")).toBeTruthy();
+    expect(screen.getByText("0 running · 0 total")).toBeTruthy();
   });
 
   it("shows unavailable lane controls while keeping progress and cancellation", async () => {
@@ -41,6 +41,7 @@ describe("background jobs drawer", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("Lane controls are unavailable");
     expect(screen.queryByText("Read-only")).toBeNull();
     expect(screen.getByText("1 of 2 groups")).toBeTruthy();
+    expect(screen.getByText("0 running · 1 total")).toBeTruthy();
     await fireEvent.click(screen.getByRole("button", { name: "Cancel Photo import a" }));
     expect(fetchSpy.mock.calls.some(([url]) => String(url).endsWith("/jobs/a/cancel"))).toBe(true);
     available = true;
@@ -66,7 +67,7 @@ describe("background jobs drawer", () => {
       expect(screen.getByText("Paused").parentElement?.textContent).toBe("Paused Idle");
       expect(screen.getByRole("button", { name: "Pause Storage repair" })).toBeTruthy();
       expect(screen.getAllByText("Idle")).toHaveLength(2);
-      expect(screen.getByText("0 running · 0 active lanes")).toBeTruthy();
+      expect(screen.getByText("0 running · 0 total")).toBeTruthy();
       expect(screen.queryByText("No background jobs")).toBeNull();
       expect(screen.queryByText("Started")).toBeNull();
       expect(screen.queryByRole("progressbar")).toBeNull();
@@ -109,12 +110,15 @@ describe("background jobs drawer", () => {
 
   it("keeps the finished outcome and pause visible, and closes on a rejected mutation", async () => {
     const item = { name: "storage:a", kind: "place", operation_id: "a", status: "completed", started_at: "2026-07-23T12:00:00Z", controllable: true, paused: true, concurrency: 1, control_revision: 1 };
+    const worker = { name: "extract:plain-text", status: "completed", started_at: "2026-07-23T12:00:00Z" };
     const auth = vi.fn();
     const close = vi.fn();
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(jobsResponse([item])).mockResolvedValueOnce(new Response("{}", { status: 401, headers: { "Content-Type": "application/json" } }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(jobsResponse([item, worker])).mockResolvedValueOnce(new Response("{}", { status: 401, headers: { "Content-Type": "application/json" } }));
     render(JobsDrawer, { session: "short-lived", onclose: close, onauthfailure: auth });
     await fireEvent.click(await screen.findByRole("button", { name: "Resume Storage placement" }));
-    expect(screen.getByText("Completed")).toBeTruthy();
+    expect(screen.getAllByText("Completed")).toHaveLength(2);
+    expect(screen.getByText("extract · plain text")).toBeTruthy();
+    expect(screen.getByText("0 running · 2 total")).toBeTruthy();
     expect(screen.getByText("Paused")).toBeTruthy();
     await waitFor(() => expect(auth).toHaveBeenCalledOnce());
     expect(close).toHaveBeenCalledOnce();
@@ -127,7 +131,7 @@ describe("background jobs drawer", () => {
     expect(screen.getAllByText("Photo import")).toHaveLength(1);
     expect(screen.getByRole("progressbar", { name: "Photo import progress" }).getAttribute("aria-valuemax")).toBe("2");
     expect(screen.getByText("2 operations")).toBeTruthy();
-    expect(screen.getByText("0 running · 1 active lanes")).toBeTruthy();
+    expect(screen.getByText("0 running · 2 total")).toBeTruthy();
     expect(screen.getAllByText("Queued")).toHaveLength(3);
     expect(screen.getAllByText("Status")).toHaveLength(2);
     expect(screen.queryByText("Finished")).toBeNull();

@@ -37,9 +37,8 @@
 
   let updating = $state(new Set<string>());
   const lanes = $derived(jobLanes(items, controls));
-  const occupiedLanes = $derived(lanes.filter((lane) => lane.members.length > 0 || lane.active));
   const running = $derived(
-    lanes.filter((lane) => lane.status === "running").length,
+    items.filter((job) => job.status === "running").length,
   );
 
   onMount(() => {
@@ -174,7 +173,7 @@
       <div>
         <span>Daemon activity</span>
         <strong>Background jobs</strong>
-        <small>{running} running · {occupiedLanes.length} active lanes</small>
+        <small>{running} running · {items.length} total</small>
       </div>
       <div class="drawer-actions">
         <IconButton
@@ -196,7 +195,7 @@
     {#if actionError}<p class="error" role="alert">{actionError}</p>{/if}
     {#if loading && lanes.length === 0}
       <div class="loading"><Spinner size={16} /> Loading background jobs…</div>
-    {:else if occupiedLanes.length === 0 && controls.length === 0}
+    {:else if lanes.length === 0}
       {#if loadError}
         <div class="load-error">
           <p role="alert">{loadError}</p>
