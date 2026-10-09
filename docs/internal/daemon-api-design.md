@@ -198,7 +198,7 @@ Browser sessions additionally allow hidden-state GET, setup/change/disable/unloc
 
 Hidden state uses the vault-wide passcode and five-minute HttpOnly, SameSite=Strict loopback cookie. Unlock records passcode failures in a storage transaction so directory audit preserves read access. Store keeps session digests and expiry times in memory; lock clears them. Authentication changes serialize session creation and revocation. Five failures within sixty seconds persist a five-minute lockout; sessions clear at restart and stay outside backups. Hide/unhide use asset revisions and receipts. Disable atomically unhides assets; reset retains flags. Locked Photos readers and mutation responses conceal hidden graphs. Album summaries retain hidden membership, expose separate `hidden_count`, count visible members in `included_count`, and omit hidden explicit covers while locked. Cover selection requires the same authorization. Documents remain accessible and their snapshots stay valid.
 
-The browser polls only while Photos is active. A failed state read conceals Hidden while preserving Library; unchanged successful state restores the Hidden view and clears only the read error. HTTP 401 follows the shared browser session-expired path.
+The browser polls only while the Hidden view is mounted. A failed state read conceals Hidden while preserving Library; unchanged successful state restores the Hidden view and clears only the read error. HTTP 401 follows the shared browser session-expired path.
 
 ### Photo graph routes
 

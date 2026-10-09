@@ -17,10 +17,11 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-const hiddenArgonParameters = "m=19456,t=2,p=1"
 const hiddenArgonMemory, hiddenArgonTime, hiddenArgonThreads = 19456, 2, 1
 
 var (
+	hiddenArgonParameters = fmt.Sprintf("m=%d,t=%d,p=%d", hiddenArgonMemory, hiddenArgonTime, hiddenArgonThreads)
+
 	ErrHiddenLocked          = errors.New("hidden photos are locked")
 	ErrHiddenNotConfigured   = errors.New("configure a hidden photos passcode first")
 	ErrHiddenConfigured      = errors.New("hidden photos already have a passcode")

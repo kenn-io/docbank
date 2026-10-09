@@ -491,6 +491,8 @@ func stableDomainError(err error) (string, int) {
 		return facts.Code, 0
 	case "stale_revision", "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "audit_mutation_unsupported", "package_incomplete":
 		return facts.Code, 0
+	case "hidden_locked", "hidden_not_configured", "hidden_passcode":
+		return facts.Code, 0
 	default:
 		return "", 0
 	}
@@ -604,6 +606,12 @@ func domainErrorMessage(code string) string {
 		return "The selected node cannot be enrolled in a photo asset."
 	case "photo_node_owned":
 		return "The selected node already belongs to a photo asset."
+	case "hidden_locked":
+		return "Unlock Hidden or unhide the photo before retrying."
+	case "hidden_not_configured":
+		return "Set up a Hidden passcode, then unlock or unhide the photo before retrying."
+	case "hidden_passcode":
+		return "Use the correct Hidden passcode to unlock or unhide the photo before retrying."
 	case "stale_revision":
 		return "The revision is stale; read the current state and retry with its revision."
 	case "audit_mutation_unsupported":

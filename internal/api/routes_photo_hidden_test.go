@@ -75,7 +75,7 @@ func TestPhotoHiddenHTTPAndClient(t *testing.T) {
 	require.NotNil(t, state.ExpiresAt)
 	require.NotEmpty(t, cookie)
 	_, err = connection.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true, "")
-	require.ErrorContains(t, err, "hidden_locked")
+	require.ErrorIs(t, err, store.ErrHiddenLocked)
 	unchanged, err := connection.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true, cookie)
 	require.NoError(t, err)
 	require.Equal(t, asset, unchanged)
