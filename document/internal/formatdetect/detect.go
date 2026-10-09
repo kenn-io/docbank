@@ -142,7 +142,7 @@ func validatePDFStructure(reader io.ReaderAt, size int64, prefix []byte) error {
 	if int64(read) != tailLength {
 		return errors.New("document bytes changed during PDF trailer read")
 	}
-	startXRefIndex := bytes.LastIndex(tail, []byte("startxref"))
+	startXRefIndex := lastPDFKeyword(tail, "startxref")
 	if startXRefIndex < 0 {
 		return errors.New("PDF startxref is missing")
 	}
@@ -154,10 +154,9 @@ func validatePDFStructure(reader io.ReaderAt, size int64, prefix []byte) error {
 	if digitEnd == 0 {
 		return errors.New("PDF startxref offset is invalid")
 	}
-	// Readers recover a file whose final %%EOF line was lost, so the marker is
-	// optional; any other byte after the last startxref offset stays rejected.
-	epilogue := bytes.TrimPrefix(trimPDFWhitespace(offsetText[digitEnd:]), []byte("%%EOF"))
-	if len(trimPDFWhitespace(epilogue)) != 0 {
+	// Preserve missing-marker recovery, but permit bounded inert producer data
+	// after an EOF line. Never skip a later startxref to recover an older revision.
+	if !validPDFEpilogue(offsetText[digitEnd:]) {
 		return errors.New("PDF trailer is not final")
 	}
 	xrefOffset, err := strconv.ParseInt(string(offsetText[:digitEnd]), 10, 64)
@@ -173,10 +172,302 @@ func validatePDFStructure(reader io.ReaderAt, size int64, prefix []byte) error {
 	if int64(read) != xrefLength {
 		return errors.New("document bytes changed during PDF cross-reference read")
 	}
-	if validPDFTableXRef(xref, tail[:startXRefIndex]) || validPDFStreamXRef(xref) {
+	if validPDFTableXRef(xref, tail[:startXRefIndex]) ||
+		(validPDFStreamXRef(xref) &&
+			(validPDFStreamClosure(reader, size, xref, xrefOffset, tail[:startXRefIndex], tailOffset) ||
+				validPDFLinearizedStreamClosure(reader, size, prefix, xref, xrefOffset, tail[:startXRefIndex], tailOffset))) {
 		return nil
 	}
 	return errors.New("PDF cross-reference data is invalid")
+}
+
+func validPDFEpilogue(data []byte) bool {
+	data = trimPDFWhitespace(data)
+	if len(data) == 0 {
+		return true // Readers also recover a lost final EOF line.
+	}
+	if !bytes.HasPrefix(data, []byte("%%EOF")) {
+		return false
+	}
+	data = data[len("%%EOF"):]
+	// A bounded compatibility allowance is not an alternate container or a
+	// partial PDF revision. Keep rejecting markup, archive signatures, and PDF
+	// syntax, even when hidden behind otherwise harmless scanner padding.
+	if bytes.ContainsAny(data, "<>") || bytes.Contains(data, []byte("%%EOF")) ||
+		bytes.Contains(data, []byte("%PDF-")) {
+		return false
+	}
+	for _, signature := range []string{"PK\x03\x04", "PK\x05\x06", "PK\x07\x08"} {
+		if bytes.Contains(data, []byte(signature)) {
+			return false
+		}
+	}
+	for _, keyword := range []string{"obj", "endobj", "stream", "endstream", "xref", "trailer", "startxref"} {
+		if firstPDFKeyword(data, keyword) >= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// PDF comments may mention %%EOF; only a standalone line marks a prior trailer.
+func containsStandalonePDFEOFLine(data []byte) bool {
+	for len(data) > 0 {
+		lineEnd := bytes.IndexAny(data, "\r\n")
+		if lineEnd < 0 {
+			lineEnd = len(data)
+		}
+		if bytes.Equal(trimPDFWhitespace(data[:lineEnd]), []byte("%%EOF")) {
+			return true
+		}
+		if lineEnd == len(data) {
+			return false
+		}
+		nextLine := lineEnd + 1
+		if data[lineEnd] == '\r' && nextLine < len(data) && data[nextLine] == '\n' {
+			nextLine++
+		}
+		data = data[nextLine:]
+	}
+	return false
+}
+
+// Anchor a stream's closing syntax to its declared byte length. For an indirect
+// length, resolve only an uncompressed length object whose xref entry and body
+// fit within bounded reads. Reject a stream when that link cannot be proven.
+func validPDFStreamClosure(
+	reader io.ReaderAt,
+	size int64,
+	xref []byte,
+	xrefOffset int64,
+	beforeStartXRef []byte,
+	tailOffset int64,
+) bool {
+	streamIndex := firstPDFKeyword(xref, "stream")
+	if streamIndex < 0 {
+		return false
+	}
+	header, ok := tokenizePDF(xref[:streamIndex])
+	if !ok {
+		return false
+	}
+	dictionary, _, ok := parsePDFDictionaryTokens(header, 3, 0)
+	if !ok {
+		return false
+	}
+	dataStart := streamIndex + len("stream")
+	if dataStart < len(xref) && xref[dataStart] == '\r' {
+		dataStart++
+	}
+	if dataStart >= len(xref) || xref[dataStart] != '\n' {
+		return false
+	}
+	dataStart++
+	length, ok := pdfXRefStreamLength(reader, size, xref, dataStart, dictionary["Length"], dictionary)
+	if !ok || length > uint64(MaxDocumentBytes) {
+		return false
+	}
+	end := xrefOffset + int64(dataStart) + int64(length)
+	if end < tailOffset || end >= tailOffset+int64(len(beforeStartXRef)) {
+		return false
+	}
+	closing := beforeStartXRef[end-tailOffset:]
+	if containsStandalonePDFEOFLine(closing) {
+		return false
+	}
+	tokens, ok := tokenizePDF(closing)
+	if !ok || len(tokens) < 2 || !slices.Equal(tokens[:2], []string{"endstream", "endobj"}) {
+		return false
+	}
+	if len(tokens) == 2 {
+		return true
+	}
+	// An indirect length may be written immediately after its stream. Admit
+	// only that exact referenced integer object, not arbitrary appended objects.
+	lengthReference := dictionary["Length"]
+	return len(lengthReference) == 3 && len(tokens) == 7 &&
+		strings.TrimLeft(tokens[2], "0") == strings.TrimLeft(lengthReference[0], "0") &&
+		strings.TrimLeft(tokens[3], "0") == strings.TrimLeft(lengthReference[1], "0") &&
+		tokens[4] == "obj" && pdfNonNegativeIntegerString(tokens[5]) && tokens[6] == "endobj"
+}
+
+// pdfXRefStreamLength returns a direct length or resolves the referenced
+// uncompressed integer object through the xref stream. The xref entry and
+// length object are both read within fixed bounds; filtered xref streams and
+// compressed length objects are conservatively rejected here.
+func pdfXRefStreamLength(
+	reader io.ReaderAt,
+	size int64,
+	xref []byte,
+	dataStart int,
+	lengthReference []string,
+	dictionary map[string][]string,
+) (uint64, bool) {
+	if length, direct := pdfPositiveInteger(lengthReference); direct {
+		return length, true
+	}
+	if size <= 0 || size > MaxDocumentBytes || dataStart < 0 || dataStart > len(xref) {
+		return 0, false
+	}
+	if !validPDFRootReference(lengthReference) || len(dictionary["Filter"]) != 0 || len(dictionary["DecodeParms"]) != 0 {
+		return 0, false
+	}
+	objectNumber, _ := strconv.ParseUint(lengthReference[0], 10, 64)
+	generation, _ := strconv.ParseUint(lengthReference[1], 10, 64)
+	widths := dictionary["W"]
+	if len(widths) != 5 || widths[0] != "[" || widths[4] != "]" {
+		return 0, false
+	}
+	var fieldWidths [3]uint64
+	entryWidth := uint64(0)
+	for index, value := range widths[1:4] {
+		width, err := strconv.ParseUint(value, 10, 64)
+		if err != nil || width > 8 {
+			return 0, false
+		}
+		fieldWidths[index] = width
+		entryWidth += width
+	}
+	if entryWidth == 0 {
+		return 0, false
+	}
+	sizeValue, sizeOK := pdfPositiveInteger(dictionary["Size"])
+	if !sizeOK || objectNumber >= sizeValue {
+		return 0, false
+	}
+	index := dictionary["Index"]
+	if len(index) == 0 {
+		index = []string{"[", "0", strconv.FormatUint(sizeValue, 10), "]"}
+	}
+	if len(index) < 4 || index[0] != "[" || index[len(index)-1] != "]" || (len(index)-2)%2 != 0 {
+		return 0, false
+	}
+	entryIndex, precedingEntries, found := uint64(0), uint64(0), false
+	for position := 1; position < len(index)-1; position += 2 {
+		first, firstErr := strconv.ParseUint(index[position], 10, 64)
+		count, countErr := strconv.ParseUint(index[position+1], 10, 64)
+		if firstErr != nil || countErr != nil || count == 0 || first > math.MaxUint64-count || first+count > sizeValue {
+			return 0, false
+		}
+		if precedingEntries > math.MaxUint64-count {
+			return 0, false
+		}
+		if objectNumber >= first && objectNumber < first+count {
+			if found {
+				return 0, false
+			}
+			entryIndex = precedingEntries + objectNumber - first
+			found = true
+		}
+		precedingEntries += count
+	}
+	dataStartBytes := uint64(dataStart) // #nosec G115 -- dataStart is a bounded index within the 4 KiB xref read.
+	if !found || entryIndex > (math.MaxUint64-dataStartBytes)/entryWidth {
+		return 0, false
+	}
+	entryStart := dataStartBytes + entryIndex*entryWidth
+	if entryStart > uint64(len(xref)) || entryWidth > uint64(len(xref))-entryStart || entryStart+entryWidth > uint64(maxPDFXRefBytes) {
+		return 0, false
+	}
+	entry := xref[entryStart : entryStart+entryWidth]
+	fieldValues := [3]uint64{}
+	position := 0
+	for field, width := range fieldWidths {
+		if width != 0 {
+			fieldEnd := position + int(width) // #nosec G115 -- widths are capped at 8 above.
+			fieldValues[field] = binary.BigEndian.Uint64(paddedPDFXRefField(entry[position:fieldEnd]))
+			position = fieldEnd
+		}
+	}
+	if fieldWidths[0] == 0 {
+		fieldValues[0] = 1
+	}
+	if fieldValues[0] != 1 || fieldValues[1] >= uint64(MaxDocumentBytes) || fieldValues[2] != generation {
+		return 0, false
+	}
+	const maxPDFLengthObjectBytes = 128
+	objectOffset := int64(fieldValues[1]) // #nosec G115 -- the value is bounded by MaxDocumentBytes above.
+	if objectOffset >= size {
+		return 0, false
+	}
+	objectBytes := make([]byte, min(int64(maxPDFLengthObjectBytes), size-objectOffset))
+	read, err := reader.ReadAt(objectBytes, objectOffset)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return 0, false
+	}
+	if read != len(objectBytes) {
+		return 0, false
+	}
+	endObject := firstPDFKeywordOutsideCommentsAndStrings(objectBytes, "endobj")
+	if endObject < 0 {
+		return 0, false
+	}
+	tokens, ok := tokenizePDF(objectBytes[:endObject+len("endobj")])
+	if !ok || len(tokens) != 5 || tokens[2] != "obj" || tokens[4] != "endobj" {
+		return 0, false
+	}
+	actualObject, objectErr := strconv.ParseUint(tokens[0], 10, 64)
+	actualGeneration, generationErr := strconv.ParseUint(tokens[1], 10, 64)
+	length, lengthOK := pdfPositiveInteger(tokens[3:4])
+	return length, objectErr == nil && generationErr == nil && actualObject == objectNumber && actualGeneration == generation && lengthOK
+}
+
+func paddedPDFXRefField(value []byte) []byte {
+	var field [8]byte
+	copy(field[len(field)-len(value):], value)
+	return field[:]
+}
+
+// Linearized files end with a startxref pointing to the first-page stream.
+// Its forward /Prev link identifies the main xref whose closure must precede
+// that startxref. Follow exactly one link, keeping each read at the same bound.
+func validPDFLinearizedStreamClosure(reader io.ReaderAt, size int64, prefix, xref []byte, xrefOffset int64, beforeStartXRef []byte, tailOffset int64) bool {
+	header, ok := tokenizePDF(prefix[:min(int64(len(prefix)), xrefOffset, maxPDFXRefBytes)])
+	if !ok || len(header) < 5 || header[2] != "obj" {
+		return false
+	}
+	linearization, _, ok := parsePDFDictionaryTokens(header, 3, 0)
+	if !ok || len(linearization["Linearized"]) != 1 {
+		return false
+	}
+	version, err := strconv.ParseFloat(linearization["Linearized"][0], 64)
+	if err != nil || version != 1 {
+		return false
+	}
+	streamIndex := firstPDFKeyword(xref, "stream")
+	if streamIndex < 0 {
+		return false
+	}
+	streamHeader, ok := tokenizePDF(xref[:streamIndex])
+	if !ok {
+		return false
+	}
+	first, _, ok := parsePDFDictionaryTokens(streamHeader, 3, 0)
+	if !ok {
+		return false
+	}
+	previous, ok := pdfPositiveInteger(first["Prev"])
+	if !ok || previous <= uint64(xrefOffset) || previous >= uint64(tailOffset+int64(len(beforeStartXRef))) { // #nosec G115 -- offsets are positive and bounded by MaxDocumentBytes in validatePDFStructure.
+		return false
+	}
+	mainOffset := int64(previous) // #nosec G115 -- previous is bounded by the startxref inside MaxDocumentBytes above.
+	mainLength := min(size-mainOffset, maxPDFXRefBytes)
+	var main []byte
+	if mainOffset >= tailOffset {
+		index := mainOffset - tailOffset
+		main = beforeStartXRef[index:min(index+maxPDFXRefBytes, int64(len(beforeStartXRef)))]
+	} else if mainOffset+mainLength <= int64(len(prefix)) {
+		main = prefix[mainOffset : mainOffset+mainLength]
+	} else {
+		main = make([]byte, mainLength)
+		read, err := reader.ReadAt(main, mainOffset)
+		if (err != nil && !errors.Is(err, io.EOF)) || read != len(main) {
+			return false
+		}
+	}
+	return validPDFTableXRefWithRoot(main, beforeStartXRef, first["Root"]) ||
+		(validPDFStreamXRefWithRoot(main, first["Root"]) &&
+			validPDFStreamClosure(reader, size, main, mainOffset, beforeStartXRef, tailOffset))
 }
 
 var (
@@ -671,6 +962,10 @@ func validPDFVersion(version []byte) bool {
 }
 
 func validPDFTableXRef(xref, beforeStartXRef []byte) bool {
+	return validPDFTableXRefWithRoot(xref, beforeStartXRef, nil)
+}
+
+func validPDFTableXRefWithRoot(xref, beforeStartXRef []byte, inheritedRoot []string) bool {
 	position := 0
 	line, ok := nextPDFLine(xref, &position)
 	if !ok || !bytes.Equal(trimPDFWhitespace(line), []byte("xref")) {
@@ -707,10 +1002,14 @@ func validPDFTableXRef(xref, beforeStartXRef []byte) bool {
 		return false
 	}
 
-	return validPDFTrailer(beforeStartXRef, first, count)
+	return validPDFTrailerWithRoot(beforeStartXRef, first, count, inheritedRoot)
 }
 
 func validPDFStreamXRef(xref []byte) bool {
+	return validPDFStreamXRefWithRoot(xref, nil)
+}
+
+func validPDFStreamXRefWithRoot(xref []byte, inheritedRoot []string) bool {
 	streamIndex := firstPDFKeyword(xref, "stream")
 	if streamIndex < 0 {
 		return false
@@ -732,12 +1031,16 @@ func validPDFStreamXRef(xref []byte) bool {
 		return false
 	}
 	_, sizeOK := pdfPositiveInteger(dictionary["Size"])
+	root := dictionary["Root"]
+	if len(root) == 0 {
+		root = inheritedRoot
+	}
 	return sizeOK && len(dictionary["Type"]) == 1 && dictionary["Type"][0] == "/XRef" &&
-		validPDFRootReference(dictionary["Root"]) && validPDFWidths(dictionary["W"]) &&
+		validPDFRootReference(root) && validPDFWidths(dictionary["W"]) &&
 		validPDFStreamLength(dictionary["Length"])
 }
 
-func validPDFTrailer(data []byte, first, count uint64) bool {
+func validPDFTrailerWithRoot(data []byte, first, count uint64, inheritedRoot []string) bool {
 	for end := len(data); end > 0; {
 		trailerIndex := lastPDFKeyword(data[:end], "trailer")
 		if trailerIndex < 0 {
@@ -745,7 +1048,11 @@ func validPDFTrailer(data []byte, first, count uint64) bool {
 		}
 		trailer, ok := parsePDFDictionary(data[trailerIndex+len("trailer"):])
 		if ok {
-			if !validPDFRootReference(trailer["Root"]) {
+			root := trailer["Root"]
+			if len(root) == 0 {
+				root = inheritedRoot
+			}
+			if !validPDFRootReference(root) {
 				return false
 			}
 			size, sizeOK := pdfPositiveInteger(trailer["Size"])
@@ -840,6 +1147,101 @@ func firstPDFKeyword(data []byte, keyword string) int {
 		start = index + 1
 	}
 	return -1
+}
+
+func firstPDFKeywordOutsideCommentsAndStrings(data []byte, keyword string) int {
+	for position := 0; position < len(data); {
+		switch data[position] {
+		case '%':
+			position = skipPDFComment(data, position)
+		case '(':
+			next, ok := skipPDFLiteralString(data, position)
+			if !ok {
+				return -1
+			}
+			position = next
+		case '<':
+			if position+1 < len(data) && data[position+1] == '<' {
+				position += 2
+				continue
+			}
+			next, ok := skipPDFHexString(data, position)
+			if !ok {
+				return -1
+			}
+			position = next
+		case '>':
+			if position+1 < len(data) && data[position+1] == '>' {
+				position += 2
+			} else {
+				position++
+			}
+		case '/':
+			position = skipPDFName(data, position)
+		default:
+			if isPDFTokenBoundary(data[position]) {
+				position++
+				continue
+			}
+			start := position
+			for position < len(data) && !isPDFTokenBoundary(data[position]) {
+				position++
+			}
+			if bytes.Equal(data[start:position], []byte(keyword)) {
+				return start
+			}
+		}
+	}
+	return -1
+}
+
+func skipPDFComment(data []byte, position int) int {
+	for position < len(data) && data[position] != '\r' && data[position] != '\n' {
+		position++
+	}
+	return position
+}
+
+func skipPDFLiteralString(data []byte, position int) (int, bool) {
+	depth, escaped := 0, false
+	for ; position < len(data); position++ {
+		char := data[position]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if char == '\\' {
+			escaped = true
+			continue
+		}
+		switch char {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return position + 1, true
+			}
+		}
+	}
+	return position, false
+}
+
+func skipPDFHexString(data []byte, position int) (int, bool) {
+	for position++; position < len(data); position++ {
+		if data[position] == '>' {
+			return position + 1, true
+		}
+	}
+	return position, false
+}
+
+func skipPDFName(data []byte, position int) int {
+	position++
+	for position < len(data) && !isPDFTokenBoundary(data[position]) {
+		position++
+	}
+	return position
 }
 
 func isPDFTokenBoundary(char byte) bool {
@@ -1003,10 +1405,14 @@ func skipPDFObject(tokens []string, position, depth int) (int, bool) {
 }
 
 func pdfPositiveInteger(value []string) (uint64, bool) {
-	if len(value) != 1 || !decimalString(value[0]) {
+	if len(value) != 1 {
 		return 0, false
 	}
-	parsed, err := strconv.ParseUint(value[0], 10, 64)
+	integer := strings.TrimPrefix(value[0], "+")
+	if !decimalString(integer) {
+		return 0, false
+	}
+	parsed, err := strconv.ParseUint(integer, 10, 64)
 	return parsed, err == nil && parsed > 0
 }
 
@@ -1043,6 +1449,10 @@ func validPDFStreamLength(value []string) bool {
 
 func decimalString(value string) bool {
 	return decimalBytes([]byte(value))
+}
+
+func pdfNonNegativeIntegerString(value string) bool {
+	return decimalString(strings.TrimPrefix(value, "+"))
 }
 
 func trimPDFWhitespace(value []byte) []byte {
