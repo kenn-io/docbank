@@ -14,7 +14,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"uuid"
 
+	"go.kenn.io/docbank/document/bundle"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
 
@@ -309,4 +311,156 @@ func TestImportMetadataProcessingIncarnationAcceptsOnlyIdenticalExistingRow(t *t
 	var count int
 	require.NoError(t, tx.QueryRow(`SELECT COUNT(*) FROM processing_incarnations`).Scan(&count))
 	assert.Equal(t, 2, count)
+}
+
+func TestUpgradeReleasedV0150KeepsExportState(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0150SQL, 28)
+			node, err := legacy.CreateFile(ctx, legacy.RootID(), "exported.txt", fakeHash("f6"), 12, "text/plain")
+			require.NoError(t, err)
+			source, err := legacy.CreateExportSource(ctx, "master", bundle.SourceRequest{
+				OperationID: uuid.New().String(), Kind: "explicit",
+				Members: []bundle.Member{{NodeID: node.ID, VersionID: node.CurrentVersionID, SHA256: node.BlobHash, Size: node.Size}},
+			}, nil)
+			require.NoError(t, err)
+			plan, err := legacy.CreateExportPlan(ctx, "master", bundle.PlanRequest{
+				OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash,
+				Roles: []bundle.RolePolicy{{Role: "original"}},
+			})
+			require.NoError(t, err)
+			job := bundle.JobRequest{PlanID: plan.ID, Fingerprint: plan.Fingerprint}
+			job.OperationID = uuid.New().String()
+			completed, err := legacy.QueueExportJob(ctx, "master", job)
+			require.NoError(t, err)
+			_, err = db.Exec(`UPDATE export_jobs SET state='completed',archive_name=? WHERE id=?`,
+				completed.ID+".zip", completed.ID)
+			require.NoError(t, err)
+			job.OperationID = uuid.New().String()
+			interrupted, err := legacy.QueueExportJob(ctx, "master", job)
+			require.NoError(t, err)
+			_, err = legacy.ClaimExportJob(ctx)
+			require.NoError(t, err)
+			snapshot, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+			require.NoError(t, err)
+			var released strings.Builder
+			for _, table := range releasedExportTables {
+				dumpReleasedTable(t, snapshot, table, &released)
+			}
+			require.NoError(t, snapshot.Rollback())
+			require.NoError(t, db.Close())
+
+			s, err := Open(path, driver.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+
+			var upgraded strings.Builder
+			for _, table := range releasedExportTables {
+				dumpReleasedTable(t, s.db, table, &upgraded)
+			}
+			assert.Equal(t, released.String(), upgraded.String())
+			retained, err := s.ExportArchiveRetained(ctx, completed.ID)
+			require.NoError(t, err)
+			assert.True(t, retained, "exporter startup keeps the completed archive")
+			_, err = s.ExportSource(ctx, "master", source.ID)
+			require.NoError(t, err)
+			_, err = s.ExportPlan(ctx, "master", plan.ID)
+			require.NoError(t, err)
+			_, err = s.ExportJob(ctx, "master", interrupted.ID)
+			require.NoError(t, err)
+			require.NoError(t, s.RequeueExportJobs(ctx))
+			resumed, err := s.ClaimExportJob(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, interrupted.ID, resumed.Job.ID)
+			assert.Equal(t, "master", resumed.Owner)
+		})
+	}
+}
+
+func TestUpgradeReleasedV0150KeepsAdmittedMediaQueued(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0150SQL, 28)
+			request := suppliedMediaPublicationFixture(t, legacy)
+			consent := testProviderAuthorizationRequest()
+			consent.Principal = request.Operation.Principal
+			_, err := legacy.GrantConsent(ctx, grantRequestForAuthorization(consent, nil))
+			require.NoError(t, err)
+			authorization, err := legacy.AuthorizeProviderOperation(ctx, consent)
+			require.NoError(t, err)
+			consent.PriorAuthorization = &authorization
+			request.ProcessingProfile, request.ProcessingPrincipal = "speech", consent.Principal
+			request.ProcessingScope, request.ProcessingProfileFingerprint = consent.Scope, consent.ProfileFingerprint
+			request.ProcessingAuthorization = consent
+			admitted, err := legacy.RetainSuppliedMedia(ctx, request)
+			require.NoError(t, err)
+			require.Equal(t, "queued", admitted.OperationState)
+			require.Empty(t, admitted.JobID, "admission committed before a rendition job was bound")
+			require.NoError(t, db.Close())
+
+			s, err := Open(path, driver.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+
+			continuations, err := s.MediaProcessingContinuations(ctx, consent.Principal, "", 10)
+			require.NoError(t, err)
+			require.Len(t, continuations, 1, "startup finishes the admission after the upgrade")
+			assert.Equal(t, admitted.OperationID, continuations[0].OperationID)
+		})
+	}
+}
+
+func TestUpgradeReleasedV0150KeepsFailedEmbeddingJobs(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := filepath.Join(t.TempDir(), "docbank.db")
+			db, legacy := newReleasedFixtureStore(t, path, driver.driver, schemaV0150SQL, 28)
+			versions := seedRenditionCatalogVersions(t, legacy)
+			profile := embeddingCatalogProfile(t)
+			require.NoError(t, legacy.withStorageTx(ctx, func(tx *sql.Tx) error {
+				return ensureProcessingProfileTx(ctx, tx, profile)
+			}))
+			request := embeddingJobTestRequest(t, legacy, versions[0], profile, "upgrade-failed")
+			_, err := legacy.EnqueueEmbeddingJob(ctx, request)
+			require.NoError(t, err)
+			at := time.Now().UTC()
+			fingerprints := []string{request.Descriptor.Fingerprint}
+			claim, work, found, err := legacy.ClaimNextEmbeddingWork(ctx, "worker:released", at, time.Minute, fingerprints)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.NoError(t, legacy.FailEmbeddingWork(ctx, claim, work, EmbeddingFailureInputRejected,
+				EmbeddingAttemptReceipt{AttemptID: claim.AttemptID}, at.Add(time.Second)))
+			reconcile := func(s *Store) EmbeddingReconcileResult {
+				result, err := s.ReconcileEmbeddingJobs(ctx, EmbeddingReconcileRequest{Mutate: embeddingTestMutation,
+					At: time.Now().UTC(), Limit: 100, DescriptorFingerprints: fingerprints})
+				require.NoError(t, err)
+				return result
+			}
+			reconcile(legacy)
+			var released strings.Builder
+			dumpReleasedTable(t, db, "embedding_jobs", &released)
+			require.NoError(t, db.Close())
+
+			s, err := Open(path, driver.driver)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+
+			var upgraded strings.Builder
+			dumpReleasedTable(t, s.db, "embedding_jobs", &upgraded)
+			assert.Equal(t, released.String(), upgraded.String())
+			assert.Zero(t, reconcile(s).Enqueued, "reconciliation does not reopen released jobs")
+			_, _, ok, err := s.ClaimEmbeddingWork(ctx, claim.AttemptID, "worker:upgraded",
+				time.Now().UTC().Add(time.Second), time.Minute, fingerprints)
+			require.NoError(t, err)
+			assert.False(t, ok, "a permanently failed job stays failed")
+		})
+	}
 }

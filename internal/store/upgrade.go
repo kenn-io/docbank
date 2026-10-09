@@ -43,6 +43,16 @@ var (
 	}
 )
 
+// releasedExportTables lists the export state in foreign-key order. Metadata
+// import keeps only sealed sources and fingerprinted plans, without owners, so
+// a restored vault cannot resume another vault's exports. An upgrade replaces
+// that partial state with the source rows so existing export handles,
+// interrupted exports, and completed archives stay valid.
+var releasedExportTables = []string{
+	"export_sources", "export_chunks", "export_members", "export_plans",
+	"export_documents", "export_role_roots", "export_jobs",
+}
+
 type databaseSchema struct {
 	version int
 	fresh   bool
@@ -710,8 +720,9 @@ func restoreV3SourceState(ctx context.Context, source metadataQuerier, target *S
 	})
 }
 
-// restoreV28SourceState restores the v3-style blob catalog, copies unfinished
-// storage work, and returns unfinished rendition jobs their authorization.
+// restoreV28SourceState restores the v3-style blob catalog and copies
+// unfinished storage work. It also puts back the export state, embedding jobs,
+// and processing authority that metadata import drops for a restore.
 func restoreV28SourceState(ctx context.Context, source metadataQuerier, target *Store) error {
 	return target.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if err := restoreV3PhysicalCatalogTx(ctx, source, tx, target); err != nil {
@@ -723,8 +734,58 @@ func restoreV28SourceState(ctx context.Context, source metadataQuerier, target *
 		if err := copyReleasedTables(ctx, source, tx, releasedPendingDeletionTables); err != nil {
 			return err
 		}
-		return restoreRenditionJobAuthorization(ctx, source, tx)
+		if err := replaceImportedTables(ctx, source, tx, releasedExportTables); err != nil {
+			return err
+		}
+		// Metadata JSONL omits embedding jobs. Reconciliation rebuilds them once
+		// consent is valid, which a restore must grant again. An upgrade keeps
+		// consent, so rebuilt jobs would reopen failed work with a fresh retry
+		// budget. Keep the source jobs instead.
+		if err := copyReleasedTable(ctx, source, tx, "embedding_jobs"); err != nil {
+			return err
+		}
+		if err := restoreRenditionJobAuthorization(ctx, source, tx); err != nil {
+			return err
+		}
+		return restoreMediaReceipts(ctx, source, tx)
 	})
+}
+
+// replaceImportedTables deletes what metadata import wrote to tables, in
+// reverse foreign-key order, and copies the source rows unchanged.
+func replaceImportedTables(ctx context.Context, source metadataQuerier, tx *sql.Tx, tables []string) error {
+	for _, table := range slices.Backward(tables) {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table); err != nil {
+			return fmt.Errorf("clearing imported %s: %w", table, err)
+		}
+	}
+	return copyReleasedTables(ctx, source, tx, tables)
+}
+
+// restoreMediaReceipts puts back media receipts unchanged. Metadata import
+// fails an admitted request that has no rendition job yet, because a restore
+// grants no provider authority. An upgrade keeps that authority, so the
+// request must stay queued for the startup continuation to finish.
+func restoreMediaReceipts(ctx context.Context, source metadataQuerier, tx *sql.Tx) error {
+	rows, err := source.QueryContext(ctx, `SELECT operation_id,receipt_json FROM media_operations ORDER BY operation_id`)
+	if err != nil {
+		return fmt.Errorf("reading released media receipts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var operationID, receipt string
+		if err := rows.Scan(&operationID, &receipt); err != nil {
+			return fmt.Errorf("reading released media receipt: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE media_operations SET receipt_json=? WHERE operation_id=?`,
+			receipt, operationID); err != nil {
+			return fmt.Errorf("restoring media receipt %s: %w", operationID, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("reading released media receipts: %w", err)
+	}
+	return rows.Close()
 }
 
 // restoreRenditionJobAuthorization puts back the authorization that metadata
