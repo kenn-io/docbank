@@ -386,9 +386,9 @@ keep their revision and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and JSONL v1 backup. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. The released schema-29 layout from v0.15.1 upgrades through the existing deterministic JSONL rebuild and retains its source database.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart and JSONL v1 backup. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 30 upgrades to 31 through the existing deterministic JSONL rebuild and retains its source database.
 
-Schema version 30 exports assets, files, settings, albums, album members, and receipts in stable
+Schema version 31 exports assets, files, settings, albums, album members, and receipts in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, receipt JSON, and the complete graph before commit. Released
