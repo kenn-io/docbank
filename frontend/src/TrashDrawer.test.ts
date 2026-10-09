@@ -84,6 +84,47 @@ it.each([1, 3])("shows a recoverable photo group with %s files and refreshes aft
   expect(new Headers(request?.headers).get("If-Match")).toBe("3");
 });
 
+it("drops stale trash rows when the refresh after a successful restore fails", async () => {
+  const photo = { id: 42, name: "capture.jpg", kind: "file", size: 74, revision: 3,
+    created_at: "2026-07-28T12:00:00Z", modified_at: "2026-07-28T12:00:00Z", trashed_at: "2026-07-28T12:01:00Z",
+    photo_asset_id: "11111111-1111-4111-8111-111111111112", photo_file_count: 3 };
+  const folder = { ...photo, id: 43, name: "Companions", kind: "dir", photo_asset_id: undefined, photo_file_count: undefined };
+  const receipt = { ...photo, revision: 4, trashed_at: undefined, path: "/Photos/capture.jpg" };
+  const remaining = { ...folder, id: 44, name: "Remaining folder" };
+  const listing = (items: typeof folder[]) => new Response(JSON.stringify({ items, total: items.length, limit: 1000, offset: 0 }));
+  let finishRead!: (response: Response) => void;
+  vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo, folder], total: 2, limit: 1000, offset: 0 })))
+    .mockResolvedValueOnce(new Response(JSON.stringify(receipt)))
+    .mockImplementationOnce(() => new Promise(resolve => finishRead = resolve))
+    .mockResolvedValueOnce(listing([remaining]));
+  const onrestored = vi.fn();
+  render(TrashDrawer, { session: "short-lived", onclose: vi.fn(), onrestored, onauthfailure: vi.fn() });
+  expect(await screen.findByText("capture.jpg")).toBeTruthy();
+  expect(screen.getByText("Companions")).toBeTruthy();
+  expect(screen.getByText("2 restorable items")).toBeTruthy();
+  await fireEvent.click(screen.getAllByRole("button", { name: "Restore" })[0]);
+  await fireEvent.click(within(screen.getByRole("dialog", { name: "Restore capture.jpg from trash" })).getByRole("button", { name: "Restore" }));
+  await waitFor(() => expect(onrestored).toHaveBeenCalledWith(receipt));
+  expect(screen.queryByRole("dialog", { name: "Restore capture.jpg from trash" })).toBeNull();
+  expect(screen.queryByText("capture.jpg")).toBeNull();
+  expect(screen.queryByText("Companions")).toBeNull();
+  expect(screen.queryByText("2 restorable items")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+  expect(screen.getByText("/Photos/capture.jpg")).toBeTruthy();
+  finishRead(new Response(JSON.stringify({ detail: "Trash refresh unavailable" }), { status: 503 }));
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Trash refresh unavailable");
+  expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+  expect(screen.queryByText("2 restorable items")).toBeNull();
+  expect(screen.getByText("/Photos/capture.jpg")).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByText("Remaining folder")).toBeTruthy();
+  expect(screen.getByText("1 restorable item")).toBeTruthy();
+  expect(screen.getAllByRole("button", { name: "Restore" })).toHaveLength(1);
+  expect(screen.queryByText("capture.jpg")).toBeNull();
+  expect(screen.queryByText("Companions")).toBeNull();
+  expect(onrestored).toHaveBeenCalledTimes(1);
+});
+
 it("keeps stale restore authority visible for a fresh decision", async () => {
   const trashed = {
     id: 42,

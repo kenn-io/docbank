@@ -69,6 +69,7 @@
   function handleRestored(receipt: Node): void {
     restoreTarget = null;
     restored = receipt;
+    page = null;
     void refresh();
     onrestored(receipt);
   }
