@@ -7,7 +7,7 @@
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import { APIError } from "./api-transport.js";
 
-  let { session, onauthfailure }: { session: string; onauthfailure: (cause: unknown) => void } = $props();
+  let { session, onauthfailure, photoActionError = "" }: { session: string; onauthfailure: (cause: unknown) => void; photoActionError?: string } = $props();
   let hiddenState = $state<PhotoHiddenState>({ change_id: "", configured: false });
   let workspace = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
   let passcode = $state("");
@@ -17,13 +17,13 @@
   let currentPasscodeError = $state("");
   let nextPasscodeError = $state("");
   let resolved = $state(false);
-  let lockoutForm = $state<"enter" | "manage">("enter");
   let readError = $state("");
   let actionError = $state("");
   let reading = $state(true);
   let actionPending = $state(false);
   let concealingAction = $state(false);
   const busy = $derived(reading || actionPending);
+  const lockoutDescription = $derived(hiddenState.locked_until ? "hidden-lockout" : undefined);
   let remaining = $state(0);
   let refreshController = new AbortController();
   const actionController = new AbortController();
@@ -67,20 +67,23 @@
     } catch (cause) { if (!controller.signal.aborted && !disposed) { if (cause instanceof APIError && cause.status === 401) onauthfailure(cause); else readError = cause instanceof Error ? cause.message : String(cause); } }
     finally { if (!controller.signal.aborted) reading = false; }
   }
+  function passcodeValidation(value: string, empty: string) {
+    return !value ? empty : new TextEncoder().encode(value).length > 1024 ? "Use 1 to 1,024 bytes." : "";
+  }
   async function action(kind: "enter" | "lock" | "change" | "disable") {
     if (busy) return;
     actionError = "";
     let invalidField: string | undefined;
     if (kind === "enter") {
-      passcodeError = !passcode ? "Enter a passcode." : new TextEncoder().encode(passcode).length > 1024 ? "Use 1 to 1,024 bytes." : "";
+      passcodeError = passcodeValidation(passcode, "Enter a passcode.");
       if (passcodeError) invalidField = "hidden-passcode";
     } else if (kind !== "lock") {
-      currentPasscodeError = !currentPasscode ? "Enter your current passcode." : new TextEncoder().encode(currentPasscode).length > 1024 ? "Use 1 to 1,024 bytes." : "";
+      currentPasscodeError = passcodeValidation(currentPasscode, "Enter your current passcode.");
+      if (currentPasscodeError) invalidField = "hidden-current-passcode";
       if (kind === "change") {
-        nextPasscodeError = !nextPasscode ? "Enter a new passcode." : new TextEncoder().encode(nextPasscode).length > 1024 ? "Use 1 to 1,024 bytes." : "";
-        if (nextPasscodeError) invalidField = "hidden-new-passcode";
+        nextPasscodeError = passcodeValidation(nextPasscode, "Enter a new passcode.");
+        if (nextPasscodeError) invalidField ??= "hidden-new-passcode";
       }
-      if (currentPasscodeError) invalidField ??= "hidden-current-passcode";
     }
     if (invalidField) { await tick(); document.getElementById(invalidField)?.focus(); return; }
     actionPending = true;
@@ -106,9 +109,7 @@
         const message = "Incorrect passcode.";
         if (kind === "enter") { passcodeError = message; invalidField = "hidden-passcode"; }
         else { currentPasscodeError = message; invalidField = "hidden-current-passcode"; }
-      } else if (cause instanceof APIError && cause.code === "hidden_lockout") {
-        lockoutForm = kind === "enter" ? "enter" : "manage";
-      } else actionError = cause instanceof Error ? cause.message : String(cause);
+      } else if (!(cause instanceof APIError && cause.code === "hidden_lockout")) actionError = cause instanceof Error ? cause.message : String(cause);
     } finally {
       actionPending = false;
       concealingAction = false;
@@ -122,13 +123,13 @@
     const privacy = (event: Event) => {
       const detail = (event as CustomEvent<PhotoHiddenState | PhotoPrivacyFeedback | undefined>).detail;
       if (detail && "configured" in detail) { refreshController.abort(); applyState(detail); return; }
-      if (detail?.hidden === true) actionError = detail.error;
       void refresh();
     };
     const failed = (event: Event) => { refreshController.abort(); clear(); hiddenState.expires_at = undefined; reading = false; readError = (event as CustomEvent<string>).detail; };
     window.addEventListener(photoPrivacyEvent, privacy);
     window.addEventListener(photoRevalidationErrorEvent, failed);
     const timer = setInterval(() => {
+      if (hiddenState.locked_until && Date.parse(hiddenState.locked_until) <= Date.now()) hiddenState.locked_until = undefined;
       if (!hiddenState.expires_at) return;
       remaining = Math.max(0, Math.ceil((Date.parse(hiddenState.expires_at) - Date.now()) / 1000));
       if (!remaining) { clear(); hiddenState.expires_at = undefined; notifyPhotoPrivacy(); }
@@ -139,6 +140,7 @@
 
 <section class="hidden-photos" aria-label="Hidden photos">
   <div class="hidden-boundary">Hidden photos stay out of Photos. Documents and document tools can still read the underlying files.</div>
+  {#if photoActionError}<p role="alert">{photoActionError}</p>{/if}
   {#if actionError}<p role="alert">{actionError}</p>{/if}
   {#if readError}<p role="alert">{readError}</p><Button size="sm" onclick={() => void refresh()}>Retry</Button>{/if}
   {#if !resolved}
@@ -150,19 +152,18 @@
     <div class="hidden-gate">
       <h1>Hidden</h1>
       {#if hiddenState.configured}<p>Unlocks for five minutes.</p>{/if}
-      <form onsubmit={event => { event.preventDefault(); void action("enter"); }}>
+      {#if hiddenState.locked_until}<p id="hidden-lockout" class="lockout" role="status">Too many attempts. Try again after {new Date(hiddenState.locked_until).toLocaleTimeString()}.</p>{/if}
+      <form aria-describedby={lockoutDescription} onsubmit={event => { event.preventDefault(); void action("enter"); }}>
         <FormField type="password" field={{ id: "hidden-passcode", label: "Passcode", value: passcode, error: passcodeError, disabled: busy }} autocomplete={hiddenState.configured ? "current-password" : "new-password"} oninput={value => { passcode = value; passcodeError = ""; }} />
-        {#if hiddenState.locked_until && lockoutForm === "enter"}<p class="lockout" role="status">Too many attempts. Try again after {new Date(hiddenState.locked_until).toLocaleTimeString()}.</p>{/if}
-        <Button type="submit" disabled={busy}>{hiddenState.configured ? "Unlock" : "Set passcode"}</Button>
+        <Button type="submit" disabled={busy} ariaDescribedby={lockoutDescription}>{hiddenState.configured ? "Unlock" : "Set passcode"}</Button>
       </form>
       {#if busy}<Spinner />{/if}
       {#if hiddenState.configured}
         <details><summary>Manage passcode</summary>
-          <form onsubmit={event => { event.preventDefault(); void action("change"); }}>
+          <form aria-describedby={lockoutDescription} onsubmit={event => { event.preventDefault(); void action("change"); }}>
             <FormField type="password" field={{ id: "hidden-current-passcode", label: "Current passcode", value: currentPasscode, error: currentPasscodeError, disabled: busy }} autocomplete="current-password" oninput={value => { currentPasscode = value; currentPasscodeError = ""; }} />
             <FormField type="password" field={{ id: "hidden-new-passcode", label: "New passcode", value: nextPasscode, error: nextPasscodeError, disabled: busy }} autocomplete="new-password" oninput={value => { nextPasscode = value; nextPasscodeError = ""; }} />
-            {#if hiddenState.locked_until && lockoutForm === "manage"}<p class="lockout" role="status">Too many attempts. Try again after {new Date(hiddenState.locked_until).toLocaleTimeString()}.</p>{/if}
-            <div class="manage-actions"><Button type="submit" disabled={busy}>Change passcode</Button><Button tone="danger" disabled={busy} onclick={() => void action("disable")}>Disable Hidden</Button></div>
+            <div class="manage-actions"><Button type="submit" disabled={busy} ariaDescribedby={lockoutDescription}>Change passcode</Button><Button tone="danger" disabled={busy} ariaDescribedby={lockoutDescription} onclick={() => void action("disable")}>Disable Hidden</Button></div>
             <p class="disable-consequence">Disabling Hidden returns every hidden photo to Library.</p>
           </form>
         </details>
