@@ -5,6 +5,24 @@ import { photo } from "./photo-test-fixtures.js";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
 
+it.each([false, true])("removes confirmed trash successes when refresh fails, partial=%s", async partial => {
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })));
+  if (partial) fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }));
+  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Refresh unavailable" }), { status: 503 }));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2)]; photos.total = 7; photos.started = true;
+  if (partial) photos.selectLoaded();
+  else photos.select("photo-1", new MouseEvent("click"), ["photo-1", "photo-2"]);
+  expect(await photos.trashSelected()).toBe(!partial);
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
+  expect(photos.total).toBe(6);
+  expect([...photos.selection.selectedIDs]).toEqual(partial ? ["photo-2"] : []);
+  expect(photos.trashTargets.map(item => item.asset_id)).toEqual(partial ? ["photo-2"] : []);
+  expect(photos.error).toBe("Refresh unavailable");
+  photos.dispose();
+});
+
 it("binds retries to captured or displayed revisions", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))

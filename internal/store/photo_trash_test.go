@@ -2,6 +2,9 @@ package store
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -194,6 +197,36 @@ func TestPhotoTrashCompletesPartialGroup(t *testing.T) {
 	assert.Equal(t, nodes[1].ID, rows[0].ID)
 }
 
+func TestPhotoTrashPageUsesLatestMemberTime(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset, nodes := photoTrashFixture(t, s)
+	_, _, err := s.Trash(t.Context(), nodes[0].ID, UnconditionalRev)
+	require.NoError(t, err)
+	old := time.Now().UTC().Add(-48 * time.Hour).Format(timestampLayout)
+	_, err = s.db.Exec(`UPDATE nodes SET trashed_at=? WHERE id=?`, old, nodes[0].ID)
+	require.NoError(t, err)
+	doc, err := s.CreateFile(t.Context(), s.RootID(), "notes.txt", fakeHash("b2"), 1, "text/plain")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), doc.ID, UnconditionalRev)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`UPDATE nodes SET trashed_at=? WHERE id=?`, time.Now().UTC().Add(-24*time.Hour).Format(timestampLayout), doc.ID)
+	require.NoError(t, err)
+	_, err = s.TrashPhotoAsset(t.Context(), asset.ID, asset.Revision)
+	require.NoError(t, err)
+	newest, err := s.NodeByID(t.Context(), nodes[1].ID)
+	require.NoError(t, err)
+	page, total, err := s.TrashedRootsPage(t.Context(), 1, 0)
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	require.Len(t, page, 1)
+	assert.Equal(t, nodes[0].ID, page[0].ID)
+	assert.Equal(t, newest.TrashedAt, page[0].TrashedAt)
+	page, _, err = s.TrashedRootsPage(t.Context(), 1, 1)
+	require.NoError(t, err)
+	assert.Equal(t, doc.ID, page[0].ID)
+}
+
 func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"bounded", "live peer", "new peer", "retained peer", "folder"} {
@@ -248,6 +281,92 @@ func TestPhotoTrashEmptyCompleteGroups(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTrashEmptyDryRunUsesReadSnapshot(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	folder, err := s.Mkdir(t.Context(), s.RootID(), "ordinary")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), folder.ID, UnconditionalRev)
+	require.NoError(t, err)
+	writer, err := s.writeDB.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { _ = writer.Rollback() }()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	result, err := s.TrashEmpty(ctx, 0, false)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), result.Candidates)
+}
+
+func TestTrashEmptyOrdinaryFoldersAcrossBatches(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for i := range 205 {
+		folder, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("folder-%d", i))
+		require.NoError(t, err)
+		_, err = s.CreateFile(t.Context(), folder.ID, "notes.txt", fakeHash("b2"), 1, "text/plain")
+		require.NoError(t, err)
+		_, _, err = s.Trash(t.Context(), folder.ID, UnconditionalRev)
+		require.NoError(t, err)
+	}
+	for _, count := range []int64{101, 101, 3} {
+		dry, err := s.TrashEmptyBounded(t.Context(), 0, 101, false)
+		require.NoError(t, err)
+		assert.Equal(t, count, dry.Candidates)
+		assert.Equal(t, count == 101, dry.More)
+		run, err := s.TrashEmptyBounded(t.Context(), 0, 101, true)
+		require.NoError(t, err)
+		assert.Equal(t, count, run.Deleted)
+		assert.Equal(t, dry.More, run.More)
+	}
+}
+
+func BenchmarkTrashEmptyLarge(b *testing.B) {
+	for _, kind := range []string{"files", "folders", "photos"} {
+		for _, count := range []int{1000, 10000} {
+			b.Run(fmt.Sprintf("%s/%d", kind, count), func(b *testing.B) {
+				s, err := Open(filepath.Join(b.TempDir(), "trash.db"))
+				require.NoError(b, err)
+				b.Cleanup(func() { require.NoError(b, s.Close()) })
+				require.NoError(b, s.withStorageTx(b.Context(), func(tx *sql.Tx) error {
+					for i := range count {
+						var node Node
+						var err error
+						if kind == "folders" {
+							node, err = s.mkdirTx(tx, s.RootID(), fmt.Sprintf("folder-%d", i), nowRFC3339())
+							if err == nil {
+								_, _, err = s.createFileTx(b.Context(), tx, node.ID, "notes.txt", fakeHash("b2"), 1, "text/plain")
+							}
+						} else {
+							name, mime := fmt.Sprintf("notes-%d.txt", i), "text/plain"
+							if kind == "photos" {
+								name, mime = fmt.Sprintf("capture-%d.jpg", i), "image/jpeg"
+							}
+							node, _, err = s.createFileTx(b.Context(), tx, s.RootID(), name, fakeHash("b2"), 1, mime)
+							if err == nil && kind == "photos" {
+								err = s.enrollNewPhotoFileTx(b.Context(), tx, node)
+							}
+						}
+						if err != nil {
+							return err
+						}
+						if err := s.trashNodeTx(tx, node, nowRFC3339()); err != nil {
+							return err
+						}
+					}
+					return nil
+				}))
+				b.ReportAllocs()
+				for b.Loop() {
+					result, err := s.TrashEmpty(b.Context(), 0, false)
+					require.NoError(b, err)
+					require.Equal(b, int64(count), result.Candidates)
+				}
+			})
+		}
 	}
 }
 

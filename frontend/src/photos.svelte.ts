@@ -161,10 +161,14 @@ export class Photos {
           const receipt = await trashPhotoAsset(item.asset_id, { "If-Match": String(revision) }, options);
           if (receipt.id !== item.asset_id || receipt.revision <= revision) throw new Error("Photo trash response did not confirm the selected photo. Refresh and retry.");
           successes++;
+          const restore = preserve?.();
+          this.items = this.items.filter(row => row.asset_id !== item.asset_id);
+          this.total = Math.max(0, this.total - 1);
           this.trashTargets = this.trashTargets.filter(target => target.asset_id !== item.asset_id);
           const ids = new Set(this.selection.selectedIDs);
           ids.delete(item.asset_id);
           this.selection = { selectedIDs: ids, anchorID: undefined };
+          await restore?.();
         } catch (cause) {
           if (cause instanceof APIError && cause.status === 401) { this.onauthfailure(cause); break; }
           this.trashError = cause instanceof Error ? cause.message : String(cause);

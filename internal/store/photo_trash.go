@@ -89,7 +89,7 @@ func photoTrashGroupTx(ctx context.Context, tx *sql.Tx, root Node) (photoTrashGr
 			rows, err := tx.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
  SELECT id FROM nodes WHERE id=?
  UNION ALL SELECT child.id FROM nodes child JOIN tree ON child.parent_id=tree.id)
- SELECT DISTINCT file.asset_id FROM tree JOIN photo_files file ON file.node_id=tree.id`, node.ID)
+ SELECT DISTINCT asset_id FROM photo_files WHERE node_id IN (SELECT id FROM tree)`, node.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -255,84 +255,74 @@ func photoRestoreOrderTx(ctx context.Context, tx *sql.Tx, roots map[int64]Node) 
 }
 
 func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string, args []any, maxRoots int) (string, []any, bool, error) {
-	eligibleSelection := `SELECT id, kind, EXISTS(SELECT 1 FROM photo_files WHERE node_id=nodes.id) FROM nodes WHERE ` + eligibleWhere + ` ORDER BY trashed_at ASC, id ASC`
+	// Walk upward from photo members once, so ordinary folders need no inspection.
+	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE photo_nodes(id) AS (
+ SELECT node_id FROM photo_files
+ UNION SELECT n.parent_id FROM nodes n JOIN photo_nodes p ON n.id=p.id WHERE n.parent_id IS NOT NULL)
+ SELECT id, id IN (SELECT id FROM photo_nodes) FROM nodes WHERE `+eligibleWhere+` ORDER BY trashed_at ASC, id ASC`, args...)
+	if err != nil {
+		return "", nil, false, err
+	}
+	type candidate struct {
+		id    int64
+		photo bool
+	}
+	var candidates []candidate
+	eligible := map[int64]bool{}
+	for rows.Next() {
+		var item candidate
+		if err := rows.Scan(&item.id, &item.photo); err != nil {
+			_ = rows.Close()
+			return "", nil, false, err
+		}
+		candidates = append(candidates, item)
+		eligible[item.id] = true
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return "", nil, false, err
+	}
+	if err := rows.Close(); err != nil {
+		return "", nil, false, err
+	}
 	seen := map[int64]bool{}
 	var selected []int64
 	more := false
-	for offset := 0; ; offset += 100 {
-		type candidate struct {
-			id    int64
-			kind  string
-			photo bool
+	for _, candidate := range candidates {
+		id := candidate.id
+		if seen[id] {
+			continue
 		}
-		candidates, err := func() (candidates []candidate, err error) {
-			rows, err := tx.QueryContext(ctx, eligibleSelection+` LIMIT 100 OFFSET ?`, append(append([]any{}, args...), offset)...)
-			if err != nil {
-				return nil, err
-			}
-			defer func() {
-				if closeErr := rows.Close(); err == nil {
-					err = closeErr
-				}
-			}()
-			for rows.Next() {
-				var item candidate
-				if err := rows.Scan(&item.id, &item.kind, &item.photo); err != nil {
-					return nil, err
-				}
-				candidates = append(candidates, item)
-			}
-			return candidates, rows.Err()
-		}()
-		if err != nil {
-			return "", nil, false, err
-		}
-		for _, candidate := range candidates {
-			id := candidate.id
-			if seen[id] {
-				continue
-			}
-			if candidate.kind == "file" && !candidate.photo {
-				if maxRoots > 0 && len(selected) >= maxRoots {
-					more = true
-					break
-				}
-				selected = append(selected, id)
-				continue
-			}
-			node, err := nodeByIDTx(tx, id)
-			if err != nil {
-				return "", nil, false, err
-			}
-			group, err := photoTrashGroupTx(ctx, tx, node)
-			if err != nil {
-				return "", nil, false, err
-			}
-			allowed := !group.live
-			for peer := range group.roots {
-				seen[peer] = true
-				if peer == id {
-					continue
-				}
-				var eligible bool
-				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE `+eligibleWhere+` AND id=?)`, append(append([]any{}, args...), peer)...).Scan(&eligible); err != nil {
-					return "", nil, false, err
-				}
-				allowed = allowed && eligible
-			}
-			if !allowed {
-				continue
-			}
+		if !candidate.photo {
 			if maxRoots > 0 && len(selected) >= maxRoots {
 				more = true
 				break
 			}
-			for peer := range group.roots {
-				selected = append(selected, peer)
-			}
+			selected = append(selected, id)
+			continue
 		}
-		if more || len(candidates) < 100 {
+		node, err := nodeByIDTx(tx, id)
+		if err != nil {
+			return "", nil, false, err
+		}
+		group, err := photoTrashGroupTx(ctx, tx, node)
+		if err != nil {
+			return "", nil, false, err
+		}
+		allowed := !group.live
+		for peer := range group.roots {
+			seen[peer] = true
+			allowed = allowed && eligible[peer]
+		}
+		if !allowed {
+			continue
+		}
+		if maxRoots > 0 && len(selected) >= maxRoots {
+			more = true
 			break
+		}
+		for peer := range group.roots {
+			selected = append(selected, peer)
 		}
 	}
 	encoded, err := json.Marshal(selected)

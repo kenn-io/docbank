@@ -304,6 +304,7 @@ func (s *Store) TrashedRootsPage(
 
 	const grouped = `WITH groups AS (
         SELECT n.id, file.asset_id,
+        MAX(n.trashed_at) OVER (PARTITION BY COALESCE(file.asset_id, CAST(n.id AS TEXT))) AS latest_trash,
         ROW_NUMBER() OVER (PARTITION BY COALESCE(file.asset_id, CAST(n.id AS TEXT)) ORDER BY (file.file_id=asset.display_file_id) DESC, n.trashed_at DESC, n.id DESC) AS representative
         FROM nodes n LEFT JOIN photo_files file ON file.node_id=n.id
         LEFT JOIN photo_assets asset ON asset.asset_id=file.asset_id
@@ -315,10 +316,10 @@ func (s *Store) TrashedRootsPage(
 	}
 	rows, err := tx.QueryContext(ctx,
 		grouped+`SELECT `+nodeCols+`, COALESCE(g.asset_id, ''),
-(SELECT COUNT(*) FROM photo_files member JOIN nodes file ON file.id=member.node_id WHERE member.asset_id=g.asset_id AND file.trashed_at IS NOT NULL)
+(SELECT COUNT(*) FROM photo_files member JOIN nodes file ON file.id=member.node_id WHERE member.asset_id=g.asset_id AND file.trashed_at IS NOT NULL), g.latest_trash
  FROM `+nodeFrom+` JOIN groups g ON g.id=n.id
 		 WHERE g.representative=1
-		 ORDER BY n.trashed_at DESC, n.id DESC LIMIT ? OFFSET ?`,
+		 ORDER BY g.latest_trash DESC, n.id DESC LIMIT ? OFFSET ?`,
 		limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing trash page: %w", err)
@@ -329,8 +330,10 @@ func (s *Store) TrashedRootsPage(
 	for rows.Next() {
 		var assetID string
 		var fileCount int
-		node, err := scanNode(rows, &assetID, &fileCount)
+		var latestTrash string
+		node, err := scanNode(rows, &assetID, &fileCount, &latestTrash)
 		node.PhotoAssetID, node.PhotoFileCount = assetID, fileCount
+		node.TrashedAt = &latestTrash
 		if err != nil {
 			return nil, 0, err
 		}
@@ -425,7 +428,7 @@ func (s *Store) trashEmpty(
 		SELECT n.parent_id FROM nodes n JOIN retained r ON n.id=r.id WHERE n.parent_id IS NOT NULL
 	) SELECT id FROM retained`
 	deletable += ` AND id NOT IN (` + emailRetainedNodes + `)`
-	runTx := s.withStorageTx
+	runTx := s.photoReadTx
 	if run {
 		runTx = s.withLogicalTx
 	}

@@ -67,6 +67,7 @@ it.each([1, 3])("shows a recoverable photo group with %s files and refreshes aft
   });
   expect(dialog).toBeTruthy();
   expect(within(dialog).getByText(new RegExp(`recovers ${count} trashed member file${count === 1 ? "" : "s"} together`))).toBeTruthy();
+  expect(within(dialog).getByText("Companions inside trashed folders also restore those folders and their other contents, including other photos.")).toBeTruthy();
   expect(
     screen.getByText(
       "Restore keeps the same stable node and retained content. It does not roll back versions or alter permanent audited history.",
