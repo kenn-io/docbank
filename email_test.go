@@ -109,7 +109,7 @@ func TestVaultOpenEmailPartHoldsLifecycleLease(t *testing.T) {
 	select {
 	case err := <-closeDone:
 		require.FailNow(t, "vault closed while an email part held its lifecycle lease", "error: %v", err)
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the open email part's lease keeps Close blocked
 	}
 	require.NoError(t, stream.Close())
 	// Closing also drains workers and storage. The suite timeout bounds this wait.

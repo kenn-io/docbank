@@ -509,7 +509,7 @@ func TestNativeRunnerCancellationReapsDescendantProcessTree(t *testing.T) {
 	case err := <-finished:
 		skipUnavailable(t, err)
 		require.FailNow(t, "isolated runner exited before cancellation", "%v", err)
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the descendant helper runs until it is canceled
 	}
 	cancel()
 	require.ErrorIs(t, <-finished, context.Canceled)

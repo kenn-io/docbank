@@ -156,7 +156,7 @@ func TestLibreOfficeRejectsOrStripsExternalDOCXTargets(t *testing.T) {
 	select {
 	case <-hit:
 		t.Fatal("LibreOffice reached the host listener")
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the sandbox keeps LibreOffice off the host listener
 	}
 	contentAfter, readErr := os.ReadFile(sentinelPath)
 	require.NoError(t, readErr)

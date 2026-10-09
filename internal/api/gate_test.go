@@ -85,7 +85,7 @@ func TestBackupCaptureBlocksPlacementAuthorityCommit(t *testing.T) {
 	select {
 	case <-commitStarted:
 		t.Fatal("placement authority commit started during backup capture")
-	case <-time.After(25 * time.Millisecond):
+	case <-time.After(25 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the held backup capture keeps the commit blocked
 	}
 	close(releaseCapture)
 	require.NoError(t, <-captureDone)
@@ -432,7 +432,7 @@ func TestBackupCaptureBlocksGCButAllowsLiveDeletion(t *testing.T) {
 	select {
 	case <-maintenanceEntered:
 		t.Fatal("GC entered while the backup still required pinned content")
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the paused backup keeps GC out of maintenance
 	}
 
 	resumeOnce.Do(func() { close(resumeBackup) })
