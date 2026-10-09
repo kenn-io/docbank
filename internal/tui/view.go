@@ -1096,6 +1096,9 @@ func auditAttachmentDetail(change *api.AuditAttachmentChange) []string {
 		return nil
 	}
 	lines := []string{" Attachment: " + change.Kind}
+	if change.Identity.FileID != "" {
+		lines = append(lines, " Attachment file: "+change.Identity.FileID)
+	}
 	if change.Identity.TagID != "" {
 		lines = append(lines, " Attachment tag: "+change.Identity.TagID)
 	}
@@ -1115,6 +1118,20 @@ func auditAttachmentStateDetail(label string, state *api.AuditAttachmentState) [
 		return []string{" " + label + ": absent"}
 	}
 	lines := []string{" " + label + ": present"}
+	if state.Photo != nil {
+		photo := state.Photo
+		v := photo.Values
+		lines = append(lines,
+			fmt.Sprintf("   Revision: %d", photo.Revision),
+			fmt.Sprintf("   Rating: %d", v.Rating),
+			"   Flag: "+quoted(v.Flag),
+			"   Label: "+quoted(v.Label),
+			"   Caption: "+quoted(v.Caption),
+			"   Creator: "+quoted(v.Creator),
+			"   Copyright: "+quoted(v.Copyright),
+			fmt.Sprintf("   Rotation: %d", v.Rotation),
+		)
+	}
 	if state.TagName != "" {
 		lines = append(lines, "   Tag name: "+quoted(state.TagName))
 	}

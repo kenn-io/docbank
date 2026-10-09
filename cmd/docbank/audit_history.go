@@ -190,6 +190,9 @@ func writeAuditAttachment(w io.Writer, change api.AuditAttachmentChange) error {
 	case "provenance":
 		summary = fmt.Sprintf("provenance %s: %s -> %s", change.Identity.ProvenanceID,
 			auditProvenanceState(change.Before), auditProvenanceState(change.After))
+	case "photo_authored":
+		summary = fmt.Sprintf("photo file %s on %s: %s -> %s", change.Identity.FileID,
+			formatNodeSelector(change.Identity.NodeID), auditPhotoState(change.Before), auditPhotoState(change.After))
 	default:
 		return fmt.Errorf("writing audit history: unknown attachment kind %q", change.Kind)
 	}
@@ -204,6 +207,16 @@ func auditTagState(state *api.AuditAttachmentState) string {
 		return "(absent)"
 	}
 	return auditDisplayPath(state.TagName)
+}
+
+func auditPhotoState(state *api.AuditAttachmentState) string {
+	if state == nil || state.Photo == nil {
+		return "(absent)"
+	}
+	photo := state.Photo
+	v := photo.Values
+	return fmt.Sprintf("revision %d, rating %d, flag %s, label %s, caption %s, creator %s, copyright %s, rotation %d",
+		photo.Revision, v.Rating, auditDisplayPath(v.Flag), auditDisplayPath(v.Label), auditDisplayPath(v.Caption), auditDisplayPath(v.Creator), auditDisplayPath(v.Copyright), v.Rotation)
 }
 
 func auditPresence(state *api.AuditAttachmentState) string {

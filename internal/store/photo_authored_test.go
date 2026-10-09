@@ -284,7 +284,7 @@ func TestPhotoAuthoredLegacyAuditDefaults(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(ctx))
 }
 
-func TestPhotoAuthoredDisplayQuery(t *testing.T) {
+func TestPhotoAuthoredMemberQuery(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -298,7 +298,7 @@ func TestPhotoAuthoredDisplayQuery(t *testing.T) {
 	value := snapshotTestQuery(t, `{"v":1,"filters":{"rating_min":5,"labels":["red"]}}`)
 	page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: value}, nil)
 	require.NoError(t, err)
-	assert.Empty(t, page.Items)
+	assert.Len(t, page.Items, 1)
 	value.Filters = query.Filters{RatingMin: new(int64(3)), Labels: []string{"red"}}
 	page, err = s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: value}, nil)
 	require.NoError(t, err)
@@ -507,13 +507,11 @@ func TestPhotoAuthoredRegroupingPreservesAuthority(t *testing.T) {
 
 func publishPhotoPacket(t *testing.T, s *Store, hash string, rating int64) {
 	t.Helper()
-	metadata := document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{
-		{Key: "image.xmp.packet_valid", Namespace: "image.xmp", SourceField: "packet", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(true)}},
-		{Key: "image.xmp.rating", Namespace: "image.xmp", SourceField: "Rating", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(rating)}},
-	}, Warnings: []document.SourceMetadataWarningV1{}}
-	canonical, _, err := document.MarshalSourceMetadataV1(metadata)
-	require.NoError(t, err)
-	_, err = s.PublishSourceMetadata(t.Context(), hash, fakeHash("ee"), canonical)
+	canonical := photoCanonical(t,
+		photoMetadataField("image.xmp.packet_valid", "image.xmp", "packet", photoBoolean(true)),
+		photoMetadataField("image.xmp.rating", "image.xmp", "Rating", photoInteger(rating)),
+	)
+	_, err := s.PublishSourceMetadata(t.Context(), hash, fakeHash("ee"), canonical)
 	require.NoError(t, err)
 }
 
@@ -731,41 +729,34 @@ func TestPhotoAuthoredExpressionBrowse(t *testing.T) {
 		require.NoError(t, err)
 		for _, tc := range []struct {
 			text, typed string
-			jpeg, raw   int
+			want        int
 		}{
-			{`rating:5`, "", 0, 1}, {`rating:3`, "", 1, 0}, {`rating:4`, "", 0, 0},
-			{`rating_min:3`, `{"rating_min":3}`, 1, 1}, {`rating_min:4`, `{"rating_min":4}`, 0, 1},
-			{`rating_max:3`, `{"rating_max":3}`, 1, 0}, {`rating_max:2`, `{"rating_max":2}`, 0, 0},
-			{`flag:pick`, `{"flags":["pick"]}`, 0, 1}, {`label:red`, `{"labels":["red"]}`, 1, 0},
-			{`NOT rating:5`, "", 1, 0}, {`NOT flag:pick`, "", 1, 0}, {`NOT label:red`, "", 0, 1},
-			{`NOT (NOT rating:3 OR NOT label:red)`, "", 1, 0},
-			{`rating:5 AND label:red`, "", 0, 0}, {`rating:3 AND label:red`, "", 1, 0},
-			{`saved:"Selected decisions"`, "", 1, 0},
+			{`rating:5`, "", 1}, {`rating:3`, "", 1}, {`rating:4`, "", 0},
+			{`rating_min:3`, `{"rating_min":3}`, 1}, {`rating_min:4`, `{"rating_min":4}`, 1},
+			{`rating_max:3`, `{"rating_max":3}`, 1}, {`rating_max:2`, `{"rating_max":2}`, 0},
+			{`flag:pick`, `{"flags":["pick"]}`, 1}, {`label:red`, `{"labels":["red"]}`, 1},
+			{`NOT rating:5`, "", 0}, {`NOT rating:4`, "", 1}, {`NOT flag:pick`, "", 0},
+			{`NOT flag:reject`, "", 1}, {`NOT label:red`, "", 0},
+			{`NOT (NOT rating:3 OR NOT label:red)`, "", 1},
+			{`rating:5 AND label:red`, "", 1}, {`rating:3 AND label:red`, "", 1},
+			{`saved:"Selected decisions"`, "", 1},
 		} {
-			want := tc.jpeg
-			if display == raw.ID {
-				want = tc.raw
-			}
 			q := snapshotTestQuery(t, `{"syntax":"advanced"}`)
 			q.Text = tc.text
 			for _, collapse := range []bool{false, true} {
 				q.Filters.CollapseDuplicates = collapse
 				page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: q}, nil)
 				require.NoError(t, err, stage, tc.text)
-				assert.Len(t, page.Items, want, stage, tc.text)
+				assert.Len(t, page.Items, tc.want, stage, tc.text)
 			}
 			if tc.typed != "" {
 				page := browsePhotoPage(t, s, `{"filters":`+tc.typed+`}`)
-				assert.Len(t, page.Items, want, stage, tc.typed)
+				assert.Len(t, page.Items, tc.want, stage, tc.typed)
 			}
 		}
 		if stage != "jpeg" {
 			text := `extension:xmp AND rating:3 AND NOT flag:pick`
-			want := 1
-			if display == raw.ID {
-				want = 0
-			}
-			assert.Len(t, browsePhotoPage(t, s, `{"syntax":"advanced","text":`+strconv.Quote(text)+`}`).Items, want)
+			assert.Empty(t, browsePhotoPage(t, s, `{"syntax":"advanced","text":`+strconv.Quote(text)+`}`).Items)
 		}
 	}
 	snapshot, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT rating:5"}`)})
@@ -776,4 +767,21 @@ func TestPhotoAuthoredExpressionBrowse(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, snapshot.Rows, 1)
 	assert.Equal(t, jpg.NodeID, snapshot.Rows[0].NodeID)
+}
+
+func TestPhotoAuthoredNegationExcludesLinkedSidecar(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node := browsePhotoNode(t, s, "capture.jpg", fakeHash("b2"), "image/jpeg")
+	asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	f := asset.Files[0]
+	_, err = s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{f.ID, 1, PhotoAuthoredPatch{Rating: new(5), Flag: new("reject"), Label: new("red")}}})
+	require.NoError(t, err)
+	sidecar := browsePhotoNode(t, s, "capture.xmp", fakeHash("c3"), "application/rdf+xml")
+	_, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &f.ID)
+	require.NoError(t, err)
+	for _, text := range []string{`NOT rating:5`, `NOT flag:reject`, `NOT label:red`, `extension:xmp AND NOT rating:5`} {
+		assert.Empty(t, browsePhotoPage(t, s, `{"syntax":"advanced","text":`+strconv.Quote(text)+`}`).Items, text)
+	}
 }
