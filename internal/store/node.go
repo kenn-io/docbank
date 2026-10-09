@@ -169,20 +169,47 @@ func (s *Store) NodeByPath(ctx context.Context, path string) (Node, error) {
 }
 
 func nodeByPath(ctx context.Context, q rowQuerier, rootID int64, path string) (Node, error) {
-	row := q.QueryRowContext(ctx, `SELECT `+nodeCols+` FROM `+nodeFrom+` WHERE n.id = ?`, rootID)
-	n, err := scanNode(row)
-	if err != nil {
-		return Node{}, fmt.Errorf("node %d: %w", rootID, err)
+	segments := splitPath(path)
+	var nameErr error
+	for i, segment := range segments {
+		segments[i], nameErr = NormalizeName(segment)
+		if nameErr != nil {
+			// Resolve the valid prefix first: /missing/.. is not found,
+			// while /existing/.. has an invalid name.
+			segments = segments[:i]
+			break
+		}
 	}
-	for _, seg := range splitPath(path) {
-		seg, err := NormalizeName(seg)
-		if err != nil {
-			return Node{}, fmt.Errorf("path %q: %w", path, err)
+	var n Node
+	var err error
+	switch len(segments) {
+	case 0:
+		n, err = nodeByIDQuery(ctx, q, rootID)
+	case 1:
+		n, err = childByName(ctx, q, rootID, segments[0])
+	default:
+		encoded, encodeErr := json.Marshal(segments)
+		if encodeErr != nil {
+			return Node{}, fmt.Errorf("encoding path %q: %w", path, encodeErr)
 		}
-		n, err = childByName(ctx, q, n.ID, seg)
-		if err != nil {
-			return Node{}, fmt.Errorf("path %q: %w", path, err)
-		}
+		// Walk the live-name index, then load metadata only for the final node.
+		n, err = scanNode(q.QueryRowContext(ctx, `
+			WITH RECURSIVE resolved(id, depth) AS (
+				SELECT ?, 0
+				UNION ALL
+				SELECT child.id, resolved.depth + 1
+				FROM resolved JOIN nodes child ON child.parent_id = resolved.id
+					AND child.name = json_extract(?, '$[' || resolved.depth || ']')
+				WHERE child.trashed_at IS NULL
+			)
+			SELECT `+nodeCols+` FROM `+nodeFrom+`
+			WHERE n.id = (SELECT id FROM resolved WHERE depth = ?)`, rootID, string(encoded), len(segments)))
+	}
+	if err != nil {
+		return Node{}, fmt.Errorf("path %q: %w", path, err)
+	}
+	if nameErr != nil {
+		return Node{}, fmt.Errorf("path %q: %w", path, nameErr)
 	}
 	return n, nil
 }

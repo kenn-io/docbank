@@ -13,7 +13,7 @@ import (
 // BenchmarkNodeSourceMetadataView includes the complete node-detail read,
 // including its transaction, path, content version, and source metadata.
 func BenchmarkNodeSourceMetadataView(b *testing.B) {
-	for _, depth := range []int{1, 32} {
+	for _, depth := range []int{1, 8, 32} {
 		b.Run(fmt.Sprintf("depth=%d", depth), func(b *testing.B) {
 			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
 			require.NoError(b, err)

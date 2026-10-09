@@ -109,6 +109,11 @@ Store code adds validation that SQL cannot express economically: Unicode NFC
 normalization, rejection of empty/dot/slash/NUL names, ancestry checks for
 cycle prevention, revision preconditions, and size agreement.
 
+Virtual-path lookup normalizes names in Go, walks the live sibling-name index
+with one query, and loads metadata only for the final node. Nested paths use
+a recursive query. Reads use the caller's transaction when supplied. A missing
+ancestor takes precedence over an invalid name later in the path.
+
 Filename search results and collection member pages resolve the selected nodes'
 paths with one recursive query. Input positions preserve result order and
 repeated node IDs. Collection paths use the same read transaction as the summary
