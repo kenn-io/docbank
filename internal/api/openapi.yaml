@@ -23758,6 +23758,25 @@ paths:
           description: Error
       summary: Prepare a frozen search export
   /api/v1/search-exports/{id}:
+    delete:
+      operationId: releaseTermReport
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{48}$
+            type: string
+      responses:
+        "204":
+          description: No Content
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Release a live report handle
     get:
       operationId: getTermReport
       parameters:

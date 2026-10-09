@@ -81,6 +81,16 @@ func (c *Connection) GetTermReport(ctx context.Context, id string) (report.Summa
 	return *response, nil
 }
 
+func (c *Connection) ReleaseTermReport(ctx context.Context, id string) error {
+	if !IsTermReportID(id) {
+		return errors.New("report ID must be 48 lowercase hexadecimal characters")
+	}
+	_, err := c.API().ReleaseTermReport(ctx, &apiclient.ReleaseTermReportRequestOptions{
+		PathParams: &apiclient.ReleaseTermReportPath{ID: id},
+	})
+	return err
+}
+
 func (c *Connection) TermReportDates(ctx context.Context, id string, page report.DatePageRequest) (report.DatePage, error) {
 	if !IsTermReportID(id) {
 		return report.DatePage{}, errors.New("report ID must be 48 lowercase hexadecimal characters")

@@ -31,6 +31,9 @@ func termReportError(err error) *Error {
 	switch {
 	case errors.Is(err, reporting.ErrUnavailable):
 		return NewError(http.StatusGone, "report_unavailable", "This report handle is no longer available.")
+	case errors.Is(err, reporting.ErrRetained):
+		return NewError(http.StatusConflict, "report_retained",
+			"An active download retains this report; retry release after it closes.")
 	case errors.Is(err, reporting.ErrCapacity):
 		return NewError(http.StatusServiceUnavailable, "report_capacity", "Report capacity is exhausted; retry later.")
 	case errors.Is(err, report.ErrBudgetExhausted), errors.Is(err, report.ErrReportLimit):
@@ -152,6 +155,22 @@ func registerTermReportRoutes(api huma.API, d Deps, gate *OperationGate, cache *
 			}
 			return &struct{ Body report.Summary }{Body: summary}, nil
 		})
+	huma.Register(api, huma.Operation{
+		OperationID: "releaseTermReport", Method: http.MethodDelete,
+		Path: "/api/v1/search-exports/{id}", Summary: "Release a live report handle",
+		DefaultStatus: http.StatusNoContent,
+	}, func(ctx context.Context, in *struct {
+		ID string `path:"id" pattern:"^[0-9a-f]{48}$"`
+	}) (*struct{}, error) {
+		owner, err := termReportOwner(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err := cache.Release(owner, in.ID); err != nil {
+			return nil, termReportError(err)
+		}
+		return &struct{}{}, nil
+	})
 	huma.Register(api, huma.Operation{OperationID: "getTermReportDates", Method: http.MethodPost,
 		Path: "/api/v1/search-exports/{id}/dates", Summary: "Inspect frozen export date evidence",
 		MaxBodyBytes: 4 << 10}, func(ctx context.Context, in *struct {

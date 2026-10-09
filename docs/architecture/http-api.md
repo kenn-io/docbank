@@ -716,6 +716,7 @@ All paths below start with `/api/v1/search-exports` and require authentication.
 | `POST /` | Version 1 request, up to 8 MiB; returns a summary with state `complete` or `needs_review`. Counts and downloads are withheld in `needs_review`. |
 | `GET /` | `offset` (0–100) and `limit` (1–50, default 20); returns `items` containing reusable `request` and `summary`, and `total`. Lists vault history, including expired receipts. |
 | `GET /{id}` | Returns the caller's live frozen summary. |
+| `DELETE /{id}` | API-key release of an owned live handle; returns 204 without a body. ID must be 48 lowercase hexadecimal characters. |
 | `POST /{id}/dates` | JSON `{"cursor":"","limit":50,"max_bytes":262144}`; limit is 1–100. Omitted or zero `max_bytes` defaults to 1 MiB; positive values must be 64 KiB–1 MiB. Returns `members` and an optional `next_cursor`. A page may stop within a member's candidates; check `candidates_complete` and continue with the opaque cursor. |
 | `POST /{id}/revisions` | JSON `{"choices":[...]}`, up to 8 MiB; returns a new summary bound to the original observation and expiry. |
 | `GET /{id}/csv` | API-key download of `search-export.csv`. |
@@ -733,6 +734,18 @@ semantics and identity requirements.
 History pages are also limited to 16 MiB. Advance `offset` by the number of
 returned items when the byte limit shortens a page. Source deletion does not
 remove a receipt or revoke an already captured report.
+
+Release frees a handle slot for either a complete or review-pending report. It
+discards that handle's live packet and date evidence, while preserving history,
+saved files and already published child reports with their original expiry.
+Shared evidence remains in memory until its last user finishes. A concurrent
+revision can publish only while its parent remains available.
+
+An active download prevents release with `409 report_retained`. The caller may
+retry deliberately after the transfer closes; no request is retried automatically.
+Unknown, expired, released and other-owner handles return `410 report_unavailable`.
+Browser sessions cannot release reports and receive `403 web_session_read_only`.
+Downloading does not release a handle.
 
 The create and history paths have no trailing slash. Date pages are limited to
 1,000 candidates and the selected byte ceiling even when the requested member

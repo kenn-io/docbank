@@ -10490,6 +10490,46 @@ func (c *Client) CreateTermReport(ctx context.Context, options *CreateTermReport
 	return responseParser(ctx, resp)
 }
 
+// ReleaseTermReport Release a live report handle
+func (c *Client) ReleaseTermReport(ctx context.Context, options *ReleaseTermReportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/search-exports/{id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReleaseTermReportErrorResponse](resp, "ReleaseTermReportErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/search-exports/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetTermReport Read a frozen export summary
 func (c *Client) GetTermReport(ctx context.Context, options *GetTermReportRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTermReportResponse, error) {
 	var err error
@@ -19642,6 +19682,37 @@ func (o *CreateTermReportRequestOptions) GetHeader() (map[string]string, error) 
 	return nil, nil
 }
 
+// ReleaseTermReportRequestOptions is the options needed to make a request to ReleaseTermReport.
+type ReleaseTermReportRequestOptions struct {
+	PathParams *ReleaseTermReportPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReleaseTermReportRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReleaseTermReportRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReleaseTermReportRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReleaseTermReportRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetTermReportRequestOptions is the options needed to make a request to GetTermReport.
 type GetTermReportRequestOptions struct {
 	PathParams *GetTermReportPath
@@ -21833,6 +21904,10 @@ type RunSavedQueryPath struct {
 	SavedQueryID string `json:"saved_query_id"`
 }
 
+type ReleaseTermReportPath struct {
+	ID string `json:"id"`
+}
+
 type GetTermReportPath struct {
 	ID string `json:"id"`
 }
@@ -23465,6 +23540,8 @@ type ListTermReportHistoryErrorResponse = Error
 type CreateTermReportResponse = report.Summary
 
 type CreateTermReportErrorResponse = Error
+
+type ReleaseTermReportErrorResponse = Error
 
 type GetTermReportResponse = report.Summary
 
