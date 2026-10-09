@@ -124,7 +124,7 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
       await page.screenshot({ path: path.join(output!, `web-albums-uuid-name-${theme}.png`), animations: "disabled" });
     }
     await createUUID.click();
-    await expect(page.getByText(`Added to ${albumID} · now 1 photo`, { exact: true })).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: `Added to ${albumID} · now 1 photo` })).toBeVisible();
     await page.getByRole("button", { name: "Clear selection", exact: true }).click();
     await writeFile(path.join(output!, "albums-preview.json"), JSON.stringify({ url: url.href, workspace, adds, albumID }, null, 2));
   } finally {
