@@ -284,14 +284,16 @@ func TestPhotoAuthoredLegacyAuditDefaults(t *testing.T) {
 	require.NoError(t, s.ValidateMetadata(ctx))
 }
 
-func TestPhotoAuthoredMemberQuery(t *testing.T) {
+func TestPhotoAuthoredDisplayQuery(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
 	asset := authoredPair(t, s)
 	raw := fileByRole(asset.Files, PhotoRoleRAW)
 	jpg := fileByRole(asset.Files, PhotoRoleImage)
-	_, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5)}}, {jpg.ID, 1, PhotoAuthoredPatch{Rating: new(3), Label: new("red")}}})
+	_, err := s.SetPhotoDisplay(ctx, asset.ID, asset.Revision, &jpg.ID)
+	require.NoError(t, err)
+	_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5)}}, {jpg.ID, 1, PhotoAuthoredPatch{Rating: new(3), Label: new("red")}}})
 	require.NoError(t, err)
 	value := snapshotTestQuery(t, `{"v":1,"filters":{"rating_min":5,"labels":["red"]}}`)
 	page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: value}, nil)
@@ -713,18 +715,65 @@ func TestPhotoAuthoredExpressionBrowse(t *testing.T) {
 	jpg := fileByRole(asset.Files, PhotoRoleImage)
 	_, err := s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5), Flag: new("pick")}}, {jpg.ID, 1, PhotoAuthoredPatch{Rating: new(3), Label: new("red")}}})
 	require.NoError(t, err)
-	for _, tc := range []struct {
-		text  string
-		count int
-	}{
-		{"rating:5", 1}, {"rating_min:4", 1}, {"rating_max:3", 1}, {"flag:pick", 1}, {"label:red", 1}, {"rating:4", 0}, {"rating:5 AND label:red", 0}, {"rating:3 AND label:red", 1},
-	} {
-		t.Run(tc.text, func(t *testing.T) {
+	_, err = s.CreateSavedQuery(t.Context(), "Selected decisions", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"rating:3 AND label:red"}`))
+	require.NoError(t, err)
+	for _, stage := range []string{"jpeg", "jpeg with sidecar", "raw with sidecar"} {
+		if stage == "jpeg with sidecar" {
+			sidecar := browsePhotoNode(t, s, "capture.xmp", fakeHash("c3"), "application/rdf+xml")
+			asset, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &raw.ID)
+			require.NoError(t, err)
+		}
+		display := jpg.ID
+		if stage == "raw with sidecar" {
+			display = raw.ID
+		}
+		asset, err = s.SetPhotoDisplay(t.Context(), asset.ID, asset.Revision, &display)
+		require.NoError(t, err)
+		for _, tc := range []struct {
+			text, typed string
+			jpeg, raw   int
+		}{
+			{`rating:5`, "", 0, 1}, {`rating:3`, "", 1, 0}, {`rating:4`, "", 0, 0},
+			{`rating_min:3`, `{"rating_min":3}`, 1, 1}, {`rating_min:4`, `{"rating_min":4}`, 0, 1},
+			{`rating_max:3`, `{"rating_max":3}`, 1, 0}, {`rating_max:2`, `{"rating_max":2}`, 0, 0},
+			{`flag:pick`, `{"flags":["pick"]}`, 0, 1}, {`label:red`, `{"labels":["red"]}`, 1, 0},
+			{`NOT rating:5`, "", 1, 0}, {`NOT flag:pick`, "", 1, 0}, {`NOT label:red`, "", 0, 1},
+			{`NOT (NOT rating:3 OR NOT label:red)`, "", 1, 0},
+			{`rating:5 AND label:red`, "", 0, 0}, {`rating:3 AND label:red`, "", 1, 0},
+			{`saved:"Selected decisions"`, "", 1, 0},
+		} {
+			want := tc.jpeg
+			if display == raw.ID {
+				want = tc.raw
+			}
 			q := snapshotTestQuery(t, `{"syntax":"advanced"}`)
 			q.Text = tc.text
-			page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: q}, nil)
-			require.NoError(t, err)
-			assert.Len(t, page.Items, tc.count)
-		})
+			for _, collapse := range []bool{false, true} {
+				q.Filters.CollapseDuplicates = collapse
+				page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: q}, nil)
+				require.NoError(t, err, stage, tc.text)
+				assert.Len(t, page.Items, want, stage, tc.text)
+			}
+			if tc.typed != "" {
+				page := browsePhotoPage(t, s, `{"filters":`+tc.typed+`}`)
+				assert.Len(t, page.Items, want, stage, tc.typed)
+			}
+		}
+		if stage != "jpeg" {
+			text := `extension:xmp AND rating:3 AND NOT flag:pick`
+			want := 1
+			if display == raw.ID {
+				want = 0
+			}
+			assert.Len(t, browsePhotoPage(t, s, `{"syntax":"advanced","text":`+strconv.Quote(text)+`}`).Items, want)
+		}
 	}
+	snapshot, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"NOT rating:5"}`)})
+	require.NoError(t, err)
+	require.Len(t, snapshot.Rows, 2)
+	assert.NotContains(t, []int64{snapshot.Rows[0].NodeID, snapshot.Rows[1].NodeID}, raw.NodeID)
+	snapshot, err = s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"rating:3 AND label:red"}`)})
+	require.NoError(t, err)
+	require.Len(t, snapshot.Rows, 1)
+	assert.Equal(t, jpg.NodeID, snapshot.Rows[0].NodeID)
 }

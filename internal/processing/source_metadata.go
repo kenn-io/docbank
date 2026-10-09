@@ -53,7 +53,7 @@ const (
 // vault then re-extracts every original, so the bump must be deliberate. The
 // shared email decoder recipe contributes its own identity to the fingerprint.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v19"
+	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v18"
 
 var (
 	// SourceMetadataImplementationID identifies the parsers qualified by fixtures,
@@ -909,7 +909,7 @@ func (c *metadataCollector) string(key, namespace, source, value string, sensiti
 	if key != "image.xmp.caption" && key != "image.xmp.creator" && key != "image.xmp.copyright" {
 		value = strings.TrimSpace(value)
 	}
-	if value == "" || c.seen[key] {
+	if strings.TrimSpace(value) == "" || c.seen[key] {
 		return
 	}
 	if !c.fieldLabelsAllowed(key, namespace, source) {

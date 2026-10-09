@@ -29,6 +29,16 @@ func (c queryCompiler) compilePhotoVersionPredicate(predicate func(alias string)
 	return compiledQueryFragment{sql: predicate("cv"), args: args}
 }
 
+func (c queryCompiler) compilePhotoAuthoredPredicate(predicate string, args ...any) compiledQueryFragment {
+	if c.photoDisplayMetadata {
+		return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member
+ JOIN photo_assets asset ON asset.asset_id=member.asset_id
+ JOIN photo_files pf ON pf.file_id=asset.display_file_id
+ WHERE member.node_id=n.id AND ` + predicate + `)`, args: args}
+	}
+	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files pf WHERE pf.node_id=n.id AND pf.asset_id IS NOT NULL AND pf.role<>'sidecar' AND ` + predicate + `)`, args: args}
+}
+
 func isPhotoScalarField(field string) bool {
 	return query.IsQualityField(field) || slices.Contains([]string{"rating", "rating_min", "rating_max", "flag", "label", "kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field)
 }
@@ -67,12 +77,12 @@ func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compile
 		if field == "rating_max" {
 			operator = "<="
 		}
-		return compilePhotoAssetPredicate("pf.role<>'sidecar' AND pf.rating"+operator+"?", n), nil
+		return c.compilePhotoAuthoredPredicate("pf.rating"+operator+"?", n), nil
 	case "flag", "label":
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
 		}
-		return compilePhotoAssetPredicate("pf.role<>'sidecar' AND pf."+field+"=?", value), nil
+		return c.compilePhotoAuthoredPredicate("pf."+field+"=?", value), nil
 	case "set":
 		if err := query.ValidateTextOperand(field, value); err != nil {
 			return compiledQueryFragment{}, err
@@ -158,27 +168,21 @@ func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int
 		parts = append(parts, part)
 	}
 	for _, bound := range []struct {
-		value    *int64
-		operator string
-	}{{filters.RatingMin, ">="}, {filters.RatingMax, "<="}} {
+		field string
+		value *int64
+	}{{"rating_min", filters.RatingMin}, {"rating_max", filters.RatingMax}} {
 		if bound.value != nil {
-			parts = append(parts, compilePhotoAssetPredicate("pf.role<>'sidecar' AND pf.rating"+bound.operator+"?", *bound.value))
+			part, err := c.compileScalarPredicate(bound.field, strconv.FormatInt(*bound.value, 10), start, end)
+			if err != nil {
+				return compiledQueryFragment{}, err
+			}
+			parts = append(parts, part)
 		}
-	}
-	for _, set := range []struct {
-		values []string
-		column string
-	}{{filters.Flags, "pf.flag"}, {filters.Labels, "pf.label"}} {
-		matches := []compiledQueryFragment{}
-		for _, v := range set.values {
-			matches = append(matches, compilePhotoAssetPredicate("pf.role<>'sidecar' AND "+set.column+"=?", v))
-		}
-		parts = append(parts, joinCompiledFragments(matches, " OR "))
 	}
 	for _, set := range []struct {
 		field  string
 		values []string
-	}{{"kind", filters.Kinds}, {"camera", filters.Cameras}, {"lens", filters.Lenses}, {"asset", filters.AssetIDs}, {"set", filters.SetIDs}} {
+	}{{"flag", filters.Flags}, {"label", filters.Labels}, {"kind", filters.Kinds}, {"camera", filters.Cameras}, {"lens", filters.Lenses}, {"asset", filters.AssetIDs}, {"set", filters.SetIDs}} {
 		matches := []compiledQueryFragment{}
 		for _, v := range set.values {
 			part, err := c.compileScalarPredicate(set.field, v, start, end)

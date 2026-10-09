@@ -27,6 +27,12 @@ func TestReadPhotoSidecar(t *testing.T) {
 		{name: "unrelated root", packet: `<foo><r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><r:Description/></r:RDF></foo>`, invalid: true},
 		{name: "bare RDF root", packet: `<r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:a="http://ns.adobe.com/xap/1.0/"><r:Description a:Rating="3"/></r:RDF>`, invalid: true},
 		{name: "empty", packet: photoSidecarHeader + `>` + photoSidecarFooter},
+		{name: "empty containers", packet: photoSidecarHeader + "><dc:description>\n <rdf:Alt>\n </rdf:Alt>\n</dc:description><dc:creator>\n <rdf:Seq>\n </rdf:Seq>\n</dc:creator><dc:rights><rdf:Alt/></dc:rights>" + photoSidecarFooter},
+		{name: "blank scalar", packet: photoSidecarHeader + "><dc:description> \n\t </dc:description><dc:creator> </dc:creator><dc:rights>\n</dc:rights>" + photoSidecarFooter},
+		{name: "blank selected items", packet: photoSidecarHeader + `><dc:description><rdf:Alt><rdf:li>Other</rdf:li><rdf:li xml:lang="x-default"> </rdf:li></rdf:Alt></dc:description><dc:creator><rdf:Seq><rdf:li> </rdf:li><rdf:li>Other</rdf:li></rdf:Seq></dc:creator><dc:rights><rdf:Alt><rdf:li> </rdf:li></rdf:Alt></dc:rights>` + photoSidecarFooter},
+		{name: "blank attributes", packet: photoSidecarHeader + ` dc:description=" &#10; " dc:creator=" " dc:rights="&#9;">` + photoSidecarFooter},
+		{name: "padded attributes", packet: photoSidecarHeader + ` dc:description="&#10; River &#10;" dc:creator=" Creator " dc:rights=" Copyright ">` + photoSidecarFooter, want: store.PhotoAuthored{Caption: "\n River \n", Creator: " Creator ", Copyright: " Copyright "}},
+		{name: "duplicate blank property", packet: photoSidecarHeader + ` dc:description=" "><dc:description>Caption</dc:description>` + photoSidecarFooter, invalid: true},
 		{name: "attributes", packet: photoSidecarHeader + ` xmp:Rating="5" xmp:Label="Red" ts:Pick="pick" ts:Rotation="90">` + photoSidecarFooter, want: store.PhotoAuthored{Rating: 5, Label: "red", Flag: "pick", Rotation: 90}},
 		{name: "rejection sentinel", packet: photoSidecarHeader + ` xmp:Rating="-1" ts:Pick="pick">` + photoSidecarFooter, want: store.PhotoAuthored{Flag: "reject"}},
 		{name: "namespace aliases", packet: `<x:xmpmeta xmlns:x="adobe:ns:meta/"><r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:a="http://ns.adobe.com/xap/1.0/"><r:Description a:Rating="3"/></r:RDF></x:xmpmeta>`, want: store.PhotoAuthored{Rating: 3}},
@@ -272,6 +278,19 @@ func TestPhotoSidecarPreservesAuthoredTextThroughExtraction(t *testing.T) {
 	assert.Equal(t, "\n  River\n", receipt.After[0].Values.Caption)
 	assert.Equal(t, " Creator ", receipt.After[0].Values.Creator)
 	assert.Equal(t, " Copyright ", receipt.After[0].Values.Copyright)
+	var backup bytes.Buffer
+	require.NoError(t, catalog.ExportMetadata(t.Context(), &backup))
+	restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	require.NoError(t, restored.ImportMetadata(t.Context(), &backup))
+	restoredAsset, err := restored.PhotoAssetForNode(t.Context(), photo.ID)
+	require.NoError(t, err)
+	for _, file := range restoredAsset.Files {
+		if file.ID == targets[0].FileID {
+			assert.Equal(t, receipt.After[0].Values, file.Authored())
+		}
+	}
 	asset, err := catalog.PhotoAssetForNode(t.Context(), photo.ID)
 	require.NoError(t, err)
 	for _, file := range asset.Files {
@@ -281,4 +300,74 @@ func TestPhotoSidecarPreservesAuthoredTextThroughExtraction(t *testing.T) {
 		}
 	}
 	t.Fatal("initialized photo file is missing from the asset")
+}
+
+func TestPhotoSidecarEmptyTextLeavesInitializationEligible(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		"><dc:description>\n <rdf:Alt>\n </rdf:Alt>\n</dc:description><dc:creator>\n <rdf:Seq>\n </rdf:Seq>\n</dc:creator><dc:rights><rdf:Alt/></dc:rights>",
+		"><dc:description> \n\t </dc:description><dc:creator> </dc:creator><dc:rights>\n</dc:rights>",
+		`><dc:description><rdf:Alt><rdf:li>Other</rdf:li><rdf:li xml:lang="x-default"> </rdf:li></rdf:Alt></dc:description><dc:creator><rdf:Seq><rdf:li> </rdf:li><rdf:li>Other</rdf:li></rdf:Seq></dc:creator><dc:rights><rdf:Alt><rdf:li> </rdf:li></rdf:Alt></dc:rights>`,
+		` dc:description=" &#10; " dc:creator=" " dc:rights="&#9;">`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+			catalog, blobs, photo, sidecar, target := photoSidecarFixture(t, []byte(photoSidecarHeader+body+photoSidecarFooter))
+			_, err := BackfillSourceMetadataTargets(ctx, catalog, blobs, t.TempDir(), []store.SourceMetadataTarget{{SourceSHA256: sidecar.BlobHash, Size: sidecar.Size}})
+			require.NoError(t, err)
+			receipt, err := catalog.InitializePhotoSidecar(ctx, target)
+			require.NoError(t, err)
+			assert.Empty(t, receipt.ReceiptID)
+			asset, err := catalog.PhotoAssetForNode(ctx, photo.ID)
+			require.NoError(t, err)
+			for _, file := range asset.Files {
+				if file.ID == target.FileID {
+					assert.Equal(t, int64(1), file.Revision)
+					assert.Equal(t, store.PhotoAuthored{}, file.Authored())
+				}
+			}
+			targets, err := catalog.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
+			require.NoError(t, err)
+			assert.Empty(t, targets)
+			var backup bytes.Buffer
+			require.NoError(t, catalog.ExportMetadata(ctx, &backup))
+			restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, restored.Close()) })
+			require.NoError(t, restored.ImportMetadata(ctx, &backup))
+			restoredAsset, err := restored.PhotoAssetForNode(ctx, photo.ID)
+			require.NoError(t, err)
+			assert.Equal(t, asset.Files, restoredAsset.Files)
+			packet := []byte(photoSidecarHeader + `><dc:description> Later caption </dc:description>` + photoSidecarFooter)
+			write, err := blobs.WriteDetailedContext(ctx, bytes.NewReader(packet))
+			require.NoError(t, err)
+			encoding, err := write.EncodingName()
+			require.NoError(t, err)
+			_, _, err = catalog.ReplaceContent(ctx, sidecar.ID, sidecar.Revision, write.Hash, write.Size, "application/rdf+xml", store.BlobPhysical{Encoding: encoding, StoredBytes: write.StoredSize, PackEligible: write.PackEligible, Created: write.Created})
+			require.NoError(t, err)
+			_, err = BackfillSourceMetadataTargets(ctx, catalog, blobs, t.TempDir(), []store.SourceMetadataTarget{{SourceSHA256: write.Hash, Size: write.Size}})
+			require.NoError(t, err)
+			targets, err = catalog.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
+			require.NoError(t, err)
+			require.Len(t, targets, 1)
+			receipt, err = catalog.InitializePhotoSidecar(ctx, targets[0])
+			require.NoError(t, err)
+			require.Len(t, receipt.After, 1)
+			assert.Equal(t, int64(2), receipt.After[0].Revision)
+			assert.Equal(t, " Later caption ", receipt.After[0].Values.Caption)
+		})
+	}
+}
+
+func TestMetadataCollectorAuthoredTextPresence(t *testing.T) {
+	t.Parallel()
+	for _, key := range []string{"image.xmp.caption", "image.xmp.creator", "image.xmp.copyright"} {
+		collector := metadataCollector{record: new(emptySourceMetadata()), seen: map[string]bool{}}
+		collector.string(key, "image.xmp", "text", " \n\t ", false)
+		assert.Empty(t, collector.record.Fields)
+		collector.string(key, "image.xmp", "text", " \n Meaningful \n ", false)
+		require.Len(t, collector.record.Fields, 1)
+		assert.Equal(t, " \n Meaningful \n ", *collector.record.Fields[0].Value.String)
+	}
 }

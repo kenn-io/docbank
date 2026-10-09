@@ -115,12 +115,16 @@ leave file and node revisions, modified time, and audit history unchanged.
 Replacement bytes can initialize a still-undecided photo. Cancellation, stale
 inputs, and blob or IO failures retry. Human edits and successful initialization
 advance the authored revision and protect those decisions from later packets.
+Whitespace-only caption, creator, and copyright values count as absent; meaningful
+text keeps its surrounding spaces and newlines. This slice doesn't import
+`dc:subject` as tags or `tiff:Orientation` as authored rotation.
 
 Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. Browse
-matches an asset when any displayable member passes the decision filters. A RAW
-member rated 5 and a JPEG member rated 3 match `rating_min:4`. All
-authored filters must match the same displayable member. RAW rating 5 and
-JPEG label red therefore don't match rating 5 together with label red. These
+reads decisions from the selected display file, including under `NOT`. With a RAW
+rated 5/pick and a selected JPEG rated 3/red, `rating:3`, `label:red`, and
+`NOT rating:5` match; `rating_min:4` and `flag:pick` don't. Selecting the RAW
+reverses those results. Linked sidecars don't change decision matches.
+Documents queries read each file's own decisions. These
 values and complete receipts round-trip through JSONL backup and restore.
 Advanced expressions accept `rating:5`, `rating_min:4`, `rating_max:3`,
 `flag:pick`, and `label:red`.
