@@ -296,9 +296,6 @@ func (s *Store) DeletePhotoSet(ctx context.Context, id string, revision int64) (
 		out, err = commitPhotoSet(ctx, tx, before, out, "set_delete", ids)
 		return err
 	})
-	if err == nil {
-		err = s.photoReadTx(ctx, func(tx *sql.Tx) error { var e error; out, e = s.photoSetResponse(ctx, tx, out); return e })
-	}
 	return out, err
 }
 
