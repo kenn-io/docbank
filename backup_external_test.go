@@ -68,7 +68,7 @@ func TestEmbeddedBackupCapturesHostFilePreparedInsideFreeze(t *testing.T) {
 	select {
 	case putErr := <-putDone:
 		require.FailNow(t, "content mutation completed during host preparation", "error: %v", putErr)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the paused host preparation keeps the put blocked
 	}
 
 	resumeOnce.Do(func() { close(resume) })
@@ -257,7 +257,7 @@ func TestEmbeddedBackupFencesPhysicalMaintenance(t *testing.T) {
 	select {
 	case err := <-packDone:
 		require.FailNow(t, "physical maintenance completed during backup capture", "error: %v", err)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the paused backup capture keeps the pack blocked
 	}
 
 	resumeOnce.Do(func() { close(resume) })

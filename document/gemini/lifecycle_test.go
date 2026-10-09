@@ -1259,45 +1259,47 @@ func TestEmbedCancellationStopsBlockedReadUploadAndPolling(t *testing.T) {
 }
 
 func TestEmbedFilesAPIStopsAfterBoundedPollAttemptsAndCleansUp(t *testing.T) {
-	data := geminiTinyPNG(t)
-	profile := geminiDirectTestProfile(t, TransportFilesAPI)
-	profile.MaxPollAttempts = 2
-	profile = rebindGeminiProfile(t, profile)
-	record := geminiCapability(t, profile, data, "synthetic.png", "image/png")
-	source := newGeminiLifecycleUpload(data, record)
-	fileName := "files/file-123"
-	fileURI := origin + "/v1beta/" + fileName
-	processing := geminiFileJSON(record, fileName, fileURI, "PROCESSING", newGeminiFileTimeline())
-	var requests atomic.Int32
-	client := newGeminiTestClient(t, profile, syntheticSecrets{"secret:gemini": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		requests.Add(1)
-		switch request.Method {
-		case http.MethodPost:
-			if request.Header.Get("X-Goog-Upload-Command") == "start" {
-				response := geminiJSONResponse(request, `{}`)
-				response.Header.Set("X-Goog-Upload-Url", origin+"/upload/v1beta/files?upload_id=synthetic-session-123&upload_protocol=resumable")
+	synctest.Test(t, func(t *testing.T) {
+		data := geminiTinyPNG(t)
+		profile := geminiDirectTestProfile(t, TransportFilesAPI)
+		profile.MaxPollAttempts = 2
+		profile = rebindGeminiProfile(t, profile)
+		record := geminiCapability(t, profile, data, "synthetic.png", "image/png")
+		source := newGeminiLifecycleUpload(data, record)
+		fileName := "files/file-123"
+		fileURI := origin + "/v1beta/" + fileName
+		processing := geminiFileJSON(record, fileName, fileURI, "PROCESSING", newGeminiFileTimeline())
+		var requests atomic.Int32
+		client := newGeminiTestClient(t, profile, syntheticSecrets{"secret:gemini": "synthetic-key"}, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			requests.Add(1)
+			switch request.Method {
+			case http.MethodPost:
+				if request.Header.Get("X-Goog-Upload-Command") == "start" {
+					response := geminiJSONResponse(request, `{}`)
+					response.Header.Set("X-Goog-Upload-Url", origin+"/upload/v1beta/files?upload_id=synthetic-session-123&upload_protocol=resumable")
+					return response, nil
+				}
+				response := geminiJSONResponse(request, `{"file":`+processing+`}`)
+				response.Header.Set("X-Goog-Upload-Status", "final")
 				return response, nil
+			case http.MethodGet:
+				return geminiJSONResponse(request, processing), nil
+			case http.MethodDelete:
+				return geminiJSONResponse(request, `{}`), nil
+			default:
+				return nil, errors.New("unexpected bounded-poll request")
 			}
-			response := geminiJSONResponse(request, `{"file":`+processing+`}`)
-			response.Header.Set("X-Goog-Upload-Status", "final")
-			return response, nil
-		case http.MethodGet:
-			return geminiJSONResponse(request, processing), nil
-		case http.MethodDelete:
-			return geminiJSONResponse(request, `{}`), nil
-		default:
-			return nil, errors.New("unexpected bounded-poll request")
-		}
-	}))
-	ctx, cancel := context.WithTimeout(t.Context(), 80*time.Millisecond)
-	defer cancel()
-	receipt := Receipt{}
+		}))
+		ctx, cancel := context.WithTimeout(t.Context(), 80*time.Millisecond)
+		defer cancel()
+		receipt := Receipt{}
 
-	_, err := client.embed(ctx, directInputs(source), geminiDirectAuthorization(profile.Descriptor, int64(len(data))), &receipt)
-	require.ErrorIs(t, err, ErrPermanentResponse)
-	assert.Equal(t, int32(5), requests.Load())
-	assert.Equal(t, 5, receipt.RequestCount)
-	assert.Equal(t, int32(1), source.closeCalls.Load())
+		_, err := client.embed(ctx, directInputs(source), geminiDirectAuthorization(profile.Descriptor, int64(len(data))), &receipt)
+		require.ErrorIs(t, err, ErrPermanentResponse)
+		assert.Equal(t, int32(5), requests.Load())
+		assert.Equal(t, 5, receipt.RequestCount)
+		assert.Equal(t, int32(1), source.closeCalls.Load())
+	})
 }
 
 func geminiDirectTestProfile(t *testing.T, transport Transport) Profile {

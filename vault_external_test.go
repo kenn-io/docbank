@@ -53,6 +53,12 @@ func TestVaultFormatCoverage(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, document.FormatLookupPending, lookup.Match)
 
+	xlsx, err := vault.LookupFormat(t.Context(), "xlsx")
+	require.NoError(t, err)
+	require.NotNil(t, xlsx.Format)
+	assert.Equal(t, document.CapabilityQualified,
+		xlsx.Format.Capabilities[document.CapabilityMetadata].State)
+
 	original := coverage.Formats[0].Capabilities[document.CapabilityDetect]
 	coverage.Formats[0].Capabilities[document.CapabilityDetect] = document.CapabilityStateV1{
 		State: document.CapabilityUnsupported,
@@ -317,7 +323,7 @@ func TestEmbeddedProcessingWaitsForSharedRenditionAndHonorsCancellation(t *testi
 	case <-done:
 		t.Fatalf("first processing request returned before rendering: %v", firstErr)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the blocked provider keeps the joined rendition running
 	defer cancel()
 	_, err = vault.StartProcessing(ctx, requests[1])
 	require.ErrorIs(t, err, context.DeadlineExceeded, "joining a live rendition must wait without failing its lease")
@@ -780,7 +786,7 @@ func TestEmbeddedProcessingJoinsRunningEmbedding(t *testing.T) {
 	case result := <-first:
 		t.Fatalf("processing returned before embedding: %v", result.err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the blocked provider keeps the shared embedding running
 	defer cancel()
 	_, err = vault.StartProcessing(ctx, request)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -788,7 +794,7 @@ func TestEmbeddedProcessingJoinsRunningEmbedding(t *testing.T) {
 	select {
 	case result := <-joined:
 		t.Fatalf("joining caller returned before shared embedding finished: %v", result.err)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the blocked provider keeps the joining caller waiting
 	}
 	release()
 	owner, waiter := <-first, <-joined
@@ -2155,7 +2161,7 @@ func TestOpenVersionContentRangeHoldsVaultLease(t *testing.T) {
 	select {
 	case err := <-closeDone:
 		require.FailNow(t, "vault closed while a range held its lifecycle lease", "error: %v", err)
-	case <-time.After(50 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the open range's lease keeps Close blocked
 	}
 
 	require.NoError(t, opened.Reader.Close())

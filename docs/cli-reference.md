@@ -190,8 +190,38 @@ instead. `inspect` also accepts an `id:N` or path selector for a member file.
 `id:N` also finds a trashed member. Sidecars must point at a same-asset RAW or
 image member and never become the display member.
 
-Photo assets, settings, and bounded decision receipts are included in JSONL
-backup and restore.
+Photo assets, albums, memberships, settings, and bounded decision receipts are
+included in JSONL backup and restore.
+
+### Photo albums
+
+```text
+docbank photos albums create <name>
+docbank photos albums list
+docbank photos albums show <album-id>
+docbank photos albums add <album-id> [asset-id ...] [--query QUERY_JSON]
+docbank photos albums remove <album-id> [asset-id ...] [--query QUERY_JSON]
+docbank photos albums members <album-id> [--sort added_time|import_time|capture_time] [--direction asc|desc] [--page-size N] [--cursor CURSOR]
+docbank photos albums rename <album-id> <name>
+docbank photos albums star <album-id> [--starred=false]
+docbank photos albums cover <album-id> [asset-id]
+docbank photos albums duplicate <album-id> <name>
+docbank photos albums delete <album-id>
+```
+
+For `add` and `remove`, supply either up to 1,000 asset IDs or `--query` with
+strict QueryV1 JSON. A query selects its complete current photo result in one
+atomic write. Coverage-dependent queries also accept `--coverage` and
+`--profile-fingerprint`. Existing-album writes accept `--revision` with the
+same automatic read and retry as asset writes.
+
+`members` defaults to `added_time` descending and 50 photos per page; the page
+size can be 1–250. Omitting the asset ID from `cover` clears the chosen cover.
+Removing a photo from an album or deleting the album keeps every file. See
+[Albums](usage/photos.md#albums) for visibility, cover selection, and `set:`
+filters.
+
+### Photo imports
 
 `photos import` queues a background import of a folder on the daemon host and
 prints the operation ID. It creates one photo per same-folder, same-name group

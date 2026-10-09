@@ -109,6 +109,16 @@ Store code adds validation that SQL cannot express economically: Unicode NFC
 normalization, rejection of empty/dot/slash/NUL names, ancestry checks for
 cycle prevention, revision preconditions, and size agreement.
 
+Virtual-path lookup normalizes names in Go, walks the live sibling-name index
+with one query, and loads metadata only for the final node. Nested paths use
+a recursive query. Reads use the caller's transaction when supplied. A missing
+ancestor takes precedence over an invalid name later in the path.
+
+Filename search results and collection member pages resolve the selected nodes'
+paths with one recursive query. Input positions preserve result order and
+repeated node IDs. Collection paths use the same read transaction as the summary
+and member page, so a concurrent move cannot mix old node data with new paths.
+
 ## Durable write ordering
 
 The ingest invariant is **bytes before reference**:
@@ -158,10 +168,20 @@ head.
 
 ## Ingest convergence
 
-Bulk ingest is intentionally restartable. For a destination name, the ingester
-scans the base name and numeric collision candidates. A candidate with the same
-blob hash is a skip; candidates with different content are preserved; the next
-free name receives the new node.
+Bulk ingest is intentionally restartable. The ingester finds live files in the
+destination whose current content has the incoming hash, then reads their active
+provenance in the same query. An operational origin matches when its source kind
+and normalized basename match the incoming file, even if the stored node was
+renamed. Embedded references remain opaque. A file without active provenance
+matches only within the incoming name's numeric suffix family. The first matching
+node by ID is reused; identical bytes under distinct source names remain separate
+documents.
+
+Candidate IDs are selected through the blob index before joining provenance, so
+the query avoids one database call per candidate and can stop reading origins
+after a match. It still examines same-content candidates as their count grows.
+When no origin matches, the next free name in the numeric suffix family receives
+the new node; existing content is preserved.
 
 Each successful file gets its own metadata transaction. Source errors are
 collected and the batch continues, so rerunning after permissions or mount

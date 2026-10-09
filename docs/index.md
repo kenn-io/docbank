@@ -24,7 +24,7 @@ If you are new, start with [setup](setup.md) and then the
 | Search by meaning | [Processing search](usage/search.md) |
 | Extract a document's text and read it | [Document processing](usage/document-processing.md) |
 | Read email and follow attachments | [Web email reader](usage/web.md#read-archived-email) |
-| Group camera files and filter photo assets | [Photos](usage/photos.md) |
+| Browse photos and organize albums | [Photos](usage/photos.md) |
 | Export documents as a verified ZIP | [Export bundles](usage/export-bundles.md) |
 | Import review packages or stamp PDF pages | [Web package import](usage/web.md#import-load-files) · [Bates export](usage/web.md#stamp-selected-pages-with-bates-labels) |
 | Export search counts for a date range, with evidence | [Search exports](usage/search-exports.md) |

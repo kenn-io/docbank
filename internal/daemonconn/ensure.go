@@ -207,6 +207,20 @@ func Ensure(ctx context.Context) (*Connection, error) {
 	return c, nil
 }
 
+// Running returns a proven client for an already-running compatible daemon.
+func Running(ctx context.Context) (*Connection, bool, error) {
+	layout, err := home.Resolve()
+	if err != nil {
+		return nil, false, err
+	}
+	rec, _, ok, err := discoverWithOptions(ctx, layout.Root, discoverOptions(true))
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	c, err := newProvenClientFor(ctx, rec)
+	return c, err == nil, err
+}
+
 // EnsureWeb returns an ownership-proven client for a daemon that is both
 // protocol-compatible and serving the compiled web application. A
 // fallback-only same-version daemon is replaced just like any other

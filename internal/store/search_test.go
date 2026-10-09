@@ -1960,7 +1960,7 @@ func TestAcquireLexicalGenerationSerializesWithPublication(t *testing.T) { //nol
 	select {
 	case got := <-leases:
 		t.Fatalf("lease acquired %v while a publication was in flight", got)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // the timer shows the event does not happen; the in-flight publication transaction keeps the lease blocked
 	}
 	close(release)
 	require.NoError(t, <-published)

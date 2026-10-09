@@ -1449,6 +1449,58 @@ it("clears page selection across folder, Back, query, tag-filter, and session tr
   expect(screen.queryByText(/selected on this page/)).toBeNull();
 });
 
+it.each(["settles", "hangs"])(
+  "sends session_ended before revoking the web session on Lock when the report %s",
+  async (report) => {
+    prepareSelectionApp();
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    const { fetchMock } = installSelectionBackend();
+    const original = fetchMock.getMockImplementation()!;
+    let resolveReport!: (response: Response) => void;
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input) === "/api/daemon/telemetry/events") {
+        if (JSON.parse(String(init?.body)).event === "session_ended") {
+          return new Promise<Response>((resolve) => {
+            resolveReport = resolve;
+          });
+        }
+        return Promise.resolve(new Response('{"status":"queued"}', { status: 202 }));
+      }
+      return original(input, init);
+    });
+    render(App);
+    await screen.findByRole("checkbox", { name: "Select readme.txt" });
+    now = 120_000;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await fireEvent.click(screen.getByRole("button", { name: "Lock web session" }));
+    const reports = () =>
+      fetchMock.mock.calls.filter(
+        ([input, init]) =>
+          String(input) === "/api/daemon/telemetry/events" &&
+          JSON.parse(String(init?.body)).event === "session_ended",
+      );
+    const revokes = () =>
+      fetchMock.mock.calls.filter(
+        ([input, init]) => String(input) === "/api/daemon/web-session" && init?.method === "DELETE",
+      );
+    expect(reports()).toHaveLength(1);
+    expect(new Headers(reports()[0]?.[1]?.headers).get("X-Docbank-Web-Session")).toBe(
+      "short-lived",
+    );
+    expect(revokes()).toHaveLength(0);
+    if (report === "settles") resolveReport(new Response('{"status":"queued"}', { status: 202 }));
+    await vi.advanceTimersByTimeAsync(999);
+    expect(revokes()).toHaveLength(report === "hangs" ? 0 : 1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(revokes()).toHaveLength(1);
+    vi.useRealTimers();
+    cleanup();
+    expect(reports()).toHaveLength(1);
+  },
+);
+
 it("restores the tag view sort when returning from a tagged folder", async () => {
   prepareSelectionApp();
   installSelectionBackend();

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -55,6 +56,53 @@ func BenchmarkCollectionReads(b *testing.B) {
 					}
 				}
 			})
+		})
+	}
+}
+
+// Hold collection size fixed while varying page size and ancestor depth.
+func BenchmarkCollectionMemberPaths(b *testing.B) {
+	for _, depth := range []int{0, 16} {
+		b.Run(fmt.Sprintf("depth=%d", depth), func(b *testing.B) {
+			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			require.NoError(b, err)
+			b.Cleanup(func() { require.NoError(b, s.Close()) })
+			ctx := b.Context()
+			prefix := strings.Repeat("/folder", depth)
+			parent, err := s.MkdirAll(ctx, prefix)
+			require.NoError(b, err)
+			run, err := s.BeginIngest(ctx, "cli", "Synthetic nested import")
+			require.NoError(b, err)
+			paths := make([]string, 1000)
+			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				for i := range paths {
+					name := fmt.Sprintf("file-%04d.txt", i)
+					paths[i] = prefix + "/" + name
+					_, _, _, err := s.ingestFileTx(ctx, tx, run, parent.ID,
+						name, fmt.Sprintf("%064x", i+1), 8, "text/plain", "/synthetic/"+name, "",
+						ingestFileOptions{})
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			}))
+			for _, limit := range []int{1, 100, 1000} {
+				b.Run(fmt.Sprintf("limit=%d", limit), func(b *testing.B) {
+					b.ReportAllocs()
+					for b.Loop() {
+						page, err := s.CollectionMembers(ctx, run.ID(), limit, 0)
+						if err != nil || page.Total != len(paths) || len(page.Items) != limit {
+							b.Fatalf("total=%d items=%d err=%v", page.Total, len(page.Items), err)
+						}
+						for i, item := range page.Items {
+							if item.Path != paths[i] {
+								b.Fatalf("path=%q want=%q", item.Path, paths[i])
+							}
+						}
+					}
+				})
+			}
 		})
 	}
 }

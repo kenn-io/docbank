@@ -726,13 +726,7 @@ func TestRepackAutomaticModeContinuesPastCorruptSparseSource(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 3, packed.BlobsPacked)
 	}
-	// Corruption recovery needs old packs regardless of the runner's wall-clock adjustments.
-	db, err := vault.metadata.SQLiteDriver().Open(filepath.Join(vault.root.Name(), "docbank.db"),
-		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
-	require.NoError(t, err)
-	_, err = db.ExecContext(t.Context(), `UPDATE blob_packs SET created_at='2000-01-01T00:00:00.000000000Z'`)
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
+	ageMaintenancePacks(t, vault)
 	trashMaintenanceFiles(t, vault, dead)
 	collected, err := vault.GarbageCollect(t.Context(), GCOptions{})
 	require.NoError(t, err)
@@ -1206,9 +1200,22 @@ func createSparseMaintenancePacks(t *testing.T, vault *Vault, count int) {
 		require.NoError(t, err)
 		require.Equal(t, 3, packed.BlobsPacked)
 	}
+	ageMaintenancePacks(t, vault)
 	trashMaintenanceFiles(t, vault, dead)
-	_, err := vault.GarbageCollect(t.Context(), GCOptions{})
+	collected, err := vault.GarbageCollect(t.Context(), GCOptions{})
 	require.NoError(t, err)
+	require.Equal(t, len(dead), collected.RemovedBlobs)
+}
+
+func ageMaintenancePacks(t *testing.T, vault *Vault) {
+	t.Helper()
+	// Repack fixtures must stay eligible across wall-clock adjustments.
+	db, err := vault.metadata.SQLiteDriver().Open(filepath.Join(vault.root.Name(), "docbank.db"),
+		docsqlite.OpenOptions{Access: docsqlite.ReadWriteExisting, TransactionMode: docsqlite.Immediate})
+	require.NoError(t, err)
+	_, err = db.ExecContext(t.Context(), `UPDATE blob_packs SET created_at='2000-01-01T00:00:00.000000000Z'`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
 }
 
 func insertDanglingMaintenanceMapping(t *testing.T, vault *Vault, hash, packID string) {

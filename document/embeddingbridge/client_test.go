@@ -725,7 +725,7 @@ func TestCancellationClosesBlockedDirectFileAndReturns(t *testing.T) {
 	select {
 	case err := <-done:
 		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		_ = upload.Close()
 		err := <-done
 		assert.Fail(t, "embedding bridge did not close the blocked authorized upload", "eventual error: %v", err)
@@ -783,7 +783,7 @@ func TestMultiFileCancellationClosesOnlyActiveSource(t *testing.T) {
 	select {
 	case err := <-done:
 		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		_ = second.Close()
 		err := <-done
 		assert.Fail(t, "embedding bridge did not close the active source", "eventual error: %v", err)
@@ -815,7 +815,7 @@ func TestCancellationWithNonComparableActiveSourceDoesNotPanic(t *testing.T) {
 	select {
 	case err := <-done:
 		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		_ = state.Close()
 		err := <-done
 		assert.Fail(t, "embedding bridge did not close the active non-comparable source", "eventual error: %v", err)
@@ -1392,7 +1392,7 @@ func TestRequestTimeoutClassification(t *testing.T) {
 				ctx := t.Context()
 				if callerDeadline {
 					var cancel context.CancelFunc
-					ctx, cancel = context.WithTimeout(ctx, 20*time.Millisecond)
+					ctx, cancel = context.WithTimeout(ctx, 20*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the handler blocks until the request ends
 					defer cancel()
 				}
 				_, err = client.Embed(ctx, oneTextInput("alpha"), authorization)

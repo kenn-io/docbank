@@ -85,6 +85,8 @@ func TestFormatCapabilitiesLookupUsesFullSnapshotBeforeFamilyFilter(t *testing.T
 	require.NotNil(t, got.Lookup)
 	assert.Equal(t, document.FormatLookupFormat, got.Lookup.Match)
 	assert.Equal(t, "pdf", got.Lookup.Format.ID)
+	assert.Equal(t, document.CapabilityQualified,
+		got.Lookup.Format.Capabilities[document.CapabilityMetadata].State)
 	for _, format := range got.Formats {
 		assert.Equal(t, "archive", format.QueryFamily)
 	}

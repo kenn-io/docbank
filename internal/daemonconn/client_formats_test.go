@@ -17,7 +17,7 @@ import (
 )
 
 func TestClientFormatCapabilitiesValidatesAndPreservesLookup(t *testing.T) {
-	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataExtractorFingerprint)
+	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataImplementationID)
 	require.NoError(t, err)
 	lookup := documentcoverage.Lookup(snapshot, "wpd")
 	snapshot.Formats = []document.FormatCapabilityV1{}
@@ -40,7 +40,7 @@ func TestClientFormatCapabilitiesValidatesAndPreservesLookup(t *testing.T) {
 }
 
 func TestClientFormatCapabilitiesAcceptsFamilyExcludedLookup(t *testing.T) {
-	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataExtractorFingerprint)
+	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataImplementationID)
 	require.NoError(t, err)
 	lookup := documentcoverage.Lookup(snapshot, "pdf")
 	snapshot.Formats = []document.FormatCapabilityV1{}
@@ -56,7 +56,7 @@ func TestClientFormatCapabilitiesAcceptsFamilyExcludedLookup(t *testing.T) {
 }
 
 func TestClientFormatCapabilitiesRejectsInvalidDomainPayload(t *testing.T) {
-	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataExtractorFingerprint)
+	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataImplementationID)
 	require.NoError(t, err)
 	snapshot.Formats[0].Capabilities[document.CapabilityDetect] = document.CapabilityStateV1{
 		State: "invented_state",
@@ -74,7 +74,7 @@ func TestClientFormatCapabilitiesRejectsInvalidDomainPayload(t *testing.T) {
 }
 
 func TestClientFormatCapabilitiesRejectsMismatchedLookup(t *testing.T) {
-	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataExtractorFingerprint)
+	snapshot, err := internalformatcoverage.Compute(nil, processing.SourceMetadataImplementationID)
 	require.NoError(t, err)
 	lookup := documentcoverage.Lookup(snapshot, "wpd")
 	lookup.Query = "wrong"
@@ -93,7 +93,7 @@ func TestClientFormatCapabilitiesRejectsMismatchedLookup(t *testing.T) {
 }
 
 func TestClientFormatCapabilitiesStrictResponseJSON(t *testing.T) {
-	base, err := internalformatcoverage.Compute(nil, processing.SourceMetadataExtractorFingerprint)
+	base, err := internalformatcoverage.Compute(nil, processing.SourceMetadataImplementationID)
 	require.NoError(t, err)
 	lookup := documentcoverage.Lookup(base, "zip")
 	base.Formats = []document.FormatCapabilityV1{*lookup.Format}

@@ -29,7 +29,7 @@ can instead [embed a vault of its own](docs/embedding.md).
 | Find a document | [Searching](docs/usage/searching.md) and [search by meaning](docs/usage/search.md) |
 | Extract a document's text and read it | [Document processing](docs/usage/document-processing.md) |
 | Read email and follow attachments | [Web email reader](docs/usage/web.md#read-archived-email) |
-| Group RAW, JPEG, and XMP files | [Photo assets](docs/usage/photos.md) |
+| Browse photos and organize albums | [Photo assets](docs/usage/photos.md) |
 | Export documents and search reports | [Verified bundles](docs/usage/export-bundles.md) and [search reports](docs/usage/search-exports.md) |
 | Keep earlier content versions | [Editing and versions](docs/architecture/editing-and-versions.md) |
 | Automate filing and retrieval | [Agent integration](docs/agents/integration.md) |
@@ -132,6 +132,10 @@ Docbank sends anonymous usage events by default:
 - `app_opened` when the web app opens, about once a day per browser and daemon
   run.
 - `screen_viewed` with a fixed screen name, once per vault per UTC day for each interface, browser and terminal, across daemon restarts.
+- `session_ended` once when a tab closes or stays hidden for 30 minutes, or the
+  terminal browser exits, with duration grouped into four buckets. Browser
+  visible time adds up across tab switches. Hidden time is excluded. The
+  terminal browser counts the time from opening to exit, including idle time.
 
 Each event carries a random per-vault install ID, the version and commit, and
 the operating system and architecture. Events never include document content,
@@ -157,15 +161,13 @@ version, and use.
 
 ## Contributors
 
-Thanks to everyone whose work went into v0.15.0:
+Thanks to everyone whose work went into v0.15.1:
 
-- [Joi Ito (@Joi)](https://github.com/Joi): macOS cloud-placeholder preflight and download guidance.
-- [Marius van Niekerk (@mariusvniekerk)](https://github.com/mariusvniekerk): API clients, MCP integration, CI, and shared search and embedding components.
-- [Rod Boev (@rodboev)](https://github.com/rodboev): import and format support, recordings, photos, metadata, and performance.
-- [Rusty Shackleford (@salmonumbrella)](https://github.com/salmonumbrella): document processing, search and review, email, reports, and exports.
-- [Wes McKinney (@wesm)](https://github.com/wesm): storage, backups, the web workspace, performance, and release integration.
+- [Rod Boev (@rodboev)](https://github.com/rodboev): the photo grid and albums, exact transcript attribution, screen usage reporting, and test and lint improvements.
+- [Wes McKinney (@wesm)](https://github.com/wesm): faster collections and imports, compressed backup restores, website fixes, documentation, and export and recovery tests.
 
-See the [release contribution history](https://github.com/kenn-io/docbank/compare/v0.14.0...v0.15.0)
+See the [release contribution history](https://github.com/kenn-io/docbank/compare/v0.15.0...v0.15.1),
+[earlier release credits](docs/changelog.md),
 and [all contributors](https://github.com/kenn-io/docbank/graphs/contributors).
 
 ## Contributing

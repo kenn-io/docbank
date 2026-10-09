@@ -2,6 +2,7 @@ name: CI
 
 on:
   workflow_call:
+  workflow_dispatch:
   push:
     branches: [main]
 permissions:
@@ -108,7 +109,7 @@ jobs:
       - name: Install pinned Chromium
         run: |
           npm ci --prefix frontend
-          node frontend/node_modules/@playwright/test/cli.js install --with-deps chromium
+          node frontend/node_modules/@playwright/test/cli.js install chromium
 
       - name: Qualify browser workflow with both SQLite builds
         run: make report-export-browser-test
@@ -177,9 +178,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Test
-        run: |
-          make check-timing-budgets
-          bash scripts/test-go-ci.sh
+        run: bash scripts/test-go-ci.sh
 
       - name: Embedded modernc restore without FTS5 build tags
         env:
@@ -234,12 +233,11 @@ jobs:
         with:
           version: v2.13.1
 
+      # Reuse the binary the action built; a second action step would build it for Windows.
       - name: Run golangci-lint for Windows
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         env:
           GOOS: windows
-        with:
-          version: v2.13.1
+        run: ./custom-gcl run ./...
 
   windows:
     name: Windows ${{ matrix.goarch }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }}

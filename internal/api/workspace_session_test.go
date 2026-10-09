@@ -73,7 +73,7 @@ func TestServerShutdownStartsSnapshotCancellationWhenSessionDrainTimesOut(t *tes
 	sessions.uploadGroup.Add(1)
 	defer sessions.uploadGroup.Done()
 	server := &Server{snapshots: snapshots, webSessions: sessions}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the open upload group keeps the session drain from finishing
 	defer cancel()
 	err = server.Shutdown(ctx)
 	require.ErrorIs(t, err, context.DeadlineExceeded)

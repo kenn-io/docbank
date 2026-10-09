@@ -4,6 +4,7 @@ package telemetry
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"go.kenn.io/kit/telemetry/posthog"
 )
@@ -15,6 +16,7 @@ const (
 	EventDaemonActive  = posthog.EventDaemonActive
 	EventAppOpened     = "app_opened"
 	EventScreenViewed  = "screen_viewed"
+	EventSessionEnded  = "session_ended"
 	// HeartbeatJobName is the supervised job that sends daemon_started and daemon_active.
 	HeartbeatJobName = "telemetry:heartbeat"
 
@@ -70,12 +72,30 @@ func New(opts Options) *Reporter {
 		posthog.WithAllowedEvent(EventScreenViewed,
 			posthog.AllowProperty("screen", posthog.AllowStringValues(screenNames...)),
 			posthog.AllowProperty("surface", posthog.AllowStringValues("web", "tui"))),
+		posthog.WithAllowedEvent(EventSessionEnded,
+			posthog.AllowProperty("surface", posthog.AllowStringValues("web", "tui")),
+			posthog.AllowProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m")),
+		),
 	)
 	if err != nil {
 		logger.Warn("telemetry disabled", "error", err)
 		return posthog.DisabledReporter()
 	}
 	return reporter
+}
+
+// DurationBucket groups elapsed time without sending an exact duration.
+func DurationBucket(elapsed time.Duration) string {
+	switch {
+	case elapsed < time.Minute:
+		return "under_1m"
+	case elapsed < 5*time.Minute:
+		return "1_to_5m"
+	case elapsed <= 30*time.Minute:
+		return "5_to_30m"
+	default:
+		return "over_30m"
+	}
 }
 
 // RunHeartbeat sends daemon_started, then kit's daemon_active heartbeat until ctx ends.

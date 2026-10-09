@@ -1,0 +1,24 @@
+[embedding_profiles.semantic]
+normalization = "unit_length"
+compatibility_id = "embeddinggemma2/search/native768/v1"
+
+[embedding_profiles.semantic.embedder]
+base_url = "http://127.0.0.1:11434/v1"
+model = "embeddinggemma2-text-f32-768-v1"
+dims = 768
+fingerprint_salt = "914f7f89142e33e77833254d9c9b90c3cef7303b-text-f32-mean-native768-v1"
+input_type_mode = "none"
+batch_size = 8
+timeout_seconds = 30
+
+[embedding_profiles.semantic.model_input]
+profile = "custom/v1"
+compatibility_id = "embeddinggemma2/search/native768/v1"
+
+[embedding_profiles.semantic.model_input.document]
+mode = "text"
+template = "title: none | text: {{content}}"
+
+[embedding_profiles.semantic.model_input.query]
+mode = "text"
+template = "task: search result | query: {{content}}"

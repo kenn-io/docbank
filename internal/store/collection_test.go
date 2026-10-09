@@ -112,6 +112,48 @@ func TestCollectionsOrderEqualStartTimesByID(t *testing.T) {
 	}
 }
 
+func TestCollectionMemberPathsFollowPagingAndMoves(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	directory, err := s.MkdirAll(ctx, "/資料/deep")
+	require.NoError(t, err)
+	run, err := s.BeginIngest(ctx, "cli", "Synthetic paths")
+	require.NoError(t, err)
+	nested, err := s.IngestFileExact(ctx, run, directory.ID, "same.txt", fakeHash("a1"),
+		4, "text/plain", "/synthetic/first.txt", "")
+	require.NoError(t, err)
+	rootFile, err := s.IngestFileExact(ctx, run, s.RootID(), "same.txt", fakeHash("b2"),
+		6, "text/plain", "/synthetic/second.txt", "")
+	require.NoError(t, err)
+	_, err = s.IngestFileExact(ctx, run, directory.ID, "a.txt", fakeHash("c3"),
+		8, "text/plain", "/synthetic/third.txt", "")
+	require.NoError(t, err)
+
+	// Equal filenames retain node-ID order, even when their paths sort differently.
+	page, err := s.CollectionMembers(ctx, run.ID(), 2, 1)
+	require.NoError(t, err)
+	require.Equal(t, 3, page.Total)
+	require.Len(t, page.Items, 2)
+	assert.Equal(t, nested.ID, page.Items[0].Node.ID)
+	assert.Equal(t, "/資料/deep/same.txt", page.Items[0].Path)
+	assert.Equal(t, rootFile.ID, page.Items[1].Node.ID)
+	assert.Equal(t, "/same.txt", page.Items[1].Path)
+
+	_, _, err = s.Move(ctx, directory.ID, s.RootID(), "renamed", UnconditionalRev)
+	require.NoError(t, err)
+	page, err = s.CollectionMembers(ctx, run.ID(), 1, 1)
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, nested.ID, page.Items[0].Node.ID)
+	assert.Equal(t, "/renamed/same.txt", page.Items[0].Path)
+
+	page, err = s.CollectionMembers(ctx, run.ID(), 2, 3)
+	require.NoError(t, err)
+	assert.Equal(t, 3, page.Total)
+	assert.Empty(t, page.Items)
+}
+
 func TestCollectionMembershipFollowsSupersessionAndTrash(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

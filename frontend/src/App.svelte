@@ -103,6 +103,7 @@
   import { takeFragmentSession } from "./browser-session.js";
   import { startScreenReporting } from "./screen-views.js";
   import { startAppOpenedReporting } from "./app-opened.js";
+  import { startSessionReporting } from "./session-duration.js";
   import { type AuditStatus, type DocumentSearchReport, type Node, type ProcessingProfileSummary, type SearchHit, type Tag, type TagAssignmentReceipt } from "./generated/docbank.js";
   import { downloadVisiblePageCSV, selectedVisibleCSVRows } from "./csv.js";
   import { basename, formatBytes, formatDate } from "./format.js";
@@ -179,6 +180,7 @@
   };
 
   let webSession = $state("");
+  let stopSessionReporting: (() => Promise<void>) | undefined;
   let photoMode = $state(location.pathname === "/photos");
   let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
 
@@ -478,6 +480,7 @@
       void loadTagCatalog();
       void loadNaturalProfiles(session.token);
       const stopAppOpened = startAppOpenedReporting(session.token);
+      stopSessionReporting = startSessionReporting(session.token);
       const channel = new VerifiedUploadChannel(session, undefined, () => {
         if (uploadChannel === channel) {
           uploadChannelError =
@@ -495,6 +498,8 @@
       );
       return () => {
         stopAppOpened();
+        void stopSessionReporting?.();
+        stopSessionReporting = undefined;
         channel.close();
         detachShortcuts();
         snapshot.reset();
@@ -1779,6 +1784,8 @@
     tagCatalogGeneration += 1;
     invalidateTagHotkeyMutation();
     const session = webSession;
+    const stopReporting = stopSessionReporting;
+    stopSessionReporting = undefined;
     uploadChannel?.close();
     uploadChannel = null;
     webSession = "";
@@ -1815,6 +1822,7 @@
     searchQuery = "";
     tagFilterID = "";
     error = "";
+    await Promise.race([stopReporting?.(), new Promise<void>((resolve) => setTimeout(resolve, 1000))]);
     try {
       if (session) await generated.revokeWebSession({ session });
     } catch {
@@ -2910,7 +2918,7 @@
       {#if panel.kind === "telemetry"}
         <Modal title="Anonymous usage" ariaLabel="Anonymous usage" tone="info" onclose={closePanel(panel)}>
           <div class="telemetry-note">
-            <p>Docbank reports when the daemon runs, the web app opens, and you open a screen so the team can count vaults in use. Reporting is on by default.</p>
+            <p>Docbank reports when the daemon runs, the web app opens, and you open a screen so the team can count vaults in use. It also reports how long a browser or terminal session lasted, as a rough bucket. Reporting is on by default.</p>
             <p>Reports go to PostHog with a random ID for this vault, the app version, operating system, and install age. They never include document content, filenames, paths, tags, or searches.</p>
             <p>To turn reporting off, set <code>DOCBANK_TELEMETRY_ENABLED=0</code> in the environment that starts the daemon, then run <code>docbank daemon restart</code>.</p>
           </div>

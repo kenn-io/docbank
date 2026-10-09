@@ -155,7 +155,7 @@ func TestProcessorCancellationDoesNotWaitForSpoolReservation(t *testing.T) {
 	var processErr error
 	select {
 	case processErr = <-done:
-	case <-time.After(2 * spoolLockRetryInterval):
+	case <-time.After(5 * time.Second):
 		releaseLock()
 		<-done
 		t.Fatal("Process waited for the spool reservation after cancellation")

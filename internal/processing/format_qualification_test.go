@@ -109,7 +109,7 @@ func TestSourceMetadataQualificationsExecuteRegisteredFixtures(t *testing.T) {
 			fixture.assert(t, metadata)
 			query := formatqualification.Query{
 				CatalogID: fixture.catalogID, Capability: formatqualification.CapabilityMetadata,
-				Evidence: fixture.evidence, ImplementationID: SourceMetadataExtractorFingerprint,
+				Evidence: fixture.evidence, ImplementationID: SourceMetadataImplementationID,
 				InputKind: formatqualification.InputOriginalFile,
 			}
 			qualification, found := formatqualification.Lookup(query)

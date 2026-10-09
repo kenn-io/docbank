@@ -15696,6 +15696,14 @@ components:
     TelemetryEventProperties:
       additionalProperties: false
       properties:
+        duration_bucket:
+          description: How long a session_ended session lasted.
+          enum:
+            - under_1m
+            - 1_to_5m
+            - 5_to_30m
+            - over_30m
+          type: string
         screen:
           description: The screen shown. Other values return 400 for screen_viewed.
           enum:
@@ -15730,7 +15738,7 @@ components:
             - operations
           type: string
         surface:
-          description: The interface that showed the screen.
+          description: The interface that sent the event.
           enum:
             - web
             - tui
@@ -16827,7 +16835,7 @@ paths:
                   type: string
                 properties:
                   $ref: "#/components/schemas/TelemetryEventProperties"
-                  description: Event properties. screen_viewed requires screen and surface.
+                  description: Event properties. screen_viewed requires screen and surface; session_ended takes surface and duration_bucket.
               required:
                 - event
               type: object

@@ -532,7 +532,7 @@ func TestPublishRenditionExcludesDerivativePurgeAcrossEveryStagingBoundary(t *te
 				purgeDone <- purgeErr
 			}()
 			require.Eventually(t, func() bool {
-				probeCtx, cancel := context.WithTimeout(t.Context(), 5*time.Millisecond)
+				probeCtx, cancel := context.WithTimeout(t.Context(), 5*time.Millisecond) //nolint:kennlint // the deadline is the expected result; the in-flight publication keeps queued maintenance and the probe waiting
 				defer cancel()
 				return errors.Is(fixture.blobs.WithMutation(probeCtx, func() error { return nil }),
 					context.DeadlineExceeded)

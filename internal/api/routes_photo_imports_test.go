@@ -53,7 +53,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 		if latest.FinishedAt != "" {
 			break
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond) //nolint:kennlint // polls the photo import job over the test server's real loopback HTTP, which synctest can't host
 	}
 	assert.Equal(t, "completed", latest.State)
 	assert.Equal(t, int64(1), latest.CompletedObjects)

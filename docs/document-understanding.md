@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-07
 title: Document understanding in Go
 description: Choose Go packages for document extraction, canonical evidence, renditions, and embeddings without opening a Docbank vault.
 ---
@@ -454,6 +454,11 @@ supports its 0.6B, 4B, and 8B models at their native dimensions and requires a
 query instruction. Both pin weights and tokenizer revisions, pooling, and
 sequence limits. These profiles exclude sparse and multi-vector outputs.
 See the [deployment contracts](https://github.com/kenn-io/docbank/blob/main/document/openaicompat/profiles.go).
+
+The existing custom text contract also supports an optional
+[EmbeddingGemma 2 native-768 recipe](configuration.md#optional-embeddinggemma-2-text-recipe).
+Its configuration and synthetic transport checks do not qualify a live model
+deployment. The operator supplies the server and its immutable recipe.
 
 Voyage contextual requests contain one document's ordered chunks. The shared
 Voyage and Mistral adapters mark their mutable hosted aliases as export-only
