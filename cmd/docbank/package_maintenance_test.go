@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestPackagePreflightMaintenanceExpiresReceiptsHourly(t *testing.T) {
+func TestRetentionMaintenanceExpiresRecordsHourly(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		catalog, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 		require.NoError(t, err)
