@@ -71,7 +71,7 @@
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
-  import PhotoAlbumsView from "./PhotoAlbumsIndex.svelte";
+  import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
   import { PhotoAlbums, photoDragType } from "./photoAlbums.svelte.js";
   import StarIcon from "@lucide/svelte/icons/star";
   import TargetIcon from "@lucide/svelte/icons/target";
@@ -2116,7 +2116,7 @@
     </TopBar>
 
     {#if photoMode && photoState}
-      {#if photoPath === "/photos/albums"}<PhotoAlbumsView albums={photoState.albums} cache={photoState.cache} onnavigate={navigatePhotos} />
+      {#if photoPath === "/photos/albums"}<PhotoAlbumsIndex albums={photoState.albums} cache={photoState.cache} onnavigate={navigatePhotos} />
       {:else if albumID && albumPhotos}{#key albumPhotos}<PhotosWorkspace photos={albumPhotos} cache={photoState.cache} albums={photoState.albums} {albumID} onnavigate={navigatePhotos} />{/key}
       {:else if !albumID}{#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} albums={photoState.albums} onnavigate={navigatePhotos} />{/key}{/if}
     {:else}
