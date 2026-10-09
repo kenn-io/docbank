@@ -997,6 +997,7 @@ accepts that credential for the following operations:
 | Create, rename, or delete a tag definition | Rename and delete require the inspected tag revision. Deletion reports the removed assignment count. |
 | Read and manage saved query or highlight definitions | Edit and delete require the saved definition's revision. Permanent audit history blocks these writes. |
 | Read collections and their members | Returns bounded lists of live import membership. |
+| Read, create, rename, star, set covers, duplicate, or delete photo albums; add or remove members | Existing-album writes require the inspected revision. Membership requests accept up to 1,000 IDs per batch or a complete live query without a total member cap. Removing members or deleting albums keeps the photos. See [Albums](photos.md#albums). |
 | Set or clear a collection label | Requires the inspected collection-label revision. |
 | Create and page a frozen query snapshot | Uses complete validated query intent. Handles remain bound to this session and daemon lifetime. |
 | Apply a tag to an exact frozen population | Requires captured node revisions, checkpoint readback, and confirmation. Retries preserve the original operation identities. |
