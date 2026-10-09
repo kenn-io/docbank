@@ -174,7 +174,7 @@ it.each(["page failure", "count retry"])("recovers pending photo counts after wo
       if (request.facets.length) return new Promise<Response>(finish => counts.push({ signal: init!.signal!, finish }));
       pages++;
       if (pages === 2) return new Response(JSON.stringify({ detail: "Temporary page failure" }), { status: 503 });
-      return new Response(JSON.stringify({ items: [photo(pages)], total: 3, next_cursor: pages === 1 ? "next" : undefined }));
+      return new Response(JSON.stringify({ items: pages === 1 ? Array.from({ length: 60 }, (_, index) => photo(index + 1)) : [photo(61)], total: 61, next_cursor: pages === 1 ? "next" : undefined }));
     }
     if (url.includes("/nodes/1")) return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", revision: 1, path: "/" }));
     return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
@@ -198,7 +198,7 @@ it.each(["page failure", "count retry"])("recovers pending photo counts after wo
   counts.at(-1)!.finish(new Response(JSON.stringify({ facets: [{ dimension: "camera", available: true, total: 3, missing: 0, other: 0, values: [{ key: "Synthetic Camera", label: "Synthetic Camera", count: 3, selected: false }] }] })));
   await screen.findByRole("button", { name: "Synthetic Camera, 3 photos" });
   if (scenario === "page failure") {
-    await fireEvent.click(screen.getByRole("button", { name: "Retry", exact: true }));
+    await fireEvent.click(screen.getByRole("button", { name: /^Retry$/ }));
     await waitFor(() => expect(pages).toBe(3));
     expect(screen.getByRole("button", { name: "Synthetic Camera, 3 photos" })).toBeTruthy();
   }
