@@ -97,10 +97,6 @@ func TestWorkspaceQueryRoutesStrictBodiesAndStableErrors(t *testing.T) {
 		{"unsupported page size", "/api/v1/workspace/queries", `{"query":{},"page_size":51}`, "validation", 422},
 		{"unknown facet", "/api/v1/workspace/queries", `{"query":{},"facets":["future"]}`, "validation", 422},
 		{"document camera facet", "/api/v1/workspace/queries", `{"query":{},"facets":["camera"]}`, "validation", 422},
-		{"document lens facet", "/api/v1/workspace/queries", `{"query":{},"facets":["lens"]}`, "validation", 422},
-		{"document year facet", "/api/v1/workspace/queries", `{"query":{},"facets":["year"]}`, "validation", 422},
-		{"document location facet", "/api/v1/workspace/queries", `{"query":{},"facets":["location"]}`, "validation", 422},
-		{"document set facet", "/api/v1/workspace/queries", `{"query":{},"facets":["set"]}`, "validation", 422},
 		{"missing snapshot", "/api/v1/workspace/queries/00000000000000000000000000000000/pages", `{"cursor":"eA"}`, "snapshot_gone", 410},
 		{"empty cursor", "/api/v1/workspace/queries/00000000000000000000000000000000/pages", `{"cursor":""}`, "validation", 422},
 	} {

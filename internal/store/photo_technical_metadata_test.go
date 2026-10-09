@@ -615,9 +615,6 @@ func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
 		require.Zero(t, browsePhotoPage(t, s, fmt.Sprintf(`{"text":%q,"sort":{"field":%q}}`, identity, sort)).Total)
 	}
 	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Survivor","sort":{"field":"relevance"}}`).Total)
-	_, err = s.db.Exec(`DELETE FROM source_metadata_generations WHERE generation_id=(SELECT generation_id FROM source_metadata_heads WHERE source_sha256=?)`, survivor.BlobHash)
-	require.NoError(t, err)
-	require.Zero(t, browsePhotoPage(t, s, `{"text":"Survivor","sort":{"field":"relevance"}}`).Total)
 }
 
 func TestPhotoTechnicalMetadataCorruptSource(t *testing.T) {

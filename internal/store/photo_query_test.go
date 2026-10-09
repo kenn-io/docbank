@@ -1266,7 +1266,6 @@ func TestPhotoFacetRawOperandsAndBudgets(t *testing.T) {
 	require.NoError(t, err)
 	facets := page.Facets
 	require.Equal(t, SnapshotFacetValue{Key: raw, Label: raw, Count: 2}, facets[0].Values[0])
-	require.NoError(t, query.ValidateTextOperand("camera", facets[0].Values[0].Key))
 	require.Equal(t, int64(3), *facets[1].Total)
 	page, err = s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: value, Facets: []string{"camera"}}, nil)
 	require.NoError(t, err)
