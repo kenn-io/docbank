@@ -27,7 +27,7 @@ func (s *Store) MissingPhotoQualityTargetsAfter(
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT v.version_id,v.blob_hash,v.size,COALESCE(v.mime_type,'')
  FROM content_versions v
- WHERE v.version_id>? AND `+liveIncludedPhotoDisplayPredicate+`
+ WHERE v.version_id>? AND `+liveIncludedPhotoDisplayPredicate("v")+`
  AND EXISTS (SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id
   AND g.recipe_fingerprint=? AND g.state='ready')
  AND NOT EXISTS (SELECT 1 FROM photo_quality_signals q WHERE q.content_version_id=v.version_id
@@ -86,7 +86,7 @@ func (s *Store) publishPhotoQuality(
  content_version_id,evaluator_fingerprint,state,`+photoQualityColumns+`)
  SELECT v.version_id,?,?,?,?,?,?,?,?,?,? FROM content_versions v
  WHERE v.version_id=? AND v.blob_hash=? AND v.size=? AND COALESCE(v.mime_type,'')=?
- AND `+liveIncludedPhotoDisplayPredicate+`
+ AND `+liveIncludedPhotoDisplayPredicate("v")+`
  ON CONFLICT(content_version_id,evaluator_fingerprint) DO NOTHING`, args...)
 		return err
 	})

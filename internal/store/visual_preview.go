@@ -362,11 +362,13 @@ const liveIncludedDisplayPredicate = `a.excluded_at IS NULL AND n.trashed_at IS 
 
 // Follow indexed ownership links from a version rather than scanning assets
 // for a matching display. The outer query can seek in version order.
-const liveIncludedPhotoDisplayPredicate = `EXISTS (
+func liveIncludedPhotoDisplayPredicate(alias string) string {
+	return `EXISTS (
  SELECT 1 FROM nodes n JOIN photo_files f ON f.node_id=n.id
  JOIN photo_assets a ON a.asset_id=f.asset_id AND a.display_file_id=f.file_id
- WHERE n.id=v.node_id AND n.current_version_id=v.version_id
+ WHERE n.id=` + alias + `.node_id AND n.current_version_id=` + alias + `.version_id
  AND a.kind='photo' AND ` + liveIncludedDisplayPredicate + `)`
+}
 
 // MissingPhotoVisualPreviewTargetsAfter lists display versions without a recorded recipe.
 func (s *Store) MissingPhotoVisualPreviewTargetsAfter(
@@ -378,7 +380,7 @@ func (s *Store) MissingPhotoVisualPreviewTargetsAfter(
 	rows, err := s.db.QueryContext(ctx, `SELECT v.version_id,v.blob_hash,v.size,COALESCE(v.mime_type,'')
  FROM content_versions v WHERE v.version_id>? AND NOT EXISTS (
  SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=?)
- AND `+liveIncludedPhotoDisplayPredicate+`
+ AND `+liveIncludedPhotoDisplayPredicate("v")+`
  ORDER BY v.version_id LIMIT ?`, afterVersionID, recipeFingerprint, limit)
 	if err != nil {
 		return nil, err
@@ -405,7 +407,7 @@ func (s *Store) PhotoVisualPreviewTargetEligible(
  SELECT 1 FROM content_versions v WHERE v.version_id=? AND v.blob_hash=?
  AND v.size=? AND COALESCE(v.mime_type,'')=? AND NOT EXISTS (
  SELECT 1 FROM visual_preview_generations g WHERE g.content_version_id=v.version_id AND g.recipe_fingerprint=?)
- AND `+liveIncludedPhotoDisplayPredicate+`)`,
+ AND `+liveIncludedPhotoDisplayPredicate("v")+`)`,
 		target.VersionID, target.SourceSHA256, target.Size, target.MediaType, recipeFingerprint).Scan(&eligible)
 	if err != nil {
 		return false, fmt.Errorf("checking photo visual preview eligibility for version %q: %w", target.VersionID, err)

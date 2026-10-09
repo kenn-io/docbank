@@ -17,16 +17,16 @@ func compilePhotoAssetPredicate(predicate string, args ...any) compiledQueryFrag
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files pf JOIN photo_assets pa ON pa.asset_id=pf.asset_id WHERE pf.node_id=n.id AND ` + predicate + `)`, args: args}
 }
 
-func (c queryCompiler) compilePhotoVersionPredicate(predicate string, args ...any) compiledQueryFragment {
+func (c queryCompiler) compilePhotoVersionPredicate(predicate func(alias string) string, args ...any) compiledQueryFragment {
 	if c.photoDisplayMetadata {
 		return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member
  JOIN photo_assets asset ON asset.asset_id=member.asset_id
  JOIN photo_files display ON display.file_id=asset.display_file_id
  JOIN nodes display_node ON display_node.id=display.node_id
  JOIN content_versions v ON v.version_id=display_node.current_version_id
- WHERE member.node_id=n.id AND ` + predicate + `)`, args: args}
+ WHERE member.node_id=n.id AND ` + predicate("v") + `)`, args: args}
 	}
-	return compiledQueryFragment{sql: strings.ReplaceAll(predicate, "v.", "cv."), args: args}
+	return compiledQueryFragment{sql: predicate("cv"), args: args}
 }
 
 func isPhotoScalarField(field string) bool {
@@ -34,7 +34,9 @@ func isPhotoScalarField(field string) bool {
 }
 
 func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
-	return c.compilePhotoVersionPredicate(`EXISTS (SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=v.blob_hash AND `+predicate+`)`, args...)
+	return c.compilePhotoVersionPredicate(func(alias string) string {
+		return `EXISTS (SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND ` + predicate + `)`
+	}, args...)
 }
 
 func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compiledQueryFragment, error) {
@@ -188,11 +190,15 @@ func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compil
 	if err != nil {
 		return compiledQueryFragment{}, err
 	}
-	quality := `EXISTS (SELECT 1 FROM photo_quality_signals q WHERE q.content_version_id=v.version_id
+	quality := func(alias string) string {
+		return `EXISTS (SELECT 1 FROM photo_quality_signals q WHERE q.content_version_id=` + alias + `.version_id
  AND q.evaluator_fingerprint=? AND q.state='ready'`
+	}
 	args := []any{fingerprints.Evaluator}
 	if field == "unevaluated" {
-		return c.compilePhotoVersionPredicate(liveIncludedPhotoDisplayPredicate+` AND NOT `+quality+`)`, args...), nil
+		return c.compilePhotoVersionPredicate(func(alias string) string {
+			return liveIncludedPhotoDisplayPredicate(alias) + ` AND NOT ` + quality(alias) + `)`
+		}, args...), nil
 	}
 	number, err := strconv.ParseFloat(value, 64)
 	if err != nil {
@@ -204,5 +210,7 @@ func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compil
 		operator = "<="
 	}
 	args = append(args, number)
-	return c.compilePhotoVersionPredicate(quality+` AND q.`+column+operator+` ?)`, args...), nil
+	return c.compilePhotoVersionPredicate(func(alias string) string {
+		return quality(alias) + ` AND q.` + column + operator + ` ?)`
+	}, args...), nil
 }
