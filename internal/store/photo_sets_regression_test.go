@@ -1,10 +1,81 @@
 package store
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestPhotoSetDeleteNeedsNoReadTransaction(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "cover.jpg")
+	set, err := s.CreatePhotoSet(ctx, "Deleted")
+	require.NoError(t, err)
+	set, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	cover := &asset.ID
+	set, err = s.UpdatePhotoSet(ctx, set.ID, set.Revision, nil, nil, &cover)
+	require.NoError(t, err)
+	require.NoError(t, s.db.Close())
+	deleted, err := s.DeletePhotoSet(ctx, set.ID, set.Revision)
+	require.NoError(t, err)
+	require.Nil(t, deleted.CoverAssetID)
+	require.NotNil(t, deleted.DeletedAt)
+	stored, err := scanPhotoSet(s.writeDB.QueryRowContext(ctx, `SELECT `+photoSetColumns+` FROM photo_sets WHERE set_id=?`, set.ID))
+	require.NoError(t, err)
+	require.Equal(t, deleted, stored)
+	ids, err := photoSetMemberIDs(ctx, s.writeDB, set.ID)
+	require.NoError(t, err)
+	require.Empty(t, ids)
+}
+
+func TestPhotoSetResponseFailureRollsBack(t *testing.T) {
+	t.Parallel()
+	for _, operation := range []string{"rename", "duplicate", "add", "remove"} {
+		t.Run(operation, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			coverAsset := albumAsset(t, s, "hidden-cover.jpg")
+			member := albumAsset(t, s, "visible.jpg")
+			set, err := s.CreatePhotoSet(ctx, "Original")
+			require.NoError(t, err)
+			ids := []string{coverAsset.ID}
+			if operation == "remove" {
+				ids = append(ids, member.ID)
+			}
+			set, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: ids})
+			require.NoError(t, err)
+			cover := &coverAsset.ID
+			set, err = s.UpdatePhotoSet(ctx, set.ID, set.Revision, nil, nil, &cover)
+			require.NoError(t, err)
+			require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
+			_, err = s.SetPhotoAssetHidden(ctx, coverAsset.ID, coverAsset.Revision, true)
+			require.NoError(t, err)
+			token, _, err := s.UnlockPhotoHidden(ctx, "correct")
+			require.NoError(t, err)
+			_, err = s.db.ExecContext(ctx, `UPDATE photo_hidden_sessions SET expires_at='invalid'`)
+			require.NoError(t, err)
+			var before, after bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &before))
+			unlocked := WithPhotoHiddenToken(ctx, token)
+			switch operation {
+			case "rename":
+				_, err = s.UpdatePhotoSet(unlocked, set.ID, set.Revision, new("Renamed"), nil, nil)
+			case "duplicate":
+				_, err = s.DuplicatePhotoSet(unlocked, set.ID, set.Revision, "Copy")
+			case "add", "remove":
+				_, err = s.ChangePhotoSetMembers(unlocked, set.ID, set.Revision, operation == "add", PhotoSetSelection{AssetIDs: []string{member.ID}})
+			}
+			require.ErrorContains(t, err, "reading hidden session expiry")
+			require.NoError(t, s.ExportMetadata(ctx, &after))
+			require.Equal(t, before.String(), after.String())
+		})
+	}
+}
 
 func TestPhotoSetMembershipSurvivesEmptyAssets(t *testing.T) {
 	t.Parallel()
