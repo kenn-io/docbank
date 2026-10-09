@@ -130,6 +130,25 @@ it("clears all-results mode after removing every member and links the operated a
   expect(albums.noticeID).toBe(album.id);
 });
 
+it("keeps the original write rejection status through failed reads and clears it for later writes", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(response({ detail: "Name too long" }, 422))
+    .mockResolvedValueOnce(response({ detail: "List unavailable" }, 503))
+    .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+    .mockResolvedValueOnce(response([album]));
+  vi.stubGlobal("fetch", fetcher);
+  const albums = new PhotoAlbums("scoped", vi.fn());
+  await albums.update(album, { name: "x".repeat(257) });
+  expect(albums.errorStatus).toBe(422); expect(albums.loadError).toBe("List unavailable");
+  await albums.update(album, { name: "Corrected name" });
+  expect(albums.errorStatus).toBeUndefined(); expect(albums.error).toBe("Failed to fetch");
+  albums.errorStatus = 422; albums.busy = true;
+  await albums.update(album, { name: "Corrected name" });
+  expect(albums.errorStatus).toBeUndefined(); expect(fetcher).toHaveBeenCalledTimes(4);
+  albums.errorStatus = 422; albums.busy = false; albums.dispose();
+  await albums.update(album, { name: "Corrected name" });
+  expect(albums.errorStatus).toBeUndefined(); expect(fetcher).toHaveBeenCalledTimes(4);
+});
+
 it("reports an album write attempted while another is running", async () => {
   const albums = new PhotoAlbums("scoped", vi.fn()); albums.busy = true;
   await albums.update(album, { starred: true });

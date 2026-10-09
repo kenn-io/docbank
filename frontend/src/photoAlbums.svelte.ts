@@ -13,6 +13,7 @@ export class PhotoAlbums {
   initialized = $state(false);
   busy = $state(false);
   error = $state("");
+  errorStatus = $state<number>();
   loadError = $state("");
   notice = $state("");
   noticeID = $state("");
@@ -63,20 +64,21 @@ export class PhotoAlbums {
 
   rejectBusy() {
     if (!this.busy) return false;
+    this.errorStatus = undefined;
     this.error ||= "Another album change is still running. Try again.";
     return true;
   }
 
   private async write(action: () => Promise<api.PhotoAlbum>, id?: string, empty = false, complete?: (result: api.PhotoAlbum | undefined) => Promise<void>) {
-    if (this.controller.signal.aborted) return;
+    if (this.controller.signal.aborted) { this.errorStatus = undefined; return; }
     if (this.rejectBusy()) return;
     ++this.read; this.loading = false;
-    this.busy = true; this.error = ""; this.notice = ""; this.noticeID = "";
+    this.busy = true; this.error = ""; this.errorStatus = undefined; this.notice = ""; this.noticeID = "";
     let result: api.PhotoAlbum | undefined;
     let failure: unknown;
     try {
       try { result = await action(); this.remember(result, empty); }
-      catch (cause) { failure = cause; this.error = this.failure(cause); }
+      catch (cause) { failure = cause; this.error = this.failure(cause); this.errorStatus = cause instanceof APIError ? cause.status : undefined; }
       const recovered = await this.list();
       if (recovered && failure instanceof APIError && id && (failure.code === "stale_revision" || failure.status === 404)) {
         const album = this.items.find(item => item.id === id);

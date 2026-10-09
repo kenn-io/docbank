@@ -172,6 +172,49 @@ it("renders added order unchanged and saves or cancels inline rename", async () 
   expect(update).toHaveBeenCalledWith(album, { name: "Holiday" });
 });
 
+it.each(["rename", "duplicate"] as const)("corrects a rejected %s name with its original revision, then requires review for a conflict", async operation => {
+  let finish!: (response: Response) => void;
+  const current = { ...album, revision: 2 };
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "List unavailable" }), { status: 503 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ code: "stale_revision" }), { status: 412 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([current])))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Review rejected" }), { status: 422 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify([current])))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...current, revision: 3, name: "Corrected name" })))
+    .mockResolvedValueOnce(new Response(JSON.stringify([current])));
+  vi.stubGlobal("fetch", fetcher);
+  const { albums } = setup(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name: operation === "rename" ? "Rename" : "Duplicate…" }));
+  const input = screen.getByRole("textbox", { name: operation === "rename" ? "Album name" : "Copy name" });
+  const submit = screen.getByRole("button", { name: operation === "rename" ? "Save" : "Duplicate album" });
+  await fireEvent.input(input, { target: { value: "x".repeat(257) } });
+  await fireEvent.click(submit);
+  await waitFor(() => expect(albums.busy).toBe(true));
+  await fireEvent.input(input, { target: { value: "Corrected name" } });
+  finish(new Response(JSON.stringify({ detail: "Name too long" }), { status: 422 }));
+  await screen.findByText("Name too long");
+  await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
+  expect(albums.loadError).toBe("List unavailable");
+  expect(screen.queryByRole("button", { name: "Review current album" })).toBeNull();
+  expect((input as HTMLInputElement).value).toBe("Corrected name");
+  await fireEvent.click(submit);
+  await fireEvent.click(await screen.findByRole("button", { name: "Review current album" }));
+  expect(fetcher.mock.calls.slice(0, 3).filter(([, init]) => init.method !== "GET").map(([, init]) => init.headers.get("If-Match"))).toEqual(['"1"', '"1"']);
+  expect(JSON.parse(fetcher.mock.calls[2][1].body).name).toBe("Corrected name");
+  await screen.findByText("Review rejected");
+  await fireEvent.input(input, { target: { value: "Corrected name" } });
+  expect((submit as HTMLButtonElement).disabled).toBe(true);
+  expect(fetcher.mock.calls.filter(([, init]) => init.method !== "GET")).toHaveLength(2);
+  await fireEvent.click(screen.getByRole("button", { name: "Review current album" }));
+  await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
+  await fireEvent.click(submit);
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(8));
+  expect(fetcher.mock.calls[6][1].headers.get("If-Match")).toBe('"2"');
+  expect(JSON.parse(fetcher.mock.calls[6][1].body).name).toBe("Corrected name");
+});
+
 it.each(["rename", "delete", "duplicate"] as const)("keeps the inspected revision for %s until current-state review and a separate retry", async operation => {
   let finish!: (response: Response) => void;
   const current = { ...album, revision: 2, name: "Updated Trip", included_count: 3 };

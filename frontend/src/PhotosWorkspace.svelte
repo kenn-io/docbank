@@ -20,9 +20,11 @@
   let renaming = $state(false);
   let renameAlbum = $state<PhotoAlbumItem>();
   let renameError = $state("");
+  let renameStatus = $state<number>();
   let name = $state("");
   let modal = $state<"delete" | "duplicate" | undefined>();
   let modalError = $state("");
+  let modalStatus = $state<number>();
   let modalAlbum = $state<PhotoAlbumItem>();
   let duplicateName = $state("");
   let renameInput = $state<HTMLInputElement>();
@@ -57,21 +59,24 @@
     if (!albums || !album) return;
     await albums.members(album, photos.scope(), photos, true, preserve);
   }
+  const reviewRequired = (kind: "rename" | "delete" | "duplicate", error: string, status: number | undefined) => !!error && (kind === "delete" || status !== 422);
   async function rename() {
-    if (!albums || !renameAlbum || renameError || !name.trim()) return;
+    if (!albums || !renameAlbum || albums.busy || reviewRequired("rename", renameError, renameStatus) || !name.trim()) return;
     const inspected = renameAlbum;
+    renameError = ""; renameStatus = undefined;
     const result = await albums.update(inspected, { name: name.trim() });
     if (!alive || !renaming || renameAlbum !== inspected) return;
     if (result) renaming = false;
-    else { renameError = albums.error; albums.error = ""; }
+    else { renameError = albums.error; renameStatus = albums.errorStatus; albums.error = ""; }
   }
-  function beginRename() { renameError = ""; renameAlbum = album; name = album?.name ?? ""; renaming = true; }
-  function openModal(kind: "delete" | "duplicate") { modalError = ""; modalAlbum = album; modal = kind; duplicateName = `${album?.name ?? "Album"} copy`; }
+  function beginRename() { renameError = ""; renameStatus = undefined; renameAlbum = album; name = album?.name ?? ""; renaming = true; }
+  function openModal(kind: "delete" | "duplicate") { modalError = ""; modalStatus = undefined; modalAlbum = album; modal = kind; duplicateName = `${album?.name ?? "Album"} copy`; }
   async function confirm() {
-    if (!albums || !modalAlbum || modalError) return;
+    if (!albums || !modal || !modalAlbum || albums.busy || reviewRequired(modal, modalError, modalStatus)) return;
+    modalError = ""; modalStatus = undefined;
     const result = modal === "delete" ? await albums.delete(modalAlbum) : await albums.duplicate(modalAlbum, duplicateName);
     if (!alive || !modal) return;
-    if (!result) { modalError = albums.error; albums.error = ""; }
+    if (!result) { modalError = albums.error; modalStatus = albums.errorStatus; albums.error = ""; }
     if (result) { const deleting = modal === "delete"; modal = undefined; onnavigate(deleting ? "/photos/albums" : `/photos/albums/${result.id}`); }
   }
   async function reviewAlbum() {
@@ -85,8 +90,8 @@
     if (!loaded && !albums.loadError) return;
     const current = loaded ? albums.items.find(item => item.id === inspected.id) : undefined;
     const error = loaded ? current ? "" : "This album was deleted." : albums.loadError;
-    if (kind === "rename") { if (current) renameAlbum = current; renameError = error; }
-    else { if (current) modalAlbum = current; modalError = error; }
+    if (kind === "rename") { if (current) { renameAlbum = current; renameStatus = undefined; } renameError = error; }
+    else { if (current) { modalAlbum = current; modalStatus = undefined; } modalError = error; }
   }
   $effect(() => { if (renaming && renameInput) { renameInput.focus(); renameInput.select(); } });
 </script>
@@ -100,7 +105,7 @@
   <div class="photo-toolbar browser-toolbar">
     <div class="library-title">
       {#if albumID}<button type="button" class="album-back" onclick={() => onnavigate("/photos/albums")}>Albums</button>{/if}
-      {#if renaming && renameAlbum}<form onsubmit={event => { event.preventDefault(); void rename(); }}>{@render sourceSummary(renameAlbum)}<TextInput ariaLabel="Album name" bind:value={name} bind:inputEl={renameInput} onkeydown={event => { if (event.key === "Escape") { event.preventDefault(); renaming = false; } }} /><Button type="submit" size="sm" disabled={albums?.busy || !!renameError || !name.trim()}>Save</Button><Button size="sm" onclick={() => renaming = false}>Cancel</Button>{#if renameError}<span role="alert">{renameError}</span><Button size="sm" disabled={albums?.busy || albums?.loading} onclick={() => void reviewAlbum()}>Review current album</Button>{/if}</form>
+      {#if renaming && renameAlbum}<form onsubmit={event => { event.preventDefault(); void rename(); }}>{@render sourceSummary(renameAlbum)}<TextInput ariaLabel="Album name" bind:value={name} bind:inputEl={renameInput} onkeydown={event => { if (event.key === "Escape") { event.preventDefault(); renaming = false; } }} /><Button type="submit" size="sm" disabled={albums?.busy || reviewRequired("rename", renameError, renameStatus) || !name.trim()}>Save</Button><Button size="sm" onclick={() => renaming = false}>Cancel</Button>{#if renameError}<span role="alert">{renameError}</span>{#if reviewRequired("rename", renameError, renameStatus)}<Button size="sm" disabled={albums?.busy || albums?.loading} onclick={() => void reviewAlbum()}>Review current album</Button>{/if}{/if}</form>
       {:else}<h1>{albumID ? album?.name ?? "Album" : "Library"}</h1>{/if}
       <span>{photos.total.toLocaleString()} photos · {photos.items.length.toLocaleString()} loaded</span>
     </div>
@@ -144,7 +149,7 @@
   <Modal title={modal === "delete" ? "Delete album" : "Duplicate album"} onclose={() => { if (!albums.busy) modal = undefined; }}>
     {#if modal === "delete"}<p>Delete "{modalAlbum.name}"? Its {modalAlbum.included_count === undefined ? "" : `${modalAlbum.included_count.toLocaleString()} `}photos stay in your library.</p>{:else}{@render sourceSummary(modalAlbum)}<TextInput ariaLabel="Copy name" bind:value={duplicateName} />{/if}
     {#if modalError}<p role="alert">{modalError}</p>{/if}
-    <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button>{#if modalError}<Button disabled={albums.busy || albums.loading} onclick={() => void reviewAlbum()}>Review current album</Button>{/if}<Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || !!modalError || modal === "duplicate" && !duplicateName.trim()} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
+    <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button>{#if reviewRequired(modal, modalError, modalStatus)}<Button disabled={albums.busy || albums.loading} onclick={() => void reviewAlbum()}>Review current album</Button>{/if}<Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || reviewRequired(modal, modalError, modalStatus) || modal === "duplicate" && !duplicateName.trim()} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
   </Modal>
 {/if}
 
