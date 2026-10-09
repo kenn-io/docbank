@@ -89,7 +89,7 @@ func photoTrashGroupTx(ctx context.Context, tx *sql.Tx, root Node) (photoTrashGr
 			rows, err := tx.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
  SELECT id FROM nodes WHERE id=?
  UNION ALL SELECT child.id FROM nodes child JOIN tree ON child.parent_id=tree.id)
- SELECT DISTINCT asset_id FROM photo_files WHERE node_id IN (SELECT id FROM tree)`, node.ID)
+ SELECT DISTINCT asset_id FROM photo_files WHERE asset_id IS NOT NULL AND node_id IN (SELECT id FROM tree)`, node.ID)
 			if err != nil {
 				return nil, err
 			}
