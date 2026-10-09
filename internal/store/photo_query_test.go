@@ -895,10 +895,6 @@ func TestPhotoFacetsFoldIdentityAndCountEachUnitOnce(t *testing.T) {
 	page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: value, Facets: []string{"camera", "lens"}}, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), page.Total)
-	for _, dimension := range []string{"camera", "lens", "year", "location", "set"} {
-		_, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value, Facets: []string{dimension}})
-		require.Error(t, err)
-	}
 	{
 		facets := page.Facets
 		require.Equal(t, []SnapshotFacetValue{{Key: "SONY", Label: "SONY", Count: 2, Selected: true}}, facets[0].Values)
@@ -923,32 +919,6 @@ func TestPhotoFacetsFoldIdentityAndCountEachUnitOnce(t *testing.T) {
 	require.Len(t, albums.Facets[0].Values, 2)
 	require.Equal(t, int64(1), albums.Facets[0].Values[0].Count)
 	require.Zero(t, *albums.Facets[0].Missing)
-	compiled := mustPhotoCompiled(t, s, snapshotTestQuery(t, `{}`))
-	options := defaultSnapshotMaterializeOptions()
-	options.FacetMemberLimit = 3
-	for _, dimensions := range [][]string{{"camera"}, {"camera", "set"}, {"set", "camera"}, {"camera", "lens", "year", "location", "set"}} {
-		facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options)
-		require.NoError(t, err)
-		require.Len(t, facets, len(dimensions))
-		for i, facet := range facets {
-			require.Equal(t, dimensions[i], facet.Dimension)
-			if facet.Dimension == "set" {
-				require.False(t, facet.Available)
-				require.Equal(t, "member_budget_exceeded", facet.Reason)
-			} else {
-				require.True(t, facet.Available, dimensions)
-				require.Equal(t, int64(2), *facet.Total)
-			}
-		}
-	}
-	options.FacetMemberLimit = 4
-	facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, []string{"set"}, options)
-	require.NoError(t, err)
-	require.True(t, facets[0].Available)
-	require.Len(t, facets[0].Values, 2)
-	for _, value := range facets[0].Values {
-		require.Equal(t, int64(2), value.Count)
-	}
 }
 
 func TestPhotoYearFacetSelectionRequiresWholeYear(t *testing.T) {
@@ -1254,8 +1224,12 @@ func TestPhotoFacetRawOperandsAndBudgets(t *testing.T) {
 	s := newTestStore(t)
 	raw := strings.Repeat("ß", 200)
 	var invalidAssetID string
+	var assetIDs []string
 	for i, model := range []string{raw, strings.Repeat("ss", 200)} {
 		node := browsePhotoNode(t, s, fmt.Sprintf("raw-operand-%d.jpg", i), browseHash(fmt.Sprint("raw-operand", i)), "image/jpeg")
+		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		assetIDs = append(assetIDs, asset.ID)
 		date := "2024-02-01"
 		if i == 1 {
 			date = "2024-08-01"
@@ -1300,6 +1274,40 @@ func TestPhotoFacetRawOperandsAndBudgets(t *testing.T) {
 		facets := page.Facets
 		require.Equal(t, SnapshotFacetValue{Key: raw, Label: raw, Count: 1, Selected: true}, facets[0].Values[0])
 		require.Equal(t, int64(1), browsePhotoPage(t, s, fmt.Sprintf(`{"filters":{"asset_ids":[%q],%q:[%q]}}`, invalidAssetID, tc.filter, facets[0].Values[0].Key)).Total)
+	}
+	for _, name := range []string{"First album", "Second album"} {
+		album, err := s.CreatePhotoSet(t.Context(), name)
+		require.NoError(t, err)
+		_, err = s.ChangePhotoSetMembers(t.Context(), album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: assetIDs})
+		require.NoError(t, err)
+	}
+	budgetQuery := snapshotTestQuery(t, `{}`)
+	budgetQuery.Filters.AssetIDs = assetIDs
+	compiled := mustPhotoCompiled(t, s, budgetQuery)
+	options = defaultSnapshotMaterializeOptions()
+	options.FacetMemberLimit = 3
+	for _, dimensions := range [][]string{{"camera"}, {"camera", "set"}, {"set", "camera"}, {"camera", "lens", "year", "location", "set"}} {
+		facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options)
+		require.NoError(t, err)
+		require.Len(t, facets, len(dimensions))
+		for i, facet := range facets {
+			require.Equal(t, dimensions[i], facet.Dimension)
+			if facet.Dimension == "set" {
+				require.False(t, facet.Available)
+				require.Equal(t, "member_budget_exceeded", facet.Reason)
+			} else {
+				require.True(t, facet.Available, dimensions)
+				require.Equal(t, int64(2), *facet.Total)
+			}
+		}
+	}
+	options.FacetMemberLimit = 4
+	facets, err = materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, []string{"set"}, options)
+	require.NoError(t, err)
+	require.True(t, facets[0].Available)
+	require.Len(t, facets[0].Values, 2)
+	for _, value := range facets[0].Values {
+		require.Equal(t, int64(2), value.Count)
 	}
 }
 

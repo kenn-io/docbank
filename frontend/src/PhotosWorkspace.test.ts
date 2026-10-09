@@ -227,7 +227,7 @@ it("keeps import guidance after clearing an empty search and recognizes numeric 
  await screen.findByText("Your photo library is empty");
  photos.dispose(); await cache.dispose();
 });
-it.each(["member_budget_exceeded", "byte_budget_exceeded", "time_budget_exceeded"])("offers count retry only for temporary failures: %s", async reason => {
+it.each(["byte_budget_exceeded", "time_budget_exceeded"])("offers count retry only for temporary failures: %s", async reason => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => new Response(JSON.stringify(JSON.parse(init.body as string).facets.length ? { facets: [{ dimension: "camera", available: false, reason }] } : { items: [], total: 0 }))));
   const photos = new Photos("scoped", vi.fn());

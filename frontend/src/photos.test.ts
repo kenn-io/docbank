@@ -407,28 +407,6 @@ it("reports unresolved visibility selections before sending requests", async () 
   expect(report).toHaveBeenCalledWith(photos.actionError);
   expect(fetcher).not.toHaveBeenCalled();
   photos.dispose();
-}
-
-it("search scope cancels stale reads and retains first-page facets through paging", async () => {
-  let finish!: (response: Response) => void;
-  const facet = { dimension: "camera", available: true, total: 2, missing: 0, other: 0, values: [{ key: "Canon", label: "Canon", count: 2, selected: false }] };
-  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(2)], total: 2, facets: [facet], next_cursor: "ranked" })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3)], total: 2, facets: [] })));
-  stubPhotoFetch(fetcher, [facet]);
-  const photos = new Photos("scope", vi.fn());
-  const old = photos.loadMore();
-  await photos.setQuery({ ...photos.query, text: "Canon", sort: { field: "relevance", direction: "desc" } });
-  expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
-  finish(response([photo(1)])); await old;
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
-  await photos.loadMore();
-  expect(photos.facets).toEqual([facet]);
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2", "photo-3"]);
-  const request = JSON.parse(fetcher.mock.calls[2][1].body);
-  expect(request.query.text).toBe("Canon"); expect(request.cursor).toBe("ranked");
-  expect(new Photos("other", vi.fn()).query.text).toBe("");
-  photos.dispose();
 });
 
 it("publishes and pages rows before optional counts, and isolates count retry, cancellation and stale scopes", async () => {
@@ -466,12 +444,18 @@ it("publishes and pages rows before optional counts, and isolates count retry, c
   counts[2].finish(new Response(JSON.stringify({ detail: "Counts unavailable" }), { status: 503 }));
   await vi.waitFor(() => expect(photos.facetsError).toBe("Counts unavailable"));
   expect(photos.error).toBe("");
-  rows.mockResolvedValueOnce(response([photo(4)]));
+  rows.mockResolvedValueOnce(response([photo(4)], "stale-tail"));
   await photos.loadMore();
   expect(photos.items).toHaveLength(3);
   const retry = photos.retryFacets();
+  let finishStale!: (response: Response) => void;
+  rows.mockImplementationOnce(() => new Promise(resolve => finishStale = resolve));
+  const staleRows = photos.loadMore();
   rows.mockResolvedValueOnce(response([photo(5)], "ranked"));
   await photos.setQuery({ ...photos.query, text: "Canon", sort: { field: "relevance", direction: "desc" } });
+  expect(rows.mock.calls[4][1].signal.aborted).toBe(true);
+  finishStale(response([photo(88)])); await staleRows;
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-5"]);
   expect(counts[3].signal.aborted).toBe(true);
   counts[3].finish(new Response(JSON.stringify({ facets: [facet] })));
   await retry;
@@ -480,8 +464,21 @@ it("publishes and pages rows before optional counts, and isolates count retry, c
   expect(counts[4].request.query.sort).toEqual({ field: "capture_time", direction: "desc" });
   expect(counts[4].request.facets).toEqual(["camera", "lens", "year", "location", "set"]);
   expect(counts[4].request.cursor).toBeUndefined();
+  rows.mockResolvedValueOnce(response([photo(6)]));
+  await photos.loadMore();
+  const request = JSON.parse(rows.mock.calls[6][1].body);
+  expect(request.query.text).toBe("Canon"); expect(request.cursor).toBe("ranked");
+  expect(new Photos("other", vi.fn()).query.text).toBe("");
+  for (const reason of ["member_budget_exceeded", "byte_budget_exceeded", "time_budget_exceeded"]) {
+    const pending = counts.at(-1)!;
+    pending.finish(new Response(JSON.stringify({ facets: [{ dimension: "camera", available: false, reason }] })));
+    await vi.waitFor(() => expect(photos.facetsError).not.toBe(""));
+    expect(photos.facetsRetryable).toBe(reason === "time_budget_exceeded");
+    expect(photos.facetsError).toBe(reason === "time_budget_exceeded" ? "Some photo counts couldn't be loaded." : "Photo counts exceed the library's size limit. Narrow your search or filters.");
+    void photos.retryFacets();
+  }
   photos.dispose();
-  expect(counts[4].signal.aborted).toBe(true);
-  counts[4].finish(new Response(JSON.stringify({ facets: [facet] })));
-  await vi.waitFor(() => expect(photos.items.map(item => item.asset_id)).toEqual(["photo-5"]));
+  expect(counts.at(-1)!.signal.aborted).toBe(true);
+  counts.at(-1)!.finish(new Response(JSON.stringify({ facets: [facet] })));
+  await vi.waitFor(() => expect(photos.items.map(item => item.asset_id)).toEqual(["photo-5", "photo-6"]));
 });
