@@ -17,7 +17,8 @@ function setup(scoped = false, onnavigate = vi.fn()) {
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1, "2024-01-01"), photo(2, "2025-01-01")]; photos.started = true; photos.total = 10000;
   if (scoped) photos.query = { ...photos.query, filters: { set_ids: [album.id] }, sort: { field: "added_time", direction: "desc" } };
-  const albums = new PhotoAlbums("scoped", vi.fn()); albums.items = [album];
+  vi.spyOn(photos, "refresh").mockResolvedValue();
+  const albums = new PhotoAlbums("scoped", vi.fn(), async () => { await Promise.all([albums.load(), photos.refresh()]); }); albums.items = [album];
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const view = render(PhotosWorkspace, { photos, albums, cache, albumID: scoped ? album.id : "", onnavigate });
   return { photos, albums, cache, view };
@@ -66,6 +67,7 @@ it("adds to the existing album when its exact name is typed and entered", async 
   await fireEvent.click(screen.getByRole("button", { name: /Add to album/ }));
   const input = screen.getByRole("combobox", { name: "Find or create an album" });
   await fireEvent.input(input, { target: { value: "Trip" } });
+  expect(screen.queryByRole("option", { name: 'Create album "Trip"' })).toBeNull();
   await fireEvent.keyDown(input, { key: "Enter" });
   await waitFor(() => expect(fetcher).toHaveBeenCalled());
   expect(fetcher.mock.calls[0][0]).toBe(`/api/v1/photos/albums/${album.id}/members/add`);
@@ -105,11 +107,10 @@ it.each(["picker add", "picker create", "index create", "delete", "duplicate"] a
   if (operation === "index create") render(PhotosWorkspace, { photos, albums, cache });
   else render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn() });
   finish(albumResponse({ detail: "Album change unavailable" }, 503));
-  const uncertain = operation === "picker create" || operation === "index create" || operation === "duplicate";
-  await screen.findByText(uncertain ? `An album named "${operation === "duplicate" ? "Trip copy" : "Summer"}" may already exist. Another attempt can create an extra album.` : "Album change unavailable");
+  await screen.findByText("Album change unavailable");
   await waitFor(() => expect(albums.busy).toBe(false));
   expect(screen.getAllByRole("alert")).toHaveLength(1);
-  expect(albums.error).toBe(uncertain ? "" : "Album change unavailable");
+  expect(albums.error).toBe("Album change unavailable");
   expect(photos.selection.selectedIDs.has("photo-1")).toBe(true);
 });
 
@@ -126,13 +127,11 @@ it.each(["Escape", "focusout"])("keeps a delayed picker failure visible after cl
   expect(screen.getAllByRole("alert")).toHaveLength(1);
 });
 
-it.each(["index create", "delete", "duplicate"] as const)("stops delayed %s success from navigating a destroyed view", async operation => {
-  const { albums, cache, onnavigate, finish, unmount } = await pendingAlbumWrite(operation);
-  unmount();
-  render(PhotoAlbumsIndex, { albums, cache, onnavigate });
+it.each(["index create", "delete", "duplicate"] as const)("navigates after successful %s", async operation => {
+  const { albums, onnavigate, finish } = await pendingAlbumWrite(operation);
   finish(albumResponse(operation === "delete" ? { ...album, revision: 2, deleted_at: "2025-01-01T00:00:00Z" } : { ...album, id: "22222222-2222-4222-8222-000000000068" }));
   await waitFor(() => expect(albums.busy).toBe(false));
-  expect(onnavigate).not.toHaveBeenCalled();
+  await waitFor(() => expect(onnavigate).toHaveBeenCalledWith(operation === "delete" ? "/photos/albums" : "/photos/albums/22222222-2222-4222-8222-000000000068"));
 });
 
 it.each(["index create", "delete", "duplicate"] as const)("keeps the %s dialog open while its write is pending and shows one failure", async operation => {
@@ -141,76 +140,10 @@ it.each(["index create", "delete", "duplicate"] as const)("keeps the %s dialog o
   await fireEvent.keyDown(window, { key: "Escape" });
   expect(screen.getByRole("dialog")).toBeTruthy();
   finish(albumResponse({ detail: "Album change unavailable" }, 503));
-  await screen.findByText(operation === "delete" ? "Album change unavailable" : `An album named "${operation === "duplicate" ? "Trip copy" : "Summer"}" may already exist. Another attempt can create an extra album.`);
+  await screen.findByText("Album change unavailable");
   await waitFor(() => expect(albums.busy).toBe(false));
   expect(screen.getAllByRole("alert")).toHaveLength(1);
   expect(albums.error).toBe("");
-});
-
-it("closes the new album dialog when View Albums is chosen after an unconfirmed create", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(albumResponse({})));
-  const albums = new PhotoAlbums("scoped", vi.fn()); albums.items = [album];
-  const onnavigate = vi.fn();
-  render(PhotoAlbumsIndex, { albums, cache: new PhotoPreviewCache("scoped", vi.fn()), onnavigate });
-  await fireEvent.click(screen.getByRole("button", { name: "New album" }));
-  await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "Summer" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Create album" }));
-  await fireEvent.click(await screen.findByRole("button", { name: "View Albums" }));
-  expect(onnavigate).toHaveBeenCalledWith("/photos/albums");
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  expect(screen.getByRole("link", { name: /Trip/ })).toBeTruthy();
-  expect(screen.getByText('An album named "Summer" may already exist. Another attempt can create an extra album.')).toBeTruthy();
-});
-
-it.each(["index create", "picker create", "duplicate"] as const)("acknowledges unconfirmed %s without replay before a separate confirmation", async operation => {
-  const { photos, albums, cache, view } = setup(operation === "duplicate");
-  const committed = { ...album, id: "22222222-2222-4222-8222-000000000065", name: operation === "duplicate" ? "Trip copy" : "Summer" };
-  const fetcher = vi.fn().mockResolvedValueOnce(albumResponse({}))
-    .mockResolvedValueOnce(albumResponse([album, committed]));
-  vi.stubGlobal("fetch", fetcher);
-  let current = view;
-  if (operation === "index create") { view.unmount(); current = render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn() }); }
-  const open = async () => {
-    if (operation === "index create") await fireEvent.click(screen.getByRole("button", { name: "New album" }));
-    else if (operation === "duplicate") { await fireEvent.click(screen.getByRole("button", { name: "Album actions" })); await fireEvent.click(await screen.findByRole("menuitem", { name: "Duplicate…" })); }
-    else await fireEvent.click(await screen.findByRole("button", { name: /Add to album/ }));
-  };
-  if (operation === "picker create") photos.selectLoaded();
-  await open();
-  const inputName = operation === "index create" ? "Album name" : operation === "duplicate" ? "Copy name" : "Find or create an album";
-  const input = screen.getByRole(operation === "picker create" ? "combobox" : "textbox", { name: inputName });
-  await fireEvent.input(input, { target: { value: committed.name } });
-  if (operation === "picker create") await fireEvent.mouseDown(await screen.findByRole("option", { name: `Create album "${committed.name}"` }));
-  else await fireEvent.click(screen.getByRole("button", { name: operation === "index create" ? "Create album" : "Duplicate album" }));
-  await screen.findByText(`An album named "${committed.name}" may already exist. Another attempt can create an extra album.`);
-  await waitFor(() => expect(albums.busy).toBe(false));
-  await fireEvent.input(input, { target: { value: "Edited draft" } });
-  expect((input as HTMLInputElement).value).toBe("Edited draft");
-  if (operation !== "picker create") await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  else await fireEvent.keyDown(input, { key: "Escape" });
-  await open();
-  await waitFor(() => expect((screen.getByRole(operation === "picker create" ? "combobox" : "textbox", { name: inputName }) as HTMLInputElement).value).toBe(committed.name));
-  if (operation !== "picker create") await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-  else await fireEvent.keyDown(screen.getByRole("combobox", { name: inputName }), { key: "Escape" });
-  current.unmount(); render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn() });
-  expect(screen.getByText(`An album named "${committed.name}" may already exist. Another attempt can create an extra album.`)).toBeTruthy();
-  await fireEvent.click(screen.getByRole("button", { name: "Allow another album" }));
-  expect(fetcher).toHaveBeenCalledTimes(2);
-  cleanup();
-  if (operation === "index create") render(PhotoAlbumsIndex, { albums, cache, onnavigate: vi.fn() });
-  else render(PhotosWorkspace, { photos, albums, cache, albumID: operation === "duplicate" ? album.id : "", onnavigate: vi.fn() });
-  await open();
-  const retryInput = screen.getByRole(operation === "picker create" ? "combobox" : "textbox", { name: inputName });
-  await fireEvent.input(retryInput, { target: { value: committed.name } });
-  fetcher.mockResolvedValueOnce(albumResponse(operation === "picker create" ? { ...committed, revision: 2 } : { ...committed, id: "22222222-2222-4222-8222-000000000066" })).mockResolvedValueOnce(albumResponse([album, committed]));
-  // The committed album now exists, so the picker adds to it instead of offering another create.
-  if (operation === "picker create") {
-    expect(screen.queryByRole("option", { name: `Create album "${committed.name}"` })).toBeNull();
-    await fireEvent.mouseDown(await screen.findByRole("option", { name: committed.name }));
-  } else await fireEvent.click(screen.getByRole("button", { name: operation === "index create" ? "Create album" : "Duplicate album" }));
-  await waitFor(() => expect(fetcher.mock.calls.filter(([, init]) => init.method !== "GET")).toHaveLength(2));
-  if (operation === "duplicate") expect(fetcher.mock.calls[2][1].headers.get("If-Match")).toBe('"1"');
-  expect(photos.selection.selectedIDs.size).toBe(operation === "picker create" ? 2 : 0);
 });
 
 it("B opens the picker without a target, ignores typing, then adds to the chosen target", async () => {
@@ -225,7 +158,7 @@ it("B opens the picker without a target, ignores typing, then adds to the chosen
   expect(members).not.toHaveBeenCalled();
   await fireEvent.keyDown(input, { key: "Escape" });
   await fireEvent.keyDown(window, { key: "b" });
-  await waitFor(() => expect(members).toHaveBeenCalledWith(album, { asset_ids: ["photo-1", "photo-2"] }, photos, false, expect.any(Function)));
+  await waitFor(() => expect(members).toHaveBeenCalledWith(album, { asset_ids: ["photo-1", "photo-2"] }));
   await fireEvent.keyDown(window, { key: "b", repeat: true });
   await fireEvent.keyDown(window, { key: "b", ctrlKey: true });
   expect(members).toHaveBeenCalledTimes(1);
@@ -278,134 +211,6 @@ it("renders added order unchanged and saves or cancels inline rename", async () 
   expect(update).toHaveBeenCalledWith(album, { name: "Holiday" });
 });
 
-it.each(["rename", "duplicate"] as const)("corrects a rejected %s name with its original revision, then requires review for a conflict", async operation => {
-  let finish!: (response: Response) => void;
-  let reconcile!: (response: Response) => void;
-  const current = { ...album, revision: 2 };
-  const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve))
-    .mockImplementationOnce(() => new Promise<Response>(resolve => reconcile = resolve))
-    .mockResolvedValueOnce(albumResponse({ code: "stale_revision" }, 412))
-    .mockResolvedValueOnce(albumResponse([current]));
-  vi.stubGlobal("fetch", fetcher);
-  const { albums, photos } = setup(true);
-  photos.selectLoaded();
-  await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
-  await fireEvent.click(await screen.findByRole("menuitem", { name: operation === "rename" ? "Rename" : "Duplicate…" }));
-  const input = screen.getByRole("textbox", { name: operation === "rename" ? "Album name" : "Copy name" });
-  const submit = screen.getByRole("button", { name: operation === "rename" ? "Save" : "Duplicate album" });
-  await fireEvent.input(input, { target: { value: "x".repeat(257) } });
-  await fireEvent.click(submit);
-  await waitFor(() => expect(albums.busy).toBe(true));
-  await fireEvent.input(input, { target: { value: "Corrected name" } });
-  finish(albumResponse({ detail: "Name too long" }, 422));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
-  if (operation === "rename") await fireEvent.keyDown(window, { key: "b" });
-  reconcile(albumResponse({ detail: "List unavailable" }, 503));
-  await screen.findByText("Name too long");
-  await waitFor(() => expect(albums.error).toBe(""));
-  await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
-  expect(albums.loadError).toBe("List unavailable");
-  expect(screen.queryByRole("button", { name: "Review current album" })).toBeNull();
-  expect((input as HTMLInputElement).value).toBe("Corrected name");
-  await fireEvent.click(submit);
-  await screen.findByRole("button", { name: "Review current album" });
-  expect(fetcher.mock.calls.slice(0, 3).filter(([, init]) => init.method !== "GET").map(([, init]) => init.headers.get("If-Match"))).toEqual(['"1"', '"1"']);
-  expect(JSON.parse(fetcher.mock.calls[2][1].body).name).toBe("Corrected name");
-  expect((submit as HTMLButtonElement).disabled).toBe(true);
-});
-
-it.each(["rename", "delete", "duplicate"] as const)("keeps the inspected revision for %s until current-state review and a separate retry", async operation => {
-  let finish!: (response: Response) => void;
-  const current = { ...album, revision: 2, name: "Updated Trip", included_count: 3 };
-  const result = { ...current, revision: operation === "duplicate" ? 1 : 3, ...(operation === "duplicate" ? { id: "22222222-2222-4222-8222-000000000068" } : {}), ...(operation === "delete" ? { deleted_at: "2025-01-01" } : { name: "My draft" }) };
-  const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve))
-    .mockResolvedValueOnce(albumResponse({ code: "stale_revision" }, 412))
-    .mockResolvedValueOnce(albumResponse([current]))
-    .mockResolvedValueOnce(albumResponse({ detail: "Review rejected" }, 422))
-    .mockResolvedValueOnce(albumResponse([current]))
-    .mockResolvedValueOnce(albumResponse(result))
-    .mockResolvedValueOnce(albumResponse(operation === "delete" ? [] : [result]));
-  vi.stubGlobal("fetch", fetcher);
-  const { albums } = setup(true);
-  await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
-  await fireEvent.click(await screen.findByRole("menuitem", { name: operation === "rename" ? "Rename" : operation === "delete" ? "Delete album…" : "Duplicate…" }));
-  if (operation !== "delete") await fireEvent.input(screen.getByRole("textbox", { name: operation === "rename" ? "Album name" : "Copy name" }), { target: { value: "My draft" } });
-  const reading = albums.load();
-  finish(albumResponse([current])); await reading;
-  const submit = screen.getByRole("button", { name: operation === "rename" ? "Save" : operation === "delete" ? "Delete album" : "Duplicate album" });
-  await fireEvent.click(submit);
-  await screen.findByText("Updated Trip changed. Try again.");
-  expect(screen.getAllByRole("alert")).toHaveLength(1);
-  expect(fetcher.mock.calls[1][1].headers.get("If-Match")).toBe('"1"');
-  expect(albums.items[0].revision).toBe(2);
-  expect((submit as HTMLButtonElement).disabled).toBe(true);
-  await fireEvent.click(await screen.findByRole("button", { name: "Review current album" }));
-  await screen.findByText("Review rejected");
-  if (operation !== "delete") await fireEvent.input(screen.getByRole("textbox", { name: operation === "rename" ? "Album name" : "Copy name" }), { target: { value: "My draft" } });
-  expect((submit as HTMLButtonElement).disabled).toBe(true);
-  expect(fetcher.mock.calls.filter(([, init]) => init.method !== "GET")).toHaveLength(1);
-  await fireEvent.click(screen.getByRole("button", { name: "Review current album" }));
-  await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
-  expect(fetcher).toHaveBeenCalledTimes(5);
-  expect(fetcher.mock.calls[4][1].method).toBe("GET");
-  if (operation === "delete") expect(screen.getByText('Delete "Updated Trip"? Its 3 photos stay in your library.')).toBeTruthy();
-  else {
-    expect(screen.getByText("Updated Trip · 3 photos")).toBeTruthy();
-    expect((screen.getByRole("textbox", { name: operation === "rename" ? "Album name" : "Copy name" }) as HTMLInputElement).value).toBe("My draft");
-  }
-  await fireEvent.click(submit);
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(7));
-  expect(fetcher.mock.calls[5][1].headers.get("If-Match")).toBe('"2"');
-  await waitFor(() => expect(screen.queryByRole("button", { name: operation === "rename" ? "Save" : operation === "delete" ? "Delete album" : "Duplicate album" })).toBeNull());
-});
-
-it.each(["failed", "missing", "superseded", "dismissed", "changed after review"] as const)("keeps album recovery safe when its read is %s", async mode => {
-  let finish!: (response: Response) => void;
-  const current = { ...album, revision: 2, included_count: 3 }, newer = { ...current, revision: 3, included_count: 4 };
-  const fetcher = vi.fn().mockResolvedValueOnce(albumResponse({ code: "stale_revision", detail: "Trip changed. Try again." }, 412))
-    .mockResolvedValueOnce(albumResponse(mode === "dismissed" ? { detail: "List unavailable" } : [current], mode === "dismissed" ? 503 : 200))
-    .mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve));
-  vi.stubGlobal("fetch", fetcher);
-  const { albums } = setup(true);
-  const open = async () => {
-    await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
-    await fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
-  };
-  await open();
-  await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "My draft" } });
-  await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-  await screen.findByText("Trip changed. Try again.");
-  await fireEvent.click(await screen.findByRole("button", { name: "Review current album" }));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
-  if (mode === "superseded") {
-    fetcher.mockResolvedValueOnce(albumResponse([newer])); await albums.load();
-  }
-  if (mode === "dismissed") { await fireEvent.click(screen.getByRole("button", { name: "Cancel" })); await open(); }
-  finish(albumResponse(mode === "failed" ? { detail: "Review unavailable" } : mode === "missing" ? [] : [mode === "dismissed" ? newer : current], mode === "failed" ? 503 : 200));
-  if (mode === "failed" || mode === "missing" || mode === "superseded") {
-    await screen.findByText(mode === "failed" ? "Review unavailable" : mode === "missing" ? "This album was deleted." : "Trip changed. Try again.");
-    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("textbox", { name: "Album name" }) as HTMLInputElement).value).toBe("My draft");
-    expect(fetcher.mock.calls.filter(([, init]) => init.method !== "GET")).toHaveLength(1);
-  } else if (mode === "dismissed") {
-    await waitFor(() => expect(albums.items[0].revision).toBe(3));
-    expect(screen.getByText("Trip · 2 photos")).toBeTruthy();
-    expect(screen.queryByRole("alert")).toBeNull();
-    fetcher.mockResolvedValueOnce(albumResponse(newer)).mockResolvedValueOnce(albumResponse([newer]));
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(5));
-    expect(fetcher.mock.calls[3][1].headers.get("If-Match")).toBe('"1"');
-  } else {
-    await waitFor(() => expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(false));
-    fetcher.mockResolvedValueOnce(albumResponse([newer])); await albums.load();
-    fetcher.mockResolvedValueOnce(albumResponse({ code: "stale_revision" }, 412)).mockResolvedValueOnce(albumResponse([newer]));
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await screen.findByText("Trip changed. Try again.");
-    expect(fetcher.mock.calls[4][1].headers.get("If-Match")).toBe('"2"');
-    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
-  }
-});
-
 it("refreshes previews and summary counts inside an album", async () => {
   const { photos, albums } = setup(true);
   const refresh = vi.spyOn(photos, "refresh").mockResolvedValue();
@@ -437,7 +242,7 @@ it.each(["uuid", "prefixed", "Unicode after deletion"])("creates albums for expl
     await fireEvent.input(input, { target: { value: name } });
     await fireEvent.mouseDown(await screen.findByRole("option", { name: `Create album "${name}"` }));
     await waitFor(() => expect(members).toHaveBeenCalledTimes(i + 1));
-    expect(members).toHaveBeenLastCalledWith(expect.objectContaining({ id: `created-${i + 1}` }), photos.scope(), photos, false, expect.any(Function));
+    expect(members).toHaveBeenLastCalledWith(expect.objectContaining({ id: `created-${i + 1}` }), photos.scope());
   }
   expect(create).toHaveBeenCalledTimes(attempts);
   expect(create).toHaveBeenCalledWith(name);
@@ -459,11 +264,11 @@ it("reuses the acknowledged created album when retrying its failed membership", 
   const created = { ...album, id: "22222222-2222-4222-8222-000000000067", name: "Summer" };
   const fetcher = vi.fn()
     .mockResolvedValueOnce(albumResponse(created))
-    .mockResolvedValueOnce(albumResponse({ detail: "Album list unavailable" }, 503))
+    .mockResolvedValueOnce(albumResponse([created]))
     .mockResolvedValueOnce(albumResponse({ detail: "Add unavailable" }, 503))
-    .mockResolvedValueOnce(albumResponse({ detail: "Album list unavailable" }, 503))
+    .mockResolvedValueOnce(albumResponse([created]))
     .mockResolvedValueOnce(albumResponse({ ...created, revision: 2 }))
-    .mockResolvedValueOnce(albumResponse({ detail: "Album list unavailable" }, 503));
+    .mockResolvedValueOnce(albumResponse([created]));
   vi.stubGlobal("fetch", fetcher);
   const { albums } = setup();
   await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
@@ -473,20 +278,20 @@ it("reuses the acknowledged created album when retrying its failed membership", 
   await screen.findByText("Add unavailable");
   await fireEvent.input(screen.getByRole("combobox", { name: "Find or create an album" }), { target: { value: "" } });
   await fireEvent.mouseDown(await screen.findByRole("option", { name: "Summer" }));
-  await waitFor(() => expect(albums.notice).toBe("Added to Summer"));
+  await waitFor(() => expect(albums.notice).toBe("Added to Summer · now 2 photos"));
   expect(fetcher.mock.calls.filter(([url, init]) => url.endsWith("/photos/albums") && init.method === "POST")).toHaveLength(1);
   expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/22222222-2222-4222-8222-000000000067/members/add"))).toHaveLength(2);
 });
 
 it("renders unavailable card observations and omits an unknown count from deletion", async () => {
-  const { albums } = setup(true); albums.items = [{ ...album, included_count: undefined, member_count: undefined, cover_known: false }];
+  const { albums } = setup(true); albums.loadError = "Album list unavailable";
   await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
   await fireEvent.click(await screen.findByRole("menuitem", { name: "Delete album…" }));
   expect(screen.getByText('Delete "Trip"? Its photos stay in your library.')).toBeTruthy();
   cleanup();
   render(PhotoAlbumsIndex, { albums, cache: new PhotoPreviewCache("scoped", vi.fn()), onnavigate: vi.fn() });
   expect(screen.getByText("Count unavailable")).toBeTruthy(); expect(screen.getByText("Cover unavailable")).toBeTruthy();
-  albums.items = [{ ...album, included_count: 0, cover_known: true }];
+  albums.loadError = ""; albums.items = [{ ...album, included_count: 0 }];
   await screen.findByText("0 photos"); await screen.findByText("No cover yet");
 });
 
@@ -499,4 +304,46 @@ it("resets the empty index create dialog after cancelled attempts", async () => 
     await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "Cancelled" } });
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
   }
+});
+
+it("disables explicit album changes over 1,000 photos until whole-query selection", async () => {
+  const { photos, albums } = setup(true);
+  photos.items = Array.from({ length: 1001 }, (_, id) => photo(id)); photos.total = 1001; photos.selectLoaded();
+  const members = vi.spyOn(albums, "members").mockResolvedValue(album);
+  const picker = await screen.findByRole("button", { name: /Add to album/ });
+  expect((picker as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Remove from album" }) as HTMLButtonElement).disabled).toBe(true);
+  await screen.findByText("Select all 1,001 photos to add more than 1,000 at once.");
+  await fireEvent.click(screen.getByRole("button", { name: "Select all 1,001 photos" }));
+  expect((picker as HTMLButtonElement).disabled).toBe(false);
+  await fireEvent.click(screen.getByRole("button", { name: "Remove from album" }));
+  expect(members).toHaveBeenCalledWith(album, { query: photos.query }, true);
+});
+
+it("retries rename with the revision loaded after a conflict", async () => {
+  const current = { ...album, revision: 2 };
+  const fetcher = vi.fn().mockResolvedValueOnce(albumResponse({ detail: "Album changed", code: "stale_revision" }, 412)).mockResolvedValueOnce(albumResponse([current])).mockResolvedValueOnce(albumResponse({ ...current, revision: 3, name: "Holiday" })).mockResolvedValueOnce(albumResponse([{ ...current, revision: 3, name: "Holiday" }]));
+  vi.stubGlobal("fetch", fetcher);
+  const { albums } = setup(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name: "Rename" }));
+  await fireEvent.input(screen.getByRole("textbox", { name: "Album name" }), { target: { value: "Holiday" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByText("Album changed");
+  await waitFor(() => expect(albums.busy).toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await screen.findByRole("heading", { name: "Holiday" });
+  expect(fetcher.mock.calls[2][1].headers.get("If-Match")).toBe('"2"');
+});
+
+it.each(["star", "cover", "remove"])("applies the selected album's %s action", async action => {
+  const { photos, albums } = setup(true);
+  const update = vi.spyOn(albums, "update").mockResolvedValue(album);
+  const cover = vi.spyOn(albums, "cover").mockResolvedValue(album);
+  const members = vi.spyOn(albums, "members").mockResolvedValue(album);
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: action === "star" ? "Star album" : action === "cover" ? "Use as cover" : "Remove from album" }));
+  if (action === "star") expect(update).toHaveBeenCalledWith(album, { starred: true });
+  else if (action === "cover") expect(cover).toHaveBeenCalledWith(album, "photo-1");
+  else expect(members).toHaveBeenCalledWith(album, photos.scope(), true);
 });

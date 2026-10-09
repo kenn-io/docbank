@@ -2,7 +2,7 @@
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { PhotoAlbumItem } from "./photoAlbums.svelte.js";
   import { previewObjectURL, type PhotoPreviewCache } from "./photoPreviewCache.js";
-  let { album, cache }: { album: PhotoAlbumItem; cache: PhotoPreviewCache } = $props();
+  let { album, cache, unavailable = false }: { album: PhotoAlbumItem; cache: PhotoPreviewCache; unavailable?: boolean } = $props();
   let url = $state("");
   let failed = $state(false);
   $effect(() => {
@@ -16,7 +16,7 @@
 
 <div class="album-cover">
   {#if url}<img src={url} alt="" onerror={() => { url = ""; failed = true; }} />
-  {:else}<ImageIcon size="28" /><span>{failed || !album.cover_known ? "Cover unavailable" : album.cover_generation_id ? "Loading cover…" : "No cover yet"}</span>{/if}
+  {:else}<ImageIcon size="28" /><span>{failed || unavailable ? "Cover unavailable" : album.cover_generation_id ? "Loading cover…" : "No cover yet"}</span>{/if}
 </div>
 
 <style>

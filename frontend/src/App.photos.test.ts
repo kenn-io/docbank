@@ -46,43 +46,60 @@ it("opens an album from the index, preserves its sort scope, and deletes only th
 
 });
 
-it("refreshes the open album after a document is trashed", async () => {
+it.each(["document trash", "photo trash", "lost photo response", "restore"])("refreshes albums and both started photo views after %s", async operation => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
   Element.prototype.scrollIntoView = vi.fn();
-  const album = photoAlbum({ member_count: 1, included_count: 1 });
-  history.replaceState(null, "", `/photos/albums/${album.id}#web_session=synthetic&web_upload_secret=proof`);
+  const album = photoAlbum({ member_count: 1, included_count: operation === "restore" ? 0 : 1 });
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   const node = { created_at: "2026-07-28T12:00:00Z", modified_at: "2026-07-28T12:00:00Z", revision: 1, size: 0 };
   const root = { ...node, id: 1, name: "", kind: "dir", path: "/" };
   const reports = { ...node, id: 2, parent_id: 1, name: "Reports", kind: "dir", path: "/Reports" };
   const file = { ...node, id: 3, parent_id: 2, name: "photo-1.jpg", kind: "file", current_version_id: "11111111-1111-4111-8111-111111111111", blob_hash: "a".repeat(64), size: 74, mime_type: "image/jpeg", path: "/Reports/photo-1.jpg" };
-  let trashed = false;
-  let albumQueries = 0;
+  let trashed = operation === "restore";
+  const reads = { albums: 0, album: 0, library: 0 };
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
-    if (url.endsWith("/photos/albums")) return json([album]);
-    if (url.endsWith("/photos/assets/query")) { if (JSON.parse(init!.body as string).query.filters?.set_ids) albumQueries += 1; return json({ items: trashed ? [] : [photo(1)], total: trashed ? 0 : 1 }); }
+    if (url.endsWith("/photos/albums")) { reads.albums++; return json([{ ...album, included_count: trashed ? 0 : 1 }]); }
+    if (url.endsWith("/photos/assets/query")) { reads[JSON.parse(init!.body as string).query.filters?.set_ids ? "album" : "library"]++; return json({ items: trashed ? [] : [photo(1)], total: trashed ? 0 : 1 }); }
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") return json({ directory: root, items: [reports], total: 1, limit: 1000, offset: 0 });
     if (url === "/api/v1/nodes/2/children?limit=1000&offset=0") return json({ directory: reports, items: trashed ? [] : [file], total: trashed ? 0 : 1, limit: 1000, offset: 0 });
-    if (url === "/api/v1/nodes/3/trash" && init?.method === "POST") { trashed = true; return json({ ...file, revision: 2, trashed_at: "2026-07-28T12:01:00Z" }); }
+    if (url.endsWith("/trash") && init?.method === "POST") {
+      trashed = true;
+      if (operation === "lost photo response") throw new TypeError("Failed to fetch");
+      return json(url.includes("/photos/assets/") ? { id: "photo-1", revision: 2 } : { ...file, revision: 2, trashed_at: "2026-07-28T12:01:00Z" });
+    }
+    if (url.startsWith("/api/v1/trash?")) return json({ items: trashed ? [{ ...file, trashed_at: "2026-07-28T12:01:00Z" }] : [], total: trashed ? 1 : 0, limit: 1000, offset: 0 });
+    if (url.endsWith("/nodes/3/restore")) { trashed = false; return json({ ...file, revision: 2 }); }
     if (url === "/api/v1/nodes/3") return json(file);
     if (url.startsWith("/api/v1/audit/status")) return json({ enabled: false, scopes: [] });
     return json({ items: [], total: 0, limit: 1000, offset: 0 });
   }));
   render(App);
-  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
-  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
-  await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
-  await screen.findByRole("cell", { name: "photo-1.jpg" });
-  const before = albumQueries;
-  await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
-  await fireEvent.click(within(screen.getByRole("dialog", { name: "Move photo-1.jpg to trash" })).getByRole("button", { name: "Move to trash" }));
-  await waitFor(() => expect(albumQueries).toBeGreaterThan(before));
-  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
-  await screen.findByText("This album is empty", { exact: false });
-  expect(screen.queryByRole("button", { name: "Select Photo 1.jpg" })).toBeNull();
+  await screen.findByText(operation === "restore" ? "Your photo library is empty" : "1 photos · 1 loaded");
+  await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
+  await screen.findByText(operation === "restore" ? "This album is empty" : "1 photos · 1 loaded");
+  const before = { ...reads };
+  if (operation === "document trash") {
+    await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+    await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
+    await screen.findByRole("cell", { name: "photo-1.jpg" });
+    await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+    await fireEvent.click(within(screen.getByRole("dialog", { name: "Move photo-1.jpg to trash" })).getByRole("button", { name: "Move to trash" }));
+  } else if (operation === "restore") {
+    await fireEvent.click(screen.getByRole("button", { name: "Recoverable trash" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+    await fireEvent.click(within(screen.getByRole("dialog", { name: "Restore photo-1.jpg from trash" })).getByRole("button", { name: "Restore" }));
+  } else {
+    await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+    await fireEvent.click(within(screen.getByRole("dialog", { name: "Move selected photos to trash" })).getByRole("button", { name: "Move to trash" }));
+  }
+  await waitFor(() => { for (const key of ["albums", "album", "library"] as const) expect(reads[key]).toBeGreaterThan(before[key]); });
+  if (operation === "document trash") await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  await screen.findByText(operation === "restore" ? "1 photos · 1 loaded" : "This album is empty");
 });
 
 it("retains photo state and previews across sidebar switches until lock", async () => {

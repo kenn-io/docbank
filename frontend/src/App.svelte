@@ -194,10 +194,7 @@
 
   $effect(() => {
     if (!webSession) return;
-    const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure), albums: new PhotoAlbums(webSession, handleFailure, async (id, source) => {
-      const current = albumPhotos;
-      if (current && current !== source && current.query.filters?.set_ids?.includes(id)) await current.refresh();
-    }) };
+    const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure), albums: new PhotoAlbums(webSession, handleFailure, photosChanged) };
     photoState = state;
     return () => { state.photos.dispose(); state.albums.dispose(); void state.cache.dispose(); photoState = undefined; };
   });
@@ -1630,8 +1627,8 @@
     await loadDirectory(parent.id, true, exact.id, false, { node: exact, path });
   }
 
-  function handleTrashed(_receipt?: Node, source?: Photos): void {
-    refreshPhotoViews(source);
+  async function handleTrashed(_receipt?: Node): Promise<void> {
+    const changed = photosChanged();
     selectNode(undefined);
 
     // Cached views may contain the removed node or pre-trash parent revisions.
@@ -1650,16 +1647,18 @@
     truncated = false;
     void loadRoot();
     void loadTagCatalog();
+    await changed;
   }
 
-  // Album counts and the other photo list may hold photos that just moved to or from trash.
-  function refreshPhotoViews(source?: Photos): void {
-    if (photoState?.albums.initialized) void photoState.albums.load();
-    for (const photos of [photoState?.photos, albumPhotos]) if (photos?.started && photos !== source) void photos.refresh();
+  async function photosChanged(): Promise<void> {
+    await Promise.all([
+      photoState?.albums.load(),
+      ...[photoState?.photos, albumPhotos].filter(photos => photos?.started).map(photos => photos!.refresh()),
+    ]);
   }
 
   function handleRestored(_receipt: Node): void {
-    refreshPhotoViews();
+    void photosChanged();
     selectNode(undefined);
 
     // Restore can advance an arbitrary destination parent and make every
@@ -1995,7 +1994,7 @@
             {#if photoState.albums.loadError}<span class="sidebar-album-error">Albums unavailable</span><Button size="sm" disabled={photoState.albums.busy} onclick={() => void photoState?.albums.load()}>Retry</Button>{/if}
             {#each photoState.albums.items as album (album.id)}
               <button type="button" class="nav-item" class:album-drop={dragOver === album.id} title={album.name} aria-current={albumID === album.id ? "page" : undefined} onclick={() => navigatePhotos(`/photos/albums/${album.id}`)} ondragover={event => { if (event.dataTransfer?.types.includes(photoDragType) && photoState?.albums.drag) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; dragOver = album.id; } }} ondragleave={() => dragOver = ""} ondrop={event => { dragOver = ""; void photoState?.albums.drop(album, event); }}>
-                {#if album.starred}<StarIcon size="14" aria-hidden="true" />{/if}<span class="sidebar-album-name">{album.name}</span><span class="sidebar-album-count">{album.included_count === undefined ? "Count unavailable" : album.included_count.toLocaleString()}</span>{#if photoState.albums.targetID === album.id}<TargetIcon size="14" aria-label="B target" />{/if}
+                {#if album.starred}<StarIcon size="14" aria-hidden="true" />{/if}<span class="sidebar-album-name">{album.name}</span><span class="sidebar-album-count">{photoState.albums.loadError || album.included_count === undefined ? "Count unavailable" : album.included_count.toLocaleString()}</span>{#if photoState.albums.targetID === album.id}<TargetIcon size="14" aria-label="B target" />{/if}
               </button>
             {/each}
           </div>
@@ -2126,8 +2125,8 @@
 
     {#if photoMode && photoState}
       {#if photoPath === "/photos/albums"}<PhotoAlbumsIndex albums={photoState.albums} cache={photoState.cache} onnavigate={navigatePhotos} />
-      {:else if albumID && albumPhotos}{#key albumPhotos}<PhotosWorkspace photos={albumPhotos} cache={photoState.cache} albums={photoState.albums} {albumID} onnavigate={navigatePhotos} ontrashed={source => handleTrashed(undefined, source)} />{/key}
-      {:else if !albumID}{#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} albums={photoState.albums} onnavigate={navigatePhotos} ontrashed={source => handleTrashed(undefined, source)} />{/key}{/if}
+      {:else if albumID && albumPhotos}{#key albumPhotos}<PhotosWorkspace photos={albumPhotos} cache={photoState.cache} albums={photoState.albums} {albumID} onnavigate={navigatePhotos} ontrashed={handleTrashed} />{/key}
+      {:else if !albumID}{#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} albums={photoState.albums} onnavigate={navigatePhotos} ontrashed={handleTrashed} />{/key}{/if}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
     {#if savedQueryDraft}

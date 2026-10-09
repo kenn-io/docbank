@@ -5,7 +5,7 @@ import { Photos } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photo } from "./photo-test-fixtures.js";
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
 
 it("keeps failed confirmation visible and closes after cancellation or success", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -20,7 +20,7 @@ it("keeps failed confirmation visible and closes after cancellation or success",
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  const ontrashed = vi.fn();
+  const ontrashed = vi.fn(() => photos.refresh());
   render(PhotosWorkspace, { photos, cache, ontrashed });
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
   const dialog = screen.getByRole("dialog", { name: "Move selected photos to trash" });
@@ -28,7 +28,7 @@ it("keeps failed confirmation visible and closes after cancellation or success",
   await fireEvent.click(within(dialog).getByRole("button", { name: "Move to trash" }));
   await within(dialog).findByText(/Photo changed/);
   expect(ontrashed).toHaveBeenCalledTimes(1);
-  expect(ontrashed).toHaveBeenCalledWith(photos);
+  expect(ontrashed).toHaveBeenCalledWith();
   await fireEvent.click(await within(dialog).findByRole("button", { name: "Keep in Docbank" }));
   expect(screen.queryByRole("dialog", { name: "Move selected photos to trash" })).toBeNull();
   await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 3.jpg" }));

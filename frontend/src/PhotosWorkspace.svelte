@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { Button, EmptyState, IconButton, Menu, MenuTrigger, MenuContent, MenuItem, Modal, TextInput, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
@@ -9,11 +9,10 @@
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoGrid from "./PhotoGrid.svelte";
   import SelectionDock from "./SelectionDock.svelte";
-  import PhotoAlbumPending from "./PhotoAlbumPending.svelte";
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
   import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
 
-  let { photos, cache, albums, albumID = "", onnavigate = () => {}, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void } = $props();
+  let { photos, cache, albums, albumID = "", onnavigate = () => {}, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: () => Promise<void> } = $props();
   const album = $derived(albums?.items.find(item => item.id === albumID));
   let alive = true;
   onDestroy(() => alive = false);
@@ -21,11 +20,9 @@
   let renaming = $state(false);
   let renameAlbum = $state<PhotoAlbumItem>();
   let renameError = $state("");
-  let renameStatus = $state<number>();
   let name = $state("");
   let modal = $state<"delete" | "duplicate" | undefined>();
   let modalError = $state("");
-  let modalStatus = $state<number>();
   let modalAlbum = $state<PhotoAlbumItem>();
   let duplicateName = $state("");
   let renameInput = $state<HTMLInputElement>();
@@ -38,8 +35,6 @@
   const densityOptions = [{ value: "compact", label: "Compact" }, { value: "comfortable", label: "Comfortable" }, { value: "large", label: "Large" }];
   const groupingOptions = [{ value: "months", label: "Months" }, { value: "sessions", label: "Capture sessions" }];
 
-  // Another view may have changed density; apply it before the grid mounts so its scroll restore uses the final layout.
-  untrack(() => photos.syncDensity());
   onMount(() => {
     void photos.resume(preserve);
     return () => photos.cancelPending();
@@ -61,47 +56,32 @@
   async function refresh() { await Promise.all([photos.refresh(preserve), albums?.load()]); }
   async function remove() {
     if (!albums || !album) return;
-    await albums.members(album, photos.scope(), photos, true, preserve);
+    await albums.members(album, photos.scope(), true);
   }
-  const reviewRequired = (kind: "rename" | "delete" | "duplicate", error: string, status: number | undefined) => !!error && (kind === "delete" || status !== 422);
   async function rename() {
-    if (!albums || !renameAlbum || albums.busy || reviewRequired("rename", renameError, renameStatus) || !name.trim()) return;
+    if (!albums || !renameAlbum || albums.busy || !name.trim()) return;
     const inspected = renameAlbum;
-    renameError = ""; renameStatus = undefined;
-    const result = await albums.update(inspected, { name: name.trim() });
+    renameError = "";
+    const result = await albums.update(albums.items.find(item => item.id === inspected.id) ?? inspected, { name: name.trim() });
     if (!alive || !renaming || renameAlbum !== inspected) return;
     if (result) renaming = false;
-    else { renameError = albums.error; renameStatus = albums.errorStatus; albums.error = ""; }
+    else { renameError = albums.error; albums.error = ""; }
   }
-  function beginRename() { renameError = ""; renameStatus = undefined; renameAlbum = album; name = album?.name ?? ""; renaming = true; }
-  function openModal(kind: "delete" | "duplicate") { modalError = ""; modalStatus = undefined; modalAlbum = album; modal = kind; duplicateName = albums?.unconfirmed?.kind === "duplicate" && albums.unconfirmed.sourceID === album?.id ? albums.unconfirmed.name : `${album?.name ?? "Album"} copy`; }
+  function beginRename() { renameError = ""; renameAlbum = album; name = album?.name ?? ""; renaming = true; }
+  function openModal(kind: "delete" | "duplicate") { modalError = ""; modalAlbum = album; modal = kind; duplicateName = `${album?.name ?? "Album"} copy`; }
   async function confirm() {
-    if (!albums || !modal || !modalAlbum || albums.busy || modal === "duplicate" && !!albums.unconfirmed || reviewRequired(modal, modalError, modalStatus)) return;
-    modalError = ""; modalStatus = undefined;
-    const result = modal === "delete" ? await albums.delete(modalAlbum) : await albums.duplicate(modalAlbum, duplicateName);
+    if (!albums || !modal || !modalAlbum || albums.busy) return;
+    modalError = "";
+    const result = modal === "delete" ? await albums.delete(albums.items.find(item => item.id === modalAlbum!.id) ?? modalAlbum) : await albums.duplicate(albums.items.find(item => item.id === modalAlbum!.id) ?? modalAlbum, duplicateName);
     if (!alive || !modal) return;
-    if (!result) { modalError = modal === "duplicate" && albums.unconfirmed ? "" : albums.error; modalStatus = albums.errorStatus; albums.error = ""; }
+    if (!result) { modalError = albums.error; albums.error = ""; }
     if (result) { const deleting = modal === "delete"; modal = undefined; onnavigate(deleting ? "/photos/albums" : `/photos/albums/${result.id}`); }
-  }
-  async function reviewAlbum() {
-    if (!albums) return;
-    const kind = renaming ? "rename" : modal;
-    const inspected = kind === "rename" ? renameAlbum : modalAlbum;
-    const rejected = kind === "rename" ? renameError : modalError;
-    if (!kind || !inspected || !rejected) return;
-    const loaded = await albums.load();
-    if (!alive || (kind === "rename" ? !renaming || renameAlbum !== inspected || renameError !== rejected : modal !== kind || modalAlbum !== inspected || modalError !== rejected)) return;
-    if (!loaded && !albums.loadError) return;
-    const current = loaded ? albums.items.find(item => item.id === inspected.id) : undefined;
-    const error = loaded ? current ? "" : "This album was deleted." : albums.loadError;
-    if (kind === "rename") { if (current) { renameAlbum = current; renameStatus = undefined; } renameError = error; }
-    else { if (current) { modalAlbum = current; modalStatus = undefined; } modalError = error; }
   }
   $effect(() => { if (renaming && renameInput) { renameInput.focus(); renameInput.select(); } });
 </script>
 
 {#snippet sourceSummary(source: PhotoAlbumItem)}
-  <span>{source.name}{#if source.included_count !== undefined}{" · "}{source.included_count.toLocaleString()} {source.included_count === 1 ? "photo" : "photos"}{/if}</span>
+  <span>{source.name}{#if !albums?.loadError && source.included_count !== undefined}{" · "}{source.included_count.toLocaleString()} {source.included_count === 1 ? "photo" : "photos"}{/if}</span>
 {/snippet}
 
 <svelte:window onkeydown={escape} />
@@ -109,7 +89,7 @@
   <div class="photo-toolbar browser-toolbar">
     <div class="library-title">
       {#if albumID}<button type="button" class="album-back" onclick={() => onnavigate("/photos/albums")}>Albums</button>{/if}
-      {#if renaming && renameAlbum}<form onsubmit={event => { event.preventDefault(); void rename(); }}>{@render sourceSummary(renameAlbum)}<TextInput ariaLabel="Album name" bind:value={name} bind:inputEl={renameInput} onkeydown={event => { if (event.key === "Escape") { event.preventDefault(); renaming = false; } }} /><Button type="submit" size="sm" disabled={albums?.busy || reviewRequired("rename", renameError, renameStatus) || !name.trim()}>Save</Button><Button size="sm" onclick={() => renaming = false}>Cancel</Button>{#if renameError}<span role="alert">{renameError}</span>{#if reviewRequired("rename", renameError, renameStatus)}<Button size="sm" disabled={albums?.busy || albums?.loading} onclick={() => void reviewAlbum()}>Review current album</Button>{/if}{/if}</form>
+      {#if renaming && renameAlbum}<form onsubmit={event => { event.preventDefault(); void rename(); }}>{@render sourceSummary(renameAlbum)}<TextInput ariaLabel="Album name" bind:value={name} bind:inputEl={renameInput} onkeydown={event => { if (event.key === "Escape") { event.preventDefault(); renaming = false; } }} /><Button type="submit" size="sm" disabled={albums?.busy || !name.trim()}>Save</Button><Button size="sm" onclick={() => renaming = false}>Cancel</Button>{#if renameError}<span role="alert">{renameError}</span>{/if}</form>
       {:else}<h1>{albumID ? album?.name ?? "Album" : "Library"}</h1>{/if}
       <span>{photos.total.toLocaleString()} photos · {photos.items.length.toLocaleString()} loaded</span>
     </div>
@@ -125,7 +105,6 @@
       {/if}<Button size="sm" disabled={photos.loading || albums?.busy} onclick={() => void refresh()}>Refresh previews</Button>
     </div>
   </div>
-  {#if albums && modal !== "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
   {#if albums?.error}<div class="photo-error" role="alert">{albums.error}</div>{/if}
   {#if albums?.notice}<div class="photo-notice" role="status">{albums.notice}{#if albums.noticeID}<a href={`/photos/albums/${albums.noticeID}`} onclick={event => { event.preventDefault(); onnavigate(`/photos/albums/${albums!.noticeID}`); }}>Open album</a>{/if}</div>{/if}
   {#if photos.error}
@@ -134,7 +113,7 @@
   {#if albumID && albums && albums.initialized && !albums.loading && !albums.busy && modal !== "delete" && !albums.loadError && !album}<EmptyState title="Album not found"><Button onclick={() => onnavigate("/photos/albums")}>Back to albums</Button></EmptyState>
   {:else if photos.items.length}
     {#key photos.query}
-    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} ondragstart={(id, event) => albums?.startDrag(id, event, photos, preserve)} ondragend={() => { if (albums) albums.drag = undefined; }} />
+    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} ondragstart={(id, event) => albums?.startDrag(id, event, photos)} ondragend={() => { if (albums) albums.drag = undefined; }} />
     {/key}
   {:else if !photos.loading && !photos.error}
     <EmptyState title={albumID ? "This album is empty" : "Your photo library is empty"} description={albumID ? "Go to Library, select photos, then choose Add to album or press B." : "Import photos with docbank photos import to browse them here."}>
@@ -145,17 +124,16 @@
   <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
   <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} loadedSelected={photos.items.every(item => photos.selection.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.total} allResults={photos.allResults} onallresults={() => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.loading || photos.allResults}>
     {#snippet photoActions()}
-      {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} {preserve} />{/if}
-      {#if album && albums}<Button size="sm" disabled={albums.busy} onclick={() => void remove()}>Remove from album</Button><Button size="sm" disabled={albums.busy || photos.allResults || photos.selection.selectedIDs.size !== 1} onclick={() => void albums!.cover(album!, [...photos.selection.selectedIDs][0])}>Use as cover</Button>{/if}
+      {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} />{/if}
+      {#if album && albums}<Button size="sm" disabled={albums.busy || !photos.allResults && photos.selection.selectedIDs.size > 1000} onclick={() => void remove()}>Remove from album</Button><Button size="sm" disabled={albums.busy || photos.allResults || photos.selection.selectedIDs.size !== 1} onclick={() => void albums!.cover(album!, [...photos.selection.selectedIDs][0])}>Use as cover</Button>{/if}
     {/snippet}
   </SelectionDock>
 </main>
 {#if modal && modalAlbum && albums}
   <Modal title={modal === "delete" ? "Delete album" : "Duplicate album"} onclose={() => { if (!albums.busy) modal = undefined; }}>
-    {#if modal === "delete"}<p>Delete "{modalAlbum.name}"? Its {modalAlbum.included_count === undefined ? "" : `${modalAlbum.included_count.toLocaleString()} `}photos stay in your library.</p>{:else}{@render sourceSummary(modalAlbum)}<TextInput ariaLabel="Copy name" bind:value={duplicateName} />{/if}
-    {#if modal === "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
+    {#if modal === "delete"}<p>Delete "{modalAlbum.name}"? Its {albums.loadError || modalAlbum.included_count === undefined ? "" : `${modalAlbum.included_count.toLocaleString()} `}photos stay in your library.</p>{:else}{@render sourceSummary(modalAlbum)}<TextInput ariaLabel="Copy name" bind:value={duplicateName} />{/if}
     {#if modalError}<p role="alert">{modalError}</p>{/if}
-    <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button>{#if reviewRequired(modal, modalError, modalStatus)}<Button disabled={albums.busy || albums.loading} onclick={() => void reviewAlbum()}>Review current album</Button>{/if}<Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || modal === "duplicate" && !!albums.unconfirmed || reviewRequired(modal, modalError, modalStatus) || modal === "duplicate" && !duplicateName.trim()} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
+    <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button><Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || modal === "duplicate" && !duplicateName.trim()} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
   </Modal>
 {/if}
 
@@ -165,7 +143,7 @@
     {#if photos.trashError}<p role="alert">{photos.trashError} Failed photos remain selected for retry.</p>{/if}
     {#snippet footer()}
       <Button disabled={photos.trashing} onclick={() => trashOpen = false}>Keep in Docbank</Button>
-      <Button tone="danger" disabled={photos.trashing || photos.selection.selectedIDs.size === 0} onclick={async () => { if (await photos.trashSelected(preserve, () => ontrashed?.(photos))) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
+      <Button tone="danger" disabled={photos.trashing || photos.selection.selectedIDs.size === 0} onclick={async () => { if (await photos.trashSelected(preserve, ontrashed)) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
     {/snippet}
   </Modal>
 {/if}

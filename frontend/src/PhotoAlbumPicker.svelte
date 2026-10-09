@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { onDestroy, tick } from "svelte";
+  import { onDestroy } from "svelte";
   import { KbdBadge, Typeahead } from "@kenn-io/kit-ui";
   import type { Photos } from "./photos.svelte.js";
   import { type PhotoAlbums } from "./photoAlbums.svelte.js";
   import type { PhotoAlbum, PhotoAlbumMembersRequest } from "./generated/docbank.js";
-  let { photos, albums, preserve }: { photos: Photos; albums: PhotoAlbums; preserve?: Parameters<Photos["refresh"]>[0] } = $props();
+  let { photos, albums }: { photos: Photos; albums: PhotoAlbums } = $props();
   let alive = true;
   onDestroy(() => alive = false);
   let error = $state("");
@@ -15,39 +15,36 @@
 
   // Keys aren't names, so Typeahead can't see an exact name match itself; hide Create for one.
   let query = $state("");
+  const oversized = $derived(!photos.allResults && photos.selection.selectedIDs.size > 1000);
   const exactName = $derived(albums.items.some(album => album.name === query.trim()));
 
-  async function restoreName(event: FocusEvent) {
-    const input = event.target, pending = albums.unconfirmed;
-    if (!(input instanceof HTMLInputElement) || input.value || pending?.kind !== "create") return;
-    await tick();
-    if (!alive || albums.unconfirmed !== pending || !input.isConnected || input.value) return;
-    input.value = pending.name; input.dispatchEvent(new Event("input", { bubbles: true }));
-  }
   export function focus() { if (alive) element?.querySelector<HTMLButtonElement>("button")?.click(); }
   async function add(album: PhotoAlbum | undefined, scope: PhotoAlbumMembersRequest) {
     error = "";
+    if (oversized) return false;
     if (!album) { error = "This album is no longer available. Choose another album."; return false; }
-    const result = await albums.members(album, scope, photos, false, preserve);
+    const result = await albums.members(album, scope);
     if (!result && alive) { error = albums.error; albums.error = ""; }
     return !!result;
   }
   export async function addToTarget() { const result = await add(target, photos.scope()); if (!result) focus(); return result; }
   async function choose(value: string) {
     error = "";
+    if (oversized) return false;
     const scope = photos.scope();
-    let album: PhotoAlbum | undefined = albums.items.find(item => choiceKey(item.id) === value);
+    let album: PhotoAlbum | undefined = albums.items.find(item => choiceKey(item.id) === value || item.name === value.trim());
     if (!album) {
       album = await albums.create(value);
-      if (!album) { if (alive) { error = albums.unconfirmed ? "" : albums.error; albums.error = ""; } return false; }
+      if (!album) { if (alive) { error = albums.error; albums.error = ""; } return false; }
     }
     albums.targetID = album.id;
     return add(album, scope);
   }
 </script>
 
-<div class="album-picker" bind:this={element} onfocusin={event => void restoreName(event)}>
-  <Typeahead options={albums.items.map(album => ({ name: choiceKey(album.id), label: album.name }))} value={albums.targetID ? choiceKey(albums.targetID) : ""} fallbackLabel="Add to album" triggerPrefix={target ? "Add to album · " : ""} placeholder="Find or create an album" title="Add to album" allowCustom={!albums.unconfirmed && !exactName} onquery={value => query = value} customLabel={'Create album "{query}"'} placement="top" loading={albums.loading || albums.busy} onselect={choose} />
+<div class="album-picker" bind:this={element}>
+  <Typeahead options={albums.items.map(album => ({ name: choiceKey(album.id), label: album.name }))} value={albums.targetID ? choiceKey(albums.targetID) : ""} fallbackLabel="Add to album" triggerPrefix={target ? "Add to album · " : ""} placeholder="Find or create an album" title="Add to album" disabled={oversized || albums.busy} allowCustom={!exactName} onquery={value => query = value} customLabel={'Create album "{query}"'} placement="top" loading={albums.loading || albums.busy} onselect={choose} />
+  {#if oversized}<span>Select all {photos.total.toLocaleString()} photos to add more than 1,000 at once.</span>{/if}
   {#if error}<span role="alert">{error}</span>{/if}
   {#if target}<span class="target-hint"><KbdBadge keys={['B']} /> adds to {target.name}</span>{/if}
 </div>

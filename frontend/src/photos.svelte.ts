@@ -7,14 +7,15 @@ import { clearSelection, reconcileIDSelection, toggleIDSelection, type Selection
 export const photoQuery: SavedQueryV1Schema = { v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "capture_time", direction: "desc" } };
 const densityKey = "docbank.photos.density";
 
-function storedDensity(): Density | undefined {
+export function loadDensity(): Density {
   try {
     const value = localPreferenceStorage()?.getItem(densityKey);
     if (value && Object.hasOwn(ROW_HEIGHTS, value)) return value as Density;
   } catch { /* Browsing also works when local storage is disabled. */ }
+  return "comfortable";
 }
 
-export function loadDensity(): Density { return storedDensity() ?? "comfortable"; }
+let density = $state<Density>(loadDensity());
 
 export class Photos {
   items = $state<PhotoBrowseRow[]>([]);
@@ -27,7 +28,7 @@ export class Photos {
   error = $state("");
   scrollTop = $state(0);
   grouping = $state<"months" | "sessions">("months");
-  density = $state<Density>(loadDensity());
+  get density() { return density; }
   selection = $state<SelectionState<string>>(clearSelection<string>());
   allResults = $state(false);
   query = $state.raw<SavedQueryV1Schema>(photoQuery);
@@ -52,9 +53,9 @@ export class Photos {
     return this.allResults ? { query: structuredClone(this.query) } : { asset_ids: [...this.selection.selectedIDs] };
   }
 
-  setDensity(density: Density) {
-    this.density = density;
-    try { localPreferenceStorage()?.setItem(densityKey, density); } catch { /* Keep the current session's preference. */ }
+  setDensity(value: Density) {
+    density = value;
+    try { localPreferenceStorage()?.setItem(densityKey, value); } catch { /* Keep the current session's preference. */ }
   }
 
   async loadMore(preserve?: () => (() => Promise<void>) | undefined) {
@@ -92,8 +93,6 @@ export class Photos {
     this.controller = new AbortController();
     this.loading = false;
   }
-
-  syncDensity() { this.density = storedDensity() ?? this.density; }
 
   resume(preserve?: () => (() => Promise<void>) | undefined) {
     if (this.error) return;
@@ -140,35 +139,13 @@ export class Photos {
         if (reachedPrefix && (mode === "refresh" || reachedPreviously)) break;
       } while (cursor);
       if (signal.aborted) throw signal.reason;
-      const eligible = new Set(candidate.keys());
-      const checked = new Set(candidate.keys());
-      const filter = this.query.filters?.asset_ids;
-      while (!this.allResults && cursor) {
-        const retained = new Set(this.selection.selectedIDs);
-        if (this.selection.anchorID !== undefined) retained.add(this.selection.anchorID);
-        const missing = [...retained].filter(id => !checked.has(id));
-        if (!missing.length) break;
-        for (let index = 0; index < missing.length; index += 256) {
-          await Promise.all(Array.from({ length: Math.min(4, Math.ceil((missing.length - index) / 64)) }, async (_, batch) => {
-            const group = missing.slice(index + batch * 64, index + (batch + 1) * 64);
-            for (const id of group) checked.add(id);
-            const ids = group.filter(id => !filter || filter.includes(id));
-            if (!ids.length) return;
-            const batchSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
-            const query = { ...this.query, filters: { ...this.query.filters, asset_ids: ids } };
-            const page = await listPhotoAssets({ query, page_size: 250 }, { session: this.session, signal: batchSignal });
-            if (batchSignal.aborted) throw batchSignal.reason;
-            for (const item of page.items) eligible.add(item.asset_id);
-          }));
-        }
-      }
       if (controller.signal.aborted) return;
       const restore = preserve?.();
       this.items = [...candidate.values()];
       this.total = total;
       this.cursor = cursor;
       this.started = true;
-      this.selection = this.allResults ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined } : reconcileIDSelection(this.selection, new Set([...eligible, ...this.trashTargets.map(item => item.asset_id)]));
+      this.selection = this.allResults ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined } : reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...this.trashTargets.map(item => item.asset_id)]));
       if (!this.selection.selectedIDs.size) this.allResults = false;
       this.expired = false;
       this.replacement = undefined;
@@ -182,21 +159,12 @@ export class Photos {
     }
   }
 
-  async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
+  async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => Promise<void> | void) {
     if (this.trashing || this.disposed) return false;
     this.pruneTrashTargets();
     this.trashing = true;
     try {
       const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
-      // A refresh keeps verified selections that moved past the loaded pages; fetch their current rows.
-      const missing = [...this.selection.selectedIDs].filter(id => !rows.has(id));
-      try {
-        for (let index = 0; index < missing.length; index += 64) {
-          const query = { ...this.query, filters: { ...this.query.filters, asset_ids: missing.slice(index, index + 64) } };
-          const page = await listPhotoAssets({ query, page_size: 250 }, { session: this.session, signal: AbortSignal.timeout(60_000) });
-          for (const item of page.items) rows.set(item.asset_id, item);
-        }
-      } catch (cause) { if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause); }
       const resolved = [...this.selection.selectedIDs].map(id => rows.get(id));
       if (!resolved.length || resolved.some(item => !item)) {
         this.trashError = "Load and select the photos again before moving them to trash.";
@@ -206,8 +174,6 @@ export class Photos {
       this.trashTargets = selected;
       this.trashError = "";
       let successes = 0;
-      // A request without a server answer may still have moved the photo.
-      let uncertain = false;
       for (const item of selected) {
         try {
           const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
@@ -225,12 +191,11 @@ export class Photos {
           await restore?.();
         } catch (cause) {
           if (cause instanceof APIError && cause.status === 401) { this.onauthfailure(cause); break; }
-          if (!(cause instanceof APIError)) uncertain = true;
           this.trashError = cause instanceof Error ? cause.message : String(cause);
         }
       }
-      if (successes || uncertain) ontrashed?.();
-      await this.refresh(preserve);
+      if (ontrashed) await ontrashed();
+      else await this.refresh(preserve);
       return successes === selected.length;
     } finally { this.trashing = false; }
   }
