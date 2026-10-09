@@ -55,6 +55,8 @@ export default defineConfig({
           "readDocumentRenditionBySelector", "readRenditionText",
           "getSavedQuery", "createSavedQuery", "updateSavedQuery", "deleteSavedQuery",
           "getCollectionLabel", "setCollectionLabel", "prepareWebDownload",
+          "createPhotoAlbum", "updatePhotoAlbum", "deletePhotoAlbum", "duplicatePhotoAlbum",
+          "setPhotoAlbumCover", "addPhotoAlbumMembers", "removePhotoAlbumMembers",
           "createWorkspaceQuery", "readWorkspaceQueryPage",
         ].map((operation) => [operation, {
           mutator: { path: "src/api-transport.ts", name: "sessionResponse", inferred: true },

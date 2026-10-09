@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import { photo, photoAlbum, storage } from "./photo-test-fixtures.js";
+import { photo, photoAlbum, albumResponse, storage } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -16,7 +16,7 @@ it("opens an album from the index, preserves its sort scope, and deletes only th
   const queries: unknown[] = [];
   const fetcher = vi.fn(async (url: string, init: RequestInit) => {
     if (url.endsWith("/photos/albums")) return new Response(JSON.stringify(deleted ? [] : [album]));
-    if (url.endsWith(`/photos/albums/${album.id}`) && init.method === "DELETE") { deleted = true; return new Response(JSON.stringify({ ...album, revision: 2, deleted_at: "2025-01-01" })); }
+    if (url.endsWith(`/photos/albums/${album.id}`) && init.method === "DELETE") { deleted = true; return albumResponse({ ...album, revision: 2, deleted_at: "2025-01-01" }); }
     if (url.endsWith("/photos/assets/query")) { queries.push(JSON.parse(init.body as string).query); return new Response(JSON.stringify({ items: [photo(1)], total: 1 })); }
     if (url.includes("/nodes/1")) return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", revision: 1, path: "/" }));
     return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
@@ -92,12 +92,12 @@ it("retains photo state and previews across sidebar switches until lock", async 
 });
 
 it.each(["add", "remove"] as const)("refreshes an album opened while its %s is pending", async operation => {
-  history.replaceState(null, "", `${operation === "add" ? "/photos" : "/photos/albums/trip"}#web_session=synthetic&web_upload_secret=proof`);
+  history.replaceState(null, "", `${operation === "add" ? "/photos" : "/photos/albums/22222222-2222-4222-8222-00000000006a"}#web_session=synthetic&web_upload_secret=proof`);
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
   Element.prototype.scrollIntoView = vi.fn();
-  const album = photoAlbum({ id: "trip", included_count: operation === "add" ? 0 : 1 });
+  const album = photoAlbum({ id: "22222222-2222-4222-8222-00000000006a", included_count: operation === "add" ? 0 : 1 });
   let included = operation === "remove";
   let finish!: () => void;
   let albumReads = 0;
@@ -106,7 +106,7 @@ it.each(["add", "remove"] as const)("refreshes an album opened while its %s is p
       included = operation === "add";
       album.included_count = included ? 1 : 0;
       album.revision++;
-      resolve(new Response(JSON.stringify(album)));
+      resolve(albumResponse(album));
     });
     if (url.endsWith("/photos/albums")) return new Response(JSON.stringify([album]));
     if (url.endsWith("/photos/assets/query")) {

@@ -9,6 +9,26 @@ export type PhotoAlbumItem = api.PhotoAlbum & Partial<Pick<api.PhotoAlbumSummary
 
 type UnconfirmedAlbum = { kind: "create" | "duplicate"; name: string; sourceID?: string };
 
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const timestamp = (value: unknown) => typeof value === "string" && Number.isFinite(Date.parse(value));
+
+async function readAlbum(response: Response, expected?: api.PhotoAlbum, creation = false, deletion = false): Promise<api.PhotoAlbum> {
+  const album = await response.json();
+  if (!album || typeof album !== "object" || Array.isArray(album) ||
+      typeof album.id !== "string" || !uuid.test(album.id) ||
+      !Number.isSafeInteger(album.revision) || album.revision < 1 ||
+      typeof album.name !== "string" || typeof album.starred !== "boolean" ||
+      !timestamp(album.created_at) || !timestamp(album.updated_at) ||
+      album.cover_asset_id != null && (typeof album.cover_asset_id !== "string" || !uuid.test(album.cover_asset_id)) ||
+      album.deleted_at != null && !timestamp(album.deleted_at) ||
+      response.headers.get("ETag") !== `"${album.revision}"` ||
+      (creation ? album.revision !== 1 || album.id === expected?.id : expected && (album.id !== expected.id || album.revision < expected.revision || album.revision > expected.revision + 1)) ||
+      (deletion ? !album.deleted_at || album.revision !== expected!.revision + 1 : album.deleted_at != null)) {
+    throw new Error("Invalid album response.");
+  }
+  return album;
+}
+
 export class PhotoAlbums {
   items = $state<PhotoAlbumItem[]>([]);
   loading = $state(false);
@@ -80,7 +100,7 @@ export class PhotoAlbums {
     let result: api.PhotoAlbum | undefined;
     let failure: unknown;
     try {
-      try { result = await action(); this.remember(result, empty); }
+      try { const candidate = await action(); this.remember(candidate, empty); result = candidate; }
       catch (cause) {
         failure = cause; this.error = this.failure(cause); this.errorStatus = cause instanceof APIError ? cause.status : undefined;
         if (creation && !(cause instanceof APIError && cause.status >= 400 && cause.status < 500)) { this.unconfirmed = creation; this.error = ""; }
@@ -101,21 +121,21 @@ export class PhotoAlbums {
   create(name: string) {
     if (this.unconfirmed) return Promise.resolve(undefined);
     name = name.trim();
-    return this.write(() => api.createPhotoAlbum({ name }, this.options()), undefined, true, undefined, { kind: "create", name });
+    return this.write(async () => readAlbum(await api.createPhotoAlbum({ name }, this.options()), undefined, true), undefined, true, undefined, { kind: "create", name });
   }
   update(album: api.PhotoAlbum, changes: api.UpdatePhotoAlbumRequest) {
-    return this.write(() => api.updatePhotoAlbum(album.id, changes, { "If-Match": `"${album.revision}"` }, this.options()), album.id);
+    return this.write(async () => readAlbum(await api.updatePhotoAlbum(album.id, changes, { "If-Match": `"${album.revision}"` }, this.options()), album), album.id);
   }
   cover(album: api.PhotoAlbum, assetID: string) {
-    return this.write(() => { this.invalidate(album.id, false); return api.setPhotoAlbumCover(album.id, { asset_id: assetID }, { "If-Match": `"${album.revision}"` }, this.options()); }, album.id);
+    return this.write(async () => { this.invalidate(album.id, false); return readAlbum(await api.setPhotoAlbumCover(album.id, { asset_id: assetID }, { "If-Match": `"${album.revision}"` }, this.options()), album); }, album.id);
   }
   duplicate(album: api.PhotoAlbum, name: string) {
     if (this.unconfirmed) return Promise.resolve(undefined);
     name = name.trim();
-    return this.write(() => api.duplicatePhotoAlbum(album.id, { name }, { "If-Match": `"${album.revision}"` }, this.options()), album.id, false, undefined, { kind: "duplicate", name, sourceID: album.id });
+    return this.write(async () => readAlbum(await api.duplicatePhotoAlbum(album.id, { name }, { "If-Match": `"${album.revision}"` }, this.options()), album, true), album.id, false, undefined, { kind: "duplicate", name, sourceID: album.id });
   }
   delete(album: api.PhotoAlbum) {
-    return this.write(() => api.deletePhotoAlbum(album.id, { "If-Match": `"${album.revision}"` }, this.options()), album.id);
+    return this.write(async () => readAlbum(await api.deletePhotoAlbum(album.id, { "If-Match": `"${album.revision}"` }, this.options()), album, false, true), album.id);
   }
 
   async members(album: api.PhotoAlbum, scope: api.PhotoAlbumMembersRequest, source: Photos, remove = false, preserve?: Parameters<Photos["refresh"]>[0]) {
@@ -129,7 +149,7 @@ export class PhotoAlbums {
       let result: api.PhotoAlbum = album;
       for (const batch of batches) {
         this.invalidate(album.id, true);
-        try { result = await (remove ? api.removePhotoAlbumMembers : api.addPhotoAlbumMembers)(album.id, batch, { "If-Match": `"${revision}"` }, this.options()); }
+        try { result = await readAlbum(await (remove ? api.removePhotoAlbumMembers : api.addPhotoAlbumMembers)(album.id, batch, { "If-Match": `"${revision}"` }, this.options()), { ...album, revision }); }
         catch (cause) { missingPhoto = cause instanceof APIError && cause.status === 404; throw cause; }
         if (batch !== batches[batches.length - 1]) this.remember(result);
         revision = result.revision;
