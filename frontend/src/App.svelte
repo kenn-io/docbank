@@ -199,7 +199,7 @@
       state.cache = new PhotoPreviewCache(webSession, photoFailure);
       photoState = { ...state };
       const detail = (event as CustomEvent<unknown>).detail;
-      if (typeof detail === "string") photoActionError = detail;
+      if (detail && typeof detail === "object" && "hidden" in detail && detail.hidden === false && "error" in detail && typeof detail.error === "string") photoActionError = detail.error;
     };
     window.addEventListener(photoPrivacyEvent, privacy);
     const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(photoPrivacyEvent) : undefined;

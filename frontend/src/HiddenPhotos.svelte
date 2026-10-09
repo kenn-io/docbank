@@ -2,7 +2,7 @@
   import { onMount, tick } from "svelte";
   import { Button, FormField, Spinner } from "@kenn-io/kit-ui";
   import { getPhotoHiddenState, setupPhotoHidden, unlockPhotoHidden, lockPhotoHidden, changePhotoHidden, disablePhotoHidden, type PhotoHiddenState } from "./generated/docbank.js";
-  import { Photos, notifyPhotoPrivacy, photoPrivacyEvent, photoRevalidationErrorEvent } from "./photos.svelte.js";
+  import { Photos, notifyPhotoPrivacy, photoPrivacyEvent, photoRevalidationErrorEvent, type PhotoPrivacyFeedback } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import { APIError } from "./api-transport.js";
@@ -43,6 +43,17 @@
     if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
     else void refresh();
   }
+  function applyState(result: PhotoHiddenState) {
+    const retain = workspace && result.change_id === hiddenState.change_id && result.configured === hiddenState.configured && result.expires_at === hiddenState.expires_at && !concealingAction;
+    if (!retain) clear();
+    readError = "";
+    hiddenState = result;
+    resolved = true;
+    reading = false;
+    remaining = result.expires_at ? Math.max(0, Math.ceil((Date.parse(result.expires_at) - Date.now()) / 1000)) : 0;
+    if (!remaining || concealingAction) clear();
+    else if (!workspace) workspace = { photos: new Photos(session, authorizationLost, true), cache: new PhotoPreviewCache(session, authorizationLost) };
+  }
   async function refresh() {
     refreshController.abort();
     refreshController = new AbortController();
@@ -52,11 +63,7 @@
     try {
       const result = await getPhotoHiddenState(options());
       if (controller.signal.aborted || disposed) return;
-      readError = "";
-      hiddenState = result;
-      resolved = true;
-      remaining = result.expires_at ? Math.max(0, Math.ceil((Date.parse(result.expires_at) - Date.now()) / 1000)) : 0;
-      if (remaining && !concealingAction) workspace = { photos: new Photos(session, authorizationLost, true), cache: new PhotoPreviewCache(session, authorizationLost) };
+      applyState(result);
     } catch (cause) { if (!controller.signal.aborted && !disposed) { if (cause instanceof APIError && cause.status === 401) onauthfailure(cause); else readError = cause instanceof Error ? cause.message : String(cause); } }
     finally { if (!controller.signal.aborted) reading = false; }
   }
@@ -65,15 +72,15 @@
     actionError = "";
     let invalidField: string | undefined;
     if (kind === "enter") {
-      passcodeError = "";
-      if (!passcode) { passcodeError = "Enter a passcode."; invalidField = "hidden-passcode"; }
+      passcodeError = !passcode ? "Enter a passcode." : new TextEncoder().encode(passcode).length > 1024 ? "Use 1 to 1,024 bytes." : "";
+      if (passcodeError) invalidField = "hidden-passcode";
     } else if (kind !== "lock") {
-      currentPasscodeError = "";
+      currentPasscodeError = !currentPasscode ? "Enter your current passcode." : new TextEncoder().encode(currentPasscode).length > 1024 ? "Use 1 to 1,024 bytes." : "";
       if (kind === "change") {
-        nextPasscodeError = "";
-        if (!nextPasscode) { nextPasscodeError = "Enter a new passcode."; invalidField = "hidden-new-passcode"; }
+        nextPasscodeError = !nextPasscode ? "Enter a new passcode." : new TextEncoder().encode(nextPasscode).length > 1024 ? "Use 1 to 1,024 bytes." : "";
+        if (nextPasscodeError) invalidField = "hidden-new-passcode";
       }
-      if (!currentPasscode) { currentPasscodeError = "Enter your current passcode."; invalidField ??= "hidden-current-passcode"; }
+      if (currentPasscodeError) invalidField ??= "hidden-current-passcode";
     }
     if (invalidField) { await tick(); document.getElementById(invalidField)?.focus(); return; }
     actionPending = true;
@@ -95,11 +102,9 @@
     } catch (cause) {
       if (disposed) return;
       if (cause instanceof APIError && cause.status === 401) { onauthfailure(cause); return; }
-      if (cause instanceof APIError && (cause.code === "hidden_passcode" || cause.code === "invalid_hidden_passcode")) {
-        const invalidNew = kind === "change" && (new TextEncoder().encode(nextPasscode).length > 1024 || !nextPasscode);
-        const message = cause.code === "hidden_passcode" ? "Incorrect passcode." : "Use 1–1,024 bytes.";
+      if (cause instanceof APIError && cause.code === "hidden_passcode") {
+        const message = "Incorrect passcode.";
         if (kind === "enter") { passcodeError = message; invalidField = "hidden-passcode"; }
-        else if (invalidNew) { nextPasscodeError = message; invalidField = "hidden-new-passcode"; }
         else { currentPasscodeError = message; invalidField = "hidden-current-passcode"; }
       } else if (cause instanceof APIError && cause.code === "hidden_lockout") {
         lockoutForm = kind === "enter" ? "enter" : "manage";
@@ -115,9 +120,9 @@
   onMount(() => {
     void refresh();
     const privacy = (event: Event) => {
-      const detail = (event as CustomEvent<PhotoHiddenState | string | undefined>).detail;
-      if (workspace && detail && typeof detail === "object" && detail.change_id === hiddenState.change_id && detail.configured === hiddenState.configured && detail.expires_at === hiddenState.expires_at) return;
-      if (typeof detail === "string") actionError = detail;
+      const detail = (event as CustomEvent<PhotoHiddenState | PhotoPrivacyFeedback | undefined>).detail;
+      if (detail && "configured" in detail) { refreshController.abort(); applyState(detail); return; }
+      if (detail?.hidden === true) actionError = detail.error;
       void refresh();
     };
     const failed = (event: Event) => { refreshController.abort(); clear(); hiddenState.expires_at = undefined; reading = false; readError = (event as CustomEvent<string>).detail; };
