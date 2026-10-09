@@ -982,14 +982,31 @@ func TestPhotoRankingOperandFieldsAndMeaning(t *testing.T) {
 	page := browsePhotoPage(t, s, `{"syntax":"advanced","text":"name:Canon","sort":{"field":"relevance"}}`)
 	require.Len(t, page.Items, 2)
 	require.InDelta(t, *page.Items[0].position.Score, *page.Items[1].position.Score, 0)
-	for _, tc := range []struct{ exact, prefix, first, second string }{
-		{`name:alpha OR name:other`, `name:alpha* OR name:other`, "alpha.jpg", "other alphabeta.jpg"},
-		{`name:"blue harbor" OR name:other`, "", "blue harbor.jpg", "other blue distant harbor.jpg"},
-		{`name:(blue NEAR/1 harbor) OR name:other`, "", "blue harbor near.jpg", "other blue far far far harbor.jpg"},
+	for _, tc := range []struct {
+		exact, prefix, first, second string
+		metadata                     bool
+	}{
+		{`name:alpha OR name:other`, `name:alpha* OR name:other`, "alpha.jpg", "other alphabeta.jpg", false},
+		{`name:"blue harbor" OR name:other`, "", "blue harbor.jpg", "other blue distant harbor.jpg", false},
+		{`name:(blue NEAR/1 harbor) OR name:other`, "", "blue harbor near.jpg", "other blue far far far harbor.jpg", false},
+		{`blue NEAR/1 harbor OR name:other`, "", "blue harbor", "blue far far far harbor", true},
 	} {
 		fixture := newTestStore(t)
-		browsePhotoNode(t, fixture, tc.first, browseHash(tc.first), "image/jpeg")
-		second := browsePhotoNode(t, fixture, tc.second, browseHash(tc.second), "image/jpeg")
+		firstName, secondName := tc.first, tc.second
+		if tc.metadata {
+			firstName, secondName = "first.jpg", "other.jpg"
+		}
+		first := browsePhotoNode(t, fixture, firstName, browseHash(tc.first), "image/jpeg")
+		second := browsePhotoNode(t, fixture, secondName, browseHash(tc.second), "image/jpeg")
+		if tc.metadata {
+			for i, node := range []Node{first, second} {
+				text := tc.first
+				if i == 1 {
+					text = tc.second
+				}
+				browsePhotoMetadata(t, fixture, node, fmt.Sprint("near", i), photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString(text)))
+			}
+		}
 		queryScore := func(text string) float64 {
 			raw := fmt.Sprintf(`{"syntax":"advanced","text":%q,"sort":{"field":"relevance"}}`, text)
 			for _, row := range browsePhotoPage(t, fixture, raw).Items {
@@ -1000,6 +1017,8 @@ func TestPhotoRankingOperandFieldsAndMeaning(t *testing.T) {
 			t.Fatal("missing accepted fallback member")
 			return 0
 		}
+		exact := fmt.Sprintf(`{"syntax":"advanced","text":%q,"sort":{"field":"relevance"}}`, tc.exact)
+		require.Len(t, browsePhotoPage(t, fixture, exact).Items, 2, tc.exact)
 		baseline := queryScore(`name:other`)
 		require.InDelta(t, baseline, queryScore(tc.exact), 0, tc.exact)
 		if tc.prefix != "" {
