@@ -12,7 +12,7 @@
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
   import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
 
-  let { photos, cache, albums, albumID = "", onnavigate = () => {}, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: () => void } = $props();
+  let { photos, cache, albums, albumID = "", onnavigate = () => {}, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void } = $props();
   const album = $derived(albums?.items.find(item => item.id === albumID));
   let alive = true;
   onDestroy(() => alive = false);
@@ -58,7 +58,7 @@
   async function remove() {
     if (!albums || !album) return;
     await albums.members(album, photos.scope(), true);
-    if (alive) await refreshPhotos();
+    await photos.refresh(alive ? preserve : undefined);
   }
   async function rename() {
     if (!albums || !renameAlbum || albums.busy || !name.trim()) return;
@@ -67,16 +67,17 @@
     const result = await albums.update(inspected, { name: name.trim() });
     if (!alive || !renaming || renameAlbum !== inspected) return;
     if (result) renaming = false;
-    else { renameError = albums.error; albums.error = ""; }
+    else { renameError = albums.error; albums.error = ""; if (!albums.loadError) renameAlbum = albums.items.find(item => item.id === inspected.id) ?? inspected; }
   }
   function beginRename() { renameError = ""; renameAlbum = album; name = album?.name ?? ""; renaming = true; }
   function openModal(kind: "delete" | "duplicate") { modalError = ""; modalAlbum = album; modal = kind; duplicateName = `${album?.name ?? "Album"} copy`; }
   async function confirm() {
     if (!albums || !modal || !modalAlbum || albums.busy) return;
     modalError = "";
-    const result = modal === "delete" ? await albums.delete(modalAlbum) : await albums.duplicate(modalAlbum, duplicateName);
+    const inspected = modalAlbum;
+    const result = modal === "delete" ? await albums.delete(inspected) : await albums.duplicate(inspected, duplicateName);
     if (!alive || !modal) return;
-    if (!result) { modalError = albums.error; albums.error = ""; }
+    if (!result) { modalError = albums.error; albums.error = ""; if (!albums.loadError) modalAlbum = albums.items.find(item => item.id === inspected.id) ?? inspected; }
     if (result) { const deleting = modal === "delete"; modal = undefined; onnavigate(deleting ? "/photos/albums" : `/photos/albums/${result.id}`); }
   }
   $effect(() => { if (renaming && renameInput) { renameInput.focus(); renameInput.select(); } });
@@ -145,7 +146,7 @@
     {#if photos.trashError}<p role="alert">{photos.trashError} Failed photos remain selected for retry.</p>{/if}
     {#snippet footer()}
       <Button disabled={photos.trashing} onclick={() => trashOpen = false}>Keep in Docbank</Button>
-      <Button tone="danger" disabled={photos.trashing || photos.selection.selectedIDs.size === 0} onclick={async () => { if (await photos.trashSelected(preserve, ontrashed)) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
+      <Button tone="danger" disabled={photos.trashing || photos.selection.selectedIDs.size === 0} onclick={async () => { const source = photos; if (await source.trashSelected(preserve, () => ontrashed?.(source))) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
     {/snippet}
   </Modal>
 {/if}

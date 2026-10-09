@@ -25,7 +25,7 @@
     if (!album) { error = "This album is no longer available. Choose another album."; return false; }
     const result = await albums.members(album, scope);
     if (!result && alive) { error = albums.error; albums.error = ""; }
-    if (alive && photos.query.filters?.set_ids?.includes(album.id)) await photos.refresh(preserve);
+    if (photos.query.filters?.set_ids?.includes(album.id)) await photos.refresh(alive ? preserve : undefined);
     return !!result;
   }
   export async function addToTarget() { const result = await add(target, photos.scope()); if (!result) focus(); return result; }

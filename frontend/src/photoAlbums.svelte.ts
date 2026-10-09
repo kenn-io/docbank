@@ -109,6 +109,12 @@ export class PhotoAlbums {
     if (!event.dataTransfer) return;
     const selected = source.selection.selectedIDs.has(id);
     this.drag = selected ? source.scope() : { asset_ids: [id] };
+    if (this.drag.asset_ids && this.drag.asset_ids.length > 1000) {
+      this.error = `Select all ${source.total.toLocaleString()} photos to add more than 1,000 at once.`;
+      this.drag = undefined;
+      event.preventDefault();
+      return;
+    }
     event.dataTransfer.setData(photoDragType, "photos");
     event.dataTransfer.effectAllowed = "copy";
   }

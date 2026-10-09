@@ -72,14 +72,27 @@ it("sends whole-query membership in one atomic write and links its feedback", as
   expect(albums.noticeID).toBe(album.id);
 });
 
-it("shows the server error when 1,001 IDs are dropped", async () => {
-  const fetcher = vi.fn().mockResolvedValueOnce(response({ detail: "Too many photos", code: "invalid_photo_album" }, 422)).mockResolvedValueOnce(response([album]));
+it("rejects dragging 1,001 explicit IDs and allows the whole-query selection", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(response({ ...album, revision: 2 })).mockResolvedValueOnce(response([album]));
   vi.stubGlobal("fetch", fetcher);
   const albums = new PhotoAlbums("scoped", vi.fn());
-  albums.drag = { asset_ids: Array.from({ length: 1001 }, (_, id) => String(id)) };
-  await albums.drop(album, { dataTransfer: { types: [photoDragType] }, preventDefault: vi.fn() } as unknown as DragEvent);
-  expect(JSON.parse(fetcher.mock.calls[0][1].body).asset_ids).toHaveLength(1001);
-  expect(albums.error).toBe("Too many photos");
+  const photos = new Photos("scoped", vi.fn());
+  photos.total = 12000;
+  photos.selection.selectedIDs = new Set(Array.from({ length: 1001 }, (_, id) => String(id)));
+  const transfer = { setData: vi.fn(), types: [photoDragType], effectAllowed: "" };
+  const event = { dataTransfer: transfer, preventDefault: vi.fn() } as unknown as DragEvent;
+  albums.startDrag("0", event, photos);
+  expect(event.preventDefault).toHaveBeenCalledOnce();
+  expect(transfer.setData).not.toHaveBeenCalled();
+  await albums.drop(album, event);
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(albums.error).toBe("Select all 12,000 photos to add more than 1,000 at once.");
+  photos.allResults = true;
+  albums.startDrag("0", event, photos);
+  await albums.drop(album, event);
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ query: photoQuery });
+  expect(albums.error).toBe("");
+  photos.dispose();
 });
 
 it.each([{ ...album, id: "invalid" }, { ...album, id: "22222222-2222-4222-8222-000000000068" }, { ...album, updated_at: "invalid" }])("rejects malformed or mismatched records and refreshes", async body => {

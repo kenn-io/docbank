@@ -28,7 +28,7 @@ it("keeps failed confirmation visible and closes after cancellation or success",
   await fireEvent.click(within(dialog).getByRole("button", { name: "Move to trash" }));
   await within(dialog).findByText(/Photo changed/);
   expect(ontrashed).toHaveBeenCalledTimes(1);
-  expect(ontrashed).toHaveBeenCalledWith();
+  expect(ontrashed).toHaveBeenCalledWith(photos);
   await fireEvent.click(await within(dialog).findByRole("button", { name: "Keep in Docbank" }));
   expect(screen.queryByRole("dialog", { name: "Move selected photos to trash" })).toBeNull();
   await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 3.jpg" }));

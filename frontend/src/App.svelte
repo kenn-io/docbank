@@ -215,7 +215,7 @@
     if (photoMode && albums) untrack(() => void albums.load());
   });
 
-  function clearPhotoNotice() { if (photoState) { photoState.albums.notice = ""; photoState.albums.noticeID = ""; } }
+  function clearPhotoNotice() { if (photoState) { photoState.albums.notice = ""; photoState.albums.noticeID = ""; photoState.albums.error = ""; } }
 
   function navigatePhotos(path: string) {
     clearPhotoNotice();
@@ -2125,8 +2125,8 @@
 
     {#if photoMode && photoState}
       {#if photoPath === "/photos/albums"}<PhotoAlbumsIndex albums={photoState.albums} cache={photoState.cache} onnavigate={navigatePhotos} />
-      {:else if albumID && albumPhotos}{#key albumPhotos}<PhotosWorkspace bind:this={photoWorkspace} photos={albumPhotos} cache={photoState.cache} albums={photoState.albums} {albumID} onnavigate={navigatePhotos} ontrashed={() => handleTrashed(undefined, albumPhotos)} />{/key}
-      {:else if !albumID}{#key photoState}<PhotosWorkspace bind:this={photoWorkspace} photos={photoState.photos} cache={photoState.cache} albums={photoState.albums} onnavigate={navigatePhotos} ontrashed={() => handleTrashed(undefined, photoState?.photos)} />{/key}{/if}
+      {:else if albumID && albumPhotos}{#key albumPhotos}<PhotosWorkspace bind:this={photoWorkspace} photos={albumPhotos} cache={photoState.cache} albums={photoState.albums} {albumID} onnavigate={navigatePhotos} ontrashed={source => handleTrashed(undefined, source)} />{/key}
+      {:else if !albumID}{#key photoState}<PhotosWorkspace bind:this={photoWorkspace} photos={photoState.photos} cache={photoState.cache} albums={photoState.albums} onnavigate={navigatePhotos} ontrashed={source => handleTrashed(undefined, source)} />{/key}{/if}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
     {#if savedQueryDraft}

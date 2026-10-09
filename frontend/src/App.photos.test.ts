@@ -52,7 +52,7 @@ it("opens an album from the index, preserves its sort scope, and deletes only th
 
 });
 
-it.each(["document trash", "photo trash", "lost photo response", "restore"])("refreshes albums and both started photo views after %s", async operation => {
+it.each(["document trash", "photo trash", "delayed photo trash", "lost photo response", "restore"])("refreshes albums and both started photo views after %s", async operation => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
@@ -63,16 +63,19 @@ it.each(["document trash", "photo trash", "lost photo response", "restore"])("re
   const root = { ...node, id: 1, name: "", kind: "dir", path: "/" };
   const reports = { ...node, id: 2, parent_id: 1, name: "Reports", kind: "dir", path: "/Reports" };
   const file = { ...node, id: 3, parent_id: 2, name: "photo-1.jpg", kind: "file", current_version_id: "11111111-1111-4111-8111-111111111111", blob_hash: "a".repeat(64), size: 74, mime_type: "image/jpeg", path: "/Reports/photo-1.jpg" };
+  const otherAlbum = photoAlbum({ id: "22222222-2222-4222-8222-000000000068", name: "Other" });
+  let finishTrash!: () => void;
   let trashed = operation === "restore";
   const reads = { albums: 0, album: 0, library: 0 };
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
-    if (url.endsWith("/photos/albums")) { reads.albums++; return json([{ ...album, included_count: trashed ? 0 : 1 }]); }
+    if (url.endsWith("/photos/albums")) { reads.albums++; return json([{ ...album, included_count: trashed ? 0 : 1 }, otherAlbum]); }
     if (url.endsWith("/photos/assets/query")) { reads[JSON.parse(init!.body as string).query.filters?.set_ids ? "album" : "library"]++; return json({ items: trashed ? [] : [photo(1)], total: trashed ? 0 : 1 }); }
     if (url === "/api/v1/path?path=%2F") return json(root);
     if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") return json({ directory: root, items: [reports], total: 1, limit: 1000, offset: 0 });
     if (url === "/api/v1/nodes/2/children?limit=1000&offset=0") return json({ directory: reports, items: trashed ? [] : [file], total: trashed ? 0 : 1, limit: 1000, offset: 0 });
     if (url.endsWith("/trash") && init?.method === "POST") {
+      if (operation === "delayed photo trash") await new Promise<void>(resolve => finishTrash = resolve);
       trashed = true;
       if (operation === "lost photo response") throw new TypeError("Failed to fetch");
       return json(url.includes("/photos/assets/") ? { id: "photo-1", revision: 2 } : { ...file, revision: 2, trashed_at: "2026-07-28T12:01:00Z" });
@@ -102,6 +105,14 @@ it.each(["document trash", "photo trash", "lost photo response", "restore"])("re
     await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
     await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
     await fireEvent.click(within(screen.getByRole("dialog", { name: "Move selected photos to trash" })).getByRole("button", { name: "Move to trash" }));
+  }
+  if (operation === "delayed photo trash") {
+    await waitFor(() => expect(finishTrash).toBeTypeOf("function"));
+    await fireEvent.click(screen.getByRole("button", { name: /^Other/ }));
+    await screen.findByRole("heading", { name: "Other" });
+    await screen.findByText("1 photos · 1 loaded");
+    Object.assign(before, reads);
+    finishTrash();
   }
   await waitFor(() => { for (const key of ["albums", "album", "library"] as const) expect(reads[key]).toBeGreaterThan(before[key]); });
   if (operation === "document trash") await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
