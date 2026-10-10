@@ -15437,6 +15437,30 @@ return sessionJSON<Summary>(getCreateTermReportUrl(),
 
 
 
+export const getReleaseTermReportUrl = (id: string,) => {
+
+
+
+
+  return `/api/v1/search-exports/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Release a live report handle
+ */
+export const releaseTermReport = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getReleaseTermReportUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
 export const getGetTermReportUrl = (id: string,) => {
 
 

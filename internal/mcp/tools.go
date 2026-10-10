@@ -42,7 +42,8 @@ func catalogInstructions(options ServerOptions) string {
 	if options.AllowReportWrites {
 		instructions += " Report writes capture exact current selections and reviewed date choices. " +
 			"CLI and MCP share eight retained report handles; each revision uses a slot. " +
-			"All descendants expire 30 minutes after the original observation. Download frees no slot."
+			"All descendants expire 30 minutes after the original observation. Download frees no slot. " +
+			"Use release_report when live evidence is no longer needed."
 	}
 	return instructions
 }
@@ -176,7 +177,8 @@ func toolCatalog(options ServerOptions) []*sdkmcp.Tool {
 		definitions = append(definitions, exportWriteToolDefinitions...)
 	}
 	if options.AllowReportWrites {
-		definitions = append(definitions, reportCreateTool, reportReviseTool, reportDownloadTool)
+		definitions = append(definitions, reportCreateTool, reportReviseTool,
+			reportDownloadTool, reportReleaseTool)
 	}
 	tools := make([]*sdkmcp.Tool, 0, len(definitions))
 	for _, definition := range definitions {
@@ -207,7 +209,7 @@ func registerToolCatalog(
 		var handler sdkmcp.ToolHandler
 		switch tool.Name {
 		case reportSummaryTool.name, reportDatesTool.name, reportCreateTool.name, reportReviseTool.name,
-			reportDownloadTool.name:
+			reportDownloadTool.name, reportReleaseTool.name:
 			handler = reports.handler(tool.Name, output)
 		case exportPlanTool.name, exportProblemsTool.name,
 			"preview_export", "start_export", "get_export_status", "cancel_export", "release_export",
@@ -461,7 +463,7 @@ func stableDomainError(err error) (string, int) {
 	case "invalid_report_request", "invalid_query", "invalid_profile", "invalid_report_scope",
 		"report_selection_changed", "invalid_report_choice", "stale_evidence", "incomplete_coverage",
 		"incomplete_date_coverage", "date_review_required", "report_unavailable", "report_capacity",
-		"report_limit", "report_timeout":
+		"report_limit", "report_timeout", "report_retained":
 		return facts.Code, 0
 	case "validation", "export_conflict", "export_expired", "export_limit", "export_retained",
 		"export_role_unavailable", "export_timeout", "export_canceled", "export_failed",
@@ -515,14 +517,17 @@ func domainErrorMessage(code string) string {
 	case "report_unavailable":
 		return "Reporting or this owned handle is unavailable; it may have expired or been lost on restart."
 	case "report_capacity":
-		return "Report capacity is full; wait for builds to finish or retained handles to expire."
+		return "Report capacity is full; wait for builds, release unneeded handles, or wait for expiry."
+	case "report_retained":
+		return "An active download retains this report; retry release deliberately after it closes."
 	case "report_limit":
 		return "A report size or verification budget limit was reached; narrow the request or use HTTP/CLI."
 	case "report_timeout":
 		return "The daemon report build deadline was reached."
 	case "report_outcome_unknown":
-		return "The call may have created a report without a usable reply. Do not retry automatically; " +
-			"inspect report history with the operator. A deliberate retry consumes another handle."
+		return "The report write may have succeeded without a usable reply. " +
+			"Do not retry automatically; " +
+			"inspect known handles or history with the operator."
 	case "export_integrity":
 		return "Export verification failed; nothing was published."
 	case "export_local_io":
