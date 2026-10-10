@@ -11498,7 +11498,9 @@ components:
         caption:
           type: string
         confirmed_fields:
+          description: "Confirmed fields bitmask: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, rotation=64. Zero means untouched. Empty text and zero values can be confirmed."
           format: int32
+          maximum: 127
           minimum: 0
           type: integer
         copyright:
@@ -11718,7 +11720,9 @@ components:
         caption:
           type: string
         confirmed_fields:
+          description: "Confirmed fields bitmask: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, rotation=64. Zero means untouched. Empty text and zero values can be confirmed."
           format: int32
+          maximum: 127
           minimum: 0
           type: integer
         copyright:

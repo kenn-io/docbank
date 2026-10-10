@@ -287,6 +287,7 @@ func TestPhotoAuthoredLegacyAuditDefaults(t *testing.T) {
 	human, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{file.ID, 1, PhotoAuthoredPatch{Rating: new(0)}}})
 	require.NoError(t, err)
 	require.NotEmpty(t, human.ReceiptID)
+	require.Equal(t, PhotoConfirmedRating, human.After[0].Values.Confirmed)
 	require.NoError(t, s.ValidateMetadata(ctx))
 	_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{file.ID, 2, PhotoAuthoredPatch{Rating: new(5)}}})
 	require.NoError(t, err)

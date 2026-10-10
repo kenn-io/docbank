@@ -40,7 +40,7 @@ func (fields PhotoAuthoredFields) Names() []string {
 }
 
 type PhotoAuthored struct {
-	Confirmed PhotoAuthoredFields `json:"confirmed_fields,omitzero"`
+	Confirmed PhotoAuthoredFields `json:"confirmed_fields,omitzero" maximum:"127" doc:"Confirmed fields bitmask: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, rotation=64. Zero means untouched. Empty text and zero values can be confirmed."`
 	Rating    int                 `json:"rating"`
 	Flag      string              `json:"flag"`
 	Label     string              `json:"label"`

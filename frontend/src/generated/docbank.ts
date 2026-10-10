@@ -97,7 +97,11 @@ export const AuditAttachmentChangeKind = {
 
 export interface PhotoAuthored {
   caption: string;
-  /** @minimum 0 */
+  /**
+     * Confirmed fields bitmask: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, rotation=64. Zero means untouched. Empty text and zero values can be confirmed.
+     * @minimum 0
+     * @maximum 127
+     */
   confirmed_fields?: number;
   copyright: string;
   creator: string;
@@ -4874,7 +4878,11 @@ export const PhotoFileRole = {
 export interface PhotoFile {
   asset_id: string;
   caption: string;
-  /** @minimum 0 */
+  /**
+     * Confirmed fields bitmask: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, rotation=64. Zero means untouched. Empty text and zero values can be confirmed.
+     * @minimum 0
+     * @maximum 127
+     */
   confirmed_fields?: number;
   copyright: string;
   created_at: string;

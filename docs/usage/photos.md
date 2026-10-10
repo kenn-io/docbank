@@ -112,7 +112,7 @@ verifies the complete blob and rejects malformed XML,
 packets over 1 MiB, and nesting over 64 elements. A caption, creator, or copyright
 over 16 KiB rejects the whole packet. Authored properties accept literal text, supported RDF containers, and `rdf:value`. RDF attributes on these values reject the whole packet; original bytes remain available and supported replacement bytes can initialize the photo. The existing source-metadata
 extractor publishes packet claims under `image.xmp.*`. Sidecar source-metadata
-detail shows a valid-packet fact for valid empty packets or warnings for rejected
+detail shows a valid-packet fact for valid packets with no supported decisions or warnings for rejected
 packets, together with the exact source version. Packets with no supported decisions and rejected packets
 leave file and node revisions, modified time, and audit history unchanged.
 Replacement bytes can initialize a still-undecided photo. Cancellation, stale
@@ -122,8 +122,7 @@ Present empty or whitespace-only caption, creator, and copyright properties stor
 `dc:subject` as tags or `tiff:Orientation` as authored rotation.
 
 Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. In Photos,
-each decision filter reads the asset's display file. With the default RAW display
-rated 5/pick and a paired JPEG rated 1/red, `rating:5`, `flag:pick`,
+each decision filter reads the asset's display file. Filters use stored values, so `rating_max:0` also matches unconfirmed zeros. With the default RAW display rated 5/pick and a paired JPEG rated 1/red, `rating:5`, `flag:pick`,
 `NOT rating:1`, and `NOT label:red` match, including with a linked XMP sidecar.
 Both typed bounds from 3 through 3 and `rating_min:3 AND rating_max:3` exclude
 the photo. Selecting the JPEG reverses those rating, flag, and label matches.
