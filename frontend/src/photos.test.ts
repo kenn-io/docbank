@@ -27,19 +27,25 @@ it("freezes selected rejects scope and refuses a changed selection", async () =>
   photos.dispose();
 });
 
-it.each([false, true])("bounds selected rejects scope while keeping Library available, selected=%s", async selected => {
-  const fetcher = vi.fn().mockResolvedValue(Response.json({ digest: "a".repeat(64), photos: 1, files: 1, unchanged: 65, mixed: [], mixed_count: 0 }));
+it.each(["Library", "selected", "oversized"])("bounds rejects requests while keeping Library available, scope=%s", async scope => {
+  const count = scope === "oversized" ? 1001 : 1;
+  const preview = { digest: "a".repeat(64), photos: count, files: count, unchanged: 65, mixed: [], mixed_count: 0 };
+  const fetcher = vi.fn().mockResolvedValue(Response.json(preview));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.selection.selectedIDs = new Set(Array.from({ length: 65 }, (_, i) => `photo-${i}`));
-  await photos.previewRejects(selected);
-  if (selected) {
+  await photos.previewRejects(scope === "selected");
+  if (scope === "selected") {
     expect(photos.rejectsError).toContain("64 photos");
     expect(fetcher).not.toHaveBeenCalled();
   } else {
     expect(photos.rejectsSelected).toBe(false);
     expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters?.asset_ids).toBeUndefined();
-    expect(photos.rejects?.photos).toBe(1);
+    expect(photos.rejects).toEqual(preview);
+    if (scope === "oversized") {
+      expect(await photos.trashRejects()).toBe(false);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    }
   }
   photos.dispose();
 });
@@ -520,16 +526,4 @@ it("reports unresolved visibility selections before sending requests", async () 
   expect(report).toHaveBeenCalledWith(photos.actionError);
   expect(fetcher).not.toHaveBeenCalled();
   photos.dispose();
-});
-
-it("previews oversized rejects without authorizing a move", async () => {
- const preview = { digest: "a".repeat(64), photos: 1001, files: 1001, unchanged: 0, mixed: [], mixed_count: 0 };
- const fetcher = vi.fn().mockResolvedValue(Response.json(preview));
- vi.stubGlobal("fetch", fetcher);
- const photos = new Photos("scoped", vi.fn());
- await photos.previewRejects(false);
- expect(photos.rejects).toEqual(preview);
- expect(await photos.trashRejects()).toBe(false);
- expect(fetcher).toHaveBeenCalledTimes(1);
- photos.dispose();
 });
