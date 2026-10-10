@@ -219,6 +219,7 @@ func TestMetadataCollectorAuthoredTextPresence(t *testing.T) {
 		assert.Equal(t, " \n Meaningful \n ", *collector.record.Fields[0].Value.String)
 	}
 }
+
 func TestPhotoSidecarInitializationPreservesPropertyPresence(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {

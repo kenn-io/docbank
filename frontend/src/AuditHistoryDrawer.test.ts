@@ -77,6 +77,19 @@ describe("audited history drawer", () => {
     expect(screen.getByText("Example photographer")).toBeTruthy(); expect(screen.getByText("Example copyright")).toBeTruthy();
   });
 
+  it.each([[0, 8], [8, 0]])("shows confirmation-only history and undo (%d to %d)", async (prior, next) => {
+    const fileID = "44444444-4444-4444-8444-444444444444";
+    const values = { rating: 0, flag: "", label: "", caption: "", creator: "", copyright: "", rotation: 0 };
+    const before = { file_id: fileID, node_id: 42, revision: 1, values: { ...values, confirmed_fields: prior } };
+    const after = { ...before, revision: 2, values: { ...values, confirmed_fields: next } };
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(Response.json(page([event({ kind: "photo_authored", attachment: { kind: "photo_authored", identity: { file_id: fileID }, before: { photo: before }, after: { photo: after } } })])));
+    render(AuditHistoryDrawer, { session: "short-lived", node, path: "/Photos/capture.jpg", onclose: vi.fn(), onauthfailure: vi.fn() });
+    expect(await screen.findByText("caption")).toBeTruthy();
+    expect(screen.getByText("(none)")).toBeTruthy();
+    expect(screen.getAllByText("Confirmed fields")).toHaveLength(2);
+    expect(screen.getAllByText("Caption")).toHaveLength(2);
+  });
+
   it("uses the authoritative path returned with history", async () => {
     const response = page([event({})]);
     response.path = "/Filed/return.pdf";

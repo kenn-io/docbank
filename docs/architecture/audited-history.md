@@ -866,7 +866,7 @@ Nested record schemas are:
 | `known_origin` | `node_id:u64`, `parent_id:u64`, `name:bytes` |
 | `topology_node` | `node_id:u64`, `parent_id:?u64`, `name:bytes`, `node_kind:text`, `state:state`, `origin:?record`, `created_at:timestamp`, `modified_at:timestamp`, `trashed_at:?timestamp` |
 | `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:u64`, `introduced_operation_id:uuid`, `transition_kind:text`, `source_version_id:?uuid` |
-| `photo_authored` | `file_id:uuid`, `node_id:u64`, `revision:u64`, `rating:u64`, `flag:text`, `label:text`, `caption:text`, `creator:text`, `copyright:text`, `rotation:u64` |
+| `photo_authored` | `file_id:uuid`, `node_id:u64`, `revision:u64`, `rating:u64`, `flag:text`, `label:text`, `caption:text`, `creator:text`, `copyright:text`, `rotation:u64`, `confirmed_fields:u64` |
 | `photo_authored_identity` | `file_id:uuid` |
 | `tag_definition` | `tag_id:uuid`, `name:text` |
 | `tag_assignment` | `tag_id:uuid`, `node_id:u64` |

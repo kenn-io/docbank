@@ -82,13 +82,15 @@ A hide retry that returns `hidden_locked` already took effect.
 Each RAW, image, and video member stores its own rating, flag, label, caption,
 creator, copyright, and rotation. A RAW rated 5 and a JPEG rated 3 keep those
 values. Inspection returns every file's revision and an `agreement` map.
-`false` for a field means the displayable members have mixed values. A new
+`false` for a field means the displayable members have mixed values or confirmation states. A new
 member starts at revision 1 with empty text, rating 0, and rotation 0.
 
 Ratings range from 0 through 5. Flags are empty, `pick`, or `reject`. Labels
 are empty, `red`, `yellow`, `green`, `blue`, or `purple`. Rotation is 0, 90,
 180, or 270 degrees. Caption, creator, and copyright each allow 16 KiB of
 UTF-8 text.
+
+`confirmed_fields` records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32), and rotation (64). Zero means untouched. Supplied empty text and numeric zero confirm a clear; absent fields stay unconfirmed. Receipts, audit history, undo, and JSONL backup preserve each field's confirmation. Unknown bits are refused.
 
 Authored edits use exact file IDs and revisions. A pair edit also checks the
 asset revision and includes every displayable member. One transaction changes
@@ -112,13 +114,12 @@ packets over 1 MiB, and nesting over 64 elements. A caption, creator, or copyrig
 over 16 KiB rejects the whole packet. The existing source-metadata
 extractor publishes packet claims under `image.xmp.*`. Sidecar source-metadata
 detail shows a valid-packet fact for valid empty packets or warnings for rejected
-packets, together with the exact source version. Empty and rejected packets
+packets, together with the exact source version. Packets with no supported decisions and rejected packets
 leave file and node revisions, modified time, and audit history unchanged.
 Replacement bytes can initialize a still-undecided photo. Cancellation, stale
 inputs, and blob or IO failures retry. Human edits and successful initialization
 advance the authored revision and protect those decisions from later packets.
-Whitespace-only caption, creator, and copyright values count as absent; meaningful
-text keeps its surrounding spaces and newlines. This slice doesn't import
+Present empty or whitespace-only caption, creator, and copyright properties confirm an empty value, overriding embedded credits during export. Absent properties stay unconfirmed. Meaningful text keeps its surrounding spaces and newlines. This slice doesn't import
 `dc:subject` as tags or `tiff:Orientation` as authored rotation.
 
 Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. In Photos,

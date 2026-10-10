@@ -25,6 +25,10 @@
   } from "./audit.js";
   import { basename, formatDate } from "./format.js";
 
+  function confirmedFields(mask = 0): string {
+    return ["rating", "flag", "label", "caption", "creator", "copyright", "rotation"].filter((_, bit) => (mask & (1 << bit)) !== 0).join(", ") || "(none)";
+  }
+
   interface Props {
     session: string;
     node: Node;
@@ -333,6 +337,7 @@
           <div><dt>Creator</dt><dd>{state.photo.values.creator || "(empty)"}</dd></div>
           <div><dt>Copyright</dt><dd>{state.photo.values.copyright || "(empty)"}</dd></div>
           <div><dt>Rotation</dt><dd>{state.photo.values.rotation}°</dd></div>
+          <div><dt>Confirmed fields</dt><dd>{confirmedFields(state.photo.values.confirmed_fields)}</dd></div>
         {/if}
         {#if state.tag_name}<div><dt>Tag name</dt><dd>{state.tag_name}</dd></div>{/if}
         {#if state.ingest_id}<div><dt>Ingest</dt><dd><code>{state.ingest_id}</code></dd></div>{/if}

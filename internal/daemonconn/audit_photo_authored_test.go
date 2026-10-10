@@ -1,10 +1,12 @@
 package daemonconn
 
 import (
+	"testing"
+
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/store"
-	"testing"
 )
 
 func TestPhotoAuthoredAuditConfirmationBoundary(t *testing.T) {

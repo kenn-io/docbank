@@ -148,6 +148,9 @@ func TestPhotoAuthoredEmptyConfirmationBackupAndUndo(t *testing.T) {
 	require.Len(t, cleared.After, 1)
 	assert.Equal(t, PhotoConfirmedRating, cleared.Before[0].Values.Confirmed)
 	assert.Equal(t, PhotoConfirmedRating|PhotoConfirmedCaption, cleared.After[0].Values.Confirmed)
+	currentAsset, err := s.PhotoAssetByID(ctx, asset.ID)
+	require.NoError(t, err)
+	assert.False(t, currentAsset.Agreement["caption"])
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
 	restored := newTestStore(t)
@@ -158,6 +161,9 @@ func TestPhotoAuthoredEmptyConfirmationBackupAndUndo(t *testing.T) {
 	undo, err := restored.UndoPhotoAuthored(ctx, cleared.ReceiptID)
 	require.NoError(t, err)
 	assert.Equal(t, PhotoConfirmedRating, undo.After[0].Values.Confirmed)
+	currentAsset, err = restored.PhotoAssetByID(ctx, asset.ID)
+	require.NoError(t, err)
+	assert.True(t, currentAsset.Agreement["caption"])
 	redo, err := restored.UndoPhotoAuthored(ctx, undo.ReceiptID)
 	require.NoError(t, err)
 	assert.Equal(t, cleared.After[0].Values, redo.After[0].Values)
@@ -832,4 +838,22 @@ func TestPhotoAuthoredExpressionBrowse(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, snapshot.Rows, 1)
 	assert.Equal(t, jpg.NodeID, snapshot.Rows[0].NodeID)
+}
+
+func TestPhotoAuthoredJSONLRefusesUnknownConfirmation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := authoredPair(t, s)
+	var backup bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &backup))
+	lines := bytes.Split(backup.Bytes(), []byte{'\n'})
+	for i, line := range lines {
+		if bytes.Contains(line, []byte(`"type":"photo_file"`)) {
+			lines[i] = bytes.Replace(line, []byte(`"confirmed_fields":0`), []byte(`"confirmed_fields":128`), 1)
+		}
+	}
+	restored := newTestStore(t)
+	require.ErrorContains(t, restored.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(lines, []byte{'\n'}))), "invalid authored photo decision")
+	_, err := restored.NodeByID(t.Context(), asset.Files[0].NodeID)
+	require.ErrorIs(t, err, ErrNotFound)
 }

@@ -215,6 +215,9 @@ func photoAgreement(files []PhotoFile) map[string]bool {
 		result["creator"] = result["creator"] && v.Creator == first.Creator
 		result["copyright"] = result["copyright"] && v.Copyright == first.Copyright
 		result["rotation"] = result["rotation"] && v.Rotation == first.Rotation
+		for i, field := range []string{"rating", "flag", "label", "caption", "creator", "copyright", "rotation"} {
+			result[field] = result[field] && (v.Confirmed^first.Confirmed)&(1<<i) == 0
+		}
 	}
 	return result
 }
