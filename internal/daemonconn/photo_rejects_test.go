@@ -1,7 +1,6 @@
 package daemonconn
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,23 +10,19 @@ import (
 
 func TestPhotoRejectsResponse(t *testing.T) {
 	t.Parallel()
-	digest := strings.Repeat("a", 64)
-	valid := api.PhotoRejectsPreflight{Digest: digest, Photos: 2, Movable: 2, Files: 3}
-	require.NoError(t, validatePhotoRejectsResponse(&valid, digest))
-	valid.Unchanged = 10001
-	require.NoError(t, validatePhotoRejectsResponse(&valid, digest))
-	valid.Photos, valid.Files, valid.Movable = 1001, 1001, 1000
-	require.NoError(t, validatePhotoRejectsResponse(&valid, ""))
-	require.NoError(t, validatePhotoRejectsResponse(&valid, digest))
-	require.Error(t, validatePhotoRejectsResponse(nil, ""))
-	require.Error(t, validatePhotoRejectsResponse(&valid, strings.Repeat("b", 64)))
+	targets := []store.PhotoRejectTarget{{AssetID: "11111111-1111-4111-8111-111111111111", Revision: 1, MemberRevision: 2}}
+	valid := api.PhotoRejectsPreflight{Targets: targets, Photos: 2, Movable: 1, Files: 3, Unchanged: 10001}
+	require.NoError(t, validatePhotoRejectsResponse(&valid))
+	require.Error(t, validatePhotoRejectsResponse(nil))
 	for _, bad := range []api.PhotoRejectsPreflight{
-		{Digest: "bad"}, {Digest: digest, Photos: 2, Files: 1}, {Digest: digest, MixedCount: 1},
-		{Digest: digest, Movable: -1}, {Digest: digest, Photos: 1, Files: 1, Movable: 2},
-		{Digest: digest, Photos: 1001, Files: 1001, Movable: 1001},
-		{Digest: digest, Unchanged: 21, MixedCount: 21, Mixed: make([]store.PhotoRejectMixed, 21)},
-		{Digest: strings.Repeat("A", 64)}, {Digest: digest, Unchanged: -1},
+		{Targets: targets, Photos: 2, Files: 1}, {Targets: targets, MixedCount: 1},
+		{Targets: targets, Movable: -1}, {Targets: targets, Photos: 1, Files: 1, Movable: 2},
+		{Targets: targets, Unchanged: 21, MixedCount: 21, Mixed: make([]store.PhotoRejectMixed, 21)},
+		{Targets: targets, Unchanged: -1},
 	} {
-		require.Error(t, validatePhotoRejectsResponse(&bad, ""))
+		require.Error(t, validatePhotoRejectsResponse(&bad))
+	}
+	for _, bad := range [][]store.PhotoRejectTarget{nil, make([]store.PhotoRejectTarget, 1001), {targets[0], targets[0]}, {{AssetID: "bad", Revision: 1, MemberRevision: 1}}, {{AssetID: targets[0].AssetID, Revision: 0, MemberRevision: 1}}, {{AssetID: targets[0].AssetID, Revision: 1}}} {
+		require.Error(t, validatePhotoRejectTargets(bad))
 	}
 }

@@ -12,38 +12,68 @@ import (
 )
 
 func (c *Connection) PhotoRejects(ctx context.Context, request api.PhotoRejectsRequest, cookie string) (api.PhotoRejectsPreflight, error) {
-	var result *api.PhotoRejectsPreflight
-	var response *http.Response
-	var err error
-	editor := func(_ context.Context, request *http.Request) error {
-		if cookie != "" {
-			request.Header.Set("Cookie", cookie)
-		}
-		return nil
-	}
-	if request.Digest == "" {
-		result, err = c.apiWithResponse(&response).PreflightPhotoRejects(ctx, &apiclient.PreflightPhotoRejectsRequestOptions{Body: &request}, editor)
-	} else {
-		result, err = c.apiWithResponse(&response).MovePhotoRejects(ctx, &apiclient.MovePhotoRejectsRequestOptions{Body: &request}, editor)
-	}
+	result, err := c.API().PreflightPhotoRejects(ctx, &apiclient.PreflightPhotoRejectsRequestOptions{Body: &request}, photoRejectsCookie(cookie))
 	if err != nil {
-		return api.PhotoRejectsPreflight{}, mutationRequestError(response, err)
+		return api.PhotoRejectsPreflight{}, err
 	}
-	if err := validatePhotoRejectsResponse(result, request.Digest); err != nil {
-		if request.Digest != "" {
-			return api.PhotoRejectsPreflight{}, &responseDecodeError{err: err}
-		}
+	if err := validatePhotoRejectsResponse(result); err != nil {
 		return api.PhotoRejectsPreflight{}, err
 	}
 	return *result, nil
 }
 
-func validatePhotoRejectsResponse(result *api.PhotoRejectsPreflight, digest string) error {
+func (c *Connection) MovePhotoRejects(ctx context.Context, request api.MovePhotoRejectsRequest, cookie string) (api.PhotoRejectsMoved, error) {
+	if err := validatePhotoRejectTargets(request.Targets); err != nil {
+		return api.PhotoRejectsMoved{}, err
+	}
+	var response *http.Response
+	result, err := c.apiWithResponse(&response).MovePhotoRejects(ctx, &apiclient.MovePhotoRejectsRequestOptions{Body: &request}, photoRejectsCookie(cookie))
+	if err != nil {
+		return api.PhotoRejectsMoved{}, mutationRequestError(response, err)
+	}
+	if result == nil || len(result.Moved) != len(request.Targets) {
+		return api.PhotoRejectsMoved{}, &responseDecodeError{err: errors.New("invalid rejects move response")}
+	}
+	for i, id := range result.Moved {
+		if id != request.Targets[i].AssetID {
+			return api.PhotoRejectsMoved{}, &responseDecodeError{err: errors.New("invalid moved photo identity")}
+		}
+	}
+	return *result, nil
+}
+
+func photoRejectsCookie(cookie string) func(context.Context, *http.Request) error {
+	return func(_ context.Context, request *http.Request) error {
+		if cookie != "" {
+			request.Header.Set("Cookie", cookie)
+		}
+		return nil
+	}
+}
+
+func validatePhotoRejectTargets(targets []store.PhotoRejectTarget) error {
+	if targets == nil || len(targets) > store.MaxPhotoRejectsMove {
+		return errors.New("invalid rejects targets")
+	}
+	seen := make(map[string]bool, len(targets))
+	for _, target := range targets {
+		if !validUUIDv4(target.AssetID) || target.Revision < 1 || target.MemberRevision < 1 || seen[target.AssetID] {
+			return errors.New("invalid rejects target")
+		}
+		seen[target.AssetID] = true
+	}
+	return nil
+}
+
+func validatePhotoRejectsResponse(result *api.PhotoRejectsPreflight) error {
 	if result == nil {
 		return errors.New("missing rejects response")
 	}
-	if !validSHA256Hex(result.Digest) || digest != "" && result.Digest != digest || result.Photos < 0 || result.Files < result.Photos || result.Unchanged < 0 || result.MixedCount < len(result.Mixed) || result.MixedCount > result.Unchanged || len(result.Mixed) > store.MaxPhotoRejectsMixed || result.Movable < 0 || result.Movable > result.Photos || result.Movable > store.MaxPhotoRejectsMove {
+	if result.Photos < 0 || result.Files < result.Photos || result.Unchanged < 0 || result.MixedCount < len(result.Mixed) || result.MixedCount > result.Unchanged || len(result.Mixed) > store.MaxPhotoRejectsMixed || result.Movable < 0 || result.Movable > result.Photos || result.Movable != len(result.Targets) {
 		return errors.New("invalid rejects response")
+	}
+	if err := validatePhotoRejectTargets(result.Targets); err != nil {
+		return err
 	}
 	for _, mixed := range result.Mixed {
 		if !validUUIDv4(mixed.AssetID) || len(mixed.Members) < 2 || len(mixed.Members) > maxPhotoResponseFiles {

@@ -2,10 +2,7 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 
@@ -16,9 +13,8 @@ const MaxPhotoRejectsMove = 1000
 const MaxPhotoRejectsMixed = 20
 
 type PhotoRejectsRequest struct {
-	Query    query.Query
-	Coverage CoverageSelection
-	Hidden   bool
+	Query  query.Query
+	Hidden bool
 }
 
 type PhotoRejectMember struct {
@@ -34,13 +30,13 @@ type PhotoRejectMixed struct {
 }
 
 type PhotoRejectsPreflight struct {
-	Digest     string             `json:"digest"`
-	Photos     int                `json:"photos"`
-	Movable    int                `json:"movable"`
-	Files      int                `json:"files"`
-	Unchanged  int                `json:"unchanged"`
-	Mixed      []PhotoRejectMixed `json:"mixed"`
-	MixedCount int                `json:"mixed_count"`
+	Targets    []PhotoRejectTarget `json:"targets"`
+	Photos     int                 `json:"photos"`
+	Movable    int                 `json:"movable"`
+	Files      int                 `json:"files"`
+	Unchanged  int                 `json:"unchanged"`
+	Mixed      []PhotoRejectMixed  `json:"mixed"`
+	MixedCount int                 `json:"mixed_count"`
 }
 
 // PreflightPhotoRejects evaluates the complete scope in one read snapshot.
@@ -48,139 +44,143 @@ func (s *Store) PreflightPhotoRejects(ctx context.Context, request PhotoRejectsR
 	var out PhotoRejectsPreflight
 	err := s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
 		var err error
-		out, _, err = s.photoRejects(ctx, q, generation.ID, request)
+		out, err = s.photoRejects(ctx, q, generation.ID, request)
 		return err
 	})
 	return out, err
 }
 
-// MovePhotoRejects checks the scope in a read snapshot and trashes the fenced batch atomically.
-func (s *Store) MovePhotoRejects(ctx context.Context, request PhotoRejectsRequest, digest string) (PhotoRejectsPreflight, error) {
-	var out PhotoRejectsPreflight
-	var batch [][]photoRejectMemberFence
-	err := s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
-		var err error
-		out, batch, err = s.photoRejects(ctx, q, generation.ID, request)
-		if err != nil {
-			return err
-		}
-		if digest == "" || digest != out.Digest {
-			return fmt.Errorf("%w: photo scope changed; preview rejects again", ErrStaleRevision)
-		}
-		return nil
-	})
-	if err != nil {
-		return PhotoRejectsPreflight{}, err
+type PhotoRejectTarget struct {
+	AssetID        string `json:"asset_id" format:"uuid"`
+	Revision       int64  `json:"revision" minimum:"1"`
+	MemberRevision int64  `json:"member_revision" minimum:"1"`
+}
+
+type PhotoRejectsMoved struct {
+	Moved []string `json:"moved"`
+}
+
+// MovePhotoRejects rechecks and trashes the previewed batch atomically.
+func (s *Store) MovePhotoRejects(ctx context.Context, hidden bool, targets []PhotoRejectTarget) (PhotoRejectsMoved, error) {
+	out := PhotoRejectsMoved{Moved: []string{}}
+	if len(targets) > MaxPhotoRejectsMove {
+		return out, fmt.Errorf("%w: at most %d targets", ErrInvalidPhotoAsset, MaxPhotoRejectsMove)
 	}
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		for _, members := range batch {
-			asset, err := s.photoAssetForMutationTx(ctx, tx, members[0].AssetID, members[0].AssetRevision)
-			if errors.Is(err, ErrNotFound) {
-				return fmt.Errorf("%w: photo scope changed; preview rejects again", ErrStaleRevision)
+	seen := make(map[string]bool, len(targets))
+	for _, target := range targets {
+		if validateUUIDv4(target.AssetID) != nil || target.Revision < 1 || target.MemberRevision < 1 || seen[target.AssetID] {
+			return out, fmt.Errorf("%w: invalid rejects target", ErrInvalidPhotoAsset)
+		}
+		seen[target.AssetID] = true
+	}
+	stale := fmt.Errorf("%w: preview rejects again", ErrStaleRevision)
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if hidden {
+			if _, err := s.hiddenSession(ctx, tx); err != nil {
+				return err
+			}
+		}
+		live := 0
+		for _, target := range targets {
+			asset, err := s.photoAssetForMutationTx(ctx, tx, target.AssetID, target.Revision)
+			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrStaleRevision) || !hidden && errors.Is(err, ErrHiddenLocked) {
+				return stale
 			}
 			if err != nil {
 				return err
 			}
-			// Authored edits and ordinary node writes advance member nodes, not the asset.
-			for _, member := range members {
-				node, err := nodeByIDTx(tx, member.NodeID)
+			if (asset.HiddenAt != nil) != hidden {
+				return stale
+			}
+			var memberRevision int64
+			for _, file := range asset.Files {
+				if file.Role != PhotoRoleSidecar && file.Flag != "reject" {
+					return stale
+				}
+				node, err := nodeByIDTx(tx, file.NodeID)
+				if errors.Is(err, ErrNotFound) {
+					return stale
+				}
 				if err != nil {
 					return err
 				}
-				if node.Revision != member.NodeRevision {
-					return fmt.Errorf("%w: photo scope changed; preview rejects again", ErrStaleRevision)
+				memberRevision += node.Revision
+				if node.TrashedAt == nil {
+					live++
 				}
+			}
+			// Ordinary member trash advances node revisions without advancing the asset.
+			if memberRevision != target.MemberRevision {
+				return stale
+			}
+			if live > MaxPhotoRejectsMove {
+				return fmt.Errorf("%w: at most %d live files", ErrInvalidPhotoAsset, MaxPhotoRejectsMove)
 			}
 			if _, err := s.trashPhotoAssetTx(ctx, tx, asset); err != nil {
 				return err
 			}
+			out.Moved = append(out.Moved, asset.ID)
 		}
 		return nil
 	})
 	if err != nil {
-		return PhotoRejectsPreflight{}, err
+		return PhotoRejectsMoved{}, err
 	}
 	return out, nil
 }
 
-type photoRejectMemberFence struct {
+type photoRejectMember struct {
 	AssetID       string
 	AssetRevision int64
 	FileID        string
-	FileRevision  int64
 	Role          string
 	Flag          string
-	NodeID        int64
 	NodeRevision  int64
-	VersionID     string
 	TrashedAt     *string
 	Name          string
 }
 
-func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation string, request PhotoRejectsRequest) (PhotoRejectsPreflight, [][]photoRejectMemberFence, error) {
-	out := PhotoRejectsPreflight{Mixed: []PhotoRejectMixed{}}
+func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation string, request PhotoRejectsRequest) (PhotoRejectsPreflight, error) {
+	out := PhotoRejectsPreflight{Mixed: []PhotoRejectMixed{}, Targets: []PhotoRejectTarget{}}
 	if request.Hidden {
 		if _, err := s.hiddenSession(ctx, q); err != nil {
-			return out, nil, err
+			return out, err
 		}
 	}
-	coverage, err := normalizeCoverageSelection(request.Coverage)
-	if err != nil {
-		return out, nil, err
-	}
-	if coverage.Configuration == photoBrowseConfiguredCoverage {
-		if err := validateSnapshotCoverageProfile(ctx, q, coverage); err != nil {
-			return out, nil, err
-		}
-	}
+	coverage := CoverageSelection{}
 	compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: q})
 	if err != nil {
-		return out, nil, err
+		return out, err
 	}
 	match, err := photoBrowseMatch(compiled, generation, coverage, request.Hidden)
 	if err != nil {
-		return out, nil, err
+		return out, err
 	}
-	canonical, err := query.Canonical(compiled.Query)
-	if err != nil {
-		return out, nil, err
-	}
-	hash := sha256.New()
-	identity, err := json.Marshal(struct {
-		Query        []byte
-		Dependencies []query.Dependency
-		Coverage     CoverageSelection
-		Hidden       bool
-	}{canonical, compiled.Dependencies, coverage, request.Hidden})
-	if err != nil {
-		return out, nil, err
-	}
-	_, _ = hash.Write(identity)
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{
-		sql: `SELECT a.asset_id,a.revision,member.file_id,member.revision,member.role,member.flag,mn.id,mn.revision,COALESCE(mn.current_version_id,''),mn.trashed_at,mn.name FROM ` + photoBrowseDisplayFrom + `
+		sql: `SELECT a.asset_id,a.revision,member.file_id,member.role,member.flag,mn.revision,mn.trashed_at,mn.name FROM ` + photoBrowseDisplayFrom + `
  CROSS JOIN photo_files member ON member.asset_id=a.asset_id
  CROSS JOIN nodes mn ON mn.id=member.node_id WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(request.Hidden) + ` AND ` + match.sql + ` ORDER BY a.asset_id,member.file_id`,
 		args: match.args, relations: match.relations,
 	}, coverage, generation)
 	if err != nil {
-		return out, nil, err
+		return out, err
 	}
 	rows, err := q.QueryContext(ctx, statement, args...)
 	if err != nil {
-		return out, nil, err
+		return out, err
 	}
 	defer func() { _ = rows.Close() }()
-	var eligible [][]photoRejectMemberFence
-	var members []photoRejectMemberFence
-	finish := func() error {
+	batchFiles := 0
+	var members []photoRejectMember
+	finish := func() {
 		if len(members) == 0 {
-			return nil
+			return
 		}
 		out.Unchanged++
-		// Scope membership matters; unrelated retained-file edits do not.
-		_, _ = fmt.Fprintln(hash, members[0].AssetID)
+		var memberRevision int64
 		originals, rejected, live := 0, 0, 0
 		for _, member := range members {
+			memberRevision += member.NodeRevision
 			if member.TrashedAt == nil {
 				live++
 			}
@@ -193,18 +193,14 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 			}
 		}
 		if rejected == 0 {
-			return nil
+			return
 		}
-		encoded, err := json.Marshal(members)
-		if err != nil {
-			return err
-		}
-		_, _ = hash.Write(encoded)
 		if rejected == originals {
 			out.Photos++
 			out.Files += live
-			if out.Files <= MaxPhotoRejectsMove {
-				eligible = append(eligible, append([]photoRejectMemberFence(nil), members...))
+			if batchFiles+live <= MaxPhotoRejectsMove {
+				batchFiles += live
+				out.Targets = append(out.Targets, PhotoRejectTarget{members[0].AssetID, members[0].AssetRevision, memberRevision})
 			}
 		} else {
 			out.MixedCount++
@@ -218,34 +214,28 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 				out.Mixed = append(out.Mixed, mixed)
 			}
 		}
-		return nil
 	}
 	for rows.Next() {
-		var member photoRejectMemberFence
-		if err := rows.Scan(&member.AssetID, &member.AssetRevision, &member.FileID, &member.FileRevision, &member.Role, &member.Flag, &member.NodeID, &member.NodeRevision, &member.VersionID, &member.TrashedAt, &member.Name); err != nil {
-			return out, nil, err
+		var member photoRejectMember
+		if err := rows.Scan(&member.AssetID, &member.AssetRevision, &member.FileID, &member.Role, &member.Flag, &member.NodeRevision, &member.TrashedAt, &member.Name); err != nil {
+			return out, err
 		}
 		if len(members) > 0 && member.AssetID != members[0].AssetID {
-			if err := finish(); err != nil {
-				return out, nil, err
-			}
+			finish()
 			members = members[:0]
 		}
 		members = append(members, member)
 	}
-	if err := finish(); err != nil {
-		return out, nil, err
-	}
+	finish()
 	err = rows.Err()
 	closeErr := rows.Close()
 	if err != nil {
-		return out, nil, err
+		return out, err
 	}
 	if closeErr != nil {
-		return out, nil, closeErr
+		return out, closeErr
 	}
-	out.Movable = len(eligible)
+	out.Movable = len(out.Targets)
 	out.Unchanged -= out.Photos
-	out.Digest = hex.EncodeToString(hash.Sum(nil))
-	return out, eligible, nil
+	return out, nil
 }

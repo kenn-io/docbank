@@ -3704,6 +3704,22 @@ export interface MovePathRequest {
   src_path: string;
 }
 
+export interface PhotoRejectTarget {
+  asset_id: string;
+  /** @minimum 1 */
+  member_revision: number;
+  /** @minimum 1 */
+  revision: number;
+}
+
+export interface MovePhotoRejectsRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  hidden?: boolean;
+  /** @maxItems 1000 */
+  targets: PhotoRejectTarget[];
+}
+
 export interface NodePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5113,24 +5129,27 @@ export interface PhotoRejectMixed {
   members: PhotoRejectMember[];
 }
 
+export interface PhotoRejectsMoved {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  moved: string[];
+}
+
 export interface PhotoRejectsPreflight {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  digest: string;
   files: number;
   mixed: PhotoRejectMixed[];
   mixed_count: number;
   movable: number;
   photos: number;
+  targets: PhotoRejectTarget[];
   unchanged: number;
 }
 
 export interface PhotoRejectsRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  coverage?: WorkspaceQueryCoverage;
-  /** @maxLength 64 */
-  digest?: string;
   hidden?: boolean;
   query: SavedQueryV1Schema;
 }
@@ -15140,9 +15159,9 @@ export const getMovePhotoRejectsUrl = () => {
 }
 
 /**
- * @summary Move confirmed rejects to trash and return the confirmed pre-move preview
+ * @summary Move previewed rejected photos to trash
  */
-export const movePhotoRejects = async (photoRejectsRequest: NonReadonly<PhotoRejectsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoRejectsPreflight> => {
+export const movePhotoRejects = async (movePhotoRejectsRequest: NonReadonly<MovePhotoRejectsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoRejectsMoved> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -15158,12 +15177,12 @@ export const movePhotoRejects = async (photoRejectsRequest: NonReadonly<PhotoRej
     }
     return headers;
   };
-return sessionJSON<PhotoRejectsPreflight>(getMovePhotoRejectsUrl(),
+return sessionJSON<PhotoRejectsMoved>(getMovePhotoRejectsUrl(),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(photoRejectsRequest)
+    body: JSON.stringify(movePhotoRejectsRequest)
   }
 );}
 

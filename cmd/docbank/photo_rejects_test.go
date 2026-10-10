@@ -5,6 +5,8 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,67 +15,59 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestPhotoRejectsCLIBoundary(t *testing.T) {
 	command, _, err := rootCmd.Find([]string{"photos", "rejects"})
 	require.NoError(t, err)
-	for _, flag := range []string{"query", "confirm", "hidden", "coverage", "profile-fingerprint"} {
+	for _, flag := range []string{"query", "confirm"} {
 		require.NotNil(t, command.Flags().Lookup(flag))
 	}
-	for _, confirm := range []bool{false, true} {
-		for _, hidden := range []bool{false, true} {
-			t.Run(strings.Join([]string{map[bool]string{false: "preview", true: "confirm"}[confirm], map[bool]string{false: "library", true: "hidden"}[hidden]}, "/"), func(t *testing.T) {
-				digest := strings.Repeat("a", 64)
-				photos, movable := 1001, 1000
-				if confirm && !hidden {
-					movable = 0
-				}
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					w.Header().Set("Content-Type", "application/json")
-					if r.URL.Path == "/api/v1/photos/hidden/unlock" {
-						var body api.PhotoHiddenPasscodeRequest
-						if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
-							return
-						}
-						assert.Equal(t, "synthetic-passcode", body.Passcode)
-						w.Header().Set("Set-Cookie", "docbank-hidden-test=synthetic-token; Path=/")
-						_, _ = w.Write([]byte(`{}`))
-						return
-					}
-					path := "/api/v1/photos/rejects/preflight"
-					if confirm {
-						path = "/api/v1/photos/rejects/trash"
-					}
-					assert.Equal(t, path, r.URL.Path)
-					assert.Equal(t, http.MethodPost, r.Method)
-					var body api.PhotoRejectsRequest
-					if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
-						return
-					}
-					assert.Equal(t, hidden, body.Hidden)
-					assert.Equal(t, "unconfigured", body.Coverage.Configuration)
-					assert.Equal(t, confirm, body.Digest == digest)
-					if hidden {
-						assert.Contains(t, r.Header.Get("Cookie"), "docbank-hidden-test=synthetic-token")
-					}
-					assert.NoError(t, json.MarshalWrite(w, api.PhotoRejectsPreflight{Digest: digest, Photos: photos, Files: photos, Movable: movable, Unchanged: 1001}))
-				}))
-				defer server.Close()
-				var out bytes.Buffer
-				cmd := &cobra.Command{}
-				cmd.SetContext(t.Context())
-				cmd.SetOut(&out)
-				cmd.SetIn(strings.NewReader("synthetic-passcode\n"))
-				request := api.PhotoRejectsRequest{Query: api.QueryPayload(`{}`), Hidden: hidden, Coverage: api.WorkspaceQueryCoverage{Configuration: "unconfigured"}}
-				if confirm {
-					request.Digest = digest
-				}
-				require.NoError(t, runPhotoRejects(cmd, daemonconn.New(server.URL, "synthetic-key"), request))
-				assert.Contains(t, out.String(), `"photos":1001`)
-				assert.Contains(t, out.String(), `"remaining":`+map[int]string{0: "1001", 1000: "1"}[movable])
-				assert.Contains(t, out.String(), `"moved":`+map[bool]string{false: "false", true: "true"}[confirm && movable > 0])
-			})
-		}
+	for _, flag := range []string{"hidden", "coverage", "profile-fingerprint"} {
+		require.Nil(t, command.Flags().Lookup(flag))
 	}
+	preview := api.PhotoRejectsPreflight{Photos: 1001, Files: 1001, Movable: 1, Targets: []store.PhotoRejectTarget{{AssetID: "11111111-1111-4111-8111-111111111111", Revision: 7, MemberRevision: 11}}, Mixed: []store.PhotoRejectMixed{}}
+	raw, err := json.Marshal(preview)
+	require.NoError(t, err)
+	for _, confirm := range []string{"", "-", "file"} {
+		t.Run(confirm, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				assert.Equal(t, http.MethodPost, r.Method)
+				if confirm == "" {
+					assert.Equal(t, "/api/v1/photos/rejects/preflight", r.URL.Path)
+					assert.NoError(t, json.MarshalWrite(w, preview))
+				} else {
+					assert.Equal(t, "/api/v1/photos/rejects/trash", r.URL.Path)
+					var body api.MovePhotoRejectsRequest
+					assert.NoError(t, json.UnmarshalRead(r.Body, &body))
+					assert.Equal(t, preview.Targets, body.Targets)
+					assert.False(t, body.Hidden)
+					assert.NoError(t, json.MarshalWrite(w, api.PhotoRejectsMoved{Moved: []string{preview.Targets[0].AssetID}}))
+				}
+			}))
+			defer server.Close()
+			var out bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+			cmd.SetOut(&out)
+			cmd.SetIn(bytes.NewReader(raw))
+			path := confirm
+			if confirm == "file" {
+				path = filepath.Join(t.TempDir(), "preview.json")
+				require.NoError(t, os.WriteFile(path, raw, 0600))
+			}
+			require.NoError(t, runPhotoRejects(cmd, daemonconn.New(server.URL, "synthetic-key"), api.PhotoRejectsRequest{Query: api.QueryPayload(`{}`)}, path))
+			if confirm == "" {
+				assert.JSONEq(t, string(raw), out.String())
+			} else {
+				assert.JSONEq(t, `{"moved":["11111111-1111-4111-8111-111111111111"]}`, out.String())
+			}
+		})
+	}
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.SetIn(strings.NewReader(`{"digest":"old"}`))
+	require.ErrorContains(t, runPhotoRejects(cmd, nil, api.PhotoRejectsRequest{}, "-"), "decoding rejects preview")
 }

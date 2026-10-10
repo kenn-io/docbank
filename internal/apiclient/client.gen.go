@@ -9675,7 +9675,7 @@ func (c *Client) PreflightPhotoRejects(ctx context.Context, options *PreflightPh
 	return responseParser(ctx, resp)
 }
 
-// MovePhotoRejects Move confirmed rejects to trash and return the confirmed pre-move preview
+// MovePhotoRejects Move previewed rejected photos to trash
 func (c *Client) MovePhotoRejects(ctx context.Context, options *MovePhotoRejectsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MovePhotoRejectsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -23154,7 +23154,7 @@ type PromotePhotoNodeBody = PromotePhotoNodeRequest
 
 type PreflightPhotoRejectsBody = PhotoRejectsRequest
 
-type MovePhotoRejectsBody = PhotoRejectsRequest
+type MovePhotoRejectsBody = MovePhotoRejectsRequest
 
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
 
@@ -24431,7 +24431,7 @@ type PreflightPhotoRejectsResponse = store.PhotoRejectsPreflight
 
 type PreflightPhotoRejectsErrorResponse = Error
 
-type MovePhotoRejectsResponse = store.PhotoRejectsPreflight
+type MovePhotoRejectsResponse = store.PhotoRejectsMoved
 
 type MovePhotoRejectsErrorResponse = Error
 
@@ -25390,6 +25390,8 @@ type MovePathRequest struct {
 	SrcPath  string  `json:"src_path"`
 }
 
+type MovePhotoRejectsRequest = api.MovePhotoRejectsRequest
+
 type Node = api.Node
 
 type NodePage = api.NodePage
@@ -25553,6 +25555,10 @@ type PhotoQualitySignals = document.PhotoQualitySignals
 type PhotoRejectMember = store.PhotoRejectMember
 
 type PhotoRejectMixed = store.PhotoRejectMixed
+
+type PhotoRejectTarget = store.PhotoRejectTarget
+
+type PhotoRejectsMoved = store.PhotoRejectsMoved
 
 type PhotoRejectsPreflight = store.PhotoRejectsPreflight
 

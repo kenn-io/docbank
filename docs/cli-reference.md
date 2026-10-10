@@ -172,7 +172,7 @@ that returns it to the live tree.
 docbank photos assets create <node-selector> [--kind photo|video] [--role ROLE]
 docbank photos assets inspect <asset-id|node-selector>
 docbank photos assets trash <asset-id> [--revision REV]
-docbank photos rejects [--query QUERY_JSON] [--confirm DIGEST] [--hidden] [--coverage CONFIG] [--profile-fingerprint HASH]
+docbank photos rejects [--query QUERY_JSON] [--confirm FILE|-]
 docbank photos assets attach <asset-id> <node-selector> [--revision REV] [--role ROLE] [--sidecar-of-file-id ID]
 docbank photos assets detach <asset-id> <file-id> [--revision REV]
 docbank photos assets exclude <asset-id> [--revision REV] [--excluded=true]
@@ -187,7 +187,7 @@ docbank photos unhide <asset-id|node-selector> [--revision REV]
 docbank photos import <source-root> [destination] [--json]
 ```
 
-`rejects` previews the whole query, defaulting to Library. Repeat the same query with the returned digest in `--confirm` to move fully rejected photos and their sidecars atomically to recoverable trash. The response includes the pre-move counts and `moved: true` when confirmation moves at least one photo, otherwise `moved: false`. `--hidden` prompts for the passcode. `--coverage` and `--profile-fingerprint` select processing coverage. Each confirmation moves a batch of up to 1,000 eligible photos and 1,000 live files in stable asset ID order; retained photos do not consume the bound. `movable` reports the batch size and `remaining` the eligible photos beyond it. Preview and confirm again for the rest.
+`rejects` previews the whole query, defaulting to Library. Save the preview JSON to a file and review its counts and targets. `--confirm FILE` moves those targets and their sidecars atomically to recoverable trash; `--confirm -` reads the preview from stdin. A changed asset revision, member node revision, or reject flag refuses the whole batch. Each preview targets up to 1,000 live files in stable asset ID order. Preview output includes complete counts, `movable` for the batch size, and `targets`; confirmation returns moved asset IDs. Preview and confirm again for the rest.
 
 Photo commands emit JSON through the daemon. Image and concrete video files are
 enrolled when created. Generic RAW files require explicit promotion.

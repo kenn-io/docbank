@@ -26,7 +26,6 @@ export class Photos {
   rejectsLoading = $state(false);
   rejectsError = $state("");
   rejectsSelected = $state(false);
-  private rejectsQuery?: SavedQueryV1Schema;
   hiding = $state(false);
   actionError = $state("");
   trashError = $state("");
@@ -139,37 +138,34 @@ export class Photos {
     this.rejects = undefined;
     this.rejectsError = "";
     this.rejectsSelected = selected;
-    this.rejectsQuery = structuredClone(photoQuery);
+    const query = structuredClone(photoQuery);
     if (selected) {
       const ids = [...this.selection.selectedIDs].sort();
       if (!ids.length || ids.length > photoRejectsSelectionLimit) {
         this.rejectsError = `Select between 1 and ${photoRejectsSelectionLimit} photos to preview selected rejects.`;
         return;
       }
-      this.rejectsQuery.filters = { ...this.rejectsQuery.filters, asset_ids: ids };
+      query.filters = { ...query.filters, asset_ids: ids };
     }
     this.rejectsLoading = true;
     try {
-      const result = await preflightPhotoRejects({ query: this.rejectsQuery, hidden: this.hidden }, { session: this.session, signal: AbortSignal.timeout(60_000) });
-      if (this.rejectsScopeChanged()) throw new Error("Selection changed. Preview rejects again.");
+      const result = await preflightPhotoRejects({ query, hidden: this.hidden }, { session: this.session, signal: AbortSignal.timeout(60_000) });
       if (!this.disposed) this.rejects = result;
     } catch (cause) { this.rejectsFailure(cause); }
     finally { this.rejectsLoading = false; }
   }
 
   async trashRejects(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
-    if (this.disposed || this.trashing || this.hiding || !this.rejects?.movable) return false;
-    if (this.rejectsScopeChanged()) {
-      this.rejects = undefined;
-      this.rejectsError = "Selection changed. Preview rejects again.";
-      return false;
-    }
-    const digest = this.rejects.digest;
+    if (this.disposed || this.trashing || this.hiding || !this.rejects?.targets.length) return false;
+    const targets = this.rejects.targets;
     this.cancelPending();
     this.trashing = true;
     this.rejectsError = "";
     try {
-      await movePhotoRejects({ query: this.rejectsQuery!, hidden: this.hidden, digest }, { session: this.session, signal: AbortSignal.timeout(60_000) });
+      const result = await movePhotoRejects({ hidden: this.hidden, targets }, { session: this.session, signal: AbortSignal.timeout(60_000) });
+      const restore = preserve?.();
+      for (const id of result.moved) this.removeTarget(id);
+      await restore?.();
       this.rejects = undefined;
       ontrashed?.();
       await this.replace("refresh", preserve);
@@ -190,10 +186,6 @@ export class Photos {
     if (this.disposed) return;
     this.rejectsError = cause instanceof Error ? cause.message : String(cause);
     if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
-  }
-
-  private rejectsScopeChanged() {
-    return this.rejectsSelected && JSON.stringify([...this.selection.selectedIDs].sort()) !== JSON.stringify(this.rejectsQuery?.filters?.asset_ids);
   }
 
   private async replace(mode: "refresh" | "expiry", preserve?: () => (() => Promise<void>) | undefined) {
@@ -318,7 +310,7 @@ export class Photos {
     this.trashTargets = this.trashTargets.filter(item => item.asset_id !== id);
     const ids = new Set(this.selection.selectedIDs);
     ids.delete(id);
-    this.selection = { selectedIDs: ids, anchorID: undefined };
+    this.selection = { selectedIDs: ids, anchorID: this.selection.anchorID === id ? undefined : this.selection.anchorID };
   }
 
   private pruneTrashTargets() { this.trashTargets = this.trashTargets.filter(item => this.selection.selectedIDs.has(item.asset_id)); }

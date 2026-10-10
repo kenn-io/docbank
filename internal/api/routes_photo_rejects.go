@@ -10,41 +10,40 @@ import (
 )
 
 type PhotoRejectsRequest struct {
-	Query    QueryPayload           `json:"query"`
-	Coverage WorkspaceQueryCoverage `json:"coverage,omitzero"`
-	Hidden   bool                   `json:"hidden,omitempty"`
-	Digest   string                 `json:"digest,omitempty" maxLength:"64"`
+	Query  QueryPayload `json:"query"`
+	Hidden bool         `json:"hidden,omitempty"`
+}
+
+type MovePhotoRejectsRequest struct {
+	Hidden  bool                      `json:"hidden,omitempty"`
+	Targets []store.PhotoRejectTarget `json:"targets" maxItems:"1000"`
 }
 
 type PhotoRejectsPreflight = store.PhotoRejectsPreflight
+type PhotoRejectsMoved = store.PhotoRejectsMoved
 
 func registerPhotoRejectRoutes(api huma.API, d Deps, g *gate) {
-	for _, confirm := range []bool{false, true} {
-		id, path, summary := "preflightPhotoRejects", "/api/v1/photos/rejects/preflight", "Preview rejected photos in the current scope"
-		if confirm {
-			id, path, summary = "movePhotoRejects", "/api/v1/photos/rejects/trash", "Move confirmed rejects to trash and return the confirmed pre-move preview"
+	huma.Register(api, huma.Operation{OperationID: "preflightPhotoRejects", Method: http.MethodPost, Path: "/api/v1/photos/rejects/preflight", Summary: "Preview rejected photos in the current scope", MaxBodyBytes: query.MaxInputBytes + (64 << 10)}, func(ctx context.Context, in *struct{ Body PhotoRejectsRequest }) (*struct{ Body PhotoRejectsPreflight }, error) {
+		value, err := query.Parse(in.Body.Query)
+		if err != nil {
+			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 		}
-		huma.Register(api, huma.Operation{OperationID: id, Method: http.MethodPost, Path: path, Summary: summary, MaxBodyBytes: query.MaxInputBytes + (64 << 10)}, func(ctx context.Context, in *struct{ Body PhotoRejectsRequest }) (*struct{ Body PhotoRejectsPreflight }, error) {
-			value, err := query.Parse(in.Body.Query)
-			if err != nil {
-				return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
-			}
-			request := store.PhotoRejectsRequest{Query: value, Hidden: in.Body.Hidden, Coverage: store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint}}
-			var result PhotoRejectsPreflight
-			if confirm {
-				err = g.mutate(func() error {
-					var callErr error
-					result, callErr = d.Store.MovePhotoRejects(ctx, request, in.Body.Digest)
-					return workspaceQueryError(callErr)
-				})
-			} else {
-				result, err = d.Store.PreflightPhotoRejects(ctx, request)
-				err = workspaceQueryError(err)
-			}
-			if err != nil {
-				return nil, err
-			}
-			return &struct{ Body PhotoRejectsPreflight }{Body: result}, nil
+		result, err := d.Store.PreflightPhotoRejects(ctx, store.PhotoRejectsRequest{Query: value, Hidden: in.Body.Hidden})
+		if err != nil {
+			return nil, workspaceQueryError(err)
+		}
+		return &struct{ Body PhotoRejectsPreflight }{Body: result}, nil
+	})
+	huma.Register(api, huma.Operation{OperationID: "movePhotoRejects", Method: http.MethodPost, Path: "/api/v1/photos/rejects/trash", Summary: "Move previewed rejected photos to trash", MaxBodyBytes: 256 << 10}, func(ctx context.Context, in *struct{ Body MovePhotoRejectsRequest }) (*struct{ Body PhotoRejectsMoved }, error) {
+		var result PhotoRejectsMoved
+		err := g.mutate(func() error {
+			var err error
+			result, err = d.Store.MovePhotoRejects(ctx, in.Body.Hidden, in.Body.Targets)
+			return workspaceQueryError(err)
 		})
-	}
+		if err != nil {
+			return nil, err
+		}
+		return &struct{ Body PhotoRejectsMoved }{Body: result}, nil
+	})
 }

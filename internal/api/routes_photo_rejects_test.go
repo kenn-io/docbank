@@ -25,20 +25,21 @@ func TestPhotoRejectRoutes(t *testing.T) {
 	var preview api.PhotoRejectsPreflight
 	require.NoError(t, json.Unmarshal([]byte(body), &preview))
 	require.Equal(t, 1, preview.Photos)
-	require.Equal(t, 1, preview.Movable)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, request)
-	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
-	request.Digest = preview.Digest
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, request)
+	require.Len(t, preview.Targets, 1)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, map[string]any{})
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	for _, targets := range [][]store.PhotoRejectTarget{{{AssetID: "bad", Revision: 1, MemberRevision: 1}}, make([]store.PhotoRejectTarget, 1001)} {
+		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, api.MovePhotoRejectsRequest{Targets: targets})
+		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	}
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, api.MovePhotoRejectsRequest{Targets: preview.Targets})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var moved api.PhotoRejectsMoved
+	require.NoError(t, json.Unmarshal([]byte(body), &moved))
+	require.Equal(t, []string{asset.ID}, moved.Moved)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, api.MovePhotoRejectsRequest{Targets: preview.Targets})
+	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
 	request.Query = api.QueryPayload(`{"v":2}`)
 	response, _ = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/preflight", nil, request)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode)
-	for _, invalid := range []api.PhotoRejectsRequest{
-		{Query: api.QueryPayload(`{}`), Digest: "fake", Coverage: api.WorkspaceQueryCoverage{Configuration: "bad"}},
-		{Query: api.QueryPayload(`{"syntax":"advanced","text":"camera:("}`), Digest: "fake"},
-	} {
-		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, invalid)
-		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	}
 }

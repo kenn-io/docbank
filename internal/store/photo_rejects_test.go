@@ -23,12 +23,15 @@ func rejectOriginals(t *testing.T, s *Store, asset PhotoAsset) {
 	require.NoError(t, err)
 }
 
+func rejectsRequest() PhotoRejectsRequest {
+	return PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
+}
+
 func TestPhotoRejectsPreviewDuringWrite(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	asset := authoredPair(t, s)
-	_, err := s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
-	require.NoError(t, err)
+	rejectOriginals(t, s, asset)
 	tx, err := s.writeDB.BeginTx(t.Context(), nil)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, tx.Rollback()) }()
@@ -36,65 +39,130 @@ func TestPhotoRejectsPreviewDuringWrite(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	value, err := query.Parse([]byte(`{}`))
+	preview, err := s.PreflightPhotoRejects(ctx, rejectsRequest())
 	require.NoError(t, err)
-	preview, err := s.PreflightPhotoRejects(ctx, PhotoRejectsRequest{Query: value})
-	require.NoError(t, err)
-	assert.Equal(t, 1, preview.Unchanged)
-	assert.Empty(t, preview.Mixed)
-	_, err = s.MovePhotoRejects(ctx, PhotoRejectsRequest{Query: value}, "stale")
-	require.ErrorIs(t, err, ErrStaleRevision)
+	assert.Len(t, preview.Targets, 1)
 }
 
-func TestPhotoRejectsMixedAndStale(t *testing.T) {
+func TestPhotoRejectsStaleTargets(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"flag", "membership", "scope", "node", "retained"} {
+	for _, change := range []string{"flag", "flag reread", "flag restored", "added", "removed", "trash", "restore", "hidden", "unhidden", "revision"} {
 		t.Run(change, func(t *testing.T) {
 			s := newTestStore(t)
 			asset := authoredPair(t, s)
-			request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
 			rejectOriginals(t, s, asset)
-			var retainedID int64
-			if change == "retained" {
-				retained, err := s.CreateFile(t.Context(), s.RootID(), "retained.jpg", fakeHash("a1"), 4, "image/jpeg")
+			ctx := t.Context()
+			request := rejectsRequest()
+			if change == "hidden" || change == "unhidden" {
+				require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+				token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
 				require.NoError(t, err)
-				retainedID = retained.ID
+				ctx = WithPhotoHiddenToken(ctx, token)
+				if change == "unhidden" {
+					var err error
+					asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+					require.NoError(t, err)
+					request.Hidden = true
+				}
 			}
-			preview, err := s.PreflightPhotoRejects(t.Context(), request)
+			if change == "restore" {
+				node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+				require.NoError(t, err)
+				_, _, err = s.Trash(ctx, node.ID, node.Revision)
+				require.NoError(t, err)
+			}
+			preview, err := s.PreflightPhotoRejects(ctx, request)
+			require.NoError(t, err)
+			require.Len(t, preview.Targets, 1)
+			asset, err = s.PhotoAssetByID(ctx, asset.ID)
 			require.NoError(t, err)
 			switch change {
-			case "flag":
-				asset, err = s.PhotoAssetByID(t.Context(), asset.ID)
+			case "flag", "flag restored":
+				_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
 				require.NoError(t, err)
-				_, err = s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
-			case "membership":
-				asset, err = s.PhotoAssetByID(t.Context(), asset.ID)
-				require.NoError(t, err)
-				_, err = s.DetachPhotoFile(t.Context(), asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
-			case "scope":
-				_, err = s.CreateFile(t.Context(), s.RootID(), "new.jpg", fakeHash("c3"), 2, "image/jpeg")
-			case "retained":
-				_, err = s.db.Exec(`UPDATE nodes SET revision=revision+1,name='renamed.jpg' WHERE id=?`, retainedID)
-			case "node":
-				_, err = s.db.Exec(`UPDATE nodes SET revision=revision+1 WHERE id=?`, asset.Files[0].NodeID)
+				if change == "flag restored" {
+					_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision + 1, Patch: PhotoAuthoredPatch{Flag: new("reject")}}})
+				}
+			case "flag reread":
+				_, err = s.db.Exec(`UPDATE photo_files SET flag='pick' WHERE file_id=?`, asset.Files[0].ID)
+			case "added":
+				node, createErr := s.CreateFile(ctx, s.RootID(), "added.raw", fakeHash("a1"), 4, "application/octet-stream")
+				require.NoError(t, createErr)
+				_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, node.ID, PhotoRoleRAW, nil)
+			case "removed":
+				_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
+			case "trash":
+				node, readErr := s.NodeByID(ctx, asset.Files[0].NodeID)
+				require.NoError(t, readErr)
+				_, _, err = s.Trash(ctx, node.ID, node.Revision)
+			case "restore":
+				node, readErr := s.NodeByID(ctx, asset.Files[0].NodeID)
+				require.NoError(t, readErr)
+				_, _, err = s.Restore(ctx, node.ID, node.Revision)
+			case "hidden", "unhidden":
+				_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, change == "hidden")
+			case "revision":
+				_, err = s.db.Exec(`UPDATE photo_assets SET revision=revision+1 WHERE asset_id=?`, asset.ID)
 			}
 			require.NoError(t, err)
-			_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
-			if change == "retained" {
-				require.NoError(t, err)
-			} else {
-				require.ErrorIs(t, err, ErrStaleRevision)
-			}
-			for _, file := range asset.Files {
-				node, err := s.NodeByID(t.Context(), file.NodeID)
-				require.NoError(t, err)
-				assert.Equal(t, change == "retained", node.TrashedAt != nil)
-			}
+			roots, err := s.TrashedRoots(ctx)
+			require.NoError(t, err)
+			_, err = s.MovePhotoRejects(ctx, request.Hidden, preview.Targets)
+			require.ErrorIs(t, err, ErrStaleRevision)
+			current, err := s.TrashedRoots(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, roots, current)
 		})
 	}
 }
 
-func TestPhotoRejectsBeyondPageAndOverflow(t *testing.T) {
+func TestPhotoRejectsPreviewedAlbumTargets(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := authoredPair(t, s)
+	rejectOriginals(t, s, asset)
+	set, err := s.CreatePhotoSet(t.Context(), "Synthetic album")
+	require.NoError(t, err)
+	set, err = s.ChangePhotoSetMembers(t.Context(), set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	value, err := query.Parse([]byte(`{"filters":{"set_ids":["` + set.ID + `"]}}`))
+	require.NoError(t, err)
+	preview, err := s.PreflightPhotoRejects(t.Context(), PhotoRejectsRequest{Query: value})
+	require.NoError(t, err)
+	require.Len(t, preview.Targets, 1)
+	_, err = s.ChangePhotoSetMembers(t.Context(), set.ID, set.Revision, false, PhotoSetSelection{AssetIDs: []string{asset.ID}})
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), s.RootID(), "unrelated.jpg", fakeHash("a1"), 4, "image/jpeg")
+	require.NoError(t, err)
+	moved, err := s.MovePhotoRejects(t.Context(), false, preview.Targets)
+	require.NoError(t, err)
+	assert.Equal(t, []string{asset.ID}, moved.Moved)
+}
+
+func TestPhotoRejectsHiddenLock(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := authoredPair(t, s)
+	rejectOriginals(t, s, asset)
+	require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+	_, err := s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	request := rejectsRequest()
+	request.Hidden = true
+	_, err = s.PreflightPhotoRejects(t.Context(), request)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	token, _, err := s.UnlockPhotoHidden(t.Context(), "synthetic-passcode")
+	require.NoError(t, err)
+	ctx := WithPhotoHiddenToken(t.Context(), token)
+	preview, err := s.PreflightPhotoRejects(ctx, request)
+	require.NoError(t, err)
+	require.Len(t, preview.Targets, 1)
+	require.NoError(t, s.LockPhotoHidden(ctx))
+	_, err = s.MovePhotoRejects(ctx, true, preview.Targets)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+}
+
+func TestPhotoRejectsFileBound(t *testing.T) {
 	t.Parallel()
 	t.Run("sidecar file cap", func(t *testing.T) {
 		s := newTestStore(t)
@@ -134,102 +202,19 @@ func TestPhotoRejectsBeyondPageAndOverflow(t *testing.T) {
 		assert.Equal(t, 334, preview.Photos)
 		assert.Equal(t, 1002, preview.Files)
 		assert.Equal(t, 333, preview.Movable)
-		_, err = s.MovePhotoRejects(t.Context(), PhotoRejectsRequest{Query: value}, preview.Digest)
+		_, err = s.MovePhotoRejects(t.Context(), false, preview.Targets)
 		require.NoError(t, err)
 		preview, err = s.PreflightPhotoRejects(t.Context(), PhotoRejectsRequest{Query: value})
 		require.NoError(t, err)
 		assert.Equal(t, 1, preview.Photos)
 		assert.Equal(t, 1, preview.Movable)
 		assert.Equal(t, 3, preview.Files)
-		_, err = s.MovePhotoRejects(t.Context(), PhotoRejectsRequest{Query: value}, preview.Digest)
+		_, err = s.MovePhotoRejects(t.Context(), false, preview.Targets)
 		require.NoError(t, err)
 		roots, err := s.TrashedRoots(t.Context())
 		require.NoError(t, err)
 		assert.Len(t, roots, 1002)
 	})
-	s := newTestStore(t)
-	var targets []PhotoAuthoredTarget
-	for i := range MaxPhotoRejectsMove + 2 {
-		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("photo-%04d.jpg", i), fakeHash("a1"), 1, "image/jpeg")
-		require.NoError(t, err)
-		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
-		require.NoError(t, err)
-		targets = append(targets, PhotoAuthoredTarget{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Flag: new("reject")}})
-	}
-	_, err := s.EditPhotoAuthored(t.Context(), targets[:1])
-	require.NoError(t, err)
-	request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
-	preview, err := s.PreflightPhotoRejects(t.Context(), request)
-	require.NoError(t, err)
-	assert.Equal(t, 1, preview.Photos)
-	assert.Equal(t, 1001, preview.Unchanged)
-	_, err = s.EditPhotoAuthored(t.Context(), targets[1:1001])
-	require.NoError(t, err)
-	preview, err = s.PreflightPhotoRejects(t.Context(), request)
-	require.NoError(t, err)
-	assert.Equal(t, 1001, preview.Photos)
-	assert.Equal(t, 1001, preview.Files)
-	assert.Equal(t, 1000, preview.Movable)
-	var outsideBatch string
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT file_id FROM photo_files WHERE flag='reject' ORDER BY asset_id DESC LIMIT 1`).Scan(&outsideBatch))
-	_, err = s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{FileID: outsideBatch, Revision: 2, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
-	require.NoError(t, err)
-	_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
-	require.ErrorIs(t, err, ErrStaleRevision)
-	_, err = s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{FileID: outsideBatch, Revision: 3, Patch: PhotoAuthoredPatch{Flag: new("reject")}}})
-	require.NoError(t, err)
-	seedInitialAuditAuthority(t, s, s.RootID())
-	preview, err = s.PreflightPhotoRejects(t.Context(), request)
-	require.NoError(t, err)
-	started := time.Now()
-	moved, err := s.MovePhotoRejects(t.Context(), request, preview.Digest)
-	t.Logf("audited 1,000-photo confirmation: %s", time.Since(started))
-	require.NoError(t, err)
-	assert.Equal(t, preview, moved)
-	roots, err := s.TrashedRoots(t.Context())
-	require.NoError(t, err)
-	assert.Len(t, roots, 1000)
-	var receipts int
-	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_change_receipts WHERE operation='trash'`).Scan(&receipts))
-	assert.Equal(t, 1000, receipts)
-	preview, err = s.PreflightPhotoRejects(t.Context(), request)
-	require.NoError(t, err)
-	assert.Equal(t, 1, preview.Photos)
-	assert.Equal(t, 1, preview.Movable)
-	assert.Equal(t, 1, preview.Unchanged)
-	_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
-	require.NoError(t, err)
-	roots, err = s.TrashedRoots(t.Context())
-	require.NoError(t, err)
-	assert.Len(t, roots, 1001)
-}
-
-func TestPhotoRejectsHiddenScope(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	asset := authoredPair(t, s)
-	rejectOriginals(t, s, asset)
-	require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
-	_, err := s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}, Hidden: true}
-	_, err = s.PreflightPhotoRejects(t.Context(), request)
-	require.ErrorIs(t, err, ErrHiddenLocked)
-	token, _, err := s.UnlockPhotoHidden(t.Context(), "synthetic-passcode")
-	require.NoError(t, err)
-	ctx := WithPhotoHiddenToken(t.Context(), token)
-	visible, err := s.PreflightPhotoRejects(ctx, PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}})
-	require.NoError(t, err)
-	assert.Zero(t, visible.Photos)
-	preview, err := s.PreflightPhotoRejects(ctx, request)
-	require.NoError(t, err)
-	assert.Equal(t, 1, preview.Photos)
-	require.NoError(t, s.LockPhotoHidden(ctx))
-	_, err = s.MovePhotoRejects(ctx, request, preview.Digest)
-	require.ErrorIs(t, err, ErrHiddenLocked)
-	node, err := s.NodeByID(t.Context(), asset.Files[0].NodeID)
-	require.NoError(t, err)
-	assert.Nil(t, node.TrashedAt)
 }
 
 func TestPhotoRejectsRollbackAllAssets(t *testing.T) {
@@ -244,8 +229,8 @@ func TestPhotoRejectsRollbackAllAssets(t *testing.T) {
 				require.NoError(t, err)
 				rejectOriginals(t, s, asset)
 			}
-			request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
-			preview, err := s.PreflightPhotoRejects(t.Context(), request)
+			seedInitialAuditAuthority(t, s, s.RootID())
+			preview, err := s.PreflightPhotoRejects(t.Context(), rejectsRequest())
 			require.NoError(t, err)
 			trigger := `CREATE TRIGGER fail_second_trash BEFORE UPDATE OF trashed_at ON nodes WHEN NEW.trashed_at IS NOT NULL AND (SELECT COUNT(*) FROM nodes WHERE trashed_at IS NOT NULL)>0 BEGIN SELECT RAISE(ABORT,'synthetic trash failure'); END`
 			if change != "failure" {
@@ -257,7 +242,7 @@ func TestPhotoRejectsRollbackAllAssets(t *testing.T) {
 			}
 			_, err = s.db.Exec(trigger)
 			require.NoError(t, err)
-			_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
+			_, err = s.MovePhotoRejects(t.Context(), false, preview.Targets)
 			if change == "failure" {
 				require.ErrorContains(t, err, "synthetic trash failure")
 			} else {
@@ -266,9 +251,9 @@ func TestPhotoRejectsRollbackAllAssets(t *testing.T) {
 			roots, err := s.TrashedRoots(t.Context())
 			require.NoError(t, err)
 			assert.Empty(t, roots)
-			current, err := s.PreflightPhotoRejects(t.Context(), request)
-			require.NoError(t, err)
-			assert.Equal(t, preview.Digest, current.Digest)
+			var receipts int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_change_receipts WHERE operation='trash'`).Scan(&receipts))
+			assert.Zero(t, receipts)
 		})
 	}
 }
@@ -314,7 +299,7 @@ func TestPhotoRejectsTrashedOriginalStillCounts(t *testing.T) {
 	for _, pair := range preview.Mixed {
 		assert.Contains(t, pair.Members, trashedMembers[pair.AssetID])
 	}
-	_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
+	_, err = s.MovePhotoRejects(t.Context(), false, preview.Targets)
 	require.NoError(t, err)
 	live, err := s.NodeByID(t.Context(), firstRawNodeID)
 	require.NoError(t, err)

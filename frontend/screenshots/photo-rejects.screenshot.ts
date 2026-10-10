@@ -78,6 +78,12 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
       await page.screenshot({ path: path.join(output!, `web-photo-rejects-selected-${theme}.png`), animations: "disabled" });
     }
     await modal.getByRole("button", { name: "Keep in Docbank", exact: true }).click();
+    await page.route("**/api/v1/photos/assets/*/trash", route => route.fulfill({ status: 412, contentType: "application/problem+json", body: JSON.stringify({ detail: "Synthetic trash refusal", code: "stale_revision" }) }), { times: 1 });
+    await page.getByRole("button", { name: "Move to trash", exact: true }).click();
+    const ordinaryTrash = page.getByRole("dialog", { name: "Move selected photos to trash", exact: true });
+    await ordinaryTrash.getByRole("button", { name: "Move to trash", exact: true }).click();
+    await expect(ordinaryTrash.getByRole("alert")).toContainText("Synthetic trash refusal");
+    await ordinaryTrash.getByRole("button", { name: "Keep in Docbank", exact: true }).click();
     await select("Synthetic-photo-00005.jpg");
     await select("Synthetic-photo-00003.jpg");
     const mounted = await scroll.elementHandle();
@@ -110,6 +116,7 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
     await expect(page.getByText("2 selected photos", { exact: true })).toBeVisible();
     expect(await mounted!.evaluate(element => element.isConnected)).toBe(true);
     await expect.poll(() => scroll.locator(`[data-asset="${anchor.id}"]`).evaluate(element => element.getBoundingClientRect().top - element.closest(".photo-scroll")!.getBoundingClientRect().top)).toBeCloseTo(anchor.offset, 0);
+    await expect(page.getByRole("button", { name: "Move rejects", exact: true })).toBeEnabled();
     for (const theme of ["light", "dark"]) {
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-photo-rejects-recovered-${theme}.png`), animations: "disabled" });

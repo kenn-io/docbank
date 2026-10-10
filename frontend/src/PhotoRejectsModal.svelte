@@ -17,14 +17,14 @@
       <ul>{#each photos.rejects.mixed as pair}<li>{pair.members.map(member => `${member.name}: ${member.flag || "undecided"}${member.in_trash ? " (in Trash)" : ""}`).join(" · ")}</li>{/each}</ul>
       {#if photos.rejects.mixed_count > photos.rejects.mixed.length}<p>And {(photos.rejects.mixed_count - photos.rejects.mixed.length).toLocaleString()} more mixed pairs.</p>{/if}
     {/if}
-    {#if photos.rejects.photos > photos.rejects.movable}<p>This moves {photos.rejects.movable.toLocaleString()} now. Choose Move rejects again for the remaining {(photos.rejects.photos - photos.rejects.movable).toLocaleString()}.</p>{/if}
+    {#if photos.rejects.photos > photos.rejects.targets.length}<p>This moves {photos.rejects.targets.length.toLocaleString()} now. Choose Move rejects again for the remaining {(photos.rejects.photos - photos.rejects.targets.length).toLocaleString()}.</p>{/if}
     <p>You can restore these photos from Trash.</p>
   {/if}
   {#if photos.rejectsError}<p role="alert">{photos.rejectsError}</p>{/if}
   {#snippet footer()}
     <Button disabled={photos.trashing} onclick={onclose}>Keep in Docbank</Button>
     {#if !photos.rejects && !photos.rejectsLoading}<Button onclick={() => void photos.previewRejects(photos.rejectsSelected)}>Preview again</Button>{/if}
-    <Button tone="danger" disabled={photos.trashing || photos.rejectsLoading || !photos.rejects?.movable} onclick={() => void onmove()}>{photos.trashing ? "Moving…" : `Move ${photos.rejects?.movable ?? 0} to trash`}</Button>
+    <Button tone="danger" disabled={photos.trashing || photos.rejectsLoading || !photos.rejects?.targets.length} onclick={() => void onmove()}>{photos.trashing ? "Moving…" : `Move ${photos.rejects?.targets.length ?? 0} to trash`}</Button>
   {/snippet}
 </Modal>
 
