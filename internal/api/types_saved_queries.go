@@ -72,6 +72,23 @@ type savedQueryFiltersSchema struct {
 	Lenses               []string                           `json:"lenses,omitempty" maxItems:"64"`
 	SetIDs               []string                           `json:"set_ids,omitempty" maxItems:"64" format:"uuid"`
 	AssetIDs             []string                           `json:"asset_ids,omitempty" maxItems:"64" format:"uuid"`
+	FocusMin             *string                            `json:"focus_min,omitempty" nullable:"true" maxLength:"64"`
+	FocusMax             *string                            `json:"focus_max,omitempty" nullable:"true" maxLength:"64"`
+	BlurMin              *string                            `json:"blur_min,omitempty" nullable:"true" maxLength:"64"`
+	BlurMax              *string                            `json:"blur_max,omitempty" nullable:"true" maxLength:"64"`
+	BrightnessMin        *string                            `json:"brightness_min,omitempty" nullable:"true" maxLength:"64"`
+	BrightnessMax        *string                            `json:"brightness_max,omitempty" nullable:"true" maxLength:"64"`
+	FramingMin           *string                            `json:"framing_min,omitempty" nullable:"true" maxLength:"64"`
+	FramingMax           *string                            `json:"framing_max,omitempty" nullable:"true" maxLength:"64"`
+	AestheticsMin        *string                            `json:"aesthetics_min,omitempty" nullable:"true" maxLength:"64"`
+	AestheticsMax        *string                            `json:"aesthetics_max,omitempty" nullable:"true" maxLength:"64"`
+	ColorRedMin          *string                            `json:"color_red_min,omitempty" nullable:"true" maxLength:"64"`
+	ColorRedMax          *string                            `json:"color_red_max,omitempty" nullable:"true" maxLength:"64"`
+	ColorGreenMin        *string                            `json:"color_green_min,omitempty" nullable:"true" maxLength:"64"`
+	ColorGreenMax        *string                            `json:"color_green_max,omitempty" nullable:"true" maxLength:"64"`
+	ColorBlueMin         *string                            `json:"color_blue_min,omitempty" nullable:"true" maxLength:"64"`
+	ColorBlueMax         *string                            `json:"color_blue_max,omitempty" nullable:"true" maxLength:"64"`
+	Unevaluated          *bool                              `json:"unevaluated,omitempty" nullable:"true"`
 	ISOMin               *int64                             `json:"iso_min,omitempty" nullable:"true" minimum:"0" maximum:"9007199254740991"`
 	ISOMax               *int64                             `json:"iso_max,omitempty" nullable:"true" minimum:"0" maximum:"9007199254740991"`
 	CaptureAfter         *string                            `json:"capture_after,omitempty" nullable:"true" format:"date"`

@@ -65,6 +65,41 @@ NEF, and RAF files have decoder paths. Format support does not guarantee that
 every individual file decodes. Unsupported and deterministic decode failures
 are stored as terminal results. Temporary storage or read failures retry.
 
+## Quality signals
+
+The daemon measures each ready grid preview locally. The photo query API
+returns `quality.state` as `ready` with numeric scores after measurement,
+or `pending` with `signals: null` while work can finish. A measured zero stays zero.
+Replacing content or changing the display file selects that version's signals.
+Videos have no quality object. `unavailable` with `signals: null` means work
+has finished without scores: the grid preview is unsupported or failed, or its
+verified bytes do not decode. Temporary read failures stay `pending` and retry.
+
+All scores use the 0..1 scale. Focus measures adjacent luminance differences
+on a 16-by-16 sample, stretched by a 0.15 calibration ceiling. At that size it
+tracks coarse, large-scale contrast, not sharpness: a blurred copy of
+a photo scores close to the original, and a sharp photo of a plain surface
+scores low. Blur is `1 - focus`. Brightness uses
+RGB luminance weights, with black at 0 and white at 1. `color_red`,
+`color_green`, and `color_blue` are mean channel values. Framing scores the
+contrast-weighted center against the rule-of-thirds intersections. Flat
+images receive framing 0.5. Aesthetics combines focus, balanced exposure,
+channel spread, and framing. These pixel heuristics do not judge subject
+intent, distinguish motion blur from soft focus, or detect faces.
+
+Scores can differ slightly from other tools because of image sampling differences.
+
+Each scalar supports `_min` and `_max` query filters. JSON bounds are decimal
+strings, such as `"brightness_min":"0.4"`, to preserve QueryV1's integer-only
+JSON number contract. Advanced search accepts `brightness_min:0.4 color_blue_min:0.5`.
+Quality filters follow the same version as other photo metadata filters. Photos
+uses the asset's selected display; Documents uses each document's own version.
+`unevaluated:true` selects versions eligible for measurement with pending or
+unavailable measurements. Expressions reject `unevaluated:false`; use
+`focus_min:0` for measured photos. Structured `"unevaluated":false` acts as omission.
+Missing measurements fail numeric comparisons. Saved queries keep these filters.
+Signals rebuild after restore and stay out of backups.
+
 ## CLI
 
 Inspect the asset created for a node or use a stable asset UUID:

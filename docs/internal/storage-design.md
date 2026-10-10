@@ -384,7 +384,7 @@ overrides remain unchanged. Human graph, display, exclusion, and preference
 changes append bounded immutable `photo_change_receipts` rows. No-op mutations
 keep their revision and append no receipt.
 
-Schema version 29 exports assets, files, settings, albums, album members, and receipts in stable
+Schema version 30 exports assets, files, settings, albums, album members, and receipts in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
 revisions, receipt JSON, and the complete graph before commit. Released
@@ -422,6 +422,10 @@ differs, so an unchanged store pays one single-row read. A recipe change costs
 one decode of every retained source generation and one gazetteer load when any
 has GPS; it reads no original blobs. A valid GPS pair can have no label when
 the embedded Natural Earth map has no matching country or simplified boundary.
+
+### Photo quality signals
+
+Schema 30 adds `photo_quality_signals`, a derived row per content version and evaluator fingerprint. It records focus, blur, brightness, color, framing, and aesthetics from the verified grid preview, or an unavailable result. It stays out of metadata JSONL and backups; the quality worker rebuilds it from ready previews.
 
 SQLite is Docbank's runtime query and transaction engine, but its historical
 page layout is not the intended long-lived backup contract. The logical

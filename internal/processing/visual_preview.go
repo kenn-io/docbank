@@ -26,48 +26,30 @@ import (
 )
 
 const (
-	visualPreviewMaxEdgePixels   = 4096
-	visualPreviewMaxSourcePixels = 100_000_000
-	visualPreviewJPEGQuality     = 90
-	visualPreviewMaxJPEGSegments = 1024
-	visualPreviewMaxPNGChunks    = 1024
-	visualPreviewMaxWebPChunks   = 1024
-	visualPreviewMaxEXIFBytes    = 1 << 20
-	visualPreviewWebPAnimation   = 1 << 1
-	visualPreviewWebPEXIF        = 1 << 3
-	visualPreviewWebPICCProfile  = 1 << 5
-	// Bump the descriptor revision when any byte-producing choice changes.
-	visualPreviewProcessorDescriptor = "docbank-visual-preview:jpeg+png+gif-stdlib+webp+embedded-camera-raw+" +
-		"x-image-draw-v0.44.0:max-edge=%d:quality=%d:alpha=white:v7"
+	visualPreviewProcessorDescriptor = document.VisualPreviewProcessorDescriptor
+	visualPreviewMaxEdgePixels       = document.VisualPreviewMaxEdgePixels
+	visualPreviewMaxSourcePixels     = 100_000_000
+	visualPreviewJPEGQuality         = document.VisualPreviewJPEGQuality
+	visualPreviewMaxJPEGSegments     = 1024
+	visualPreviewMaxPNGChunks        = 1024
+	visualPreviewMaxWebPChunks       = 1024
+	visualPreviewMaxEXIFBytes        = 1 << 20
+	visualPreviewWebPAnimation       = 1 << 1
+	visualPreviewWebPEXIF            = 1 << 3
+	visualPreviewWebPICCProfile      = 1 << 5
 )
 
-var visualPreviewRecipe = document.VisualPreviewRecipeV1{
-	ContractVersion:   document.VisualPreviewContractV1,
-	MaxEdgePixels:     visualPreviewMaxEdgePixels,
-	OutputMediaType:   "image/jpeg",
-	OrientationPolicy: "apply",
-	ColorPolicy:       "srgb",
-	FramePolicy:       "primary",
-	ProcessorFingerprint: fingerprintVisualPreviewProcessor(fmt.Sprintf(
-		visualPreviewProcessorDescriptor, visualPreviewMaxEdgePixels, visualPreviewJPEGQuality)),
-}
+var visualPreviewRecipe = func() document.VisualPreviewRecipeV1 {
+	recipe, err := document.BuiltInVisualPreviewRecipe("large")
+	if err != nil {
+		panic(err)
+	}
+	return recipe
+}()
 
 // VisualPreviewRecipeForSize returns a canonical built-in size recipe.
 func VisualPreviewRecipeForSize(size string) (document.VisualPreviewRecipeV1, error) {
-	recipe := visualPreviewRecipe
-	switch size {
-	case "grid":
-		recipe.MaxEdgePixels = 512
-	case "fit":
-		recipe.MaxEdgePixels = 2560
-	case "large":
-		return recipe, nil
-	default:
-		return document.VisualPreviewRecipeV1{}, fmt.Errorf("unknown visual preview size %q", size)
-	}
-	descriptor := fmt.Sprintf(visualPreviewProcessorDescriptor, recipe.MaxEdgePixels, visualPreviewJPEGQuality)
-	recipe.ProcessorFingerprint = fingerprintVisualPreviewProcessor(descriptor)
-	return recipe, nil
+	return document.BuiltInVisualPreviewRecipe(size)
 }
 
 func validateBuiltInVisualPreviewRecipe(recipe document.VisualPreviewRecipeV1) error {
@@ -795,11 +777,6 @@ func applyVisualPreviewOrientation(source *image.NRGBA, orientation int) *image.
 		}
 	}
 	return output
-}
-
-func fingerprintVisualPreviewProcessor(descriptor string) string {
-	digest := sha256.Sum256([]byte(descriptor))
-	return hex.EncodeToString(digest[:])
 }
 
 func failedVisualPreview(

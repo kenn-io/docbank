@@ -51,7 +51,7 @@ func TestQueryCompilePreviewErrorsAndAuthentication(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	resp, body := rawJSONRequest(t, ts.URL, http.MethodPost, queryParsePath, nil, `{}`)
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, body)
-	for _, text := range []string{`{"syntax":"advanced","text":"😀 AND"}`, `{"syntax":"advanced","text":"NOT tag:missing"}`} {
+	for _, text := range []string{`{"syntax":"advanced","text":"😀 AND"}`, `{"syntax":"advanced","text":"NOT tag:missing"}`, `{"syntax":"advanced","text":"unevaluated:false"}`, `{"syntax":"advanced","text":"unevaluated:\"false\""}`, `{"syntax":"advanced","text":"unevaluated:(true OR false)"}`} {
 		resp, body = rawJSONRequest(t, ts.URL, http.MethodPost, queryParsePath,
 			map[string]string{"X-Api-Key": testAPIKey}, text)
 		require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"image/color"
 	"log/slog"
 	"net"
 	"net/http"
@@ -18,6 +20,8 @@ import (
 	"go.kenn.io/kit/packstore"
 
 	docbank "go.kenn.io/docbank"
+	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
@@ -25,6 +29,7 @@ import (
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -32,6 +37,16 @@ func TestDerivedBackfillsAreRegisteredOnce(t *testing.T) {
 	catalog, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, catalog.Close()) })
+	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(t.TempDir(), "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	written, err := blobs.WriteDetailedContext(t.Context(), bytes.NewReader(mediatest.JPEG(32, 24, color.White)))
+	require.NoError(t, err)
+	encoding, err := written.EncodingName()
+	require.NoError(t, err)
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "synthetic-photo.jpg", written.Hash, written.Size, "image/jpeg",
+		store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize})
+	require.NoError(t, err)
 	logger := slog.New(slog.DiscardHandler)
 	supervisor := jobs.New(t.Context(), logger)
 	t.Cleanup(func() {
@@ -41,16 +56,31 @@ func TestDerivedBackfillsAreRegisteredOnce(t *testing.T) {
 	})
 
 	require.NoError(t, startProcessingJobs(
-		supervisor, catalog, nil, t.TempDir(), processing.NewRenditionRuntimeRegistry(), 1,
+		supervisor, catalog, blobs, t.TempDir(), processing.NewRenditionRuntimeRegistry(), 1,
 		api.NewOperationGate(), logger,
 	))
 	registered := map[string]int{}
 	for _, job := range supervisor.Snapshot() {
-		if job.Name == "derive:document-events" || job.Name == "derive:document-people" {
+		if job.Name == "derive:document-events" || job.Name == "derive:document-people" || job.Name == "derive:photo-quality" {
 			registered[job.Name]++
 		}
 	}
-	require.Equal(t, map[string]int{"derive:document-events": 1, "derive:document-people": 1}, registered)
+	require.Equal(t, map[string]int{"derive:document-events": 1, "derive:document-people": 1, "derive:photo-quality": 1}, registered)
+	emptyQuery, err := query.Parse([]byte(`{}`))
+	require.NoError(t, err)
+	var signals *document.PhotoQualitySignals
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		page, err := catalog.ListPhotoAssets(t.Context(), store.PhotoBrowseRequest{Query: emptyQuery}, nil)
+		if assert.NoError(c, err) && assert.Len(c, page.Items, 1) {
+			assert.Equal(c, node.CurrentVersionID, page.Items[0].ContentVersionID)
+			signals = page.Items[0].Quality
+			assert.NotNil(c, signals)
+		}
+	}, daemonStartTimeout, 50*time.Millisecond)
+	require.NoError(t, document.ValidatePhotoQualitySignals(*signals))
+	assert.InDelta(t, 1, signals.Brightness, 0.01)
+	assert.InDelta(t, 0, signals.Focus, 0.01)
+	assert.InDelta(t, 1, signals.Blur, 0.01)
 }
 
 func TestWebOriginUsesDedicatedEphemeralLoopbackListeners(t *testing.T) {

@@ -2,6 +2,18 @@
   "format": "docbank-query-identity-v1",
   "queries": [
     {
+      "name": "query_quality_optional_null_and_one",
+      "input_json": "{\"filters\":{\"focus_max\":\"1.0\",\"unevaluated\":null}}",
+      "canonical_utf8": "{\"filters\":{\"focus_max\":\"1\"},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:d47e3ee0bc97e15c431a16f5118b9b8c704e7add5cb0370a6edfa53182b892c8"
+    },
+    {
+      "name": "query_quality_decimal_bounds",
+      "input_json": "{\"filters\":{\"focus_min\":\"00.700\",\"blur_max\":\"0.000\",\"unevaluated\":true}}",
+      "canonical_utf8": "{\"filters\":{\"blur_max\":\"0\",\"focus_min\":\"0.7\",\"unevaluated\":true},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:509429903db1bb2054e34d1659073eb0795b091b16a48fbee3137a5909d42540"
+    },
+    {
       "name": "query_set_ids_added_time",
       "input_json": "{\"filters\":{\"set_ids\":[\"00000000-0000-4000-8000-000000000002\",\"00000000-0000-4000-8000-000000000001\",\"00000000-0000-4000-8000-000000000002\"]},\"sort\":{\"field\":\"added_time\",\"direction\":\"desc\"}}",
       "canonical_utf8": "{\"filters\":{\"set_ids\":[\"00000000-0000-4000-8000-000000000001\",\"00000000-0000-4000-8000-000000000002\"]},\"mode\":\"lexical\",\"sort\":{\"direction\":\"desc\",\"field\":\"added_time\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
@@ -95,6 +107,11 @@
     }
   ],
   "invalid_queries": [
+    {"name": "quality_numeric_decimal", "json_text": "{\"filters\":{\"focus_min\":0.7}}"},
+    {"name": "quality_nonfinite", "json_text": "{\"filters\":{\"focus_min\":\"NaN\"}}"},
+    {"name": "quality_negative_zero", "json_text": "{\"filters\":{\"focus_min\":\"-0\"}}"},
+    {"name": "quality_above_one", "json_text": "{\"filters\":{\"focus_min\":\"1.00000000000000001\"}}"},
+    {"name": "quality_reversed_precise_bounds", "json_text": "{\"filters\":{\"focus_min\":\"0.70000000000000001\",\"focus_max\":\"0.7\"}}"},
     {
       "name": "set_id_not_uuid",
       "json_text": "{\"filters\":{\"set_ids\":[\"album\"]}}"

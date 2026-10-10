@@ -562,12 +562,12 @@ func expressionTokenStartsOperand(kind expressionTokenKind) bool {
 		kind == expressionTokenLeftParen || kind == expressionTokenNot
 }
 
-var expressionFields = map[string]struct{}{
+var expressionFields = withQualityFields(map[string]struct{}{
 	"name": {}, "path": {}, "tag": {}, "collection": {}, "saved": {},
 	"mime": {}, "extension": {}, "media_family": {},
 	"modified_after": {}, "modified_before": {}, "size_min": {}, "size_max": {},
 	"text_coverage": {}, "has_duplicates": {}, "kind": {}, "camera": {}, "lens": {}, "iso": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps": {}, "asset": {}, "set": {},
-}
+})
 
 func expressionError(start, end int, message string) *ExpressionError {
 	return &ExpressionError{Offset: start, End: end, Message: message}

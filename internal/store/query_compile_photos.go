@@ -1,10 +1,13 @@
 package store
 
 import (
+	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
+	"go.kenn.io/docbank/document"
 	"golang.org/x/text/cases"
 
 	"go.kenn.io/docbank/internal/query"
@@ -14,21 +17,43 @@ func compilePhotoAssetPredicate(predicate string, args ...any) compiledQueryFrag
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files pf JOIN photo_assets pa ON pa.asset_id=pf.asset_id WHERE pf.node_id=n.id AND ` + predicate + `)`, args: args}
 }
 
-func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
+func (c queryCompiler) compilePhotoVersionPredicate(predicate func(alias string) string, args ...any) compiledQueryFragment {
 	if c.photoDisplayMetadata {
 		return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member
  JOIN photo_assets asset ON asset.asset_id=member.asset_id
  JOIN photo_files display ON display.file_id=asset.display_file_id
  JOIN nodes display_node ON display_node.id=display.node_id
- JOIN content_versions display_version ON display_version.version_id=display_node.current_version_id
- JOIN source_metadata_heads h ON h.source_sha256=display_version.blob_hash
- JOIN photo_technical_metadata p ON p.generation_id=h.generation_id
- WHERE member.node_id=n.id AND ` + predicate + `)`, args: args}
+ JOIN content_versions v ON v.version_id=display_node.current_version_id
+ WHERE member.node_id=n.id AND ` + predicate("v") + `)`, args: args}
 	}
-	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=cv.blob_hash AND ` + predicate + `)`, args: args}
+	return compiledQueryFragment{sql: predicate("cv"), args: args}
+}
+
+func isPhotoScalarField(field string) bool {
+	return query.IsQualityField(field) || slices.Contains([]string{"kind", "camera", "lens", "iso", "iso_min", "iso_max", "capture_after", "capture_before", "gps", "asset", "set"}, field)
+}
+
+func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
+	return c.compilePhotoVersionPredicate(func(alias string) string {
+		return `EXISTS (SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND ` + predicate + `)`
+	}, args...)
 }
 
 func (c queryCompiler) compilePhotoScalarPredicate(field, value string) (compiledQueryFragment, error) {
+	if query.IsQualityField(field) {
+		if field == "unevaluated" {
+			if value != "true" {
+				return compiledQueryFragment{}, errors.New("unevaluated must be true")
+			}
+		} else {
+			normalized, err := query.NormalizeQualityOperand(value)
+			if err != nil {
+				return compiledQueryFragment{}, err
+			}
+			value = normalized
+		}
+		return c.compilePhotoQualityPredicate(field, value)
+	}
 	switch field {
 	case "set":
 		if err := query.ValidateTextOperand(field, value); err != nil {
@@ -98,6 +123,22 @@ func (c queryCompiler) compilePhotoGPSPredicate(bounds query.GPSBounds) compiled
 
 func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int) (compiledQueryFragment, error) {
 	parts := []compiledQueryFragment{}
+	for _, bound := range query.QualityBounds(filters) {
+		if bound.Value != nil {
+			part, err := c.compilePhotoQualityPredicate(bound.Field, *bound.Value)
+			if err != nil {
+				return compiledQueryFragment{}, err
+			}
+			parts = append(parts, part)
+		}
+	}
+	if filters.Unevaluated {
+		part, err := c.compilePhotoQualityPredicate("unevaluated", "true")
+		if err != nil {
+			return compiledQueryFragment{}, err
+		}
+		parts = append(parts, part)
+	}
 	for _, set := range []struct {
 		field  string
 		values []string
@@ -142,4 +183,34 @@ func (c queryCompiler) compilePhotoFilters(filters query.Filters, start, end int
 		parts = append(parts, part)
 	}
 	return joinCompiledFragments(parts, ` AND `), nil
+}
+
+func (c queryCompiler) compilePhotoQualityPredicate(field, value string) (compiledQueryFragment, error) {
+	fingerprints, err := document.CurrentPhotoQualityFingerprints()
+	if err != nil {
+		return compiledQueryFragment{}, err
+	}
+	quality := func(alias string) string {
+		return `EXISTS (SELECT 1 FROM photo_quality_signals q WHERE q.content_version_id=` + alias + `.version_id
+ AND q.evaluator_fingerprint=? AND q.state='ready'`
+	}
+	args := []any{fingerprints.Evaluator}
+	if field == "unevaluated" {
+		return c.compilePhotoVersionPredicate(func(alias string) string {
+			return liveIncludedPhotoDisplayPredicate(alias) + ` AND NOT ` + quality(alias) + `)`
+		}, args...), nil
+	}
+	number, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return compiledQueryFragment{}, fmt.Errorf("parsing quality bound %s: %w", field, err)
+	}
+	column, operator := strings.TrimSuffix(field, "_min"), ">="
+	if maxColumn, ok := strings.CutSuffix(field, "_max"); ok {
+		column = maxColumn
+		operator = "<="
+	}
+	args = append(args, number)
+	return c.compilePhotoVersionPredicate(func(alias string) string {
+		return quality(alias) + ` AND q.` + column + operator + ` ?)`
+	}, args...), nil
 }

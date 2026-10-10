@@ -110,6 +110,17 @@ var releasedStorageSchemas = []releasedStorageSchema{
 		restoreSourceState:         restoreV28SourceState,
 		keepsProcessingIncarnation: true,
 	},
+	{
+		version: 29, release: "v0.15.1", backupSuffix: ".schema-v29.bak",
+		validate: func(db *sql.DB, _, _ []string) error {
+			return validateReleasedLayout(db, "v0.15.1", schemaV29Layout)
+		},
+		exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
+			return exportReleasedMetadataSnapshot(ctx, source, dst, 29)
+		},
+		restoreSourceState:         restoreV28SourceState,
+		keepsProcessingIncarnation: true,
+	},
 }
 
 var (
@@ -123,7 +134,7 @@ var currentSchemaTables = [...]string{
 	"mailbox_archives", "mailbox_transfer_receipts",
 	"mailbox_jobs", "mailbox_occurrences",
 	"email_document_publications", "email_document_relations",
-	"photo_assets", "photo_files", "photo_library_settings", "photo_sets", "photo_set_members", "photo_change_receipts",
+	"photo_quality_signals", "photo_assets", "photo_files", "photo_library_settings", "photo_sets", "photo_set_members", "photo_change_receipts",
 	"photo_technical_metadata", "photo_technical_metadata_state",
 	"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
 	"blob_stores", "blob_locations", "blob_pack_entries",
@@ -1579,3 +1590,10 @@ const schemaV28Layout = `{
   "visual_preview_heads": ["content_version_id", "generation_id", "published_at"],
   "watch_sources": ["blob_hash", "node_id", "size", "source_ref", "watch_name"]
 }`
+
+// Schema 29 adds photo sets and their receipt field to the released schema 28 layout.
+var schemaV29Layout = strings.Replace(schemaV28Layout,
+	`"photo_change_receipts": ["after_json", "after_revision", "asset_id", "before_json", "before_revision", "created_at", "operation", "receipt_id", "settings_key"]`,
+	`"photo_sets": ["cover_asset_id", "created_at", "deleted_at", "name", "revision", "set_id", "starred", "updated_at"],
+  "photo_set_members": ["added_at", "asset_id", "set_id"],
+  "photo_change_receipts": ["after_json", "after_revision", "asset_id", "before_json", "before_revision", "created_at", "operation", "receipt_id", "set_id", "settings_key"]`, 1)

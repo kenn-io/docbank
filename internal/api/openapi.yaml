@@ -6704,10 +6704,34 @@ components:
     Filters:
       additionalProperties: false
       properties:
+        aesthetics_max:
+          type:
+            - string
+            - "null"
+        aesthetics_min:
+          type:
+            - string
+            - "null"
         asset_ids:
           items:
             type: string
           type: array
+        blur_max:
+          type:
+            - string
+            - "null"
+        blur_min:
+          type:
+            - string
+            - "null"
+        brightness_max:
+          type:
+            - string
+            - "null"
+        brightness_min:
+          type:
+            - string
+            - "null"
         cameras:
           items:
             type: string
@@ -6722,6 +6746,30 @@ components:
           items:
             type: string
           type: array
+        color_blue_max:
+          type:
+            - string
+            - "null"
+        color_blue_min:
+          type:
+            - string
+            - "null"
+        color_green_max:
+          type:
+            - string
+            - "null"
+        color_green_min:
+          type:
+            - string
+            - "null"
+        color_red_max:
+          type:
+            - string
+            - "null"
+        color_red_min:
+          type:
+            - string
+            - "null"
         exclude_collection_ids:
           items:
             type: string
@@ -6738,6 +6786,22 @@ components:
           items:
             type: string
           type: array
+        focus_max:
+          type:
+            - string
+            - "null"
+        focus_min:
+          type:
+            - string
+            - "null"
+        framing_max:
+          type:
+            - string
+            - "null"
+        framing_min:
+          type:
+            - string
+            - "null"
         gps_bounds:
           $ref: "#/components/schemas/GPSBounds"
         has_duplicates:
@@ -6798,6 +6862,8 @@ components:
           items:
             type: string
           type: array
+        unevaluated:
+          type: boolean
       type: object
       x-go-type: query.Filters
       x-go-type-import:
@@ -11495,6 +11561,23 @@ components:
           type: integer
         previews:
           $ref: "#/components/schemas/PhotoPreviewSlots"
+        quality:
+          additionalProperties: false
+          properties:
+            signals:
+              anyOf:
+                - $ref: "#/components/schemas/PhotoQualitySignals"
+                - type: "null"
+            state:
+              enum:
+                - pending
+                - unavailable
+                - ready
+              type: string
+          required:
+            - state
+            - signals
+          type: object
         revision:
           format: int64
           minimum: 1
@@ -11650,6 +11733,63 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoQualitySignals:
+      additionalProperties: false
+      properties:
+        aesthetics:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        blur:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        brightness:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        color_blue:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        color_green:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        color_red:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        focus:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+        framing:
+          format: double
+          maximum: 1
+          minimum: 0
+          type: number
+      required:
+        - focus
+        - blur
+        - brightness
+        - color_red
+        - color_green
+        - color_blue
+        - framing
+        - aesthetics
+      type: object
+      x-go-type: document.PhotoQualitySignals
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     PhotoSettings:
       additionalProperties: false
       properties:
@@ -13954,12 +14094,42 @@ components:
     SavedQueryFiltersSchema:
       additionalProperties: false
       properties:
+        aesthetics_max:
+          maxLength: 64
+          type:
+            - string
+            - "null"
+        aesthetics_min:
+          maxLength: 64
+          type:
+            - string
+            - "null"
         asset_ids:
           items:
             format: uuid
             type: string
           maxItems: 64
           type: array
+        blur_max:
+          maxLength: 64
+          type:
+            - string
+            - "null"
+        blur_min:
+          maxLength: 64
+          type:
+            - string
+            - "null"
+        brightness_max:
+          maxLength: 64
+          type:
+            - string
+            - "null"
+        brightness_min:
+          maxLength: 64
+          type:
+            - string
+            - "null"
         cameras:
           items:
             type: string
@@ -13985,6 +14155,36 @@ components:
             type: string
           maxItems: 64
           type: array
+        color_blue_max:
+          maxLength: 64
+          type:
+            - string
+            - "null"
+        color_blue_min:
+          maxLength: 64
+          type:
+            - string
+            - "null"
+        color_green_max:
+          maxLength: 64
+          type:
+            - string
+            - "null"
+        color_green_min:
+          maxLength: 64
+          type:
+            - string
+            - "null"
+        color_red_max:
+          maxLength: 64
+          type:
+            - string
+            - "null"
+        color_red_min:
+          maxLength: 64
+          type:
+            - string
+            - "null"
         exclude_collection_ids:
           items:
             format: uuid
@@ -14008,6 +14208,26 @@ components:
             type: string
           maxItems: 32
           type: array
+        focus_max:
+          maxLength: 64
+          type:
+            - string
+            - "null"
+        focus_min:
+          maxLength: 64
+          type:
+            - string
+            - "null"
+        framing_max:
+          maxLength: 64
+          type:
+            - string
+            - "null"
+        framing_min:
+          maxLength: 64
+          type:
+            - string
+            - "null"
         gps_bounds:
           additionalProperties: false
           properties:
@@ -14143,6 +14363,10 @@ components:
             type: string
           maxItems: 6
           type: array
+        unevaluated:
+          type:
+            - boolean
+            - "null"
       type: object
     SavedQueryGPSBoundsSchema:
       additionalProperties: false

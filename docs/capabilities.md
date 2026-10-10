@@ -67,7 +67,8 @@ Start with [Importing documents](usage/importing.md) and
 - Browse photos in the web app, grouped by month or capture session. Adjust
   grid density and keep your selection and place when switching workspaces.
 - Browse photo assets over HTTP and filter by camera, lens, ISO, capture date,
-  GPS, asset type, or album. A RAW/JPEG pair appears once.
+  GPS, asset type, album, or quality scores. Use `unevaluated` to include photos
+  whose quality signals are pending or unavailable. A RAW/JPEG pair appears once.
 - Given a SHA-256 hash, find every node and version that still refers to it.
 - Download current or earlier content and check its size, hash, and final
   verification result.

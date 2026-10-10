@@ -92,6 +92,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 				CaptureTimeOffset:    row.Fields.CaptureTimeOffset,
 				WidthPX:              row.Fields.WidthPX, HeightPX: row.Fields.HeightPX,
 				Previews: PhotoPreviewSlots{Grid: slots["grid"], Fit: slots["fit"], Large: slots["large"]},
+				Quality:  photoQualityWire(row),
 			}
 		}
 		if page.Next != nil {
@@ -224,4 +225,18 @@ func (service *documentQueryService) decodePhotoCursor(raw string) (store.PhotoB
 		return store.PhotoBrowsePosition{}, store.ErrDocumentCursorExpired
 	}
 	return position, nil
+}
+
+func photoQualityWire(row store.PhotoBrowseRow) *PhotoQuality {
+	if row.Kind != "photo" {
+		return nil
+	}
+	state := "pending"
+	if row.Quality != nil {
+		state = "ready"
+	} else if preview := row.Previews["grid"]; row.QualityUnavailable ||
+		preview.State == "unsupported" || preview.State == "failed" {
+		state = "unavailable"
+	}
+	return &PhotoQuality{State: state, Signals: row.Quality}
 }

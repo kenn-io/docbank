@@ -24632,6 +24632,8 @@ type PhotoPreviewSlot = api.PhotoPreviewSlot
 
 type PhotoPreviewSlots = api.PhotoPreviewSlots
 
+type PhotoQualitySignals = document.PhotoQualitySignals
+
 type PhotoSettings = api.PhotoSettings
 
 type Plan = bundle.Plan
@@ -24898,16 +24900,32 @@ type SavedQuery = api.SavedQuery
 type SavedQueryCreateRequest = api.SavedQueryCreateRequest
 
 type SavedQueryFiltersSchema struct {
+	AestheticsMax        *string                                `json:"aesthetics_max,omitempty"`
+	AestheticsMin        *string                                `json:"aesthetics_min,omitempty"`
 	AssetIds             []uuid.UUID                            `json:"asset_ids,omitempty"`
+	BlurMax              *string                                `json:"blur_max,omitempty"`
+	BlurMin              *string                                `json:"blur_min,omitempty"`
+	BrightnessMax        *string                                `json:"brightness_max,omitempty"`
+	BrightnessMin        *string                                `json:"brightness_min,omitempty"`
 	Cameras              []string                               `json:"cameras,omitempty"`
 	CaptureAfter         *runtime.Date                          `json:"capture_after,omitempty"`
 	CaptureBefore        *runtime.Date                          `json:"capture_before,omitempty"`
 	CollapseDuplicates   *bool                                  `json:"collapse_duplicates,omitempty"`
 	CollectionIds        []uuid.UUID                            `json:"collection_ids,omitempty"`
+	ColorBlueMax         *string                                `json:"color_blue_max,omitempty"`
+	ColorBlueMin         *string                                `json:"color_blue_min,omitempty"`
+	ColorGreenMax        *string                                `json:"color_green_max,omitempty"`
+	ColorGreenMin        *string                                `json:"color_green_min,omitempty"`
+	ColorRedMax          *string                                `json:"color_red_max,omitempty"`
+	ColorRedMin          *string                                `json:"color_red_min,omitempty"`
 	ExcludeCollectionIds []uuid.UUID                            `json:"exclude_collection_ids,omitempty"`
 	ExcludePaths         []string                               `json:"exclude_paths,omitempty"`
 	ExcludeTagIds        []uuid.UUID                            `json:"exclude_tag_ids,omitempty"`
 	Extensions           []string                               `json:"extensions,omitempty"`
+	FocusMax             *string                                `json:"focus_max,omitempty"`
+	FocusMin             *string                                `json:"focus_min,omitempty"`
+	FramingMax           *string                                `json:"framing_max,omitempty"`
+	FramingMin           *string                                `json:"framing_min,omitempty"`
 	GpsBounds            *SavedQueryFiltersSchema_GpsBounds     `json:"gps_bounds,omitempty"`
 	HasDuplicates        *bool                                  `json:"has_duplicates,omitempty"`
 	IsoMax               *int64                                 `json:"iso_max,omitempty"`
@@ -24925,6 +24943,7 @@ type SavedQueryFiltersSchema struct {
 	SizeMin              *int64                                 `json:"size_min,omitempty"`
 	TagIds               []uuid.UUID                            `json:"tag_ids,omitempty"`
 	TextCoverage         []SavedQueryFiltersSchemaTextCoverage  `json:"text_coverage,omitempty"`
+	Unevaluated          *bool                                  `json:"unevaluated,omitempty"`
 }
 
 type SavedQueryFiltersSchema_GpsBounds struct {

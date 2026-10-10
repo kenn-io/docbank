@@ -50,6 +50,22 @@ func TestCompilePhotoPredicates(t *testing.T) {
 	}
 }
 
+func TestCompilePhotoPredicatesReuseDocumentVersion(t *testing.T) {
+	t.Parallel()
+	for _, text := range []string{`camera:A`, `lens:B`, `iso:100`, `capture_after:2024-01-01`, `gps:"-1,-1,1,1"`, `focus_min:0.5`, `unevaluated:true`} {
+		for _, photos := range []bool{false, true} {
+			compiled, err := (queryCompiler{photoDisplayMetadata: photos}).compile(t.Context(), compilerQuery(t, text), nil)
+			require.NoError(t, err, text)
+			if photos {
+				require.Contains(t, compiled.predicate.sql, "JOIN content_versions v ON v.version_id=display_node.current_version_id", text)
+			} else {
+				require.NotContains(t, compiled.predicate.sql, "FROM content_versions", text)
+				require.Contains(t, compiled.predicate.sql, "cv.", text)
+			}
+		}
+	}
+}
+
 func TestPhotoBrowseISOAndAssetPredicates(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -130,6 +146,7 @@ func TestPhotoBrowseDisplayMetadata(t *testing.T) {
 	ctx := t.Context()
 	raw := browsePhotoNode(t, s, "capture.raw", browseHash("raw-member"), "application/octet-stream")
 	jpeg := browsePhotoNode(t, s, "capture.jpg", browseHash("jpeg-member"), "image/jpeg")
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(jpeg), document.PhotoQualitySignals{Focus: 0.1}))
 	jpegAsset, err := s.PhotoAssetForNode(ctx, jpeg.ID)
 	require.NoError(t, err)
 	_, err = s.DetachPhotoFile(ctx, jpegAsset.ID, jpegAsset.Revision, jpegAsset.Files[0].ID, PhotoDetachOptions{})
@@ -140,6 +157,11 @@ func TestPhotoBrowseDisplayMetadata(t *testing.T) {
 	require.NoError(t, err)
 	browsePhotoMetadata(t, s, raw, "raw-fields", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Camera A")))
 	browsePhotoMetadata(t, s, jpeg, "jpeg-fields", photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens B")))
+	require.NoError(t, s.PublishPhotoQualitySignals(ctx, qualityTarget(raw), document.PhotoQualitySignals{Focus: 0.8}))
+	_, err = s.CreateSavedQuery(ctx, "Selected focus", "", SavedQueryKindQuery, []byte(`{"filters":{"focus_min":"0.7"}}`))
+	require.NoError(t, err)
+	qualityQuery := `{"syntax":"advanced","text":"saved:\"Selected focus\""}`
+	require.Len(t, browsePhotoPage(t, s, qualityQuery).Items, 1)
 	_, err = s.CreateSavedQuery(ctx, "Camera match", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"camera:\"Camera A\""}`))
 	require.NoError(t, err)
 	for _, tc := range []struct {
@@ -174,6 +196,12 @@ func TestPhotoBrowseDisplayMetadata(t *testing.T) {
 	require.NoError(t, err)
 	page = browsePhotoPage(t, s, `{"filters":{"lenses":["Lens B"]}}`)
 	require.Len(t, page.Items, 1, "changing the display changes its metadata matches")
+	require.Empty(t, browsePhotoPage(t, s, qualityQuery).Items)
+	require.Len(t, browsePhotoPage(t, s, `{"syntax":"advanced","text":"extension:raw AND focus_max:0.2"}`).Items, 1)
+	snapshot, err := s.MaterializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, qualityQuery)})
+	require.NoError(t, err)
+	require.Len(t, snapshot.Rows, 1)
+	require.Equal(t, raw.ID, snapshot.Rows[0].NodeID)
 }
 
 func TestPhotoBrowseActiveMetadata(t *testing.T) {

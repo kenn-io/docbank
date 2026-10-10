@@ -38,19 +38,22 @@ type PhotoPreviewSlot struct {
 }
 
 type PhotoBrowseRow struct {
-	AssetID          string
-	Kind             string
-	Revision         int64
-	DisplayFileID    string
-	NodeID           int64
-	ContentVersionID string
-	Name             string
-	MediaType        string
-	ImportTime       string
-	Fields           PhotoTechnicalFields
-	Previews         map[string]PhotoPreviewSlot
-	position         PhotoBrowsePosition
-	sourceHash       string
+	Quality *document.PhotoQualitySignals
+	// QualityUnavailable marks a terminal evaluator result with no signals.
+	QualityUnavailable bool
+	AssetID            string
+	Kind               string
+	Revision           int64
+	DisplayFileID      string
+	NodeID             int64
+	ContentVersionID   string
+	Name               string
+	MediaType          string
+	ImportTime         string
+	Fields             PhotoTechnicalFields
+	Previews           map[string]PhotoPreviewSlot
+	position           PhotoBrowsePosition
+	sourceHash         string
 }
 
 type PhotoBrowsePage struct {
@@ -243,8 +246,16 @@ func (s *Store) ListPhotoAssets(
 		if err != nil {
 			return err
 		}
+		qualities, err := photoQualityForVersions(ctx, q, versions)
+		if err != nil {
+			return err
+		}
 		for i := range page.Items {
 			row := &page.Items[i]
+			if signals, ok := qualities.signals[row.ContentVersionID]; ok {
+				row.Quality = &signals
+			}
+			row.QualityUnavailable = qualities.unavailable[row.ContentVersionID]
 			row.Previews = make(map[string]PhotoPreviewSlot, 3)
 			for _, size := range []string{"grid", "fit", "large"} {
 				slot := PhotoPreviewSlot{State: "missing"}
