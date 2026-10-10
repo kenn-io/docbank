@@ -46,7 +46,7 @@ func ValidatePhotoAuthored(v PhotoAuthored) error {
 	}
 	for _, field := range photoAuthoredFields {
 		if v.Confirmed&field.bit == 0 && field.nonDefault(&v) {
-			return fmt.Errorf("%w: unconfirmed authored photo %s", ErrInvalidPhotoAsset, field.name)
+			return fmt.Errorf("%w: invalid authored photo decision: unconfirmed %s", ErrInvalidPhotoAsset, field.name)
 		}
 	}
 	for _, text := range []string{v.Caption, v.Creator, v.Copyright} {
