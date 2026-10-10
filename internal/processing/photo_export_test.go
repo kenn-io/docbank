@@ -40,13 +40,15 @@ func TestPhotoExportTrailingEXIFCreditsNamespacesAndICC(t *testing.T) {
 	decoded, err := png.Decode(bytes.NewReader(out))
 	require.NoError(t, err)
 	assert.Equal(t, image.Rect(0, 0, 2, 3), decoded.Bounds())
-	packet := []byte(photoSidecarHeader + ` dc:creator="Embedded credit" dc:rights="Embedded rights" dc:description="Embedded caption" xmlns:keep="https://example.org/photo/" keep:Orientation="77"><keep:ImageWidth>12345</keep:ImageWidth>` + photoSidecarFooter)
+	packet := []byte(photoSidecarHeader + ` dc:creator="Embedded credit" dc:rights="Embedded rights" dc:description="Embedded caption" dc:subject="Embedded keyword" xmlns:keep="https://example.org/photo/" keep:Orientation="77"><keep:ImageWidth>12345</keep:ImageWidth>` + photoSidecarFooter)
 	input := store.PhotoExportInput{Authored: store.PhotoAuthored{Rating: 4, Confirmed: store.PhotoConfirmedRating}}
 	merged, err := mergePhotoXMP(t.Context(), packet, input, receipt)
 	require.NoError(t, err)
 	for _, value := range []string{"Embedded credit", "Embedded rights", "Embedded caption", "77", "12345"} {
 		assert.Contains(t, string(merged), value)
 	}
+	assert.NotContains(t, string(merged), "Embedded keyword")
+	assert.Contains(t, string(merged), "Bag")
 	input.Authored.Confirmed |= store.PhotoConfirmedCaption
 	merged, err = mergePhotoXMP(t.Context(), packet, input, receipt)
 	require.NoError(t, err)
@@ -288,7 +290,14 @@ func TestPhotoExportFailedDecodePreservesPixelBudget(t *testing.T) {
 func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 	t.Parallel()
 	preview := mediatest.JPEG(3, 2, color.White)
-	data := syntheticRAWPreviewTIFF(6, preview)
+	data := syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6), tiffASCII(0x010f, "Synthetic Camera"), tiffShort(0x0102, 16), tiffShort(0x0103, 7), tiffShort(0x0106, 32803), tiffLong(0xc612, 0x00000401), tiffShort(0x828e, 1), tiffLong(0x0201, 0), tiffLong(0x0202, uint32(len(preview)))}, nil)
+	for index := range int(binary.LittleEndian.Uint16(data[8:])) {
+		entry := 10 + index*12
+		if binary.LittleEndian.Uint16(data[entry:]) == 0x0201 {
+			binary.LittleEndian.PutUint32(data[entry+8:], uint32(len(data)))
+		}
+	}
+	data = append(data, preview...)
 	in := photoRenderInput(data, "image/x-adobe-dng")
 	out, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(data), in, bundle.PhotoRenderProfile{Format: "png", Quality: 90, IncludeMetadata: true})
 	require.NoError(t, err)
@@ -300,6 +309,11 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 	reader, ok := newExifReader(packets.exif)
 	require.True(t, ok)
 	assert.Equal(t, uint16(1), reader.order.Uint16(reader.entries(reader.u32(4))[0x0112]))
+	root := reader.entries(reader.u32(4))
+	for _, tag := range []uint16{0x0102, 0x0103, 0x0106, 0xc612, 0x828e, 0x0201, 0x0202} {
+		assert.NotContains(t, root, tag)
+	}
+	assert.Equal(t, "Synthetic Camera", exifASCII(root[0x010f]))
 	missing := syntheticRAWPreviewTIFF(1)
 	_, _, err = RenderPhotoExport(t.Context(), bytes.NewReader(missing), photoRenderInput(missing, "image/x-adobe-dng"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90})
 	require.ErrorIs(t, err, bundle.ErrUnavailable)

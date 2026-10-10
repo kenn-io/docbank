@@ -218,7 +218,7 @@ func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.Pla
 			if r.PhotoRender != nil {
 				artifact, ok := prepared[m.VersionID]
 				if !ok {
-					return bundle.ErrUnavailable
+					return fmt.Errorf("%w: photo %d has no prepared output", bundle.ErrUnavailable, m.NodeID)
 				}
 				input, err := s.exportPhotoInput(ctx, tx, m)
 				if err != nil {
@@ -230,7 +230,7 @@ func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.Pla
 				}
 				current, err := canonical.Marshal(input)
 				if err != nil || string(current) != string(frozen) || artifact.Receipt.Source != m || artifact.Receipt.Profile != *r.PhotoRender {
-					return bundle.ErrConflict
+					return fmt.Errorf("%w: photo %d changed during preparation", bundle.ErrConflict, m.NodeID)
 				}
 				if err = s.EnsureBlobTx(tx, artifact.SHA256, artifact.Size, artifact.Physical); err != nil {
 					return err

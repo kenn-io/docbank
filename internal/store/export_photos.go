@@ -107,12 +107,15 @@ func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.
 			delete(selected, row.AssetID)
 			m := bundle.Member{NodeID: row.NodeID, VersionID: row.ContentVersionID}
 			if err := s.db.QueryRowContext(ctx, `SELECT v.blob_hash,v.size,n.revision FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=? AND n.current_version_id=v.version_id`, m.VersionID).Scan(&m.SHA256, &m.Size, &m.Revision); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil, "", fmt.Errorf("%w: photo %d is no longer exportable", bundle.ErrConflict, m.NodeID)
+				}
 				return nil, "", err
 			}
-			out = append(out, m)
-			if len(out) > bundle.MaxMembers {
+			if len(out) >= bundle.MaxPhotoExportMembers {
 				return nil, "", bundle.ErrLimit
 			}
+			out = append(out, m)
 		}
 		if page.Next == nil || len(selection.AssetIDs) > 0 && len(selected) == 0 {
 			break
@@ -129,10 +132,17 @@ func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.
 	return out, identity, nil
 }
 
-func (s *Store) exportPhotoInput(ctx context.Context, q metadataQuerier, m bundle.Member) (PhotoExportInput, error) {
-	i := PhotoExportInput{Member: m, Keywords: []string{}}
+func (s *Store) exportPhotoInput(ctx context.Context, q metadataQuerier, m bundle.Member) (i PhotoExportInput, err error) {
+	i = PhotoExportInput{Member: m, Keywords: []string{}}
+	defer func() {
+		if errors.Is(err, sql.ErrNoRows) {
+			err = fmt.Errorf("%w: photo %d is no longer exportable", bundle.ErrConflict, m.NodeID)
+		} else if err != nil {
+			err = fmt.Errorf("photo %d: %w", m.NodeID, err)
+		}
+	}()
 	var hidden sql.NullString
-	err := q.QueryRowContext(ctx, `SELECT f.file_id,f.revision,a.revision,n.revision,v.mime_type,a.hidden_at,n.name FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id WHERE n.id=? AND v.version_id=? AND v.blob_hash=? AND v.size=? AND a.display_file_id=f.file_id AND a.excluded_at IS NULL AND n.trashed_at IS NULL`, m.NodeID, m.VersionID, m.SHA256, m.Size).Scan(&i.FileID, &i.FileRevision, &i.AssetRevision, &i.NodeRevision, &i.MediaType, &hidden, &i.Name)
+	err = q.QueryRowContext(ctx, `SELECT f.file_id,f.revision,a.revision,n.revision,v.mime_type,a.hidden_at,n.name FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id WHERE n.id=? AND v.version_id=? AND v.blob_hash=? AND v.size=? AND a.display_file_id=f.file_id AND a.excluded_at IS NULL AND n.trashed_at IS NULL`, m.NodeID, m.VersionID, m.SHA256, m.Size).Scan(&i.FileID, &i.FileRevision, &i.AssetRevision, &i.NodeRevision, &i.MediaType, &hidden, &i.Name)
 	if err != nil {
 		return i, err
 	}

@@ -30,6 +30,7 @@ func TestPhotoExportPlanSealsFrozenInputsAndOwnsArtifact(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.SealPhotoExportPlan(ctx, "owner", r, []PreparedPhotoExport{a})
 	require.ErrorIs(t, err, bundle.ErrConflict)
+	require.ErrorContains(t, err, fmt.Sprintf("photo %d", n.ID))
 	var roots int
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT count(*) FROM export_role_roots`).Scan(&roots))
 	require.Zero(t, roots)

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	"image/png"
 	"io"
 	"net/http"
 	"os"
@@ -27,8 +26,12 @@ import (
 )
 
 func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
-	for _, metadata := range []bool{false, true} {
-		t.Run(fmt.Sprint(metadata), func(t *testing.T) {
+	for _, setting := range []struct {
+		format   string
+		metadata bool
+	}{{"jpeg", false}, {"jpeg", true}, {"png", false}, {"png", true}} {
+		t.Run(fmt.Sprintf("%s/%t", setting.format, setting.metadata), func(t *testing.T) {
+			metadata := setting.metadata
 			t.Parallel()
 			var worker *exporter.Worker
 			var vault string
@@ -41,10 +44,21 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 				d.Exports = worker
 			})
 			var pixels bytes.Buffer
-			require.NoError(t, png.Encode(&pixels, image.NewNRGBA(image.Rect(0, 0, 9, 6))))
-			hash, size, err := s.Blobs.Write(bytes.NewReader(pixels.Bytes()))
+			require.NoError(t, jpeg.Encode(&pixels, image.NewNRGBA(image.Rect(0, 0, 9, 6)), nil))
+			packet := []byte("http://ns.adobe.com/xap/1.0/\x00" + `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:subject><rdf:Bag><rdf:li>Embedded keyword</rdf:li></rdf:Bag></dc:subject></rdf:Description></rdf:RDF></x:xmpmeta>`)
+			data := append([]byte{0xff, 0xd8, 0xff, 0xe1, byte((len(packet) + 2) >> 8), byte(len(packet) + 2)}, packet...)
+			data = append(data, pixels.Bytes()[2:]...)
+			hash, size, err := s.Blobs.Write(bytes.NewReader(data))
 			require.NoError(t, err)
-			n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic-export.png", hash, size, "image/png")
+			n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic-export.jpg", hash, size, "image/jpeg")
+			require.NoError(t, err)
+			tag, err := s.CreateTag(t.Context(), "Catalog keyword")
+			require.NoError(t, err)
+			_, err = s.AssignTag(t.Context(), tag.ID, n.ID, n.Revision)
+			require.NoError(t, err)
+			current, err := s.NodeByID(t.Context(), n.ID)
+			require.NoError(t, err)
+			_, err = s.UnassignTag(t.Context(), tag.ID, n.ID, current.Revision)
 			require.NoError(t, err)
 			asset, err := s.PhotoAssetForNode(t.Context(), n.ID)
 			require.NoError(t, err)
@@ -55,7 +69,7 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 			source, err := client.CreateExportSource(t.Context(), &apiclient.CreateExportSourceRequestOptions{Body: &bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "photos", Photos: &selection}})
 			require.NoError(t, err)
 			require.Equal(t, 1, source.Total)
-			r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "png", Quality: 90, LongEdge: 3, IncludeMetadata: metadata, RemoveGPS: true}}
+			r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: setting.format, Quality: 90, LongEdge: 3, IncludeMetadata: metadata, RemoveGPS: true}}
 			abandoned := filepath.Join(vault, "export-archives", ".photo-export-"+strings.Repeat("a", 32))
 			require.NoError(t, os.MkdirAll(abandoned, 0700))
 			require.NoError(t, os.WriteFile(filepath.Join(abandoned, "payload.tmp"), []byte("abandoned"), 0600))
@@ -82,11 +96,15 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { require.NoError(t, response.Body.Close()) }()
 			require.Equal(t, http.StatusOK, response.StatusCode)
-			data, err := io.ReadAll(response.Body)
+			archiveData, err := io.ReadAll(response.Body)
 			require.NoError(t, err)
-			archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+			archive, err := zip.NewReader(bytes.NewReader(archiveData), int64(len(archiveData)))
 			require.NoError(t, err)
-			want := fmt.Sprintf("documents/%d/%s/photo.png", n.ID, n.CurrentVersionID)
+			extension := setting.format
+			if extension == "jpeg" {
+				extension = "jpg"
+			}
+			want := fmt.Sprintf("documents/%d/%s/photo.%s", n.ID, n.CurrentVersionID, extension)
 			found := false
 			for _, file := range archive.File {
 				reader, err := file.Open()
@@ -101,13 +119,15 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 				}
 				if file.Name == want {
 					found = true
-					decoded, err := png.Decode(bytes.NewReader(contents))
+					require.NotContains(t, string(contents), "Embedded keyword")
+					require.NotContains(t, string(contents), "Catalog keyword")
+					decoded, _, err := image.Decode(bytes.NewReader(contents))
 					require.NoError(t, err)
 					require.Equal(t, image.Rect(0, 0, 3, 2), decoded.Bounds())
 					if metadata {
-						require.Contains(t, string(contents), "XML:com.adobe.xmp")
+						require.Contains(t, string(contents), "http://purl.org/dc/elements/1.1/")
 					} else {
-						require.NotContains(t, string(contents), "XML:com.adobe.xmp")
+						require.NotContains(t, string(contents), "http://purl.org/dc/elements/1.1/")
 					}
 				}
 				if !metadata {
@@ -150,4 +170,37 @@ func TestPhotoExportMetadataFailureNamesPhoto(t *testing.T) {
 	require.Contains(t, body, fmt.Sprintf("photo %d", n.ID))
 	_, err = s.ExportPlan(t.Context(), "master", r.OperationID)
 	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
+	for _, state := range []string{"non-photo", "trashed", "replaced"} {
+		t.Run(state, func(t *testing.T) {
+			t.Parallel()
+			ts, s := newTestServer(t, nil)
+			mediaType := "image/jpeg"
+			if state == "non-photo" {
+				mediaType = "text/plain"
+			}
+			hash, size, err := s.Blobs.Write(bytes.NewReader([]byte("synthetic member")))
+			require.NoError(t, err)
+			n, err := s.CreateFile(t.Context(), s.RootID(), "unavailable-member", hash, size, mediaType)
+			require.NoError(t, err)
+			source, err := s.CreateExportSource(t.Context(), "master", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: hash, Size: size}}}, nil)
+			require.NoError(t, err)
+			switch state {
+			case "trashed":
+				_, _, err = s.Trash(t.Context(), n.ID, n.Revision)
+			case "replaced":
+				hash, size, err = s.Blobs.Write(bytes.NewReader([]byte("replacement member")))
+				require.NoError(t, err)
+				_, _, err = s.ReplaceContent(t.Context(), n.ID, n.Revision, hash, size, mediaType)
+			}
+			require.NoError(t, err)
+			r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90}}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/exports/plans", nil, r)
+			require.Equal(t, http.StatusConflict, response.StatusCode, body)
+			require.Contains(t, body, fmt.Sprintf("photo %d", n.ID))
+			require.Contains(t, body, "no longer exportable")
+		})
+	}
 }

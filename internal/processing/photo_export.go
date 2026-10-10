@@ -58,7 +58,7 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 	var sourceBytes int64
 	for _, input := range inputs {
 		if input.Member.Size > maxPhotoExportSourceBytes-sourceBytes {
-			return bundle.Plan{}, fmt.Errorf("%w: photo source bytes exceed 512 MiB", bundle.ErrLimit)
+			return bundle.Plan{}, photoExportError(input, fmt.Errorf("%w: photo source bytes exceed 512 MiB", bundle.ErrLimit))
 		}
 		sourceBytes += input.Member.Size
 	}
@@ -75,7 +75,7 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 		}
 		if size != input.Member.Size {
 			_ = reader.Close()
-			return bundle.Plan{}, bundle.ErrConflict
+			return bundle.Plan{}, photoExportError(input, bundle.ErrConflict)
 		}
 		output, receipt, err := renderPhotoExport(ctx, reader, input, *request.PhotoRender, &budget)
 		closeErr := reader.Close()
@@ -86,16 +86,16 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 			return bundle.Plan{}, photoExportError(input, err)
 		}
 		if int64(len(output)) > maxPhotoExportOutputBytes-total {
-			return bundle.Plan{}, bundle.ErrLimit
+			return bundle.Plan{}, photoExportError(input, fmt.Errorf("%w: encoded output exceeds 1 GiB", bundle.ErrLimit))
 		}
 		total += int64(len(output))
 		stage, err := filepublish.CreateStage(spoolParent, ".photo-export-")
 		if err != nil {
-			return bundle.Plan{}, err
+			return bundle.Plan{}, photoExportError(input, err)
 		}
 		stages = append(stages, stage)
 		if _, err = stage.File.Write(output); err != nil {
-			return bundle.Plan{}, err
+			return bundle.Plan{}, photoExportError(input, err)
 		}
 		artifacts = append(artifacts, store.PreparedPhotoExport{Receipt: receipt, Input: input})
 	}
@@ -105,15 +105,15 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 			for index := range artifacts {
 				file := stages[index].File
 				if _, err := file.Seek(0, io.SeekStart); err != nil {
-					return err
+					return photoExportError(artifacts[index].Input, err)
 				}
 				written, err := blobs.WriteDetailedContext(ctx, file)
 				if err != nil {
-					return err
+					return photoExportError(artifacts[index].Input, err)
 				}
 				encoding, err := written.EncodingName()
 				if err != nil {
-					return err
+					return photoExportError(artifacts[index].Input, err)
 				}
 				artifacts[index].SHA256, artifacts[index].Size = written.Hash, written.Size
 				artifacts[index].Physical = store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize, PackEligible: written.PackEligible, MD5: written.MD5, Created: written.Created}

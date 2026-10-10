@@ -411,8 +411,8 @@ func rewritePhotoEXIF(data []byte, width, height int, removeGPS bool, authored s
 			return 0, errors.New("malformed EXIF directory")
 		}
 		for tag, entry := range entries {
-			// These fields address original pixels, alternate images, or duplicate XMP.
-			if slices.Contains([]uint16{0x0111, 0x0117, 0x0144, 0x0145, 0x014a, 0x0201, 0x0202, 700, 0x927c, 0xc634}, tag) || removeGPS && tag == 0x8825 {
+			// Pixel layout and RAW calibration describe the source, not the delivered pixels.
+			if slices.Contains([]uint16{0x0102, 0x0103, 0x0106, 0x010a, 0x0111, 0x0115, 0x0116, 0x0117, 0x011c, 0x013d, 0x0144, 0x0145, 0x014a, 0x0153, 0x0201, 0x0202, 700, 0x828d, 0x828e, 0x927c, 0xc612, 0xc613, 0xc616, 0xc617, 0xc618, 0xc619, 0xc61a, 0xc61b, 0xc61c, 0xc61d, 0xc61e, 0xc61f, 0xc620, 0xc634, 0xc68d, 0xc68e, 0xc740, 0xc741, 0xc74e}, tag) || removeGPS && tag == 0x8825 {
 				delete(entries, tag)
 				continue
 			}
@@ -740,7 +740,7 @@ func photoXMPConfirmed(n xml.Name, input store.PhotoExportInput) bool {
 		case "rights":
 			bit = store.PhotoConfirmedCopyright
 		case "subject":
-			return len(input.Keywords) > 0
+			return true
 		}
 	}
 	return bit != 0 && input.Authored.Confirmed&bit != 0
