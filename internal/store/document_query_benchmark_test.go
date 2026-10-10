@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -54,6 +55,51 @@ func BenchmarkDocumentCatalogPage(b *testing.B) {
 						require.Equal(b, lastPath, page.Items[49].Path)
 						require.Equal(b, tc.start > 0, page.HasPrevious)
 						require.Equal(b, tc.start+50 < files, page.HasNext)
+					}
+				})
+			}
+		})
+	}
+}
+
+func BenchmarkResolveDocumentSummaries(b *testing.B) {
+	for _, corpus := range []struct{ files, depth int }{
+		{100, 0}, {10000, 0}, {100, 8}, {10000, 8},
+	} {
+		b.Run(fmt.Sprintf("files=%d/depth=%d", corpus.files, corpus.depth), func(b *testing.B) {
+			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			require.NoError(b, err)
+			b.Cleanup(func() { require.NoError(b, s.Close()) })
+			ctx := b.Context()
+			prefix := strings.Repeat("/dir", corpus.depth)
+			parent, err := s.MkdirAll(ctx, prefix)
+			require.NoError(b, err)
+			identities := make([]DocumentCatalogIdentity, 0, 50)
+			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				for i := range corpus.files {
+					name := fmt.Sprintf("file-%05d.bin", i)
+					node, _, err := s.createFileTx(ctx, tx, parent.ID, name,
+						fmt.Sprintf("%064x", i+1), int64(i+1), "application/octet-stream")
+					if err != nil {
+						return err
+					}
+					if i >= corpus.files-50 {
+						identities = append(identities, DocumentCatalogIdentity{
+							NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Path: prefix + "/" + name,
+						})
+					}
+				}
+				return nil
+			}))
+			for _, count := range []int{1, 50} {
+				b.Run(fmt.Sprintf("selected=%d", count), func(b *testing.B) {
+					b.ReportAllocs()
+					for b.Loop() {
+						items, err := s.ResolveDocumentSummaries(ctx, identities[:count])
+						require.NoError(b, err)
+						require.Len(b, items, count)
+						require.Equal(b, identities[0].Path, items[0].Path)
+						require.Equal(b, identities[count-1].Path, items[count-1].Path)
 					}
 				})
 			}

@@ -136,6 +136,69 @@ func TestResolveDocumentSummariesPreservesOrderAndRejectsStaleIdentity(t *testin
 	require.ErrorIs(t, err, ErrInvalidDocumentQuery)
 }
 
+func TestResolveDocumentSummariesTracksLiveAncestors(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	dir, err := s.MkdirAll(t.Context(), "/folder/nested")
+	require.NoError(t, err)
+	file, err := s.CreateFile(t.Context(), dir.ID, "report.bin", fakeHash("nested-report"), 7, "")
+	require.NoError(t, err)
+	identity := DocumentCatalogIdentity{
+		NodeID: file.ID, ContentVersionID: file.CurrentVersionID, Path: "/folder/nested/report.bin",
+	}
+	items, err := s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{identity})
+	require.NoError(t, err)
+	require.Equal(t, []string{"/folder/nested/report.bin"}, documentCatalogPaths(items))
+	shortened := identity
+	shortened.Path = "/nested/report.bin"
+	_, err = s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{shortened})
+	require.ErrorIs(t, err, ErrProcessingSourceFenceStaleVersion)
+
+	folder, err := s.NodeByPath(t.Context(), "/folder")
+	require.NoError(t, err)
+	folder, _, err = s.Move(t.Context(), folder.ID, s.RootID(), "moved", folder.Revision)
+	require.NoError(t, err)
+	_, err = s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{identity})
+	require.ErrorIs(t, err, ErrProcessingSourceFenceStaleVersion)
+	identity.Path = "/moved/nested/report.bin"
+	items, err = s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{identity})
+	require.NoError(t, err)
+	require.Equal(t, []string{"/moved/nested/report.bin"}, documentCatalogPaths(items))
+
+	_, _, err = s.Trash(t.Context(), folder.ID, folder.Revision)
+	require.NoError(t, err)
+	_, err = s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{identity})
+	require.ErrorIs(t, err, ErrProcessingSourceFenceStaleVersion)
+}
+
+func TestResolveDocumentSummariesRejectsEntireStaleBatch(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	file, err := s.CreateFile(t.Context(), s.RootID(), "report.bin", fakeHash("old-report"), 7, "")
+	require.NoError(t, err)
+	old := DocumentCatalogIdentity{NodeID: file.ID, ContentVersionID: file.CurrentVersionID, Path: "/report.bin"}
+	file, _, err = s.ReplaceContent(t.Context(), file.ID, file.Revision, fakeHash("new-report"), 8, "")
+	require.NoError(t, err)
+	current := DocumentCatalogIdentity{NodeID: file.ID, ContentVersionID: file.CurrentVersionID, Path: "/report.bin"}
+	missing := current
+	missing.NodeID += 1000
+	for _, stale := range []DocumentCatalogIdentity{old, missing} {
+		for _, identities := range [][]DocumentCatalogIdentity{{current, stale}, {stale, current}} {
+			items, err := s.ResolveDocumentSummaries(t.Context(), identities)
+			require.ErrorIs(t, err, ErrProcessingSourceFenceStaleVersion)
+			require.Nil(t, items)
+		}
+	}
+	items, err := s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{current})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, int64(8), items[0].Size)
+	_, _, err = s.Trash(t.Context(), file.ID, file.Revision)
+	require.NoError(t, err)
+	_, err = s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{current})
+	require.ErrorIs(t, err, ErrProcessingSourceFenceStaleVersion)
+}
+
 func TestDocumentCatalogTraversesNextAndPreviousExactly(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -323,7 +386,7 @@ func TestDocumentCatalogMaximumPathPositionTraversesBothDirections(t *testing.T)
 		segments = append(segments, name)
 	}
 	fileName := strings.Repeat("y", 63)
-	_, err = s.CreateFile(t.Context(), parentID, fileName, fakeHash("max-path"), 1, "text/plain")
+	file, err := s.CreateFile(t.Context(), parentID, fileName, fakeHash("max-path"), 1, "text/plain")
 	require.NoError(t, err)
 	segments = append(segments, fileName)
 	maxPath := "/" + strings.Join(segments, "/")
@@ -344,6 +407,11 @@ func TestDocumentCatalogMaximumPathPositionTraversesBothDirections(t *testing.T)
 	assert.Equal(t, maxPath, middle.Items[0].Path)
 	assert.Equal(t, "/z.txt", last.Items[0].Path)
 	assert.Equal(t, "/a.txt", back.Items[0].Path)
+	items, err := s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{{
+		NodeID: file.ID, ContentVersionID: file.CurrentVersionID, Path: maxPath,
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{maxPath}, documentCatalogPaths(items))
 }
 
 func TestDocumentCatalogReturnsOnlySummaryProcessingAndActiveRenditionIdentity(t *testing.T) {
@@ -377,17 +445,19 @@ func TestDocumentCatalogReturnsOnlySummaryProcessingAndActiveRenditionIdentity(t
 		AttachmentID:       attachment.ID,
 		BuildID:            build.ID,
 	}, item.ActiveRenditions[0])
-	resolved, err := s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{{
-		NodeID: item.NodeID, ContentVersionID: versions[0], Path: item.Path,
-	}})
+	resolved, err := s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{
+		{NodeID: item.NodeID, ContentVersionID: versions[0], Path: item.Path},
+		{NodeID: page.Items[1].NodeID, ContentVersionID: versions[1], Path: page.Items[1].Path},
+	})
 	require.NoError(t, err)
-	require.Len(t, resolved, 1)
+	require.Len(t, resolved, 2)
 	assert.Equal(t, "queued", resolved[0].LatestProcessingState)
 	assert.Equal(t, []DocumentRenditionIdentity{{
 		ProfileFingerprint: profile.Fingerprint,
 		AttachmentID:       attachment.ID,
 		BuildID:            build.ID,
 	}}, resolved[0].ActiveRenditions)
+	assert.Empty(t, resolved[1].ActiveRenditions)
 }
 
 func TestDocumentCatalogLatestProcessingStateUsesJobTransitionRecency(t *testing.T) {
@@ -542,15 +612,24 @@ func TestDocumentCatalogPreservesLongDirectoryNames(t *testing.T) {
 	name := strings.Repeat("x", 256)
 	dir, err := s.Mkdir(t.Context(), s.RootID(), name)
 	require.NoError(t, err)
-	_, err = s.CreateFile(t.Context(), dir.ID, "file.txt", fakeHash("long-directory"), 1, "text/plain")
+	file, err := s.CreateFile(t.Context(), dir.ID, "file.txt", fakeHash("long-directory"), 1, "text/plain")
 	require.NoError(t, err)
 	for _, prefix := range []string{"/", "/" + name} {
 		page, err := s.ListDocuments(t.Context(), DocumentCatalogQuery{PathPrefix: prefix}, nil, DocumentCatalogTraversalNext)
 		require.NoError(t, err)
 		require.Equal(t, []string{"/" + name + "/file.txt"}, documentCatalogPaths(page.Items))
 	}
-	_, err = s.CreateFile(t.Context(), s.RootID(), name+".txt", fakeHash("long-file"), 1, "text/plain")
+	items, err := s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{{
+		NodeID: file.ID, ContentVersionID: file.CurrentVersionID, Path: "/" + name + "/file.txt",
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/" + name + "/file.txt"}, documentCatalogPaths(items))
+	file, err = s.CreateFile(t.Context(), s.RootID(), name+".txt", fakeHash("long-file"), 1, "text/plain")
 	require.NoError(t, err)
 	_, err = s.ListDocuments(t.Context(), DocumentCatalogQuery{PathPrefix: "/" + name + ".txt"}, nil, DocumentCatalogTraversalNext)
 	require.ErrorIs(t, err, ErrInvalidDocumentQuery)
+	_, err = s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{{
+		NodeID: file.ID, ContentVersionID: file.CurrentVersionID, Path: "/" + name + ".txt",
+	}})
+	require.ErrorIs(t, err, ErrProcessingSourceFenceStaleVersion)
 }

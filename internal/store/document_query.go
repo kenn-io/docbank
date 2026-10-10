@@ -147,7 +147,7 @@ func (s *Store) ListDocuments(
 }
 
 // ResolveDocumentSummaries resolves an ordered bounded set of exact
-// current/live identities in one catalog query. Missing, moved, superseded,
+// current/live identities in one query. Missing, moved, superseded,
 // or repeated identities fail closed so callers cannot attach stale links.
 func (s *Store) ResolveDocumentSummaries(
 	ctx context.Context, identities []DocumentCatalogIdentity,
@@ -177,21 +177,50 @@ func (s *Store) ResolveDocumentSummaries(
 	defer func() { _ = tx.Rollback() }()
 
 	values := make([]string, len(identities))
-	args := documentCatalogArgs(s.rootID, "/")
+	args := []any{s.rootID, MaxWalkDepth, MaxWalkPathBytes, MaxDocumentCatalogNameCharacters}
 	for index, identity := range identities {
 		values[index] = "(?,?,?,?)"
 		args = append(args, index, identity.NodeID, identity.ContentVersionID, identity.Path)
 	}
-	rows, err := tx.QueryContext(ctx, documentCatalogCTE+`, requested(ordinal,node_id,content_version_id,path) AS (
+	// Resolve each selected parent once, then check exact filenames. Unrelated
+	// subtrees must not make a bounded identity lookup grow with the whole vault.
+	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE
+	limits(root_id,max_depth,max_path_bytes,max_name_chars) AS (VALUES (?,?,?,?)),
+	requested(ordinal,node_id,content_version_id,path) AS (
 		VALUES `+strings.Join(values, ",")+`
+	), selected_documents AS (
+		SELECT r.ordinal,n.id AS node_id,n.parent_id,cv.version_id AS content_version_id,
+			r.path,n.name,COALESCE(cv.mime_type,'') AS media_type,cv.size,n.modified_at
+		FROM requested r JOIN nodes n ON n.id=r.node_id
+		JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
+		CROSS JOIN limits
+		WHERE n.kind='file' AND n.trashed_at IS NULL
+			AND cv.version_id=r.content_version_id AND length(n.name)<=limits.max_name_chars
+	), ancestry(origin_id,id,parent_id,path,depth) AS (
+		SELECT DISTINCT n.id,n.id,n.parent_id,
+			CASE WHEN n.id=limits.root_id THEN '' ELSE '/'||n.name END,1
+		FROM selected_documents d JOIN nodes n ON n.id=d.parent_id CROSS JOIN limits
+		WHERE n.trashed_at IS NULL AND (n.id=limits.root_id
+			OR length(CAST(n.name AS BLOB))+1<=limits.max_path_bytes)
+		UNION ALL
+		SELECT a.origin_id,n.id,n.parent_id,
+			CASE WHEN n.id=limits.root_id THEN a.path ELSE '/'||n.name||a.path END,a.depth+1
+		FROM nodes n JOIN ancestry a ON n.id=a.parent_id CROSS JOIN limits
+		WHERE n.trashed_at IS NULL AND a.depth<limits.max_depth
+			AND length(CAST(a.path AS BLOB)) + CASE WHEN n.id=limits.root_id THEN 0
+				ELSE length(CAST(n.name AS BLOB))+1 END <= limits.max_path_bytes
+	), documents AS (
+		SELECT d.* FROM selected_documents d CROSS JOIN limits
+		JOIN ancestry a ON a.origin_id=d.parent_id AND a.id=limits.root_id
+		WHERE CASE WHEN length(CAST(a.path AS BLOB))+length(CAST(d.name AS BLOB))+1
+			<=limits.max_path_bytes THEN a.path||'/'||d.name END=d.path
 	)
-	SELECT r.ordinal,d.node_id,d.content_version_id,d.path,d.name,d.media_type,d.size,d.modified_at,
+	SELECT d.ordinal,d.node_id,d.content_version_id,d.path,d.name,d.media_type,d.size,d.modified_at,
 	       `+documentCatalogProcessingState+`,h.profile_fingerprint,h.attachment_id,a.build_id
-	FROM requested r JOIN documents d ON d.node_id=r.node_id
-		AND d.content_version_id=r.content_version_id AND d.path=r.path
+	FROM documents d
 	LEFT JOIN rendition_heads h ON h.content_version_id=d.content_version_id
 	LEFT JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
-	ORDER BY r.ordinal,h.profile_fingerprint,h.attachment_id`, args...)
+	ORDER BY d.ordinal,h.profile_fingerprint,h.attachment_id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("querying document summary resolution: %w", err)
 	}
