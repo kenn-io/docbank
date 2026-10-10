@@ -53,7 +53,7 @@ const (
 // vault then re-extracts every original, so the bump must be deliberate. The
 // shared email decoder recipe contributes its own identity to the fingerprint.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v18"
+	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v19"
 
 var (
 	// SourceMetadataImplementationID identifies the parsers qualified by fixtures,
@@ -906,10 +906,14 @@ func (c *metadataCollector) reserveValueBytes(size int, namespace, source string
 }
 
 func (c *metadataCollector) string(key, namespace, source, value string, sensitive bool) {
+	c.stringValue(key, namespace, source, value, sensitive, false)
+}
+
+func (c *metadataCollector) stringValue(key, namespace, source, value string, sensitive, allowEmpty bool) {
 	if key != "image.xmp.caption" && key != "image.xmp.creator" && key != "image.xmp.copyright" {
 		value = strings.TrimSpace(value)
 	}
-	if strings.TrimSpace(value) == "" || c.seen[key] {
+	if !allowEmpty && strings.TrimSpace(value) == "" || c.seen[key] {
 		return
 	}
 	if !c.fieldLabelsAllowed(key, namespace, source) {
@@ -2238,10 +2242,21 @@ func (c *metadataCollector) extractPhotoSidecar(ctx context.Context, data []byte
 		return nil
 	}
 	c.boolean("image.xmp.packet_valid", "image.xmp", "packet", true)
-	c.integer("image.xmp.rating", "image.xmp", "Rating", int64(values.Rating))
-	c.integer("image.xmp.rotation", "image.xmp", "Rotation", int64(values.Rotation))
-	for _, field := range []struct{ key, source, value string }{{"flag", "Pick", values.Flag}, {"label", "Label", values.Label}, {"caption", "description", values.Caption}, {"creator", "creator", values.Creator}, {"copyright", "rights", values.Copyright}} {
-		c.string("image.xmp."+field.key, "image.xmp", field.source, field.value, false)
+	if values.Confirmed&store.PhotoConfirmedRating != 0 {
+		c.integer("image.xmp.rating", "image.xmp", "Rating", int64(values.Rating))
+	}
+	if values.Confirmed&store.PhotoConfirmedRotation != 0 {
+		c.integer("image.xmp.rotation", "image.xmp", "Rotation", int64(values.Rotation))
+	}
+	for _, field := range []struct {
+		key, source, value string
+		bit                store.PhotoAuthoredFields
+	}{
+		{"flag", "Pick", values.Flag, store.PhotoConfirmedFlag}, {"label", "Label", values.Label, store.PhotoConfirmedLabel}, {"caption", "description", values.Caption, store.PhotoConfirmedCaption}, {"creator", "creator", values.Creator, store.PhotoConfirmedCreator}, {"copyright", "rights", values.Copyright, store.PhotoConfirmedCopyright},
+	} {
+		if values.Confirmed&field.bit != 0 {
+			c.stringValue("image.xmp."+field.key, "image.xmp", field.source, field.value, false, true)
+		}
 	}
 	return nil
 }

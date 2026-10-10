@@ -199,6 +199,16 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	if rootCount != 1 || len(stack) != 0 || !description {
 		return result, errors.New("photo sidecar needs an RDF description")
 	}
+	for _, field := range []struct {
+		key string
+		bit store.PhotoAuthoredFields
+	}{
+		{"Pick", store.PhotoConfirmedFlag}, {"Label", store.PhotoConfirmedLabel}, {"description", store.PhotoConfirmedCaption}, {"creator", store.PhotoConfirmedCreator}, {"rights", store.PhotoConfirmedCopyright},
+	} {
+		if _, present := values[field.key]; present {
+			result.Confirmed |= field.bit
+		}
+	}
 	result.Flag = values["Pick"]
 	if !query.ValidPhotoFlag(result.Flag) {
 		return result, errors.New("invalid XMP pick")
@@ -206,6 +216,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	result.Label = strings.ToLower(values["Label"])
 	if !query.ValidPhotoColorLabel(result.Label) {
 		result.Label = ""
+		result.Confirmed &^= store.PhotoConfirmedLabel
 	}
 	result.Caption = values["description"]
 	result.Creator = values["creator"]
@@ -217,14 +228,17 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 		}
 		if n == -1 {
 			result.Flag = "reject"
+			result.Confirmed |= store.PhotoConfirmedFlag
 		} else {
 			result.Rating = n
+			result.Confirmed |= store.PhotoConfirmedRating
 		}
 	}
 	if value, ok := values["Rotation"]; ok {
 		n, err := strconv.Atoi(value)
 		if err == nil && (n == 0 || n == 90 || n == 180 || n == 270) {
 			result.Rotation = n
+			result.Confirmed |= store.PhotoConfirmedRotation
 		}
 	}
 	if err := store.ValidatePhotoAuthored(result); err != nil {

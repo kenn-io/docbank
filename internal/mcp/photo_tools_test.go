@@ -59,7 +59,7 @@ func TestPhotoMCPAuthoredPagesFitEnvelope(t *testing.T) {
 			asset := api.PhotoAsset{ID: "00000000-0000-4000-8000-000000000001", Kind: "photo", Revision: 2, DisplaySource: "default", CreatedAt: stamp, UpdatedAt: stamp, ExcludedAt: new(stamp)}
 			text := strings.Repeat(test.text, store.MaxPhotoAuthoredTextBytes)
 			for i := range test.files {
-				asset.Files = append(asset.Files, api.PhotoFile{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+10), AssetID: asset.ID, NodeID: int64(i + 7), Role: "raw", Revision: 1, Caption: text, Creator: text, Copyright: text, CreatedAt: stamp})
+				asset.Files = append(asset.Files, api.PhotoFile{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+10), AssetID: asset.ID, NodeID: int64(i + 7), Role: "raw", Revision: 1, Confirmed: store.PhotoConfirmedAll, Caption: text, Creator: text, Copyright: text, CreatedAt: stamp})
 			}
 			asset.DisplayFileID = new(asset.Files[0].ID)
 			var writes atomic.Int32

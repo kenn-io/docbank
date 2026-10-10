@@ -29,6 +29,16 @@ const (
 
 const PhotoConfirmedAll = PhotoConfirmedRating | PhotoConfirmedFlag | PhotoConfirmedLabel | PhotoConfirmedCaption | PhotoConfirmedCreator | PhotoConfirmedCopyright | PhotoConfirmedRotation
 
+func (fields PhotoAuthoredFields) Names() []string {
+	names := []string{}
+	for i, name := range []string{"rating", "flag", "label", "caption", "creator", "copyright", "rotation"} {
+		if fields&(1<<i) != 0 {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 type PhotoAuthored struct {
 	Confirmed PhotoAuthoredFields `json:"confirmed_fields,omitzero"`
 	Rating    int                 `json:"rating"`

@@ -1130,6 +1130,7 @@ func auditAttachmentStateDetail(label string, state *api.AuditAttachmentState) [
 			"   Creator: "+quoted(v.Creator),
 			"   Copyright: "+quoted(v.Copyright),
 			fmt.Sprintf("   Rotation: %d", v.Rotation),
+			"   Confirmed fields: "+quoted(strings.Join(v.Confirmed.Names(), ", ")),
 		)
 	}
 	if state.TagName != "" {

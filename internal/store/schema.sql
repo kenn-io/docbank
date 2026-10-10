@@ -2179,7 +2179,7 @@ CREATE TABLE IF NOT EXISTS photo_files (
     creator              TEXT NOT NULL DEFAULT '',
     copyright            TEXT NOT NULL DEFAULT '',
     rotation             INTEGER NOT NULL DEFAULT 0,
-    confirmed_fields     INTEGER NOT NULL DEFAULT 0 CHECK (confirmed_fields BETWEEN 0 AND 127),
+    confirmed_fields     INTEGER NOT NULL DEFAULT 0,
     created_at           TEXT NOT NULL,
     FOREIGN KEY (sidecar_of_file_id) REFERENCES photo_files(file_id)
         ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED
