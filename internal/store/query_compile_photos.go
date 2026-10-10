@@ -44,9 +44,6 @@ func isPhotoScalarField(field string) bool {
 }
 
 func (c queryCompiler) compilePhotoMetadataPredicate(predicate string, args ...any) compiledQueryFragment {
-	if c.photoOuterDisplay {
-		return compiledQueryFragment{sql: `COALESCE(p.generation_id IS NOT NULL AND (` + predicate + `),0)`, args: args}
-	}
 	return c.compilePhotoVersionPredicate(func(alias string) string {
 		return `EXISTS (SELECT 1 FROM source_metadata_heads h JOIN photo_technical_metadata p ON p.generation_id=h.generation_id WHERE h.source_sha256=` + alias + `.blob_hash AND ` + predicate + `)`
 	}, args...)

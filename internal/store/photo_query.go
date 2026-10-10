@@ -8,9 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
-	"time"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/query"
@@ -18,7 +16,6 @@ import (
 )
 
 const photoBrowseConfiguredCoverage = "configured"
-const photoRankedRowsTimeout = 10 * time.Second
 
 // PhotoBrowseRequest supplies query meaning and exact preview recipe identities.
 type PhotoBrowseRequest struct {
@@ -32,13 +29,11 @@ type PhotoBrowseRequest struct {
 
 // PhotoBrowsePosition is the selected SQL key bound to the resolved query.
 type PhotoBrowsePosition struct {
-	Key           string   `json:"key"`
-	Tier          int      `json:"tier,omitempty"`
-	Score         *float64 `json:"score,omitempty"`
-	Missing       bool     `json:"missing"`
-	AssetID       string   `json:"asset_id"`
-	QueryIdentity string   `json:"query_identity"`
-	Total         int64    `json:"total"`
+	Key           string `json:"key"`
+	Missing       bool   `json:"missing"`
+	AssetID       string `json:"asset_id"`
+	QueryIdentity string `json:"query_identity"`
+	Total         int64  `json:"total"`
 }
 
 type PhotoPreviewSlot struct {
@@ -122,7 +117,7 @@ func (s *Store) ListPhotoAssets(
 			from = `photo_set_members sm CROSS JOIN photo_assets a ON a.asset_id=sm.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`)
 			sortKey, ok = "sm.added_at", true
 		}
-		if !ok && sortField != "relevance" {
+		if !ok {
 			return fmt.Errorf("%w: unsupported sort", ErrInvalidPhotoQuery)
 		}
 		if coverage.Configuration == photoBrowseConfiguredCoverage {
@@ -150,9 +145,7 @@ func (s *Store) ListPhotoAssets(
 		if boundary != nil {
 			if boundary.QueryIdentity != identity || validateUUIDv4(boundary.AssetID) != nil ||
 				len(boundary.Key) > MaxPhotoSortKeyBytes || boundary.Total < 0 ||
-				(sortField == "relevance") != (boundary.Score != nil) ||
-				boundary.Tier < 0 || boundary.Tier > 2 || sortField != "relevance" && boundary.Tier != 0 ||
-				boundary.Score != nil && (math.IsNaN(*boundary.Score) || math.IsInf(*boundary.Score, 0) || boundary.Key != "" || boundary.Missing) {
+				boundary.Missing && boundary.Key != "" {
 				return ErrInvalidPhotoCursor
 			}
 		}
@@ -165,7 +158,7 @@ func (s *Store) ListPhotoAssets(
 				sql: sql, args: args, relations: match.relations,
 			}, coverage, generation.ID)
 		}
-		if boundary == nil && sortField != "relevance" {
+		if boundary == nil {
 			countSQL, countArgs, err := bind(`SELECT COUNT(*) FROM `+photoBrowseDisplayFrom+
 				` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(request.Hidden)+` AND `+match.sql, match.args)
 			if err != nil {
@@ -178,7 +171,7 @@ func (s *Store) ListPhotoAssets(
 			page.Total = boundary.Total
 		}
 		if boundary == nil {
-			page.Facets, err = materializePhotoFacets(ctx, q, compiled, generation.ID, coverage, dimensions, defaultSnapshotMaterializeOptions())
+			page.Facets, err = materializePhotoFacets(ctx, q, compiled, generation.ID, coverage, dimensions, defaultSnapshotMaterializeOptions(), nil)
 			if err != nil {
 				return err
 			}
@@ -188,69 +181,57 @@ func (s *Store) ListPhotoAssets(
 			primary, comparison = "DESC", "<"
 		}
 		page.Items = make([]PhotoBrowseRow, 0, request.PageSize+1)
-		if sortField == "relevance" {
-			rankedCtx, cancel := context.WithTimeout(ctx, photoRankedRowsTimeout)
-			defer cancel()
-			page.Items, err = rankedPhotoRows(rankedCtx, q, compiled, generation.ID, coverage, request.PageSize, boundary, identity, page.Total)
+		// Read known keys from their index, then missing keys in asset order.
+		// Keeping these separate avoids sorting the entire library to put NULLs last.
+		for _, missing := range []bool{false, true} {
+			if !missing && boundary != nil && boundary.Missing {
+				continue
+			}
+			pageFrom, key := from, sortKey
+			order := key + ` ` + primary + `,a.asset_id ASC`
+			where := key + `>''`
+			args := append([]any(nil), match.args...)
+			if sortField == "added_time" {
+				where = `sm.set_id=? AND ` + where
+				args = append(args, compiled.Query.Filters.SetIDs[0])
+			}
+			if missing {
+				pageFrom = photoBrowseDisplayFrom
+				if sortField == "added_time" {
+					continue
+				}
+				key = photoBrowseMissingKey(sortField)
+				where = key + `=''`
+				order = `a.asset_id ASC`
+				if boundary != nil && boundary.Missing {
+					where += ` AND a.asset_id>?`
+					args = append(args, boundary.AssetID)
+				}
+			} else if boundary != nil {
+				// The inclusive range gives SQLite a seek even when the tie-break
+				// below is an OR involving a joined asset.
+				where += ` AND ` + key + comparison + `=? AND (` + key + comparison +
+					`? OR (` + key + `=? AND a.asset_id>?))`
+				args = append(args, boundary.Key, boundary.Key, boundary.Key, boundary.AssetID)
+			}
+			args = append(args, request.PageSize+1-len(page.Items))
+			pageSQL, pageArgs, err := bind(`SELECT `+photoBrowseSelect+`,`+key+` FROM `+pageFrom+` WHERE `+
+				photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(request.Hidden)+` AND `+match.sql+` AND `+where+
+				` ORDER BY `+order+` LIMIT ?`, args)
 			if err != nil {
 				return err
 			}
-			if boundary == nil && len(page.Items) > 0 {
-				page.Total = page.Items[0].position.Total
+			rows, err := q.QueryContext(ctx, pageSQL, pageArgs...)
+			if err != nil {
+				return err
 			}
-		} else {
-			// Read known keys from their index, then missing keys in asset order.
-			// Keeping these separate avoids sorting the entire library to put NULLs last.
-			for _, missing := range []bool{false, true} {
-				if !missing && boundary != nil && boundary.Missing {
-					continue
-				}
-				pageFrom, key := from, sortKey
-				order := key + ` ` + primary + `,a.asset_id ASC`
-				where := key + `>''`
-				args := append([]any(nil), match.args...)
-				if sortField == "added_time" {
-					where = `sm.set_id=? AND ` + where
-					args = append(args, compiled.Query.Filters.SetIDs[0])
-				}
-				if missing {
-					pageFrom = photoBrowseDisplayFrom
-					if sortField == "added_time" {
-						continue
-					}
-					key = photoBrowseMissingKey(sortField)
-					where = key + `=''`
-					order = `a.asset_id ASC`
-					if boundary != nil && boundary.Missing {
-						where += ` AND a.asset_id>?`
-						args = append(args, boundary.AssetID)
-					}
-				} else if boundary != nil {
-					// The inclusive range gives SQLite a seek even when the tie-break
-					// below is an OR involving a joined asset.
-					where += ` AND ` + key + comparison + `=? AND (` + key + comparison +
-						`? OR (` + key + `=? AND a.asset_id>?))`
-					args = append(args, boundary.Key, boundary.Key, boundary.Key, boundary.AssetID)
-				}
-				args = append(args, request.PageSize+1-len(page.Items))
-				pageSQL, pageArgs, err := bind(`SELECT `+photoBrowseSelect+`,`+key+` FROM `+pageFrom+` WHERE `+
-					photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(request.Hidden)+` AND `+match.sql+` AND `+where+
-					` ORDER BY `+order+` LIMIT ?`, args)
-				if err != nil {
-					return err
-				}
-				rows, err := q.QueryContext(ctx, pageSQL, pageArgs...)
-				if err != nil {
-					return err
-				}
-				items, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{QueryIdentity: identity, Total: page.Total, Missing: missing}, false)
-				if err != nil {
-					return err
-				}
-				page.Items = append(page.Items, items...)
-				if len(page.Items) > request.PageSize {
-					break
-				}
+			items, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{QueryIdentity: identity, Total: page.Total, Missing: missing})
+			if err != nil {
+				return err
+			}
+			page.Items = append(page.Items, items...)
+			if len(page.Items) > request.PageSize {
+				break
 			}
 		}
 		if len(page.Items) > request.PageSize {
@@ -258,41 +239,7 @@ func (s *Store) ListPhotoAssets(
 			position := page.Items[len(page.Items)-1].position
 			page.Next = &position
 		}
-		versions := make([]string, len(page.Items))
-		for i, row := range page.Items {
-			versions[i] = row.ContentVersionID
-		}
-		previews, err := photoPreviewGenerations(ctx, q, versions, request.Recipes)
-		if err != nil {
-			return err
-		}
-		qualities, err := photoQualityForVersions(ctx, q, versions)
-		if err != nil {
-			return err
-		}
-		for i := range page.Items {
-			row := &page.Items[i]
-			if signals, ok := qualities.signals[row.ContentVersionID]; ok {
-				row.Quality = &signals
-			}
-			row.QualityUnavailable = qualities.unavailable[row.ContentVersionID]
-			row.Previews = make(map[string]PhotoPreviewSlot, 3)
-			for _, size := range []string{"grid", "fit", "large"} {
-				slot := PhotoPreviewSlot{State: "missing"}
-				if preview, ok := previews[row.ContentVersionID][request.Recipes[size]]; ok {
-					if preview.VaultID != s.vaultID || preview.Preview.SourceSHA256 != row.sourceHash {
-						return errors.New("preview source binding mismatch")
-					}
-					slot.State = string(preview.Preview.State)
-					slot.Generation = &preview
-					if preview.Preview.State == document.VisualPreviewReady && preview.Preview.Output == nil {
-						return errors.New("ready preview lacks output")
-					}
-				}
-				row.Previews[size] = slot
-			}
-		}
-		return nil
+		return s.hydratePhotoPreviews(ctx, q, request, page.Items)
 	})
 	if err != nil {
 		return PhotoBrowsePage{}, err
@@ -395,7 +342,7 @@ func photoBrowseMatch(compiled CompiledQuery, generation string, coverage Covera
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member CROSS JOIN (` + population.sql + `) matched ON matched.node_id=member.node_id WHERE member.asset_id=a.asset_id)`, args: population.args, relations: population.relations}, nil
 }
 
-func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, size int, boundary *PhotoBrowsePosition, identity string, total int64) ([]PhotoBrowseRow, error) {
+func materializeRankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, options snapshotMaterializeOptions, projection *SnapshotProjection) error {
 	var names, content []string
 	for _, operand := range compiled.predicate.lexical {
 		if operand.negated {
@@ -408,7 +355,7 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 	}
 	population, err := photoBrowsePopulation(compiled, generation, coverage)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	candidates := sqlquery.Query{SQL: `SELECT 0 node_id,0 tier,0.0 score WHERE 0`}
 	if len(names) > 0 {
@@ -418,58 +365,71 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
 		}
 		candidates, err = photoSearchCandidates(strings.Join(names, " OR "), strings.Join(content, " OR "), generation, profile)
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 	ranking := `WITH eligible AS MATERIALIZED (` + population.sql + `), candidates AS (` + candidates.SQL + `), ranked AS (
  SELECT member.asset_id,COALESCE(MAX(candidates.tier),0) tier,
- COALESCE(MAX(CASE WHEN candidates.tier=2 THEN candidates.score END),MAX(CASE WHEN candidates.tier=1 THEN candidates.score END),0) score
+ COALESCE(MAX(CASE WHEN candidates.tier=3 THEN candidates.score END),MAX(CASE WHEN candidates.tier=2 THEN candidates.score END),MAX(CASE WHEN candidates.tier=1 THEN candidates.score END),0) score
  FROM eligible JOIN photo_files member ON member.node_id=eligible.node_id
 	 LEFT JOIN candidates ON candidates.node_id=eligible.node_id GROUP BY member.asset_id)`
 	args := append(append([]any(nil), population.args...), candidates.Args...)
-	count := `COUNT(*) OVER ()`
-	if boundary != nil {
-		count = `?`
-		args = append(args, total)
-	}
-	ranking += ` SELECT asset_id,tier,score,` + count + ` total FROM ranked WHERE 1`
-	where := ``
-	comparison, order := `<`, `DESC`
+	order := "DESC"
 	if compiled.Query.Sort.Direction == "asc" {
-		comparison, order = `>`, `ASC`
+		order = "ASC"
 	}
-	if boundary != nil {
-		where = ` AND (tier` + comparison + `? OR (tier=? AND (score` + comparison + `? OR (score=? AND asset_id>?))))`
-		args = append(args, boundary.Tier, boundary.Tier, *boundary.Score, *boundary.Score, boundary.AssetID)
-	}
-	args = append(args, size+1)
-	ranking += where + ` ORDER BY tier ` + order + `,score ` + order + `,asset_id ASC LIMIT ?`
-	statement, args, err := bindQueryPopulation(compiledQueryFragment{sql: `SELECT ` + photoBrowseSelect + `,page.tier,page.score,page.total FROM (` + ranking + `) page CROSS JOIN photo_assets a ON a.asset_id=page.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`) + ` ORDER BY page.tier ` + order + `,page.score ` + order + `,a.asset_id ASC`, args: args, relations: population.relations}, coverage, generation)
+	ranking += ` SELECT member.asset_id,n.id,v.version_id,v.blob_hash,v.size,n.revision FROM ranked member
+ CROSS JOIN photo_assets a ON a.asset_id=member.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`) +
+		` ORDER BY member.tier ` + order + `,member.score ` + order + `,member.asset_id ASC`
+	statement, args, err := bindQueryPopulation(compiledQueryFragment{sql: ranking, args: args, relations: population.relations}, coverage, generation)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	rows, err := q.QueryContext(ctx, statement, args...)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return scanPhotoBrowseRows(rows, PhotoBrowsePosition{QueryIdentity: identity, Total: total}, true)
+	defer func() { _ = rows.Close() }()
+	if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, 2); err != nil {
+		return err
+	}
+	for rows.Next() {
+		if int64(len(projection.Rows)) >= options.MaxRows {
+			return ErrQuerySnapshotTooLarge
+		}
+		var row SnapshotRow
+		if err := rows.Scan(&row.PhotoAssetID, &row.NodeID, &row.ContentVersionID, &row.BlobHash, &row.Size, &row.Revision); err != nil {
+			return err
+		}
+		row.SortKey = fmt.Sprintf("%020d", len(projection.Rows))
+		encoded, err := json.Marshal(row)
+		if err != nil {
+			return err
+		}
+		bytes := int64(len(encoded)) + 1
+		if bytes > options.MaxRowBytes {
+			return ErrQuerySnapshotTooLarge
+		}
+		if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 1, bytes); err != nil {
+			return err
+		}
+		projection.Rows = append(projection.Rows, row)
+		projection.TotalBytes += row.Size
+	}
+	projection.Total = int64(len(projection.Rows))
+	return rows.Err()
 }
 
 var photoBrowseSelect = `a.asset_id,a.kind,a.revision,f.file_id,n.id,v.version_id,n.name,COALESCE(v.mime_type,''),n.created_at,v.blob_hash,` + photoTechnicalSelect
 
-func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition, ranked bool) ([]PhotoBrowseRow, error) {
+func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition) ([]PhotoBrowseRow, error) {
 	defer func() { _ = rows.Close() }()
 	result := make([]PhotoBrowseRow, 0)
 	for rows.Next() {
 		row := PhotoBrowseRow{position: position}
 		dest := []any{&row.AssetID, &row.Kind, &row.Revision, &row.DisplayFileID, &row.NodeID, &row.ContentVersionID, &row.Name, &row.MediaType, &row.ImportTime, &row.sourceHash}
 		dest = append(dest, row.Fields.columnPointers()...)
-		if ranked {
-			row.position.Score = new(float64)
-			dest = append(dest, &row.position.Tier, row.position.Score, &row.position.Total)
-		} else {
-			dest = append(dest, &row.position.Key)
-		}
+		dest = append(dest, &row.position.Key)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
@@ -480,4 +440,198 @@ func scanPhotoBrowseRows(rows *sql.Rows, position PhotoBrowsePosition, ranked bo
 		return nil, err
 	}
 	return result, rows.Close()
+}
+
+func (s *Store) hydratePhotoPreviews(ctx context.Context, q metadataQuerier, request PhotoBrowseRequest, items []PhotoBrowseRow) error {
+	versions := make([]string, len(items))
+	for i, row := range items {
+		versions[i] = row.ContentVersionID
+	}
+	previews, err := photoPreviewGenerations(ctx, q, versions, request.Recipes)
+	if err != nil {
+		return err
+	}
+	qualities, err := photoQualityForVersions(ctx, q, versions)
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		row := &items[i]
+		if signals, ok := qualities.signals[row.ContentVersionID]; ok {
+			row.Quality = &signals
+		}
+		row.QualityUnavailable = qualities.unavailable[row.ContentVersionID]
+		row.Previews = make(map[string]PhotoPreviewSlot, 3)
+		for _, size := range []string{"grid", "fit", "large"} {
+			slot := PhotoPreviewSlot{State: "missing"}
+			if preview, ok := previews[row.ContentVersionID][request.Recipes[size]]; ok {
+				if preview.VaultID != s.vaultID || preview.Preview.SourceSHA256 != row.sourceHash {
+					return errors.New("preview source binding mismatch")
+				}
+				slot.State = string(preview.Preview.State)
+				slot.Generation = &preview
+				if preview.Preview.State == document.VisualPreviewReady && preview.Preview.Output == nil {
+					return errors.New("ready preview lacks output")
+				}
+			}
+			row.Previews[size] = slot
+		}
+	}
+	return nil
+}
+
+func photoRankedIdentity(request PhotoBrowseRequest) (string, error) {
+	canonical, err := query.Canonical(request.Query)
+	if err != nil {
+		return "", err
+	}
+	binding, err := json.Marshal(struct {
+		Query    []byte
+		Coverage CoverageSelection
+		Hidden   bool
+		PageSize int
+		Facets   []string
+	}{canonical, request.Coverage, request.Hidden, request.PageSize, request.Facets})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(binding)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func normalizePhotoRankedRequest(request PhotoBrowseRequest) (PhotoBrowseRequest, error) {
+	if request.PageSize == 0 {
+		request.PageSize = DefaultDocumentCatalogPageSize
+	}
+	if request.PageSize < 1 || request.PageSize > MaxDocumentCatalogPageSize {
+		return request, ErrInvalidPhotoQuery
+	}
+	var err error
+	request.Coverage, err = normalizeCoverageSelection(request.Coverage)
+	if err != nil {
+		return request, err
+	}
+	request.Facets, err = normalizeFacetDimensions(request.Facets, []string{compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField})
+	if err != nil {
+		return request, fmt.Errorf("%w: %w", ErrInvalidPhotoQuery, err)
+	}
+	return request, nil
+}
+
+func (s *Store) materializePhotoRankedSnapshot(ctx context.Context, request PhotoBrowseRequest, options snapshotMaterializeOptions) (SnapshotProjection, error) {
+	request, err := normalizePhotoRankedRequest(request)
+	if err != nil {
+		return SnapshotProjection{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, options.BuildTimeout)
+	defer cancel()
+	var projection SnapshotProjection
+	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
+		if request.Hidden {
+			if _, err := s.hiddenSession(ctx, q); err != nil {
+				return err
+			}
+		}
+		compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: q})
+		if err != nil {
+			return err
+		}
+		if compiled.Query.Sort.Field != "relevance" {
+			return ErrInvalidPhotoQuery
+		}
+		if request.Coverage.Configuration == photoBrowseConfiguredCoverage {
+			if err := validateSnapshotCoverageProfile(ctx, q, request.Coverage); err != nil {
+				return err
+			}
+		}
+		identity, err := photoRankedIdentity(request)
+		if err != nil {
+			return err
+		}
+		projection = SnapshotProjection{
+			Query: compiled.Query, Dependencies: compiled.Dependencies, QueryFingerprint: identity,
+			Coverage: request.Coverage, PageSize: request.PageSize, ObservedAt: options.Now().UTC(),
+			Rows: make([]SnapshotRow, 0), Generation: SnapshotGeneration{Kind: "native"},
+		}
+		if generation.ID != "" {
+			projection.Generation = SnapshotGeneration{Kind: "rendition", GenerationID: generation.ID}
+		}
+		if err := materializeRankedPhotoRows(ctx, q, compiled, generation.ID, request.Coverage, options, &projection); err != nil {
+			return err
+		}
+		projection.MemberHash = snapshotMemberHash(snapshotMembers(projection.Rows))
+		projection.Facets, err = materializePhotoFacets(ctx, q, compiled, generation.ID, request.Coverage, request.Facets, options, &projection.SerializedBytes)
+		if err != nil {
+			return err
+		}
+		projection.SnapshotFingerprint, err = snapshotProjectionFingerprint(projection)
+		if err != nil {
+			return err
+		}
+		bytes, err := snapshotProjectionMetadataBytes(projection)
+		if err != nil {
+			return err
+		}
+		return chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, bytes)
+	})
+	return projection, err
+}
+
+func (s *QuerySnapshotService) PagePhotoRanked(ctx context.Context, owner, id, cursor string, request PhotoBrowseRequest) (SnapshotPage, error) {
+	request, err := normalizePhotoRankedRequest(request)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	page, err := s.Page(ctx, owner, id, cursor)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	identity, err := photoRankedIdentity(request)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	if identity != page.QueryFingerprint {
+		return SnapshotPage{}, ErrInvalidPhotoCursor
+	}
+	return page, nil
+}
+
+func (s *Store) HydratePhotoRankedPage(ctx context.Context, request PhotoBrowseRequest, snapshot SnapshotPage) (PhotoBrowsePage, error) {
+	page := PhotoBrowsePage{Total: snapshot.Total, Items: make([]PhotoBrowseRow, 0)}
+	if snapshot.PrevCursor == "" {
+		page.Facets = snapshot.Facets
+	}
+	err := s.withLexicalGenerationRead(ctx, func(q metadataQuerier, _ LexicalGeneration) error {
+		if request.Hidden {
+			if _, err := s.hiddenSession(ctx, q); err != nil {
+				return err
+			}
+		}
+		if len(snapshot.Rows) == 0 {
+			return nil
+		}
+		args := make([]any, len(snapshot.Rows))
+		for i, row := range snapshot.Rows {
+			args[i] = row.PhotoAssetID
+		}
+		rows, err := q.QueryContext(ctx, `SELECT `+photoBrowseSelect+`,'' FROM `+photoBrowseDisplayFrom+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(request.Hidden)+` AND a.asset_id IN (`+placeholders(len(args))+`)`, args...)
+		if err != nil {
+			return err
+		}
+		items, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{})
+		if err != nil {
+			return err
+		}
+		byID := make(map[string]PhotoBrowseRow, len(items))
+		for _, row := range items {
+			byID[row.AssetID] = row
+		}
+		for _, member := range snapshot.Rows {
+			if row, ok := byID[member.PhotoAssetID]; ok {
+				page.Items = append(page.Items, row)
+			}
+		}
+		return s.hydratePhotoPreviews(ctx, q, request, page.Items)
+	})
+	return page, err
 }

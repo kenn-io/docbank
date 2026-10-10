@@ -7,6 +7,25 @@ import { photo } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
 
+it("disables search and filters until a delayed Hide finishes", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  let finish!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn((url: string) => url.endsWith("/hide") ? new Promise<Response>(resolve => finish = resolve) : Promise.resolve(Response.json({ items: [], total: 0, facets: [] }))));
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.started = true;
+  photos.facets = [{ dimension: "camera", available: true, reason: "", total: 1, missing: 0, other: 0, values: [{ key: "Canon", label: "Canon", count: 1, selected: false }] }];
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  const controls = [screen.getByRole("searchbox", { name: "Search photos" }), screen.getByRole("button", { name: "Search" }), screen.getByRole("combobox", { name: "Sort photos: Capture date" }), screen.getByRole("button", { name: "Clear filters" }), screen.getByRole("button", { name: "Canon, 1 photos" })];
+  expect(screen.getByRole("button", { name: "Clear filters" }).getAttribute("type")).toBe("button");
+  const pending = photos.setHidden("photo-1");
+  await waitFor(() => { for (const control of controls) expect(control.hasAttribute("disabled")).toBe(true); });
+  finish(Response.json({ id: "photo-1", revision: 2 }));
+  await pending;
+  await waitFor(() => { for (const control of controls.slice(0, 4)) expect(control.hasAttribute("disabled")).toBe(false); });
+  photos.dispose(); await cache.dispose();
+});
+
 it("keeps failed confirmation visible and closes after cancellation or success", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -16,7 +35,7 @@ it("keeps failed confirmation visible and closes after cancellation or success",
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3)], total: 3 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-3", revision: 2 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(2)], total: 1 })));
-  vi.stubGlobal("fetch", (url: string, init: RequestInit) => url.endsWith("/photos/assets/query") && JSON.parse(init.body as string).page_size === 1 ? Promise.resolve(Response.json({ facets: [] })) : fetcher(url, init));
+  vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();
   const cache = new PhotoPreviewCache("scoped", vi.fn());
@@ -47,7 +66,7 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(1), photo(2)], total: 3, next_cursor: "next" })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Page unavailable" }), { status: 503 }))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3, "2024-01-01T12:00:00")], total: 3 })));
-  vi.stubGlobal("fetch", (url: string, init: RequestInit) => JSON.parse(init.body as string).page_size === 1 ? Promise.resolve(new Response(JSON.stringify({ facets: [] }))) : fetcher(url, init));
+  vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const view = render(PhotosWorkspace, { photos, cache });
@@ -186,7 +205,7 @@ it("keeps loading pages that add no rows and keeps the top photo across density 
   const page = (rows: typeof items, cursor?: string) => new Response(JSON.stringify({ items: rows, total: 60, next_cursor: cursor }));
   const fetcher = vi.fn().mockResolvedValueOnce(page(items.slice(0, 2), "repeat")).mockResolvedValueOnce(page(items.slice(0, 2), "rest"))
     .mockResolvedValueOnce(page(items.slice(2)));
-  vi.stubGlobal("fetch", (url: string, init: RequestInit) => JSON.parse(init.body as string).facets.length ? Promise.resolve(new Response(JSON.stringify({ facets: [] }))) : fetcher(url, init));
+  vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotosWorkspace, { photos, cache });
@@ -230,7 +249,7 @@ it("keeps import guidance after clearing an empty search and recognizes numeric 
 it("explains fixed count limits without offering retry", async () => {
   const reason = "byte_budget_exceeded";
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-  vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => new Response(JSON.stringify(JSON.parse(init.body as string).facets.length ? { facets: [{ dimension: "camera", available: false, reason }] } : { items: [], total: 0 }))));
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [], total: 0, facets: [{ dimension: "camera", available: false, reason }] }))));
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotosWorkspace, { photos, cache });

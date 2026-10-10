@@ -202,7 +202,15 @@ func newQuerySnapshotService(store *Store, options querySnapshotServiceOptions) 
 func (s *QuerySnapshotService) Create(
 	ctx context.Context, owner string, request SnapshotRequest,
 ) (SnapshotPage, error) {
-	prepared, err := s.prepareSnapshot(ctx, owner, request, nil)
+	return s.create(ctx, owner, request, nil)
+}
+
+func (s *QuerySnapshotService) CreatePhotoRanked(ctx context.Context, owner string, request PhotoBrowseRequest) (SnapshotPage, error) {
+	return s.create(ctx, owner, SnapshotRequest{}, &request)
+}
+
+func (s *QuerySnapshotService) create(ctx context.Context, owner string, request SnapshotRequest, photo *PhotoBrowseRequest) (SnapshotPage, error) {
+	prepared, err := s.prepareSnapshot(ctx, owner, request, nil, photo)
 	if err != nil {
 		return SnapshotPage{}, err
 	}
@@ -230,7 +238,7 @@ func (s *QuerySnapshotService) RunSaved(
 	}
 	prepared, err := s.prepareSnapshot(ctx, owner, request, &savedQuerySnapshotInput{
 		ID: id, ExpectedRevision: expectedRevision,
-	})
+	}, nil)
 	if err != nil {
 		return SavedQueryRun{}, SnapshotPage{}, err
 	}
@@ -273,7 +281,7 @@ func (s *QuerySnapshotService) RunSaved(
 }
 
 func (s *QuerySnapshotService) prepareSnapshot(
-	ctx context.Context, owner string, request SnapshotRequest, saved *savedQuerySnapshotInput,
+	ctx context.Context, owner string, request SnapshotRequest, saved *savedQuerySnapshotInput, photo *PhotoBrowseRequest,
 ) (preparedQuerySnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return preparedQuerySnapshot{}, err
@@ -302,6 +310,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 	options := defaultSnapshotMaterializeOptions()
 	options.Now = s.now
 	options.SavedQuery = saved
+	options.PhotoRequest = photo
 	var chargedRows, chargedBytes int64
 	options.Charge = func(rows, bytes int64) error {
 		if err := buildCtx.Err(); err != nil {

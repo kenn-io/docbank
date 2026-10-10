@@ -503,7 +503,7 @@ func finalizeSnapshotFacetValues(
 	return values, other
 }
 
-func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions) ([]SnapshotFacet, error) {
+func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions, used *int64) ([]SnapshotFacet, error) {
 	results := make(map[string]SnapshotFacet)
 	options.MaterializeFacet = func(ctx context.Context, dimension string) (SnapshotFacet, error) {
 		if facet, ok := results[dimension]; ok {
@@ -525,13 +525,15 @@ func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled Com
 		}
 		return results[dimension], nil
 	}
-	var used int64
-	return materializeSnapshotFacets(ctx, q, compiled, generation, coverage, dimensions, nil, options, &used)
+	if used == nil {
+		used = new(int64)
+	}
+	return materializeSnapshotFacets(ctx, q, compiled, generation, coverage, dimensions, nil, options, used)
 }
 
 func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions) ([]SnapshotFacet, error) {
 	value := queryWithoutSnapshotFacet(compiled.Query, dimensions[0])
-	resolved, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: compiled.photoHidden, photoOuterDisplay: !value.Filters.CollapseDuplicates}).compile(ctx, value, queryResolver{q: q})
+	resolved, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: compiled.photoHidden}).compile(ctx, value, queryResolver{q: q})
 	if err != nil {
 		return nil, err
 	}

@@ -78,16 +78,9 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 		value, err := query.Parse([]byte(tc.raw))
 		require.NoError(b, err)
 		request := PhotoBrowseRequest{Query: value, PageSize: 50, Recipes: recipes}
-		first, err := s.ListPhotoAssets(ctx, request, nil)
-		require.NoError(b, err)
-		require.Len(b, first.Items, 50)
-		require.NotNil(b, first.Next)
-		if tc.name != "capture_range" {
-			require.Equal(b, int64(assetCount), first.Total)
-		} else {
-			require.Equal(b, int64(1488), first.Total)
-		}
 		if tc.name == "ranked" {
+			service := NewQuerySnapshotService(s)
+			b.Cleanup(func() { require.NoError(b, service.Close()) })
 			b.Run("ranked/counts", func(b *testing.B) {
 				counts := request
 				counts.Query.Sort = query.Sort{Field: "capture_time", Direction: "desc"}
@@ -108,6 +101,42 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 					b.ReportMetric(float64(available), "available-facets")
 				}
 			})
+			request.Facets = []string{"camera", "lens", "year", "location", "set"}
+			b.Run("ranked/first", func(b *testing.B) {
+				b.ReportAllocs()
+				for range b.N {
+					snapshot, err := service.CreatePhotoRanked(ctx, "benchmark", request)
+					require.NoError(b, err)
+					page, err := s.HydratePhotoRankedPage(ctx, request, snapshot)
+					require.NoError(b, err)
+					require.Len(b, page.Items, 50)
+					require.Equal(b, int64(assetCount), page.Total)
+					require.Len(b, page.Facets, 5)
+				}
+			})
+			first, err := service.CreatePhotoRanked(ctx, "benchmark", request)
+			require.NoError(b, err)
+			b.Run("ranked/later", func(b *testing.B) {
+				b.ReportAllocs()
+				for range b.N {
+					snapshot, err := service.PagePhotoRanked(ctx, "benchmark", first.SnapshotID, first.NextCursor, request)
+					require.NoError(b, err)
+					page, err := s.HydratePhotoRankedPage(ctx, request, snapshot)
+					require.NoError(b, err)
+					require.Len(b, page.Items, 50)
+					require.Len(b, page.Items[0].Previews, 3)
+				}
+			})
+			continue
+		}
+		first, err := s.ListPhotoAssets(ctx, request, nil)
+		require.NoError(b, err)
+		require.Len(b, first.Items, 50)
+		require.NotNil(b, first.Next)
+		if tc.name != "capture_range" {
+			require.Equal(b, int64(assetCount), first.Total)
+		} else {
+			require.Equal(b, int64(1488), first.Total)
 		}
 		for _, page := range []struct {
 			name     string

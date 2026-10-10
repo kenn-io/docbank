@@ -40,10 +40,10 @@ Search filenames, camera or lens names, and location labels in the Photos
 search box. Search opens in relevance order, with one tile per asset even
 when several paired files match. Choose Capture date to
 return to date browsing. Relevance keeps the ranked order across loaded
-pages and uses asset IDs to break equal-score ties. The first ranked page counts its complete ranked scope. Ranked retrieval has a ten-second deadline; Retry repeats a timed-out read while retaining earlier pages.
+pages and uses asset IDs to break equal-score ties. The first ranked page freezes the matching order and counts under a thirty-second build limit. Later pages read that saved order and current display facts. Snapshots expire after fifteen minutes idle or thirty minutes total; Retry rebuilds an expired search while retaining the earlier grid.
 
 Camera, Lens, Year, Location, and Albums narrow the grid. Counts cover the
-whole matching library, including photos beyond the loaded page. The grid loads before optional counts; Retry counts reloads temporary failures while paging stays available. Counts that exceed fixed member or byte limits require a narrower search or filters. Each facet
+whole matching library, including photos beyond the loaded page. Counts arrive with the first page. Unavailable counts show their reason; counts that exceed fixed member or byte limits require a narrower search or filters. Each facet
 omits its own selected filter while retaining search and the other filters.
 Camera, lens, year, and location describe the selected display file; year
 uses its recorded local capture date. Text may match any live member of a
@@ -393,7 +393,7 @@ and `lens:B` does not. A sidecar without camera metadata cannot make
 `NOT camera:A` match. Changing the display file changes these metadata matches.
 
 Photos text also searches camera and lens makes/models and location labels from
-active metadata heads. `name:` searches filenames only. Filenames and metadata supply BM25 relevance scores ahead of retained content-only matches, which rank by their text evidence. Prefix, phrase and NEAR operands keep their matching meaning when scored.
+active metadata heads. `name:` searches filenames only. Relevance orders filename matches, then metadata matches, then retained content-only matches. Each group uses its own BM25 scores. Prefix, phrase and NEAR operands keep their matching meaning when scored.
 The best matching member supplies an asset's score, after the complete
 expression restricts eligible members. Ordinary text, name, extension, tag, and collection predicates still match
 individual members. One member must satisfy the complete expression, using

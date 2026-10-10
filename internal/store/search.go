@@ -2449,7 +2449,7 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
 	if err != nil {
 		return sqlquery.Query{}, err
 	}
-	result := sqlquery.Query{SQL: `SELECT doc_key node_id,2 tier,score FROM (` + names.SQL + `)`, Args: names.Args}
+	result := sqlquery.Query{SQL: `SELECT doc_key node_id,3 tier,score FROM (` + names.SQL + `)`, Args: names.Args}
 	if textMatch == "" {
 		return result, nil
 	}

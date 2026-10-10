@@ -23089,7 +23089,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Browse matching photo assets with live keyset pagination
+      summary: Browse matching photo assets
   /api/v1/photos/assets/{asset_id}:
     get:
       operationId: getPhotoAsset

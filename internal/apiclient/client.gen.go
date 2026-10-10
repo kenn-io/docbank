@@ -8695,7 +8695,7 @@ func (c *Client) CreatePhotoAsset(ctx context.Context, options *CreatePhotoAsset
 	return responseParser(ctx, resp)
 }
 
-// ListPhotoAssets Browse matching photo assets with live keyset pagination
+// ListPhotoAssets Browse matching photo assets
 func (c *Client) ListPhotoAssets(ctx context.Context, options *ListPhotoAssetsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPhotoAssetsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

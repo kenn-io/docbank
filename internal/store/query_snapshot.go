@@ -59,6 +59,7 @@ type SnapshotTag struct {
 type SnapshotRow struct {
 	SnapshotMember
 
+	PhotoAssetID           string        `json:"photo_asset_id,omitempty"`
 	Name                   string        `json:"name"`
 	Path                   string        `json:"path"`
 	MIMEType               string        `json:"mime_type"`
@@ -119,6 +120,7 @@ type SnapshotProjection struct {
 }
 
 type snapshotMaterializeOptions struct {
+	PhotoRequest       *PhotoBrowseRequest
 	MaterializeFacet   func(context.Context, string) (SnapshotFacet, error)
 	MaxRows            int64
 	MaxRowBytes        int64
@@ -186,6 +188,9 @@ func (s *Store) materializeQuerySnapshot(
 	ctx context.Context, request SnapshotRequest, options snapshotMaterializeOptions,
 ) (SnapshotProjection, error) {
 	options = options.withDefaults()
+	if options.PhotoRequest != nil {
+		return s.materializePhotoRankedSnapshot(ctx, *options.PhotoRequest, options)
+	}
 	pageSize, err := normalizeSnapshotPageSize(request.PageSize)
 	if err != nil {
 		return SnapshotProjection{}, err

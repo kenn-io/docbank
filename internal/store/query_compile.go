@@ -66,7 +66,6 @@ func compileQuery(
 type queryCompiler struct {
 	photoDisplayMetadata bool
 	photoHidden          bool
-	photoOuterDisplay    bool
 }
 
 func (c queryCompiler) compile(
@@ -295,9 +294,6 @@ func (c queryCompiler) compileNearExpression(expression *query.ResolvedExpressio
 }
 
 func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpression) (compiledQueryFragment, error) {
-	if expression.Saved.Query.Filters.CollapseDuplicates {
-		c.photoOuterDisplay = false
-	}
 	nested, err := c.compileResolvedQuery(*expression.Saved)
 	if err != nil {
 		if expressionErr, ok := errors.AsType[*query.ExpressionError](err); ok {

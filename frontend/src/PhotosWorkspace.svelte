@@ -57,19 +57,18 @@
   </div>
   {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
   <form class="photo-search" onsubmit={event => { event.preventDefault(); void photos.setQuery({ ...photos.query, text: search, syntax: "simple", sort: { field: search.trim() ? "relevance" : "capture_time", direction: "desc" } }); }}>
-    <SearchInput ariaLabel="Search photos" placeholder="Search photos" bind:value={search} />
-    <Button type="submit" size="sm">Search</Button>
-    <SelectDropdown title="Sort photos" value={photos.query.sort.field} options={sortOptions} onchange={value => void photos.setQuery({ ...photos.query, sort: { field: value as "capture_time" | "relevance", direction: "desc" } })} />
-    <Button size="sm" onclick={() => { search = ""; void photos.setQuery({ ...photos.query, text: "", filters: {}, sort: { field: "capture_time", direction: "desc" } }); }}>Clear filters</Button>
+    <SearchInput disabled={photos.loading || photos.hiding || photos.trashing} ariaLabel="Search photos" placeholder="Search photos" bind:value={search} />
+    <Button type="submit" size="sm" disabled={photos.loading || photos.hiding || photos.trashing}>Search</Button>
+    <SelectDropdown disabled={photos.loading || photos.hiding || photos.trashing} title="Sort photos" value={photos.query.sort.field} options={sortOptions} onchange={value => void photos.setQuery({ ...photos.query, sort: { field: value as "capture_time" | "relevance", direction: "desc" } })} />
+    <Button type="button" size="sm" disabled={photos.loading || photos.hiding || photos.trashing} onclick={() => { search = ""; void photos.setQuery({ ...photos.query, text: "", filters: {}, sort: { field: "capture_time", direction: "desc" } }); }}>Clear filters</Button>
   </form>
   {#if photos.error}
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
   {/if}
   <div class="photo-browser">
   <div class="photo-facets">
-    {#if photos.facetsLoading}<div class="photo-loading" role="status"><Spinner size={14} />Loading counts…</div>{/if}
-    {#if photos.facetsError}<div class="photo-error" role="alert"><span>{photos.facetsError}</span>{#if photos.facetsRetryable}<Button size="sm" onclick={() => void photos.retryFacets()}>Retry counts</Button>{/if}</div>{/if}
-    <FacetSidebar facets={photos.facets} query={photos.query} unit="photos" onchange={value => void photos.setQuery(value)} />
+    {#if photos.facetsError}<div class="photo-error" role="alert"><span>{photos.facetsError}</span></div>{/if}
+    <FacetSidebar disabled={photos.loading || photos.hiding || photos.trashing} facets={photos.facets} query={photos.query} unit="photos" onchange={value => void photos.setQuery(value)} />
   </div>
   <div class="photo-results">
   {#if photos.items.length}

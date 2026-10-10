@@ -178,8 +178,8 @@ func TestWorkspaceQueryRoutesReportCanceledAndExpiredRequests(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	saved, _ := createSavedQuery(t, ts.URL, "Canceled synthetic query", `{}`)
 	for _, test := range []struct{ name, detail string }{
-		{"canceled", "query was canceled"},
-		{"deadline", "query did not finish within its resource budget"},
+		{"canceled", "query snapshot build was canceled"},
+		{"deadline", "query snapshot did not finish within its resource budget"},
 	} {
 		for _, path := range []string{"/api/v1/workspace/queries", "/api/v1/saved-queries/" + saved.ID + "/runs", "/api/v1/photos/assets/query"} {
 			t.Run(test.name+"/"+path, func(t *testing.T) {

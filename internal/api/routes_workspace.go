@@ -107,9 +107,9 @@ func workspaceQueryError(err error) error {
 	case errors.Is(err, store.ErrInvalidSavedQueryRun):
 		return NewError(http.StatusUnprocessableEntity, "invalid_saved_query_run", err.Error())
 	case errors.Is(err, context.DeadlineExceeded):
-		return NewError(http.StatusServiceUnavailable, "snapshot_unavailable", "query did not finish within its resource budget")
+		return NewError(http.StatusServiceUnavailable, "snapshot_unavailable", "query snapshot did not finish within its resource budget")
 	case errors.Is(err, context.Canceled):
-		return NewError(http.StatusServiceUnavailable, "snapshot_unavailable", "query was canceled")
+		return NewError(http.StatusServiceUnavailable, "snapshot_unavailable", "query snapshot build was canceled")
 	default:
 		return FromStoreError(err)
 	}

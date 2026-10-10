@@ -14351,7 +14351,7 @@ export const getListPhotoAssetsUrl = () => {
 }
 
 /**
- * @summary Browse matching photo assets with live keyset pagination
+ * @summary Browse matching photo assets
  */
 export const listPhotoAssets = async (photoBrowseRequest: NonReadonly<PhotoBrowseRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoBrowsePage> => {
 

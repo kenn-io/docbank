@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,7 +23,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryService) {
+func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryService, snapshots *store.QuerySnapshotService) {
 	recipes := make(map[string]string, 3)
 	for _, size := range []string{"grid", "fit", "large"} {
 		recipe, err := processing.VisualPreviewRecipeForSize(size)
@@ -37,33 +38,63 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 	}
 	huma.Register(api, huma.Operation{
 		OperationID: "listPhotoAssets", Method: http.MethodPost, Path: "/api/v1/photos/assets/query",
-		Summary:      "Browse matching photo assets with live keyset pagination",
+		Summary:      "Browse matching photo assets",
 		MaxBodyBytes: query.MaxInputBytes + (64 << 10),
 	}, func(ctx context.Context, in *struct{ Body PhotoBrowseRequest }) (*struct{ Body PhotoBrowsePage }, error) {
 		value, err := query.Parse(in.Body.Query)
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 		}
-		var boundary *store.PhotoBrowsePosition
-		if in.Body.Cursor != "" {
-			position, err := service.decodePhotoCursor(in.Body.Cursor)
-			if err != nil {
-				return nil, FromStoreError(err)
-			}
-			boundary = &position
-		}
-		page, err := d.Store.ListPhotoAssets(ctx, store.PhotoBrowseRequest{
+		request := store.PhotoBrowseRequest{
 			Query: value, Hidden: in.Body.Hidden,
-			Coverage: store.CoverageSelection{
-				Configuration:      in.Body.Coverage.Configuration,
-				ProfileFingerprint: in.Body.Coverage.ProfileFingerprint,
-			},
+			Coverage: store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint},
 			PageSize: in.Body.PageSize, Recipes: recipes, Facets: in.Body.Facets,
-		}, boundary)
+		}
+		var page store.PhotoBrowsePage
+		var nextCursor string
+		if value.Sort.Field == "relevance" {
+			owner, ok := workspaceSnapshotOwner(ctx)
+			if !ok {
+				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated snapshot owner is missing")
+			}
+			var snapshot store.SnapshotPage
+			if in.Body.Cursor == "" {
+				snapshot, err = snapshots.CreatePhotoRanked(ctx, owner, request)
+			} else {
+				var cursor photoRankedCursor
+				cursor, err = service.decodePhotoRankedCursor(in.Body.Cursor)
+				if err == nil {
+					snapshot, err = snapshots.PagePhotoRanked(ctx, owner, cursor.SnapshotID, cursor.Cursor, request)
+				}
+			}
+			if errors.Is(err, store.ErrSnapshotGone) {
+				err = store.ErrDocumentCursorExpired
+			}
+			if errors.Is(err, store.ErrSnapshotCursor) {
+				err = store.ErrInvalidPhotoCursor
+			}
+			if err == nil {
+				page, err = d.Store.HydratePhotoRankedPage(ctx, request, snapshot)
+			}
+			if err == nil && snapshot.NextCursor != "" {
+				nextCursor, err = service.encodePhotoRankedCursor(snapshot.SnapshotID, snapshot.NextCursor)
+			}
+		} else {
+			var boundary *store.PhotoBrowsePosition
+			if in.Body.Cursor != "" {
+				position, cursorErr := service.decodePhotoCursor(in.Body.Cursor)
+				if cursorErr != nil {
+					return nil, FromStoreError(cursorErr)
+				}
+				boundary = &position
+			}
+			page, err = d.Store.ListPhotoAssets(ctx, request, boundary)
+		}
+
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}
-		wire := PhotoBrowsePage{Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, Facets: fromStoreFacets(page.Facets)}
+		wire := PhotoBrowsePage{Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, NextCursor: nextCursor, Facets: fromStoreFacets(page.Facets)}
 		for i, row := range page.Items {
 			slots := map[string]PhotoPreviewSlot{}
 			for size, slot := range row.Previews {
@@ -242,4 +273,37 @@ func photoQualityWire(row store.PhotoBrowseRow) *PhotoQuality {
 		state = "unavailable"
 	}
 	return &PhotoQuality{State: state, Signals: row.Quality}
+}
+
+type photoRankedCursor struct {
+	Type       string `json:"type"`
+	SnapshotID string `json:"snapshot_id"`
+	Cursor     string `json:"cursor"`
+}
+
+func (service *documentQueryService) encodePhotoRankedCursor(id, offset string) (string, error) {
+	payload, err := json.Marshal(photoRankedCursor{Type: "photo-ranked-v1", SnapshotID: id, Cursor: offset})
+	if err != nil {
+		return "", err
+	}
+	cursor := service.signCursorEnvelope(payload)
+	if len(cursor) > MaxDocumentCursorBytes {
+		return "", store.ErrInvalidPhotoCursor
+	}
+	return cursor, nil
+}
+
+func (service *documentQueryService) decodePhotoRankedCursor(raw string) (photoRankedCursor, error) {
+	payload, err := service.verifyCursorEnvelope(raw)
+	if err != nil {
+		return photoRankedCursor{}, store.ErrInvalidPhotoCursor
+	}
+	var cursor photoRankedCursor
+	if err := json.Unmarshal(payload, &cursor, json.RejectUnknownMembers(true)); err != nil {
+		return cursor, store.ErrInvalidPhotoCursor
+	}
+	if cursor.Type != "photo-ranked-v1" || cursor.SnapshotID == "" || cursor.Cursor == "" {
+		return cursor, store.ErrInvalidPhotoCursor
+	}
+	return cursor, nil
 }
