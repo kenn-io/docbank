@@ -5101,6 +5101,39 @@ export interface PhotoImportStartRequest {
   source_root: string;
 }
 
+export interface PhotoRejectMember {
+  file_id: string;
+  flag: string;
+  in_trash: boolean;
+  name: string;
+}
+
+export interface PhotoRejectMixed {
+  asset_id: string;
+  members: PhotoRejectMember[];
+}
+
+export interface PhotoRejectsPreflight {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  digest: string;
+  files: number;
+  mixed: PhotoRejectMixed[];
+  mixed_count: number;
+  photos: number;
+  unchanged: number;
+}
+
+export interface PhotoRejectsRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  coverage?: WorkspaceQueryCoverage;
+  /** @maxLength 64 */
+  digest?: string;
+  hidden?: boolean;
+  query: SavedQueryV1Schema;
+}
+
 /**
  * @nullable
  */
@@ -15054,6 +15087,82 @@ return sessionJSON<PhotoAsset>(getPromotePhotoNodeUrl(nodeId),
     method: 'POST',
     headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
     body: JSON.stringify(promotePhotoNodeRequest)
+  }
+);}
+
+
+
+export const getPreflightPhotoRejectsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/rejects/preflight`
+}
+
+/**
+ * @summary Preview rejected photos in the current scope
+ */
+export const preflightPhotoRejects = async (photoRejectsRequest: NonReadonly<PhotoRejectsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoRejectsPreflight> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoRejectsPreflight>(getPreflightPhotoRejectsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoRejectsRequest)
+  }
+);}
+
+
+
+export const getMovePhotoRejectsUrl = () => {
+
+
+
+
+  return `/api/v1/photos/rejects/trash`
+}
+
+/**
+ * @summary Move confirmed rejects to trash and return the confirmed pre-move preview
+ */
+export const movePhotoRejects = async (photoRejectsRequest: NonReadonly<PhotoRejectsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoRejectsPreflight> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoRejectsPreflight>(getMovePhotoRejectsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoRejectsRequest)
   }
 );}
 

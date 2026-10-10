@@ -5,6 +5,126 @@ import { photo } from "./photo-test-fixtures.js";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
 
+it("freezes selected rejects scope and refuses a changed selection", async () => {
+  const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview))
+    .mockResolvedValueOnce(Response.json(preview)).mockResolvedValueOnce(response([]));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.selectLoaded();
+  await photos.previewRejects(true);
+  await photos.trashRejects();
+  const first = JSON.parse(fetcher.mock.calls[0][1].body);
+  expect(first.query.filters.asset_ids).toEqual(["photo-1"]);
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ query: first.query, hidden: false, digest: preview.digest });
+  photos.items = [photo(1)]; photos.selectLoaded();
+  fetcher.mockResolvedValueOnce(Response.json(preview));
+  await photos.previewRejects(true);
+  photos.clearSelection();
+  expect(await photos.trashRejects()).toBe(false);
+  expect(photos.rejectsError).toContain("Selection changed");
+  expect(fetcher).toHaveBeenCalledTimes(4);
+  photos.dispose();
+});
+
+it.each(["Library", "selected", "oversized"])("bounds rejects requests while keeping Library available, scope=%s", async scope => {
+  const count = scope === "oversized" ? 1001 : 1;
+  const preview = { digest: "a".repeat(64), photos: count, files: count, unchanged: 65, mixed: [], mixed_count: 0 };
+  const fetcher = vi.fn().mockResolvedValue(Response.json(preview));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.selection.selectedIDs = new Set(Array.from({ length: 65 }, (_, i) => `photo-${i}`));
+  await photos.previewRejects(scope === "selected");
+  if (scope === "selected") {
+    expect(photos.rejectsError).toContain("64 photos");
+    expect(fetcher).not.toHaveBeenCalled();
+  } else {
+    expect(photos.rejectsSelected).toBe(false);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters?.asset_ids).toBeUndefined();
+    expect(photos.rejects).toEqual(preview);
+    if (scope === "oversized") {
+      expect(await photos.trashRejects()).toBe(false);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+    }
+  }
+  photos.dispose();
+});
+
+it.each(["confirmed", "network", "server"])("recovers the loaded rejects range and surviving selection after a %s move and failed refresh", async outcome => {
+  let finish!: (response: Response) => void;
+  const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
+  if (outcome === "confirmed") fetcher.mockResolvedValueOnce(Response.json(preview));
+  else if (outcome === "server") fetcher.mockResolvedValueOnce(Response.json({ detail: "Internal error", code: "internal" }, { status: 500 }));
+  else fetcher.mockRejectedValueOnce(new TypeError("Reply lost"));
+  fetcher.mockResolvedValueOnce(Response.json({ detail: "Refresh unavailable" }, { status: 503 }))
+    .mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve))
+    .mockResolvedValueOnce(Response.json({ items: Array.from({ length: 250 }, (_, i) => photo(i + 2)), total: 749, next_cursor: "second" }))
+    .mockResolvedValueOnce(Response.json({ items: Array.from({ length: 250 }, (_, i) => photo(i + 252)), total: 749, next_cursor: "remaining" }));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  const original = Array.from({ length: 500 }, (_, i) => photo(i + 1));
+  photos.items = original; photos.total = 750; photos.cursor = "old"; photos.started = true; photos.scrollTop = 12_000;
+  photos.selection = { selectedIDs: new Set(["photo-1", "photo-2", "photo-300", "photo-999"]), anchorID: "photo-300" };
+  photos.trashTargets = [photo(999)];
+  await photos.previewRejects();
+  const changed = vi.fn(() => { expect(photos.items).toHaveLength(500); expect(photos.listingInvalid).toBe(true); });
+  const restore = vi.fn(async () => expect(photos.scrollTop).toBe(12_000));
+  const preserve = vi.fn(() => restore);
+  expect(await photos.trashRejects(preserve, changed)).toBe(outcome === "confirmed");
+  expect(changed).toHaveBeenCalledOnce();
+  expect(photos.listingInvalid).toBe(true);
+  expect(photos.items).toEqual(original);
+  expect(photos.total).toBe(750);
+  expect(photos.cursor).toBe("old");
+  expect(photos.selection.selectedIDs.size).toBe(4);
+  expect(photos.trashTargets).toEqual([]);
+  expect(photos.error).toBe("Refresh unavailable");
+  expect(photos.rejectsError).toBe(outcome === "confirmed" ? "" : "The move may have completed. Refresh Photos before trying again.");
+  await photos.loadMore(); await photos.previewRejects(); await photos.trashSelected(); await photos.setHidden("photo-2");
+  photos.select("photo-2", new MouseEvent("click"), ["photo-2"]); photos.check("photo-2", false, false, ["photo-2"]);
+  photos.selectLoaded(); photos.clearSelection();
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(photos.selection.selectedIDs.size).toBe(4);
+  expect(preserve).not.toHaveBeenCalled();
+  const interrupted = photos.retry(preserve);
+  photos.cancelPending();
+  finish(response([photo(999)]));
+  await interrupted;
+  expect(photos.listingInvalid).toBe(true);
+  expect(photos.items).toEqual(original);
+  await photos.resume(preserve);
+  expect(photos.error).toBe("");
+  expect(photos.listingInvalid).toBe(false);
+  expect(photos.items).toHaveLength(500);
+  expect(photos.items[0].asset_id).toBe("photo-2");
+  expect(photos.items.at(-1)?.asset_id).toBe("photo-501");
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-2", "photo-300"]);
+  expect(photos.selection.anchorID).toBe("photo-300");
+  expect(photos.cursor).toBe("remaining");
+  expect(photos.total).toBe(749);
+  expect(restore).toHaveBeenCalledOnce();
+  photos.dispose();
+});
+
+it.each([[412, "stale_revision"], [503, "maintenance_busy"]] as const)("requires another rejects preview after a definite %s refusal without reconciling other views", async (status, code) => {
+  const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview))
+    .mockResolvedValueOnce(Response.json({ detail: "Move refused", code }, { status }))
+    .mockResolvedValueOnce(response([photo(1)]));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.previewRejects(false);
+  const changed = vi.fn();
+  expect(await photos.trashRejects(undefined, changed)).toBe(false);
+  expect(changed).not.toHaveBeenCalled();
+  expect(photos.rejectsError).toBe("Move refused");
+  expect(photos.rejects).toBeUndefined();
+  expect(await photos.trashRejects()).toBe(false);
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  photos.dispose();
+});
+
 it.each(["hide", "unhide", "trash"])("reconciles other views after a lost %s reply and retains uncertain targets", async kind => {
   const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Reply lost after commit"))
     .mockRejectedValueOnce(new Error("Refresh unavailable"));

@@ -21,6 +21,12 @@ func TestPhotoBrowserPermissions(t *testing.T) {
 	}{
 		{http.MethodPost, "/api/v1/photos/assets/query", true}, {http.MethodGet, preview, true},
 		{http.MethodPost, base + "/trash", true},
+		{http.MethodPost, "/api/v1/photos/rejects/preflight", true},
+		{http.MethodGet, "/api/v1/photos/rejects/preflight", false},
+		{http.MethodPost, "/api/v1/photos/rejects/preflight?extra=1", false},
+		{http.MethodPost, "/api/v1/photos/rejects/trash", true},
+		{http.MethodGet, "/api/v1/photos/rejects/trash", false},
+		{http.MethodPost, "/api/v1/photos/rejects/trash?extra=1", false},
 		{http.MethodGet, base + "?run=true", false},
 		{http.MethodPost, base + "/trash?run=true", false},
 		{http.MethodPost, base + "/trash/extra", false},

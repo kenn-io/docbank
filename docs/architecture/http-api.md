@@ -84,6 +84,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /photos/assets/{asset_id}/previews/{generation_id}` | read verified bytes for an eligible display preview | Implemented |
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |
 | `POST /photos/assets/{asset_id}/exclude` · `POST /photos/nodes/{node_id}/promote` | change exclusion or promote a live file | Implemented |
+| `POST /photos/rejects/preflight` · `POST /photos/rejects/trash` | count scoped rejects and mixed pairs, then confirm a bounded atomic move to recoverable trash | Implemented |
 | `POST /photos/assets/{asset_id}/trash` | atomically move every live photo member to recoverable trash | Implemented |
 | `PUT /photos/assets/{asset_id}/display` · `GET\|PUT /photos/settings` | set an asset display override or vault preference | Implemented |
 | `POST /photos/assets/{asset_id}/hide` · `POST /photos/assets/{asset_id}/unhide` | change Photos visibility under `If-Match` | Implemented |

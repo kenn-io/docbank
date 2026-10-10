@@ -229,6 +229,9 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
+	if r.URL.Path == "/api/v1/photos/rejects/preflight" || r.URL.Path == "/api/v1/photos/rejects/trash" {
+		return r.Method == http.MethodPost && r.URL.RawQuery == ""
+	}
 	if r.URL.Path == "/api/v1/photos/assets/query" {
 		return r.Method == http.MethodPost && r.URL.RawQuery == ""
 	}
