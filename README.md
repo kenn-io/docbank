@@ -161,12 +161,13 @@ version, and use.
 
 ## Contributors
 
-Thanks to everyone whose work went into v0.15.1:
+Thanks to everyone whose work went into v0.15.2:
 
-- [Rod Boev (@rodboev)](https://github.com/rodboev): the photo grid and albums, exact transcript attribution, screen usage reporting, and test and lint improvements.
-- [Wes McKinney (@wesm)](https://github.com/wesm): faster collections and imports, compressed backup restores, website fixes, documentation, and export and recovery tests.
+- [Rod Boev (@rodboev)](https://github.com/rodboev): exact-recording transcript search, active session reporting, and test, lint, and CI improvements.
+- [Rusty Shackleford (@salmonumbrella)](https://github.com/salmonumbrella): the optional EmbeddingGemma 2 text retrieval recipe and adapter contract tests.
+- [Wes McKinney (@wesm)](https://github.com/wesm): faster path lookups, collection pages, searches, and imports; vault upgrade recovery; large packed-content backups; and metadata qualification fixes.
 
-See the [release contribution history](https://github.com/kenn-io/docbank/compare/v0.15.0...v0.15.1),
+See the [release contribution history](https://github.com/kenn-io/docbank/compare/v0.15.1...v0.15.2),
 [earlier release credits](docs/changelog.md),
 and [all contributors](https://github.com/kenn-io/docbank/graphs/contributors).
 

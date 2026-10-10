@@ -64,6 +64,9 @@ Start with [Importing documents](usage/importing.md) and
   to the version that was attached.
 - Read imported or generated transcripts with speaker labels and timing, and
   match search evidence to the exact retained transcript build.
+- [Search transcripts for selected recordings](agents/integration.md#search-transcripts-for-exact-recordings)
+  through HTTP, keeping each recording's identity even when recordings share
+  the same audio.
 - Browse photos in the web app, grouped by month or capture session. Adjust
   grid density and keep your selection and place when switching workspaces.
 - Browse photo assets over HTTP and filter by camera, lens, ISO, capture date,

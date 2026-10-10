@@ -512,10 +512,11 @@ func newClient(t *testing.T, server *httptest.Server, descriptor document.Rendit
 
 func newClientWithBounds(t *testing.T, origin string, descriptor document.RenditionDescriptor, httpClient *http.Client, versions json.RawMessage, maximum int64) *Client {
 	t.Helper()
+	// Contract checks use normal deadlines so host setup is not a timing assertion.
 	client, err := New(Profile{
 		Origin: origin, Descriptor: descriptor, SecretBinding: "datalab-api", Mode: "balanced",
-		ExpectedVersions: versions, RequestTimeout: time.Second, TotalTimeout: 2 * time.Second,
-		PollInterval: time.Millisecond, MaxPollAttempts: 4, MaxResponseBytes: maximum, MaxDocumentBytes: 1 << 20,
+		ExpectedVersions: versions,
+		PollInterval:     time.Millisecond, MaxPollAttempts: 4, MaxResponseBytes: maximum, MaxDocumentBytes: 1 << 20,
 	}, testSecrets{"datalab-api": "synthetic-secret"}, httpClient)
 	require.NoError(t, err)
 	return client
