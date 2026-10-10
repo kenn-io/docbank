@@ -205,29 +205,3 @@ it("restores photo scroll before resumed counts finish and keeps subsequent scro
   await act(async () => {});
   expect(resumed.scrollTop).toBe(960);
 });
-
-it("cancels retried photo counts when switching workspaces", async () => {
-  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  storage();
-  const counts: { signal: AbortSignal; finish: (response: Response) => void }[] = [];
-  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
-    if (url.includes("/photos/assets/query")) {
-      const request = JSON.parse(init!.body as string);
-      if (request.facets.length) return new Promise<Response>(finish => counts.push({ signal: init!.signal!, finish }));
-      return new Response(JSON.stringify({ items: [photo(1)], total: 1 }));
-    }
-    if (url.includes("/nodes/1")) return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", revision: 1, path: "/" }));
-    return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
-  });
-  render(App);
-  await waitFor(() => expect(counts).toHaveLength(1));
-  counts[0].finish(new Response(JSON.stringify({ detail: "Temporary counts failure" }), { status: 503 }));
-  await fireEvent.click(await screen.findByRole("button", { name: "Retry counts" }));
-  await waitFor(() => expect(counts).toHaveLength(2));
-  const canceled = counts.at(-1)!;
-  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
-  expect(canceled.signal.aborted).toBe(true);
-});

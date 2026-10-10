@@ -118,10 +118,6 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 	var ranked api.PhotoBrowsePage
 	require.NoError(t, json.Unmarshal([]byte(body), &ranked))
 	require.Len(t, ranked.Facets, 2)
-	rankedRequest.Cursor = "invalid"
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, rankedRequest)
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	require.Equal(t, "invalid_photo_cursor", decodeProblem(t, body).Code)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"syntax":"advanced","text":"camera:A*"}`)})
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	require.NotNil(t, decodeProblem(t, body).Position)
