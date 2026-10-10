@@ -889,6 +889,40 @@ func TestPhotoSearchFacetsRespectVisibilityAndAuthoredDecisions(t *testing.T) {
 	require.ErrorIs(t, err, ErrHiddenLocked)
 }
 
+func TestPhotoBrowseRelevanceWithSharedPredicates(t *testing.T) {
+	t.Parallel()
+	s, _, _, profile := collectionCoverageFixture(t, 0)
+	hash := browseHash("harbor-duplicate")
+	complete := browsePhotoNode(t, s, "harbor-complete.jpg", hash, "image/jpeg")
+	partial := browsePhotoNode(t, s, "harbor-partial.jpg", hash, "image/jpeg")
+	browsePhotoNode(t, s, "harbor-unprocessed.jpg", browseHash("harbor-unique"), "image/jpeg")
+	collectionCoveragePublish(t, s, complete, profile, "complete")
+	collectionCoveragePublish(t, s, partial, profile, "partial")
+	for _, tc := range []struct {
+		name    string
+		filters string
+		want    []string
+	}{
+		{"duplicates", `{"has_duplicates":true}`, []string{complete.Name, partial.Name}},
+		{"coverage", `{"text_coverage":["complete"]}`, []string{complete.Name}},
+		{"both", `{"has_duplicates":true,"text_coverage":["complete"]}`, []string{complete.Name}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			page, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{
+				Query:    snapshotTestQuery(t, `{"syntax":"advanced","text":"name:harbor","filters":`+tc.filters+`,"sort":{"field":"relevance","direction":"desc"}}`),
+				Coverage: CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint},
+			}, nil)
+			require.NoError(t, err)
+			require.Equal(t, int64(len(tc.want)), page.Total)
+			names := make([]string, len(page.Items))
+			for i, item := range page.Items {
+				names[i] = item.Name
+			}
+			require.ElementsMatch(t, tc.want, names)
+		})
+	}
+}
+
 func TestPhotoBrowseRelevanceAndFacets(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

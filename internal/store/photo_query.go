@@ -383,9 +383,14 @@ func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQu
  CROSS JOIN photo_assets a ON a.asset_id=member.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`) +
 		` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` ORDER BY member.tier ` + order + `,member.score ` + order + `,COALESCE(p.capture_sort_key,'') DESC,member.asset_id ASC LIMIT ?`
 	args = append(args, pageSize)
-	statement, args, err := bindQueryPopulation(compiledQueryFragment{sql: ranking, args: args, relations: population.relations}, coverage, generation)
+	statement, args, err := bindQueryPopulation(compiledQueryFragment{args: args, relations: population.relations}, coverage, generation)
 	if err != nil {
 		return nil, err
+	}
+	if statement == "" {
+		statement = ranking
+	} else {
+		statement = strings.TrimSpace(statement) + ", " + strings.TrimPrefix(ranking, "WITH ")
 	}
 	rows, err := q.QueryContext(ctx, statement, args...)
 	if err != nil {
