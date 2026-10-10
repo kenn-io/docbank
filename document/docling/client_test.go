@@ -1261,9 +1261,10 @@ func newClientWithBounds(t *testing.T, origin string, descriptor document.Rendit
 	if secrets != nil {
 		binding = "docling-api"
 	}
+	// Timeout tests override these normal deadlines explicitly.
 	client, err := New(Profile{
 		Origin: origin, Descriptor: descriptor, SecretBinding: binding,
-		RequestTimeout: time.Second, TotalTimeout: 2 * time.Second, PollInterval: time.Millisecond,
+		PollInterval:    time.Millisecond,
 		MaxPollAttempts: 4, MaxResponseBytes: maxResponseBytes,
 	}, secrets, httpClient)
 	require.NoError(t, err)

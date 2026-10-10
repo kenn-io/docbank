@@ -10,7 +10,7 @@ pre-1.0, so public interfaces may still evolve, but vaults created by v0.9.0 and
 later are within the
 [storage compatibility boundary](architecture/storage.md#released-upgrades).
 
-## [v0.15.2](https://github.com/kenn-io/docbank/releases/tag/v0.15.2) — Unreleased
+## [v0.15.2](https://github.com/kenn-io/docbank/releases/tag/v0.15.2) — 2026-10-09
 
 ### New features
 
