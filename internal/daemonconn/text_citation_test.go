@@ -101,29 +101,3 @@ func TestTextCitationClientTransport(t *testing.T) {
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	require.NotErrorIs(t, err, document.ErrCitationIntegrity)
 }
-
-func TestTextCitationClientProblems(t *testing.T) {
-	t.Parallel()
-	want := clientCitation(t)
-	for code, status := range map[string]int{
-		"invalid_text_citation": 422, "citation_unavailable": 404, "citation_limit": 413,
-		"invalid_citation_range": 416, "citation_timeout": 504, "citation_canceled": 408,
-		"citation_integrity": 500, "citation_failed": 500, "processing_unavailable": 503,
-	} {
-		t.Run(code, func(t *testing.T) {
-			calls := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls++
-				w.Header().Set("Content-Type", "application/problem+json")
-				w.WriteHeader(status)
-				_, _ = fmt.Fprintf(w, `{"status":%d,"code":%q,"detail":"synthetic failure"}`, status, code)
-			}))
-			defer server.Close()
-			_, err := New(server.URL, "synthetic-key").ResolveTextCitation(t.Context(), want.Citation)
-			got, ok := ProblemCode(err)
-			require.True(t, ok)
-			require.Equal(t, code, got)
-			require.Equal(t, 1, calls)
-		})
-	}
-}

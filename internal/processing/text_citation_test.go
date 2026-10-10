@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"testing/iotest"
+	"time"
 	"unicode/utf8"
 	"uuid"
 
@@ -278,40 +280,61 @@ func TestResolveTextCitationLifecycle(t *testing.T) {
 func TestResolveTextCitationMutationAfterSnapshot(t *testing.T) {
 	t.Parallel()
 	f := NewTextCitationTestFixture(t)
-	artifact, err := f.Catalog.RetainedTextCitation(t.Context(), f.Citation)
-	require.NoError(t, err)
 	entered, resume := make(chan struct{}), make(chan struct{})
-	source := citationReadBoundary{source: f.Blobs, wrap: func(r io.Reader) io.Reader {
-		return &citationFirstRead{Reader: r, entered: entered, resume: resume}
-	}}
+	release := sync.OnceFunc(func() { close(resume) })
+	defer release()
+	// Pause the real blob store's physical read after the service's authority lookup.
+	blobs, err := blob.New(&citationPausedCatalog{
+		PackCatalog: store.NewPackCatalog(f.Catalog), entered: entered, resume: resume,
+	}, filepath.Join(filepath.Dir(f.fixture.databasePath), "blobs"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+	f.Service.blobs = blobs
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
 	done := make(chan error, 1)
 	var got document.ResolvedTextCitation
 	go func() {
 		var err error
-		got, err = readTextCitation(t.Context(), source, f.Citation, artifact.Size)
+		got, err = f.Service.ResolveTextCitation(ctx, f.Citation)
 		done <- err
 	}()
-	<-entered
-	_, _, err = f.Catalog.Trash(t.Context(), f.Citation.NodeID, store.UnconditionalRev)
-	close(resume)
-	require.NoError(t, err)
+	select {
+	case <-entered:
+	case err := <-done:
+		t.Fatalf("citation read stopped before blob I/O: %v", err)
+	}
+	err = f.Service.gate.MutateContext(ctx, func() error {
+		_, _, err := f.Catalog.Trash(ctx, f.Citation.NodeID, store.UnconditionalRev)
+		return err
+	})
+	require.NoError(t, err, "trash must complete while the citation read is paused")
+	release()
 	require.NoError(t, <-done)
 	require.Equal(t, "é界🙂", got.Text)
 	_, err = f.Service.ResolveTextCitation(t.Context(), f.Citation)
 	require.ErrorIs(t, err, document.ErrCitationUnavailable)
 }
 
-type citationFirstRead struct {
-	io.Reader
+type citationPausedCatalog struct {
+	*store.PackCatalog
 
 	entered, resume chan struct{}
+	once            sync.Once
 }
 
-func (r *citationFirstRead) Read(p []byte) (int, error) {
-	if r.entered != nil {
-		close(r.entered)
-		r.entered = nil
-		<-r.resume
+func (c *citationPausedCatalog) ResolveLocations(
+	ctx context.Context, hash packstore.Hash,
+) (packstore.Resolution, error) {
+	locations, err := c.PackCatalog.ResolveLocations(ctx, hash)
+	if err != nil {
+		return locations, err
 	}
-	return r.Reader.Read(p)
+	c.once.Do(func() { close(c.entered) })
+	select {
+	case <-ctx.Done():
+		return packstore.Resolution{}, ctx.Err()
+	case <-c.resume:
+		return locations, nil
+	}
 }

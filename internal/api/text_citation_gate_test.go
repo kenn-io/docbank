@@ -128,7 +128,7 @@ func TestTextCitationHTTPDeadline(t *testing.T) {
 				encoded, err := json.Marshal(f.citation)
 				require.NoError(t, err)
 				request := httptest.NewRequestWithContext(ctx, http.MethodPost,
-					citationPath, bytes.NewReader(encoded))
+					f.server.URL+citationPath, bytes.NewReader(encoded))
 				request.Header.Set("X-Api-Key", testAPIKey)
 				request.Header.Set("Content-Type", "application/json")
 				response := httptest.NewRecorder()
