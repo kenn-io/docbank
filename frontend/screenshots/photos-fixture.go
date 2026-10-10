@@ -151,4 +151,8 @@ func seedRejects(ctx context.Context, s *store.Store) {
 	check(err)
 	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, member.Files[0].NodeID, store.PhotoRoleImage, nil)
 	check(err)
+	node, err := s.NodeByID(ctx, member.Files[0].NodeID)
+	check(err)
+	_, _, err = s.Trash(ctx, node.ID, node.Revision)
+	check(err)
 }

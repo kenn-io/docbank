@@ -314,7 +314,7 @@ func TestPhotoRejectsTrashedOriginalStillCounts(t *testing.T) {
 	assert.Zero(t, preview.Photos)
 	assert.Equal(t, 1, preview.Unchanged)
 	require.Len(t, preview.Mixed, 1)
-	assert.Contains(t, preview.Mixed[0].Members, PhotoRejectMember{image.ID, node.Name, "pick"})
+	assert.Contains(t, preview.Mixed[0].Members, PhotoRejectMember{image.ID, node.Name, "pick", true})
 	_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
 	require.NoError(t, err)
 	live, err := s.NodeByID(t.Context(), raw.NodeID)

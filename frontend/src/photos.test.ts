@@ -51,10 +51,37 @@ it("confirms the complete rejects scope and refreshes after a lost reply", async
   expect(await photos.trashRejects(undefined, changed)).toBe(false);
   expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ query: expect.any(Object), hidden: false, digest: preview.digest });
   expect(photos.rejects).toBeUndefined();
-  expect(photos.rejectsError).toBe("Reply lost after commit");
+  expect(photos.rejectsError).toBe("The move may have completed. Refresh Photos before trying again.");
   expect(photos.items).toEqual([photo(2)]);
   expect(changed).toHaveBeenCalledOnce();
   expect(photos.selection.selectedIDs.size).toBe(0);
+  photos.dispose();
+});
+
+it.each(["confirmed", "network", "timeout"])("invalidates the rejects listing after a %s move and failed refresh, then retries", async outcome => {
+  const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
+  if (outcome === "confirmed") fetcher.mockResolvedValueOnce(Response.json(preview));
+  else fetcher.mockRejectedValueOnce(outcome === "timeout" ? new DOMException("Timed out", "TimeoutError") : new TypeError("Reply lost"));
+  fetcher.mockResolvedValueOnce(Response.json({ detail: "Refresh unavailable" }, { status: 503 }))
+    .mockResolvedValueOnce(response([photo(2)]));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.total = 1; photos.cursor = "old"; photos.started = true; photos.selectLoaded();
+  await photos.previewRejects();
+  const changed = vi.fn(() => expect(photos.items).toEqual([]));
+  expect(await photos.trashRejects(undefined, changed)).toBe(outcome === "confirmed");
+  expect(changed).toHaveBeenCalledOnce();
+  expect(photos.items).toEqual([]);
+  expect(photos.total).toBe(0);
+  expect(photos.cursor).toBeUndefined();
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  expect(photos.trashTargets).toEqual([]);
+  expect(photos.error).toBe("Refresh unavailable");
+  expect(photos.rejectsError).toBe(outcome === "confirmed" ? "" : "The move may have completed. Refresh Photos before trying again.");
+  await photos.retry();
+  expect(photos.error).toBe("");
+  expect(photos.items).toEqual([photo(2)]);
   photos.dispose();
 });
 

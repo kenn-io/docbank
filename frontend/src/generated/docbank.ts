@@ -5104,6 +5104,7 @@ export interface PhotoImportStartRequest {
 export interface PhotoRejectMember {
   file_id: string;
   flag: string;
+  in_trash: boolean;
   name: string;
 }
 

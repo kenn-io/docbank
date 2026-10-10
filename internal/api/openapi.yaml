@@ -11968,12 +11968,15 @@ components:
           type: string
         flag:
           type: string
+        in_trash:
+          type: boolean
         name:
           type: string
       required:
         - file_id
         - name
         - flag
+        - in_trash
       type: object
       x-go-type: store.PhotoRejectMember
       x-go-type-import:

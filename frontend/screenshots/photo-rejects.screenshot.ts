@@ -31,7 +31,7 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
     await expect(modal.getByText("2 photos · 2 files including sidecars")).toBeVisible();
     await expect(modal.getByText("Mixed flags (1)", { exact: true })).toBeVisible();
     await expect(modal.getByText(/Synthetic-photo-00003.jpg: reject/)).toBeVisible();
-    await expect(modal.getByText(/Synthetic-photo-00004.jpg: undecided/)).toBeVisible();
+    await expect(modal.getByText(/Synthetic-photo-00004.jpg: undecided \(in Trash\)/)).toBeVisible();
     for (const theme of ["light", "dark"]) {
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-photo-rejects-${theme}.png`), animations: "disabled" });
@@ -71,8 +71,8 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
     await page.getByRole("button", { name: "Recoverable trash", exact: true }).click();
     await expect(page.getByText("Synthetic-photo-00001.jpg", { exact: true })).toBeVisible();
     await expect(page.getByText("Synthetic-photo-00002.jpg", { exact: true })).toBeVisible();
-    const trash = JSON.parse(await run("trash", "list", "--json")) as { items: { id: number }[] };
-    for (const node of trash.items) await run("restore", String(node.id));
+    const trash = JSON.parse(await run("trash", "list", "--json")) as { items: { id: number; name: string }[] };
+    for (const node of trash.items.filter(node => /^Synthetic-photo-0000[12]\.jpg$/.test(node.name))) await run("restore", String(node.id));
     webURL.pathname = "/photos/hidden";
     await page.goto(webURL.href);
     await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");

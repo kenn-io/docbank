@@ -21,9 +21,10 @@ type PhotoRejectsRequest struct {
 }
 
 type PhotoRejectMember struct {
-	FileID string `json:"file_id"`
-	Name   string `json:"name"`
-	Flag   string `json:"flag"`
+	FileID  string `json:"file_id"`
+	Name    string `json:"name"`
+	Flag    string `json:"flag"`
+	InTrash bool   `json:"in_trash"`
 }
 
 type PhotoRejectMixed struct {
@@ -195,7 +196,7 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 				mixed := PhotoRejectMixed{AssetID: members[0].AssetID, Members: []PhotoRejectMember{}}
 				for _, member := range members {
 					if member.Role != PhotoRoleSidecar {
-						mixed.Members = append(mixed.Members, PhotoRejectMember{member.FileID, member.Name, member.Flag})
+						mixed.Members = append(mixed.Members, PhotoRejectMember{member.FileID, member.Name, member.Flag, member.TrashedAt != nil})
 					}
 				}
 				out.Mixed = append(out.Mixed, mixed)

@@ -169,13 +169,17 @@ export class Photos {
     try {
       await movePhotoRejects({ query: this.rejectsQuery!, hidden: this.hidden, digest }, { session: this.session, signal: AbortSignal.timeout(60_000) });
       this.rejects = undefined;
-      this.clearSelection();
+      this.invalidateRejectsListing();
       ontrashed?.();
       await this.refresh(preserve);
       return true;
     } catch (cause) {
       this.rejects = undefined;
       this.rejectsFailure(cause);
+      if (!(cause instanceof APIError)) {
+        this.invalidateRejectsListing();
+        this.rejectsError = "The move may have completed. Refresh Photos before trying again.";
+      }
       ontrashed?.();
       await this.refresh(preserve);
       return false;
@@ -186,6 +190,13 @@ export class Photos {
     if (this.disposed) return;
     this.rejectsError = cause instanceof Error ? cause.message : String(cause);
     if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
+  }
+
+  private invalidateRejectsListing() {
+    this.items = [];
+    this.total = 0;
+    this.cursor = undefined;
+    this.clearSelection();
   }
 
   private rejectsScopeChanged() {

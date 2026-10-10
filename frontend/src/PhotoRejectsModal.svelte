@@ -14,7 +14,7 @@
     <p>{photos.rejects.unchanged.toLocaleString()} photos stay in Docbank</p>
     {#if photos.rejects.mixed.length}
       <h3>Mixed flags ({photos.rejects.mixed_count.toLocaleString()})</h3>
-      <ul>{#each photos.rejects.mixed as pair}<li>{pair.members.map(member => `${member.name}: ${member.flag || "undecided"}`).join(" · ")}</li>{/each}</ul>
+      <ul>{#each photos.rejects.mixed as pair}<li>{pair.members.map(member => `${member.name}: ${member.flag || "undecided"}${member.in_trash ? " (in Trash)" : ""}`).join(" · ")}</li>{/each}</ul>
       {#if photos.rejects.mixed_count > photos.rejects.mixed.length}<p>And {(photos.rejects.mixed_count - photos.rejects.mixed.length).toLocaleString()} more mixed pairs.</p>{/if}
     {/if}
     {#if photos.rejects.photos > 1000 || photos.rejects.files > 1000}<p role="alert">Select fewer photos. Each move allows up to 1,000 photos and 1,000 files.</p>{/if}
