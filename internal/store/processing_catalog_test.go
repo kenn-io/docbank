@@ -846,15 +846,15 @@ func seedRenditionCatalogVersions(t *testing.T, s *Store) []string {
 	return []string{first.CurrentVersionID, second.CurrentVersionID}
 }
 
-func catalogProcessingProfile(t *testing.T, withEmbedding bool) ProcessingProfileRecord {
-	t.Helper()
-	return catalogProcessingProfileWith(t, withEmbedding, nil)
+func catalogProcessingProfile(tb testing.TB, withEmbedding bool) ProcessingProfileRecord {
+	tb.Helper()
+	return catalogProcessingProfileWith(tb, withEmbedding, nil)
 }
 
 func catalogProcessingProfileWith(
-	t *testing.T, withEmbedding bool, mutate func(*document.ProcessingProfileV1),
+	tb testing.TB, withEmbedding bool, mutate func(*document.ProcessingProfileV1),
 ) ProcessingProfileRecord {
-	t.Helper()
+	tb.Helper()
 	profile := document.ProcessingProfileV1{
 		ContractVersion: document.ProcessingProfileContractV1,
 		Rendition: &document.RenditionBindingV1{
@@ -895,7 +895,7 @@ func catalogProcessingProfileWith(
 		mutate(&profile)
 	}
 	canonical, fingerprints, err := document.CanonicalProfile(profile)
-	require.NoError(t, err)
+	require.NoError(tb, err)
 	return ProcessingProfileRecord{
 		Fingerprint: fingerprints.Profile, CanonicalProfile: jsontext.Value(canonical),
 		RenditionRequestFingerprint:    fingerprints.RenditionRequest,

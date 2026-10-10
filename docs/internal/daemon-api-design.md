@@ -195,6 +195,11 @@ read snapshot and preserves request order; any stale identity rejects the whole
 batch. The same file-name, path-byte, and depth limits apply without traversing
 unrelated subtrees.
 
+Processing-state lookups use the content-version index on rendition job
+waiters. They consider only waiters for the selected version, then choose the
+job with the latest update time, breaking ties by job ID. Store bootstrap adds
+the index to existing vaults on open; query results and job history are unchanged.
+
 ### MCP response budgets
 
 MCP success results carry the payload as both JSON text and structured content.

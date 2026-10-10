@@ -106,3 +106,67 @@ func BenchmarkResolveDocumentSummaries(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkDocumentCatalogProcessingHistory includes the processing-state
+// lookup with one shared job and a waiter per document except file 49.
+func BenchmarkDocumentCatalogProcessingHistory(b *testing.B) {
+	for _, files := range []int{100, 10000} {
+		b.Run(fmt.Sprintf("files=%d", files), func(b *testing.B) {
+			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			require.NoError(b, err)
+			b.Cleanup(func() { require.NoError(b, s.Close()) })
+			ctx := b.Context()
+			identities := make([]DocumentCatalogIdentity, 0, files)
+			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				for i := range files {
+					name := fmt.Sprintf("file-%05d.pdf", i)
+					node, _, err := s.createFileTx(ctx, tx, s.RootID(), name,
+						catalogSourceHash, 20, "application/pdf")
+					if err != nil {
+						return err
+					}
+					identities = append(identities, DocumentCatalogIdentity{
+						NodeID: node.ID, ContentVersionID: node.CurrentVersionID, Path: "/" + name,
+					})
+				}
+				return nil
+			}))
+			request := renditionJobTestRequest(identities[0].ContentVersionID, catalogProcessingProfile(b, false))
+			_, err = s.GrantConsent(ctx, grantRequestForAuthorization(request.Authorization, nil))
+			require.NoError(b, err)
+			for i, identity := range identities {
+				if i == 49 {
+					continue
+				}
+				request.ContentVersionID = identity.ContentVersionID
+				_, _, err := s.EnqueueRenditionJob(ctx, request)
+				require.NoError(b, err)
+			}
+			for _, operation := range []string{"page", "resolve"} {
+				b.Run(operation, func(b *testing.B) {
+					b.ReportAllocs()
+					for b.Loop() {
+						var items []DocumentSummary
+						if operation == "page" {
+							page, err := s.ListDocuments(ctx, DocumentCatalogQuery{PageSize: 50}, nil,
+								DocumentCatalogTraversalNext)
+							require.NoError(b, err)
+							require.True(b, page.HasNext)
+							items = page.Items
+						} else {
+							items, err = s.ResolveDocumentSummaries(ctx, identities[:50])
+							require.NoError(b, err)
+						}
+						require.Len(b, items, 50)
+						require.Equal(b, "/file-00000.pdf", items[0].Path)
+						require.Equal(b, "/file-00049.pdf", items[49].Path)
+						for _, item := range items[:49] {
+							require.Equal(b, "queued", item.LatestProcessingState)
+						}
+						require.Empty(b, items[49].LatestProcessingState)
+					}
+				})
+			}
+		})
+	}
+}
