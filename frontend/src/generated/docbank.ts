@@ -5796,6 +5796,69 @@ export interface Request {
   version: number;
 }
 
+export type TextCitationVersion = typeof TextCitationVersion[keyof typeof TextCitationVersion];
+
+
+export const TextCitationVersion = {
+  NUMBER_1: 1,
+} as const;
+
+export interface TextCitation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  build_id: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  content_sha256: string;
+  /**
+     * @minLength 36
+     * @maxLength 36
+     * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+     */
+  content_version_id: string;
+  /**
+     * @minimum 1
+     * @maximum 2147483647
+     */
+  end: number;
+  /** @minimum 1 */
+  node_id: number;
+  /** @pattern ^[0-9a-f]{64}$ */
+  rendition_attachment_id: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  rendition_sha256: string;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  start: number;
+  /**
+     * @minLength 36
+     * @maxLength 36
+     * @pattern ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+     */
+  vault_uid: string;
+  version: TextCitationVersion;
+}
+
+export interface ResolvedTextCitation {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  citation: TextCitation;
+  /**
+     * @minLength 1
+     * @maxLength 16000
+     */
+  text: string;
+  /**
+     * @minimum 1
+     * @maximum 64000
+     */
+  text_bytes: number;
+  /** @pattern ^[0-9a-f]{64}$ */
+  text_sha256: string;
+}
+
 export interface RevertNodeContentRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -16696,6 +16759,82 @@ export const listTagNodes = async (tagId: string,
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getResolveTextCitationWithJsonUrl = () => {
+
+
+
+
+  return `/api/v1/text-citations/resolve`
+}
+
+/**
+ * @summary Resolve an exact quotation from retained rendition text
+ */
+export const resolveTextCitationWithJson = async (textCitation: NonReadonly<TextCitation>, options?: Parameters<typeof sessionJSON>[1]): Promise<ResolvedTextCitation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ResolvedTextCitation>(getResolveTextCitationWithJsonUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(textCitation)
+  }
+);}
+
+
+
+export const getResolveTextCitationWithBlobUrl = () => {
+
+
+
+
+  return `/api/v1/text-citations/resolve`
+}
+
+/**
+ * @summary Resolve an exact quotation from retained rendition text
+ */
+export const resolveTextCitationWithBlob = async (resolveTextCitationBody: Blob, options?: Parameters<typeof sessionJSON>[1]): Promise<ResolvedTextCitation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<ResolvedTextCitation>(getResolveTextCitationWithBlobUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream', ...getHeaders(options?.headers) },
+    body: resolveTextCitationBody
   }
 );}
 

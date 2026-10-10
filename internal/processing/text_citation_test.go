@@ -21,7 +21,9 @@ import (
 	"go.kenn.io/kit/packstore"
 )
 
-func writeCitationBlob(t *testing.T, f publicationFixture, text string) (document.TextCitation, int64) {
+func writeCitationBlob(
+	t *testing.T, f publicationFixture, text string,
+) (document.TextCitation, int64) {
 	t.Helper()
 	receipt, err := f.blobs.WriteDetailedContext(t.Context(), strings.NewReader(text))
 	require.NoError(t, err)
@@ -155,7 +157,8 @@ func (b citationReadBoundary) OpenStreamContext(
 	if b.wrap != nil {
 		reader = b.wrap(r)
 	}
-	return &citationBoundaryStream{VerifiedReadCloser: r, reader: reader, closeErr: b.closeErr}, size, nil
+	wrapped := &citationBoundaryStream{VerifiedReadCloser: r, reader: reader, closeErr: b.closeErr}
+	return wrapped, size, nil
 }
 
 type citationBoundaryStream struct {
@@ -183,7 +186,8 @@ func NewTextCitationTestFixture(t *testing.T) TextCitationTestFixture {
 	f := newPublicationFixture(t)
 	publisher, err := NewArtifactPublisher(f.catalog, f.blobs)
 	require.NoError(t, err)
-	staged := f.stage(t, publicationIDs{"citation-build", "citation-attachment", "citation-generation"},
+	ids := publicationIDs{"citation-build", "citation-attachment", "citation-generation"}
+	staged := f.stage(t, ids,
 		"aé界🙂z", "Synthetic quote")
 	_, err = publisher.PublishRendition(t.Context(), staged)
 	require.NoError(t, err)
@@ -260,4 +264,44 @@ func TestResolveTextCitationLifecycle(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResolveTextCitationMutationAfterSnapshot(t *testing.T) {
+	t.Parallel()
+	f := NewTextCitationTestFixture(t)
+	artifact, err := f.Catalog.RetainedTextCitation(t.Context(), f.Citation)
+	require.NoError(t, err)
+	entered, resume := make(chan struct{}), make(chan struct{})
+	source := citationReadBoundary{source: f.Blobs, wrap: func(r io.Reader) io.Reader {
+		return &citationFirstRead{Reader: r, entered: entered, resume: resume}
+	}}
+	done := make(chan error, 1)
+	var got document.ResolvedTextCitation
+	go func() {
+		var err error
+		got, err = readTextCitation(t.Context(), source, f.Citation, artifact.Size)
+		done <- err
+	}()
+	<-entered
+	_, _, err = f.Catalog.Trash(t.Context(), f.Citation.NodeID, store.UnconditionalRev)
+	close(resume)
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+	require.Equal(t, "é界🙂", got.Text)
+	_, err = f.Service.ResolveTextCitation(t.Context(), f.Citation)
+	require.ErrorIs(t, err, document.ErrCitationUnavailable)
+}
+
+type citationFirstRead struct {
+	io.Reader
+	entered, resume chan struct{}
+}
+
+func (r *citationFirstRead) Read(p []byte) (int, error) {
+	if r.entered != nil {
+		close(r.entered)
+		r.entered = nil
+		<-r.resume
+	}
+	return r.Reader.Read(p)
 }

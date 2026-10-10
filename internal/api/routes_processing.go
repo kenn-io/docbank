@@ -23,6 +23,7 @@ import (
 )
 
 func registerProcessingRoutes(api huma.API, d Deps) {
+	registerTextCitationRoute(api, d)
 	registerEvidenceWindowRoute(api, d)
 	type sourceFenceInput struct {
 		Body DocumentSourceFenceResolveRequest
