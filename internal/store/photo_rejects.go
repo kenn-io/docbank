@@ -12,6 +12,8 @@ import (
 	"go.kenn.io/docbank/internal/query"
 )
 
+const maxPhotoRejectsMoveTargets = 1000
+
 type PhotoRejectsRequest struct {
 	Query    query.Query
 	Coverage CoverageSelection
@@ -63,8 +65,8 @@ func (s *Store) MovePhotoRejects(ctx context.Context, request PhotoRejectsReques
 		if err != nil {
 			return err
 		}
-		if out.Photos > maxBatchTagTargets || out.Files > maxBatchTagTargets {
-			return fmt.Errorf("%w: select fewer photos; moves allow at most %d photos or live files", ErrInvalidPhotoQuery, maxBatchTagTargets)
+		if out.Photos > maxPhotoRejectsMoveTargets || out.Files > maxPhotoRejectsMoveTargets {
+			return fmt.Errorf("%w: select fewer photos; moves allow at most %d photos or live files", ErrInvalidPhotoQuery, maxPhotoRejectsMoveTargets)
 		}
 		if digest == "" || digest != out.Digest {
 			return fmt.Errorf("%w: photo scope changed; preview rejects again", ErrStaleRevision)
@@ -184,7 +186,7 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 		if rejected == originals {
 			out.Photos++
 			out.Files += live
-			if out.Photos <= maxBatchTagTargets && out.Files <= maxBatchTagTargets {
+			if out.Photos <= maxPhotoRejectsMoveTargets && out.Files <= maxPhotoRejectsMoveTargets {
 				eligible = append(eligible, members[0].AssetID)
 			}
 		} else {

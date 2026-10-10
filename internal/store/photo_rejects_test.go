@@ -182,7 +182,7 @@ func TestPhotoRejectsBeyondPageAndOverflow(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	var targets []PhotoAuthoredTarget
-	for i := 0; i < maxBatchTagTargets+2; i++ {
+	for i := 0; i < maxPhotoRejectsMoveTargets+2; i++ {
 		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("photo-%04d.jpg", i), fakeHash("a1"), 1, "image/jpeg")
 		require.NoError(t, err)
 		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
