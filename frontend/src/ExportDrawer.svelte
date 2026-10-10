@@ -98,9 +98,9 @@
             {#if photoFormat === "jpeg"}<label for="photo-export-quality">JPEG quality, 1–100</label><TextInput id="photo-export-quality" ariaLabel="JPEG quality" bind:value={quality} block />{/if}
             <label for="photo-export-edge">Long edge, pixels</label><TextInput id="photo-export-edge" ariaLabel="Long edge, pixels" bind:value={longEdge} placeholder="Original size" block />
             <p>Blank keeps the original size. Smaller originals keep their size. Up to 16 photos per export.</p>
-            <Checkbox label="Include metadata" checked={includeMetadata} onchange={checked => includeMetadata = checked} />
+            <Checkbox label="Include image metadata" checked={includeMetadata} onchange={checked => includeMetadata = checked} />
             <Checkbox label="Remove GPS" checked={removeGPS} disabled={!includeMetadata} onchange={checked => removeGPS = checked} />
-            <p>Color profiles stay attached to preserve appearance.</p>
+            <p>The ZIP retains original filenames, vault paths and source hashes. Color profiles stay attached to preserve appearance.</p>
             <Button tone="info" disabled={busy || count === 0 || count > memberLimit || !validPhotoSettings} onclick={() => void controller.preview()}>{view.status === "preparing" ? "Preparing…" : "Prepare"}</Button>
           {:else}
           <div class="role-choice"><strong>Email body PDFs</strong><SelectDropdown title="Email body PDF" value={emailPDF} options={[{ value: "omit", label: "Do not include" }, { value: "include", label: "Include retained body PDFs" }]} onchange={value => { emailPDF = value; if (value === "include") { original = "omit"; packaging = "bounded"; } }} /></div>

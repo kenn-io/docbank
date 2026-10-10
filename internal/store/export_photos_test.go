@@ -1,9 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/bundle"
@@ -111,6 +113,29 @@ func TestPhotoExportPlanSealsFrozenInputsAndOwnsArtifact(t *testing.T) {
 	require.ErrorIs(t, err, ErrHiddenLocked)
 	_, err = s.ExportPlan(ctx, "owner", plan.ID)
 	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE export_sources SET expires_at=? WHERE id=?`, time.Now().Add(24*time.Hour).UTC().Format(timestampLayout), source.ID)
+	require.NoError(t, err)
+	var exported bytes.Buffer
+	snapshot, err := s.BeginMetadataSnapshot(ctx)
+	require.NoError(t, err)
+	require.NoError(t, snapshot.ExportBackup(ctx, &exported))
+	require.NoError(t, snapshot.Close())
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	var sources, membersCount int
+	require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT count(*) FROM export_sources`).Scan(&sources))
+	require.Equal(t, 1, sources)
+	require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT count(*) FROM export_members`).Scan(&membersCount))
+	require.Equal(t, 1, membersCount)
+	var restoredSourceID string
+	require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT id FROM export_sources`).Scan(&restoredSourceID))
+	require.Equal(t, pinnedSource.ID, restoredSourceID)
+	for range 31 {
+		_, err = restored.CreateExportSource(ctx, "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{m}}, nil)
+		require.NoError(t, err)
+	}
+	_, err = restored.CreateExportSource(ctx, "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{m}}, nil)
+	require.ErrorIs(t, err, bundle.ErrLimit)
 }
 
 func TestPhotoExportResolvesCompleteScopeAndSelectedDisplayMembers(t *testing.T) {

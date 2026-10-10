@@ -1889,6 +1889,9 @@ func (r exifReader) readTypedEntries(offset uint32, export bool) (map[uint16]exi
 		}
 		result[tag] = exifEntry{kind: kind}
 		size := uint64(items) * width
+		if export && size > 1<<20 {
+			return result, false
+		}
 		if width == 0 || size > 1<<20 {
 			continue
 		}

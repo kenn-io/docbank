@@ -15,6 +15,11 @@ import (
 
 const metadataExportType = "export_authority"
 
+// Preserve shared sources when an ordinary plan still needs their authority.
+const backupExportSourcePredicate = `(json_extract(s.canonical_json, '$.kind')<>'photos' AND
+ NOT EXISTS (SELECT 1 FROM export_plans p WHERE p.source_id=s.id AND NOT (` + BackupExportPlanPredicate + `))) OR
+ EXISTS (SELECT 1 FROM export_plans p WHERE p.source_id=s.id AND ` + BackupExportPlanPredicate + `)`
+
 type metadataExportRecord struct {
 	Type          string         `json:"type"`
 	Kind          string         `json:"kind"`
@@ -39,7 +44,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 		}
 		return write(metadataExportRecord{Type: metadataExportType, Kind: kind, ID: id, Ordinal: ordinal, RetainUntil: until, CanonicalJSON: raw, Checksum: pageChecksum(raw)})
 	}
-	ids, err := pageMetadataKeys(ctx, q, `SELECT id FROM export_sources WHERE state='sealed' ORDER BY id`)
+	ids, err := pageMetadataKeys(ctx, q, `SELECT s.id FROM export_sources s WHERE s.state='sealed' AND (`+backupExportSourcePredicate+`) ORDER BY s.id`)
 	if err != nil {
 		return err
 	}

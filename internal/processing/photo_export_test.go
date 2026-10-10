@@ -403,14 +403,18 @@ func TestPhotoExportFailedDecodePreservesPixelBudget(t *testing.T) {
 func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 	t.Parallel()
 	preview := mediatest.JPEG(3, 2, color.White)
-	data := syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6), tiffASCII(0x010f, "Synthetic Camera"), tiffShort(0x0102, 16), tiffShort(0x0103, 7), tiffShort(0x0106, 32803), tiffLong(0xc612, 0x00000401), tiffShort(0x828e, 1), tiffLong(0x0201, 0), tiffLong(0x0202, uint32(len(preview)))}, nil)
-	for index := range int(binary.LittleEndian.Uint16(data[8:])) {
-		entry := 10 + index*12
-		if binary.LittleEndian.Uint16(data[entry:]) == 0x0201 {
-			binary.LittleEndian.PutUint32(data[entry+8:], uint32(len(data)))
+	rawData := func(extra ...syntheticTIFFEntry) []byte {
+		entries := []syntheticTIFFEntry{tiffShort(0x0112, 6), tiffASCII(0x010f, "Synthetic Camera"), tiffShort(0x0102, 16), tiffShort(0x0103, 7), tiffShort(0x0106, 32803), tiffLong(0xc612, 0x00000401), tiffShort(0x828e, 1), tiffLong(0x0201, 0), tiffLong(0x0202, uint32(len(preview)))}
+		data := syntheticTIFF(42, append(entries, extra...), nil)
+		for index := range int(binary.LittleEndian.Uint16(data[8:])) {
+			entry := 10 + index*12
+			if binary.LittleEndian.Uint16(data[entry:]) == 0x0201 {
+				binary.LittleEndian.PutUint32(data[entry+8:], uint32(len(data)))
+			}
 		}
+		return append(data, preview...)
 	}
-	data = append(data, preview...)
+	data := rawData()
 	in := photoRenderInput(data, "image/x-adobe-dng")
 	out, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(data), in, bundle.PhotoRenderProfile{Format: "png", Quality: 90, IncludeMetadata: true}, nil)
 	require.NoError(t, err)
@@ -443,6 +447,18 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 	_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(bad), input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90}, nil)
 	require.NoError(t, err)
 	oversized := bytes.Repeat([]byte{'x'}, maxPhotoSidecarBytes+1)
+	for _, tag := range []uint16{34675, 0x010e} {
+		raw := rawData(syntheticTIFFEntry{tag: tag, kind: 7, value: oversized})
+		// Ordinary extraction remains lenient while export refuses discarded values.
+		reader, ok := newExifReader(raw)
+		require.True(t, ok)
+		_, ok = reader.typedEntries(reader.u32(4))
+		require.True(t, ok)
+		for _, metadata := range []bool{true, false} {
+			_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(raw), photoRenderInput(raw, "image/x-adobe-dng"), bundle.PhotoRenderProfile{Format: "png", Quality: 90, IncludeMetadata: metadata}, nil)
+			require.ErrorContains(t, err, "invalid RAW EXIF directory")
+		}
+	}
 	var compressed bytes.Buffer
 	writer := zlib.NewWriter(&compressed)
 	_, err = writer.Write(oversized)

@@ -3,6 +3,7 @@ package api_test
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json/v2"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -95,7 +96,7 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 	archive, err := zip.NewReader(bytes.NewReader(archiveData), int64(len(archiveData)))
 	require.NoError(t, err)
 	want := fmt.Sprintf("documents/%d/%s/photo.jpg", n.ID, n.CurrentVersionID)
-	found := false
+	found, foundManifest := false, false
 	for _, file := range archive.File {
 		reader, err := file.Open()
 		require.NoError(t, err)
@@ -104,13 +105,30 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 		require.NoError(t, reader.Close())
 		if file.Name == want {
 			found = true
+			require.NotContains(t, string(contents), "Embedded keyword")
 			require.NotContains(t, string(contents), "Catalog keyword")
 		}
-		if strings.HasSuffix(file.Name, "manifest.jsonl") {
-			require.Contains(t, string(contents), "photo_rendered")
+		if file.Name == "bundle.json" {
+			foundManifest = true
+			var manifest struct {
+				Documents []bundle.Document `json:"documents"`
+			}
+			require.NoError(t, json.Unmarshal(contents, &manifest))
+			require.Len(t, manifest.Documents, 1)
+			require.Len(t, manifest.Documents[0].Roles, 1)
+			role := manifest.Documents[0].Roles[0]
+			require.Equal(t, "photo_rendered", role.Role)
+			require.Equal(t, want, role.Path)
+			var receipt bundle.PhotoRenderReceipt
+			require.NoError(t, json.Unmarshal(role.Recipe, &receipt))
+			require.Equal(t, *r.PhotoRender, receipt.Profile)
+			require.Equal(t, n.ID, receipt.Source.NodeID)
+			require.Equal(t, 3, receipt.Width)
+			require.Equal(t, 2, receipt.Height)
 		}
 	}
 	require.True(t, found)
+	require.True(t, foundManifest)
 }
 
 func TestPhotoExportMetadataFailureNamesPhoto(t *testing.T) {

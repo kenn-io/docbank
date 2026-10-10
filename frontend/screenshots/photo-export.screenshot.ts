@@ -56,7 +56,7 @@ test("selected JPEG and complete-scope PNG export through verified downloads", a
     await page.locator("[data-asset]").nth(1).getByRole("button", { name: /^Select / }).click({ modifiers: ["ControlOrMeta"] });
     await page.getByRole("button", { name: "Export selection", exact: true }).click();
     await expect(page.getByLabel("JPEG quality", { exact: true })).toHaveValue("90");
-    await expect(page.getByRole("checkbox", { name: "Include metadata", exact: true })).toBeChecked();
+    await expect(page.getByRole("checkbox", { name: "Include image metadata", exact: true })).toBeChecked();
     await expect(page.getByRole("checkbox", { name: "Remove GPS", exact: true })).toBeChecked();
     await page.getByLabel("Long edge, pixels", { exact: true }).fill("256");
     await page.getByLabel("Downloaded ZIP filename", { exact: true }).fill("synthetic-selected.zip");
@@ -88,7 +88,7 @@ test("selected JPEG and complete-scope PNG export through verified downloads", a
     await page.getByRole("button", { name: "Export photos", exact: true }).click();
     await page.getByRole("combobox", { name: /^Photo format/ }).click();
     await page.getByRole("option", { name: "PNG", exact: true }).click();
-    await page.getByRole("checkbox", { name: "Include metadata", exact: true }).uncheck();
+    await page.getByRole("checkbox", { name: "Include image metadata", exact: true }).uncheck();
     await page.getByLabel("Downloaded ZIP filename", { exact: true }).fill("synthetic-scope.zip");
     await page.getByRole("button", { name: "Prepare", exact: true }).click();
     await expect(page.getByTestId("export-total")).toHaveText(String(count));

@@ -800,6 +800,10 @@ document has too many date candidates, the error names that document.
 build deadline expired, and `503 report_unavailable` means the server has no
 export service.
 
+### Rendered photo exports
+
+`POST /exports/sources` accepts a `photos` selection of up to 16 display members. `POST /exports/plans` accepts the `photo_rendered` role with `photo_render` settings for JPEG or PNG, quality, long edge, image metadata and GPS removal. Existing Jobs and ZIP tickets deliver the reviewed artifacts. Image metadata settings control EXIF/XMP; the verified ZIP retains original filenames, vault paths and source hashes. See [Export photos](../usage/export-bundles.md#export-photos).
+
 ### Saved query and highlight definitions
 
 `POST /saved-queries` stores a name, optional description, immutable `kind`,
