@@ -187,6 +187,10 @@ components:
           type: string
         photo:
           $ref: "#/components/schemas/PhotoAuthoredSnapshot"
+        photo_confirmed_fields:
+          items:
+            type: string
+          type: array
         provenance_id:
           pattern: ^[0-9a-f]{64}$
           type: string

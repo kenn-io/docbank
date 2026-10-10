@@ -425,10 +425,14 @@ func auditAttachmentState(value *store.AuditAttachmentState) *AuditAttachmentSta
 	if value == nil {
 		return nil
 	}
-	return &AuditAttachmentState{
+	state := &AuditAttachmentState{
 		Photo: value.Photo, TagID: value.TagID, NodeID: value.NodeID, TagName: value.TagName,
 		ProvenanceID: value.ProvenanceID, IngestID: value.IngestID,
 		OriginalPath: value.OriginalPath, OriginalMTime: value.OriginalMTime,
 		Supersedes: value.Supersedes,
 	}
+	if value.Photo != nil {
+		state.PhotoConfirmedFields = value.Photo.Values.Confirmed.Names()
+	}
+	return state
 }

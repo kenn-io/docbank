@@ -67,7 +67,7 @@ describe("audited history drawer", () => {
     const fileID = "44444444-4444-4444-8444-444444444444";
     const before = { file_id: fileID, node_id: 42, revision: 1, values: { rating: 0, flag: "", label: "", caption: "", creator: "", copyright: "", rotation: 0, confirmed_fields: 0 } };
     const after = { ...before, revision: 2, values: { rating: 5, flag: "pick", label: "red", caption: "River", creator: "Example photographer", copyright: "Example copyright", rotation: 90, confirmed_fields: 127 } };
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify(page([event({ kind: "photo_authored", attachment: { kind: "photo_authored", identity: { file_id: fileID }, before: { photo: before }, after: { photo: after } } })])), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify(page([event({ kind: "photo_authored", attachment: { kind: "photo_authored", identity: { file_id: fileID }, before: { photo: before, photo_confirmed_fields: [] }, after: { photo: after, photo_confirmed_fields: ["rating", "flag", "label", "caption", "creator", "copyright", "rotation"] } } })])), { status: 200, headers: { "Content-Type": "application/json" } }));
     render(AuditHistoryDrawer, { session: "short-lived", node, path: "/Photos/capture.jpg", onclose: vi.fn(), onauthfailure: vi.fn() });
     expect(await screen.findByText("River")).toBeTruthy();
     expect(screen.getByText("rating, flag, label, caption, creator, copyright, rotation")).toBeTruthy();

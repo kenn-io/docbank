@@ -150,6 +150,11 @@ func TestPhotoRoutesAndClientTraversal(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := fixture.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
+	client := daemonconn.New(ts.URL, testAPIKey)
+	preview, err := client.PreviewAudit(t.Context(), daemonconn.AuditPreviewOptions{NodeID: fixture.RootID()})
+	require.NoError(t, err)
+	_, err = client.EnableAudit(t.Context(), preview.PreviewToken, true)
+	require.NoError(t, err)
 	_, err = fixture.EditPhotoAuthored(t.Context(), []store.PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: store.PhotoAuthoredPatch{Caption: new("")}}})
 	require.NoError(t, err)
 
@@ -157,12 +162,18 @@ func TestPhotoRoutesAndClientTraversal(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
 	assert.Equal(t, strconv.Quote(strconv.FormatInt(asset.Revision, 10)), resp.Header.Get("ETag"))
 
-	client := daemonconn.New(ts.URL, testAPIKey)
 	byNode, err := client.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	assert.Equal(t, asset.ID, byNode.ID)
 	assert.Equal(t, asset.Revision, byNode.Revision)
 	assert.Equal(t, store.PhotoConfirmedCaption, byNode.Files[0].Confirmed)
+	history, err := client.AuditHistory(t.Context(), "", node.ID, 10, "")
+	require.NoError(t, err)
+	require.NotEmpty(t, history.Items)
+	change := history.Items[0].Attachment
+	require.NotNil(t, change)
+	require.Empty(t, change.Before.PhotoConfirmedFields)
+	require.Equal(t, []string{"caption"}, change.After.PhotoConfirmedFields)
 }
 
 func TestTrashEmptyReportsPhotoHeldRoots(t *testing.T) {

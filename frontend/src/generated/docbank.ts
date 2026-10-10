@@ -125,6 +125,7 @@ export interface AuditAttachmentState {
   original_mtime?: string;
   original_path?: string;
   photo?: PhotoAuthoredSnapshot;
+  photo_confirmed_fields?: string[];
   /** @pattern ^[0-9a-f]{64}$ */
   provenance_id?: string;
   /** @pattern ^[0-9a-f]{64}$ */
