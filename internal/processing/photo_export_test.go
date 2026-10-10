@@ -208,7 +208,6 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 	values, err := ReadPhotoSidecar(t.Context(), merged)
 	require.NoError(t, err)
 	expected := input.Authored
-	expected.Confirmed = 0
 	assert.Equal(t, expected, values)
 	assert.Contains(t, string(merged), "landscape")
 	assert.Contains(t, string(merged), "reviewed")
@@ -239,7 +238,6 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 		actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
 		require.NoError(t, err)
 		expected := in.Authored
-		expected.Confirmed = 0
 		assert.Equal(t, expected, actual)
 	}
 }
@@ -303,4 +301,50 @@ func syntheticPhotoICC() []byte {
 	}
 	binary.BigEndian.PutUint32(profile, uint32(len(profile)))
 	return profile
+}
+func TestPhotoExportPNGPixelChunksDoNotConsumeMetadataBudget(t *testing.T) {
+	frame := image.NewNRGBA(image.Rect(0, 0, 65, 64))
+	seed := uint32(1)
+	for i := range frame.Pix {
+		seed = seed*1664525 + 1013904223
+		frame.Pix[i] = byte(seed >> 24)
+	}
+	var encoded, source bytes.Buffer
+	require.NoError(t, png.Encode(&encoded, frame))
+	source.Write(encoded.Bytes()[:8])
+	chunks := 0
+	for data := encoded.Bytes()[8:]; len(data) > 0; {
+		n := int(binary.BigEndian.Uint32(data))
+		kind := string(data[4:8])
+		payload := data[8 : 8+n]
+		if kind == "IDAT" {
+			for len(payload) > 0 {
+				size := min(8, len(payload))
+				writePhotoPNGChunk(&source, kind, payload[:size])
+				payload = payload[size:]
+				chunks++
+			}
+		} else {
+			source.Write(data[:n+12])
+		}
+		data = data[n+12:]
+	}
+	require.Greater(t, chunks, visualPreviewMaxPNGChunks)
+	input := photoRenderInput(source.Bytes(), "image/png")
+	output, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90})
+	require.NoError(t, err)
+	require.Equal(t, 65, receipt.Width)
+	require.NotEmpty(t, output)
+	preview, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source.Bytes()), VisualPreviewTarget{SourceSHA256: input.Member.SHA256, Size: input.Member.Size, MediaType: "image/png"})
+	require.NoError(t, err)
+	require.NotNil(t, preview.Preview.Output)
+	require.Equal(t, 65, preview.Preview.Output.Width)
+	for _, category := range []error{bundle.ErrLimit, bundle.ErrConflict, bundle.ErrUnavailable} {
+		err := photoExportError(input, category)
+		require.ErrorIs(t, err, category)
+		require.Contains(t, err.Error(), "photo 1")
+	}
+	exif := syntheticTIFF(42, []syntheticTIFFEntry{{tag: 0x010e, kind: 2}}, nil)
+	_, err = rewritePhotoEXIF(exif, 65, 64, false, store.PhotoAuthored{})
+	require.NoError(t, err)
 }

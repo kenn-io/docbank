@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/json/v2"
 	"fmt"
 	"io"
@@ -199,4 +200,19 @@ func TestPhotoExportRequestValidation(t *testing.T) {
 	require.Error(t, validateExportRequest(request))
 	request.PhotoRender = nil
 	require.Error(t, validateExportRequest(request))
+}
+func TestPhotoExportPreviewDescribesDeliveredCopies(t *testing.T) {
+	var output bytes.Buffer
+	plan := bundle.Plan{PhotoRender: &bundle.PhotoRenderProfile{Format: "png", Quality: 90, LongEdge: 2048, RemoveGPS: true}, EmbeddedPreviews: 2}
+	require.NoError(t, writeExportPreview(&output, plan))
+	require.Contains(t, output.String(), "photo format png")
+	require.Contains(t, output.String(), "long edge 2048 pixels")
+	require.Contains(t, output.String(), "metadata false, remove GPS true")
+	require.Contains(t, output.String(), "embedded RAW previews 2")
+	require.NotContains(t, output.String(), "Original contents")
+	output.Reset()
+	plan.PhotoRender = nil
+	require.NoError(t, writeExportPreview(&output, plan))
+	require.Contains(t, output.String(), "original bytes")
+	require.Contains(t, output.String(), "Original contents")
 }

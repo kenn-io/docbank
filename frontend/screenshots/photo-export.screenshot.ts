@@ -22,11 +22,28 @@ test("selected JPEG and complete-scope PNG export through verified downloads", a
   const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
   try {
     await mkdir(output!, { recursive: true });
-    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault, "12"], { cwd: repository, env, timeout: 240_000 });
+    const count = Number(process.env.DOCBANK_PHOTO_EXPORT_COUNT ?? "12");
+    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault, String(count)], { cwd: repository, env, timeout: 240_000 });
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
     await page.goto(webURL.href);
-    await expect(page.locator("[data-asset]")).toHaveCount(12);
+    await expect(page.locator("[data-asset]")).toHaveCount(count);
+    const capture = async (state: string) => {
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
+        await page.screenshot({ path: path.join(output!, `photo-export-${state}-${theme}.png`), animations: "disabled" });
+      }
+    };
+    if (count > 16) {
+      await expect(page.getByRole("button", { name: "Export photos", exact: true })).toBeDisabled();
+      await expect(page.getByText("Select up to 16 photos to export.", { exact: true })).toBeVisible();
+      await capture("scope-limit");
+      await page.locator("[data-asset]").first().getByRole("button", { name: /^Select / }).click();
+      await page.getByRole("button", { name: "Select loaded photos", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Export selection", exact: true })).toBeDisabled();
+      await capture("selection-limit");
+      await page.getByRole("button", { name: "Clear selection", exact: true }).click();
+    }
     await page.locator("[data-asset]").first().getByRole("button", { name: /^Select / }).click();
     await page.locator("[data-asset]").nth(1).getByRole("button", { name: /^Select / }).click({ modifiers: ["ControlOrMeta"] });
     await page.getByRole("button", { name: "Export selection", exact: true }).click();
@@ -35,12 +52,6 @@ test("selected JPEG and complete-scope PNG export through verified downloads", a
     await expect(page.getByRole("checkbox", { name: "Remove GPS", exact: true })).toBeChecked();
     await page.getByLabel("Long edge, pixels", { exact: true }).fill("256");
     await page.getByLabel("Downloaded ZIP filename", { exact: true }).fill("synthetic-selected.zip");
-    const capture = async (state: string) => {
-      for (const theme of ["light", "dark"]) {
-        await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
-        await page.screenshot({ path: path.join(output!, `photo-export-${state}-${theme}.png`), animations: "disabled" });
-      }
-    };
     await capture("settings");
     await page.getByRole("button", { name: "Prepare", exact: true }).click();
     await expect(page.getByTestId("export-total")).toHaveText("2");
@@ -61,6 +72,7 @@ test("selected JPEG and complete-scope PNG export through verified downloads", a
     await page.getByRole("button", { name: "Prepare another export", exact: true }).click();
     await page.getByRole("button", { name: "Close export", exact: true }).click();
     await page.getByRole("button", { name: "Clear selection", exact: true }).click();
+    if (count > 16) return;
     await page.getByRole("button", { name: "Export photos", exact: true }).click();
     await page.getByRole("combobox", { name: /^Photo format/ }).click();
     await page.getByRole("option", { name: "PNG", exact: true }).click();

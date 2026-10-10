@@ -388,3 +388,5 @@ globally, and two per owner. Completed, failed, and canceled jobs count until
 release or cleanup removes them. All clients using the daemon API key share the
 `master` owner and its two-job allowance. Over-limit work fails without
 truncating the selection.
+
+The preview processor advances to v8 to apply EXIF stored after PNG pixel chunks. Existing grid, fit and large previews regenerate under the new recipe.

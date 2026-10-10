@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/document/bundle"
@@ -63,18 +64,27 @@ var exportPreviewCmd = &cobra.Command{
 		if exportJSON {
 			return writeCLIJSON(cmd.OutOrStdout(), plan)
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(),
-			"plan %s\nsource %s\nmember hash %s\nfingerprint %s\n"+
-				"planned contents: %d document versions, %d output bytes, %d metadata bytes\n"+
-				"admission expires %s\n"+
-				"Original contents are included without redaction or sanitization.\n",
-			plan.ID, plan.Source.ID, plan.Source.MemberHash, plan.Fingerprint,
-			plan.Total, plan.RoleBytes, plan.MetadataBytes, plan.ExpiresAt)
-		if err != nil {
-			return fmt.Errorf("writing export preview: %w", err)
-		}
-		return nil
+		return writeExportPreview(cmd.OutOrStdout(), *plan)
+
 	},
+}
+
+func writeExportPreview(w io.Writer, plan bundle.Plan) error {
+	note := "Original contents are included without redaction or sanitization."
+	byteLabel := "original bytes"
+	if p := plan.PhotoRender; p != nil {
+		byteLabel = "output bytes"
+		quality := ""
+		if p.Format == "jpeg" {
+			quality = fmt.Sprintf(", quality %d", p.Quality)
+		}
+		note = fmt.Sprintf("photo format %s%s, long edge %d pixels (0 keeps original size), metadata %t, remove GPS %t\nembedded RAW previews %d", p.Format, quality, p.LongEdge, p.IncludeMetadata, p.RemoveGPS, plan.EmbeddedPreviews)
+	}
+	_, err := fmt.Fprintf(w, "plan %s\nsource %s\nmember hash %s\nfingerprint %s\nplanned contents: %d document versions, %d %s, %d metadata bytes\nadmission expires %s\n%s\n", plan.ID, plan.Source.ID, plan.Source.MemberHash, plan.Fingerprint, plan.Total, plan.RoleBytes, byteLabel, plan.MetadataBytes, plan.ExpiresAt, note)
+	if err != nil {
+		return fmt.Errorf("writing export preview: %w", err)
+	}
+	return nil
 }
 
 var exportStartCmd = &cobra.Command{

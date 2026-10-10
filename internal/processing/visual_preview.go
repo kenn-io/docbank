@@ -401,7 +401,7 @@ func inspectVisualPreviewPNG(
 	}
 	orientation = 1
 	offset := int64(len(signature))
-	for range visualPreviewMaxPNGChunks {
+	for chunks := 0; chunks < visualPreviewMaxPNGChunks; {
 		if err := ctx.Err(); err != nil {
 			return 0, false, false, false, err
 		}
@@ -417,6 +417,9 @@ func inspectVisualPreviewPNG(
 		}
 		length := int64(binary.BigEndian.Uint32(header[:4]))
 		chunkType := string(header[4:])
+		if chunkType != "IDAT" {
+			chunks++
+		}
 		if length > sourceSize-offset-12 {
 			return 0, false, false, true, nil
 		}

@@ -23,6 +23,8 @@ const photoXMPPNGKeyword = "XML:com.adobe.xmp"
 type photoPackets struct {
 	exif, xmp, icc   []byte
 	unsupportedColor bool
+	orientation      int
+	animated         bool
 }
 
 func photoExportMetadata(ctx context.Context, packets photoPackets, input store.PhotoExportInput, receipt bundle.PhotoRenderReceipt, pixels []byte) ([]byte, error) {
@@ -105,6 +107,17 @@ func writePhotoPNGChunk(out *bytes.Buffer, kind string, payload []byte) {
 
 // photoSourcePackets bounds metadata independently of the source's pixel bytes.
 func photoSourcePackets(data []byte, metadata bool) (result photoPackets, err error) {
+	result.orientation = 1
+	inspectEXIF := func(payload []byte) error {
+		if len(payload) > visualPreviewMaxEXIFBytes {
+			return errors.New("EXIF exceeds inspection limit")
+		}
+		if orientation, colorSpace, found := visualPreviewEXIF(payload); found {
+			result.orientation = orientation
+			result.unsupportedColor = result.unsupportedColor || colorSpace != 0 && colorSpace != 1
+		}
+		return nil
+	}
 	var exif, packet []byte
 	var iccParts [][]byte
 	iccBytes := 0
@@ -190,6 +203,11 @@ func photoSourcePackets(data []byte, metadata bool) (result photoPackets, err er
 				}
 				iccParts[index] = payload[14:]
 			}
+			if marker == 0xe1 && bytes.HasPrefix(payload, []byte("Exif\x00\x00")) {
+				if e := inspectEXIF(payload[6:]); e != nil {
+					return result, e
+				}
+			}
 			if !metadata || marker != 0xe1 {
 				continue
 			}
@@ -208,7 +226,7 @@ func photoSourcePackets(data []byte, metadata bool) (result photoPackets, err er
 		return result, errors.New("too many JPEG segments")
 	case bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")):
 		position := 8
-		for range visualPreviewMaxPNGChunks {
+		for chunks := 0; chunks < visualPreviewMaxPNGChunks; {
 			if position > len(data)-12 {
 				return result, io.ErrUnexpectedEOF
 			}
@@ -217,6 +235,9 @@ func photoSourcePackets(data []byte, metadata bool) (result photoPackets, err er
 				return result, io.ErrUnexpectedEOF
 			}
 			kind := string(data[position+4 : position+8])
+			if kind != "IDAT" {
+				chunks++
+			}
 			payload := data[position+8 : position+8+int(n)]
 			position += 12 + int(n)
 			if kind == "iCCP" {
@@ -240,6 +261,14 @@ func photoSourcePackets(data []byte, metadata bool) (result photoPackets, err er
 			}
 			if kind == "cHRM" && !bytes.Equal(payload, []byte{0, 0, 122, 38, 0, 0, 128, 132, 0, 0, 250, 0, 0, 0, 128, 232, 0, 0, 117, 48, 0, 0, 234, 96, 0, 0, 58, 152, 0, 0, 23, 112}) {
 				result.unsupportedColor = true
+			}
+			if kind == "acTL" {
+				result.animated = true
+			}
+			if kind == "eXIf" {
+				if e := inspectEXIF(payload); e != nil {
+					return result, e
+				}
 			}
 			if metadata && kind == "eXIf" {
 				err = set(&exif, payload)
@@ -275,6 +304,9 @@ func photoSourcePackets(data []byte, metadata bool) (result photoPackets, err er
 				return result, err
 			}
 			if kind == "IEND" {
+				if n != 0 {
+					return result, errors.New("malformed PNG end")
+				}
 				return finish()
 			}
 		}
@@ -310,22 +342,36 @@ func photoSourcePackets(data []byte, metadata bool) (result photoPackets, err er
 		}
 		return photoSourcePackets(data[location.offset:location.offset+location.length], metadata)
 	case bytes.HasPrefix(data, []byte("RIFF")) && len(data) >= 12 && string(data[8:12]) == "WEBP":
+		if uint64(binary.LittleEndian.Uint32(data[4:8]))+8 != uint64(len(data)) {
+			return result, errors.New("malformed WebP size")
+		}
 		for position, count := 12, 0; position < len(data); count++ {
 			if count >= visualPreviewMaxWebPChunks || position > len(data)-8 {
 				return result, errors.New("malformed WebP metadata")
 			}
 			n := int64(binary.LittleEndian.Uint32(data[position+4:]))
-			if n > int64(len(data)-position-8) {
+			if n+n%2 > int64(len(data)-position-8) {
 				return result, io.ErrUnexpectedEOF
 			}
 			payload := data[position+8 : position+8+int(n)]
 			switch string(data[position : position+4]) {
+			case "VP8X":
+				if len(payload) != 10 {
+					return result, errors.New("malformed WebP flags")
+				}
+				result.animated = payload[0]&visualPreviewWebPAnimation != 0
+				result.unsupportedColor = result.unsupportedColor || payload[0]&visualPreviewWebPICCProfile != 0
+			case "ANIM", "ANMF":
+				result.animated = true
 			case "ICCP":
 				if len(result.icc) > 0 {
 					return result, errors.New("duplicate ICC profile")
 				}
 				result.icc = payload
 			case "EXIF":
+				if e := inspectEXIF(bytes.TrimPrefix(payload, []byte("Exif\x00\x00"))); e != nil {
+					return result, e
+				}
 				if !metadata {
 					break
 				}
@@ -375,7 +421,8 @@ func rewritePhotoEXIF(data []byte, width, height int, removeGPS bool, authored s
 				continue
 			}
 			if len(entry.value) == 0 {
-				return 0, errors.New("unsupported EXIF entry")
+				delete(entries, tag)
+				continue
 			}
 		}
 		long := func(n int) exifEntry {

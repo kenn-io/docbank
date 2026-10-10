@@ -76,9 +76,11 @@ func (v *RowValidator) Add(d Document) error {
 		}
 		v.parent, v.children, v.paths = d, 0, map[string]bool{}
 		v.members++
-		if err := ValidatePhotoRoles(v.Plan, d); err != nil {
+		embedded, err := validatePhotoRoles(v.Plan, d)
+		if err != nil {
 			return err
 		}
+		v.embeddedPreviews += embedded
 		if err := ValidateEmailPDFRoles(v.Plan, d); err != nil {
 			return err
 		}
@@ -194,15 +196,7 @@ func (v *RowValidator) count(d Document) error {
 		v.Counts.UnavailableInventories++
 	}
 	for _, r := range d.Roles {
-		if r.Role == "photo_rendered" {
-			var receipt PhotoRenderReceipt
-			if json.Unmarshal(r.Recipe, &receipt, json.RejectUnknownMembers(true)) != nil {
-				return ErrConflict
-			}
-			if receipt.EmbeddedPreview {
-				v.embeddedPreviews++
-			}
-		}
+
 		switch r.Status {
 		case "unavailable":
 			v.Counts.Unavailable++

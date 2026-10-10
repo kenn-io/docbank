@@ -133,7 +133,7 @@ func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.
 				return nil, "", bundle.ErrLimit
 			}
 		}
-		if page.Next == nil {
+		if page.Next == nil || len(selection.AssetIDs) > 0 && len(selected) == 0 {
 			break
 		}
 		cursor = page.Next

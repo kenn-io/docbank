@@ -68,7 +68,7 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 		}
 		reader, size, err := blobs.OpenSeekableContext(ctx, input.Member.SHA256)
 		if err != nil {
-			return bundle.Plan{}, fmt.Errorf("%w: photo %d (%s): %v", bundle.ErrUnavailable, input.Member.NodeID, input.Name, err)
+			return bundle.Plan{}, photoExportError(input, err)
 		}
 		if size != input.Member.Size {
 			_ = reader.Close()
@@ -80,7 +80,7 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return bundle.Plan{}, err
 			}
-			return bundle.Plan{}, fmt.Errorf("%w: photo %d (%s): %v", bundle.ErrUnavailable, input.Member.NodeID, input.Name, err)
+			return bundle.Plan{}, photoExportError(input, err)
 		}
 		if int64(len(output)) > maxPhotoExportOutputBytes-total {
 			return bundle.Plan{}, bundle.ErrLimit
@@ -124,7 +124,6 @@ func RenderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 }
 
 func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.PhotoExportInput, profile bundle.PhotoRenderProfile, budget *photoExportBudget) ([]byte, bundle.PhotoRenderReceipt, error) {
-
 	receipt := bundle.PhotoRenderReceipt{Version: bundle.PhotoRenderReceiptVersion, Profile: profile, Source: input.Member}
 	if err := profile.Validate(); err != nil {
 		return nil, receipt, err
@@ -170,16 +169,22 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 		var orientation int
 		for _, location := range locations {
 			preview := io.NewSectionReader(bytes.NewReader(data), location.offset, location.length)
-			if len(packets.icc) == 0 {
-				p, e := photoSourcePackets(data[location.offset:location.offset+location.length], false)
-				if e != nil {
-					err = e
-					continue
-				}
-				packets.icc = p.icc
+
+			p, e := photoSourcePackets(data[location.offset:location.offset+location.length], false)
+			if e != nil {
+				err = e
+				continue
 			}
-			decoded, orientation, err = decodePhotoExport(ctx, preview, "jpeg", location.length, location.orientation, len(packets.icc) > 0, budget)
+			candidate := packets
+			if len(candidate.icc) == 0 {
+				candidate.icc = p.icc
+			}
+			candidate.orientation, candidate.animated = p.orientation, p.animated
+			candidate.unsupportedColor = candidate.unsupportedColor || p.unsupportedColor
+
+			decoded, orientation, err = decodePhotoExport(ctx, preview, "jpeg", location.orientation, candidate, budget)
 			if err == nil {
+				packets = candidate
 				break
 			}
 		}
@@ -189,36 +194,28 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 		receipt.EmbeddedPreview = true
 		return encodePhotoExport(ctx, decoded, orientation, packets, input, receipt)
 	}
-	decoded, orientation, err := decodePhotoExport(ctx, pixels, format, int64(len(data)), containerOrientation, len(packets.icc) > 0, budget)
+	decoded, orientation, err := decodePhotoExport(ctx, pixels, format, containerOrientation, packets, budget)
 	if err != nil {
 		return nil, receipt, err
-	}
-	if packets.unsupportedColor && len(packets.icc) == 0 {
-		return nil, receipt, errors.New("unsupported color metadata without an ICC profile")
 	}
 	return encodePhotoExport(ctx, decoded, orientation, packets, input, receipt)
 }
 
-func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string, size int64, containerOrientation int, hasProfile bool, budget *photoExportBudget) (image.Image, int, error) {
-	orientation := 1
-	var color, metadata, malformed, animated bool
-	var err error
-	switch format {
-	case "jpeg":
-		orientation, color, malformed, err = inspectVisualPreviewJPEG(ctx, source)
-	case "png":
-		orientation, color, metadata, malformed, err = inspectVisualPreviewPNG(ctx, source, size)
-	case "webp":
-		orientation, color, metadata, animated, malformed, err = inspectVisualPreviewWebP(ctx, source, size)
-	case "gif":
-	default:
+func photoExportError(input store.PhotoExportInput, err error) error {
+	category := bundle.ErrUnavailable
+	if errors.Is(err, bundle.ErrLimit) || errors.Is(err, bundle.ErrConflict) {
+		category = err
+	}
+	return fmt.Errorf("%w: photo %d (%s): %w", category, input.Member.NodeID, input.Name, err)
+}
+
+func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string, containerOrientation int, packets photoPackets, budget *photoExportBudget) (image.Image, int, error) {
+	orientation := packets.orientation
+	if format != "jpeg" && format != "png" && format != "webp" && format != "gif" {
 		return nil, 0, fmt.Errorf("%w: unsupported photo media type", bundle.ErrUnavailable)
 	}
-	if err != nil {
-		return nil, 0, err
-	}
-	if color && !hasProfile || metadata || malformed || animated {
-		return nil, 0, errors.New("unsupported color profile, animation, or malformed image metadata")
+	if packets.unsupportedColor && len(packets.icc) == 0 || packets.animated {
+		return nil, 0, errors.New("unsupported color profile or animation")
 	}
 	if containerOrientation >= 1 && containerOrientation <= 8 {
 		orientation = containerOrientation

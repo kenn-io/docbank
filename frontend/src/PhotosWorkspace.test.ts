@@ -207,3 +207,21 @@ it("keeps loading pages that add no rows and keeps the top photo across density 
   photos.dispose();
   await cache.dispose();
 });
+it("explains the photo export cap before offering scope or selected export", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = Array.from({ length: 17 }, (_, i) => photo(i + 1)); photos.total = 17; photos.started = true; photos.selectLoaded();
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ items: photos.items, total: 17 })));
+  const cache = new PhotoPreviewCache("scoped", vi.fn()); const onexport = vi.fn();
+  render(PhotosWorkspace, { photos, cache, onexport });
+  expect((screen.getByRole("button", { name: "Export photos" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "Export selection" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.getByText(/Clear the selection to choose fewer photos/)).toBeTruthy();
+  await fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
+  expect(onexport).toHaveBeenCalledWith(expect.objectContaining({ total: 1 }));
+  photos.dispose(); await cache.dispose();
+});
