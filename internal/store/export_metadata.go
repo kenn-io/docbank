@@ -187,7 +187,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 					}
 					continue
 				}
-				if r.Status != roleAvailable || !canonical.IsSHA256Hex(r.SHA256) || r.Size < 0 {
+				if r.Status != "available" || !canonical.IsSHA256Hex(r.SHA256) || r.Size < 0 {
 					return bundle.ErrConflict
 				}
 				var size int64
@@ -288,7 +288,7 @@ func importBundleMetadata(ctx context.Context, tx *sql.Tx, r metadataExportRecor
 			return err
 		}
 		for _, role := range d.Roles {
-			if role.Status == roleAvailable {
+			if role.Status == "available" {
 				if _, err := tx.ExecContext(ctx, `INSERT INTO export_role_roots(plan_id,blob_hash) VALUES(?,?) ON CONFLICT DO NOTHING`, r.ID, role.SHA256); err != nil {
 					return err
 				}

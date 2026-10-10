@@ -44,6 +44,9 @@ func validatePhotoPlanRequest(r *bundle.PlanRequest) error {
 	if photo && (len(r.Roles) != 1 || r.Roles[0] != (bundle.RolePolicy{Role: "photo_rendered"}) || len(r.Publications) != 0) {
 		return bundle.ErrConflict
 	}
+	if photo && (r.DuplicatePolicy != "" && r.DuplicatePolicy != "preserve" || r.VolumeLimits != nil) {
+		return fmt.Errorf("%w: photo exports take no duplicate_policy or volume_limits", bundle.ErrConflict)
+	}
 	if r.PhotoRender != nil {
 		if err := r.PhotoRender.Validate(); err != nil {
 			return err
@@ -69,9 +72,6 @@ func (s *Store) ExportPlanReplay(ctx context.Context, owner string, r bundle.Pla
 
 // ResolvePhotoExportMembers uses the same complete population as Photos browsing.
 func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.PhotoExportSelection) ([]bundle.Member, string, error) {
-	if len(selection.AssetIDs) > bundle.MaxPhotoExportMembers {
-		return nil, "", fmt.Errorf("%w: photo exports allow at most %d photos", bundle.ErrLimit, bundle.MaxPhotoExportMembers)
-	}
 	selected := make(map[string]bool, len(selection.AssetIDs))
 	for _, id := range selection.AssetIDs {
 		if validateUUIDv4(id) != nil || selected[id] {

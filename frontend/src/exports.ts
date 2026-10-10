@@ -71,7 +71,7 @@ export function validateExportOptions(value: ExportOptions): ExportOptions {
   if (r.photo_render !== undefined) {
     const p = object(r.photo_render);
     if (Object.keys(p).some(k => !["format", "quality", "long_edge", "include_metadata", "remove_gps"].includes(k)) || !["jpeg", "png"].includes(string(p.format)) || typeof p.include_metadata !== "boolean" || typeof p.remove_gps !== "boolean") fail();
-    out.photo_render = { format: string(p.format), quality: integer(p.quality, 100, p.format === "png" ? 0 : 1), long_edge: integer(p.long_edge, 100000), include_metadata: p.include_metadata, remove_gps: p.remove_gps };
+    out.photo_render = { format: string(p.format), quality: integer(p.quality === undefined && p.format === "png" ? 0 : p.quality, 100, p.format === "png" ? 0 : 1), long_edge: integer(p.long_edge, 100000), include_metadata: p.include_metadata, remove_gps: p.remove_gps };
     if (out.photo_render.format === "png") out.photo_render.quality = 0;
   }
   if (r.duplicate_policy !== undefined) {

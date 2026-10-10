@@ -11,7 +11,6 @@ import (
 
 const (
 	roleAvailable           = "available"
-	roleCollapsed           = "collapsed"
 	Format                  = "docbank-bundle-v1"
 	MaxMembers              = 100000
 	ChunkMembers            = 1000

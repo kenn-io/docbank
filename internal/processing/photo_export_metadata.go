@@ -169,7 +169,7 @@ func photoSourcePackets(ctx context.Context, data []byte, metadata bool) (result
 		case 0x89:
 			format = visualFormatPNG
 		}
-		err = walkVisualPreviewContainer(ctx, bytes.NewReader(data), format, int64(len(data)), func(kind string, r io.Reader, n int64) error {
+		err = walkPhotoContainer(ctx, bytes.NewReader(data), format, int64(len(data)), func(kind string, r io.Reader, n int64) error {
 			if format == visualFormatJPEG && kind != "\xe1" && kind != "\xe2" {
 				return nil
 			}

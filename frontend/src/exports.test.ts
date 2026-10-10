@@ -150,6 +150,10 @@ it("binds rendered photo profiles and RAW counts to the reviewed plan", async ()
   expect(() => parseExportPlan({ ...photoPlan, photo_render: { ...profile, remove_gps: false } }, photoSource, photoPlan.roles, planID, { photo_render: profile })).toThrow();
   expect(() => validateExportOptions({ photo_render: { ...profile, quality: 0 } })).toThrow();
   expect(validateExportOptions({ photo_render: { ...profile, format: "png", quality: 90 } }).photo_render?.quality).toBe(0);
+  const { quality, ...pngProfile } = { ...profile, format: "png" };
+  expect(validateExportOptions({ photo_render: pngProfile }).photo_render?.quality).toBe(0);
+  // @ts-expect-error Runtime JSON can contain null.
+  expect(() => validateExportOptions({ photo_render: { ...pngProfile, quality: null } })).toThrow();
   expect(() => validateExportOptions({ photo_render: { ...profile, long_edge: -1 } })).toThrow();
   const selection = { query: { filters: {}, v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "name", direction: "asc" } }, hidden: false, asset_ids: [id] };
   const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(response(photoSource));

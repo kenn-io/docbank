@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/blob"
@@ -231,17 +230,6 @@ func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
 	assert.Greater(t, canvasRed, uint32(0xf000))
 	assert.Greater(t, canvasGreen, uint32(0xf000))
 	assert.Greater(t, canvasBlue, uint32(0xf000))
-	output, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(source), photoRenderInput(source, "image/gif"), bundle.PhotoRenderProfile{Format: "png", Quality: 90}, nil)
-	require.NoError(t, err)
-	assert.Equal(t, 64, receipt.Width)
-	assert.Equal(t, 32, receipt.Height)
-	rendered, err := png.Decode(bytes.NewReader(output))
-	require.NoError(t, err)
-	assert.Equal(t, image.Rect(0, 0, 64, 32), rendered.Bounds())
-	red, green, blue, alpha := rendered.At(8, 4).RGBA()
-	assert.Equal(t, [4]uint32{}, [4]uint32{red, green, blue, alpha})
-	red, green, blue, alpha = rendered.At(32, 16).RGBA()
-	assert.Equal(t, [4]uint32{0, 0, 0, 65535}, [4]uint32{red, green, blue, alpha})
 }
 
 func TestProduceVisualPreviewAcceptsWebP(t *testing.T) {
@@ -850,61 +838,4 @@ func (r *failingVisualPreviewReadSeeker) Seek(offset int64, whence int) (int64, 
 		r.startSeeks++
 	}
 	return position, err //nolint:wrapcheck // The test double preserves Seeker error identity.
-}
-
-func TestVisualPreviewPNGPixelChunksDoNotConsumeMetadataBudget(t *testing.T) {
-	t.Parallel()
-	frame := image.NewNRGBA(image.Rect(0, 0, 65, 64))
-	seed := uint32(1)
-	for i := range frame.Pix {
-		seed = seed*1664525 + 1013904223
-		frame.Pix[i] = byte(seed >> 24)
-	}
-	var encoded, source bytes.Buffer
-	require.NoError(t, png.Encode(&encoded, frame))
-	source.Write(encoded.Bytes()[:8])
-	chunks := 0
-	for data := encoded.Bytes()[8:]; len(data) > 0; {
-		n := int(binary.BigEndian.Uint32(data))
-		kind := string(data[4:8])
-		payload := data[8 : 8+n]
-		if kind == "IDAT" {
-			for len(payload) > 0 {
-				size := min(8, len(payload))
-				writePhotoPNGChunk(&source, kind, payload[:size])
-				payload = payload[size:]
-				chunks++
-			}
-		} else {
-			source.Write(data[:n+12])
-		}
-		data = data[n+12:]
-	}
-	require.Greater(t, chunks, 1024)
-	path := filepath.Join(t.TempDir(), "many-chunks.png")
-	require.NoError(t, os.WriteFile(path, source.Bytes(), 0600))
-	file, err := os.Open(path)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, file.Close()) }()
-	counted := &previewCountedFile{File: file}
-	_, color, metadata, animated, malformed, err := inspectVisualPreviewContainer(t.Context(), counted, int64(source.Len()), "png")
-	require.NoError(t, err)
-	require.False(t, color || metadata || animated || malformed)
-	require.Less(t, counted.reads, chunks/8)
-	input := photoRenderInput(source.Bytes(), "image/png")
-	output, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90}, nil)
-	require.NoError(t, err)
-	require.Equal(t, 65, receipt.Width)
-	require.NotEmpty(t, output)
-}
-
-type previewCountedFile struct {
-	*os.File
-
-	reads int
-}
-
-func (f *previewCountedFile) Read(p []byte) (int, error) {
-	f.reads++
-	return f.File.Read(p)
 }

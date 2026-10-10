@@ -12,6 +12,8 @@ import (
 	"os"
 	"time"
 
+	_ "golang.org/x/image/webp" // Register WebP with image.Decode.
+
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/filepublish"
@@ -77,19 +79,14 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 		if err := renderCtx.Err(); err != nil {
 			return bundle.Plan{}, err
 		}
-		reader, size, err := blobs.OpenSeekableContext(renderCtx, input.Member.SHA256)
+		data, err := readExportBlob(renderCtx, blobs, input.Member.SHA256, input.Member.Size, maxPhotoExportSourceBytes)
 		if err != nil {
-			return bundle.Plan{}, photoExportError(input, err)
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return bundle.Plan{}, err
+			}
+			return bundle.Plan{}, photoExportError(input, fmt.Errorf("source is missing or unreadable: %w", bundle.ErrUnavailable))
 		}
-		if size != input.Member.Size {
-			_ = reader.Close()
-			return bundle.Plan{}, photoExportError(input, bundle.ErrConflict)
-		}
-		output, receipt, err := renderPhotoExport(renderCtx, reader, input, *request.PhotoRender, &budget)
-		closeErr := reader.Close()
-		if closeErr != nil {
-			return bundle.Plan{}, photoExportError(input, closeErr)
-		}
+		output, receipt, err := renderPhotoExport(renderCtx, data, input, *request.PhotoRender, &budget)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return bundle.Plan{}, err
@@ -137,26 +134,13 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 	return plan, err
 }
 
-func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.PhotoExportInput, profile bundle.PhotoRenderProfile, budget *photoExportBudget) ([]byte, bundle.PhotoRenderReceipt, error) {
+func renderPhotoExport(ctx context.Context, data []byte, input store.PhotoExportInput, profile bundle.PhotoRenderProfile, budget *photoExportBudget) ([]byte, bundle.PhotoRenderReceipt, error) {
 	receipt := bundle.PhotoRenderReceipt{Version: bundle.PhotoRenderReceiptVersion, Profile: profile, Source: input.Member}
 	if err := store.ValidatePhotoAuthored(input.Authored); err != nil {
 		return nil, receipt, err
 	}
 	if input.Member.Size < 1 || input.Member.Size > maxPhotoExportSourceBytes {
 		return nil, receipt, bundle.ErrLimit
-	}
-	if err := verifySeekableSource(ctx, source, input.Member.SHA256, input.Member.Size); err != nil {
-		return nil, receipt, err
-	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return nil, receipt, err
-	}
-	data, err := io.ReadAll(io.LimitReader(source, input.Member.Size+1))
-	if err != nil {
-		return nil, receipt, err
-	}
-	if int64(len(data)) != input.Member.Size {
-		return nil, receipt, bundle.ErrConflict
 	}
 	packets, err := photoSourcePackets(ctx, data, profile.IncludeMetadata)
 	if err != nil {
@@ -245,7 +229,7 @@ func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string,
 	if containerOrientation >= 1 && containerOrientation <= 8 {
 		orientation = containerOrientation
 	}
-	pixels, err := decodeVisualPreviewPixels(ctx, source, format, func(config image.Config) error {
+	pixels, err := decodePhotoPixels(ctx, source, format, func(config image.Config) error {
 		if budget != nil && int64(config.Width)*int64(config.Height) > budget.pixels {
 			return fmt.Errorf("%w: decoded pixels exceed 512 million", bundle.ErrLimit)
 		}
@@ -293,4 +277,63 @@ func encodePhotoExport(ctx context.Context, decoded image.Image, orientation int
 		}
 	}
 	return result, receipt, nil
+}
+
+var errVisualDimensions = errors.New("source dimensions exceed the built-in limit")
+var errVisualColor = errors.New("unsupported JPEG color model")
+var errVisualFormat = errors.New("unexpected image format")
+var errVisualDecodeBounds = errors.New("image dimensions changed during decoding")
+
+type photoPixels struct {
+	image   image.Image
+	config  image.Config
+	readErr error
+}
+
+func decodePhotoPixels(ctx context.Context, source io.ReadSeeker, format string, admit func(image.Config) error) (result photoPixels, err error) {
+	if _, err = source.Seek(0, io.SeekStart); err != nil {
+		result.readErr = err
+		return result, err
+	}
+	reader := &visualPreviewReadErrorRecorder{reader: visualPreviewContextReader{ctx, source}}
+	defer func() {
+		if reader.err != nil {
+			result.readErr = reader.err
+		}
+	}()
+	var actual string
+	result.config, actual, err = image.DecodeConfig(reader)
+	if err != nil {
+		return result, fmt.Errorf("reading image dimensions: %w", err)
+	}
+	if actual != format {
+		return result, errVisualFormat
+	}
+	if !visualPreviewDimensionsAllowed(result.config.Width, result.config.Height) {
+		return result, errVisualDimensions
+	}
+	if format == visualFormatJPEG && !visualPreviewJPEGColorModelSupported(result.config.ColorModel) {
+		return result, errVisualColor
+	}
+	if admit != nil {
+		if err = admit(result.config); err != nil {
+			return result, err
+		}
+	}
+	if _, err = source.Seek(0, io.SeekStart); err != nil {
+		result.readErr = err
+		return result, err
+	}
+	if format == "gif" {
+		result.image, err = decodeGIFCanvas(reader, result.config)
+	} else {
+		result.image, _, err = image.Decode(reader)
+	}
+	if err != nil {
+		return result, fmt.Errorf("decoding image pixels: %w", err)
+	}
+	if result.image.Bounds().Dx() != result.config.Width || result.image.Bounds().Dy() != result.config.Height {
+		return result, errVisualDecodeBounds
+	}
+	return result, ctx.Err()
 }

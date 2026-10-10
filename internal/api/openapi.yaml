@@ -12009,7 +12009,6 @@ components:
           type: boolean
       required:
         - format
-        - quality
         - long_edge
         - include_metadata
         - remove_gps

@@ -5137,7 +5137,7 @@ export interface PhotoRenderProfile {
   format: string;
   include_metadata: boolean;
   long_edge: number;
-  quality: number;
+  quality?: number;
   remove_gps: boolean;
 }
 

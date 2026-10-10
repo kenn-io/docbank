@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"net/http"
@@ -186,7 +187,16 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		if err != nil {
 			return nil, err
 		}
-		if err = json.Unmarshal(in.RawBody, &in.Body, json.RejectUnknownMembers(true)); err != nil {
+		if err = json.Unmarshal(in.RawBody, &in.Body, json.RejectUnknownMembers(true), json.WithUnmarshalers(json.UnmarshalFunc(func(raw []byte, profile *bundle.PhotoRenderProfile) error {
+			var fields map[string]jsontext.Value
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				return err
+			}
+			if quality, present := fields["quality"]; present && quality.Kind() == 'n' {
+				return bundle.ErrConflict
+			}
+			return json.Unmarshal(raw, profile, json.RejectUnknownMembers(true))
+		}))); err != nil {
 			return nil, NewError(400, "validation", "invalid export plan")
 		}
 		var p bundle.Plan

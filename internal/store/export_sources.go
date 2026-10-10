@@ -68,8 +68,11 @@ func validateExportSource(r bundle.SourceRequest) error {
 	}
 	switch r.Kind {
 	case "photos":
-		if r.Photos == nil || len(r.Photos.AssetIDs) > bundle.MaxMembers {
+		if r.Photos == nil {
 			return bundle.ErrConflict
+		}
+		if len(r.Photos.AssetIDs) > bundle.MaxPhotoExportMembers {
+			return fmt.Errorf("%w: photo exports allow at most %d photos", bundle.ErrLimit, bundle.MaxPhotoExportMembers)
 		}
 	case "mailbox_collection":
 		if validateUUIDv4(r.CollectionID) != nil {

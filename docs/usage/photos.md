@@ -135,8 +135,6 @@ Advanced expressions accept `rating:5`, `rating_min:4`, `rating_max:3`,
 
 ## Previews
 
-The preview processor advances to v8 to apply EXIF stored after PNG pixel chunks. Existing grid, fit and large previews regenerate under the new recipe.
-
 The daemon produces a grid preview with a 512-pixel maximum edge for each
 included photo's selected display file. It discovers new imports continuously
 and resumes missing work after restart. It keeps completed results.

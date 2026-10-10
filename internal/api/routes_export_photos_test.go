@@ -3,6 +3,7 @@ package api_test
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"image"
@@ -159,7 +160,7 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 
 func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"non-photo", "trashed", "replaced", "mislabeled", "missing-blob", "unsupported", "oversized-metadata"} {
+	for _, state := range []string{"non-photo", "trashed", "replaced", "mislabeled", "missing-blob", "damaged-blob", "unsupported", "oversized-metadata"} {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
 			ts, s := newTestServer(t, nil)
@@ -171,7 +172,7 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 				mediaType = "image/heic"
 			}
 			content := []byte("synthetic member")
-			if state == "mislabeled" || state == "missing-blob" || state == "oversized-metadata" {
+			if state == "mislabeled" || state == "missing-blob" || state == "damaged-blob" || state == "oversized-metadata" {
 				if state == "mislabeled" {
 					mediaType = "image/png"
 				}
@@ -206,6 +207,10 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			switch state {
 			case "missing-blob":
 				err = s.Blobs.Remove(hash)
+			case "damaged-blob":
+				damaged := bytes.Clone(content)
+				damaged[len(damaged)/2] ^= 1
+				err = os.WriteFile(filepath.Join(s.BlobsDir, hash[:2], hash), damaged, 0600)
 			case "trashed":
 				_, _, err = s.Trash(t.Context(), n.ID, n.Revision)
 			case "replaced":
@@ -217,9 +222,12 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90}}
 			r.PhotoRender.IncludeMetadata = state == "oversized-metadata"
 			response, body := do(t, ts, http.MethodPost, "/api/v1/exports/plans", nil, r)
-			if state == "missing-blob" {
-				require.Equal(t, http.StatusInternalServerError, response.StatusCode, body)
-				require.Contains(t, body, "export_failed")
+			if state == "missing-blob" || state == "damaged-blob" {
+				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+				require.Contains(t, body, "export_role_unavailable")
+				require.Contains(t, body, fmt.Sprintf("photo %d (unavailable-member): source is missing or unreadable", n.ID))
+				require.NotContains(t, body, hash)
+				require.NotContains(t, body, s.BlobsDir)
 				return
 			}
 			require.Contains(t, body, fmt.Sprintf("photo %d", n.ID))
@@ -237,6 +245,48 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			default:
 				require.Equal(t, http.StatusConflict, response.StatusCode, body)
 				require.Contains(t, body, "no longer exportable")
+			}
+		})
+	}
+}
+
+func TestPhotoExportPNGWithoutQualityAndInvalidPlanSettings(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	var encoded bytes.Buffer
+	require.NoError(t, jpeg.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil))
+	hash, size, err := s.Blobs.Write(bytes.NewReader(encoded.Bytes()))
+	require.NoError(t, err)
+	n, err := s.CreateFile(t.Context(), s.RootID(), "synthetic-settings.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	source, err := s.CreateExportSource(t.Context(), "master", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: hash, Size: size}}}, nil)
+	require.NoError(t, err)
+	for _, settings := range []struct {
+		name   string
+		extra  string
+		status int
+	}{
+		{"png without quality", "", http.StatusOK},
+		{"default duplicates", `,"duplicate_policy":"preserve"`, http.StatusOK},
+		{"null quality", `,"quality":null`, http.StatusBadRequest},
+		{"duplicate collapse", `,"duplicate_policy":"collapse_exact_content"`, http.StatusConflict},
+		{"volume limits", `,"volume_limits":{"roles":1,"role_bytes":1024}`, http.StatusConflict},
+	} {
+		t.Run(settings.name, func(t *testing.T) {
+			profileExtra, planExtra := "", settings.extra
+			if settings.name == "null quality" {
+				profileExtra, planExtra = settings.extra, ""
+			}
+			raw := fmt.Sprintf(`{"operation_id":%q,"source_id":%q,"member_hash":%q,"roles":[{"role":"photo_rendered"}],"photo_render":{"format":"png","long_edge":0,"include_metadata":false,"remove_gps":false%s}%s}`, uuid.New().String(), source.ID, source.MemberHash, profileExtra, planExtra)
+			response, body := do(t, ts, http.MethodPost, "/api/v1/exports/plans", nil, jsontext.Value(raw))
+			require.Equal(t, settings.status, response.StatusCode, body)
+			switch settings.status {
+			case http.StatusOK:
+				var plan bundle.Plan
+				require.NoError(t, json.Unmarshal([]byte(body), &plan))
+				require.Zero(t, plan.PhotoRender.Quality)
+			case http.StatusConflict:
+				require.Contains(t, body, "photo exports take no duplicate_policy or volume_limits")
 			}
 		})
 	}

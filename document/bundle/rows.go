@@ -52,7 +52,7 @@ func (v *RowValidator) Add(d Document) error {
 		return err
 	}
 	for _, r := range d.Roles {
-		if r.Status != roleAvailable {
+		if r.Status != "available" {
 			if r.Volume != 0 {
 				return ErrConflict
 			}
@@ -141,8 +141,8 @@ func (v *RowValidator) Add(d Document) error {
 		}
 		r := d.Roles[index]
 		index++
-		if r.Status == roleCollapsed {
-			r.Status = roleAvailable
+		if r.Status == "collapsed" {
+			r.Status = "available"
 		}
 		if r.Page != nil {
 			return ErrConflict
@@ -153,7 +153,7 @@ func (v *RowValidator) Add(d Document) error {
 			}
 			continue
 		}
-		if r.Status != roleAvailable || rel.Child == nil || r.Reason != "" {
+		if r.Status != "available" || rel.Child == nil || r.Reason != "" {
 			return ErrConflict
 		}
 		base := fmt.Sprintf("documents/%d/%s/attachments/%04d/", d.NodeID, d.VersionID, rel.Order)
@@ -199,7 +199,7 @@ func (v *RowValidator) count(d Document) error {
 		switch r.Status {
 		case "unavailable":
 			v.Counts.Unavailable++
-		case roleCollapsed:
+		case "collapsed":
 			v.Counts.Collapsed++
 		}
 		if r.Role != "email_pdf" && r.Role != "attachment_pdf" || r.Status == "unavailable" {
@@ -212,7 +212,7 @@ func (v *RowValidator) count(d Document) error {
 		if d.Inventory != nil && d.Inventory.OperationID != "" && d.Inventory.GenerationID != receipt.Binding.GenerationID {
 			return ErrConflict
 		}
-		if r.Status == roleAvailable {
+		if r.Status == "available" {
 			if r.Role == "email_pdf" {
 				v.Counts.EmailPDFs++
 			} else {

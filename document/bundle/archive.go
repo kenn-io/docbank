@@ -192,7 +192,7 @@ func Write(ctx context.Context, file *os.File, plan Plan, walk Walk, open Open, 
 		}
 		count++
 		for _, r := range d.Roles {
-			if r.Status == roleCollapsed {
+			if r.Status == "collapsed" {
 				continue
 			}
 			if r.Status == "unavailable" {
@@ -201,7 +201,7 @@ func Write(ctx context.Context, file *os.File, plan Plan, walk Walk, open Open, 
 				}
 				continue
 			}
-			if r.Status != roleAvailable || !canonical.IsSHA256Hex(r.SHA256) || r.Size < 0 || r.Size > MaxRoleBytes-roleBytes || roles >= MaxRoles {
+			if r.Status != "available" || !canonical.IsSHA256Hex(r.SHA256) || r.Size < 0 || r.Size > MaxRoleBytes-roleBytes || roles >= MaxRoles {
 				return ErrLimit
 			}
 			if volumes != nil {

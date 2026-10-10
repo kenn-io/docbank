@@ -56,7 +56,7 @@ func retainedExportPlanSchema() schema {
 			"format": enumSchema("jpeg", "png"), "quality": integerSchema(0, 100),
 			"long_edge": integerSchema(0, 100000), "include_metadata": booleanSchema(),
 			"remove_gps": booleanSchema(),
-		}, "format", "quality", "long_edge", "include_metadata", "remove_gps"),
+		}, "format", "long_edge", "include_metadata", "remove_gps"),
 		"embedded_previews": integerSchema(0, bundle.MaxPhotoExportMembers),
 		"volume_limits": objectSchema(schema{
 			"role_bytes": integerSchema(1, bundle.MaxVolumeRoleBytes),

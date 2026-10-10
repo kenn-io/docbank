@@ -171,6 +171,21 @@ func TestPhotoExportResolvesCompleteScopeAndSelectedDisplayMembers(t *testing.T)
 	require.ErrorIs(t, err, ErrHiddenLocked)
 }
 
+func TestPhotoExportSourceRejectsTooManyAssetIDsBeforeReservation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ids := make([]string, bundle.MaxPhotoExportMembers+1)
+	for i := range ids {
+		ids[i] = uuid.New().String()
+	}
+	_, err := s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "photos", Photos: &bundle.PhotoExportSelection{AssetIDs: ids}}, nil)
+	require.ErrorIs(t, err, bundle.ErrLimit)
+	require.ErrorContains(t, err, "photo exports allow at most 16 photos")
+	var count int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT count(*) FROM export_sources`).Scan(&count))
+	require.Zero(t, count)
+}
+
 func TestPhotoExportCancellationAndInvalidProfile(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

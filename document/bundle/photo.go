@@ -10,7 +10,7 @@ import (
 // PhotoRenderProfile selects pixels and metadata for a shared copy.
 type PhotoRenderProfile struct {
 	Format          string `json:"format"`
-	Quality         int    `json:"quality"`
+	Quality         int    `json:"quality,omitzero"`
 	LongEdge        int    `json:"long_edge"`
 	IncludeMetadata bool   `json:"include_metadata"`
 	RemoveGPS       bool   `json:"remove_gps"`
@@ -52,7 +52,7 @@ func validatePhotoRoles(plan Plan, d Document) (int, error) {
 		}
 		count++
 		var receipt PhotoRenderReceipt
-		if plan.PhotoRender == nil || role.Status != roleAvailable && role.Status != roleCollapsed || json.Unmarshal(role.Recipe, &receipt, json.RejectUnknownMembers(true)) != nil {
+		if plan.PhotoRender == nil || role.Status != roleAvailable || json.Unmarshal(role.Recipe, &receipt, json.RejectUnknownMembers(true)) != nil {
 			return 0, ErrConflict
 		}
 		if receipt.Profile != *plan.PhotoRender || receipt.Source != d.Member || receipt.Width < 1 || receipt.Height < 1 || int64(receipt.Width)*int64(receipt.Height) > 100000000 || receipt.Version != PhotoRenderReceiptVersion || !canonical.IsSHA256Hex(role.SHA256) || role.Size < 1 || role.Page != nil {
