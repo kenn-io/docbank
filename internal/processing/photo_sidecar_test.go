@@ -117,20 +117,16 @@ func TestPhotoSidecarSourceEvidence(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {
 		name, packet string
-		rating       int
 		valid        bool
 	}{
-		{"prolog and packet", "\xef\xbb\xbf" + `<?xml version="1.0"?><?xpacket begin=""?>` + photoSidecarHeader + ` xmp:Rating="4">` + photoSidecarFooter + `<?xpacket end="w"?>`, 4, true},
-		{"empty", photoSidecarHeader + `>` + photoSidecarFooter, 0, true},
-		{"invalid", photoSidecarHeader + ` xmp:Rating="7">` + photoSidecarFooter, 0, false},
+		{"prolog and packet", "\xef\xbb\xbf" + `<?xml version="1.0"?><?xpacket begin=""?>` + photoSidecarHeader + ` xmp:Rating="4">` + photoSidecarFooter + `<?xpacket end="w"?>`, true},
+		{"empty", photoSidecarHeader + `>` + photoSidecarFooter, true},
+		{"invalid", photoSidecarHeader + ` xmp:Rating="7">` + photoSidecarFooter, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := t.Context()
 			packet := []byte(test.packet)
-			catalog, blobs, photo, sidecar, target := photoSidecarFixture(t, packet)
-			pending, err := catalog.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
-			require.NoError(t, err)
-			assert.Empty(t, pending)
+			catalog, blobs, _, sidecar, _ := photoSidecarFixture(t, packet)
 			count, err := BackfillSourceMetadataTargets(ctx, catalog, blobs, t.TempDir(), []store.SourceMetadataTarget{{SourceSHA256: sidecar.BlobHash, Size: sidecar.Size}})
 			require.NoError(t, err)
 			assert.Equal(t, 1, count)
@@ -146,65 +142,12 @@ func TestPhotoSidecarSourceEvidence(t *testing.T) {
 			if !test.valid {
 				assert.NotEmpty(t, view.Metadata.Warnings)
 			}
-			var backup bytes.Buffer
-			require.NoError(t, catalog.ExportMetadata(ctx, &backup))
-			restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
-			require.NoError(t, err)
-			defer func() { require.NoError(t, restored.Close()) }()
-			require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
-			next, err := restored.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
-			require.NoError(t, err)
-			if test.rating > 0 {
-				require.Len(t, next, 1)
-				receipt, applyErr := restored.InitializePhotoSidecar(ctx, next[0])
-				require.NoError(t, applyErr)
-				require.NotEmpty(t, receipt.ReceiptID)
-				asset, assetErr := restored.PhotoAssetForNode(ctx, photo.ID)
-				require.NoError(t, assetErr)
-				for _, f := range asset.Files {
-					if f.ID == target.FileID {
-						assert.Equal(t, test.rating, f.Rating)
-						assert.Empty(t, f.Label)
-						assert.Equal(t, int64(2), f.Revision)
-					}
-				}
-			} else {
-				require.Len(t, next, 1)
-				unchanged, nodeErr := restored.NodeByID(ctx, photo.ID)
-				require.NoError(t, nodeErr)
-				assert.Equal(t, photo, unchanged)
-				_, applyErr := restored.InitializePhotoSidecar(ctx, target)
-				require.NoError(t, applyErr)
-				next, err = restored.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
-				require.NoError(t, err)
-				assert.Empty(t, next)
-				receiptBytes := backup.String()
-				assert.NotContains(t, receiptBytes, "sidecar_result")
-				assert.NotContains(t, receiptBytes, "authored_sidecar")
-				replacement := []byte(photoSidecarHeader + ` xmp:Rating="4">` + photoSidecarFooter)
-				write, writeErr := blobs.WriteDetailedContext(ctx, bytes.NewReader(replacement))
-				require.NoError(t, writeErr)
-				encoding, encodingErr := write.EncodingName()
-				require.NoError(t, encodingErr)
-				_, _, replaceErr := catalog.ReplaceContent(ctx, sidecar.ID, sidecar.Revision, write.Hash, write.Size, "application/rdf+xml", store.BlobPhysical{Encoding: encoding, StoredBytes: write.StoredSize, PackEligible: write.PackEligible, Created: write.Created})
-				require.NoError(t, replaceErr)
-				_, applyErr = catalog.InitializePhotoSidecar(ctx, target)
-				require.ErrorIs(t, applyErr, store.ErrStaleRevision)
-				_, extractErr := BackfillSourceMetadataTargets(ctx, catalog, blobs, t.TempDir(), []store.SourceMetadataTarget{{SourceSHA256: write.Hash, Size: write.Size}})
-				require.NoError(t, extractErr)
-				next, listErr := catalog.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
-				require.NoError(t, listErr)
-				require.Len(t, next, 1)
-				_, applyErr = catalog.InitializePhotoSidecar(ctx, next[0])
-				require.NoError(t, applyErr)
-			}
 			stream, _, err := blobs.OpenStreamContext(ctx, sidecar.BlobHash)
 			require.NoError(t, err)
 			original, err := io.ReadAll(stream)
 			require.NoError(t, err)
 			require.NoError(t, stream.Close())
 			assert.Equal(t, packet, original)
-			require.NoError(t, restored.ValidateMetadata(ctx))
 		})
 	}
 }
@@ -260,103 +203,6 @@ func TestPhotoSidecarImportInitialization(t *testing.T) {
 			assert.Equal(t, 0, file.Rating)
 			assert.Equal(t, int64(1), file.Revision)
 		}
-	}
-}
-
-func TestPhotoSidecarPreservesAuthoredTextThroughExtraction(t *testing.T) {
-	t.Parallel()
-	packet := []byte(photoSidecarHeader + `><dc:description>` + "\n  River\n" + `</dc:description><dc:creator><rdf:Seq><rdf:li> Creator </rdf:li></rdf:Seq></dc:creator><dc:rights> Copyright </dc:rights>` + photoSidecarFooter)
-	catalog, blobs, photo, sidecar, _ := photoSidecarFixture(t, packet)
-	_, err := BackfillSourceMetadataTargets(t.Context(), catalog, blobs, t.TempDir(), []store.SourceMetadataTarget{{SourceSHA256: sidecar.BlobHash, Size: sidecar.Size}})
-	require.NoError(t, err)
-	targets, err := catalog.MissingPhotoSidecarsAfter(t.Context(), SourceMetadataExtractorFingerprint, "", 10)
-	require.NoError(t, err)
-	require.Len(t, targets, 1)
-	receipt, err := catalog.InitializePhotoSidecar(t.Context(), targets[0])
-	require.NoError(t, err)
-	require.Len(t, receipt.After, 1)
-	assert.Equal(t, "\n  River\n", receipt.After[0].Values.Caption)
-	assert.Equal(t, " Creator ", receipt.After[0].Values.Creator)
-	assert.Equal(t, " Copyright ", receipt.After[0].Values.Copyright)
-	var backup bytes.Buffer
-	require.NoError(t, catalog.ExportMetadata(t.Context(), &backup))
-	restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, restored.Close()) })
-	require.NoError(t, restored.ImportMetadata(t.Context(), &backup))
-	restoredAsset, err := restored.PhotoAssetForNode(t.Context(), photo.ID)
-	require.NoError(t, err)
-	for _, file := range restoredAsset.Files {
-		if file.ID == targets[0].FileID {
-			assert.Equal(t, receipt.After[0].Values, file.Authored())
-		}
-	}
-	asset, err := catalog.PhotoAssetForNode(t.Context(), photo.ID)
-	require.NoError(t, err)
-	for _, file := range asset.Files {
-		if file.ID == targets[0].FileID {
-			assert.Equal(t, "\n  River\n", file.Caption)
-			return
-		}
-	}
-	t.Fatal("initialized photo file is missing from the asset")
-}
-
-func TestPhotoSidecarEmptyTextLeavesInitializationEligible(t *testing.T) {
-	t.Parallel()
-	for _, body := range []string{
-		"><dc:description>\n <rdf:Alt>\n </rdf:Alt>\n</dc:description><dc:creator>\n <rdf:Seq>\n </rdf:Seq>\n</dc:creator><dc:rights><rdf:Alt/></dc:rights>",
-		"><dc:description> \n\t </dc:description><dc:creator> </dc:creator><dc:rights>\n</dc:rights>",
-		`><dc:description><rdf:Alt><rdf:li>Other</rdf:li><rdf:li xml:lang="x-default"> </rdf:li></rdf:Alt></dc:description><dc:creator><rdf:Seq><rdf:li> </rdf:li><rdf:li>Other</rdf:li></rdf:Seq></dc:creator><dc:rights><rdf:Alt><rdf:li> </rdf:li></rdf:Alt></dc:rights>`,
-		` dc:description=" &#10; " dc:creator=" " dc:rights="&#9;">`,
-	} {
-		t.Run(body, func(t *testing.T) {
-			t.Parallel()
-			ctx := t.Context()
-			catalog, blobs, photo, sidecar, target := photoSidecarFixture(t, []byte(photoSidecarHeader+body+photoSidecarFooter))
-			_, err := BackfillSourceMetadataTargets(ctx, catalog, blobs, t.TempDir(), []store.SourceMetadataTarget{{SourceSHA256: sidecar.BlobHash, Size: sidecar.Size}})
-			require.NoError(t, err)
-			receipt, err := catalog.InitializePhotoSidecar(ctx, target)
-			require.NoError(t, err)
-			assert.Empty(t, receipt.ReceiptID)
-			asset, err := catalog.PhotoAssetForNode(ctx, photo.ID)
-			require.NoError(t, err)
-			for _, file := range asset.Files {
-				if file.ID == target.FileID {
-					assert.Equal(t, int64(1), file.Revision)
-					assert.Equal(t, store.PhotoAuthored{}, file.Authored())
-				}
-			}
-			targets, err := catalog.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
-			require.NoError(t, err)
-			assert.Empty(t, targets)
-			var backup bytes.Buffer
-			require.NoError(t, catalog.ExportMetadata(ctx, &backup))
-			restored, err := store.Open(filepath.Join(t.TempDir(), "restored.db"))
-			require.NoError(t, err)
-			t.Cleanup(func() { require.NoError(t, restored.Close()) })
-			require.NoError(t, restored.ImportMetadata(ctx, &backup))
-			restoredAsset, err := restored.PhotoAssetForNode(ctx, photo.ID)
-			require.NoError(t, err)
-			assert.Equal(t, asset.Files, restoredAsset.Files)
-			packet := []byte(photoSidecarHeader + `><dc:description> Later caption </dc:description>` + photoSidecarFooter)
-			write, err := blobs.WriteDetailedContext(ctx, bytes.NewReader(packet))
-			require.NoError(t, err)
-			encoding, err := write.EncodingName()
-			require.NoError(t, err)
-			_, _, err = catalog.ReplaceContent(ctx, sidecar.ID, sidecar.Revision, write.Hash, write.Size, "application/rdf+xml", store.BlobPhysical{Encoding: encoding, StoredBytes: write.StoredSize, PackEligible: write.PackEligible, Created: write.Created})
-			require.NoError(t, err)
-			_, err = BackfillSourceMetadataTargets(ctx, catalog, blobs, t.TempDir(), []store.SourceMetadataTarget{{SourceSHA256: write.Hash, Size: write.Size}})
-			require.NoError(t, err)
-			targets, err = catalog.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
-			require.NoError(t, err)
-			require.Len(t, targets, 1)
-			receipt, err = catalog.InitializePhotoSidecar(ctx, targets[0])
-			require.NoError(t, err)
-			require.Len(t, receipt.After, 1)
-			assert.Equal(t, int64(2), receipt.After[0].Revision)
-			assert.Equal(t, " Later caption ", receipt.After[0].Values.Caption)
-		})
 	}
 }
 

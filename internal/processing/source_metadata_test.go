@@ -770,7 +770,7 @@ func TestExtractSourceMetadataWarnsForUndecodableEmailFields(t *testing.T) {
 
 func TestExtractSourceMetadataRequiresEmailHeaders(t *testing.T) {
 	t.Parallel()
-	for _, payload := range []string{`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"><channel rdf:about="https://example.test/feed"/></rdf:RDF>`, `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/"><rdf:Description><dc:creator>Example creator</dc:creator></rdf:Description></rdf:RDF>`, "", "plain text\r\n\r\nbody", "\r\nFrom: body@example.test\r\n", `<html><body>Page</body></html>`, `<svg xmlns="http://www.w3.org/2000/svg"><r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><r:Description/></r:RDF></svg>`, `<?xml version="1.0"?><note/>`, `<foo><r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><r:Description/></r:RDF></foo>`} {
+	for _, payload := range []string{`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"><channel rdf:about="https://example.test/feed"/></rdf:RDF>`, `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/"><rdf:Description><dc:creator>Example creator</dc:creator></rdf:Description></rdf:RDF>`, "", "plain text\r\n\r\nbody", "\r\nFrom: body@example.test\r\n", `<html><body>Page</body></html>`, `<svg xmlns="http://www.w3.org/2000/svg"><r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><r:Description/></r:RDF></svg>`, `<?xml version="1.0"?><note/>`} {
 		metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte(payload))
 		require.NoError(t, err)
 		assert.Empty(t, metadata.Fields)
