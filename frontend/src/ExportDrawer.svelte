@@ -88,6 +88,7 @@
       <section class="choices" aria-label="Download settings">
         <label for="export-basename">Downloaded ZIP filename</label>
         <TextInput id="export-basename" ariaLabel="Downloaded ZIP filename" bind:value={basename} block />
+        {#if !photo}<p>Changing the filename does not change the reviewed files or require another preview.</p>{/if}
       </section>
 
       {#if !admitted}

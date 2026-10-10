@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,7 +38,7 @@ func TestPhotoExportTrailingEXIFCreditsNamespacesAndICC(t *testing.T) {
 	late.Write(source.Bytes()[:source.Len()-12])
 	writePhotoPNGChunk(&late, "eXIf", syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
 	late.Write(source.Bytes()[source.Len()-12:])
-	out, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(late.Bytes()), photoRenderInput(late.Bytes(), "image/png"), bundle.PhotoRenderProfile{Format: "png", Quality: 90, IncludeMetadata: true})
+	out, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(late.Bytes()), photoRenderInput(late.Bytes(), "image/png"), bundle.PhotoRenderProfile{Format: "png", Quality: 90, IncludeMetadata: true}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 2, receipt.Width)
 	decoded, err := png.Decode(bytes.NewReader(out))
@@ -60,7 +62,7 @@ func TestPhotoExportTrailingEXIFCreditsNamespacesAndICC(t *testing.T) {
 
 	jpegSource := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe2, append([]byte("ICC_PROFILE\x00\x01\x01"), profile...))
 	for _, format := range []string{"jpeg", "png"} {
-		out, _, err := RenderPhotoExport(t.Context(), bytes.NewReader(jpegSource), photoRenderInput(jpegSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: format, Quality: 90})
+		out, _, err := renderPhotoExport(t.Context(), bytes.NewReader(jpegSource), photoRenderInput(jpegSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: format, Quality: 90}, nil)
 		require.NoError(t, err)
 		packets, err := photoSourcePackets(t.Context(), out, true)
 		require.NoError(t, err)
@@ -69,13 +71,45 @@ func TestPhotoExportTrailingEXIFCreditsNamespacesAndICC(t *testing.T) {
 		assert.Empty(t, packets.exif)
 	}
 	exifSource := syntheticJPEGSegment(t, jpegSource, 0xe1, append([]byte("Exif\x00\x00"), syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 1)}, nil)...))
-	out, _, err = RenderPhotoExport(t.Context(), bytes.NewReader(exifSource), photoRenderInput(exifSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true})
+	out, _, err = renderPhotoExport(t.Context(), bytes.NewReader(exifSource), photoRenderInput(exifSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true}, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte{0xff, 0xe1}, out[2:4])
 	require.Equal(t, "Exif\x00\x00", string(out[6:12]))
 	packets, err := photoSourcePackets(t.Context(), out, true)
 	require.NoError(t, err)
 	require.Equal(t, profile, packets.icc)
+	largeXMP := []byte(photoSidecarHeader + ` xmlns:keep="https://example.org/photo/" xmlns:lr="http://ns.adobe.com/lightroom/1.0/" xmlns:pdf="http://ns.adobe.com/pdf/1.3/" lr:hierarchicalSubject="Removed attribute tag" pdf:Keywords="Removed PDF tag"><lr:hierarchicalSubject><rdf:Bag><rdf:li>Removed collection tag</rdf:li></rdf:Bag></lr:hierarchicalSubject><pdf:Keywords>Removed scalar tag</pdf:Keywords>` + strings.Repeat(`<keep:History rdf:parseType="Resource"><keep:Step keep:Type="keep:Type">kept &amp; safe</keep:Step></keep:History>`, 360) + `<keep:Scoped xmlns:keep="https://example.org/scoped/" keep:Type="keep:Type"><keep:Value>keep:Literal</keep:Value></keep:Scoped><Plain xmlns="https://example.org/default/" xmlns:q="https://example.org/default/" q:Value="q:Literal"><Child/></Plain><keep:Reset xmlns=""><Child/></keep:Reset>` + photoSidecarFooter)
+	require.Greater(t, len(largeXMP), 40000)
+	largeSource := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1, append([]byte(photoXMPJPEGPrefix), largeXMP...))
+	out, _, err = renderPhotoExport(t.Context(), bytes.NewReader(largeSource), photoRenderInput(largeSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true}, nil)
+	require.NoError(t, err)
+	packets, err = photoSourcePackets(t.Context(), out, true)
+	require.NoError(t, err)
+	require.Less(t, len(packets.xmp), len(largeXMP)+1000)
+	require.NotContains(t, string(packets.xmp), "Removed")
+	counts := map[xml.Name]int{}
+	decoder := xml.NewDecoder(bytes.NewReader(packets.xmp))
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		if element, ok := token.(xml.StartElement); ok {
+			counts[element.Name]++
+			for _, attr := range element.Attr {
+				if attr.Name.Local == "Type" {
+					require.Equal(t, element.Name.Space, attr.Name.Space)
+					require.Equal(t, "keep:Type", attr.Value)
+				}
+			}
+		}
+	}
+	require.Equal(t, 360, counts[xml.Name{Space: "https://example.org/photo/", Local: "Step"}])
+	require.Equal(t, 1, counts[xml.Name{Space: "https://example.org/scoped/", Local: "Value"}])
+	require.Equal(t, 1, counts[xml.Name{Space: "https://example.org/default/", Local: "Child"}])
+	require.Equal(t, 1, counts[xml.Name{Local: "Child"}])
+	require.Equal(t, 1, counts[xml.Name{Space: xmpDublinCoreNamespace, Local: "subject"}])
 	budget := photoExportBudget{pixels: 5}
 	_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(jpegSource), photoRenderInput(jpegSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: "png", Quality: 90}, &budget)
 	require.ErrorIs(t, err, bundle.ErrLimit)
@@ -101,7 +135,7 @@ func BenchmarkPhotoExport24MP(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
-				if _, _, err := RenderPhotoExport(context.Background(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: setting.format, Quality: 90, LongEdge: setting.edge}); err != nil {
+				if _, _, err := renderPhotoExport(context.Background(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: setting.format, Quality: 90, LongEdge: setting.edge}, nil); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -132,7 +166,7 @@ func TestPhotoExportOrientationAndAuthoredRotation(t *testing.T) {
 			t.Run(fmt.Sprintf("%d/%d", orientation, rotation), func(t *testing.T) {
 				input := photoRenderInput(source.Bytes(), "image/png")
 				input.Authored.Rotation = rotation
-				out, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90})
+				out, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90}, nil)
 				require.NoError(t, err)
 				decoded, err := png.Decode(bytes.NewReader(out))
 				require.NoError(t, err)
@@ -171,7 +205,7 @@ func TestPhotoExportSizeQualityAndMetadataOff(t *testing.T) {
 	require.NoError(t, png.Encode(&source, frame))
 	input := photoRenderInput(source.Bytes(), "image/png")
 	for _, test := range []struct{ edge, want int }{{0, 5000}, {6000, 5000}, {1000, 1000}} {
-		out, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90, LongEdge: test.edge})
+		out, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90, LongEdge: test.edge}, nil)
 		require.NoError(t, err)
 		assert.Equal(t, test.want, receipt.Width)
 		packets, err := photoSourcePackets(t.Context(), out, true)
@@ -181,7 +215,7 @@ func TestPhotoExportSizeQualityAndMetadataOff(t *testing.T) {
 	}
 	var outputs [][]byte
 	for _, quality := range []int{10, 95} {
-		out, _, err := RenderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: quality})
+		out, _, err := renderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: quality}, nil)
 		require.NoError(t, err)
 		_, err = jpeg.Decode(bytes.NewReader(out))
 		require.NoError(t, err)
@@ -241,7 +275,7 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 		in := photoRenderInput(data, "image/jpeg")
 		in.Authored = input.Authored
 		in.Keywords = input.Keywords
-		out, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(data), in, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true, RemoveGPS: true})
+		out, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(data), in, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true, RemoveGPS: true}, nil)
 		require.NoError(t, err)
 		assert.Equal(t, 2, receipt.Width)
 		packets, err := photoSourcePackets(t.Context(), out, true)
@@ -263,7 +297,7 @@ func TestPhotoExportConfirmedFlagClearsLegacyReject(t *testing.T) {
 				data := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1, append([]byte(photoXMPJPEGPrefix), packet...))
 				input := photoRenderInput(data, "image/jpeg")
 				input.Authored = store.PhotoAuthored{Confirmed: store.PhotoConfirmedFlag, Flag: flag}
-				out, _, err := RenderPhotoExport(t.Context(), bytes.NewReader(data), input, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true, RemoveGPS: true})
+				out, _, err := renderPhotoExport(t.Context(), bytes.NewReader(data), input, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true, RemoveGPS: true}, nil)
 				require.NoError(t, err)
 				packets, err := photoSourcePackets(t.Context(), out, true)
 				require.NoError(t, err)
@@ -310,7 +344,7 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 	}
 	data = append(data, preview...)
 	in := photoRenderInput(data, "image/x-adobe-dng")
-	out, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(data), in, bundle.PhotoRenderProfile{Format: "png", Quality: 90, IncludeMetadata: true})
+	out, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(data), in, bundle.PhotoRenderProfile{Format: "png", Quality: 90, IncludeMetadata: true}, nil)
 	require.NoError(t, err)
 	assert.True(t, receipt.EmbeddedPreview)
 	assert.Equal(t, 2, receipt.Width)
@@ -326,22 +360,22 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 	}
 	assert.Equal(t, "Synthetic Camera", exifASCII(root[0x010f]))
 	raf := syntheticRAF()
-	_, rafReceipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(raf), photoRenderInput(raf, "image/x-fuji-raf"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true})
+	_, rafReceipt, err := renderPhotoExport(t.Context(), bytes.NewReader(raf), photoRenderInput(raf, "image/x-fuji-raf"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true}, nil)
 	require.NoError(t, err)
 	assert.True(t, rafReceipt.EmbeddedPreview)
 	assert.Equal(t, 30, rafReceipt.Width)
 	assert.Equal(t, 40, rafReceipt.Height)
 	missing := syntheticRAWPreviewTIFF(1)
-	_, _, err = RenderPhotoExport(t.Context(), bytes.NewReader(missing), photoRenderInput(missing, "image/x-adobe-dng"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90})
+	_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(missing), photoRenderInput(missing, "image/x-adobe-dng"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90}, nil)
 	require.ErrorIs(t, err, bundle.ErrUnavailable)
 	bad := syntheticJPEGSegment(t, preview, 0xe1, append([]byte(photoXMPJPEGPrefix), []byte(`<x:xmpmeta xmlns:x="adobe:ns:meta/"><broken>`)...))
 	input := photoRenderInput(bad, "image/jpeg")
-	_, _, err = RenderPhotoExport(t.Context(), bytes.NewReader(bad), input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true})
+	_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(bad), input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true}, nil)
 	require.Error(t, err)
-	_, _, err = RenderPhotoExport(t.Context(), bytes.NewReader(bad), input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90})
+	_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(bad), input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90}, nil)
 	require.NoError(t, err)
 	input.Member.SHA256 = strings.Repeat("0", 64)
-	_, _, err = RenderPhotoExport(t.Context(), bytes.NewReader(bad), input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90})
+	_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(bad), input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90}, nil)
 	require.Error(t, err)
 }
 
@@ -415,7 +449,7 @@ func TestPhotoExportPNGPixelChunksDoNotConsumeMetadataBudget(t *testing.T) {
 	require.False(t, malformed)
 	require.Less(t, counted.reads, chunks/8)
 	input := photoRenderInput(source.Bytes(), "image/png")
-	output, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90})
+	output, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90}, nil)
 	require.NoError(t, err)
 	require.Equal(t, 65, receipt.Width)
 	require.NotEmpty(t, output)
@@ -460,7 +494,7 @@ func TestPhotoExportClearsWindowsEXIFAliases(t *testing.T) {
 		for _, format := range []string{"jpeg", "png"} {
 			input := photoRenderInput(data, "image/jpeg")
 			input.Authored.Confirmed = confirmed
-			out, _, err := RenderPhotoExport(t.Context(), bytes.NewReader(data), input, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true})
+			out, _, err := renderPhotoExport(t.Context(), bytes.NewReader(data), input, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true}, nil)
 			require.NoError(t, err)
 			packets, err := photoSourcePackets(t.Context(), out, true)
 			require.NoError(t, err)

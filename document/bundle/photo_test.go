@@ -15,7 +15,8 @@ func TestPhotoExportReceiptRejectsFutureAndPrivateFields(t *testing.T) {
 	role := Role{Role: "photo_rendered", Status: "available", Path: "documents/1/" + member.VersionID + "/photo.png", MediaType: "image/png", SHA256: strings.Repeat("b", 64), Size: 100}
 	plan := Plan{PhotoRender: &profile, Roles: []RolePolicy{{Role: "photo_rendered"}}}
 	role.Recipe, _ = json.Marshal(receipt)
-	require.NoError(t, ValidatePhotoRoles(plan, Document{Member: member, Roles: []Role{role}}))
+	_, err := validatePhotoRoles(plan, Document{Member: member, Roles: []Role{role}})
+	require.NoError(t, err)
 	for _, field := range []string{"version", "input", "input_sha256"} {
 		var fields map[string]any
 		require.NoError(t, json.Unmarshal(role.Recipe, &fields))
@@ -26,6 +27,7 @@ func TestPhotoExportReceiptRejectsFutureAndPrivateFields(t *testing.T) {
 		}
 		bad := role
 		bad.Recipe, _ = json.Marshal(fields)
-		require.ErrorIs(t, ValidatePhotoRoles(plan, Document{Member: member, Roles: []Role{bad}}), ErrConflict)
+		_, err = validatePhotoRoles(plan, Document{Member: member, Roles: []Role{bad}})
+		require.ErrorIs(t, err, ErrConflict)
 	}
 }

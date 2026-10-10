@@ -9,6 +9,7 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -457,6 +458,84 @@ func rewritePhotoEXIF(data []byte, width, height int, removeGPS bool, authored s
 	return out, err
 }
 
+type photoXMPFrame struct {
+	original, qualified xml.Name
+	namespaces          map[string]string
+}
+
+type photoXMPEncoder struct {
+	encoder *xml.Encoder
+	frames  []photoXMPFrame
+}
+
+func (w *photoXMPEncoder) EncodeToken(token xml.Token) error {
+	switch t := token.(type) {
+	case xml.StartElement:
+		namespaces := map[string]string{"xml": xmlNamespace}
+		if len(w.frames) > 0 {
+			namespaces = maps.Clone(w.frames[len(w.frames)-1].namespaces)
+		}
+		for _, attr := range t.Attr {
+			if attr.Name.Space == "xmlns" {
+				namespaces[attr.Name.Local] = attr.Value
+			} else if attr.Name.Space == "" && attr.Name.Local == "xmlns" {
+				namespaces[""] = attr.Value
+			}
+		}
+		attrs := make([]xml.Attr, 0, len(t.Attr))
+		qualify := func(name xml.Name, attribute bool) xml.Name {
+			if name.Space == "" {
+				return name
+			}
+			if !attribute && namespaces[""] == name.Space {
+				return xml.Name{Local: name.Local}
+			}
+			for _, prefix := range slices.Sorted(maps.Keys(namespaces)) {
+				if prefix != "" && namespaces[prefix] == name.Space {
+					return xml.Name{Local: prefix + ":" + name.Local}
+				}
+			}
+			prefix := "ns" + strconv.Itoa(len(namespaces))
+			for namespaces[prefix] != "" {
+				prefix += "_"
+			}
+			namespaces[prefix] = name.Space
+			attrs = append(attrs, xml.Attr{Name: xml.Name{Local: "xmlns:" + prefix}, Value: name.Space})
+			return xml.Name{Local: prefix + ":" + name.Local}
+		}
+		original := t.Name
+		t.Name = qualify(t.Name, false)
+		for _, attr := range t.Attr {
+			if attr.Name.Space == "xmlns" {
+				attr.Name = xml.Name{Local: "xmlns:" + attr.Name.Local}
+			} else {
+				attr.Name = qualify(attr.Name, true)
+			}
+			attrs = append(attrs, attr)
+		}
+		t.Attr = attrs
+		w.frames = append(w.frames, photoXMPFrame{original, t.Name, namespaces})
+		token = t
+	case xml.EndElement:
+		if len(w.frames) == 0 || w.frames[len(w.frames)-1].original != t.Name {
+			return errors.New("unbalanced XMP element")
+		}
+		t.Name = w.frames[len(w.frames)-1].qualified
+		w.frames = w.frames[:len(w.frames)-1]
+		token = t
+	}
+	return w.encoder.EncodeToken(token)
+}
+
+func (w *photoXMPEncoder) EncodeElement(value string, start xml.StartElement) error {
+	for _, token := range []xml.Token{start, xml.CharData(value), start.End()} {
+		if err := w.EncodeToken(token); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportInput, receipt bundle.PhotoRenderReceipt) ([]byte, error) {
 	if len(packet) == 0 {
 		packet = []byte(`<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"></rdf:RDF></x:xmpmeta>`)
@@ -466,13 +545,16 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 	}
 	decoder := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(packet, []byte{0xef, 0xbb, 0xbf})))
 	var out bytes.Buffer
-	encoder := xml.NewEncoder(&out)
+	encoder := &photoXMPEncoder{encoder: xml.NewEncoder(&out)}
 	clearLegacyReject := input.Authored.Confirmed&store.PhotoConfirmedFlag != 0 && input.Authored.Flag != "reject" && input.Authored.Confirmed&store.PhotoConfirmedRating == 0
 	isRating := func(n xml.Name) bool { return n.Space == xmpBasicNamespace && n.Local == "Rating" }
 	authored := func(n xml.Name) bool {
 		return photoXMPConfirmed(n, input)
 	}
 	remove := func(n xml.Name) bool {
+		if n.Space == "xmlns" || n.Space == "" && n.Local == "xmlns" {
+			return false
+		}
 		return authored(n) || receipt.Profile.RemoveGPS && strings.HasPrefix(strings.ToUpper(n.Local), "GPS")
 	}
 	depth, skip, roots, rdf := 0, 0, 0, 0
@@ -559,11 +641,8 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 					return nil, errors.New("duplicate XMP attribute")
 				}
 				seen[a.Name] = true
-				if remove(a.Name) || a.Name.Local == "xmlns" || clearLegacyReject && isRating(a.Name) && strings.TrimSpace(a.Value) == "-1" {
+				if remove(a.Name) || clearLegacyReject && isRating(a.Name) && strings.TrimSpace(a.Value) == "-1" {
 					continue
-				}
-				if a.Name.Space == "xmlns" {
-					a.Name = xml.Name{Local: "xmlns:" + a.Name.Local}
 				}
 				if value := normalized(a.Name); value != "" {
 					a.Value = value
@@ -615,7 +694,7 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 	if roots != 1 || rdf != 1 || depth != 0 {
 		return nil, errors.New("incomplete XMP packet")
 	}
-	if err := encoder.Flush(); err != nil {
+	if err := encoder.encoder.Flush(); err != nil {
 		return nil, err
 	}
 	if out.Len() > maxPhotoSidecarBytes {
@@ -624,7 +703,7 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 	return out.Bytes(), nil
 }
 
-func writePhotoAuthoredXMP(encoder *xml.Encoder, input store.PhotoExportInput) error {
+func writePhotoAuthoredXMP(encoder *photoXMPEncoder, input store.PhotoExportInput) error {
 	description := xml.StartElement{Name: xml.Name{Space: rdfNamespace, Local: "Description"}, Attr: []xml.Attr{{Name: xml.Name{Space: rdfNamespace, Local: "about"}, Value: ""}}}
 	if err := encoder.EncodeToken(description); err != nil {
 		return err
@@ -689,6 +768,10 @@ func photoXMPConfirmed(n xml.Name, input store.PhotoExportInput) bool {
 		if n.Local == "Rotation" {
 			return true
 		}
+	case "http://ns.adobe.com/lightroom/1.0/":
+		return n.Local == "hierarchicalSubject"
+	case xmpPDFNamespace:
+		return n.Local == "Keywords"
 	case xmpDublinCoreNamespace:
 		switch n.Local {
 		case "description":

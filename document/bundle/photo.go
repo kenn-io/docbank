@@ -35,11 +35,6 @@ type PhotoRenderReceipt struct {
 	EmbeddedPreview bool               `json:"embedded_preview"`
 }
 
-func ValidatePhotoRoles(plan Plan, d Document) error {
-	_, err := validatePhotoRoles(plan, d)
-	return err
-}
-
 func validatePhotoRoles(plan Plan, d Document) (int, error) {
 	embedded := 0
 	count := 0

@@ -231,7 +231,7 @@ func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
 	assert.Greater(t, canvasRed, uint32(0xf000))
 	assert.Greater(t, canvasGreen, uint32(0xf000))
 	assert.Greater(t, canvasBlue, uint32(0xf000))
-	output, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(source), photoRenderInput(source, "image/gif"), bundle.PhotoRenderProfile{Format: "png", Quality: 90})
+	output, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(source), photoRenderInput(source, "image/gif"), bundle.PhotoRenderProfile{Format: "png", Quality: 90}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 64, receipt.Width)
 	assert.Equal(t, 32, receipt.Height)

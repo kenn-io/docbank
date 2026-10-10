@@ -24,7 +24,7 @@ const maxPhotoExportOutputBytes = 1 << 30
 
 type photoExportBudget struct{ pixels int64 }
 
-// PreparePhotoExportPlan renders sequentially before the short publication transaction.
+// PreparePhotoExportPlan renders sequentially before bounded artifact publication under the mutation lease.
 func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *blob.Store, spoolParent, owner string, request bundle.PlanRequest, publish func(context.Context, func() error) error) (bundle.Plan, error) {
 	if request.PhotoRender == nil {
 		return bundle.Plan{}, bundle.ErrConflict
@@ -124,11 +124,6 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 		})
 	})
 	return plan, err
-}
-
-// RenderPhotoExport reads original pixels once, preserving the RAW container's metadata.
-func RenderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.PhotoExportInput, profile bundle.PhotoRenderProfile) ([]byte, bundle.PhotoRenderReceipt, error) {
-	return renderPhotoExport(ctx, source, input, profile, nil)
 }
 
 func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.PhotoExportInput, profile bundle.PhotoRenderProfile, budget *photoExportBudget) ([]byte, bundle.PhotoRenderReceipt, error) {
