@@ -21,11 +21,27 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
   const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
   try {
     await mkdir(output!, { recursive: true });
-    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault, "70", "--rejects"], { cwd: repository, env, timeout: 240_000 });
+    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault, "750", "--rejects"], { cwd: repository, env, timeout: 240_000 });
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
     await page.goto(webURL.href);
-    await expect(page.getByText("69 photos · 69 loaded", { exact: true })).toBeVisible();
+    const scroll = page.getByTestId("photo-scroll");
+    for (const loaded of [250, 500, 749]) {
+      await expect(page.getByText(`749 photos · ${loaded} loaded`, { exact: true })).toBeVisible();
+      if (loaded < 749) await scroll.evaluate(element => element.scrollTop = element.scrollHeight);
+    }
+    const select = async (name: string) => {
+      const checkbox = page.getByRole("checkbox", { name: `Select photo ${name}`, exact: true });
+      const height = await scroll.evaluate(element => element.scrollHeight);
+      const step = await scroll.evaluate(element => element.clientHeight);
+      for (let top = 0; top <= height; top += step) {
+        await scroll.evaluate((element, value) => element.scrollTop = value, top);
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        if (await checkbox.count()) { await checkbox.check(); return; }
+      }
+      throw new Error(`Photo was not mounted: ${name}`);
+    };
+    await scroll.evaluate(element => element.scrollTop = 0);
     await page.getByRole("button", { name: "Move rejects", exact: true }).click();
     const modal = page.getByRole("dialog", { name: "Move rejects to trash" });
     await expect(modal.getByText("2 photos · 2 files including sidecars")).toBeVisible();
@@ -43,7 +59,7 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
     await expect(modal.getByText("2 photos · 2 files including sidecars")).toBeVisible();
     await expect(modal.getByText("Close this dialog and select up to 64 photos.", { exact: true })).toBeVisible();
     await modal.getByRole("combobox", { name: "Rejects scope: Library", exact: true }).click();
-    await expect(page.getByRole("option", { name: "Selected photos (69)", exact: true })).toBeDisabled();
+    await expect(page.getByRole("option", { name: "Selected photos (749)", exact: true })).toBeDisabled();
     await modal.getByRole("combobox", { name: "Rejects scope: Library", exact: true }).click();
     for (const theme of ["light", "dark"]) {
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
@@ -51,8 +67,7 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
     }
     await modal.getByRole("button", { name: "Keep in Docbank", exact: true }).click();
     await page.getByRole("button", { name: "Clear selection", exact: true }).click();
-    await page.getByTestId("photo-scroll").evaluate(element => { element.scrollTop = element.scrollHeight; });
-    await page.getByRole("checkbox", { name: "Select photo Synthetic-photo-00001.jpg", exact: true }).check();
+    await select("Synthetic-photo-00001.jpg");
     await page.getByRole("button", { name: "Move rejects", exact: true }).click();
     await expect(modal.getByText("2 photos · 2 files including sidecars")).toBeVisible();
     await modal.getByRole("combobox", { name: "Rejects scope: Library", exact: true }).click();
@@ -62,15 +77,46 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-photo-rejects-selected-${theme}.png`), animations: "disabled" });
     }
-    await modal.getByRole("combobox", { name: "Rejects scope: Selected photos (1)", exact: true }).click();
-    await page.getByRole("option", { name: "Library", exact: true }).click();
-    await expect(modal.getByText("2 photos · 2 files including sidecars")).toBeVisible();
-    await modal.getByRole("button", { name: "Move 2 to trash", exact: true }).click();
+    await modal.getByRole("button", { name: "Keep in Docbank", exact: true }).click();
+    await select("Synthetic-photo-00005.jpg");
+    await select("Synthetic-photo-00003.jpg");
+    const mounted = await scroll.elementHandle();
+    const anchor = await scroll.evaluate(element => {
+      const top = element.getBoundingClientRect().top;
+      const cell = [...element.querySelectorAll<HTMLElement>("[data-asset]")].find(item => item.getBoundingClientRect().bottom > top + 56)!;
+      return { id: cell.dataset.asset!, offset: cell.getBoundingClientRect().top - top, scroll: element.scrollTop };
+    });
+    expect(anchor.scroll).toBeGreaterThan(10_000);
+    await page.getByRole("button", { name: "Move rejects", exact: true }).click();
+    await modal.getByRole("combobox", { name: "Rejects scope: Library", exact: true }).click();
+    await page.getByRole("option", { name: "Selected photos (3)", exact: true }).click();
+    await expect(modal.getByText("1 photo · 1 file including sidecars")).toBeVisible();
+    await expect(modal.getByText("Mixed flags (1)", { exact: true })).toBeVisible();
+    await page.route("**/api/v1/photos/assets/query", route => route.fulfill({ status: 503, contentType: "application/problem+json", body: JSON.stringify({ detail: "Photo reload unavailable" }) }), { times: 1 });
+    await modal.getByRole("button", { name: "Move 1 to trash", exact: true }).click();
     await expect(modal).toHaveCount(0);
-    await expect(page.getByText("67 photos · 67 loaded", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+    await expect(scroll).toBeHidden();
+    await expect(scroll).toHaveAttribute("inert", "");
+    expect(await mounted!.evaluate(element => element.isConnected)).toBe(true);
+    await expect(page.locator(".library-title span")).toBeHidden();
+    await expect(page.getByRole("button", { name: "Move to trash", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Move rejects", exact: true })).toBeDisabled();
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
+      await page.screenshot({ path: path.join(output!, `web-photo-rejects-retry-${theme}.png`), animations: "disabled" });
+    }
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(page.getByText("748 photos · 748 loaded", { exact: true })).toBeVisible();
+    await expect(page.getByText("2 selected photos", { exact: true })).toBeVisible();
+    expect(await mounted!.evaluate(element => element.isConnected)).toBe(true);
+    await expect.poll(() => scroll.locator(`[data-asset="${anchor.id}"]`).evaluate(element => element.getBoundingClientRect().top - element.closest(".photo-scroll")!.getBoundingClientRect().top)).toBeCloseTo(anchor.offset, 0);
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
+      await page.screenshot({ path: path.join(output!, `web-photo-rejects-recovered-${theme}.png`), animations: "disabled" });
+    }
     await page.getByRole("button", { name: "Recoverable trash", exact: true }).click();
     await expect(page.getByText("Synthetic-photo-00001.jpg", { exact: true })).toBeVisible();
-    await expect(page.getByText("Synthetic-photo-00002.jpg", { exact: true })).toBeVisible();
     const trash = JSON.parse(await run("trash", "list", "--json")) as { items: { id: number; name: string }[] };
     for (const node of trash.items.filter(node => /^Synthetic-photo-0000[12]\.jpg$/.test(node.name))) await run("restore", String(node.id));
     webURL.pathname = "/photos/hidden";

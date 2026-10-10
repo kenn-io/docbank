@@ -5,10 +5,11 @@
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoMonthChunk from "./PhotoMonthChunk.svelte";
 
-  let { groups, targetRowHeight, loading, cache, selectedIDs, onselect, oncheck, onhidden, hidden = false, onloadmore, scrollTop = $bindable(0) }: {
+  let { groups, targetRowHeight, loading, invalid = false, cache, selectedIDs, onselect, oncheck, onhidden, hidden = false, onloadmore, scrollTop = $bindable(0) }: {
     groups: PhotoGroup[];
     targetRowHeight: number;
     loading: boolean;
+    invalid?: boolean;
     cache: PhotoPreviewCache;
     selectedIDs: ReadonlySet<string>;
     onselect: (id: string, event: MouseEvent) => void;
@@ -61,7 +62,7 @@
     return () => { current = false; resize.disconnect(); };
   });
   $effect(() => {
-    if (initialized && !loading && totalHeight < scrollTop + viewport + 800) untrack(onloadmore);
+    if (initialized && !invalid && !loading && totalHeight < scrollTop + viewport + 800) untrack(onloadmore);
   });
 
   function jump(year: string) {
@@ -105,7 +106,7 @@
   }
 </script>
 
-<div class="photo-scroll" class:with-years={years.length > 1} bind:this={container} onscroll={() => { if (initialized) scrollTop = container?.scrollTop ?? 0; }} data-testid="photo-scroll">
+<div class="photo-scroll" class:invalid class:with-years={years.length > 1} inert={invalid} aria-hidden={invalid ? true : undefined} bind:this={container} onscroll={() => { if (initialized) scrollTop = container?.scrollTop ?? 0; }} data-testid="photo-scroll">
   {#if years.length > 1}
   <nav class="year-scrubber" aria-label="Photo years">
     <div class="year-buttons" style:max-height={`${Math.max(0, viewport - 7)}px`}>
@@ -124,6 +125,7 @@
 
 <style>
   .photo-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 12px; align-content: start; padding: 0 12px; }
+  .invalid { visibility: hidden; }
   .with-years { grid-template-columns: minmax(0, 1fr) max-content; }
   .with-years .grid { padding-right: 12px; border-right: 1px solid var(--border-default); }
   .year-scrubber { position: sticky; top: 7px; grid-column: 2; grid-row: 1; height: 0; z-index: 3; }

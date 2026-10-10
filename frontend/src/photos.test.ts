@@ -44,31 +44,60 @@ it.each([false, true])("bounds selected rejects scope while keeping Library avai
   photos.dispose();
 });
 
-it.each(["confirmed", "network", "server"])("invalidates the rejects listing after a %s move and failed refresh, then retries", async outcome => {
+it.each(["confirmed", "network", "server"])("recovers the loaded rejects range and surviving selection after a %s move and failed refresh", async outcome => {
+  let finish!: (response: Response) => void;
   const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
   if (outcome === "confirmed") fetcher.mockResolvedValueOnce(Response.json(preview));
   else if (outcome === "server") fetcher.mockResolvedValueOnce(Response.json({ detail: "Internal error", code: "internal" }, { status: 500 }));
   else fetcher.mockRejectedValueOnce(new TypeError("Reply lost"));
   fetcher.mockResolvedValueOnce(Response.json({ detail: "Refresh unavailable" }, { status: 503 }))
-    .mockResolvedValueOnce(response([photo(2)]));
+    .mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve))
+    .mockResolvedValueOnce(Response.json({ items: Array.from({ length: 250 }, (_, i) => photo(i + 2)), total: 749, next_cursor: "second" }))
+    .mockResolvedValueOnce(Response.json({ items: Array.from({ length: 250 }, (_, i) => photo(i + 252)), total: 749, next_cursor: "remaining" }));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
-  photos.items = [photo(1)]; photos.total = 1; photos.cursor = "old"; photos.started = true; photos.selectLoaded();
+  const original = Array.from({ length: 500 }, (_, i) => photo(i + 1));
+  photos.items = original; photos.total = 750; photos.cursor = "old"; photos.started = true; photos.scrollTop = 12_000;
+  photos.selection = { selectedIDs: new Set(["photo-1", "photo-2", "photo-300", "photo-999"]), anchorID: "photo-300" };
+  photos.trashTargets = [photo(999)];
   await photos.previewRejects();
-  const changed = vi.fn(() => expect(photos.items).toEqual([]));
-  expect(await photos.trashRejects(undefined, changed)).toBe(outcome === "confirmed");
+  const changed = vi.fn(() => { expect(photos.items).toHaveLength(500); expect(photos.listingInvalid).toBe(true); });
+  const restore = vi.fn(async () => expect(photos.scrollTop).toBe(12_000));
+  const preserve = vi.fn(() => restore);
+  expect(await photos.trashRejects(preserve, changed)).toBe(outcome === "confirmed");
   expect(changed).toHaveBeenCalledOnce();
-  expect(photos.items).toEqual([]);
-  expect(photos.total).toBe(0);
-  expect(photos.cursor).toBeUndefined();
-  expect(photos.selection.selectedIDs.size).toBe(0);
+  expect(photos.listingInvalid).toBe(true);
+  expect(photos.items).toEqual(original);
+  expect(photos.total).toBe(750);
+  expect(photos.cursor).toBe("old");
+  expect(photos.selection.selectedIDs.size).toBe(4);
   expect(photos.trashTargets).toEqual([]);
   expect(photos.error).toBe("Refresh unavailable");
   expect(photos.rejectsError).toBe(outcome === "confirmed" ? "" : "The move may have completed. Refresh Photos before trying again.");
-  await photos.retry();
+  await photos.loadMore(); await photos.previewRejects(); await photos.trashSelected(); await photos.setHidden("photo-2");
+  photos.select("photo-2", new MouseEvent("click"), ["photo-2"]); photos.check("photo-2", false, false, ["photo-2"]);
+  photos.selectLoaded(); photos.clearSelection();
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(photos.selection.selectedIDs.size).toBe(4);
+  expect(preserve).not.toHaveBeenCalled();
+  const interrupted = photos.retry(preserve);
+  photos.cancelPending();
+  finish(response([photo(999)]));
+  await interrupted;
+  expect(photos.listingInvalid).toBe(true);
+  expect(photos.items).toEqual(original);
+  await photos.resume(preserve);
   expect(photos.error).toBe("");
-  expect(photos.items).toEqual([photo(2)]);
+  expect(photos.listingInvalid).toBe(false);
+  expect(photos.items).toHaveLength(500);
+  expect(photos.items[0].asset_id).toBe("photo-2");
+  expect(photos.items.at(-1)?.asset_id).toBe("photo-501");
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-2", "photo-300"]);
+  expect(photos.selection.anchorID).toBe("photo-300");
+  expect(photos.cursor).toBe("remaining");
+  expect(photos.total).toBe(749);
+  expect(restore).toHaveBeenCalledOnce();
   photos.dispose();
 });
 
