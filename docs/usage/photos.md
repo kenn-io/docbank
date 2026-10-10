@@ -105,8 +105,7 @@ the whole edit. Grouping operations retain their existing audit restrictions.
 The daemon initializes each original file's decisions from the imported XMP
 sidecar linked to it. It reads
 rating, label, pick, rotation, caption, creator, and copyright, then records the
-sidecar node and content version in the receipt. XMP rating -1 means reject
-with rating 0. Unsupported custom color labels become empty; supported decisions
+sidecar node and content version in the receipt. XMP rating -1 confirms only the reject flag; rating stays unconfirmed. Unsupported custom color labels are omitted and stay unconfirmed; supported decisions
 and the original sidecar bytes are preserved. Competing sidecars are scanned in
 ascending node-ID order; the first successful initialization wins. Parsing
 verifies the complete blob and rejects malformed XML,
@@ -119,7 +118,7 @@ leave file and node revisions, modified time, and audit history unchanged.
 Replacement bytes can initialize a still-undecided photo. Cancellation, stale
 inputs, and blob or IO failures retry. Human edits and successful initialization
 advance the authored revision and protect those decisions from later packets.
-Present empty or whitespace-only caption, creator, and copyright properties confirm an empty value, overriding embedded credits during export. Absent properties stay unconfirmed. Meaningful text keeps its surrounding spaces and newlines. This slice doesn't import
+Present empty or whitespace-only caption, creator, and copyright properties store a confirmed empty value. Absent properties stay unconfirmed. Meaningful text keeps its surrounding spaces and newlines. This slice doesn't import
 `dc:subject` as tags or `tiff:Orientation` as authored rotation.
 
 Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. In Photos,

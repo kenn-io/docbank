@@ -27,12 +27,18 @@ func TestPhotoAuthoredAuditConfirmationBoundary(t *testing.T) {
 				after.Revision++
 			case "node":
 				e.Attachment.Identity.NodeID++
+				e.Attachment.Before.NodeID = e.Attachment.Identity.NodeID
+				e.Attachment.After.NodeID = e.Attachment.Identity.NodeID
+				before.NodeID = e.Attachment.Identity.NodeID
+				after.NodeID = e.Attachment.Identity.NodeID
 			case "missing":
 				e.Attachment.After = nil
 			}
 			err := validateAuditEvent(e, e.NodeID)
 			if bad == "" {
 				require.NoError(t, err)
+			} else if bad == "node" {
+				require.ErrorContains(t, err, "photo attachment belongs to another node")
 			} else {
 				require.Error(t, err)
 			}
