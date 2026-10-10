@@ -503,7 +503,8 @@ func finalizeSnapshotFacetValues(
 	return values, other
 }
 
-func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions, used *int64) ([]SnapshotFacet, error) {
+func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions) ([]SnapshotFacet, error) {
+	options.FacetTimeout = options.BuildTimeout
 	results := make(map[string]SnapshotFacet)
 	options.MaterializeFacet = func(ctx context.Context, dimension string) (SnapshotFacet, error) {
 		if facet, ok := results[dimension]; ok {
@@ -525,10 +526,7 @@ func materializePhotoFacets(ctx context.Context, q metadataQuerier, compiled Com
 		}
 		return results[dimension], nil
 	}
-	if used == nil {
-		used = new(int64)
-	}
-	return materializeSnapshotFacets(ctx, q, compiled, generation, coverage, dimensions, nil, options, used)
+	return materializeSnapshotFacets(ctx, q, compiled, generation, coverage, dimensions, nil, options, new(int64))
 }
 
 func materializeSharedPhotoFacets(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, dimensions []string, options snapshotMaterializeOptions) ([]SnapshotFacet, error) {

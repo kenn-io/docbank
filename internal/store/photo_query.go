@@ -165,7 +165,7 @@ func (s *Store) ListPhotoAssets(
 			page.Total = boundary.Total
 		}
 		if boundary == nil && len(dimensions) > 0 {
-			page.Facets, err = materializePhotoFacets(ctx, q, compiled, generation.ID, coverage, dimensions, defaultSnapshotMaterializeOptions(), nil)
+			page.Facets, err = materializePhotoFacets(ctx, q, compiled, generation.ID, coverage, dimensions, defaultSnapshotMaterializeOptions())
 			if err != nil {
 				return err
 			}

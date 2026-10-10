@@ -479,7 +479,25 @@ it("publishes and pages rows before optional counts, and isolates count retry, c
 });
 
 
-it.each(["member_budget_exceeded", "byte_budget_exceeded", "time_budget_exceeded"])("asks to narrow the query for %s counts", async reason => {
+it("retries timed-out counts without reloading tiles", async () => {
+  const facet = { dimension: "camera", available: true, total: 3, values: [], missing: 3, other: 0 };
+  const counts = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ facets: [{ dimension: "camera", available: false, reason: "time_budget_exceeded" }] })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ facets: [facet] })));
+  const rows = vi.fn(async () => response([photo(1)]));
+  vi.stubGlobal("fetch", (url: string, init: RequestInit) => JSON.parse(init.body as string).page_size === 1 ? counts() : rows());
+  const photos = new Photos("scope", vi.fn());
+  await photos.loadMore();
+  await vi.waitFor(() => expect(photos.facetsError).toBe("Some photo counts couldn't be loaded."));
+  expect(photos.facetsRetryable).toBe(true);
+  await photos.retryFacets();
+  expect(counts).toHaveBeenCalledTimes(2);
+  expect(rows).toHaveBeenCalledOnce();
+  expect(photos.facetsError).toBe("");
+  expect(photos.facets).toEqual([facet]);
+  photos.dispose();
+});
+
+it.each(["member_budget_exceeded", "byte_budget_exceeded"])("asks to narrow the query for %s counts", async reason => {
   stubPhotoFetch(async () => response([photo(1)]), [{ dimension: "camera", available: false, reason }]);
   const photos = new Photos("scope", vi.fn());
   await photos.loadMore();

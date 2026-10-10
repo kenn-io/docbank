@@ -263,7 +263,7 @@ export class Photos {
       this.needsFacets = false;
       const unavailable = this.facets.filter(facet => !facet.available);
       if (unavailable.length) {
-        this.facetsRetryable = unavailable.some(facet => facet.reason !== "member_budget_exceeded" && facet.reason !== "byte_budget_exceeded" && facet.reason !== "time_budget_exceeded");
+        this.facetsRetryable = unavailable.some(facet => facet.reason !== "member_budget_exceeded" && facet.reason !== "byte_budget_exceeded");
         this.facetsError = this.facetsRetryable ? "Some photo counts couldn't be loaded." : "Photo counts exceed the query's limits. Narrow your search or filters.";
       }
     } catch (cause) {

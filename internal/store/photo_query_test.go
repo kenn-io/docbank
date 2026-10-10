@@ -11,7 +11,33 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestPhotoFacetsUseBuildTimeout(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	browsePhotoNode(t, s, "camera.jpg", browseHash("facet-timeout"), "image/jpeg")
+	value := snapshotTestQuery(t, `{}`)
+	compiled := mustPhotoCompiled(t, s, value)
+	options := defaultSnapshotMaterializeOptions()
+	options.FacetTimeout = -time.Nanosecond
+	dimensions := []string{"camera", "lens", "year", "location", "set"}
+	facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options)
+	require.NoError(t, err)
+	for _, facet := range facets {
+		require.True(t, facet.Available)
+		require.Equal(t, int64(1), *facet.Total)
+	}
+	options.BuildTimeout = -time.Nanosecond
+	facets, err = materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options)
+	require.NoError(t, err)
+	require.Len(t, facets, len(dimensions))
+	for _, facet := range facets {
+		require.False(t, facet.Available)
+		require.Equal(t, "time_budget_exceeded", facet.Reason)
+	}
+}
 
 func browsePhotoNode(t *testing.T, s *Store, name, hash, mime string) Node {
 	t.Helper()
@@ -1142,7 +1168,7 @@ func TestPhotoFacetRawOperandsAndBudgets(t *testing.T) {
 	options = defaultSnapshotMaterializeOptions()
 	options.FacetMemberLimit = 3
 	for _, dimensions := range [][]string{{"camera"}, {"camera", "set"}, {"set", "camera"}, {"camera", "lens", "year", "location", "set"}} {
-		facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options, nil)
+		facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options)
 		require.NoError(t, err)
 		require.Len(t, facets, len(dimensions))
 		for i, facet := range facets {
@@ -1157,7 +1183,7 @@ func TestPhotoFacetRawOperandsAndBudgets(t *testing.T) {
 		}
 	}
 	options.FacetMemberLimit = 4
-	facets, err = materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, []string{"set"}, options, nil)
+	facets, err = materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, []string{"set"}, options)
 	require.NoError(t, err)
 	require.True(t, facets[0].Available)
 	require.Len(t, facets[0].Values, 2)

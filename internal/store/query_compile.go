@@ -530,7 +530,10 @@ func compileMediaFamilyPredicate(value string) compiledQueryFragment {
 
 func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) compiledQueryFragment {
 	name := compiledQueryFragment{
-		sql: `n.id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)`, args: []any{fts}, lexical: []lexicalOperand{{match: fts, content: includeContent}},
+		sql: `n.id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)`, args: []any{fts},
+	}
+	if c.photoDisplayMetadata {
+		name.lexical = []lexicalOperand{{match: fts, content: includeContent}}
 	}
 	if !includeContent {
 		return name

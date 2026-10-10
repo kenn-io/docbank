@@ -42,7 +42,7 @@ when several paired files match. Choose Capture date to
 return to date browsing. Relevance shows the best 250 matches and the full total. Refine the search or sort by capture date to see all matches. Equal-score ties use capture time descending, then asset ID.
 
 Camera, Lens, Year, Location, and Albums narrow the grid. Counts cover the
-whole matching library, including photos beyond the loaded page. Tiles appear before the separate count request finishes. Unavailable counts show their reason. Time, member, or byte limits require a narrower search or filters. Each facet
+whole matching library, including photos beyond the loaded page. Tiles appear before the separate count request finishes. Counts have a 30-second budget. Unavailable counts show their reason. Choose Retry counts after a timeout. Member or byte limits require a narrower search or filters. Each facet
 omits its own selected filter while retaining search and the other filters.
 Camera, lens, year, and location describe the selected display file; year
 uses its recorded local capture date. Text may match any live member of a
