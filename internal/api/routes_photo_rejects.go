@@ -22,7 +22,7 @@ func registerPhotoRejectRoutes(api huma.API, d Deps, g *gate) {
 	for _, confirm := range []bool{false, true} {
 		id, path, summary := "preflightPhotoRejects", "/api/v1/photos/rejects/preflight", "Preview rejected photos in the current scope"
 		if confirm {
-			id, path, summary = "movePhotoRejects", "/api/v1/photos/rejects/trash", "Move confirmed rejects to recoverable trash"
+			id, path, summary = "movePhotoRejects", "/api/v1/photos/rejects/trash", "Move confirmed rejects to trash and return the confirmed pre-move preview"
 		}
 		huma.Register(api, huma.Operation{OperationID: id, Method: http.MethodPost, Path: path, Summary: summary, MaxBodyBytes: query.MaxInputBytes + (64 << 10)}, func(ctx context.Context, in *struct{ Body PhotoRejectsRequest }) (*struct{ Body PhotoRejectsPreflight }, error) {
 			value, err := query.Parse(in.Body.Query)
@@ -35,7 +35,7 @@ func registerPhotoRejectRoutes(api huma.API, d Deps, g *gate) {
 				err = g.mutate(func() error {
 					var callErr error
 					result, callErr = d.Store.MovePhotoRejects(ctx, request, in.Body.Digest)
-					return FromStoreError(callErr)
+					return workspaceQueryError(callErr)
 				})
 			} else {
 				result, err = d.Store.PreflightPhotoRejects(ctx, request)

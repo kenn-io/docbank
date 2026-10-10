@@ -2,12 +2,12 @@ package daemonconn
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"net/http"
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
+	"go.kenn.io/docbank/internal/query"
 )
 
 func (c *Connection) PhotoRejects(ctx context.Context, request api.PhotoRejectsRequest, cookie string) (api.PhotoRejectsPreflight, error) {
@@ -41,8 +41,7 @@ func validatePhotoRejectsResponse(result *api.PhotoRejectsPreflight, digest stri
 	if result == nil {
 		return errors.New("missing rejects response")
 	}
-	decoded, err := hex.DecodeString(result.Digest)
-	if err != nil || len(decoded) != 32 || digest != "" && result.Digest != digest || result.Photos < 0 || result.Files < result.Photos || result.Files > 1000 || result.Unchanged < 0 || result.Photos+result.Unchanged > 1000 || result.CheckoutSkipped != 0 || len(result.Mixed) > result.Unchanged {
+	if !validSHA256Hex(result.Digest) || digest != "" && result.Digest != digest || result.Photos < 0 || result.Photos > 1000 || result.Files < result.Photos || result.Files > 1000 || result.Unchanged < 0 || len(result.Mixed) > result.Unchanged {
 		return errors.New("invalid rejects response")
 	}
 	for _, mixed := range result.Mixed {
@@ -50,7 +49,7 @@ func validatePhotoRejectsResponse(result *api.PhotoRejectsPreflight, digest stri
 			return errors.New("invalid mixed photo response")
 		}
 		for _, member := range mixed.Members {
-			if !validUUIDv4(member.FileID) || member.Flag != "" && member.Flag != "pick" && member.Flag != "reject" {
+			if !validUUIDv4(member.FileID) || !query.ValidPhotoFlag(member.Flag) {
 				return errors.New("invalid mixed flag response")
 			}
 		}

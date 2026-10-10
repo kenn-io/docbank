@@ -38,6 +38,17 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-photo-rejects-${theme}.png`), animations: "disabled" });
     }
+    await modal.getByRole("button", { name: "Keep in Docbank", exact: true }).click();
+    await page.getByRole("checkbox", { name: "Select photo Synthetic-photo-00001.jpg", exact: true }).check();
+    await page.getByRole("button", { name: "Move rejects", exact: true }).click();
+    await expect(modal.getByText("1 photo · 1 file including sidecars")).toBeVisible();
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
+      await page.screenshot({ path: path.join(output!, `web-photo-rejects-selected-${theme}.png`), animations: "disabled" });
+    }
+    await modal.getByRole("combobox", { name: "Rejects scope: Selected photos (1)", exact: true }).click();
+    await page.getByRole("option", { name: "Library", exact: true }).click();
+    await expect(modal.getByText("2 photos · 2 files including sidecars")).toBeVisible();
     await modal.getByRole("button", { name: "Move 2 to trash", exact: true }).click();
     await expect(modal).toHaveCount(0);
     await expect(page.locator("[data-asset]")).toHaveCount(9);
@@ -46,6 +57,17 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
     await expect(page.getByText("Synthetic-photo-00002.jpg", { exact: true })).toBeVisible();
     const trash = JSON.parse(await run("trash", "list", "--json")) as { items: { id: number }[] };
     for (const node of trash.items) await run("restore", String(node.id));
+    webURL.pathname = "/photos/hidden";
+    await page.goto(webURL.href);
+    await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
+    await page.getByRole("button", { name: "Set passcode", exact: true }).click();
+    await expect(page.getByText(/Locks in/)).toBeVisible();
+    await page.getByRole("button", { name: "Move rejects", exact: true }).click();
+    await expect(modal).toBeVisible();
+    await page.clock.install();
+    await page.clock.fastForward(301_000);
+    await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
+    await expect(modal).toHaveCount(0);
   } finally {
     if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {
       const url = new URL(await run("web", "--no-browser"));

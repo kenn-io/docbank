@@ -24,6 +24,8 @@ export class Photos {
   rejects = $state<PhotoRejectsPreflight>();
   rejectsLoading = $state(false);
   rejectsError = $state("");
+  rejectsSelected = $state(false);
+  private rejectsQuery?: SavedQueryV1Schema;
   hiding = $state(false);
   actionError = $state("");
   trashError = $state("");
@@ -130,13 +132,24 @@ export class Photos {
     return this.replace("refresh", preserve);
   }
 
-  async previewRejects() {
+  async previewRejects(selected = this.selection.selectedIDs.size > 0) {
     if (this.disposed || this.trashing || this.hiding || this.rejectsLoading) return;
     this.rejects = undefined;
     this.rejectsError = "";
+    this.rejectsSelected = selected;
+    this.rejectsQuery = structuredClone(photoQuery);
+    if (selected) {
+      const ids = [...this.selection.selectedIDs].sort();
+      if (!ids.length || ids.length > 64) {
+        this.rejectsError = "Select between 1 and 64 photos to preview selected rejects.";
+        return;
+      }
+      this.rejectsQuery.filters = { ...this.rejectsQuery.filters, asset_ids: ids };
+    }
     this.rejectsLoading = true;
     try {
-      const result = await preflightPhotoRejects({ query: photoQuery, hidden: this.hidden }, { session: this.session, signal: AbortSignal.timeout(60_000) });
+      const result = await preflightPhotoRejects({ query: this.rejectsQuery, hidden: this.hidden }, { session: this.session, signal: AbortSignal.timeout(60_000) });
+      if (this.rejectsScopeChanged()) throw new Error("Selection changed. Preview rejects again.");
       if (!this.disposed) this.rejects = result;
     } catch (cause) { this.rejectsFailure(cause); }
     finally { this.rejectsLoading = false; }
@@ -144,12 +157,17 @@ export class Photos {
 
   async trashRejects(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
     if (this.disposed || this.trashing || this.hiding || !this.rejects?.photos) return false;
+    if (this.rejectsScopeChanged()) {
+      this.rejects = undefined;
+      this.rejectsError = "Selection changed. Preview rejects again.";
+      return false;
+    }
     const digest = this.rejects.digest;
     this.cancelPending();
     this.trashing = true;
     this.rejectsError = "";
     try {
-      await movePhotoRejects({ query: photoQuery, hidden: this.hidden, digest }, { session: this.session, signal: AbortSignal.timeout(60_000) });
+      await movePhotoRejects({ query: this.rejectsQuery!, hidden: this.hidden, digest }, { session: this.session, signal: AbortSignal.timeout(60_000) });
       this.rejects = undefined;
       this.clearSelection();
       ontrashed?.();
@@ -168,6 +186,10 @@ export class Photos {
     if (this.disposed) return;
     this.rejectsError = cause instanceof Error ? cause.message : String(cause);
     if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
+  }
+
+  private rejectsScopeChanged() {
+    return this.rejectsSelected && JSON.stringify([...this.selection.selectedIDs].sort()) !== JSON.stringify(this.rejectsQuery?.filters?.asset_ids);
   }
 
   private async replace(mode: "refresh" | "expiry", preserve?: () => (() => Promise<void>) | undefined) {

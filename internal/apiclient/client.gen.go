@@ -9675,7 +9675,7 @@ func (c *Client) PreflightPhotoRejects(ctx context.Context, options *PreflightPh
 	return responseParser(ctx, resp)
 }
 
-// MovePhotoRejects Move confirmed rejects to recoverable trash
+// MovePhotoRejects Move confirmed rejects to trash and return the confirmed pre-move preview
 func (c *Client) MovePhotoRejects(ctx context.Context, options *MovePhotoRejectsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MovePhotoRejectsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

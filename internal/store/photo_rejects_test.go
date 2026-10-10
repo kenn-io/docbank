@@ -1,9 +1,11 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,6 +24,77 @@ func rejectOriginals(t *testing.T, s *Store, asset PhotoAsset) {
 	require.NoError(t, err)
 }
 
+func TestPhotoRejectsPreviewDuringWrite(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := authoredPair(t, s)
+	_, err := s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
+	require.NoError(t, err)
+	tx, err := s.writeDB.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, tx.Rollback()) }()
+	_, err = tx.Exec(`UPDATE nodes SET revision=revision+1 WHERE id=?`, asset.Files[0].NodeID)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	value, err := query.Parse([]byte(`{}`))
+	require.NoError(t, err)
+	preview, err := s.PreflightPhotoRejects(ctx, PhotoRejectsRequest{Query: value})
+	require.NoError(t, err)
+	assert.Equal(t, 1, preview.Unchanged)
+	assert.Empty(t, preview.Mixed)
+}
+
+func TestPhotoRejectsRetainedCompanions(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	var targets []PhotoAuthoredTarget
+	for i := 0; i < 334; i++ {
+		dir, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("group-%03d", i))
+		require.NoError(t, err)
+		raw, err := s.CreateFile(t.Context(), dir.ID, "capture.raw", fakeHash("a1"), 1, "application/octet-stream")
+		require.NoError(t, err)
+		jpg, err := s.CreateFile(t.Context(), dir.ID, "capture.jpg", fakeHash("a1"), 1, "image/jpeg")
+		require.NoError(t, err)
+		owned, err := s.PhotoAssetForNode(t.Context(), jpg.ID)
+		require.NoError(t, err)
+		_, err = s.DetachPhotoFile(t.Context(), owned.ID, owned.Revision, owned.Files[0].ID, PhotoDetachOptions{})
+		require.NoError(t, err)
+		asset, err := s.CreatePhotoAsset(t.Context(), raw.ID, PhotoRoleRAW, PhotoKindPhoto)
+		require.NoError(t, err)
+		asset, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, jpg.ID, PhotoRoleImage, nil)
+		require.NoError(t, err)
+		xmp, err := s.CreateFile(t.Context(), dir.ID, "capture.xmp", fakeHash("a1"), 1, "application/rdf+xml")
+		require.NoError(t, err)
+		member := fileByRole(asset.Files, PhotoRoleRAW)
+		asset, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, xmp.ID, PhotoRoleSidecar, &member.ID)
+		require.NoError(t, err)
+		if i == 0 {
+			rejectOriginals(t, s, asset)
+		} else {
+			for _, file := range asset.Files {
+				if file.Role != PhotoRoleSidecar {
+					targets = append(targets, PhotoAuthoredTarget{FileID: file.ID, Revision: file.Revision, Patch: PhotoAuthoredPatch{Flag: new("reject")}})
+				}
+			}
+		}
+	}
+	value, err := query.Parse([]byte(`{}`))
+	require.NoError(t, err)
+	preview, err := s.PreflightPhotoRejects(t.Context(), PhotoRejectsRequest{Query: value})
+	require.NoError(t, err)
+	assert.Equal(t, 1, preview.Photos)
+	assert.Equal(t, 3, preview.Files)
+	assert.Equal(t, 333, preview.Unchanged)
+	_, err = s.EditPhotoAuthored(t.Context(), targets)
+	require.NoError(t, err)
+	_, err = s.MovePhotoRejects(t.Context(), PhotoRejectsRequest{Query: value}, preview.Digest)
+	require.ErrorIs(t, err, ErrInvalidPhotoQuery)
+	roots, err := s.TrashedRoots(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, roots)
+}
+
 func TestPhotoRejectsAtomicTrashAndRestore(t *testing.T) {
 	t.Parallel()
 	for _, audited := range []bool{false, true} {
@@ -37,7 +110,6 @@ func TestPhotoRejectsAtomicTrashAndRestore(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, 1, preview.Photos)
 			assert.Equal(t, 3, preview.Files)
-			assert.Zero(t, preview.CheckoutSkipped)
 			assert.Empty(t, preview.Mixed)
 			_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
 			require.NoError(t, err)
@@ -110,23 +182,22 @@ func TestPhotoRejectsBeyondPageAndOverflow(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	var targets []PhotoAuthoredTarget
-	for i := 0; i < MaxDocumentCatalogPageSize+1; i++ {
+	for i := 0; i < maxBatchTagTargets+2; i++ {
 		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("photo-%04d.jpg", i), fakeHash("a1"), 1, "image/jpeg")
 		require.NoError(t, err)
 		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 		require.NoError(t, err)
 		targets = append(targets, PhotoAuthoredTarget{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Flag: new("reject")}})
 	}
-	_, err := s.EditPhotoAuthored(t.Context(), targets)
+	_, err := s.EditPhotoAuthored(t.Context(), targets[:1])
 	require.NoError(t, err)
 	request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
 	preview, err := s.PreflightPhotoRejects(t.Context(), request)
 	require.NoError(t, err)
-	assert.Equal(t, MaxDocumentCatalogPageSize+1, preview.Photos)
-	for i := len(targets); i <= maxBatchTagTargets; i++ {
-		_, err = s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("overflow-%d.jpg", i), fakeHash("a1"), 1, "image/jpeg")
-		require.NoError(t, err)
-	}
+	assert.Equal(t, 1, preview.Photos)
+	assert.Equal(t, 1001, preview.Unchanged)
+	_, err = s.EditPhotoAuthored(t.Context(), targets[1:1001])
+	require.NoError(t, err)
 	_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
 	require.ErrorIs(t, err, ErrInvalidPhotoQuery)
 	roots, err := s.TrashedRoots(t.Context())

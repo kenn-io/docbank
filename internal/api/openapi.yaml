@@ -12006,9 +12006,6 @@ components:
           format: uri
           readOnly: true
           type: string
-        checkout_skipped:
-          format: int64
-          type: integer
         digest:
           type: string
         files:
@@ -12029,7 +12026,6 @@ components:
         - photos
         - files
         - unchanged
-        - checkout_skipped
         - mixed
       type: object
       x-go-type: store.PhotoRejectsPreflight
@@ -23764,7 +23760,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
           description: Error
-      summary: Move confirmed rejects to recoverable trash
+      summary: Move confirmed rejects to trash and return the confirmed pre-move preview
   /api/v1/photos/settings:
     get:
       operationId: getPhotoSettings

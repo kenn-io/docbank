@@ -20,23 +20,7 @@ func init() {
 		if err != nil {
 			return err
 		}
-		var cookie string
-		if hidden {
-			passcode, err := readPhotoPasscode(cmd, bufio.NewReaderSize(cmd.InOrStdin(), 2048), "Passcode")
-			if err != nil {
-				return err
-			}
-			_, cookie, err = c.PhotoHidden(cmd.Context(), "unlock", passcode, "")
-			if err != nil {
-				return err
-			}
-		}
-		request := api.PhotoRejectsRequest{Query: api.QueryPayload(raw), Hidden: hidden, Digest: digest, Coverage: api.WorkspaceQueryCoverage{Configuration: coverage, ProfileFingerprint: profile}}
-		result, err := c.PhotoRejects(cmd.Context(), request, cookie)
-		if err != nil {
-			return err
-		}
-		return writeCLIJSON(cmd.OutOrStdout(), result)
+		return runPhotoRejects(cmd, c, api.PhotoRejectsRequest{Query: api.QueryPayload(raw), Hidden: hidden, Digest: digest, Coverage: api.WorkspaceQueryCoverage{Configuration: coverage, ProfileFingerprint: profile}})
 	}}
 	command.Flags().StringVar(&raw, "query", "{}", "QueryV1 JSON selecting the scope")
 	command.Flags().StringVar(&digest, "confirm", "", "preflight digest authorizing the move")
@@ -44,4 +28,23 @@ func init() {
 	command.Flags().StringVar(&coverage, "coverage", "", "coverage configuration")
 	command.Flags().StringVar(&profile, "profile-fingerprint", "", "configured coverage profile fingerprint")
 	photosCmd.AddCommand(command)
+}
+
+func runPhotoRejects(cmd *cobra.Command, c *daemonconn.Connection, request api.PhotoRejectsRequest) error {
+	var cookie string
+	if request.Hidden {
+		passcode, err := readPhotoPasscode(cmd, bufio.NewReaderSize(cmd.InOrStdin(), 2048), "Passcode")
+		if err != nil {
+			return err
+		}
+		_, cookie, err = c.PhotoHidden(cmd.Context(), "unlock", passcode, "")
+		if err != nil {
+			return err
+		}
+	}
+	result, err := c.PhotoRejects(cmd.Context(), request, cookie)
+	if err != nil {
+		return err
+	}
+	return writeCLIJSON(cmd.OutOrStdout(), result)
 }

@@ -5115,7 +5115,6 @@ export interface PhotoRejectMixed {
 export interface PhotoRejectsPreflight {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
-  checkout_skipped: number;
   digest: string;
   files: number;
   mixed: PhotoRejectMixed[];
@@ -15138,7 +15137,7 @@ export const getMovePhotoRejectsUrl = () => {
 }
 
 /**
- * @summary Move confirmed rejects to recoverable trash
+ * @summary Move confirmed rejects to trash and return the confirmed pre-move preview
  */
 export const movePhotoRejects = async (photoRejectsRequest: NonReadonly<PhotoRejectsRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoRejectsPreflight> => {
 

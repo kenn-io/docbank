@@ -38,4 +38,11 @@ func TestPhotoRejectRoutes(t *testing.T) {
 	request.Query = api.QueryPayload(`{"v":2}`)
 	response, _ = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/preflight", nil, request)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode)
+	for _, invalid := range []api.PhotoRejectsRequest{
+		{Query: api.QueryPayload(`{}`), Digest: "fake", Coverage: api.WorkspaceQueryCoverage{Configuration: "bad"}},
+		{Query: api.QueryPayload(`{"syntax":"advanced","text":"camera:("}`), Digest: "fake"},
+	} {
+		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, invalid)
+		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	}
 }
