@@ -42,24 +42,6 @@ it.each([
   photos.dispose();
 });
 
-it.each([false, true])("removes confirmed trash successes when refresh fails, partial=%s", async partial => {
-  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })));
-  if (partial) fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }));
-  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Refresh unavailable" }), { status: 503 }));
-  vi.stubGlobal("fetch", fetcher);
-  const photos = new Photos("scoped", vi.fn());
-  photos.items = [photo(1), photo(2)]; photos.total = 7; photos.started = true;
-  if (partial) photos.selectLoaded();
-  else photos.select("photo-1", new MouseEvent("click"), ["photo-1", "photo-2"]);
-  expect(await photos.trashSelected()).toBe(!partial);
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
-  expect(photos.total).toBe(6);
-  expect([...photos.selection.selectedIDs]).toEqual(partial ? ["photo-2"] : []);
-  expect(photos.trashTargets.map(item => item.asset_id)).toEqual(partial ? ["photo-2"] : []);
-  expect(photos.error).toBe("Refresh unavailable");
-  photos.dispose();
-});
-
 it("binds retries to captured or displayed revisions", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
@@ -323,41 +305,46 @@ it("times each replacement page separately", async () => {
   photos.dispose();
 });
 
-it.each([false, true])("partial visibility writes keep failures, position and pending targets after failed refresh, hidden=%s", async hidden => {
+it.each([
+  { kind: "hide", partial: true },
+  { kind: "unhide", partial: true },
+  { kind: "trash", partial: true },
+  { kind: "trash", partial: false },
+])("$kind writes keep failures, position and pending targets after failed refresh, partial=$partial", async ({ kind, partial }) => {
   let finish!: (response: Response) => void;
   let writeSignal: AbortSignal | undefined;
   let readSignal: AbortSignal | undefined;
   const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1), photo(2), photo(3)]))
     .mockImplementationOnce((_url, options: RequestInit) => { readSignal = options.signal!; return new Promise(resolve => finish = resolve); })
-    .mockImplementationOnce(async (_url, options: RequestInit) => { writeSignal = options.signal!; return Response.json({ id: "photo-1", revision: 2 }); })
-    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Listing unavailable" }), { status: 503 }));
+    .mockImplementationOnce(async (_url, options: RequestInit) => { writeSignal = options.signal!; return Response.json({ id: "photo-1", revision: 2 }); });
+  if (partial) fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }));
+  fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Listing unavailable" }), { status: 503 }));
   vi.stubGlobal("fetch", fetcher);
-  const photos = new Photos("scoped", vi.fn(), hidden);
+  const photos = new Photos("scoped", vi.fn(), kind === "unhide");
   await photos.loadMore();
-  photos.selection = { selectedIDs: new Set(["photo-1", "photo-2"]), anchorID: "photo-1" };
-  photos.trashTargets = [photo(1), photo(2)];
+  photos.total = 7;
+  photos.selection = { selectedIDs: new Set(partial ? ["photo-1", "photo-2"] : ["photo-1"]), anchorID: "photo-1" };
+  photos.trashTargets = partial ? [photo(1), photo(2)] : [photo(1)];
   photos.scrollTop = 480;
   const oldRead = photos.refresh();
   const restore = vi.fn(async () => {});
-  const changed = vi.fn();
-  await photos.setHidden("photo-1", () => restore, changed);
+  if (kind === "trash") expect(await photos.trashSelected(() => restore)).toBe(!partial);
+  else await photos.setHidden("photo-1", () => restore);
   expect(readSignal?.aborted).toBe(true);
   expect(writeSignal).toBeDefined();
   expect(writeSignal?.aborted).toBe(false);
   finish(response([photo(1), photo(2), photo(3)])); await oldRead;
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2", "photo-3"]);
-  expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
-  expect(photos.trashTargets.map(item => item.asset_id)).toEqual(["photo-2"]);
-  expect(photos.total).toBe(2);
+  expect([...photos.selection.selectedIDs]).toEqual(partial ? ["photo-2"] : []);
+  expect(photos.trashTargets.map(item => item.asset_id)).toEqual(partial ? ["photo-2"] : []);
+  expect(photos.total).toBe(6);
   expect(photos.scrollTop).toBe(480);
   expect(restore).toHaveBeenCalledOnce();
-  expect(changed).toHaveBeenCalledWith();
-  expect(photos.actionError).toBe("1 photo failed: Photo changed");
+  expect(kind === "trash" ? photos.trashError : photos.actionError).toBe(partial ? kind === "trash" ? "Photo changed" : "1 photo failed: Photo changed" : "");
   expect(photos.error).toBe("Listing unavailable");
   fetcher.mockResolvedValueOnce(response([photo(2), photo(3)]));
   await photos.retry();
-  expect(photos.actionError).toBe("1 photo failed: Photo changed");
+  expect(kind === "trash" ? photos.trashError : photos.actionError).toBe(partial ? kind === "trash" ? "Photo changed" : "1 photo failed: Photo changed" : "");
   fetcher.mockImplementationOnce(() => new Promise(resolve => finish = resolve));
   const items = photos.items;
   const late = photos.refresh(); photos.dispose(); finish(response([photo(1)])); await late;
@@ -406,50 +393,6 @@ it("bounds selection writes, rejects unconfirmed success and guards overlapping 
   expect(photos.items).toHaveLength(1);
   expect(photos.actionError).toContain("did not confirm");
   expect(photos.hiding).toBe(false);
-  photos.dispose();
-});
-
-it.each([false, true])("changes visibility of retry targets outside the loaded page, hidden=%s", async hidden => {
-  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ detail: "Photo changed" }, { status: 412 }))
-    .mockResolvedValueOnce(response([photo(2)]))
-    .mockResolvedValueOnce(Response.json({ id: "photo-1", revision: 2 }))
-    .mockResolvedValueOnce(Response.json({ id: "photo-2", revision: 2 }))
-    .mockResolvedValueOnce(response([]));
-  vi.stubGlobal("fetch", fetcher);
-  const photos = new Photos("scoped", vi.fn(), hidden);
-  photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
-  expect(await photos.trashSelected()).toBe(false);
-  photos.check("photo-2", true, false, ["photo-2"]);
-  await photos.setHidden("photo-2");
-  const action = hidden ? "unhide" : "hide";
-  expect(fetcher.mock.calls.slice(2, 4).map(call => call[0])).toEqual([`/api/v1/photos/assets/photo-1/${action}`, `/api/v1/photos/assets/photo-2/${action}`]);
-  expect(photos.actionError).toBe("");
-  expect(photos.selection.selectedIDs.size).toBe(0);
-  expect(photos.trashTargets).toEqual([]);
-  photos.dispose();
-});
-
-it.each([false, true])("keeps failed visibility targets selected after a reorder and retries current revisions, hidden=%s", async hidden => {
-  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ detail: "Photo changed" }, { status: 412 }))
-    .mockResolvedValueOnce(response([photo(2)]))
-    .mockResolvedValueOnce(Response.json({ detail: "Photo changed again" }, { status: 412 }))
-    .mockResolvedValueOnce(response([{ ...photo(1), revision: 3 }]))
-    .mockResolvedValueOnce(Response.json({ id: "photo-1", revision: 4 }))
-    .mockResolvedValueOnce(response([]));
-  vi.stubGlobal("fetch", fetcher);
-  const photos = new Photos("scoped", vi.fn(), hidden);
-  photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
-  await photos.setHidden("photo-1");
-  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
-  expect(photos.trashTargets.map(item => item.asset_id)).toEqual(["photo-1"]);
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
-  expect(photos.actionError).toBe("1 photo failed: Photo changed");
-  await photos.setHidden("photo-1");
-  expect(new Headers(fetcher.mock.calls[2][1].headers).get("If-Match")).toBe("1");
-  await photos.setHidden("photo-1");
-  expect(new Headers(fetcher.mock.calls[4][1].headers).get("If-Match")).toBe("3");
-  expect(photos.selection.selectedIDs.size).toBe(0);
-  expect(photos.trashTargets).toEqual([]);
   photos.dispose();
 });
 

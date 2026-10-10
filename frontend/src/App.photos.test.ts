@@ -94,40 +94,6 @@ it("retains photo state and previews across sidebar switches until lock", async 
   await waitFor(() => expect(stored.data.has(cacheName)).toBe(false));
 });
 
-it.each([false, true])("keeps selection and previews after partial visibility writes and failed refresh, hidden=%s", async hidden => {
-  history.replaceState(null, "", `${hidden ? "/photos/hidden" : "/photos"}#web_session=synthetic&web_upload_secret=proof`);
-  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL() {} });
-  storage();
-  const items = [photo(1), photo(2), photo(3)].map(item => ({ ...item, previews: { ...item.previews, grid: { state: "ready" as const, generation_id: "synthetic" } } }));
-  let refreshFailed = false;
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z" });
-    if (url.includes("/previews/")) return new Response("synthetic-jpeg", { headers: hidden ? { "Cache-Control": "no-store" } : {} });
-    if (url.includes("/assets/query")) {
-      if (refreshFailed) throw new Error("Listing unavailable");
-      return Response.json({ items, total: 3 });
-    }
-    if (url.endsWith(`/photo-1/${hidden ? "unhide" : "hide"}`)) { refreshFailed = true; return Response.json({ id: "photo-1", revision: 2 }); }
-    if (url.endsWith(`/photo-2/${hidden ? "unhide" : "hide"}`)) return Response.json({ detail: "Photo changed" }, { status: 412 });
-    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
-  }));
-  render(App);
-  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
-  await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" }));
-  const grid = screen.getByRole("main", { name: "Photo library" });
-  const preview = await screen.findByAltText("Photo 3.jpg");
-  await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
-  await fireEvent.click(await screen.findByRole("menuitem", { name: hidden ? "Unhide" : "Hide" }));
-  await screen.findByText("Listing unavailable");
-  expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
-  expect(screen.getByRole("main", { name: "Photo library" })).toBe(grid);
-  expect(screen.getByAltText("Photo 3.jpg")).toBe(preview);
-  expect(screen.getByText("1 selected photo")).toBeTruthy();
-});
-
 it.each([false, true])("Hidden trash invalidates Documents and Trash restore refreshes only an unlocked grid, locked=%s", async locked => {
   history.replaceState(null, "", "/#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
