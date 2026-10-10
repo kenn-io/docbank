@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"io"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,14 +16,28 @@ import (
 )
 
 func TestHumanAuditHistoryShowsPhotoDecisions(t *testing.T) {
-	const fileID = "33333333-3333-4333-8333-333333333333"
-	before := store.PhotoAuthoredSnapshot{FileID: fileID, NodeID: 42, Revision: 1}
-	after := before
-	after.Revision = 2
-	after.Values = store.PhotoAuthored{Rating: 5, Flag: "pick", Label: "red", Caption: "River\n\x1b[31m", Creator: "Example photographer", Copyright: "Example rights", Rotation: 90}
-	events := []api.AuditEvent{{NodeID: 42, Kind: "photo_authored", Attachment: &api.AuditAttachmentChange{
-		Kind: "photo_authored", Identity: api.AuditAttachmentIdentity{FileID: fileID, NodeID: 42},
-		Before: &api.AuditAttachmentState{Photo: &before}, After: &api.AuditAttachmentState{Photo: &after},
+	s, err := store.Open(filepath.Join(t.TempDir(), "vault.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	node, err := s.CreateFile(t.Context(), s.RootID(), "photo.jpg", strings.Repeat("a", 64), 4, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	fileID := asset.Files[0].ID
+	plan, err := s.PreviewInitialAudit(t.Context(), s.RootID(), "cli", nil)
+	require.NoError(t, err)
+	_, err = s.EnableInitialAudit(t.Context(), plan)
+	require.NoError(t, err)
+	_, err = s.EditPhotoAuthored(t.Context(), []store.PhotoAuthoredTarget{{FileID: fileID, Revision: 1, Patch: store.PhotoAuthoredPatch{Rating: new(5), Flag: new("pick"), Label: new("red"), Caption: new("River\n\x1b[31m"), Creator: new("Example photographer"), Copyright: new("Example rights"), Rotation: new(90)}}})
+	require.NoError(t, err)
+	page, err := s.AuditHistory(t.Context(), node.ID, 10, "")
+	require.NoError(t, err)
+	change := page.Items[0].Attachment
+	require.NotNil(t, change)
+	require.Equal(t, node.ID, change.Identity.NodeID)
+	events := []api.AuditEvent{{NodeID: node.ID, Kind: "photo_authored", Attachment: &api.AuditAttachmentChange{
+		Kind: change.Kind, Identity: api.AuditAttachmentIdentity{FileID: change.Identity.FileID, NodeID: change.Identity.NodeID},
+		Before: &api.AuditAttachmentState{Photo: change.Before.Photo}, After: &api.AuditAttachmentState{Photo: change.After.Photo},
 	}}}
 	for _, scope := range []bool{false, true} {
 		t.Run(strconv.FormatBool(scope), func(t *testing.T) {
@@ -29,9 +45,9 @@ func TestHumanAuditHistoryShowsPhotoDecisions(t *testing.T) {
 			if scope {
 				require.NoError(t, writeAuditScopeHistory(&output, api.AuditScopeEventPage{Items: events, Total: 1}))
 			} else {
-				require.NoError(t, writeAuditHistory(&output, api.AuditEventPage{Node: api.Node{ID: 42}, Items: events, Total: 1}))
+				require.NoError(t, writeAuditHistory(&output, api.AuditEventPage{Node: api.Node{ID: node.ID}, Items: events, Total: 1}))
 			}
-			for _, want := range []string{fileID, "id:42", "revision 1", "revision 2", "rating 0", "rating 5", `flag "pick"`, `label "red"`, `caption "River\n\x1b[31m"`, `creator "Example photographer"`, `copyright "Example rights"`, "rotation 90"} {
+			for _, want := range []string{fileID, "on id:" + strconv.FormatInt(node.ID, 10), "revision 1", "revision 2", "rating 0", "rating 5", `flag "pick"`, `label "red"`, `caption "River\n\x1b[31m"`, `creator "Example photographer"`, `copyright "Example rights"`, "rotation 90"} {
 				assert.Contains(t, output.String(), want)
 			}
 			assert.NotContains(t, output.String(), "\x1b")
@@ -129,7 +145,7 @@ func TestAuditRetentionDisclosureNamesEveryMetadataClass(t *testing.T) {
 	require.NoError(t, writeAuditPreview(&output, api.AuditEnrollmentPreview{}))
 	help := auditEnableCmd.Flags().Lookup("acknowledge-permanent-retention").Usage
 	for _, text := range []string{output.String(), help} {
-		for _, class := range []string{"names", "topology", "tags", "assignments", "ingests", "provenance"} {
+		for _, class := range []string{"names", "topology", "tags", "assignments", "ingests", "provenance", "photo decisions", "captions", "creators", "copyrights"} {
 			assert.Contains(t, text, class)
 		}
 	}

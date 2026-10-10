@@ -32,10 +32,11 @@ func (c queryCompiler) compilePhotoVersionPredicate(predicate func(alias string)
 func (c queryCompiler) compilePhotoDecisionPredicate(predicate string, args ...any) compiledQueryFragment {
 	if c.photoDisplayMetadata {
 		return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member
- JOIN photo_files pf ON pf.asset_id=member.asset_id
- WHERE member.node_id=n.id AND pf.role<>'sidecar' AND ` + predicate + `)`, args: args}
+ JOIN photo_assets asset ON asset.asset_id=member.asset_id
+ JOIN photo_files pf ON pf.file_id=asset.display_file_id
+ WHERE member.node_id=n.id AND ` + predicate + `)`, args: args}
 	}
-	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files pf WHERE pf.node_id=n.id AND pf.asset_id IS NOT NULL AND pf.role<>'sidecar' AND ` + predicate + `)`, args: args}
+	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files pf WHERE pf.node_id=n.id AND pf.role<>'sidecar' AND ` + predicate + `)`, args: args}
 }
 
 func isPhotoScalarField(field string) bool {
