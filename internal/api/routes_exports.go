@@ -14,6 +14,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -133,6 +134,9 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 			return err
 		})
 		if err != nil {
+			if _, ok := errors.AsType[*query.ExpressionError](err); ok {
+				return nil, workspaceQueryError(err)
+			}
 			return nil, exportProblem(err)
 		}
 		return &sourceOutput{Body: source}, nil

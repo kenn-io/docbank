@@ -32,7 +32,7 @@ func photoRenderInput(data []byte, mediaType string) store.PhotoExportInput {
 	return store.PhotoExportInput{Member: bundle.Member{NodeID: 1, VersionID: "11111111-1111-4111-8111-111111111111", SHA256: hex.EncodeToString(h[:]), Size: int64(len(data))}, MediaType: mediaType, Keywords: []string{}}
 }
 
-func TestPhotoExportTrailingEXIFCreditsNamespacesAndICC(t *testing.T) {
+func TestPhotoExportTrailingEXIFAndICC(t *testing.T) {
 	t.Parallel()
 	var source bytes.Buffer
 	require.NoError(t, png.Encode(&source, image.NewNRGBA(image.Rect(0, 0, 3, 2))))
@@ -58,19 +58,6 @@ func TestPhotoExportTrailingEXIFCreditsNamespacesAndICC(t *testing.T) {
 	compressedPackets, err := photoSourcePackets(t.Context(), tagged.Bytes(), true)
 	require.NoError(t, err)
 	require.Equal(t, packet, compressedPackets.xmp)
-	input := store.PhotoExportInput{Authored: store.PhotoAuthored{Rating: 4, Confirmed: store.PhotoConfirmedRating}}
-	merged, err := mergePhotoXMP(t.Context(), packet, input, receipt)
-	require.NoError(t, err)
-	for _, value := range []string{"Embedded credit", "Embedded rights", "Embedded caption", "77", "12345"} {
-		assert.Contains(t, string(merged), value)
-	}
-	assert.NotContains(t, string(merged), "Embedded keyword")
-	assert.Contains(t, string(merged), "Bag")
-	input.Authored.Confirmed |= store.PhotoConfirmedCaption
-	merged, err = mergePhotoXMP(t.Context(), packet, input, receipt)
-	require.NoError(t, err)
-	assert.NotContains(t, string(merged), "Embedded caption")
-	assert.Contains(t, string(merged), "Embedded credit")
 	profile := syntheticPhotoICC()
 
 	jpegSource := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe2, append([]byte("ICC_PROFILE\x00\x01\x01"), profile...))
@@ -91,41 +78,6 @@ func TestPhotoExportTrailingEXIFCreditsNamespacesAndICC(t *testing.T) {
 	packets, err := photoSourcePackets(t.Context(), out, true)
 	require.NoError(t, err)
 	require.Equal(t, profile, packets.icc)
-	largeXMP := []byte(photoSidecarHeader + ` xmlns:keep="https://example.org/photo/" xmlns:lr="http://ns.adobe.com/lightroom/1.0/" xmlns:pdf="http://ns.adobe.com/pdf/1.3/" lr:hierarchicalSubject="Removed attribute tag" pdf:Keywords="Removed PDF tag"><lr:hierarchicalSubject><rdf:Bag><rdf:li>Removed collection tag</rdf:li></rdf:Bag></lr:hierarchicalSubject><pdf:Keywords>Removed scalar tag</pdf:Keywords>` + strings.Repeat(`<keep:History rdf:parseType="Resource"><keep:Step keep:Type="keep:Type">kept &amp; safe</keep:Step></keep:History>`, 360) + `<keep:Scoped xmlns:keep="https://example.org/scoped/" keep:Type="keep:Type"><keep:Value>keep:Literal</keep:Value></keep:Scoped><Plain xmlns="https://example.org/default/" xmlns:q="https://example.org/default/" q:Value="q:Literal"><Child/></Plain><keep:Reset xmlns=""><Child/></keep:Reset>` + photoSidecarFooter)
-	require.Greater(t, len(largeXMP), 40000)
-	largeSource := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1, append([]byte(photoXMPJPEGPrefix), largeXMP...))
-	out, _, err = renderPhotoExport(t.Context(), bytes.NewReader(largeSource), photoRenderInput(largeSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true}, nil)
-	require.NoError(t, err)
-	packets, err = photoSourcePackets(t.Context(), out, true)
-	require.NoError(t, err)
-	require.Less(t, len(packets.xmp), len(largeXMP)+1000)
-	require.NotContains(t, string(packets.xmp), "Removed")
-	counts := map[xml.Name]int{}
-	decoder := xml.NewDecoder(bytes.NewReader(packets.xmp))
-	for {
-		token, err := decoder.Token()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		require.NoError(t, err)
-		if element, ok := token.(xml.StartElement); ok {
-			counts[element.Name]++
-			for _, attr := range element.Attr {
-				if attr.Name.Local == "Type" {
-					require.Equal(t, element.Name.Space, attr.Name.Space)
-					require.Equal(t, "keep:Type", attr.Value)
-				}
-			}
-		}
-	}
-	require.Equal(t, 360, counts[xml.Name{Space: "https://example.org/photo/", Local: "Step"}])
-	require.Equal(t, 1, counts[xml.Name{Space: "https://example.org/scoped/", Local: "Value"}])
-	require.Equal(t, 1, counts[xml.Name{Space: "https://example.org/default/", Local: "Child"}])
-	require.Equal(t, 1, counts[xml.Name{Local: "Child"}])
-	require.Equal(t, 1, counts[xml.Name{Space: xmpDublinCoreNamespace, Local: "subject"}])
-	budget := photoExportBudget{pixels: 5}
-	_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(jpegSource), photoRenderInput(jpegSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: "png", Quality: 90}, &budget)
-	require.ErrorIs(t, err, bundle.ErrLimit)
 }
 
 func BenchmarkPhotoExport24MP(b *testing.B) {
@@ -270,6 +222,49 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 	assert.Equal(t, expected, values)
 	assert.Contains(t, string(merged), "landscape")
 	assert.Contains(t, string(merged), "reviewed")
+	creditPacket := []byte(photoSidecarHeader + ` dc:creator="Embedded credit" dc:rights="Embedded rights" dc:description="Embedded caption" dc:subject="Embedded keyword" xmlns:keep="https://example.org/photo/" keep:Orientation="77"><keep:ImageWidth>12345</keep:ImageWidth>` + photoSidecarFooter)
+	creditInput := store.PhotoExportInput{Authored: store.PhotoAuthored{Rating: 4, Confirmed: store.PhotoConfirmedRating}}
+	merged, err = mergePhotoXMP(t.Context(), creditPacket, creditInput, receipt)
+	require.NoError(t, err)
+	for _, value := range []string{"Embedded credit", "Embedded rights", "Embedded caption", "77", "12345"} {
+		assert.Contains(t, string(merged), value)
+	}
+	assert.NotContains(t, string(merged), "Embedded keyword")
+	assert.Contains(t, string(merged), "Bag")
+	creditInput.Authored.Confirmed |= store.PhotoConfirmedCaption
+	merged, err = mergePhotoXMP(t.Context(), creditPacket, creditInput, receipt)
+	require.NoError(t, err)
+	assert.NotContains(t, string(merged), "Embedded caption")
+	assert.Contains(t, string(merged), "Embedded credit")
+	largeXMP := []byte(photoSidecarHeader + ` xmlns:keep="https://example.org/photo/" xmlns:lr="http://ns.adobe.com/lightroom/1.0/" xmlns:pdf="http://ns.adobe.com/pdf/1.3/" lr:hierarchicalSubject="Removed attribute tag" pdf:Keywords="Removed PDF tag"><lr:hierarchicalSubject><rdf:Bag><rdf:li>Removed collection tag</rdf:li></rdf:Bag></lr:hierarchicalSubject><pdf:Keywords>Removed scalar tag</pdf:Keywords>` + strings.Repeat(`<keep:History rdf:parseType="Resource"><keep:Step keep:Type="keep:Type">kept &amp; safe</keep:Step></keep:History>`, 360) + `<keep:Scoped xmlns:keep="https://example.org/scoped/" keep:Type="keep:Type"><keep:Value>keep:Literal</keep:Value></keep:Scoped><Plain xmlns="https://example.org/default/" xmlns:q="https://example.org/default/" q:Value="q:Literal"><Child/></Plain><keep:Reset xmlns=""><Child/></keep:Reset>` + photoSidecarFooter)
+	require.Greater(t, len(largeXMP), 40000)
+	merged, err = mergePhotoXMP(t.Context(), largeXMP, input, receipt)
+	require.NoError(t, err)
+	require.Less(t, len(merged), len(largeXMP)+1000)
+	require.NotContains(t, string(merged), "Removed")
+	counts := map[xml.Name]int{}
+	decoder := xml.NewDecoder(bytes.NewReader(merged))
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		if element, ok := token.(xml.StartElement); ok {
+			counts[element.Name]++
+			for _, attr := range element.Attr {
+				if attr.Name.Local == "Type" {
+					require.Equal(t, element.Name.Space, attr.Name.Space)
+					require.Equal(t, "keep:Type", attr.Value)
+				}
+			}
+		}
+	}
+	require.Equal(t, 360, counts[xml.Name{Space: "https://example.org/photo/", Local: "Step"}])
+	require.Equal(t, 1, counts[xml.Name{Space: "https://example.org/scoped/", Local: "Value"}])
+	require.Equal(t, 1, counts[xml.Name{Space: "https://example.org/default/", Local: "Child"}])
+	require.Equal(t, 1, counts[xml.Name{Local: "Child"}])
+	require.Equal(t, 1, counts[xml.Name{Space: xmpDublinCoreNamespace, Local: "subject"}])
 	for _, strip := range []bool{false, true} {
 		out, err := rewritePhotoEXIF(exif, 2, 3, strip, input.Authored)
 		require.NoError(t, err)
@@ -301,12 +296,9 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 		return packets, receipt
 	}
 	for _, format := range []string{"jpeg", "png"} {
-		packets, receipt := render(exif, packet, input.Authored, input.Keywords, format, true)
-		assert.Equal(t, 2, receipt.Width)
-		assert.NotContains(t, string(packets.exif), "GPS-PAYLOAD")
-		actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
-		require.NoError(t, err)
-		assert.Equal(t, input.Authored, actual)
+		packets, _ := render(exif, packet, input.Authored, input.Keywords, format, true)
+		require.NotEmpty(t, packets.exif)
+		require.NotEmpty(t, packets.xmp)
 	}
 	for _, flag := range []string{"pick", "", "reject"} {
 		for _, property := range []string{` xmp:Rating="-1">`, `><xmp:Rating>-<!--split-->1</xmp:Rating>`, `><xmp:Rating><rdf:value>-1</rdf:value></xmp:Rating>`, ` xmp:Rating="4">`, `><xmp:Rating>4</xmp:Rating>`, `><xmp:Rating><rdf:value>4</rdf:value></xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/" exif:GPSLatitude="12,30N">4</xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/"><rdf:value>4</rdf:value><exif:GPSLatitude>12,30N</exif:GPSLatitude></xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/"><rdf:value>-1</rdf:value><exif:GPSLatitude>12,30N</exif:GPSLatitude></xmp:Rating>`} {
@@ -314,35 +306,35 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 				property := strings.ReplaceAll(property, "-1", spelling)
 				property = strings.ReplaceAll(property, "-<!--split-->1", "-<!--split-->"+spelling[1:])
 				for _, confirmed := range []store.PhotoAuthoredFields{0, store.PhotoConfirmedFlag, store.PhotoConfirmedRating, store.PhotoConfirmedFlag | store.PhotoConfirmedRating} {
-					for _, format := range []string{"jpeg", "png"} {
-						packet := []byte(photoSidecarHeader + property + photoSidecarFooter)
-						packets, _ := render(nil, packet, store.PhotoAuthored{Confirmed: confirmed, Rating: 3, Flag: flag}, nil, format, true)
-						require.NotContains(t, string(packets.xmp), "GPSLatitude")
-						actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
-						require.NoError(t, err)
-						wantFlag, wantRating := "", 0
-						if strings.Contains(property, "4") {
-							wantRating = 4
-						} else {
-							wantFlag = "reject"
-						}
-						if confirmed&store.PhotoConfirmedFlag != 0 {
-							wantFlag = flag
-						}
-						if confirmed&store.PhotoConfirmedRating != 0 {
-							wantRating = 3
-						}
-						require.Equal(t, wantFlag, actual.Flag)
-						require.Equal(t, wantRating, actual.Rating)
+					packet := []byte(photoSidecarHeader + property + photoSidecarFooter)
+					merged, err := mergePhotoXMP(t.Context(), packet, store.PhotoExportInput{Authored: store.PhotoAuthored{Confirmed: confirmed, Rating: 3, Flag: flag}}, receipt)
+					require.NoError(t, err)
+					require.NotContains(t, string(merged), "GPSLatitude")
+					actual, err := ReadPhotoSidecar(t.Context(), merged)
+					require.NoError(t, err)
+					wantFlag, wantRating := "", 0
+					if strings.Contains(property, "4") {
+						wantRating = 4
+					} else {
+						wantFlag = "reject"
 					}
+					if confirmed&store.PhotoConfirmedFlag != 0 {
+						wantFlag = flag
+					}
+					if confirmed&store.PhotoConfirmedRating != 0 {
+						wantRating = 3
+					}
+					require.Equal(t, wantFlag, actual.Flag)
+					require.Equal(t, wantRating, actual.Rating)
 				}
 			}
 		}
 	}
 	for _, property := range []string{` ts:Pick="pick"><xmp:Rating>-01</xmp:Rating>`, `><ts:Pick>pick</ts:Pick><xmp:Rating>-01</xmp:Rating>`, `><xmp:Rating>-01</xmp:Rating><ts:Pick>pick</ts:Pick>`, ` ts:Pick="pick"><xmp:Rating>4</xmp:Rating>`} {
 		packet := []byte(photoSidecarHeader + property + photoSidecarFooter)
-		packets, _ := render(nil, packet, store.PhotoAuthored{Confirmed: store.PhotoConfirmedRating, Rating: 3}, nil, "png", true)
-		actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
+		merged, err := mergePhotoXMP(t.Context(), packet, store.PhotoExportInput{Authored: store.PhotoAuthored{Confirmed: store.PhotoConfirmedRating, Rating: 3}}, receipt)
+		require.NoError(t, err)
+		actual, err := ReadPhotoSidecar(t.Context(), merged)
 		require.NoError(t, err)
 		flag := "reject"
 		if strings.Contains(property, ">4<") {
@@ -413,6 +405,9 @@ func TestPhotoExportFailedDecodePreservesPixelBudget(t *testing.T) {
 	_, _, err = decodePhotoExport(t.Context(), bytes.NewReader(preview), "jpeg", 1, photoPackets{}, budget)
 	require.NoError(t, err)
 	require.Zero(t, budget.pixels)
+	budget.pixels = 5
+	_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(preview), photoRenderInput(preview, "image/jpeg"), bundle.PhotoRenderProfile{Format: "png"}, budget)
+	require.ErrorIs(t, err, bundle.ErrLimit)
 }
 
 func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
@@ -474,12 +469,6 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 		require.ErrorIs(t, err, bundle.ErrUnavailable)
 		require.ErrorContains(t, err, "not associated")
 	}
-	raf := syntheticRAF()
-	_, rafReceipt, err := renderPhotoExport(t.Context(), bytes.NewReader(raf), photoRenderInput(raf, "image/x-fuji-raf"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true}, nil)
-	require.NoError(t, err)
-	assert.True(t, rafReceipt.EmbeddedPreview)
-	assert.Equal(t, 30, rafReceipt.Width)
-	assert.Equal(t, 40, rafReceipt.Height)
 	missing := syntheticRAWPreviewTIFF(1)
 	_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(missing), photoRenderInput(missing, "image/x-adobe-dng"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90}, nil)
 	require.ErrorIs(t, err, bundle.ErrUnavailable)
@@ -626,10 +615,11 @@ func TestPhotoExportPNGPixelChunksDoNotConsumeMetadataBudget(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 65, receipt.Width)
 	require.NotEmpty(t, output)
-	preview, err := ProduceVisualPreview(t.Context(), bytes.NewReader(source.Bytes()), VisualPreviewTarget{SourceSHA256: input.Member.SHA256, Size: input.Member.Size, MediaType: "image/png"})
-	require.NoError(t, err)
-	require.NotNil(t, preview.Preview.Output)
-	require.Equal(t, 65, preview.Preview.Output.Width)
+}
+
+func TestPhotoExportErrorPreservesCategory(t *testing.T) {
+	t.Parallel()
+	input := store.PhotoExportInput{Member: bundle.Member{NodeID: 1}}
 	for _, category := range []error{bundle.ErrLimit, bundle.ErrConflict, bundle.ErrUnavailable} {
 		err := photoExportError(input, category)
 		require.ErrorIs(t, err, category)

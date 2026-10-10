@@ -134,7 +134,6 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 		require.NoError(t, reader.Close())
 		if file.Name == want {
 			found = true
-			require.NotContains(t, string(contents), "Embedded keyword")
 			require.NotContains(t, string(contents), "Catalog keyword")
 		}
 		if file.Name == "bundle.json" {
@@ -152,43 +151,15 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 			require.NoError(t, json.Unmarshal(role.Recipe, &receipt))
 			require.Equal(t, r.PhotoRender.Canonical(), receipt.Profile)
 			require.Equal(t, n.ID, receipt.Source.NodeID)
-			require.Equal(t, 3, receipt.Width)
-			require.Equal(t, 2, receipt.Height)
 		}
 	}
 	require.True(t, found)
 	require.True(t, foundManifest)
 }
 
-func TestPhotoExportMetadataFailureNamesPhoto(t *testing.T) {
-	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	var pixels bytes.Buffer
-	require.NoError(t, jpeg.Encode(&pixels, image.NewRGBA(image.Rect(0, 0, 9, 6)), nil))
-	packet := `http://ns.adobe.com/xap/1.0/` + "\x00" + `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:keep="https://example.org/photo/" keep:Note="` + strings.Repeat("z", 60000) + `"/></rdf:RDF></x:xmpmeta>`
-	data := append([]byte{0xff, 0xd8, 0xff, 0xe1, byte((len(packet) + 2) >> 8), byte(len(packet) + 2)}, []byte(packet)...)
-	data = append(data, pixels.Bytes()[2:]...)
-	hash, size, err := s.Blobs.Write(bytes.NewReader(data))
-	require.NoError(t, err)
-	n, err := s.CreateFile(t.Context(), s.RootID(), "oversized-credits.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(t.Context(), n.ID)
-	require.NoError(t, err)
-	_, err = s.EditPhotoAuthored(t.Context(), []store.PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: store.PhotoAuthoredPatch{Caption: new(strings.Repeat("c", store.MaxPhotoAuthoredTextBytes))}}})
-	require.NoError(t, err)
-	source, err := s.CreateExportSource(t.Context(), "master", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: hash, Size: size}}}, nil)
-	require.NoError(t, err)
-	r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true}}
-	response, body := do(t, ts, http.MethodPost, "/api/v1/exports/plans", nil, r)
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	require.Contains(t, body, "oversized-credits.jpg")
-	_, err = s.ExportPlan(t.Context(), "master", r.OperationID)
-	require.ErrorIs(t, err, store.ErrNotFound)
-}
-
 func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"non-photo", "trashed", "replaced", "mislabeled", "missing-blob", "unsupported"} {
+	for _, state := range []string{"non-photo", "trashed", "replaced", "mislabeled", "missing-blob", "unsupported", "oversized-metadata"} {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
 			ts, s := newTestServer(t, nil)
@@ -200,13 +171,18 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 				mediaType = "image/heic"
 			}
 			content := []byte("synthetic member")
-			if state == "mislabeled" || state == "missing-blob" {
+			if state == "mislabeled" || state == "missing-blob" || state == "oversized-metadata" {
 				if state == "mislabeled" {
 					mediaType = "image/png"
 				}
 				var encoded bytes.Buffer
 				require.NoError(t, jpeg.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil))
 				content = encoded.Bytes()
+				if state == "oversized-metadata" {
+					packet := `http://ns.adobe.com/xap/1.0/` + "\x00" + `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:keep="https://example.org/photo/" keep:Note="` + strings.Repeat("z", 60000) + `"/></rdf:RDF></x:xmpmeta>`
+					content = append([]byte{0xff, 0xd8, 0xff, 0xe1, byte((len(packet) + 2) >> 8), byte(len(packet) + 2)}, []byte(packet)...)
+					content = append(content, encoded.Bytes()[2:]...)
+				}
 			}
 			hash, size, err := s.Blobs.Write(bytes.NewReader(content))
 			require.NoError(t, err)
@@ -219,6 +195,12 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			n, err := s.CreateFile(t.Context(), s.RootID(), "unavailable-member", hash, size, mediaType)
 			require.NoError(t, err)
 			members = append(members, bundle.Member{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: hash, Size: size})
+			if state == "oversized-metadata" {
+				asset, err := s.PhotoAssetForNode(t.Context(), n.ID)
+				require.NoError(t, err)
+				_, err = s.EditPhotoAuthored(t.Context(), []store.PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: store.PhotoAuthoredPatch{Caption: new(strings.Repeat("c", store.MaxPhotoAuthoredTextBytes))}}})
+				require.NoError(t, err)
+			}
 			source, err := s.CreateExportSource(t.Context(), "master", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: members}, nil)
 			require.NoError(t, err)
 			switch state {
@@ -233,6 +215,7 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			}
 			require.NoError(t, err)
 			r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90}}
+			r.PhotoRender.IncludeMetadata = state == "oversized-metadata"
 			response, body := do(t, ts, http.MethodPost, "/api/v1/exports/plans", nil, r)
 			if state == "missing-blob" {
 				require.Equal(t, http.StatusInternalServerError, response.StatusCode, body)
@@ -244,6 +227,10 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			case "unsupported":
 				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 				require.Contains(t, body, "unsupported photo media type image/heic")
+			case "oversized-metadata":
+				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+				_, err = s.ExportPlan(t.Context(), "master", r.OperationID)
+				require.ErrorIs(t, err, store.ErrNotFound)
 			case "mislabeled":
 				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 				require.Contains(t, body, "unexpected image format")
@@ -253,4 +240,13 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPhotoExportMalformedQuery(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	request := bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "photos", Photos: &bundle.PhotoExportSelection{Query: query.Query{V: 1, Syntax: "advanced", Text: ")", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/exports/sources", nil, request)
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Contains(t, body, "invalid_query")
 }

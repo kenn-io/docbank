@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -45,7 +46,18 @@ func readExportRequest(path string) (exportPreviewRequest, error) {
 	if len(raw) > 1<<20 {
 		return request, usageError(errors.New("request JSON exceeds 1 MiB"))
 	}
-	if err := json.Unmarshal(raw, &request, json.RejectUnknownMembers(true)); err != nil {
+	if err := json.Unmarshal(raw, &request, json.RejectUnknownMembers(true), json.WithUnmarshalers(json.UnmarshalFunc(func(raw []byte, profile *bundle.PhotoRenderProfile) error {
+		var fields map[string]jsontext.Value
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return err
+		}
+		for name, value := range fields {
+			if value.Kind() == 'n' {
+				return fmt.Errorf("photo_render.%s must not be null", name)
+			}
+		}
+		return json.Unmarshal(raw, profile, json.RejectUnknownMembers(true))
+	}))); err != nil {
 		return request, usageError(fmt.Errorf("invalid export request JSON: %w", err))
 	}
 	return request, validateExportRequest(request)
