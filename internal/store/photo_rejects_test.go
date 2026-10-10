@@ -48,7 +48,7 @@ func TestPhotoRejectsRetainedCompanions(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	var targets []PhotoAuthoredTarget
-	for i := 0; i < 334; i++ {
+	for i := range 334 {
 		dir, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("group-%03d", i))
 		require.NoError(t, err)
 		raw, err := s.CreateFile(t.Context(), dir.ID, "capture.raw", fakeHash("a1"), 1, "application/octet-stream")
@@ -155,7 +155,7 @@ func TestPhotoRejectsBeyondPageAndOverflow(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	var targets []PhotoAuthoredTarget
-	for i := 0; i < maxPhotoRejectsMoveTargets+2; i++ {
+	for i := range maxPhotoRejectsMoveTargets + 2 {
 		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("photo-%04d.jpg", i), fakeHash("a1"), 1, "image/jpeg")
 		require.NoError(t, err)
 		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
@@ -232,7 +232,7 @@ func TestPhotoRejectsHiddenScope(t *testing.T) {
 func TestPhotoRejectsRollbackAllAssets(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("reject-%d.jpg", i), fakeHash("a1"), 1, "image/jpeg")
 		require.NoError(t, err)
 		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)

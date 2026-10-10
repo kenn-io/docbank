@@ -141,6 +141,7 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 	if err != nil {
 		return out, nil, err
 	}
+	defer func() { _ = rows.Close() }()
 	var eligible []string
 	type memberFence struct {
 		AssetID       string
@@ -207,12 +208,10 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 	for rows.Next() {
 		var member memberFence
 		if err := rows.Scan(&member.AssetID, &member.AssetRevision, &member.FileID, &member.FileRevision, &member.Role, &member.Flag, &member.NodeID, &member.NodeRevision, &member.VersionID, &member.TrashedAt, &member.Name); err != nil {
-			_ = rows.Close()
 			return out, nil, err
 		}
 		if len(members) > 0 && member.AssetID != members[0].AssetID {
 			if err := finish(); err != nil {
-				_ = rows.Close()
 				return out, nil, err
 			}
 			members = members[:0]
@@ -220,7 +219,6 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 		members = append(members, member)
 	}
 	if err := finish(); err != nil {
-		_ = rows.Close()
 		return out, nil, err
 	}
 	err = rows.Err()

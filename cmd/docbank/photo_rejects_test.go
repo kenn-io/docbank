@@ -36,7 +36,9 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 					w.Header().Set("Content-Type", "application/json")
 					if r.URL.Path == "/api/v1/photos/hidden/unlock" {
 						var body api.PhotoHiddenPasscodeRequest
-						require.NoError(t, json.UnmarshalRead(r.Body, &body))
+						if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+							return
+						}
 						assert.Equal(t, "synthetic-passcode", body.Passcode)
 						w.Header().Set("Set-Cookie", "docbank-hidden-test=synthetic-token; Path=/")
 						_, _ = w.Write([]byte(`{}`))
@@ -49,7 +51,9 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 					assert.Equal(t, path, r.URL.Path)
 					assert.Equal(t, http.MethodPost, r.Method)
 					var body api.PhotoRejectsRequest
-					require.NoError(t, json.UnmarshalRead(r.Body, &body))
+					if !assert.NoError(t, json.UnmarshalRead(r.Body, &body)) {
+						return
+					}
 					assert.Equal(t, hidden, body.Hidden)
 					assert.Equal(t, "unconfigured", body.Coverage.Configuration)
 					assert.Equal(t, confirm, body.Digest == digest)
