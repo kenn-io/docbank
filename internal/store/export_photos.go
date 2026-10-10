@@ -36,7 +36,7 @@ func (a PreparedPhotoExport) role() (bundle.Role, error) {
 	return bundle.Role{Role: "photo_rendered", Status: roleAvailable, Path: bundle.PhotoRenderedPath(a.Receipt.Source, a.Receipt.Profile), SHA256: a.SHA256, Size: a.Size, MediaType: "image/" + a.Receipt.Profile.Format, Recipe: raw}, err
 }
 
-func validatePhotoPlanRequest(r bundle.PlanRequest) error {
+func validatePhotoPlanRequest(r *bundle.PlanRequest) error {
 	photo := slices.ContainsFunc(r.Roles, func(p bundle.RolePolicy) bool { return p.Role == "photo_rendered" })
 	if photo != (r.PhotoRender != nil) {
 		return bundle.ErrConflict
@@ -45,33 +45,26 @@ func validatePhotoPlanRequest(r bundle.PlanRequest) error {
 		return bundle.ErrConflict
 	}
 	if r.PhotoRender != nil {
-		return r.PhotoRender.Validate()
+		if err := r.PhotoRender.Validate(); err != nil {
+			return err
+		}
+		profile := r.PhotoRender.Canonical()
+		r.PhotoRender = &profile
 	}
 	return nil
 }
 
 // ExportPlanReplay checks identity before expensive rendering and again at seal.
 func (s *Store) ExportPlanReplay(ctx context.Context, owner string, r bundle.PlanRequest) (bundle.Plan, bool, error) {
-	raw, _, err := validateExportPlanRequest(owner, r)
+	raw, _, err := validateExportPlanRequest(owner, &r)
 	if err != nil {
 		return bundle.Plan{}, false, err
 	}
-	var actual, digest string
-	err = s.db.QueryRowContext(ctx, `SELECT owner,request_sha256 FROM export_plans WHERE id=?`, r.OperationID).Scan(&actual, &digest)
-	if errors.Is(err, sql.ErrNoRows) {
-		return bundle.Plan{}, false, checkExportPlanCapacity(ctx, s.db)
+	plan, found, err := replayExportPlan(ctx, s.db, owner, r.OperationID, pageChecksum(raw))
+	if !found && err == nil {
+		err = checkExportPlanCapacity(ctx, s.db)
 	}
-	if err != nil {
-		return bundle.Plan{}, false, err
-	}
-	if actual != owner {
-		return bundle.Plan{}, false, ErrNotFound
-	}
-	if digest != pageChecksum(raw) {
-		return bundle.Plan{}, false, bundle.ErrConflict
-	}
-	plan, err := s.ExportPlan(ctx, owner, r.OperationID)
-	return plan, true, err
+	return plan, found, err
 }
 
 // ResolvePhotoExportMembers uses the same complete population as Photos browsing.

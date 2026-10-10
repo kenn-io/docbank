@@ -79,7 +79,7 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 	var source bundle.Source
 	require.NoError(t, json.Unmarshal([]byte(body), &source))
 	require.Equal(t, 1, source.Total)
-	r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, LongEdge: 3, IncludeMetadata: true, RemoveGPS: true}}
+	r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "png", Quality: 90, LongEdge: 3, IncludeMetadata: true, RemoveGPS: true}}
 	abandoned := filepath.Join(vault, "export-archives", ".photo-export-"+strings.Repeat("a", 32))
 	require.NoError(t, os.MkdirAll(abandoned, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(abandoned, "payload.tmp"), []byte("abandoned"), 0600))
@@ -91,6 +91,8 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var plan bundle.Plan
 	require.NoError(t, json.Unmarshal([]byte(body), &plan))
+	require.Zero(t, plan.PhotoRender.Quality)
+	r.PhotoRender.Quality = 20
 	_, err = os.Stat(abandoned)
 	require.ErrorIs(t, err, os.ErrNotExist)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/exports/plans", headers, r)
@@ -122,7 +124,7 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 	require.NoError(t, err)
 	archive, err := zip.NewReader(bytes.NewReader(archiveData), int64(len(archiveData)))
 	require.NoError(t, err)
-	want := fmt.Sprintf("documents/%d/%s/photo.jpg", n.ID, n.CurrentVersionID)
+	want := fmt.Sprintf("documents/%d/%s/photo.png", n.ID, n.CurrentVersionID)
 	found, foundManifest := false, false
 	for _, file := range archive.File {
 		reader, err := file.Open()
@@ -148,7 +150,7 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 			require.Equal(t, want, role.Path)
 			var receipt bundle.PhotoRenderReceipt
 			require.NoError(t, json.Unmarshal(role.Recipe, &receipt))
-			require.Equal(t, *r.PhotoRender, receipt.Profile)
+			require.Equal(t, r.PhotoRender.Canonical(), receipt.Profile)
 			require.Equal(t, n.ID, receipt.Source.NodeID)
 			require.Equal(t, 3, receipt.Width)
 			require.Equal(t, 2, receipt.Height)
@@ -186,13 +188,16 @@ func TestPhotoExportMetadataFailureNamesPhoto(t *testing.T) {
 
 func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"non-photo", "trashed", "replaced", "mislabeled", "missing-blob"} {
+	for _, state := range []string{"non-photo", "trashed", "replaced", "mislabeled", "missing-blob", "unsupported"} {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
 			ts, s := newTestServer(t, nil)
 			mediaType := "image/jpeg"
-			if state == "non-photo" {
+			switch state {
+			case "non-photo":
 				mediaType = "text/plain"
+			case "unsupported":
+				mediaType = "image/heic"
 			}
 			content := []byte("synthetic member")
 			if state == "mislabeled" || state == "missing-blob" {
@@ -205,9 +210,16 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			}
 			hash, size, err := s.Blobs.Write(bytes.NewReader(content))
 			require.NoError(t, err)
+			var members []bundle.Member
+			if state == "unsupported" {
+				earlier, err := s.CreateFile(t.Context(), s.RootID(), "earlier-corrupt.jpg", hash, size, "image/jpeg")
+				require.NoError(t, err)
+				members = append(members, bundle.Member{NodeID: earlier.ID, VersionID: earlier.CurrentVersionID, SHA256: hash, Size: size})
+			}
 			n, err := s.CreateFile(t.Context(), s.RootID(), "unavailable-member", hash, size, mediaType)
 			require.NoError(t, err)
-			source, err := s.CreateExportSource(t.Context(), "master", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: hash, Size: size}}}, nil)
+			members = append(members, bundle.Member{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: hash, Size: size})
+			source, err := s.CreateExportSource(t.Context(), "master", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: members}, nil)
 			require.NoError(t, err)
 			switch state {
 			case "missing-blob":
@@ -228,10 +240,14 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 				return
 			}
 			require.Contains(t, body, fmt.Sprintf("photo %d", n.ID))
-			if state == "mislabeled" {
+			switch state {
+			case "unsupported":
+				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+				require.Contains(t, body, "unsupported photo media type image/heic")
+			case "mislabeled":
 				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 				require.Contains(t, body, "unexpected image format")
-			} else {
+			default:
 				require.Equal(t, http.StatusConflict, response.StatusCode, body)
 				require.Contains(t, body, "no longer exportable")
 			}

@@ -446,6 +446,34 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 		assert.NotContains(t, root, tag)
 	}
 	assert.Equal(t, "Synthetic Camera", exifASCII(root[0x010f]))
+	rootICC := syntheticPhotoICC()
+	previewICC := append([]byte(nil), rootICC...)
+	whitePoint := int(binary.BigEndian.Uint32(previewICC[136:]))
+	previewICC[whitePoint+19] ^= 1
+	originalPreview := preview
+	preview = syntheticJPEGSegment(t, preview, 0xe2, append([]byte("ICC_PROFILE\x00\x01\x01"), previewICC...))
+	profiledRAW := rawData(syntheticTIFFEntry{tag: 34675, kind: 7, value: rootICC})
+	for _, format := range []string{"jpeg", "png"} {
+		for _, metadata := range []bool{true, false} {
+			out, _, err := renderPhotoExport(t.Context(), bytes.NewReader(profiledRAW), photoRenderInput(profiledRAW, "image/x-adobe-dng"), bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: metadata}, nil)
+			require.NoError(t, err)
+			packets, err := photoSourcePackets(t.Context(), out, true)
+			require.NoError(t, err)
+			require.Equal(t, previewICC, packets.icc)
+			if metadata {
+				reader, ok := newExifReader(packets.exif)
+				require.True(t, ok)
+				require.NotContains(t, reader.entries(reader.u32(4)), uint16(34675))
+			}
+		}
+	}
+	preview = originalPreview
+	ambiguousRAW := rawData(syntheticTIFFEntry{tag: 34675, kind: 7, value: rootICC})
+	for _, metadata := range []bool{true, false} {
+		_, _, err := renderPhotoExport(t.Context(), bytes.NewReader(ambiguousRAW), photoRenderInput(ambiguousRAW, "image/x-adobe-dng"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: metadata}, nil)
+		require.ErrorIs(t, err, bundle.ErrUnavailable)
+		require.ErrorContains(t, err, "not associated")
+	}
 	raf := syntheticRAF()
 	_, rafReceipt, err := renderPhotoExport(t.Context(), bytes.NewReader(raf), photoRenderInput(raf, "image/x-fuji-raf"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true}, nil)
 	require.NoError(t, err)

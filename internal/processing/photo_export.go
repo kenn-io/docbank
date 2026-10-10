@@ -31,22 +31,24 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	release, err := catalog.AcquirePhotoExportPreparation(ctx)
+	deadline, _ := ctx.Deadline()
+	renderCtx, stopRendering := context.WithDeadline(ctx, deadline.Add(-time.Minute))
+	defer stopRendering()
+	release, err := catalog.AcquirePhotoExportPreparation(renderCtx)
 	if err != nil {
 		return bundle.Plan{}, err
 	}
 	defer release()
-	if plan, found, err := catalog.ExportPlanReplay(ctx, owner, request); found || err != nil {
+	if plan, found, err := catalog.ExportPlanReplay(renderCtx, owner, request); found || err != nil {
 		return plan, err
 	}
 	if blobs == nil {
 		return bundle.Plan{}, errors.New("photo export blob store unavailable")
 	}
-	inputs, err := catalog.ExportPhotoInputs(ctx, owner, request)
+	profile := request.PhotoRender.Canonical()
+	request.PhotoRender = &profile
+	inputs, err := catalog.ExportPhotoInputs(renderCtx, owner, request)
 	if err != nil {
-		return bundle.Plan{}, err
-	}
-	if err := os.MkdirAll(spoolParent, 0700); err != nil {
 		return bundle.Plan{}, err
 	}
 	var stages []*filepublish.Stage
@@ -57,19 +59,25 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 	}()
 	var sourceBytes int64
 	for _, input := range inputs {
+		if visualPreviewFormat(input.MediaType) == "" {
+			return bundle.Plan{}, photoExportError(input, fmt.Errorf("%w: unsupported photo media type %s", bundle.ErrUnavailable, input.MediaType))
+		}
 		if input.Member.Size > maxPhotoExportSourceBytes-sourceBytes {
 			return bundle.Plan{}, photoExportError(input, fmt.Errorf("%w: photo source bytes exceed 512 MiB", bundle.ErrLimit))
 		}
 		sourceBytes += input.Member.Size
 	}
+	if err := os.MkdirAll(spoolParent, 0700); err != nil {
+		return bundle.Plan{}, err
+	}
 	budget := photoExportBudget{pixels: maxPhotoExportDecodedPixels}
 	artifacts := make([]store.PreparedPhotoExport, 0, len(inputs))
 	var total int64
 	for _, input := range inputs {
-		if err := ctx.Err(); err != nil {
+		if err := renderCtx.Err(); err != nil {
 			return bundle.Plan{}, err
 		}
-		reader, size, err := blobs.OpenSeekableContext(ctx, input.Member.SHA256)
+		reader, size, err := blobs.OpenSeekableContext(renderCtx, input.Member.SHA256)
 		if err != nil {
 			return bundle.Plan{}, photoExportError(input, err)
 		}
@@ -77,7 +85,7 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 			_ = reader.Close()
 			return bundle.Plan{}, photoExportError(input, bundle.ErrConflict)
 		}
-		output, receipt, err := renderPhotoExport(ctx, reader, input, *request.PhotoRender, &budget)
+		output, receipt, err := renderPhotoExport(renderCtx, reader, input, *request.PhotoRender, &budget)
 		closeErr := reader.Close()
 		if closeErr != nil {
 			return bundle.Plan{}, photoExportError(input, closeErr)
@@ -188,9 +196,11 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 				}
 			}
 			candidate := packets
-			if len(candidate.icc) == 0 {
-				candidate.icc = p.icc
+			if len(packets.icc) > 0 && len(p.icc) == 0 {
+				err = fmt.Errorf("%w: RAW ICC profile is not associated with the embedded JPEG", bundle.ErrUnavailable)
+				continue
 			}
+			candidate.icc = p.icc
 			candidate.orientation, candidate.animated = p.orientation, p.animated
 			candidate.unsupportedColor = candidate.unsupportedColor || p.unsupportedColor
 

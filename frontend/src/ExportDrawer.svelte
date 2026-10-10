@@ -98,6 +98,7 @@
             {#if photoFormat === "jpeg"}<label for="photo-export-quality">JPEG quality, 1–100</label><TextInput id="photo-export-quality" ariaLabel="JPEG quality" bind:value={quality} block />{/if}
             <label for="photo-export-edge">Long edge, pixels</label><TextInput id="photo-export-edge" ariaLabel="Long edge, pixels" bind:value={longEdge} placeholder="Original size" block />
             <p>Blank keeps the original size. Smaller originals keep their size. Up to 16 photos and 512 million decoded pixels per export.</p>
+            <p>JPEG, PNG, GIF and static WebP; embedded JPEG previews from ARW, DNG, CR2, NEF and RAF.</p>
             <Checkbox label="Include image metadata" checked={includeMetadata} onchange={checked => includeMetadata = checked} />
             <Checkbox label="Remove GPS" checked={removeGPS} disabled={!includeMetadata} onchange={checked => removeGPS = checked} />
             <p>The ZIP retains original filenames, vault paths and source hashes. Color profiles stay attached to preserve appearance.</p>

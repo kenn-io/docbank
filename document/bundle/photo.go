@@ -23,6 +23,14 @@ func (p PhotoRenderProfile) Validate() error {
 	return nil
 }
 
+// Canonical removes settings that cannot affect a validated render profile.
+func (p PhotoRenderProfile) Canonical() PhotoRenderProfile {
+	if p.Format == "png" {
+		p.Quality = 0
+	}
+	return p
+}
+
 const PhotoRenderReceiptVersion = 1
 const MaxPhotoExportMembers = 16
 

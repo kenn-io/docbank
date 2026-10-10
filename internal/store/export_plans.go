@@ -94,35 +94,39 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 	return s.createExportPlan(ctx, owner, r, nil)
 }
 
+func replayExportPlan(ctx context.Context, q metadataQuerier, owner, id, digest string) (bundle.Plan, bool, error) {
+	var oldOwner, oldDigest string
+	err := q.QueryRowContext(ctx, `SELECT owner,request_sha256 FROM export_plans WHERE id=?`, id).Scan(&oldOwner, &oldDigest)
+	if err == nil && oldOwner != owner {
+		return bundle.Plan{}, false, ErrNotFound
+	}
+	_, found, err := replayReceipt(oldDigest, err, digest == oldDigest, bundle.ErrConflict)
+	if err != nil || !found {
+		return bundle.Plan{}, found, err
+	}
+	plan, err := loadExportPlan(ctx, q, id)
+	if err == nil && exportExpired(plan.ExpiresAt) {
+		err = bundle.ErrExpired
+	}
+	if err == nil && plan.Fingerprint == "" {
+		err = bundle.ErrConflict
+	}
+	return plan, true, err
+}
+
 func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.PlanRequest, prepared map[string]PreparedPhotoExport) (bundle.Plan, error) {
-	request, publications, err := validateExportPlanRequest(owner, r)
+	request, publications, err := validateExportPlanRequest(owner, &r)
 	if err != nil {
 		return bundle.Plan{}, err
 	}
 	digest := pageChecksum(request)
 	var plan bundle.Plan
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var oldDigest, oldOwner string
-		e := tx.QueryRowContext(ctx, `SELECT owner,request_sha256 FROM export_plans WHERE id=?`, r.OperationID).Scan(&oldOwner, &oldDigest)
-		if e == nil && oldOwner != owner {
-			return ErrNotFound
-		}
-		_, found, e := replayReceipt(oldDigest, e, digest == oldDigest, bundle.ErrConflict)
-		if e != nil {
+		var found bool
+		var e error
+		plan, found, e = replayExportPlan(ctx, tx, owner, r.OperationID, digest)
+		if e != nil || found {
 			return e
-		}
-		if found {
-			plan, e = loadExportPlan(ctx, tx, r.OperationID)
-			if e != nil {
-				return e
-			}
-			if exportExpired(plan.ExpiresAt) {
-				return bundle.ErrExpired
-			}
-			if plan.Fingerprint == "" {
-				return bundle.ErrConflict
-			}
-			return nil
 		}
 		source, e := loadExportSource(ctx, tx, owner, r.SourceID)
 		if e != nil {
@@ -541,7 +545,7 @@ func checkExportPlanCapacity(ctx context.Context, q metadataQuerier) error {
 	return nil
 }
 
-func validateExportPlanRequest(owner string, r bundle.PlanRequest) ([]byte, map[string]string, error) {
+func validateExportPlanRequest(owner string, r *bundle.PlanRequest) ([]byte, map[string]string, error) {
 	if err := validatePhotoPlanRequest(r); err != nil {
 		return nil, nil, err
 	}
