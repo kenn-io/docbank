@@ -40,7 +40,7 @@ func registerPhotoRejectRoutes(api huma.API, d Deps, g *gate) {
 		err := g.mutate(func() error {
 			var err error
 			result, err = d.Store.MovePhotoRejects(ctx, in.Body.Hidden, in.Body.Targets)
-			return workspaceQueryError(err)
+			return FromStoreError(err)
 		})
 		if err != nil {
 			return nil, err

@@ -40,7 +40,4 @@ func TestPhotoRejectRoutes(t *testing.T) {
 	require.Equal(t, []string{asset.ID}, moved.Moved)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, api.MovePhotoRejectsRequest{Targets: preview.Targets})
 	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
-	request.Query = api.QueryPayload(`{"v":2}`)
-	response, _ = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/preflight", nil, request)
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode)
 }

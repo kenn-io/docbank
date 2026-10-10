@@ -173,12 +173,7 @@ export class Photos {
     try {
       const result = await movePhotoRejects({ hidden: this.hidden, targets }, { session: this.session, signal: AbortSignal.timeout(60_000) });
       if (result.moved.length !== targets.length || result.moved.some((id, i) => id !== targets[i].asset_id)) throw new Error("Invalid rejects move response");
-      const restore = preserve?.();
-      for (const id of result.moved) this.removeTarget(id);
-      await restore?.();
-      this.rejects = undefined;
-      ontrashed?.();
-      await this.replace("refresh", preserve);
+      await this.applyAction(result.moved, preserve, () => { this.rejects = undefined; ontrashed?.(); });
       return true;
     } catch (cause) {
       this.rejects = undefined;
@@ -278,17 +273,26 @@ export class Photos {
           if (receipt.id !== item.asset_id || receipt.revision <= item.revision) throw new Error(`Photo${action === "trashing" ? " trash" : ""} response did not confirm the selected photo. Refresh and retry.`);
           this.cancelPending();
           successes++;
-          const restore = preserve?.();
-          this.removeTarget(item.asset_id);
-          await restore?.();
+          await this.applyAction([item.asset_id], preserve);
         } catch (cause) {
           if (onerror(cause)) break;
         }
       }
-      if (dispatched) oncomplete();
-      await this.replace("refresh", preserve);
+      await this.applyAction([], preserve, () => { if (dispatched) oncomplete(); });
       return successes;
     } finally { this[action] = false; }
+  }
+
+  private async applyAction(ids: string[], preserve?: () => (() => Promise<void>) | undefined, oncomplete?: () => void) {
+    if (ids.length) {
+      const restore = preserve?.();
+      for (const id of ids) this.removeTarget(id);
+      await restore?.();
+    }
+    if (oncomplete) {
+      oncomplete();
+      await this.replace("refresh", preserve);
+    }
   }
 
   select(id: string, event: MouseEvent, orderedIDs: string[]) {

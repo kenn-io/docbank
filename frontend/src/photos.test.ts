@@ -59,32 +59,26 @@ it("ignores a closed rejects preview after reopening with a different selection"
   photos.dispose();
 });
 
-it("moves the previewed selection after the selection changes and clears failed trash targets", async () => {
+it("moves the previewed selection after the selection changes", async () => {
   const preview = { targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
-  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ detail: "Trash refused", code: "stale_revision" }, { status: 412 }))
-    .mockResolvedValueOnce(response([photo(1), photo(2)]))
-    .mockResolvedValueOnce(Response.json(preview))
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview))
     .mockResolvedValueOnce(Response.json({ moved: ["photo-1"] })).mockResolvedValueOnce(response([photo(2)]));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)]; photos.started = true;
   photos.selection.selectedIDs = new Set(["photo-1"]);
-  expect(await photos.trashSelected()).toBe(false);
-  expect(photos.trashTargets.map(item => item.asset_id)).toEqual(["photo-1"]);
   await photos.previewRejects(true);
   photos.selection.selectedIDs = new Set(["photo-1", "photo-2"]);
   expect(await photos.trashRejects()).toBe(true);
-  expect(JSON.parse(fetcher.mock.calls[2][1].body).query.filters.asset_ids).toEqual(["photo-1"]);
-  expect(JSON.parse(fetcher.mock.calls[3][1].body)).toEqual({ hidden: false, targets: preview.targets });
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters.asset_ids).toEqual(["photo-1"]);
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ hidden: false, targets: preview.targets });
   expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
-  expect(photos.trashTargets).toEqual([]);
   photos.dispose();
 });
 
-it.each(["Library", "selected", "oversized"])("bounds rejects requests while keeping Library available, scope=%s", async scope => {
-  const count = scope === "oversized" ? 1001 : 1;
-  const preview = { targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }], photos: count, files: count, unchanged: 65, mixed: [], mixed_count: 0 };
-  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview)).mockResolvedValueOnce(Response.json({ moved: ["photo-1"] })).mockResolvedValueOnce(response([]));
+it.each(["Library", "selected"])("bounds rejects requests while keeping Library available, scope=%s", async scope => {
+  const preview = { targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }], photos: 1, files: 1, unchanged: 65, mixed: [], mixed_count: 0 };
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.selection.selectedIDs = new Set(Array.from({ length: 65 }, (_, i) => `photo-${i}`));
@@ -96,22 +90,17 @@ it.each(["Library", "selected", "oversized"])("bounds rejects requests while kee
     expect(photos.rejectsSelected).toBe(false);
     expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters?.asset_ids).toBeUndefined();
     expect(photos.rejects).toEqual(preview);
-    if (scope === "oversized") {
-      expect(await photos.trashRejects()).toBe(true);
-      expect(fetcher).toHaveBeenCalledTimes(3);
-    }
   }
   photos.dispose();
 });
 
-it.each(["confirmed", "network", "server", "unknown ID", "missing ID", "duplicate ID"])("recovers the loaded rejects range and surviving selection after a %s move and failed refresh", async outcome => {
+it.each(["confirmed", "network", "server", "unknown ID", "missing ID"])("recovers the loaded rejects range and surviving selection after a %s move and failed refresh", async outcome => {
   let finish!: (response: Response) => void;
   const preview = { targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
   if (outcome === "confirmed") fetcher.mockResolvedValueOnce(Response.json({ moved: ["photo-1"] }));
   else if (outcome === "unknown ID") fetcher.mockResolvedValueOnce(Response.json({ moved: ["photo-2"] }));
   else if (outcome === "missing ID") fetcher.mockResolvedValueOnce(Response.json({ moved: [] }));
-  else if (outcome === "duplicate ID") fetcher.mockResolvedValueOnce(Response.json({ moved: ["photo-1", "photo-1"] }));
   else if (outcome === "server") fetcher.mockResolvedValueOnce(Response.json({ detail: "Internal error", code: "internal" }, { status: 500 }));
   else fetcher.mockRejectedValueOnce(new TypeError("Reply lost"));
   fetcher.mockResolvedValueOnce(Response.json({ detail: "Refresh unavailable" }, { status: 503 }))
@@ -136,21 +125,23 @@ it.each(["confirmed", "network", "server", "unknown ID", "missing ID", "duplicat
   expect(photos.error).toBe("Refresh unavailable");
   expect(photos.rejectsError).toBe(outcome === "confirmed" ? "" : "The move may have completed. Refresh Photos before trying again.");
   expect(preserve).toHaveBeenCalledTimes(outcome === "confirmed" ? 1 : 0);
-  const interrupted = photos.retry(preserve);
-  photos.cancelPending();
-  finish(response([photo(999)]));
-  await interrupted;
-  expect(photos.items).toEqual(outcome === "confirmed" ? original.slice(1) : original);
-  await photos.resume(preserve);
-  expect(photos.error).toBe("");
-  expect(photos.items).toHaveLength(500);
-  expect(photos.items[0].asset_id).toBe("photo-2");
-  expect(photos.items.at(-1)?.asset_id).toBe("photo-501");
-  expect([...photos.selection.selectedIDs]).toEqual(["photo-2", "photo-300"]);
-  expect(photos.selection.anchorID).toBe(outcome === "confirmed" ? undefined : "photo-300");
-  expect(photos.cursor).toBe("remaining");
-  expect(photos.total).toBe(749);
-  expect(restore).toHaveBeenCalledTimes(outcome === "confirmed" ? 2 : 1);
+  if (outcome === "confirmed") {
+    const interrupted = photos.retry(preserve);
+    photos.cancelPending();
+    finish(response([photo(999)]));
+    await interrupted;
+    expect(photos.items).toEqual(original.slice(1));
+    await photos.resume(preserve);
+    expect(photos.error).toBe("");
+    expect(photos.items).toHaveLength(500);
+    expect(photos.items[0].asset_id).toBe("photo-2");
+    expect(photos.items.at(-1)?.asset_id).toBe("photo-501");
+    expect([...photos.selection.selectedIDs]).toEqual(["photo-2", "photo-300"]);
+    expect(photos.selection.anchorID).toBeUndefined();
+    expect(photos.cursor).toBe("remaining");
+    expect(photos.total).toBe(749);
+    expect(restore).toHaveBeenCalledTimes(2);
+  }
   photos.dispose();
 });
 

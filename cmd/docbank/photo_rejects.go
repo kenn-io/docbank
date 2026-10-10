@@ -13,14 +13,17 @@ import (
 
 func init() {
 	var raw, confirm, coverage, profile string
-	command := &cobra.Command{Use: "rejects", Short: "Preview rejects or move previewed photos to trash", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		c, err := daemonconn.Ensure(cmd.Context())
-		if err != nil {
-			return err
-		}
-		return runPhotoRejects(cmd, c, api.PhotoRejectsRequest{Query: api.QueryPayload(raw), Coverage: api.WorkspaceQueryCoverage{Configuration: coverage, ProfileFingerprint: profile}}, confirm)
-	}}
-	command.Flags().StringVar(&raw, "query", "{}", "QueryV1 JSON selecting the scope")
+	command := &cobra.Command{Use: "rejects", Short: "Preview rejected photos or move previewed photos to trash",
+		Long:    "Preview photos whose originals all have reject flags in the query scope.\nMixed-flag photos stay in Docbank. Save the preview JSON, then use --confirm\nto move its targets and sidecars to recoverable trash. Confirmation refuses\nphotos changed since preview and moves at most 1,000 photos and 1,000 live\nfiles.",
+		Example: "  docbank photos rejects > preview.json\n  docbank photos rejects --confirm preview.json",
+		Args:    cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := daemonconn.Ensure(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return runPhotoRejects(cmd, c, api.PhotoRejectsRequest{Query: api.QueryPayload(raw), Coverage: api.WorkspaceQueryCoverage{Configuration: coverage, ProfileFingerprint: profile}}, confirm)
+		}}
+	command.Flags().StringVar(&raw, "query", "{}", "query JSON selecting the preview scope")
 	command.Flags().StringVar(&confirm, "confirm", "", "preview JSON file, or - for stdin")
 	command.Flags().StringVar(&coverage, "coverage", "", "coverage configuration: configured or unconfigured")
 	command.Flags().StringVar(&profile, "profile-fingerprint", "", "configured coverage profile fingerprint")

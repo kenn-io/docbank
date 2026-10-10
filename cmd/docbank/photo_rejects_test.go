@@ -95,9 +95,9 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 	}
 	cmd := &cobra.Command{}
 	cmd.SetContext(t.Context())
-	cmd.SetIn(strings.NewReader(`{"digest":"old"}`))
-	require.ErrorContains(t, runPhotoRejects(cmd, nil, api.PhotoRejectsRequest{}, "-"), "decoding rejects preview")
 	path := filepath.Join(t.TempDir(), "newer-preview.json")
 	require.NoError(t, os.WriteFile(path, append([]byte(`{"unknown":true,`), raw[1:]...), 0600))
-	require.ErrorContains(t, runPhotoRejects(cmd, nil, api.PhotoRejectsRequest{}, path), "unknown")
+	err = runPhotoRejects(cmd, nil, api.PhotoRejectsRequest{}, path)
+	require.ErrorContains(t, err, "decoding rejects preview")
+	require.ErrorContains(t, err, "unknown")
 }
