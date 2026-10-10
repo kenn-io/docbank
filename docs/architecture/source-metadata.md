@@ -166,7 +166,7 @@ the strict photo packet reader. Other XML, including bare `rdf:RDF`, RSS, and SV
 falls through to the existing format checks. Valid packets publish `image.xmp.packet_valid` and supported
 rating, flag, label, caption, creator, copyright, and rotation claims. Custom color
 labels and invalid properties are omitted. Unsupported rotations are omitted. Present empty or whitespace-only caption, creator, and copyright properties emit empty claims and confirm a clear; absent properties stay unconfirmed. Meaningful text retains its whitespace. Malformed, oversized, or
-invalid packets publish warnings without a valid-packet fact. The tolerant
+invalid packets publish warnings without a valid-packet fact. Authored properties accept literal text, supported RDF containers, and `rdf:value`, preserving `xml:lang`. RDF attributes on authored properties or their descendants reject the whole packet, preserving original bytes and later initialization. Unrelated RDF references remain outside this validation. The tolerant
 embedded XMP reader retains its existing behavior.
 
 Photo initialization consumes checksum-checked evidence from the running extractor

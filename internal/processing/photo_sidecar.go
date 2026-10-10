@@ -140,7 +140,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 			}
 			if field != "" {
 				for _, attr := range t.Attr {
-					if attr.Name.Space == rdfNamespace && attr.Name.Local == "resource" {
+					if attr.Name.Space == rdfNamespace {
 						return result, errors.New("unsupported authored RDF value")
 					}
 				}

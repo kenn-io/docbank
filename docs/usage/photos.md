@@ -111,7 +111,7 @@ and the original sidecar bytes are preserved. Competing sidecars are scanned in
 ascending node-ID order; the first successful initialization wins. Parsing
 verifies the complete blob and rejects malformed XML,
 packets over 1 MiB, and nesting over 64 elements. A caption, creator, or copyright
-over 16 KiB rejects the whole packet. The existing source-metadata
+over 16 KiB rejects the whole packet. Authored properties accept literal text, supported RDF containers, and `rdf:value`. RDF attributes on these values reject the whole packet; original bytes remain available and supported replacement bytes can initialize the photo. The existing source-metadata
 extractor publishes packet claims under `image.xmp.*`. Sidecar source-metadata
 detail shows a valid-packet fact for valid empty packets or warnings for rejected
 packets, together with the exact source version. Packets with no supported decisions and rejected packets

@@ -30,10 +30,20 @@ func TestReadPhotoSidecar(t *testing.T) {
 		{name: "empty", packet: photoSidecarHeader + `>` + photoSidecarFooter},
 		{name: "explicit empty", confirmed: store.PhotoConfirmedCaption, packet: photoSidecarHeader + `><dc:description/>` + photoSidecarFooter},
 		{name: "numeric zero", confirmed: store.PhotoConfirmedRating | store.PhotoConfirmedRotation, packet: photoSidecarHeader + `><xmp:Rating>0</xmp:Rating><ts:Rotation>0</ts:Rotation>` + photoSidecarFooter},
+		{name: "literal value", confirmed: store.PhotoConfirmedCreator, packet: photoSidecarHeader + `><dc:creator><rdf:value>Author</rdf:value></dc:creator>` + photoSidecarFooter, want: store.PhotoAuthored{Creator: "Author"}},
 		{name: "resource property", packet: photoSidecarHeader + `><dc:creator rdf:resource="https://example.org/author"/>` + photoSidecarFooter, invalid: true},
 		{name: "resource item", packet: photoSidecarHeader + `><dc:creator><rdf:Seq><rdf:li rdf:resource="https://example.org/author"/></rdf:Seq></dc:creator>` + photoSidecarFooter, invalid: true},
 		{name: "resource value", packet: photoSidecarHeader + `><dc:description><rdf:value rdf:resource="https://example.org/caption"/></dc:description>` + photoSidecarFooter, invalid: true},
 		{name: "unrelated resource", packet: photoSidecarHeader + `><dc:subject rdf:resource="https://example.org/subject"/>` + photoSidecarFooter},
+		{name: "node reference property", packet: photoSidecarHeader + `><dc:creator rdf:nodeID="author"/>` + photoSidecarFooter, invalid: true},
+		{name: "node reference item", packet: photoSidecarHeader + `><dc:creator><rdf:Seq><rdf:li rdf:nodeID="author"/></rdf:Seq></dc:creator>` + photoSidecarFooter, invalid: true},
+		{name: "node reference value", packet: photoSidecarHeader + `><dc:creator><rdf:value rdf:nodeID="author"/></dc:creator>` + photoSidecarFooter, invalid: true},
+		{name: "parse type property", packet: photoSidecarHeader + `><dc:creator rdf:parseType="Resource"/>` + photoSidecarFooter, invalid: true},
+		{name: "parse type item", packet: photoSidecarHeader + `><dc:creator><rdf:Seq><rdf:li rdf:parseType="Resource"/></rdf:Seq></dc:creator>` + photoSidecarFooter, invalid: true},
+		{name: "parse type value", packet: photoSidecarHeader + `><dc:creator><rdf:value rdf:parseType="Resource"/></dc:creator>` + photoSidecarFooter, invalid: true},
+		{name: "typed property", packet: photoSidecarHeader + `><dc:creator rdf:datatype="https://example.org/type"/>` + photoSidecarFooter, invalid: true},
+		{name: "typed item", packet: photoSidecarHeader + `><dc:creator><rdf:Seq><rdf:li rdf:datatype="https://example.org/type"/></rdf:Seq></dc:creator>` + photoSidecarFooter, invalid: true},
+		{name: "typed value", packet: photoSidecarHeader + `><dc:creator><rdf:value rdf:datatype="https://example.org/type"/></dc:creator>` + photoSidecarFooter, invalid: true},
 		{name: "empty containers", confirmed: store.PhotoConfirmedCaption | store.PhotoConfirmedCreator | store.PhotoConfirmedCopyright, packet: photoSidecarHeader + "><dc:description>\n <rdf:Alt>\n </rdf:Alt>\n</dc:description><dc:creator>\n <rdf:Seq>\n </rdf:Seq>\n</dc:creator><dc:rights><rdf:Alt/></dc:rights>" + photoSidecarFooter},
 		{name: "blank scalar", confirmed: store.PhotoConfirmedCaption | store.PhotoConfirmedCreator | store.PhotoConfirmedCopyright, packet: photoSidecarHeader + "><dc:description> \n\t </dc:description><dc:creator> </dc:creator><dc:rights>\n</dc:rights>" + photoSidecarFooter},
 		{name: "blank selected items", confirmed: store.PhotoConfirmedCaption | store.PhotoConfirmedCreator | store.PhotoConfirmedCopyright, packet: photoSidecarHeader + `><dc:description><rdf:Alt><rdf:li>Other</rdf:li><rdf:li xml:lang="x-default"> </rdf:li></rdf:Alt></dc:description><dc:creator><rdf:Seq><rdf:li> </rdf:li><rdf:li>Other</rdf:li></rdf:Seq></dc:creator><dc:rights><rdf:Alt><rdf:li> </rdf:li></rdf:Alt></dc:rights>` + photoSidecarFooter},
@@ -214,7 +224,7 @@ func TestPhotoSidecarImportInitialization(t *testing.T) {
 			assert.Equal(t, int64(1), file.Revision)
 		}
 	}
-	emptyCatalog, emptyBlobs, _, sidecar, _ := photoSidecarFixture(t, []byte(photoSidecarHeader+">"+photoSidecarFooter))
+	emptyCatalog, emptyBlobs, photo, sidecar, _ := photoSidecarFixture(t, []byte(photoSidecarHeader+` xmp:Rating="4"><dc:creator rdf:nodeID="author"/>`+photoSidecarFooter))
 	initialize := func(node store.Node) store.PhotoAuthoredReceipt {
 		count, err := BackfillSourceMetadataTargets(ctx, emptyCatalog, emptyBlobs, t.TempDir(), []store.SourceMetadataTarget{{SourceSHA256: node.BlobHash, Size: node.Size}})
 		require.NoError(t, err)
@@ -227,6 +237,14 @@ func TestPhotoSidecarImportInitialization(t *testing.T) {
 		return receipt
 	}
 	require.Empty(t, initialize(sidecar).ReceiptID)
+	undecided, err := emptyCatalog.PhotoAssetForNode(ctx, photo.ID)
+	require.NoError(t, err)
+	for _, file := range undecided.Files {
+		if file.NodeID == photo.ID {
+			assert.Equal(t, store.PhotoAuthored{}, file.Authored())
+			assert.Equal(t, int64(1), file.Revision)
+		}
+	}
 	replacement := []byte(photoSidecarHeader + ` xmp:Rating="4">` + photoSidecarFooter)
 	written, err := emptyBlobs.WriteDetailedContext(ctx, bytes.NewReader(replacement))
 	require.NoError(t, err)
