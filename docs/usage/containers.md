@@ -6,8 +6,8 @@ description: Build and run stock Docbank with environment settings, mounted secr
 # Run in a container
 
 The repository Dockerfile runs stock Docbank as UID/GID `1000:1000` on Debian
-with glibc and the compiled web application. It builds on Linux amd64 and
-arm64. It adds no image publishing workflow.
+with glibc and the compiled web application. CI builds and starts it on Linux
+amd64. The repository does not publish an image.
 
 The image selects `0.0.0.0:8485`. Supply an explicit API key or startup fails.
 The ordinary binary still defaults to loopback with an ephemeral key.
@@ -70,6 +70,13 @@ build context, and keep secret values out of image layers and command flags.
 Mounted secrets must be regular files owned by UID `1000`, with mode `0400`
 or `0600`; symlinks and files accessible to other users are refused. Restart
 the daemon after rotating a key.
+
+Some orchestrators mount secrets in a form these checks refuse. Kubernetes
+Secret volumes expose each key as a root-owned symlink, and Docker Swarm
+secrets default to `root:root` with mode `0444`. In those environments, pass
+the key through `DOCBANK_API_KEY` or `DOCBANK_MCP_HTTP_TOKEN` from the
+orchestrator's secret reference instead of the `_FILE` form, or set Swarm's
+secret `uid` and `mode` to match the rules above.
 
 ## Check from a second container
 

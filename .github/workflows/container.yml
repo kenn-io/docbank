@@ -40,3 +40,31 @@ jobs:
             fi
           fi
           grep -F 'requires an explicit api_key' startup.log
+
+      - name: Serve authenticated requests with a mounted key
+        run: |
+          trap 'docker logs docbank-keyed || true; docker rm -f docbank-keyed >/dev/null 2>&1 || true' EXIT
+          secrets="$RUNNER_TEMP/docbank-secrets"
+          mkdir -p "$secrets"
+          key="$(openssl rand -hex 32)"
+          printf '%s\n' "$key" > "$secrets/api-key"
+          chmod 0400 "$secrets/api-key"
+          sudo chown 1000:1000 "$secrets/api-key"
+          docker run -d --name docbank-keyed -p 127.0.0.1:18485:8485 \
+            --mount type=bind,src="$secrets/api-key",dst=/run/secrets/api-key,readonly \
+            -e DOCBANK_API_KEY_FILE=/run/secrets/api-key \
+            -e DOCBANK_ALLOWED_HOSTS=docbank:8485 \
+            -e DOCBANK_TELEMETRY_ENABLED=off \
+            docbank:smoke
+          for _ in $(seq 60); do
+            if curl -fsS -H 'Host: docbank:8485' http://127.0.0.1:18485/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          status() {
+            curl -s -o /dev/null -w '%{http_code}' "$@" http://127.0.0.1:18485/api/v1/info
+          }
+          test "$(status -H 'Host: docbank:8485' -H "Authorization: Bearer $key")" = 200
+          test "$(status -H 'Host: docbank:8485')" = 401
+          test "$(status -H 'Host: unconfigured.example' -H "Authorization: Bearer $key")" = 403

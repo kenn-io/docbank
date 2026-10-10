@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:24-bookworm-slim AS frontend
+FROM node:24-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS frontend
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -12,7 +12,7 @@ RUN npm run build
 
 # Keep the Go version aligned with go.mod: source-metadata qualification
 # includes the exact toolchain version.
-FROM golang:1.27.0-bookworm AS build
+FROM golang:1.27.0-trixie@sha256:df98008ecd2b0ecc9f0a94d1b07e3564a9c92b555369b33d9b5f60d0765b2db7 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -24,7 +24,7 @@ RUN CGO_ENABLED=1 go build -tags fts5 \
     -ldflags="-X go.kenn.io/docbank/internal/version.Version=${VERSION} -X go.kenn.io/docbank/internal/version.Commit=${COMMIT}" \
     -o /out/docbank ./cmd/docbank
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 1000 docbank \
