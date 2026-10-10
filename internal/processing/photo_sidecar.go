@@ -138,6 +138,13 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 					defaultText = ""
 				}
 			}
+			if field != "" {
+				for _, attr := range t.Attr {
+					if attr.Name.Space == rdfNamespace && attr.Name.Local == "resource" {
+						return result, errors.New("unsupported authored RDF value")
+					}
+				}
+			}
 			if field != "" && t.Name.Space == rdfNamespace && t.Name.Local == "li" {
 				if itemDepth != 0 {
 					return result, errors.New("nested RDF item")
