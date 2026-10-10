@@ -58,10 +58,11 @@ it("confirms the complete rejects scope and refreshes after a lost reply", async
   photos.dispose();
 });
 
-it.each(["confirmed", "network", "timeout"])("invalidates the rejects listing after a %s move and failed refresh, then retries", async outcome => {
+it.each(["confirmed", "network", "timeout", "server"])("invalidates the rejects listing after a %s move and failed refresh, then retries", async outcome => {
   const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
   if (outcome === "confirmed") fetcher.mockResolvedValueOnce(Response.json(preview));
+  else if (outcome === "server") fetcher.mockResolvedValueOnce(Response.json({ detail: "Internal error", code: "internal" }, { status: 500 }));
   else fetcher.mockRejectedValueOnce(outcome === "timeout" ? new DOMException("Timed out", "TimeoutError") : new TypeError("Reply lost"));
   fetcher.mockResolvedValueOnce(Response.json({ detail: "Refresh unavailable" }, { status: 503 }))
     .mockResolvedValueOnce(response([photo(2)]));
@@ -85,16 +86,18 @@ it.each(["confirmed", "network", "timeout"])("invalidates the rejects listing af
   photos.dispose();
 });
 
-it("requires another rejects preview after a stale confirmation", async () => {
+it.each([[412, "stale_revision"], [401, "unauthorized"], [403, "hidden_locked"], [503, "maintenance_busy"]] as const)("requires another rejects preview after a definite %s refusal without reconciling other views", async (status, code) => {
   const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview))
-    .mockResolvedValueOnce(Response.json({ detail: "Photo scope changed", code: "stale_revision" }, { status: 412 }))
+    .mockResolvedValueOnce(Response.json({ detail: "Move refused", code }, { status }))
     .mockResolvedValueOnce(response([photo(1)]));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   await photos.previewRejects(false);
-  expect(await photos.trashRejects()).toBe(false);
-  expect(photos.rejectsError).toBe("Photo scope changed");
+  const changed = vi.fn();
+  expect(await photos.trashRejects(undefined, changed)).toBe(false);
+  expect(changed).not.toHaveBeenCalled();
+  expect(photos.rejectsError).toBe("Move refused");
   expect(photos.rejects).toBeUndefined();
   expect(await photos.trashRejects()).toBe(false);
   expect(fetcher).toHaveBeenCalledTimes(3);

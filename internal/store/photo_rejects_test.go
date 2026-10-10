@@ -207,6 +207,25 @@ func TestPhotoRejectsBeyondPageAndOverflow(t *testing.T) {
 	roots, err := s.TrashedRoots(t.Context())
 	require.NoError(t, err)
 	assert.Empty(t, roots)
+	_, err = s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{FileID: targets[1000].FileID, Revision: 2, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
+	require.NoError(t, err)
+	seedInitialAuditAuthority(t, s, s.RootID())
+	preview, err = s.PreflightPhotoRejects(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, 1000, preview.Photos)
+	assert.Equal(t, 1000, preview.Files)
+	assert.Equal(t, 2, preview.Unchanged)
+	started := time.Now()
+	moved, err := s.MovePhotoRejects(t.Context(), request, preview.Digest)
+	t.Logf("audited 1,000-photo confirmation: %s", time.Since(started))
+	require.NoError(t, err)
+	assert.Equal(t, preview, moved)
+	roots, err = s.TrashedRoots(t.Context())
+	require.NoError(t, err)
+	assert.Len(t, roots, 1000)
+	var receipts int
+	require.NoError(t, s.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM photo_change_receipts WHERE operation='trash'`).Scan(&receipts))
+	assert.Equal(t, 1000, receipts)
 }
 
 func TestPhotoRejectsHiddenScope(t *testing.T) {

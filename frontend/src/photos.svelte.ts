@@ -5,6 +5,8 @@ import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
 import { clearSelection, reconcileIDSelection, toggleIDSelection, type SelectionState } from "./selection.js";
 
 export const photoQuery: SavedQueryV1Schema = { v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "capture_time", direction: "desc" } };
+export const photoRejectsSelectionLimit = 64;
+export const photoRejectsMoveLimit = 1000;
 const densityKey = "docbank.photos.density";
 
 export function loadDensity(): Density {
@@ -140,8 +142,8 @@ export class Photos {
     this.rejectsQuery = structuredClone(photoQuery);
     if (selected) {
       const ids = [...this.selection.selectedIDs].sort();
-      if (!ids.length || ids.length > 64) {
-        this.rejectsError = "Select between 1 and 64 photos to preview selected rejects.";
+      if (!ids.length || ids.length > photoRejectsSelectionLimit) {
+        this.rejectsError = `Select between 1 and ${photoRejectsSelectionLimit} photos to preview selected rejects.`;
         return;
       }
       this.rejectsQuery.filters = { ...this.rejectsQuery.filters, asset_ids: ids };
@@ -156,7 +158,7 @@ export class Photos {
   }
 
   async trashRejects(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
-    if (this.disposed || this.trashing || this.hiding || !this.rejects?.photos || this.rejects.photos > 1000 || this.rejects.files > 1000) return false;
+    if (this.disposed || this.trashing || this.hiding || !this.rejects?.photos || this.rejects.photos > photoRejectsMoveLimit || this.rejects.files > photoRejectsMoveLimit) return false;
     if (this.rejectsScopeChanged()) {
       this.rejects = undefined;
       this.rejectsError = "Selection changed. Preview rejects again.";
@@ -176,11 +178,11 @@ export class Photos {
     } catch (cause) {
       this.rejects = undefined;
       this.rejectsFailure(cause);
-      if (!(cause instanceof APIError)) {
+      if (!(cause instanceof APIError) || cause.status >= 500 && cause.code !== "maintenance_busy") {
         this.invalidateRejectsListing();
         this.rejectsError = "The move may have completed. Refresh Photos before trying again.";
+        ontrashed?.();
       }
-      ontrashed?.();
       await this.refresh(preserve);
       return false;
     } finally { this.trashing = false; }

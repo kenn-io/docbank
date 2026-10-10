@@ -1,13 +1,13 @@
 <script lang="ts">
   import { Button, Modal, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
-  import type { Photos } from "./photos.svelte.js";
+  import { photoRejectsMoveLimit, photoRejectsSelectionLimit, type Photos } from "./photos.svelte.js";
 
   let { photos, onclose, onmove }: { photos: Photos; onclose: () => void; onmove: () => Promise<void> } = $props();
 </script>
 
 <Modal title="Move rejects to trash?" tone="danger" ariaLabel="Move rejects to trash" onclose={() => { if (!photos.trashing) onclose(); }} closeOnOverlayClick={!photos.trashing}>
-  <SelectDropdown title="Rejects scope" value={photos.rejectsSelected ? "selected" : "workspace"} options={[{ value: "workspace", label: photos.hidden ? "Hidden" : "Library" }, { value: "selected", label: `Selected photos (${photos.selection.selectedIDs.size})`, disabled: !photos.selection.selectedIDs.size || photos.selection.selectedIDs.size > 64 }]} disabled={photos.trashing || photos.rejectsLoading} onchange={value => void photos.previewRejects(value === "selected")} />
-  {#if photos.selection.selectedIDs.size > 64}<p>Close this dialog and select up to 64 photos.</p>{/if}
+  <SelectDropdown title="Rejects scope" value={photos.rejectsSelected ? "selected" : "workspace"} options={[{ value: "workspace", label: photos.hidden ? "Hidden" : "Library" }, { value: "selected", label: `Selected photos (${photos.selection.selectedIDs.size})`, disabled: !photos.selection.selectedIDs.size || photos.selection.selectedIDs.size > photoRejectsSelectionLimit }]} disabled={photos.trashing || photos.rejectsLoading} onchange={value => void photos.previewRejects(value === "selected")} />
+  {#if photos.selection.selectedIDs.size > photoRejectsSelectionLimit}<p>Close this dialog and select up to {photoRejectsSelectionLimit} photos.</p>{/if}
   {#if photos.rejectsLoading}<p role="status"><Spinner size={14} /> Counting rejects…</p>{/if}
   {#if photos.rejects}
     <p>{photos.rejects.photos.toLocaleString()} {photos.rejects.photos === 1 ? "photo" : "photos"} · {photos.rejects.files.toLocaleString()} {photos.rejects.files === 1 ? "file" : "files"} including sidecars</p>
@@ -17,14 +17,14 @@
       <ul>{#each photos.rejects.mixed as pair}<li>{pair.members.map(member => `${member.name}: ${member.flag || "undecided"}${member.in_trash ? " (in Trash)" : ""}`).join(" · ")}</li>{/each}</ul>
       {#if photos.rejects.mixed_count > photos.rejects.mixed.length}<p>And {(photos.rejects.mixed_count - photos.rejects.mixed.length).toLocaleString()} more mixed pairs.</p>{/if}
     {/if}
-    {#if photos.rejects.photos > 1000 || photos.rejects.files > 1000}<p role="alert">Select fewer photos. Each move allows up to 1,000 photos and 1,000 files.</p>{/if}
+    {#if photos.rejects.photos > photoRejectsMoveLimit || photos.rejects.files > photoRejectsMoveLimit}<p role="alert">Select fewer photos. Each move allows up to {photoRejectsMoveLimit.toLocaleString()} photos and {photoRejectsMoveLimit.toLocaleString()} files.</p>{/if}
     <p>You can restore these photos from Trash.</p>
   {/if}
   {#if photos.rejectsError}<p role="alert">{photos.rejectsError}</p>{/if}
   {#snippet footer()}
     <Button disabled={photos.trashing} onclick={onclose}>Keep in Docbank</Button>
     {#if !photos.rejects && !photos.rejectsLoading}<Button onclick={() => void photos.previewRejects(photos.rejectsSelected)}>Preview again</Button>{/if}
-    <Button tone="danger" disabled={photos.trashing || photos.rejectsLoading || !photos.rejects?.photos || photos.rejects.photos > 1000 || photos.rejects.files > 1000} onclick={() => void onmove()}>{photos.trashing ? "Moving…" : `Move ${photos.rejects?.photos ?? 0} to trash`}</Button>
+    <Button tone="danger" disabled={photos.trashing || photos.rejectsLoading || !photos.rejects?.photos || photos.rejects.photos > photoRejectsMoveLimit || photos.rejects.files > photoRejectsMoveLimit} onclick={() => void onmove()}>{photos.trashing ? "Moving…" : `Move ${photos.rejects?.photos ?? 0} to trash`}</Button>
   {/snippet}
 </Modal>
 
