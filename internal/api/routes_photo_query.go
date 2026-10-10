@@ -61,11 +61,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			if in.Body.Cursor == "" {
 				snapshot, err = snapshots.CreatePhotoRanked(ctx, owner, request)
 			} else {
-				var cursor photoRankedCursor
-				cursor, err = service.decodePhotoRankedCursor(in.Body.Cursor)
-				if err == nil {
-					snapshot, err = snapshots.PagePhotoRanked(ctx, owner, cursor.SnapshotID, cursor.Cursor, request)
-				}
+				snapshot, err = snapshots.PagePhotoRanked(ctx, owner, in.Body.Cursor, request)
 			}
 			if errors.Is(err, store.ErrSnapshotGone) {
 				err = store.ErrDocumentCursorExpired
@@ -77,7 +73,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 				page, err = d.Store.HydratePhotoRankedPage(ctx, request, snapshot)
 			}
 			if err == nil && snapshot.NextCursor != "" {
-				nextCursor, err = service.encodePhotoRankedCursor(snapshot.SnapshotID, snapshot.NextCursor)
+				nextCursor = snapshot.NextCursor
 			}
 		} else {
 			var boundary *store.PhotoBrowsePosition
@@ -273,37 +269,4 @@ func photoQualityWire(row store.PhotoBrowseRow) *PhotoQuality {
 		state = "unavailable"
 	}
 	return &PhotoQuality{State: state, Signals: row.Quality}
-}
-
-type photoRankedCursor struct {
-	Type       string `json:"type"`
-	SnapshotID string `json:"snapshot_id"`
-	Cursor     string `json:"cursor"`
-}
-
-func (service *documentQueryService) encodePhotoRankedCursor(id, offset string) (string, error) {
-	payload, err := json.Marshal(photoRankedCursor{Type: "photo-ranked-v1", SnapshotID: id, Cursor: offset})
-	if err != nil {
-		return "", err
-	}
-	cursor := service.signCursorEnvelope(payload)
-	if len(cursor) > MaxDocumentCursorBytes {
-		return "", store.ErrInvalidPhotoCursor
-	}
-	return cursor, nil
-}
-
-func (service *documentQueryService) decodePhotoRankedCursor(raw string) (photoRankedCursor, error) {
-	payload, err := service.verifyCursorEnvelope(raw)
-	if err != nil {
-		return photoRankedCursor{}, store.ErrInvalidPhotoCursor
-	}
-	var cursor photoRankedCursor
-	if err := json.Unmarshal(payload, &cursor, json.RejectUnknownMembers(true)); err != nil {
-		return cursor, store.ErrInvalidPhotoCursor
-	}
-	if cursor.Type != "photo-ranked-v1" || cursor.SnapshotID == "" || cursor.Cursor == "" {
-		return cursor, store.ErrInvalidPhotoCursor
-	}
-	return cursor, nil
 }

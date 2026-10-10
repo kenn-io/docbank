@@ -67,7 +67,8 @@
   {/if}
   <div class="photo-browser">
   <div class="photo-facets">
-    {#if photos.facetsError}<div class="photo-error" role="alert"><span>{photos.facetsError}</span></div>{/if}
+    {#if photos.facetsLoading}<div class="photo-loading" role="status"><Spinner size={14} />Loading counts…</div>{/if}
+    {#if photos.facetsError}<div class="photo-error" role="alert"><span>{photos.facetsError}</span>{#if photos.facetsRetryable}<Button size="sm" onclick={() => void photos.retryFacets()}>Retry counts</Button>{/if}</div>{/if}
     <FacetSidebar disabled={photos.loading || photos.hiding || photos.trashing} facets={photos.facets} query={photos.query} unit="photos" onchange={value => void photos.setQuery(value)} />
   </div>
   <div class="photo-results">

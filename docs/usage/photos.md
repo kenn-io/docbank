@@ -40,10 +40,10 @@ Search filenames, camera or lens names, and location labels in the Photos
 search box. Search opens in relevance order, with one tile per asset even
 when several paired files match. Choose Capture date to
 return to date browsing. Relevance keeps the ranked order across loaded
-pages and uses asset IDs to break equal-score ties. The first ranked page freezes the matching order and counts under a thirty-second build limit. Later pages read that saved order and current display facts. Snapshots expire after fifteen minutes idle or thirty minutes total; Retry rebuilds an expired search while retaining the earlier grid.
+pages and breaks equal-score ties by capture time descending, then asset ID. The first ranked page freezes the matching order under a thirty-second build limit. Later pages read that saved order and current display facts. Snapshots expire after fifteen minutes idle or thirty minutes total; Retry rebuilds an expired search while retaining the earlier grid.
 
 Camera, Lens, Year, Location, and Albums narrow the grid. Counts cover the
-whole matching library, including photos beyond the loaded page. Counts arrive with the first page. Unavailable counts show their reason; counts that exceed fixed member or byte limits require a narrower search or filters. Each facet
+whole matching library, including photos beyond the loaded page. Tiles appear before the separate count request finishes. Unavailable counts show their reason. Time, member, or byte limits require a narrower search or filters. Each facet
 omits its own selected filter while retaining search and the other filters.
 Camera, lens, year, and location describe the selected display file; year
 uses its recorded local capture date. Text may match any live member of a
@@ -362,11 +362,11 @@ Request `camera`, `lens`, `year`, `location`, or `set` facets. It returns
 `items`, the matching asset `total`, first-page `facets`, and an optional
 `next_cursor`. Facets count distinct eligible assets across the whole scope
 and omit their own root structured filter. Keep them across continuations.
-Facet time or member limits return an unavailable reason. Later pages keep that total. Start a new browse to refresh it.
+Request counts separately from tile pages, with `page_size: 1` and a time sort. Relevance pages build their frozen order without facets.
+Facet time, member, or byte limits return an unavailable reason. Later pages keep that total. Start a new browse to refresh it.
 The default page size is 50. Send the same query and page options with each
 continuation. Editing a saved query invalidates its earlier cursor. Cursors
-expire after 15 minutes. Results are live: file changes can move assets across
-the previous page boundary.
+expire after 15 minutes idle. Relevance pages retain their original order. They omit assets that become trashed or change visibility, so the total can exceed the returned rows until the snapshot expires. Other sorts read live results, so file changes can move assets across the previous page boundary.
 
 Use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`,
 `location:"Paris, Île-de-France, France"`, `iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`,

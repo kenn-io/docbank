@@ -61,7 +61,8 @@ test("photo search, whole-library facets and ordered continuation use the real v
     const next = await (await continuation).json();
     const ids = [...first.items, ...next.items].map(item => item.asset_id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toEqual([...ids].sort());
+    const order = [...first.items, ...next.items].map(item => item.capture_time ?? "");
+    expect(order).toEqual([...order].sort().reverse());
     await expect(page.getByRole("group", { name: "Lens facet" }).getByRole("button", { name: "RF 24-70mm F2.8, 5000 photos" })).toBeVisible();
     await page.waitForLoadState("networkidle");
     for (const theme of ["light", "dark"]) {

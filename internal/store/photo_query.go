@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -82,20 +83,11 @@ const (
 func (s *Store) ListPhotoAssets(
 	ctx context.Context, request PhotoBrowseRequest, boundary *PhotoBrowsePosition,
 ) (PhotoBrowsePage, error) {
-	if request.PageSize == 0 {
-		request.PageSize = DefaultDocumentCatalogPageSize
-	}
-	if request.PageSize < 1 || request.PageSize > MaxDocumentCatalogPageSize {
-		return PhotoBrowsePage{}, ErrInvalidPhotoQuery
-	}
-	dimensions, err := normalizeFacetDimensions(request.Facets, []string{compiledCameraField, compiledLensField, snapshotFacetYear, compiledLocationField, compiledSetField})
-	if err != nil {
-		return PhotoBrowsePage{}, fmt.Errorf("%w: %w", ErrInvalidPhotoQuery, err)
-	}
-	coverage, err := normalizeCoverageSelection(request.Coverage)
+	request, err := normalizePhotoBrowseRequest(request)
 	if err != nil {
 		return PhotoBrowsePage{}, err
 	}
+	dimensions, coverage := request.Facets, request.Coverage
 	var page PhotoBrowsePage
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
 		if request.Hidden {
@@ -170,7 +162,7 @@ func (s *Store) ListPhotoAssets(
 		} else if boundary != nil {
 			page.Total = boundary.Total
 		}
-		if boundary == nil {
+		if boundary == nil && len(dimensions) > 0 {
 			page.Facets, err = materializePhotoFacets(ctx, q, compiled, generation.ID, coverage, dimensions, defaultSnapshotMaterializeOptions(), nil)
 			if err != nil {
 				return err
@@ -380,7 +372,7 @@ func materializeRankedPhotoRows(ctx context.Context, q metadataQuerier, compiled
 	}
 	ranking += ` SELECT member.asset_id,n.id,v.version_id,v.blob_hash,v.size,n.revision FROM ranked member
  CROSS JOIN photo_assets a ON a.asset_id=member.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`) +
-		` ORDER BY member.tier ` + order + `,member.score ` + order + `,member.asset_id ASC`
+		` ORDER BY member.tier ` + order + `,member.score ` + order + `,COALESCE(p.capture_sort_key,'') DESC,member.asset_id ASC`
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{sql: ranking, args: args, relations: population.relations}, coverage, generation)
 	if err != nil {
 		return err
@@ -499,7 +491,7 @@ func photoRankedIdentity(request PhotoBrowseRequest) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func normalizePhotoRankedRequest(request PhotoBrowseRequest) (PhotoBrowseRequest, error) {
+func normalizePhotoBrowseRequest(request PhotoBrowseRequest) (PhotoBrowseRequest, error) {
 	if request.PageSize == 0 {
 		request.PageSize = DefaultDocumentCatalogPageSize
 	}
@@ -519,7 +511,7 @@ func normalizePhotoRankedRequest(request PhotoBrowseRequest) (PhotoBrowseRequest
 }
 
 func (s *Store) materializePhotoRankedSnapshot(ctx context.Context, request PhotoBrowseRequest, options snapshotMaterializeOptions) (SnapshotProjection, error) {
-	request, err := normalizePhotoRankedRequest(request)
+	request, err := normalizePhotoBrowseRequest(request)
 	if err != nil {
 		return SnapshotProjection{}, err
 	}
@@ -560,10 +552,6 @@ func (s *Store) materializePhotoRankedSnapshot(ctx context.Context, request Phot
 			return err
 		}
 		projection.MemberHash = snapshotMemberHash(snapshotMembers(projection.Rows))
-		projection.Facets, err = materializePhotoFacets(ctx, q, compiled, generation.ID, request.Coverage, request.Facets, options, &projection.SerializedBytes)
-		if err != nil {
-			return err
-		}
 		projection.SnapshotFingerprint, err = snapshotProjectionFingerprint(projection)
 		if err != nil {
 			return err
@@ -577,12 +565,16 @@ func (s *Store) materializePhotoRankedSnapshot(ctx context.Context, request Phot
 	return projection, err
 }
 
-func (s *QuerySnapshotService) PagePhotoRanked(ctx context.Context, owner, id, cursor string, request PhotoBrowseRequest) (SnapshotPage, error) {
-	request, err := normalizePhotoRankedRequest(request)
+func (s *QuerySnapshotService) PagePhotoRanked(ctx context.Context, owner, cursor string, request PhotoBrowseRequest) (SnapshotPage, error) {
+	request, err := normalizePhotoBrowseRequest(request)
 	if err != nil {
 		return SnapshotPage{}, err
 	}
-	page, err := s.Page(ctx, owner, id, cursor)
+	payload, err := s.decodeCursor(owner, cursor)
+	if err != nil {
+		return SnapshotPage{}, err
+	}
+	page, err := s.Page(ctx, owner, payload.SnapshotID, cursor)
 	if err != nil {
 		return SnapshotPage{}, err
 	}
@@ -593,14 +585,21 @@ func (s *QuerySnapshotService) PagePhotoRanked(ctx context.Context, owner, id, c
 	if identity != page.QueryFingerprint {
 		return SnapshotPage{}, ErrInvalidPhotoCursor
 	}
-	return page, nil
+	err = s.store.withLexicalGenerationRead(ctx, func(q metadataQuerier, _ LexicalGeneration) error {
+		compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: q})
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(compiled.Dependencies, page.Dependencies) {
+			return ErrInvalidPhotoCursor
+		}
+		return nil
+	})
+	return page, err
 }
 
 func (s *Store) HydratePhotoRankedPage(ctx context.Context, request PhotoBrowseRequest, snapshot SnapshotPage) (PhotoBrowsePage, error) {
 	page := PhotoBrowsePage{Total: snapshot.Total, Items: make([]PhotoBrowseRow, 0)}
-	if snapshot.PrevCursor == "" {
-		page.Facets = snapshot.Facets
-	}
 	err := s.withLexicalGenerationRead(ctx, func(q metadataQuerier, _ LexicalGeneration) error {
 		if request.Hidden {
 			if _, err := s.hiddenSession(ctx, q); err != nil {

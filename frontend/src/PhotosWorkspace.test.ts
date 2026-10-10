@@ -35,7 +35,7 @@ it("keeps failed confirmation visible and closes after cancellation or success",
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3)], total: 3 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-3", revision: 2 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(2)], total: 1 })));
-  vi.stubGlobal("fetch", fetcher);
+  vi.stubGlobal("fetch", (url: string, init: RequestInit) => url.endsWith("/photos/assets/query") && JSON.parse(init.body as string).page_size === 1 ? Promise.resolve(Response.json({ facets: [] })) : fetcher(url, init));
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();
   const cache = new PhotoPreviewCache("scoped", vi.fn());
@@ -66,7 +66,7 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(1), photo(2)], total: 3, next_cursor: "next" })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Page unavailable" }), { status: 503 }))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3, "2024-01-01T12:00:00")], total: 3 })));
-  vi.stubGlobal("fetch", fetcher);
+  vi.stubGlobal("fetch", (url: string, init: RequestInit) => JSON.parse(init.body as string).page_size === 1 ? Promise.resolve(new Response(JSON.stringify({ facets: [] }))) : fetcher(url, init));
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const view = render(PhotosWorkspace, { photos, cache });
@@ -205,7 +205,7 @@ it("keeps loading pages that add no rows and keeps the top photo across density 
   const page = (rows: typeof items, cursor?: string) => new Response(JSON.stringify({ items: rows, total: 60, next_cursor: cursor }));
   const fetcher = vi.fn().mockResolvedValueOnce(page(items.slice(0, 2), "repeat")).mockResolvedValueOnce(page(items.slice(0, 2), "rest"))
     .mockResolvedValueOnce(page(items.slice(2)));
-  vi.stubGlobal("fetch", fetcher);
+  vi.stubGlobal("fetch", (url: string, init: RequestInit) => JSON.parse(init.body as string).facets.length ? Promise.resolve(new Response(JSON.stringify({ facets: [] }))) : fetcher(url, init));
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotosWorkspace, { photos, cache });
@@ -249,11 +249,11 @@ it("keeps import guidance after clearing an empty search and recognizes numeric 
 it("explains fixed count limits without offering retry", async () => {
   const reason = "byte_budget_exceeded";
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [], total: 0, facets: [{ dimension: "camera", available: false, reason }] }))));
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => new Response(JSON.stringify(JSON.parse(init.body as string).facets.length ? { facets: [{ dimension: "camera", available: false, reason }] } : { items: [], total: 0 }))));
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotosWorkspace, { photos, cache });
-  await screen.findByText("Photo counts exceed the library's size limit. Narrow your search or filters.");
+  await screen.findByText("Photo counts exceed the query's limits. Narrow your search or filters.");
   expect(screen.queryByRole("button", { name: "Retry counts" })).toBeNull();
   photos.dispose(); await cache.dispose();
 });

@@ -189,7 +189,7 @@ it.each(["page failure", "count retry"])("recovers pending photo counts after wo
     await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
     await screen.findByText("Temporary page failure");
   } else {
-    counts[0].finish(new Response(JSON.stringify({ facets: [{ dimension: "camera", available: false, reason: "time_budget_exceeded" }] })));
+    counts[0].finish(new Response(JSON.stringify({ detail: "Temporary counts failure" }), { status: 503 }));
     await fireEvent.click(await screen.findByRole("button", { name: "Retry counts" }));
     await waitFor(() => expect(counts).toHaveLength(2));
   }

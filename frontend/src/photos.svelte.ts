@@ -21,7 +21,9 @@ export function loadDensity(): Density {
 export class Photos {
   query = $state<Query>(parseQuery(canonicalQuery(photoQuery)));
   facets = $state<SnapshotPage["facets"]>([]);
+  facetsLoading = $state(false);
   facetsError = $state("");
+  facetsRetryable = $state(true);
   items = $state<PhotoBrowseRow[]>([]);
   total = $state(0);
   cursor = $state<string | undefined>();
@@ -40,6 +42,8 @@ export class Photos {
   private expired = false;
   private replacement: "refresh" | "expiry" | undefined;
   private controller = new AbortController();
+  private facetsController = new AbortController();
+  private needsFacets = false;
   private disposed = false;
 
   constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false) {}
@@ -49,7 +53,7 @@ export class Photos {
     this.cancelPending();
     try { this.query = parseQuery(canonicalQuery(query)); } catch (cause) { this.error = cause instanceof Error ? cause.message : String(cause); return; }
     this.items = []; this.facets = []; this.total = 0; this.cursor = undefined;
-    this.facetsError = "";
+    this.facetsError = ""; this.needsFacets = false;
     this.started = false; this.error = ""; this.expired = false; this.replacement = undefined;
     this.scrollTop = 0; this.clearSelection();
     return this.loadMore();
@@ -66,7 +70,7 @@ export class Photos {
     const controller = this.controller;
     try {
       const first = !this.started;
-      const page = await listPhotoAssets({ query: this.query, hidden: this.hidden, facets: [...photoFacets], page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
+      const page = await listPhotoAssets({ query: this.query, hidden: this.hidden, facets: [], page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
       if (controller.signal.aborted) return;
       const seen = new Set(this.items.map(item => item.asset_id));
       const restore = preserve?.();
@@ -78,8 +82,8 @@ export class Photos {
       this.total = page.total;
       this.cursor = page.next_cursor;
       this.started = true;
-      if (first) this.setFacets(page.facets);
       await restore?.();
+      if (first && !controller.signal.aborted) { this.needsFacets = true; void this.retryFacets(); }
     } catch (cause) {
       if (controller.signal.aborted) return;
       if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
@@ -126,13 +130,17 @@ export class Photos {
     if (this.disposed) return;
     this.controller.abort();
     this.controller = new AbortController();
+    this.facetsController.abort();
+    this.facetsLoading = false;
     this.loading = false;
   }
 
   resume(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.error) return;
+    const counts = this.needsFacets && !this.facetsError ? this.retryFacets() : undefined;
+    if (this.error) return counts;
     if (this.replacement) return this.retry(preserve);
     if (!this.started) return this.loadMore(preserve);
+    return counts;
   }
 
   retry(preserve?: () => (() => Promise<void>) | undefined) {
@@ -159,14 +167,12 @@ export class Photos {
     const candidate = new Map<string, PhotoBrowseRow>();
     let cursor: string | undefined;
     let total = 0;
-    let facets: SnapshotPage["facets"] = [];
     let reachedPrefix = !count;
     try {
       do {
         signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
-        const page = await listPhotoAssets({ query: this.query, hidden: this.hidden, facets: [...photoFacets], page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
+        const page = await listPhotoAssets({ query: this.query, hidden: this.hidden, facets: [], page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
         if (signal.aborted) throw signal.reason;
-        if (!cursor) facets = (page.facets ?? []) as SnapshotPage["facets"];
         const reachedPreviously = reachedPrefix;
         for (const item of page.items) candidate.set(item.asset_id, item);
         reachedPrefix ||= (!!tail && candidate.has(tail)) || candidate.size >= count;
@@ -178,13 +184,14 @@ export class Photos {
       const restore = preserve?.();
       this.items = [...candidate.values()];
       this.total = total;
-      this.setFacets(facets);
+      this.facets = []; this.facetsError = "";
       this.cursor = cursor;
       this.started = true;
       this.selection = reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...this.trashTargets.map(item => item.asset_id)]));
       this.expired = false;
       this.replacement = undefined;
       await restore?.();
+      if (!controller.signal.aborted) { this.needsFacets = true; void this.retryFacets(); }
     } catch (cause) {
       if (controller.signal.aborted) return;
       if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
@@ -241,11 +248,32 @@ export class Photos {
     } finally { this[action] = false; }
   }
 
-  private setFacets(facets: unknown) {
-    this.facets = (facets ?? []) as SnapshotPage["facets"];
-    const unavailable = this.facets.filter(facet => !facet.available);
-    this.facetsError = unavailable.length ? unavailable.some(facet => facet.reason === "member_budget_exceeded" || facet.reason === "byte_budget_exceeded")
-      ? "Photo counts exceed the library's size limit. Narrow your search or filters." : "Some photo counts couldn't be loaded." : "";
+  async retryFacets() {
+    if (this.disposed || !this.started || this.facetsLoading) return;
+    this.facetsController.abort();
+    const controller = this.facetsController = new AbortController();
+    this.needsFacets = true;
+    this.facetsLoading = true; this.facetsError = ""; this.facetsRetryable = true;
+    const query = parseQuery(canonicalQuery(this.query));
+    query.sort = { field: "capture_time", direction: "desc" };
+    try {
+      const page = await listPhotoAssets({ query, hidden: this.hidden, facets: [...photoFacets], page_size: 1 }, { session: this.session, signal: controller.signal });
+      if (controller.signal.aborted) return;
+      this.facets = (page.facets ?? []) as SnapshotPage["facets"];
+      this.needsFacets = false;
+      const unavailable = this.facets.filter(facet => !facet.available);
+      if (unavailable.length) {
+        this.facetsRetryable = unavailable.some(facet => facet.reason !== "member_budget_exceeded" && facet.reason !== "byte_budget_exceeded" && facet.reason !== "time_budget_exceeded");
+        this.facetsError = this.facetsRetryable ? "Some photo counts couldn't be loaded." : "Photo counts exceed the query's limits. Narrow your search or filters.";
+      }
+    } catch (cause) {
+      if (controller.signal.aborted) return;
+      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
+      this.needsFacets = false;
+      this.facetsError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (!controller.signal.aborted) this.facetsLoading = false;
+    }
   }
 
   select(id: string, event: MouseEvent, orderedIDs: string[]) {
@@ -284,5 +312,5 @@ export class Photos {
 
   clearSelection() { this.selection = clearSelection<string>(); this.trashTargets = []; }
   selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
-  dispose() { this.disposed = true; this.controller.abort(); }
+  dispose() { this.disposed = true; this.controller.abort(); this.facetsController.abort(); }
 }

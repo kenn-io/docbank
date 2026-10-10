@@ -101,7 +101,6 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 					b.ReportMetric(float64(available), "available-facets")
 				}
 			})
-			request.Facets = []string{"camera", "lens", "year", "location", "set"}
 			b.Run("ranked/first", func(b *testing.B) {
 				b.ReportAllocs()
 				for range b.N {
@@ -111,7 +110,7 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 					require.NoError(b, err)
 					require.Len(b, page.Items, 50)
 					require.Equal(b, int64(assetCount), page.Total)
-					require.Len(b, page.Facets, 5)
+					require.Empty(b, page.Facets)
 				}
 			})
 			first, err := service.CreatePhotoRanked(ctx, "benchmark", request)
@@ -119,7 +118,7 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 			b.Run("ranked/later", func(b *testing.B) {
 				b.ReportAllocs()
 				for range b.N {
-					snapshot, err := service.PagePhotoRanked(ctx, "benchmark", first.SnapshotID, first.NextCursor, request)
+					snapshot, err := service.PagePhotoRanked(ctx, "benchmark", first.NextCursor, request)
 					require.NoError(b, err)
 					page, err := s.HydratePhotoRankedPage(ctx, request, snapshot)
 					require.NoError(b, err)
