@@ -28,7 +28,7 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 	for _, flag := range []string{"hidden", "coverage", "profile-fingerprint"} {
 		require.Nil(t, command.Flags().Lookup(flag))
 	}
-	preview := api.PhotoRejectsPreflight{Photos: 1001, Files: 1001, Targets: []store.PhotoRejectTarget{{AssetID: "11111111-1111-4111-8111-111111111111", Revision: 7, MemberRevision: 11}}, Mixed: []store.PhotoRejectMixed{}}
+	preview := api.PhotoRejectsPreflight{Photos: 1001, Files: 1001, Targets: []store.PhotoRejectTarget{{AssetID: "11111111-1111-4111-8111-111111111111", Revision: 7}}, Mixed: []store.PhotoRejectMixed{}}
 	for group := range store.MaxPhotoRejectsMixed {
 		mixed := store.PhotoRejectMixed{AssetID: fmt.Sprintf("22222222-2222-4222-8222-%012d", group)}
 		for i := range 256 {

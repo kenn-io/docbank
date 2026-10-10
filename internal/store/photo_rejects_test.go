@@ -46,7 +46,7 @@ func TestPhotoRejectsPreviewDuringWrite(t *testing.T) {
 
 func TestPhotoRejectsStaleTargets(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"flag", "flag reread", "flag restored", "added", "removed", "trash", "restore", "hidden", "unhidden", "revision"} {
+	for _, change := range []string{"flag", "flag reread", "added", "removed", "trash", "hidden", "unhidden", "revision"} {
 		t.Run(change, func(t *testing.T) {
 			s := newTestStore(t)
 			asset := authoredPair(t, s)
@@ -65,24 +65,14 @@ func TestPhotoRejectsStaleTargets(t *testing.T) {
 					request.Hidden = true
 				}
 			}
-			if change == "restore" {
-				node, err := s.NodeByID(ctx, fileByRole(asset.Files, PhotoRoleImage).NodeID)
-				require.NoError(t, err)
-				_, _, err = s.Trash(ctx, node.ID, node.Revision)
-				require.NoError(t, err)
-			}
 			preview, err := s.PreflightPhotoRejects(ctx, request)
 			require.NoError(t, err)
 			require.Len(t, preview.Targets, 1)
 			asset, err = s.PhotoAssetByID(ctx, asset.ID)
 			require.NoError(t, err)
 			switch change {
-			case "flag", "flag restored":
+			case "flag":
 				_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
-				require.NoError(t, err)
-				if change == "flag restored" {
-					_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision + 1, Patch: PhotoAuthoredPatch{Flag: new("reject")}}})
-				}
 			case "flag reread":
 				_, err = s.db.Exec(`UPDATE photo_files SET flag='pick' WHERE file_id=?`, asset.Files[0].ID)
 			case "added":
@@ -92,13 +82,12 @@ func TestPhotoRejectsStaleTargets(t *testing.T) {
 			case "removed":
 				_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
 			case "trash":
-				node, readErr := s.NodeByID(ctx, asset.Files[0].NodeID)
-				require.NoError(t, readErr)
-				_, _, err = s.Trash(ctx, node.ID, node.Revision)
-			case "restore":
-				node, readErr := s.NodeByID(ctx, fileByRole(asset.Files, PhotoRoleImage).NodeID)
-				require.NoError(t, readErr)
-				_, _, err = s.Restore(ctx, node.ID, node.Revision)
+				for _, file := range asset.Files {
+					node, readErr := s.NodeByID(ctx, file.NodeID)
+					require.NoError(t, readErr)
+					_, _, err = s.Trash(ctx, node.ID, node.Revision)
+					require.NoError(t, err)
+				}
 			case "hidden", "unhidden":
 				_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, change == "hidden")
 			case "revision":
@@ -217,6 +206,18 @@ func TestPhotoRejectsFileBound(t *testing.T) {
 		for _, target := range preview.Targets {
 			assert.Less(t, target.AssetID, lastID)
 		}
+		var extraID string
+		require.NoError(t, s.db.QueryRow(`SELECT MAX(asset_id) FROM photo_files WHERE asset_id<>?`, lastID).Scan(&extraID))
+		extra, err := s.PhotoAssetByID(t.Context(), extraID)
+		require.NoError(t, err)
+		oversized := append([]PhotoRejectTarget{}, preview.Targets...)
+		oversized = append(oversized, PhotoRejectTarget{extra.ID, extra.Revision})
+		_, err = s.MovePhotoRejects(t.Context(), false, oversized)
+		require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+		require.ErrorContains(t, err, "at most 1000 live files")
+		unchanged, err := s.TrashedRoots(t.Context())
+		require.NoError(t, err)
+		assert.Len(t, unchanged, 2)
 		_, err = s.MovePhotoRejects(t.Context(), false, preview.Targets)
 		require.NoError(t, err)
 		preview, err = s.PreflightPhotoRejects(t.Context(), PhotoRejectsRequest{Query: value})
@@ -234,7 +235,7 @@ func TestPhotoRejectsFileBound(t *testing.T) {
 
 func TestPhotoRejectsRollbackAllAssets(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"failure", "asset", "member"} {
+	for _, change := range []string{"failure", "asset"} {
 		t.Run(change, func(t *testing.T) {
 			s := newTestStore(t)
 			for i := range 2 {
@@ -250,9 +251,6 @@ func TestPhotoRejectsRollbackAllAssets(t *testing.T) {
 			trigger := `CREATE TRIGGER fail_second_trash BEFORE UPDATE OF trashed_at ON nodes WHEN NEW.trashed_at IS NOT NULL AND (SELECT COUNT(*) FROM nodes WHERE trashed_at IS NOT NULL)>0 BEGIN SELECT RAISE(ABORT,'synthetic trash failure'); END`
 			if change != "failure" {
 				update := `UPDATE photo_assets SET revision=revision+1 WHERE asset_id=(SELECT MAX(asset_id) FROM photo_assets);`
-				if change == "member" {
-					update = `UPDATE nodes SET revision=revision+1 WHERE id=(SELECT node_id FROM photo_files ORDER BY asset_id DESC LIMIT 1);`
-				}
 				trigger = `CREATE TRIGGER stale_second_photo AFTER UPDATE OF trashed_at ON nodes WHEN NEW.trashed_at IS NOT NULL BEGIN ` + update + ` END`
 			}
 			_, err = s.db.Exec(trigger)

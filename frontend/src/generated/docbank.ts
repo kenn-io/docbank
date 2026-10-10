@@ -3707,8 +3707,6 @@ export interface MovePathRequest {
 export interface PhotoRejectTarget {
   asset_id: string;
   /** @minimum 1 */
-  member_revision: number;
-  /** @minimum 1 */
   revision: number;
 }
 

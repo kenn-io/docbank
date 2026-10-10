@@ -12029,10 +12029,6 @@ components:
         asset_id:
           format: uuid
           type: string
-        member_revision:
-          format: int64
-          minimum: 1
-          type: integer
         revision:
           format: int64
           minimum: 1
@@ -12040,7 +12036,6 @@ components:
       required:
         - asset_id
         - revision
-        - member_revision
       type: object
       x-go-type: store.PhotoRejectTarget
       x-go-type-import:

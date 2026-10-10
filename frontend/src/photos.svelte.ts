@@ -39,6 +39,7 @@ export class Photos {
   private expired = false;
   private replacement: "refresh" | "expiry" | undefined;
   private controller = new AbortController();
+  private rejectsController = new AbortController();
   private disposed = false;
 
   constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false) {}
@@ -113,6 +114,7 @@ export class Photos {
     this.controller.abort();
     this.controller = new AbortController();
     this.loading = false;
+    this.rejectsController.abort();
     this.rejectsLoading = false;
   }
 
@@ -149,12 +151,13 @@ export class Photos {
       query.filters = { ...query.filters, asset_ids: ids };
     }
     this.rejectsLoading = true;
-    const controller = this.controller;
+    this.rejectsController.abort();
+    const controller = this.rejectsController = new AbortController();
     try {
       const result = await preflightPhotoRejects({ query, hidden: this.hidden }, { session: this.session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]) });
       if (!controller.signal.aborted) this.rejects = result;
     } catch (cause) { if (!controller.signal.aborted) this.rejectsFailure(cause); }
-    finally { if (!controller.signal.aborted) this.rejectsLoading = false; }
+    finally { if (this.rejectsController === controller) this.rejectsLoading = false; }
   }
 
   async trashRejects(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
@@ -312,12 +315,12 @@ export class Photos {
     this.trashTargets = this.trashTargets.filter(item => item.asset_id !== id);
     const ids = new Set(this.selection.selectedIDs);
     ids.delete(id);
-    this.selection = { selectedIDs: ids, anchorID: this.selection.anchorID === id ? undefined : this.selection.anchorID };
+    this.selection = { selectedIDs: ids, anchorID: undefined };
   }
 
   private pruneTrashTargets() { this.trashTargets = this.trashTargets.filter(item => this.selection.selectedIDs.has(item.asset_id)); }
 
   clearSelection() { this.selection = clearSelection<string>(); this.trashTargets = []; }
   selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
-  dispose() { this.disposed = true; this.controller.abort(); }
+  dispose() { this.disposed = true; this.controller.abort(); this.rejectsController.abort(); }
 }

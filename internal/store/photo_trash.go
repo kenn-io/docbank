@@ -16,23 +16,27 @@ func (s *Store) TrashPhotoAsset(ctx context.Context, assetID string, revision in
 		if err != nil {
 			return err
 		}
-		asset, err = s.trashPhotoAssetTx(ctx, tx, current)
+		var trashed int
+		asset, trashed, err = s.trashPhotoAssetTx(ctx, tx, current)
+		if err == nil && trashed == 0 {
+			return fmt.Errorf("%w: photo has no live files to trash", ErrInvalidPhotoAsset)
+		}
 		return err
 	})
 	return asset, err
 }
 
-func (s *Store) trashPhotoAssetTx(ctx context.Context, tx *sql.Tx, asset PhotoAsset) (PhotoAsset, error) {
+func (s *Store) trashPhotoAssetTx(ctx context.Context, tx *sql.Tx, asset PhotoAsset) (PhotoAsset, int, error) {
 	active, err := auditAuthorityActiveTx(ctx, tx)
 	if err != nil {
-		return PhotoAsset{}, err
+		return PhotoAsset{}, 0, err
 	}
-	changed := false
+	trashed := 0
 	now := nowRFC3339()
 	for _, file := range asset.Files {
 		n, err := nodeByIDTx(tx, file.NodeID)
 		if err != nil {
-			return PhotoAsset{}, err
+			return PhotoAsset{}, 0, err
 		}
 		if n.TrashedAt != nil {
 			continue
@@ -43,14 +47,15 @@ func (s *Store) trashPhotoAssetTx(ctx context.Context, tx *sql.Tx, asset PhotoAs
 			err = s.trashNodeTx(tx, n, now)
 		}
 		if err != nil {
-			return PhotoAsset{}, err
+			return PhotoAsset{}, 0, err
 		}
-		changed = true
+		trashed++
 	}
-	if !changed {
-		return PhotoAsset{}, fmt.Errorf("%w: photo has no live files to trash", ErrInvalidPhotoAsset)
+	if trashed == 0 {
+		return PhotoAsset{}, 0, nil
 	}
-	return commitPhotoAssetTx(ctx, tx, asset, asset, "trash")
+	result, err := commitPhotoAssetTx(ctx, tx, asset, asset, "trash")
+	return result, trashed, err
 }
 
 type photoTrashGroup struct {

@@ -50,9 +50,8 @@ func (s *Store) PreflightPhotoRejects(ctx context.Context, request PhotoRejectsR
 }
 
 type PhotoRejectTarget struct {
-	AssetID        string `json:"asset_id" format:"uuid"`
-	Revision       int64  `json:"revision" minimum:"1"`
-	MemberRevision int64  `json:"member_revision" minimum:"1"`
+	AssetID  string `json:"asset_id" format:"uuid"`
+	Revision int64  `json:"revision" minimum:"1"`
 }
 
 type PhotoRejectsMoved struct {
@@ -67,7 +66,7 @@ func (s *Store) MovePhotoRejects(ctx context.Context, hidden bool, targets []Pho
 	}
 	seen := make(map[string]bool, len(targets))
 	for _, target := range targets {
-		if validateUUIDv4(target.AssetID) != nil || target.Revision < 1 || target.MemberRevision < 1 || seen[target.AssetID] {
+		if validateUUIDv4(target.AssetID) != nil || target.Revision < 1 || seen[target.AssetID] {
 			return out, fmt.Errorf("%w: invalid rejects target", ErrInvalidPhotoAsset)
 		}
 		seen[target.AssetID] = true
@@ -91,32 +90,21 @@ func (s *Store) MovePhotoRejects(ctx context.Context, hidden bool, targets []Pho
 			if (asset.HiddenAt != nil) != hidden {
 				return stale
 			}
-			var memberRevision int64
 			for _, file := range asset.Files {
 				if file.Role != PhotoRoleSidecar && file.Flag != "reject" {
 					return stale
 				}
-				node, err := nodeByIDTx(tx, file.NodeID)
-				if errors.Is(err, ErrNotFound) {
-					return stale
-				}
-				if err != nil {
-					return err
-				}
-				memberRevision += node.Revision
-				if node.TrashedAt == nil {
-					live++
-				}
 			}
-			// Ordinary member trash advances node revisions without advancing the asset.
-			if memberRevision != target.MemberRevision {
+			_, trashed, err := s.trashPhotoAssetTx(ctx, tx, asset)
+			if err != nil {
+				return err
+			}
+			if trashed == 0 {
 				return stale
 			}
+			live += trashed
 			if live > MaxPhotoRejectsMove {
 				return fmt.Errorf("%w: at most %d live files", ErrInvalidPhotoAsset, MaxPhotoRejectsMove)
-			}
-			if _, err := s.trashPhotoAssetTx(ctx, tx, asset); err != nil {
-				return err
 			}
 			out.Moved = append(out.Moved, asset.ID)
 		}
@@ -134,7 +122,6 @@ type photoRejectMember struct {
 	FileID        string
 	Role          string
 	Flag          string
-	NodeRevision  int64
 	TrashedAt     *string
 	Name          string
 }
@@ -156,7 +143,7 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 		return out, err
 	}
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{
-		sql: `SELECT a.asset_id,a.revision,member.file_id,member.role,member.flag,mn.revision,mn.trashed_at,mn.name FROM ` + photoBrowseDisplayFrom + `
+		sql: `SELECT a.asset_id,a.revision,member.file_id,member.role,member.flag,mn.trashed_at,mn.name FROM ` + photoBrowseDisplayFrom + `
  CROSS JOIN photo_files member ON member.asset_id=a.asset_id
  CROSS JOIN nodes mn ON mn.id=member.node_id WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(request.Hidden) + ` AND ` + match.sql + ` ORDER BY a.asset_id,member.file_id`,
 		args: match.args, relations: match.relations,
@@ -176,10 +163,8 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 			return
 		}
 		out.Unchanged++
-		var memberRevision int64
 		originals, rejected, live := 0, 0, 0
 		for _, member := range members {
-			memberRevision += member.NodeRevision
 			if member.TrashedAt == nil {
 				live++
 			}
@@ -199,7 +184,7 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 			out.Files += live
 			batchFiles += live
 			if batchFiles <= MaxPhotoRejectsMove {
-				out.Targets = append(out.Targets, PhotoRejectTarget{members[0].AssetID, members[0].AssetRevision, memberRevision})
+				out.Targets = append(out.Targets, PhotoRejectTarget{members[0].AssetID, members[0].AssetRevision})
 			}
 		} else {
 			out.MixedCount++
@@ -216,7 +201,7 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 	}
 	for rows.Next() {
 		var member photoRejectMember
-		if err := rows.Scan(&member.AssetID, &member.AssetRevision, &member.FileID, &member.Role, &member.Flag, &member.NodeRevision, &member.TrashedAt, &member.Name); err != nil {
+		if err := rows.Scan(&member.AssetID, &member.AssetRevision, &member.FileID, &member.Role, &member.Flag, &member.TrashedAt, &member.Name); err != nil {
 			return out, err
 		}
 		if len(members) > 0 && member.AssetID != members[0].AssetID {
