@@ -291,3 +291,33 @@ func TestPhotoRejectsRetainedEditAndMixedBound(t *testing.T) {
 	_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
 	require.NoError(t, err)
 }
+
+func TestPhotoRejectsTrashedOriginalStillCounts(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := authoredPair(t, s)
+	raw, image := fileByRole(asset.Files, PhotoRoleRAW), fileByRole(asset.Files, PhotoRoleImage)
+	_, err := s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{
+		{FileID: raw.ID, Revision: raw.Revision, Patch: PhotoAuthoredPatch{Flag: new("reject")}},
+		{FileID: image.ID, Revision: image.Revision, Patch: PhotoAuthoredPatch{Flag: new("pick")}},
+	})
+	require.NoError(t, err)
+	node, err := s.NodeByID(t.Context(), image.NodeID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
+	require.NoError(t, err)
+	value, err := query.Parse([]byte(`{}`))
+	require.NoError(t, err)
+	request := PhotoRejectsRequest{Query: value}
+	preview, err := s.PreflightPhotoRejects(t.Context(), request)
+	require.NoError(t, err)
+	assert.Zero(t, preview.Photos)
+	assert.Equal(t, 1, preview.Unchanged)
+	require.Len(t, preview.Mixed, 1)
+	assert.Contains(t, preview.Mixed[0].Members, PhotoRejectMember{image.ID, node.Name, "pick"})
+	_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
+	require.NoError(t, err)
+	live, err := s.NodeByID(t.Context(), raw.NodeID)
+	require.NoError(t, err)
+	assert.Nil(t, live.TrashedAt)
+}

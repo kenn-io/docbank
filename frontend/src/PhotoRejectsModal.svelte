@@ -6,7 +6,8 @@
 </script>
 
 <Modal title="Move rejects to trash?" tone="danger" ariaLabel="Move rejects to trash" onclose={() => { if (!photos.trashing) onclose(); }} closeOnOverlayClick={!photos.trashing}>
-  <SelectDropdown title="Rejects scope" value={photos.rejectsSelected ? "selected" : "workspace"} options={[{ value: "workspace", label: photos.hidden ? "Hidden" : "Library" }, { value: "selected", label: `Selected photos (${photos.selection.selectedIDs.size})` }]} disabled={photos.trashing || photos.rejectsLoading} onchange={value => void photos.previewRejects(value === "selected")} />
+  <SelectDropdown title="Rejects scope" value={photos.rejectsSelected ? "selected" : "workspace"} options={[{ value: "workspace", label: photos.hidden ? "Hidden" : "Library" }, { value: "selected", label: `Selected photos (${photos.selection.selectedIDs.size})`, disabled: !photos.selection.selectedIDs.size || photos.selection.selectedIDs.size > 64 }]} disabled={photos.trashing || photos.rejectsLoading} onchange={value => void photos.previewRejects(value === "selected")} />
+  {#if photos.selection.selectedIDs.size > 64}<p>Close this dialog and select up to 64 photos.</p>{/if}
   {#if photos.rejectsLoading}<p role="status"><Spinner size={14} /> Counting rejects…</p>{/if}
   {#if photos.rejects}
     <p>{photos.rejects.photos.toLocaleString()} {photos.rejects.photos === 1 ? "photo" : "photos"} · {photos.rejects.files.toLocaleString()} {photos.rejects.files === 1 ? "file" : "files"} including sidecars</p>
