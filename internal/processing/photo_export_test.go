@@ -199,7 +199,7 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 	binary.LittleEndian.PutUint32(exif[gpsPointer:], uint32(gpsOffset))
 	external := gpsOffset + 18
 	writeSyntheticTIFFIFD(exif, gpsOffset, []syntheticTIFFEntry{tiffASCII(0x001b, "GPS-PAYLOAD")}, &external)
-	packet := []byte(photoSidecarHeader + ` xmp:Rating="5" dc:description="Old caption" xmlns:exif="http://ns.adobe.com/exif/1.0/" exif:GPSLatitude="12,34N" xmlns:keep="https://example.org/photo/" keep:Lens="Synthetic lens"><exif:Orientation>6</exif:Orientation>` + photoSidecarFooter)
+	packet := []byte("\xef\xbb\xbf" + photoSidecarHeader + ` xmp:Rating="5" dc:description="Old caption" xmlns:exif="http://ns.adobe.com/exif/1.0/" exif:GPSLatitude="12,34N" xmlns:keep="https://example.org/photo/" keep:Lens="Synthetic lens"><exif:Orientation>6</exif:Orientation>` + photoSidecarFooter)
 	input := store.PhotoExportInput{Authored: store.PhotoAuthored{Confirmed: store.PhotoConfirmedAll, Flag: "reject"}, Keywords: []string{"landscape", "reviewed"}}
 	receipt := bundle.PhotoRenderReceipt{Profile: bundle.PhotoRenderProfile{RemoveGPS: true}, Width: 2, Height: 3}
 	merged, err := mergePhotoXMP(t.Context(), packet, input, receipt)

@@ -161,7 +161,6 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 	}
 	pixels := io.ReadSeeker(bytes.NewReader(data))
 	format := visualPreviewFormat(input.MediaType)
-	containerOrientation := 0
 	if format == "raw" {
 		locations, malformed, err := visualPreviewRAWLocations(bytes.NewReader(data), input.MediaType, int64(len(data)))
 		if err != nil {
@@ -202,7 +201,7 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 		receipt.EmbeddedPreview = true
 		return encodePhotoExport(ctx, decoded, orientation, packets, input, receipt)
 	}
-	decoded, orientation, err := decodePhotoExport(ctx, pixels, format, containerOrientation, packets, budget)
+	decoded, orientation, err := decodePhotoExport(ctx, pixels, format, 0, packets, budget)
 	if err != nil {
 		return nil, receipt, err
 	}

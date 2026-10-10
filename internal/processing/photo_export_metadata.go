@@ -501,7 +501,7 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 	if len(packet) > maxPhotoSidecarBytes {
 		return nil, bundle.ErrLimit
 	}
-	decoder := xml.NewDecoder(bytes.NewReader(packet))
+	decoder := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(packet, []byte{0xef, 0xbb, 0xbf})))
 	var out bytes.Buffer
 	encoder := xml.NewEncoder(&out)
 	clearLegacyReject := input.Authored.Confirmed&store.PhotoConfirmedFlag != 0 && input.Authored.Flag != "reject" && input.Authored.Confirmed&store.PhotoConfirmedRating == 0
