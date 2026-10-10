@@ -89,14 +89,7 @@ func runMCP(cmd *cobra.Command) (retErr error) {
 		if err != nil {
 			return err
 		}
-		cfg, err := config.Load(layout.Root)
-		if err != nil {
-			return err
-		}
-		if err := cfg.Validate(); err != nil {
-			return err
-		}
-		token, err := resolveMCPHTTPBearerConfig(cfg)
+		cfg, token, err := loadMCPHTTPConfig(layout.Root)
 		if err != nil {
 			return err
 		}
@@ -126,35 +119,33 @@ func validateMCPCommandOptions(transport, listen string) error {
 	}
 }
 
-func resolveMCPHTTPBearer(root string) (string, error) {
+// loadMCPHTTPConfig loads the startup configuration and resolves the MCP
+// HTTP bearer from its named binding.
+func loadMCPHTTPConfig(root string) (config.Config, string, error) {
 	cfg, err := config.Load(root)
 	if err != nil {
-		return "", err
+		return config.Config{}, "", err
 	}
 	if err := cfg.Validate(); err != nil {
-		return "", err
+		return config.Config{}, "", err
 	}
-	return resolveMCPHTTPBearerConfig(cfg)
-}
-
-func resolveMCPHTTPBearerConfig(cfg config.Config) (string, error) {
 	reference := cfg.MCP.HTTP.CredentialBinding
 	if reference == "" {
-		return "", errors.New("[mcp.http] credential_binding is required for HTTP")
+		return config.Config{}, "", errors.New("[mcp.http] credential_binding is required for HTTP")
 	}
 	name := strings.TrimPrefix(reference, "credential:")
 	binding, ok := cfg.CredentialBindings[name]
 	if !ok {
-		return "", errors.New("MCP HTTP credential binding is not configured")
+		return config.Config{}, "", errors.New("MCP HTTP credential binding is not configured")
 	}
 	token, selected, err := config.EnvironmentSecret(binding.EnvironmentVariable)
 	if err != nil {
-		return "", err
+		return config.Config{}, "", err
 	}
 	if !selected || !docmcp.ValidHTTPBearerToken(token) {
-		return "", errors.New("MCP HTTP credential is unavailable")
+		return config.Config{}, "", errors.New("MCP HTTP credential is unavailable")
 	}
-	return token, nil
+	return cfg, token, nil
 }
 
 func init() {

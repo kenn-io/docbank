@@ -12,7 +12,7 @@ import (
 
 func TestNetworkMCPGuardPreservesHostOriginAndBearerBoundary(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	handler, err := wrapHTTPTransport(inner, HTTPOptions{BearerToken: testMCPBearer, ListenHost: "0.0.0.0", AllowedHosts: []string{"docbank:7341"}})
+	handler, err := wrapHTTPTransport(inner, HTTPOptions{BearerToken: testMCPBearer, listenHost: "0.0.0.0", AllowedHosts: []string{"docbank:7341"}})
 	require.NoError(t, err)
 	for _, test := range []struct {
 		host, origin, token string

@@ -200,12 +200,12 @@ environment_variable = "DOCBANK_TEST_MCP_HTTP_TOKEN"
 `), 0o600))
 	t.Setenv("DOCBANK_TEST_MCP_HTTP_TOKEN", "first-start-token")
 
-	first, err := resolveMCPHTTPBearer(home)
+	_, first, err := loadMCPHTTPConfig(home)
 	require.NoError(t, err)
 	assert.Equal(t, "first-start-token", first)
 	t.Setenv("DOCBANK_TEST_MCP_HTTP_TOKEN", "second-start-token")
 	assert.Equal(t, "first-start-token", first, "a running process must keep its startup credential")
-	second, err := resolveMCPHTTPBearer(home)
+	_, second, err := loadMCPHTTPConfig(home)
 	require.NoError(t, err)
 	assert.Equal(t, "second-start-token", second, "a restarted process must resolve the binding again")
 }
@@ -234,7 +234,7 @@ func TestResolveMCPHTTPBearerRefusesMissingOrEmptyConfigurationWithoutSecretEcho
 			if test.value != nil {
 				t.Setenv("DOCBANK_TEST_MCP_EMPTY", *test.value)
 			}
-			_, err := resolveMCPHTTPBearer(home)
+			_, _, err := loadMCPHTTPConfig(home)
 			require.Error(t, err)
 			assert.NotContains(t, err.Error(), sensitive)
 		})
@@ -309,11 +309,11 @@ func TestMCPBearerCanStartFromMountedSecretWithoutTOML(t *testing.T) {
 	require.NoError(t, file.Close())
 	t.Setenv("DOCBANK_MCP_HTTP_TOKEN", "")
 	t.Setenv("DOCBANK_MCP_HTTP_TOKEN_FILE", path)
-	token, err := resolveMCPHTTPBearer(root)
+	_, token, err := loadMCPHTTPConfig(root)
 	require.NoError(t, err)
 	require.Equal(t, "synthetic-mcp-key", token)
 	t.Setenv("DOCBANK_MCP_HTTP_TOKEN", "conflicting-key")
-	_, err = resolveMCPHTTPBearer(root)
+	_, _, err = loadMCPHTTPConfig(root)
 	require.ErrorContains(t, err, "cannot both")
 	require.NotContains(t, err.Error(), "conflicting-key")
 }

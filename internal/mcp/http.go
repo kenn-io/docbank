@@ -57,8 +57,8 @@ type httpLimits struct {
 type HTTPOptions struct {
 	BearerToken  string
 	AllowedHosts []string
-	ListenHost   string
 	Logger       *slog.Logger
+	listenHost   string
 	limits       httpLimits
 }
 
@@ -128,7 +128,7 @@ func wrapHTTPTransport(inner http.Handler, options HTTPOptions) (http.Handler, e
 	guard := &httpTransportGuard{
 		inner: inner, tokenHash: sha256.Sum256([]byte(options.BearerToken)),
 		logger: logger, limits: limits,
-		listenHost: options.ListenHost, allowedHosts: append([]string(nil), options.AllowedHosts...),
+		listenHost: options.listenHost, allowedHosts: append([]string(nil), options.AllowedHosts...),
 	}
 	return guard, nil
 }
@@ -584,7 +584,11 @@ func ServeHTTP(ctx context.Context, server *Server, address string, options HTTP
 	if err := ValidateHTTPListenAddress(address); err != nil {
 		return err
 	}
-	options.ListenHost, _, _ = net.SplitHostPort(address)
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("splitting MCP HTTP listen address: %w", err)
+	}
+	options.listenHost = host
 	if err := server.prepareHTTP(ctx, options.BearerToken); err != nil {
 		return err
 	}

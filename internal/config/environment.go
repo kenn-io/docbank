@@ -73,12 +73,12 @@ func EnvironmentSecret(name string) (string, bool, error) {
 	if path != "" {
 		file, err := openSecret(path)
 		if err != nil {
-			return "", true, fmt.Errorf("%s_FILE requires a readable, current-user-owned, non-symlink regular file with Unix mode 0400/0600 or a private protected Windows ACL", name)
+			return "", true, fmt.Errorf("%s_FILE requires a readable, current-user-owned, non-symlink regular file with Unix mode 0400/0600 or a private protected Windows ACL: %w", name, err)
 		}
 		data, readErr := io.ReadAll(io.LimitReader(file, maxSecretBytes+3))
 		closeErr := file.Close()
-		if readErr != nil || closeErr != nil {
-			return "", true, fmt.Errorf("cannot read %s_FILE", name)
+		if err := errors.Join(readErr, closeErr); err != nil {
+			return "", true, fmt.Errorf("cannot read %s_FILE: %w", name, err)
 		}
 		value = string(data)
 		if before, ok := strings.CutSuffix(value, "\r\n"); ok {
