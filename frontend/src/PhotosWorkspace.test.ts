@@ -13,6 +13,7 @@ it("disables search and filters until a delayed Hide finishes", async () => {
   vi.stubGlobal("fetch", vi.fn((url: string) => url.endsWith("/hide") ? new Promise<Response>(resolve => finish = resolve) : Promise.resolve(Response.json({ items: [], total: 0, facets: [] }))));
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)]; photos.started = true;
+  photos.query = { ...photos.query, text: "Canon" };
   photos.facets = [{ dimension: "camera", available: true, reason: "", total: 1, missing: 0, other: 0, values: [{ key: "Canon", label: "Canon", count: 1, selected: false }] }];
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotosWorkspace, { photos, cache });
@@ -23,6 +24,29 @@ it("disables search and filters until a delayed Hide finishes", async () => {
   finish(Response.json({ id: "photo-1", revision: 2 }));
   await pending;
   await waitFor(() => { for (const control of controls.slice(0, 4)) expect(control.hasAttribute("disabled")).toBe(false); });
+  photos.dispose(); await cache.dispose();
+});
+
+it("restores applied search text after a facet click and only offers clearing applied filters", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const fetcher = vi.fn().mockResolvedValue(Response.json({ items: [], total: 0, facets: [] }));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.facets = [{ dimension: "camera", available: true, reason: "", total: 1, missing: 0, other: 0, values: [{ key: "Canon", label: "Canon", count: 1, selected: false }] }];
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  const search = screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement;
+  expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  await fireEvent.input(search, { target: { value: "Nikon" } });
+  expect(search.value).toBe("Nikon");
+  expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Canon, 1 photos" }));
+  await waitFor(() => expect(search.value).toBe(""));
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).query.text).toBe("");
+  await waitFor(() => expect(photos.loading).toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull());
   photos.dispose(); await cache.dispose();
 });
 

@@ -161,7 +161,7 @@ func (s *Store) ListPhotoAssets(
 			if err := q.QueryRowContext(ctx, countSQL, countArgs...).Scan(&page.Total); err != nil {
 				return err
 			}
-		} else if boundary != nil {
+		} else {
 			page.Total = boundary.Total
 		}
 		if boundary == nil && len(dimensions) > 0 {

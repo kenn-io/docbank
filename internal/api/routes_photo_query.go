@@ -51,9 +51,6 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		}
 		var boundary *store.PhotoBrowsePosition
 		if in.Body.Cursor != "" {
-			if value.Sort.Field == "relevance" {
-				return nil, FromStoreError(store.ErrInvalidPhotoCursor)
-			}
 			position, cursorErr := service.decodePhotoCursor(in.Body.Cursor)
 			if cursorErr != nil {
 				return nil, FromStoreError(cursorErr)

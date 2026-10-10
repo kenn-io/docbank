@@ -25,6 +25,7 @@
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));
   const densityOptions = [{ value: "compact", label: "Compact" }, { value: "comfortable", label: "Comfortable" }, { value: "large", label: "Large" }];
   let search = $state(untrack(() => photos.query.text));
+  $effect(() => { search = photos.query.text; });
   const sortOptions = $derived([{ value: "capture_time", label: "Capture date" }, ...(photos.query.text.trim() ? [{ value: "relevance", label: "Relevance" }] : [])]);
   const groupingOptions = [{ value: "months", label: "Months" }, { value: "sessions", label: "Capture sessions" }];
 
@@ -60,7 +61,9 @@
     <SearchInput disabled={photos.loading || photos.hiding || photos.trashing} ariaLabel="Search photos" placeholder="Search photos" bind:value={search} />
     <Button type="submit" size="sm" disabled={photos.loading || photos.hiding || photos.trashing}>Search</Button>
     <SelectDropdown disabled={photos.loading || photos.hiding || photos.trashing} title="Sort photos" value={photos.query.sort.field} options={sortOptions} onchange={value => void photos.setQuery({ ...photos.query, sort: { field: value as "capture_time" | "relevance", direction: "desc" } })} />
-    <Button type="button" size="sm" disabled={photos.loading || photos.hiding || photos.trashing} onclick={() => { search = ""; void photos.setQuery({ ...photos.query, text: "", filters: {}, sort: { field: "capture_time", direction: "desc" } }); }}>Clear filters</Button>
+    {#if filtered}
+      <Button type="button" size="sm" disabled={photos.loading || photos.hiding || photos.trashing} onclick={() => { search = ""; void photos.setQuery({ ...photos.query, text: "", filters: {}, sort: { field: "capture_time", direction: "desc" } }); }}>Clear filters</Button>
+    {/if}
   </form>
   {#if photos.query.sort.field === "relevance" && photos.total > photos.items.length}
     <p class="photo-search-limit">Showing the best 250 of {photos.total.toLocaleString()} matches. Refine the search or sort by capture date to see all.</p>

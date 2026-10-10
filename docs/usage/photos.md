@@ -47,7 +47,7 @@ omits its own selected filter while retaining search and the other filters.
 Camera, lens, year, and location describe the selected display file; year
 uses its recorded local capture date. Text may match any live member of a
 pair, so a text match can appear under a different display-file camera or lens. Camera and lens count both make and model; their counts can sum to more than the asset total. Equivalent Unicode-folded values share one bucket and count each asset once. Buttons submit an original valid spelling; oversized metadata stays visible as informational counts. Year counts omit a selected whole-year range and retain other date ranges. Albums show live memberships. Choose Clear filters to reset the
-search and facets. Changing scope clears selection and starts a fresh grid.
+search and facets. Clear filters appears when a search or filter is applied. Changing a facet restores the applied search text. Changing scope clears selection and starts a fresh grid.
 
 Choose Months or Capture sessions to group the grid. A session joins captures
 with gaps of four hours or less. Compact, Comfortable, and Large change the

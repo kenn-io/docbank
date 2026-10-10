@@ -2462,7 +2462,7 @@ func photoSearchCandidates(namesMatch, textMatch, generation string, profile *st
 		return sqlquery.Query{}, fmt.Errorf("building photo metadata search: %w", err)
 	}
 	result.SQL += ` UNION ALL SELECT n.id node_id,2 tier,matched.score FROM (` + metadata.SQL + `) matched
-  JOIN photo_technical_metadata p ON p.generation_id=matched.doc_key JOIN source_metadata_heads h ON h.generation_id=p.generation_id
+  JOIN source_metadata_heads h ON h.generation_id=matched.doc_key
   JOIN content_versions cv ON cv.blob_hash=h.source_sha256 JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`
 	result.Args = append(result.Args, metadata.Args...)
 	cte, _, rank, args := contentSearchMatches(textMatch, generation, profile)

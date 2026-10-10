@@ -44,11 +44,15 @@ test("photo search, whole-library facets and bounded relevance use the real vaul
     deferCounts = false; releaseCounts();
     const camera = page.getByRole("group", { name: "Camera facet" });
     await expect(camera.getByRole("button", { name: "Canon EOS R6, 5000 photos" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Clear filters", exact: true })).toHaveCount(0);
+    await page.getByRole("searchbox", { name: "Search photos" }).fill("Nikon");
     await camera.getByRole("button", { name: "Canon EOS R6, 5000 photos" }).click();
     await expect(page.getByText(/5,000 photos/)).toBeVisible();
+    await expect(page.getByRole("searchbox", { name: "Search photos" })).toHaveValue("");
     await expect(camera.getByRole("button", { name: "Nikon Z6, 5000 photos" })).toBeVisible();
     await page.getByRole("button", { name: "Clear filters", exact: true }).click();
     await expect(page.getByText(/10,000 photos/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Clear filters", exact: true })).toHaveCount(0);
     await page.getByRole("searchbox", { name: "Search photos" }).fill("Canon");
     const searchPage = page.waitForResponse(response => response.url().includes("/photos/assets/query") && response.request().postDataJSON().query.text === "Canon" && response.request().postDataJSON().facets.length === 0);
     await page.getByRole("button", { name: "Search", exact: true }).click();
