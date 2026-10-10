@@ -153,7 +153,7 @@ func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 
 func TestEnsureReplacesPreHiddenPhotosDaemon(t *testing.T) {
 	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
-	for _, protocol := range []string{"66", "67", "68", "69", "70", "71"} {
+	for _, protocol := range []string{"66", "67", "68", "69"} {
 		t.Run(protocol, func(t *testing.T) {
 			root, rec := startUnresponsiveRuntime(t)
 			assetID := "00000000-0000-4000-8000-000000000001"

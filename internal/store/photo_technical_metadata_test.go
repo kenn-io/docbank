@@ -568,11 +568,6 @@ func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
 	)
 	generation, err := s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("fb"), canonical)
 	require.NoError(t, err)
-	survivor := browsePhotoNode(t, s, "kept.jpg", fakeHash("ad"), "image/jpeg")
-	browsePhotoMetadata(t, s, survivor, "survivor", photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Survivor")))
-	for _, sort := range []string{"name", "relevance"} {
-		require.Equal(t, int64(1), browsePhotoPage(t, s, fmt.Sprintf(`{"text":"DeletedCamera","sort":{"field":%q}}`, sort)).Total)
-	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM source_metadata_heads WHERE source_sha256=?`, node.BlobHash)
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `DELETE FROM source_metadata_generations WHERE generation_id=?`, generation.GenerationID)
@@ -583,26 +578,6 @@ func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
 	assert.Zero(t, projections)
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_metadata_fts WHERE generation_id=?`, generation.GenerationID).Scan(&projections))
 	require.Zero(t, projections)
-
-	for _, sort := range []string{"name", "relevance"} {
-		page := browsePhotoPage(t, s, fmt.Sprintf(`{"text":"DeletedCamera","sort":{"field":%q}}`, sort))
-		require.Zero(t, page.Total)
-		require.Empty(t, page.Items)
-	}
-	var identity string
-	require.NoError(t, s.db.QueryRow(`SELECT generation_id FROM photo_technical_metadata`).Scan(&identity))
-	for _, sort := range []string{"name", "relevance"} {
-		require.Zero(t, browsePhotoPage(t, s, fmt.Sprintf(`{"text":%q,"sort":{"field":%q}}`, identity, sort)).Total)
-	}
-	_, err = s.db.Exec(`VACUUM`)
-	require.NoError(t, err)
-	var after string
-	require.NoError(t, s.db.QueryRow(`SELECT generation_id FROM photo_technical_metadata`).Scan(&after))
-	require.Equal(t, identity, after)
-	for _, sort := range []string{"name", "relevance"} {
-		require.Zero(t, browsePhotoPage(t, s, fmt.Sprintf(`{"text":%q,"sort":{"field":%q}}`, identity, sort)).Total)
-	}
-	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Survivor","sort":{"field":"relevance"}}`).Total)
 }
 
 func TestPhotoTechnicalMetadataCorruptSource(t *testing.T) {

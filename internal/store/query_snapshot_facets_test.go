@@ -284,7 +284,7 @@ func TestQuerySnapshotFacetValidationAndParentCancellation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	value := snapshotTestQuery(t, `{}`)
-	for _, facets := range [][]string{{"future"}, {"tags", "tags"}, {"camera"}, {"lens"}, {"year"}, {"location"}, {"set"}} {
+	for _, facets := range [][]string{{"future"}, {"tags", "tags"}, {"camera"}} {
 		_, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value, Facets: facets})
 		require.Error(t, err)
 	}

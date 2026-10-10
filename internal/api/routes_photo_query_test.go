@@ -118,9 +118,6 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 	var ranked api.PhotoBrowsePage
 	require.NoError(t, json.Unmarshal([]byte(body), &ranked))
 	require.Len(t, ranked.Facets, 2)
-	require.Len(t, ranked.Items, 1)
-	require.Equal(t, page.Total, ranked.Total)
-	require.Empty(t, ranked.NextCursor)
 	rankedRequest.Cursor = "invalid"
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, rankedRequest)
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)

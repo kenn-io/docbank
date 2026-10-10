@@ -27,15 +27,18 @@ it("disables search and filters until a delayed Hide finishes", async () => {
   photos.dispose(); await cache.dispose();
 });
 
-it("restores applied search text after a facet click and only offers clearing applied filters", async () => {
+it("restores applied search after a facet click and keeps empty-library guidance when clearing filters", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-  const fetcher = vi.fn().mockResolvedValue(Response.json({ items: [], total: 0, facets: [] }));
+  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  const fetcher = vi.fn().mockImplementation(() => Promise.resolve(Response.json({ items: [], total: 0, facets: [] })));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.started = true;
   photos.facets = [{ dimension: "camera", available: true, reason: "", total: 1, missing: 0, other: 0, values: [{ key: "Canon", label: "Canon", count: 1, selected: false }] }];
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   render(PhotosWorkspace, { photos, cache });
+  await screen.findByText("Your photo library is empty");
+  expect(await screen.findByText(/Import photos with docbank photos import/)).toBeTruthy();
   const search = screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement;
   expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
   await fireEvent.input(search, { target: { value: "Nikon" } });
@@ -47,6 +50,15 @@ it("restores applied search text after a facet click and only offers clearing ap
   await waitFor(() => expect(photos.loading).toBe(false));
   await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull());
+  await screen.findByText("Your photo library is empty");
+  await fireEvent.click(screen.getByRole("combobox", { name: "Sort photos: Capture date" }));
+  expect(screen.queryByRole("option", { name: "Relevance" })).toBeNull();
+  await fireEvent.click(screen.getByRole("option", { name: "Capture date" }));
+  await photos.setQuery({ ...photos.query, filters: { iso_min: 0 } });
+  await screen.findByText("No matching photos");
+  await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  await screen.findByText("Your photo library is empty");
+  expect(screen.getByText(/Import photos with docbank photos import/)).toBeTruthy();
   photos.dispose(); await cache.dispose();
 });
 
@@ -252,24 +264,6 @@ it("keeps loading pages that add no rows and keeps the top photo across density 
   await cache.dispose();
 });
 
-it("keeps import guidance after clearing an empty search and recognizes numeric zero filters", async () => {
- vi.stubGlobal("ResizeObserver",class { observe() {} disconnect() {} });
- Object.defineProperty(Element.prototype,"scrollIntoView",{configurable:true,value:vi.fn()});
- const photos = new Photos("scoped",vi.fn()); photos.started = true;
- const cache = new PhotoPreviewCache("scoped",vi.fn());
- vi.stubGlobal("fetch",vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({items:[],total:0})))));
- render(PhotosWorkspace,{photos,cache});
- await screen.findByText("Your photo library is empty");
- await fireEvent.click(screen.getByRole("combobox",{name:"Sort photos: Capture date"}));
- expect(screen.queryByRole("option",{name:"Relevance"})).toBeNull();
- await fireEvent.click(screen.getByRole("option",{name:"Capture date"}));
- expect(await screen.findByText(/Import photos with docbank photos import/)).toBeTruthy();
- await photos.setQuery({...photos.query,filters:{iso_min:0}});
- await screen.findByText("No matching photos");
- await fireEvent.click(screen.getByRole("button",{name:"Clear filters"}));
- await screen.findByText("Your photo library is empty");
- photos.dispose(); await cache.dispose();
-});
 it("explains the relevance limit and hides it for complete results or capture dates", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   const photos = new Photos("scoped", vi.fn());

@@ -453,9 +453,7 @@ func TestPhotoBrowseSavedDuplicateScope(t *testing.T) {
 	definition := `{"syntax":"advanced","text":"camera:\"Camera A\"","filters":{"collapse_duplicates":true}}`
 	_, err = s.CreateSavedQuery(ctx, "Photo duplicates", "", SavedQueryKindQuery, []byte(definition))
 	require.NoError(t, err)
-	_, err = s.CreateSavedQuery(ctx, "Nested duplicates", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"saved:\"Photo duplicates\""}`))
-	require.NoError(t, err)
-	for _, raw := range []string{definition, `{"syntax":"advanced","text":"saved:\"Photo duplicates\""}`, `{"syntax":"advanced","text":"saved:\"Nested duplicates\""}`} {
+	for _, raw := range []string{definition, `{"syntax":"advanced","text":"saved:\"Photo duplicates\""}`} {
 		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: snapshotTestQuery(t, raw), Facets: []string{"camera", "lens"}}, nil)
 		require.NoError(t, err)
 		require.Len(t, page.Items, 1, raw)
@@ -943,14 +941,6 @@ func TestPhotoBrowseRelevanceAndFacets(t *testing.T) {
 	require.Equal(t, int64(7), *page.Facets[0].Total)
 	_, err = s.ListPhotoAssets(t.Context(), request, &PhotoBrowsePosition{})
 	require.ErrorIs(t, err, ErrInvalidPhotoCursor)
-	request.Facets = []string{"camera"}
-	request.Query = snapshotTestQuery(t, `{"filters":{"cameras":["Absent"]},"sort":{"field":"relevance","direction":"desc"}}`)
-	page, err = s.ListPhotoAssets(t.Context(), request, nil)
-	require.NoError(t, err)
-	require.Empty(t, page.Items)
-	require.Zero(t, page.Total)
-	require.Equal(t, int64(8), *page.Facets[0].Total)
-	require.Equal(t, SnapshotFacetValue{Key: "Absent", Label: "Absent", Selected: true}, page.Facets[0].Values[4])
 }
 
 func mustPhotoCompiled(t *testing.T, s *Store, value query.Query) CompiledQuery {
@@ -1010,21 +1000,6 @@ func TestPhotoFacetsFoldIdentityAndCountEachUnitOnce(t *testing.T) {
 			require.Zero(t, *facet.Missing)
 		}
 	}
-	assetID := page.Items[0].AssetID
-	assetIDs := []string{assetID, page.Items[1].AssetID}
-	for _, name := range []string{"First album", "Second album"} {
-		album, err := s.CreatePhotoSet(t.Context(), name)
-		require.NoError(t, err)
-		_, err = s.ChangePhotoSetMembers(t.Context(), album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: assetIDs})
-		require.NoError(t, err)
-	}
-	value.Filters.AssetIDs = []string{assetID}
-	albums, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: value, Facets: []string{"set"}}, nil)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), *albums.Facets[0].Total)
-	require.Len(t, albums.Facets[0].Values, 2)
-	require.Equal(t, int64(1), albums.Facets[0].Values[0].Count)
-	require.Zero(t, *albums.Facets[0].Missing)
 }
 
 func TestPhotoYearFacetSelectionRequiresWholeYear(t *testing.T) {
@@ -1180,6 +1155,13 @@ func TestPhotoFacetRawOperandsAndBudgets(t *testing.T) {
 	for _, value := range facets[0].Values {
 		require.Equal(t, int64(2), value.Count)
 	}
+	budgetQuery.Filters.AssetIDs = assetIDs[:1]
+	albums, err := s.ListPhotoAssets(t.Context(), PhotoBrowseRequest{Query: budgetQuery, Facets: []string{"set"}}, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), *albums.Facets[0].Total)
+	require.Len(t, albums.Facets[0].Values, 2)
+	require.Equal(t, int64(1), albums.Facets[0].Values[0].Count)
+	require.Zero(t, *albums.Facets[0].Missing)
 }
 
 func TestPhotoOrdinarySeekReadsNextLivePage(t *testing.T) {

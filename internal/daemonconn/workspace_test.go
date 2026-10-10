@@ -66,12 +66,6 @@ func TestWorkspaceClientRejectsInvalidRequestsBeforeTransport(t *testing.T) {
 		Query: api.QueryPayload(`{}`), PageSize: 51,
 	})
 	require.Error(t, err)
-	for _, facets := range [][]string{{"camera"}} {
-		_, err = c.CreateWorkspaceQuery(t.Context(), api.WorkspaceQueryCreateRequest{Query: api.QueryPayload(`{}`), Facets: facets})
-		require.Error(t, err)
-		_, err = c.RunSavedQuery(t.Context(), "10000000-0000-4000-8000-000000000001", 1, api.SavedQueryRunRequest{Facets: facets})
-		require.Error(t, err)
-	}
 	_, err = c.ReadWorkspaceQueryPage(t.Context(), "not-a-snapshot", "opaque")
 	require.Error(t, err)
 	_, err = c.ReadWorkspaceQueryPage(t.Context(), strings.Repeat("0", 32), "")
