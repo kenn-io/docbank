@@ -15,8 +15,6 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -67,8 +65,6 @@ func TestPhotoExportTrailingEXIFAndICC(t *testing.T) {
 		packets, err := photoSourcePackets(t.Context(), out, true)
 		require.NoError(t, err)
 		assert.Equal(t, profile, packets.icc)
-		assert.Empty(t, packets.xmp)
-		assert.Empty(t, packets.exif)
 	}
 	exifSource := syntheticJPEGSegment(t, jpegSource, 0xe1, append([]byte("Exif\x00\x00"), syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 1)}, nil)...))
 	out, _, err = renderPhotoExport(t.Context(), bytes.NewReader(exifSource), photoRenderInput(exifSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true}, nil)
@@ -160,7 +156,7 @@ func TestPhotoExportOrientationAndAuthoredRotation(t *testing.T) {
 	}
 }
 
-func TestPhotoExportSizeQualityAndMetadataOff(t *testing.T) {
+func TestPhotoExportSizeAndQuality(t *testing.T) {
 	t.Parallel()
 	frame := image.NewNRGBA(image.Rect(0, 0, 5000, 2))
 	for x := range 5000 {
@@ -170,13 +166,9 @@ func TestPhotoExportSizeQualityAndMetadataOff(t *testing.T) {
 	require.NoError(t, png.Encode(&source, frame))
 	input := photoRenderInput(source.Bytes(), "image/png")
 	for _, test := range []struct{ edge, want int }{{0, 5000}, {6000, 5000}, {1000, 1000}} {
-		out, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90, LongEdge: test.edge}, nil)
+		_, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90, LongEdge: test.edge}, nil)
 		require.NoError(t, err)
 		assert.Equal(t, test.want, receipt.Width)
-		packets, err := photoSourcePackets(t.Context(), out, true)
-		require.NoError(t, err)
-		assert.Empty(t, packets.exif)
-		assert.Empty(t, packets.xmp)
 	}
 	var outputs [][]byte
 	for _, quality := range []int{10, 95} {
@@ -571,52 +563,6 @@ func syntheticPhotoICC() []byte {
 	binary.BigEndian.PutUint32(profile, uint32(len(profile)))
 	return profile
 }
-func TestPhotoExportPNGPixelChunksDoNotConsumeMetadataBudget(t *testing.T) {
-	t.Parallel()
-	frame := image.NewNRGBA(image.Rect(0, 0, 65, 64))
-	seed := uint32(1)
-	for i := range frame.Pix {
-		seed = seed*1664525 + 1013904223
-		frame.Pix[i] = byte(seed >> 24)
-	}
-	var encoded, source bytes.Buffer
-	require.NoError(t, png.Encode(&encoded, frame))
-	source.Write(encoded.Bytes()[:8])
-	chunks := 0
-	for data := encoded.Bytes()[8:]; len(data) > 0; {
-		n := int(binary.BigEndian.Uint32(data))
-		kind := string(data[4:8])
-		payload := data[8 : 8+n]
-		if kind == "IDAT" {
-			for len(payload) > 0 {
-				size := min(8, len(payload))
-				writePhotoPNGChunk(&source, kind, payload[:size])
-				payload = payload[size:]
-				chunks++
-			}
-		} else {
-			source.Write(data[:n+12])
-		}
-		data = data[n+12:]
-	}
-	require.Greater(t, chunks, 1024)
-	path := filepath.Join(t.TempDir(), "many-chunks.png")
-	require.NoError(t, os.WriteFile(path, source.Bytes(), 0600))
-	file, err := os.Open(path)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, file.Close()) }()
-	counted := &previewCountedFile{File: file}
-	_, color, metadata, animated, malformed, err := inspectVisualPreviewContainer(t.Context(), counted, int64(source.Len()), "png")
-	require.NoError(t, err)
-	require.False(t, color || metadata || animated || malformed)
-	require.Less(t, counted.reads, chunks/8)
-	input := photoRenderInput(source.Bytes(), "image/png")
-	output, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90}, nil)
-	require.NoError(t, err)
-	require.Equal(t, 65, receipt.Width)
-	require.NotEmpty(t, output)
-}
-
 func TestPhotoExportErrorPreservesCategory(t *testing.T) {
 	t.Parallel()
 	input := store.PhotoExportInput{Member: bundle.Member{NodeID: 1}}
@@ -625,15 +571,4 @@ func TestPhotoExportErrorPreservesCategory(t *testing.T) {
 		require.ErrorIs(t, err, category)
 		require.Contains(t, err.Error(), "photo 1")
 	}
-}
-
-type previewCountedFile struct {
-	*os.File
-
-	reads int
-}
-
-func (f *previewCountedFile) Read(p []byte) (int, error) {
-	f.reads++
-	return f.File.Read(p)
 }

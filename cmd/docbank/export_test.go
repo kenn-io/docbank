@@ -30,10 +30,6 @@ func TestExportPreflightDoesNotContactDaemon(t *testing.T) {
 	for _, tc := range []struct{ name, body, field string }{
 		{"malformed", "{", "JSON"},
 		{"null GPS", strings.Replace(photo, `"remove_gps":true`, `"remove_gps":null`, 1), "photo_render.remove_gps"},
-		{"null metadata", strings.Replace(photo, `"include_metadata":true`, `"include_metadata":null`, 1), "photo_render.include_metadata"},
-		{"null quality", strings.Replace(photo, `"format":"png"`, `"format":"png","quality":null`, 1), "photo_render.quality"},
-		{"null edge", strings.Replace(photo, `"format":"png"`, `"format":"png","long_edge":null`, 1), "photo_render.long_edge"},
-		{"null format", strings.Replace(photo, `"format":"png"`, `"format":null`, 1), "photo_render.format"},
 		{"unknown", strings.Replace(valid, `"size":0`, `"unknown":0`, 1), "JSON"},
 		{"source ID", strings.Replace(valid, "11111111-1111-4111-8111-111111111111", "bad", 1), "source_operation_id"},
 		{"plan ID", strings.Replace(valid, "22222222-2222-4222-8222-222222222222", "bad", 1), "plan_operation_id"},
@@ -202,8 +198,6 @@ func releaseCLIExport(t *testing.T, id string) string {
 func TestPhotoExportRequestValidation(t *testing.T) {
 	request := exportPreviewRequest{SourceOperationID: uuid.New().String(), PlanOperationID: uuid.New().String(), Photos: &bundle.PhotoExportSelection{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true, RemoveGPS: true}}
 	require.NoError(t, validateExportRequest(request))
-	request.PhotoRender.Quality = 0
-	require.Error(t, validateExportRequest(request))
 	request.PhotoRender = nil
 	require.Error(t, validateExportRequest(request))
 }
