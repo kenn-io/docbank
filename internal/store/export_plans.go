@@ -28,7 +28,8 @@ func validateExportPolicies(roles []bundle.RolePolicy) error {
 		}
 		seen[p.Role] = true
 		switch p.Role {
-		case "original", "attachment_original", "photo_rendered":
+		case "photo_rendered":
+		case "original", "attachment_original":
 			if p.ProfileFingerprint != "" || p.RecipeSHA256 != "" {
 				return bundle.ErrConflict
 			}

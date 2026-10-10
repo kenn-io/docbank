@@ -194,12 +194,8 @@ func (s *Store) createExportSource(ctx context.Context, owner string, r bundle.S
 		if exists {
 			return ErrNotFound
 		}
-		var count int
-		if e = tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM export_sources)+(SELECT count(*) FROM export_plans)`).Scan(&count); e != nil {
+		if e = checkExportPlanCapacity(ctx, tx); e != nil {
 			return e
-		}
-		if count >= 32 {
-			return bundle.ErrLimit
 		}
 		state := "resolving"
 		if r.Kind == "upload" {

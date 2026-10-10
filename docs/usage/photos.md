@@ -413,7 +413,7 @@ matching population to choose representatives before returning a page.
 
 ## Export photos
 
-Choose **Export photos** for the whole current scope, or **Export selection** for selected photos. The [export drawer](export-bundles.md#export-photos) prepares JPEG or PNG copies with your size, metadata, and GPS choices, then delivers a verified ZIP. RAW display members export embedded previews and carry that label. GPS removal leaves descriptive location names intact. With metadata enabled, current catalog tags replace embedded keywords, including an empty tag list. A changed or unavailable photo stops preparation with an error naming it; the linked guide lists preparation and metadata limits.
+Choose **Export photos** for the whole current scope, or **Export selection** for selected photos. The [export drawer](export-bundles.md#export-photos) prepares JPEG or PNG copies with your size, metadata, and GPS choices, then delivers a verified ZIP. RAW display members export embedded previews and carry that label. GPS removal leaves descriptive location names intact. With metadata enabled, current catalog tags replace embedded keywords only when the photo has at least one tag. A changed or unavailable photo stops preparation with an error naming it; the linked guide lists preparation and metadata limits.
 
 ## Move photos to trash
 

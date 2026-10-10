@@ -274,7 +274,11 @@ export class ExportSession {
       if (!this.current(started.generation)) return;
       this.stop(); this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
       this.emit({ status: "idle" });
-    } catch (error) { this.fail(started.generation, error); }
+    } catch (error) {
+      if (error instanceof APIError && error.status === 409 && error.code === "export_retained") {
+        if (this.current(started.generation)) this.emit({ ...this.state, releasing: false, error: new Error("Your browser is still downloading this export. Choose Prepare another export again once the download finishes.") });
+      } else this.fail(started.generation, error);
+    }
   }
   dispose(): void { this.close(); this.disposed = true; }
 

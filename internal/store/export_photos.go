@@ -80,38 +80,27 @@ func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.
 		selected[id] = true
 	}
 	var out []bundle.Member
-	var cursor *PhotoBrowsePosition
 	identity := ""
-	for {
-		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: selection.Query, Hidden: selection.Hidden, PageSize: MaxDocumentCatalogPageSize, assetIDs: selection.AssetIDs}, cursor)
-		if err != nil {
+	page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: selection.Query, Hidden: selection.Hidden, PageSize: MaxDocumentCatalogPageSize, assetIDs: selection.AssetIDs}, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(selection.AssetIDs) == 0 && page.Total > bundle.MaxPhotoExportMembers {
+		return nil, "", fmt.Errorf("%w: photo exports allow at most %d photos", bundle.ErrLimit, bundle.MaxPhotoExportMembers)
+	}
+	if len(page.Items) > 0 {
+		identity = page.Items[0].position.QueryIdentity
+	}
+	for _, row := range page.Items {
+		delete(selected, row.AssetID)
+		m := bundle.Member{NodeID: row.NodeID, VersionID: row.ContentVersionID}
+		if err := s.db.QueryRowContext(ctx, `SELECT v.blob_hash,v.size,n.revision FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=? AND n.current_version_id=v.version_id`, m.VersionID).Scan(&m.SHA256, &m.Size, &m.Revision); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, "", fmt.Errorf("%w: photo %d is no longer exportable", bundle.ErrConflict, m.NodeID)
+			}
 			return nil, "", err
 		}
-		if len(selection.AssetIDs) == 0 && page.Total > bundle.MaxPhotoExportMembers {
-			return nil, "", fmt.Errorf("%w: photo exports allow at most %d photos", bundle.ErrLimit, bundle.MaxPhotoExportMembers)
-		}
-		if len(page.Items) > 0 {
-			identity = page.Items[0].position.QueryIdentity
-		}
-		for _, row := range page.Items {
-			delete(selected, row.AssetID)
-			m := bundle.Member{NodeID: row.NodeID, VersionID: row.ContentVersionID}
-			if err := s.db.QueryRowContext(ctx, `SELECT v.blob_hash,v.size,n.revision FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=? AND n.current_version_id=v.version_id`, m.VersionID).Scan(&m.SHA256, &m.Size, &m.Revision); err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					return nil, "", fmt.Errorf("%w: photo %d is no longer exportable", bundle.ErrConflict, m.NodeID)
-				}
-				return nil, "", err
-			}
-			if len(out) >= bundle.MaxPhotoExportMembers {
-				return nil, "", bundle.ErrLimit
-			}
-			out = append(out, m)
-		}
-		if page.Next == nil || len(selection.AssetIDs) > 0 && len(selected) == 0 {
-			break
-		}
-		cursor = page.Next
-		identity = cursor.QueryIdentity
+		out = append(out, m)
 	}
 	if len(selected) != 0 {
 		return nil, "", bundle.ErrConflict
@@ -196,13 +185,6 @@ func (s *Store) ExportPhotoInputs(ctx context.Context, owner string, r bundle.Pl
 func (s *Store) SealPhotoExportPlan(ctx context.Context, owner string, r bundle.PlanRequest, artifacts []PreparedPhotoExport) (bundle.Plan, error) {
 	prepared := make(map[string]PreparedPhotoExport, len(artifacts))
 	for _, a := range artifacts {
-		if _, exists := prepared[a.Receipt.Source.VersionID]; exists {
-			return bundle.Plan{}, bundle.ErrConflict
-		}
-		if a.Input.Member != a.Receipt.Source {
-			return bundle.Plan{}, bundle.ErrConflict
-		}
-
 		prepared[a.Receipt.Source.VersionID] = a
 	}
 	return s.createExportPlan(ctx, owner, r, prepared)

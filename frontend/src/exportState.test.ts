@@ -460,6 +460,36 @@ it.each(["completed", "failed"])("releases a %s job through the generated route"
   h.session.dispose();
 });
 
+it("keeps a finished download until the user retries its release", async () => {
+  const h = await harness();
+  const original = h.fetcher.getMockImplementation()!;
+  h.fetcher.mockImplementation(async (url, init) => {
+    const result = await original(url, init);
+    if (String(url).includes("/jobs/") && !String(url).includes("/events")) {
+      const job = await result.json();
+      return response({ ...job, state: "completed", sequence: 2, completed_roles: 1, completed_bytes: 12, receipt: { format: "docbank-bundle-v1", plan_fingerprint: hash, sha256: hash, size: 512, entries: 4 } });
+    }
+    return result;
+  });
+  await h.session.preview();
+  await h.session.start();
+  expect(h.state().status).toBe("completed");
+  const active = h.state().active;
+  h.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ code: "export_retained", detail: "Archive is retained" }), { status: 409 }));
+  await h.session.clearFinished();
+  expect(h.state().active).toEqual(active);
+  expect(h.state().status).toBe("completed");
+  expect(h.state().releasing).toBe(false);
+  expect(h.state().error?.message).toBe("Your browser is still downloading this export. Choose Prepare another export again once the download finishes.");
+  expect(h.fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
+  h.fetcher.mockResolvedValueOnce(new Response(null, { status: 204 }));
+  await h.session.clearFinished();
+  expect(h.state().active).toBeUndefined();
+  expect(h.state().status).toBe("idle");
+  expect(h.state().error).toBeUndefined();
+  h.session.dispose();
+});
+
 it("recovers an interrupted release when retry confirms the job is gone", async () => {
   const h = await harness();
   await h.session.preview();
