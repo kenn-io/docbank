@@ -75,7 +75,7 @@ func registerAuditRoutes(
 		Summary: "Permanently enable the exact reviewed audit scope",
 		Description: "Consumes a one-use preview token. The acknowledgment explicitly " +
 			"accepts permanent protected history plus names, topology, tags, assignments, " +
-			"ingests, and provenance " +
+			"ingests, provenance, photo decisions, captions, creators, and copyrights " +
 			"across the vault, including outside the selected scope; preview again after " +
 			"any stale-token response.",
 	}, func(ctx context.Context, in *struct {

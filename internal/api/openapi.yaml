@@ -17420,7 +17420,7 @@ paths:
       summary: Issue a scoped browser session
   /api/v1/audit/enable:
     post:
-      description: Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, and provenance across the vault, including outside the selected scope; preview again after any stale-token response.
+      description: Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, provenance, photo decisions, captions, creators, and copyrights across the vault, including outside the selected scope; preview again after any stale-token response.
       operationId: enableAudit
       requestBody:
         content:

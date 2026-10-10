@@ -523,6 +523,13 @@ func projectAuditAttachment(event audit.Record) (*AuditAttachmentChange, error) 
 	if result.After, err = projectAuditAttachmentState(*kind, after); err != nil {
 		return nil, err
 	}
+	if *kind == "photo_authored" {
+		if result.After != nil {
+			result.Identity.NodeID = result.After.NodeID
+		} else if result.Before != nil {
+			result.Identity.NodeID = result.Before.NodeID
+		}
+	}
 	return result, nil
 }
 

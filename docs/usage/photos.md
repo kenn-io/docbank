@@ -108,7 +108,8 @@ with rating 0. Unsupported custom color labels become empty; supported decisions
 and the original sidecar bytes are preserved. Competing sidecars are scanned in
 ascending node-ID order; the first successful initialization wins. Parsing
 verifies the complete blob and rejects malformed XML,
-packets over 1 MiB, and nesting over 64 elements. The existing source-metadata
+packets over 1 MiB, and nesting over 64 elements. A caption, creator, or copyright
+over 16 KiB rejects the whole packet. The existing source-metadata
 extractor publishes packet claims under `image.xmp.*`. Sidecar source-metadata
 detail shows a valid-packet fact for valid empty packets or warnings for rejected
 packets, together with the exact source version. Empty and rejected packets
@@ -121,11 +122,12 @@ text keeps its surrounding spaces and newlines. This slice doesn't import
 `dc:subject` as tags or `tiff:Orientation` as authored rotation.
 
 Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. In Photos,
-each decision filter matches when any non-sidecar member passes, and `NOT`
-matches when none does. With a RAW rated 5/pick and a displayed JPEG rated 3/red,
-`rating:5`, `rating:3`, `rating_min:4`, `flag:pick`, and `label:red` match.
-`NOT rating:5` excludes that photo, including when it has a linked XMP sidecar.
-Changing the display file preserves these decision matches.
+each decision filter reads the asset's display file. With the default RAW display
+rated 5/pick and a paired JPEG rated 1/red, `rating:5`, `flag:pick`,
+`NOT rating:1`, and `NOT label:red` match, including with a linked XMP sidecar.
+Both typed bounds from 3 through 3 and `rating_min:3 AND rating_max:3` exclude
+the photo. Selecting the JPEG reverses those rating, flag, and label matches.
+Changing the display file changes these decision matches.
 Documents queries read each file's own decisions. These
 values and complete receipts round-trip through JSONL backup and restore.
 Advanced expressions accept `rating:5`, `rating_min:4`, `rating_max:3`,
@@ -351,7 +353,8 @@ the previous page boundary.
 
 Use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`,
 `iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`,
-`capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, or `asset:` or `set:`
+`capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, `rating:5`, `flag:pick`,
+`label:red`, or `asset:` or `set:`
 followed by a canonical asset or album UUIDv4. Existing `collection:`, tag, and text predicates combine
 with these fields. Camera and lens match the complete make or model, ignoring
 case using Unicode case folding. Values in one typed filter array combine with

@@ -8052,7 +8052,7 @@ export const getEnableAuditUrl = () => {
 }
 
 /**
- * Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, and provenance across the vault, including outside the selected scope; preview again after any stale-token response.
+ * Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, provenance, photo decisions, captions, creators, and copyrights across the vault, including outside the selected scope; preview again after any stale-token response.
  * @summary Permanently enable the exact reviewed audit scope
  */
 export const enableAudit = async (enableAuditRequest: NonReadonly<EnableAuditRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<AuditStatus> => {
