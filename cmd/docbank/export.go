@@ -65,7 +65,6 @@ var exportPreviewCmd = &cobra.Command{
 			return writeCLIJSON(cmd.OutOrStdout(), plan)
 		}
 		return writeExportPreview(cmd.OutOrStdout(), *plan)
-
 	},
 }
 

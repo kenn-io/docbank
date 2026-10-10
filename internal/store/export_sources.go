@@ -353,7 +353,6 @@ func sealExportMembers(ctx context.Context, tx *sql.Tx, owner string, source *bu
 	source.Total = len(members)
 	source.MemberHash = hash
 	source.SourceBytes = total
-
 	source.ExpiresAt = exportDeadline(10 * time.Minute)
 	raw, err := canonical.Marshal(source)
 	if err != nil {

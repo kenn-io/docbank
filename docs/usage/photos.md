@@ -135,6 +135,8 @@ Advanced expressions accept `rating:5`, `rating_min:4`, `rating_max:3`,
 
 ## Previews
 
+The preview processor advances to v8 to apply EXIF stored after PNG pixel chunks. Existing grid, fit and large previews regenerate under the new recipe.
+
 The daemon produces a grid preview with a 512-pixel maximum edge for each
 included photo's selected display file. It discovers new imports continuously
 and resumes missing work after restart. It keeps completed results.
@@ -426,5 +428,3 @@ Open **Trash** in either workspace to restore a photo group. Trash lists files, 
 Trash keeps file bytes, content versions, photo relationships, and album membership intact. Trash and restore each advance the affected asset revision once and record a change receipt. Permanent deletion waits until every member is trashed, old enough, and free of retention references. For a partially trashed photo, trash the remaining companions with the asset action or detach its live companions before emptying trash. See [Trash and garbage collection](trash-and-gc.md).
 
 Metadata JSONL v1 includes `trash` and `restore` receipts recording the operation and asset revision change; node trash state remains in the node records. Older Docbank clients refuse imports containing these operations; use a version that supports photo trash to restore that metadata.
-
-The preview processor advances to v8 to apply EXIF stored after PNG pixel chunks. Existing grid, fit and large previews regenerate under the new recipe.

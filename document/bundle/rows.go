@@ -196,7 +196,6 @@ func (v *RowValidator) count(d Document) error {
 		v.Counts.UnavailableInventories++
 	}
 	for _, r := range d.Roles {
-
 		switch r.Status {
 		case "unavailable":
 			v.Counts.Unavailable++

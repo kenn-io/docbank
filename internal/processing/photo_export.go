@@ -243,7 +243,6 @@ func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string,
 		if n > budget.pixels {
 			return nil, 0, fmt.Errorf("%w: decoded pixels exceed 512 million", bundle.ErrLimit)
 		}
-		budget.pixels -= n
 	}
 	if format == "jpeg" && !visualPreviewJPEGColorModelSupported(config.ColorModel) {
 		return nil, 0, errors.New("unsupported JPEG color model")
@@ -263,7 +262,13 @@ func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string,
 	if decoded.Bounds().Dx() != config.Width || decoded.Bounds().Dy() != config.Height {
 		return nil, 0, bundle.ErrConflict
 	}
-	return decoded, orientation, ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	if budget != nil {
+		budget.pixels -= int64(config.Width) * int64(config.Height)
+	}
+	return decoded, orientation, nil
 }
 
 func encodePhotoExport(ctx context.Context, decoded image.Image, orientation int, packets photoPackets, input store.PhotoExportInput, receipt bundle.PhotoRenderReceipt) ([]byte, bundle.PhotoRenderReceipt, error) {

@@ -242,6 +242,49 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 	}
 }
 
+func TestPhotoExportConfirmedFlagClearsLegacyReject(t *testing.T) {
+	t.Parallel()
+	for _, flag := range []string{"pick", ""} {
+		for _, property := range []string{` xmp:Rating="-1">`, `><xmp:Rating>-<!--split-->1</xmp:Rating>`, `><xmp:Rating><rdf:value>-1</rdf:value></xmp:Rating>`, ` xmp:Rating="4">`, `><xmp:Rating>4</xmp:Rating>`, `><xmp:Rating><rdf:value>4</rdf:value></xmp:Rating>`} {
+			for _, format := range []string{"jpeg", "png"} {
+				packet := []byte(photoSidecarHeader + property + photoSidecarFooter)
+				data := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1, append([]byte(photoXMPJPEGPrefix), packet...))
+				input := photoRenderInput(data, "image/jpeg")
+				input.Authored = store.PhotoAuthored{Confirmed: store.PhotoConfirmedFlag, Flag: flag}
+				out, _, err := RenderPhotoExport(t.Context(), bytes.NewReader(data), input, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true})
+				require.NoError(t, err)
+				packets, err := photoSourcePackets(t.Context(), out, true)
+				require.NoError(t, err)
+				actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
+				require.NoError(t, err)
+				require.Equal(t, flag, actual.Flag)
+				if strings.Contains(property, "4") {
+					require.Equal(t, 4, actual.Rating)
+				} else {
+					require.Zero(t, actual.Rating)
+				}
+			}
+		}
+	}
+}
+
+func TestPhotoExportFailedDecodePreservesPixelBudget(t *testing.T) {
+	preview := mediatest.JPEG(3, 2, color.White)
+	sos := bytes.Index(preview, []byte{0xff, 0xda})
+	require.Positive(t, sos)
+	broken := preview[:sos+2+int(binary.BigEndian.Uint16(preview[sos+2:]))]
+	config, _, err := image.DecodeConfig(bytes.NewReader(broken))
+	require.NoError(t, err)
+	require.Equal(t, 3, config.Width)
+	budget := &photoExportBudget{pixels: 6}
+	_, _, err = decodePhotoExport(t.Context(), bytes.NewReader(broken), "jpeg", 1, photoPackets{}, budget)
+	require.Error(t, err)
+	require.EqualValues(t, 6, budget.pixels)
+	_, _, err = decodePhotoExport(t.Context(), bytes.NewReader(preview), "jpeg", 1, photoPackets{}, budget)
+	require.NoError(t, err)
+	require.Zero(t, budget.pixels)
+}
+
 func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 	t.Parallel()
 	preview := mediatest.JPEG(3, 2, color.White)

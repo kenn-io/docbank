@@ -97,9 +97,6 @@ func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.
 		if len(selection.AssetIDs) == 0 && page.Total > bundle.MaxPhotoExportMembers {
 			return nil, "", fmt.Errorf("%w: photo exports allow at most %d photos", bundle.ErrLimit, bundle.MaxPhotoExportMembers)
 		}
-		if len(selection.AssetIDs) == 0 && page.Total > bundle.MaxMembers {
-			return nil, "", bundle.ErrLimit
-		}
 		if len(page.Items) > 0 {
 			identity = page.Items[0].position.QueryIdentity
 		}

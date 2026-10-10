@@ -504,6 +504,8 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 	decoder := xml.NewDecoder(bytes.NewReader(packet))
 	var out bytes.Buffer
 	encoder := xml.NewEncoder(&out)
+	clearLegacyReject := input.Authored.Confirmed&store.PhotoConfirmedFlag != 0 && input.Authored.Flag != "reject" && input.Authored.Confirmed&store.PhotoConfirmedRating == 0
+	isRating := func(n xml.Name) bool { return n.Space == xmpBasicNamespace && n.Local == "Rating" }
 	authored := func(n xml.Name) bool {
 		return photoXMPConfirmed(n, input)
 	}
@@ -558,6 +560,42 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 				skip = 1
 				continue
 			}
+			if clearLegacyReject && isRating(t.Name) {
+				var value strings.Builder
+				tokens := []xml.Token{xml.CopyToken(t)}
+				for nested := 1; nested > 0; {
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
+					next, err := decoder.Token()
+					if err != nil {
+						return nil, err
+					}
+					switch next.(type) {
+					case xml.StartElement:
+						nested++
+						if depth+nested-1 > maxSourceMetadataXMLDepth {
+							return nil, bundle.ErrLimit
+						}
+					case xml.EndElement:
+						nested--
+					case xml.CharData:
+						value.Write(next.(xml.CharData))
+					case xml.Directive:
+						return nil, errors.New("XMP directives are unsupported")
+					}
+					tokens = append(tokens, xml.CopyToken(next))
+				}
+				depth--
+				if strings.TrimSpace(value.String()) != "-1" {
+					for _, token := range tokens {
+						if err := encoder.EncodeToken(token); err != nil {
+							return nil, err
+						}
+					}
+				}
+				continue
+			}
 			attrs := []xml.Attr{}
 			seen := map[xml.Name]bool{}
 			for _, a := range t.Attr {
@@ -565,7 +603,7 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 					return nil, errors.New("duplicate XMP attribute")
 				}
 				seen[a.Name] = true
-				if remove(a.Name) || a.Name.Local == "xmlns" {
+				if remove(a.Name) || a.Name.Local == "xmlns" || clearLegacyReject && isRating(a.Name) && strings.TrimSpace(a.Value) == "-1" {
 					continue
 				}
 				if a.Name.Space == "xmlns" {
