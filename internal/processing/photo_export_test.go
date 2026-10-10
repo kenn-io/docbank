@@ -360,14 +360,29 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 	for _, tag := range []uint16{0x9c9b, 0x9c9c, 0x9c9d, 0x9c9e, 0x9c9f, 0x9c90} {
 		entries = append(entries, syntheticTIFFEntry{tag: tag, kind: 1, value: value})
 	}
+	entries = append(entries, tiffShort(0x4746, 5), tiffShort(0x4749, 99), syntheticTIFFEntry{tag: 0x83bb, kind: 7, value: append([]byte{0x1c, 2, 25, 0, 16}, []byte("Embedded keyword")...)})
 	aliasEXIF := syntheticTIFF(42, entries, nil)
-	for _, confirmed := range []store.PhotoAuthoredFields{0, store.PhotoConfirmedCaption | store.PhotoConfirmedCreator} {
+	for _, confirmed := range []store.PhotoAuthoredFields{0, store.PhotoConfirmedCaption | store.PhotoConfirmedCreator | store.PhotoConfirmedRating} {
 		for _, format := range []string{"jpeg", "png"} {
 			packets, _ := render(aliasEXIF, nil, store.PhotoAuthored{Confirmed: confirmed}, nil, format, false)
 			r, ok := newExifReader(packets.exif)
 			require.True(t, ok)
 			root := r.entries(r.u32(4))
 			require.NotContains(t, root, uint16(0x9c9e))
+			require.NotContains(t, root, uint16(0x83bb))
+			require.NotContains(t, string(packets.exif), "Embedded keyword")
+			for _, tag := range []uint16{0x4746, 0x4749} {
+				if confirmed == 0 {
+					require.Contains(t, root, tag)
+				} else {
+					require.NotContains(t, root, tag)
+				}
+			}
+			if confirmed&store.PhotoConfirmedRating != 0 {
+				actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
+				require.NoError(t, err)
+				require.Zero(t, actual.Rating)
+			}
 			require.Equal(t, value, root[0x9c90])
 			for _, tag := range []uint16{0x9c9b, 0x9c9c, 0x9c9d, 0x9c9f} {
 				if confirmed == 0 {
