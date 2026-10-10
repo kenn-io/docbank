@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"bufio"
 	"bytes"
 	"compress/flate"
 	"compress/zlib"
@@ -401,8 +402,9 @@ func inspectVisualPreviewPNG(
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return 0, false, false, false, err
 	}
+	reader := bufio.NewReaderSize(source, 4096)
 	var signature [8]byte
-	if _, err := io.ReadFull(source, signature[:]); err != nil {
+	if _, err := io.ReadFull(reader, signature[:]); err != nil {
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			return 0, false, false, true, nil
 		}
@@ -412,16 +414,23 @@ func inspectVisualPreviewPNG(
 		return 0, false, false, true, nil
 	}
 	orientation = 1
+	afterIDAT, sawEXIF := false, false
 	offset := int64(len(signature))
-	for range visualPreviewMaxPNGChunks {
+	for chunks := 0; afterIDAT || chunks < visualPreviewMaxPNGChunks; chunks++ {
 		if err := ctx.Err(); err != nil {
 			return 0, false, false, false, err
 		}
 		if offset > sourceSize-12 {
+			if afterIDAT {
+				return orientation, unsupportedColor, unsupportedMetadata, false, nil
+			}
 			return 0, false, false, true, nil
 		}
 		var header [8]byte
-		if _, err := io.ReadFull(source, header[:]); err != nil {
+		if _, err := io.ReadFull(reader, header[:]); err != nil {
+			if afterIDAT {
+				return orientation, unsupportedColor, unsupportedMetadata, false, nil
+			}
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				return 0, false, false, true, nil
 			}
@@ -430,21 +439,31 @@ func inspectVisualPreviewPNG(
 		length := int64(binary.BigEndian.Uint32(header[:4]))
 		chunkType := string(header[4:])
 		if length > sourceSize-offset-12 {
+			if afterIDAT {
+				return orientation, unsupportedColor, unsupportedMetadata, false, nil
+			}
 			return 0, false, false, true, nil
 		}
 		if chunkType == "IDAT" {
-			return orientation, unsupportedColor, unsupportedMetadata, false, nil
+			if sawEXIF || unsupportedColor || unsupportedMetadata {
+				return orientation, unsupportedColor, unsupportedMetadata, false, nil
+			}
+			afterIDAT = true
 		}
 		switch chunkType {
 		case "iCCP":
-			unsupportedColor = true
+			unsupportedColor = unsupportedColor || !afterIDAT
 		case "eXIf":
+			sawEXIF = sawEXIF || !afterIDAT
 			if length > visualPreviewMaxEXIFBytes {
-				unsupportedMetadata = true
+				unsupportedMetadata = !afterIDAT
 				break
 			}
 			payload := make([]byte, length)
-			if _, err := io.ReadFull(source, payload); err != nil {
+			if _, err := io.ReadFull(reader, payload); err != nil {
+				if afterIDAT {
+					return orientation, unsupportedColor, unsupportedMetadata, false, nil
+				}
 				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 					return 0, false, false, true, nil
 				}
@@ -452,14 +471,24 @@ func inspectVisualPreviewPNG(
 			}
 			if value, colorSpace, found := visualPreviewEXIF(payload); found {
 				orientation = value
-				unsupportedColor = unsupportedColor || colorSpace != 0 && colorSpace != 1
+				unsupportedColor = unsupportedColor || !afterIDAT && colorSpace != 0 && colorSpace != 1
+			}
+			if afterIDAT {
+				// Trailing EXIF supplies orientation only to preserve existing color support.
+				return orientation, unsupportedColor, unsupportedMetadata, false, nil
 			}
 			length = 0
 		case "IEND":
+			if afterIDAT {
+				return orientation, unsupportedColor, unsupportedMetadata, false, nil
+			}
 			return 0, false, false, true, nil
 		}
-		if _, err := source.Seek(length+4, io.SeekCurrent); err != nil {
-			return 0, false, false, false, err
+		if _, err := reader.Discard(int(length + 4)); err != nil {
+			if afterIDAT {
+				return orientation, unsupportedColor, unsupportedMetadata, false, nil
+			}
+			return 0, false, false, false, fmt.Errorf("skipping PNG chunk: %w", err)
 		}
 		offset += 12 + int64(binary.BigEndian.Uint32(header[:4]))
 	}
