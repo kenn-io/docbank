@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -91,7 +92,7 @@ func TestPhotoExportTrailingEXIFCreditsNamespacesAndICC(t *testing.T) {
 	decoder := xml.NewDecoder(bytes.NewReader(packets.xmp))
 	for {
 		token, err := decoder.Token()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
@@ -175,7 +176,7 @@ func TestPhotoExportOrientationAndAuthoredRotation(t *testing.T) {
 					w, h = 2, 3
 				}
 				order := append([]int(nil), orders[orientation-1]...)
-				for turn := 0; turn < rotation/90; turn++ {
+				for range rotation / 90 {
 					next := make([]int, len(order))
 					for y := range w {
 						for x := range h {
@@ -344,6 +345,7 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 }
 
 func TestPhotoExportFailedDecodePreservesPixelBudget(t *testing.T) {
+	t.Parallel()
 	preview := mediatest.JPEG(3, 2, color.White)
 	sos := bytes.Index(preview, []byte{0xff, 0xda})
 	require.Positive(t, sos)
@@ -409,7 +411,8 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 
 func syntheticPhotoICC() []byte {
 	tags := []string{"wtpt", "rXYZ", "gXYZ", "bXYZ", "rTRC", "gTRC", "bTRC"}
-	profile := make([]byte, 132+12*len(tags))
+	profile := make([]byte, 0)
+	profile = append(profile, make([]byte, 132+12*len(tags))...)
 	copy(profile[12:16], "mntr")
 	copy(profile[16:20], "RGB ")
 	copy(profile[20:24], "XYZ ")
@@ -439,6 +442,7 @@ func syntheticPhotoICC() []byte {
 	return profile
 }
 func TestPhotoExportPNGPixelChunksDoNotConsumeMetadataBudget(t *testing.T) {
+	t.Parallel()
 	frame := image.NewNRGBA(image.Rect(0, 0, 65, 64))
 	seed := uint32(1)
 	for i := range frame.Pix {
@@ -472,9 +476,9 @@ func TestPhotoExportPNGPixelChunksDoNotConsumeMetadataBudget(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, file.Close()) }()
 	counted := &previewCountedFile{File: file}
-	_, _, _, _, malformed, err := inspectVisualPreviewContainer(t.Context(), counted, int64(source.Len()), "png")
+	_, color, metadata, animated, malformed, err := inspectVisualPreviewContainer(t.Context(), counted, int64(source.Len()), "png")
 	require.NoError(t, err)
-	require.False(t, malformed)
+	require.False(t, color || metadata || animated || malformed)
 	require.Less(t, counted.reads, chunks/8)
 	input := photoRenderInput(source.Bytes(), "image/png")
 	output, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90}, nil)
@@ -494,6 +498,7 @@ func TestPhotoExportPNGPixelChunksDoNotConsumeMetadataBudget(t *testing.T) {
 
 type previewCountedFile struct {
 	*os.File
+
 	reads int
 }
 

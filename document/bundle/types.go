@@ -10,6 +10,8 @@ import (
 )
 
 const (
+	roleAvailable           = "available"
+	roleCollapsed           = "collapsed"
 	Format                  = "docbank-bundle-v1"
 	MaxMembers              = 100000
 	ChunkMembers            = 1000
@@ -40,14 +42,15 @@ type Member struct {
 	Revision  int64  `json:"revision,omitzero"`
 }
 
-// SourceRequest selects exactly one source kind. Revision is a precondition
-// only when the caller explicitly supplies it.
+// PhotoExportSelection selects photos from a query or explicit asset IDs.
 type PhotoExportSelection struct {
 	Query    query.Query `json:"query"`
 	AssetIDs []string    `json:"asset_ids,omitzero"`
 	Hidden   bool        `json:"hidden"`
 }
 
+// SourceRequest selects exactly one source kind. Revision is a precondition
+// only when the caller explicitly supplies it.
 type SourceRequest struct {
 	Photos             *PhotoExportSelection `json:"photos,omitzero"`
 	OperationID        string                `json:"operation_id"`

@@ -21,12 +21,15 @@ import (
 	"mime"
 
 	xdraw "golang.org/x/image/draw"
-	_ "golang.org/x/image/webp"
+	_ "golang.org/x/image/webp" // Register WebP with image.Decode.
 
 	"go.kenn.io/docbank/document"
 )
 
 const (
+	visualFormatJPEG                 = "jpeg"
+	visualFormatPNG                  = "png"
+	visualFormatWebP                 = "webp"
 	visualPreviewProcessorDescriptor = document.VisualPreviewProcessorDescriptor
 	visualPreviewMaxEdgePixels       = document.VisualPreviewMaxEdgePixels
 	visualPreviewMaxSourcePixels     = 100_000_000
@@ -70,13 +73,13 @@ func VisualPreviewSupportsMediaType(mediaType string) bool {
 func visualPreviewFormat(mediaType string) string {
 	switch visualPreviewSourceMediaType(mediaType) {
 	case "image/jpeg":
-		return "jpeg"
+		return visualFormatJPEG
 	case "image/png":
-		return "png"
+		return visualFormatPNG
 	case "image/gif":
 		return "gif"
 	case "image/webp":
-		return "webp"
+		return visualFormatWebP
 	case "image/x-sony-arw", "image/x-adobe-dng", "image/x-canon-cr2", "image/x-nikon-nef", "image/x-fuji-raf":
 		return "raw"
 	default:
@@ -129,7 +132,7 @@ func ProduceVisualPreviewForRecipe(
 	}
 	mediaType := visualPreviewSourceMediaType(target.MediaType)
 	switch visualPreviewFormat(mediaType) {
-	case "jpeg", "png", "gif", "webp":
+	case visualFormatJPEG, visualFormatPNG, "gif", visualFormatWebP:
 		return produceVisualPreviewImage(ctx, source, target.Size, visualPreviewFormat(mediaType), base, 0)
 	case "raw":
 		return produceVisualPreviewCameraRAW(ctx, source, target.Size, mediaType, base)
@@ -144,7 +147,7 @@ func ProduceVisualPreviewForRecipe(
 }
 
 func produceVisualPreviewJPEGWithOrientation(ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1, orientation int) (VisualPreviewProduct, error) {
-	return produceVisualPreviewImage(ctx, source, -1, "jpeg", base, orientation)
+	return produceVisualPreviewImage(ctx, source, -1, visualFormatJPEG, base, orientation)
 }
 
 func produceVisualPreviewImage(ctx context.Context, source io.ReadSeeker, size int64, format string, base document.VisualPreviewV1, containerOrientation int) (VisualPreviewProduct, error) {
@@ -192,7 +195,7 @@ type visualPreviewPixels struct {
 func decodeVisualPreviewPixels(ctx context.Context, source io.ReadSeeker, format string, admit func(image.Config) error) (result visualPreviewPixels, err error) {
 	if _, err = source.Seek(0, io.SeekStart); err != nil {
 		result.readErr = err
-		return
+		return result, err
 	}
 	reader := &visualPreviewReadErrorRecorder{reader: visualPreviewContextReader{ctx, source}}
 	defer func() {
@@ -203,7 +206,7 @@ func decodeVisualPreviewPixels(ctx context.Context, source io.ReadSeeker, format
 	var actual string
 	result.config, actual, err = image.DecodeConfig(reader)
 	if err != nil {
-		return
+		return result, fmt.Errorf("reading image dimensions: %w", err)
 	}
 	if actual != format {
 		return result, errVisualFormat
@@ -211,17 +214,17 @@ func decodeVisualPreviewPixels(ctx context.Context, source io.ReadSeeker, format
 	if !visualPreviewDimensionsAllowed(result.config.Width, result.config.Height) {
 		return result, errVisualDimensions
 	}
-	if format == "jpeg" && !visualPreviewJPEGColorModelSupported(result.config.ColorModel) {
+	if format == visualFormatJPEG && !visualPreviewJPEGColorModelSupported(result.config.ColorModel) {
 		return result, errVisualColor
 	}
 	if admit != nil {
 		if err = admit(result.config); err != nil {
-			return
+			return result, err
 		}
 	}
 	if _, err = source.Seek(0, io.SeekStart); err != nil {
 		result.readErr = err
-		return
+		return result, err
 	}
 	if format == "gif" {
 		result.image, err = decodeGIFCanvas(reader, result.config)
@@ -229,7 +232,7 @@ func decodeVisualPreviewPixels(ctx context.Context, source io.ReadSeeker, format
 		result.image, _, err = image.Decode(reader)
 	}
 	if err != nil {
-		return
+		return result, fmt.Errorf("decoding image pixels: %w", err)
 	}
 	if result.image.Bounds().Dx() != result.config.Width || result.image.Bounds().Dy() != result.config.Height {
 		return result, errVisualDecodeBounds
@@ -256,21 +259,21 @@ func produceDecodedVisualPreview(ctx context.Context, source io.ReadSeeker, form
 		}
 		detail := "the verified " + format + " cannot be decoded"
 		switch format {
-		case "jpeg":
+		case visualFormatJPEG:
 			return visualPreviewJPEGDecodeResult(base, detail, err)
-		case "png":
+		case visualFormatPNG:
 			return visualPreviewPNGDecodeResult(base, detail, err)
 		default:
 			return failedVisualPreview(base, "decode_failed", detail), nil
 		}
 	}
-	return encodeVisualPreview(base, pixels.image, pixels.config.Width, pixels.config.Height, orientation)
+	return encodeVisualPreview(base, pixels.image, orientation)
 }
 
 func encodeVisualPreview(
 	base document.VisualPreviewV1,
 	decoded image.Image,
-	sourceWidth, sourceHeight, orientation int,
+	orientation int,
 ) (VisualPreviewProduct, error) {
 	preview := transformPhotoPixels(decoded, orientation, base.Recipe.MaxEdgePixels)
 	width, height := preview.Bounds().Dx(), preview.Bounds().Dy()
@@ -329,12 +332,12 @@ func walkVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, forma
 		return err
 	}
 	r := bufio.NewReader(visualPreviewContextReader{ctx, io.LimitReader(source, size)})
-	headerSize := map[string]int{"jpeg": 2, "png": 8, "webp": 12}[format]
+	headerSize := map[string]int{visualFormatJPEG: 2, visualFormatPNG: 8, visualFormatWebP: 12}[format]
 	header := make([]byte, headerSize)
 	if _, err := io.ReadFull(r, header); err != nil {
 		return err
 	}
-	if format == "jpeg" && !bytes.Equal(header, []byte{0xff, 0xd8}) || format == "png" && string(header) != "\x89PNG\r\n\x1a\n" || format == "webp" && (string(header[:4]) != "RIFF" || string(header[8:]) != "WEBP" || uint64(binary.LittleEndian.Uint32(header[4:]))+8 != uint64(size)) {
+	if format == visualFormatJPEG && !bytes.Equal(header, []byte{0xff, 0xd8}) || format == visualFormatPNG && string(header) != "\x89PNG\r\n\x1a\n" || format == visualFormatWebP && (string(header[:4]) != "RIFF" || string(header[8:]) != "WEBP" || int64(binary.LittleEndian.Uint32(header[4:]))+8 != size) {
 		return errVisualContainer
 	}
 	offset := int64(headerSize)
@@ -342,19 +345,19 @@ func walkVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, forma
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if format == "webp" && offset == size {
+		if format == visualFormatWebP && offset == size {
 			return nil
 		}
-		if format == "jpeg" && count >= visualPreviewMaxJPEGSegments {
+		if format == visualFormatJPEG && count >= visualPreviewMaxJPEGSegments {
 			return errVisualContainer
 		}
-		if format == "webp" && count >= visualPreviewMaxWebPChunks {
+		if format == visualFormatWebP && count >= visualPreviewMaxWebPChunks {
 			return errVisualMetadataLimit
 		}
 		var kind string
 		var length, overhead, padding int64
 		switch format {
-		case "jpeg":
+		case visualFormatJPEG:
 			marker, err := readVisualPreviewJPEGMarker(r)
 			if err != nil {
 				return err
@@ -374,9 +377,9 @@ func walkVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, forma
 				return errVisualContainer
 			}
 			kind = string([]byte{marker})
-		case "png", "webp":
+		case visualFormatPNG, visualFormatWebP:
 			overhead = 8
-			if format == "png" {
+			if format == visualFormatPNG {
 				overhead = 12
 			}
 			if offset > size-overhead {
@@ -386,13 +389,13 @@ func walkVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, forma
 			if _, err := io.ReadFull(r, h[:]); err != nil {
 				return err
 			}
-			if format == "png" {
+			if format == visualFormatPNG {
 				length, kind, padding = int64(binary.BigEndian.Uint32(h[:4])), string(h[4:]), 4
 			} else {
 				length, kind = int64(binary.LittleEndian.Uint32(h[4:])), string(h[:4])
 				padding = length % 2
 			}
-			if length > size-offset-overhead || format == "webp" && length+padding > size-offset-8 {
+			if length > size-offset-overhead || format == visualFormatWebP && length+padding > size-offset-8 {
 				return errVisualContainer
 			}
 		}
@@ -410,10 +413,10 @@ func walkVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, forma
 			return err
 		}
 		offset += overhead + length
-		if format == "webp" {
+		if format == visualFormatWebP {
 			offset += padding
 		}
-		if format == "png" && kind == "IEND" {
+		if format == visualFormatPNG && kind == "IEND" {
 			if length != 0 {
 				return errVisualContainer
 			}
@@ -425,18 +428,18 @@ func walkVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, forma
 func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, size int64, format string) (orientation int, unsupportedColor, unsupportedMetadata, animated, malformed bool, err error) {
 	orientation = 1
 	err = walkVisualPreviewContainer(ctx, source, format, size, func(kind string, r io.Reader, n int64) error {
-		if format == "jpeg" && kind != "\xe1" && kind != "\xe2" {
+		if format == visualFormatJPEG && kind != "\xe1" && kind != "\xe2" {
 			return nil
 		}
-		if format == "png" && kind == "iCCP" || format == "webp" && kind == "ICCP" {
+		if format == visualFormatPNG && kind == "iCCP" || format == visualFormatWebP && kind == "ICCP" {
 			unsupportedColor = true
 			return nil
 		}
-		if format == "webp" && (kind == "ANIM" || kind == "ANMF") {
+		if format == visualFormatWebP && (kind == "ANIM" || kind == "ANMF") {
 			animated = true
 			return nil
 		}
-		if format == "webp" && kind == "VP8X" {
+		if format == visualFormatWebP && kind == "VP8X" {
 			if n != 10 {
 				return errVisualContainer
 			}
@@ -448,7 +451,7 @@ func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, si
 			unsupportedColor = unsupportedColor || flags[0]&visualPreviewWebPICCProfile != 0
 			return nil
 		}
-		if format != "jpeg" && kind != "eXIf" && kind != "EXIF" {
+		if format != visualFormatJPEG && kind != "eXIf" && kind != "EXIF" {
 			return nil
 		}
 		if n > visualPreviewMaxEXIFBytes {
@@ -459,7 +462,7 @@ func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, si
 		if err != nil {
 			return err
 		}
-		if format == "jpeg" {
+		if format == visualFormatJPEG {
 			if kind == "\xe2" && bytes.HasPrefix(payload, []byte("ICC_PROFILE\x00")) {
 				unsupportedColor = true
 				return nil
@@ -480,7 +483,7 @@ func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, si
 	if errors.Is(err, errVisualMetadataLimit) {
 		unsupportedMetadata, err = true, nil
 	}
-	return
+	return orientation, unsupportedColor, unsupportedMetadata, animated, malformed, err
 }
 
 func readVisualPreviewJPEGMarker(source io.Reader) (byte, error) {
@@ -676,7 +679,7 @@ func whitePhotoMatte(pixels image.Image) *image.RGBA {
 func decodeGIFCanvas(source io.Reader, config image.Config) (image.Image, error) {
 	decoded, err := gif.Decode(source)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decoding GIF canvas: %w", err)
 	}
 	canvas := image.NewNRGBA(image.Rect(0, 0, config.Width, config.Height))
 	draw.Draw(canvas, decoded.Bounds(), decoded, decoded.Bounds().Min, draw.Src)

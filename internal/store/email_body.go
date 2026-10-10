@@ -95,7 +95,7 @@ func validateEmailBodyShape(v EmailMetadataView, r metadataEmailBodyResult) erro
 	}
 	selected, body := emailSelectedBody(v.Evidence)
 	switch r.State {
-	case "available":
+	case roleAvailable:
 		if selected == nil || body == nil || r.PartPath == nil || *r.PartPath != *selected || r.RenditionAttachmentID == nil || r.Reason != nil {
 			return fmt.Errorf("%w: available body selection", ErrEmailCorrupt)
 		}
@@ -135,7 +135,7 @@ func validateEmailBodyResult(ctx context.Context, q metadataQuerier, v EmailMeta
 	if err := validateEmailBodyShape(v, r); err != nil {
 		return err
 	}
-	if r.State == "available" {
+	if r.State == roleAvailable {
 		a, err := loadRenditionAttachment(ctx, q, *r.RenditionAttachmentID)
 		if err != nil {
 			return err
@@ -201,7 +201,7 @@ func emailBodySearch(ctx context.Context, q metadataQuerier, v EmailMetadataView
 	if !serving {
 		return pending()
 	}
-	return EmailBodySearch{State: "available", RenditionBuildID: new(buildID), RenditionAttachmentID: r.RenditionAttachmentID}, nil
+	return EmailBodySearch{State: roleAvailable, RenditionBuildID: new(buildID), RenditionAttachmentID: r.RenditionAttachmentID}, nil
 }
 func selectedEmailAttachment(ctx context.Context, q metadataQuerier, id string) (EmailMetadataView, error) {
 	a, err := loadEmailAttachment(ctx, q, id)
@@ -323,7 +323,7 @@ func (s *Store) PublishEmailBody(ctx context.Context, p EmailBodyPublication) er
 		if a.VaultID != s.VaultID() || a.ContentVersionID != v.Version.ID || !reflect.DeepEqual(a.Profile, profile) {
 			return fmt.Errorf("%w: body rendition attachment source/profile", ErrEmailCorrupt)
 		}
-		r := metadataEmailBodyResult{Type: "email_body_result", EmailAttachmentID: p.EmailAttachmentID, BodyRecipeFingerprint: p.BodyRecipeFingerprint, State: "available", PartPath: new(p.PartPath), RenditionAttachmentID: new(a.ID)}
+		r := metadataEmailBodyResult{Type: "email_body_result", EmailAttachmentID: p.EmailAttachmentID, BodyRecipeFingerprint: p.BodyRecipeFingerprint, State: roleAvailable, PartPath: new(p.PartPath), RenditionAttachmentID: new(a.ID)}
 		if err := validateEmailBodyShape(v, r); err != nil {
 			return err
 		}

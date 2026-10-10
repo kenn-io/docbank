@@ -140,6 +140,7 @@ func TestPhotoExportMetadataFailureNamesPhoto(t *testing.T) {
 }
 
 func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"non-photo", "trashed", "replaced"} {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()

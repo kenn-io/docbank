@@ -33,12 +33,12 @@ func (c *DuplicateCursor) Add(d *Document, seal bool) error {
 	for i := range d.Roles {
 		r := &d.Roles[i]
 		if c.Policy != "collapse_exact_content" || r.Status == "unavailable" {
-			if r.Status == "collapsed" || r.ReuseOf != "" {
+			if r.Status == roleCollapsed || r.ReuseOf != "" {
 				return ErrConflict
 			}
 			continue
 		}
-		if r.Status != "available" && r.Status != "collapsed" {
+		if r.Status != roleAvailable && r.Status != roleCollapsed {
 			return ErrConflict
 		}
 		key, err := collapseKey(*d, *r)
@@ -50,9 +50,9 @@ func (c *DuplicateCursor) Add(d *Document, seal bool) error {
 		}
 		previous := c.seen[key]
 		if seal && previous != "" {
-			r.Status, r.ReuseOf = "collapsed", previous
+			r.Status, r.ReuseOf = roleCollapsed, previous
 		}
-		if r.Status == "collapsed" {
+		if r.Status == roleCollapsed {
 			if previous == "" || previous != r.ReuseOf || r.Path == previous {
 				return ErrConflict
 			}

@@ -238,10 +238,10 @@ func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
 	rendered, err := png.Decode(bytes.NewReader(output))
 	require.NoError(t, err)
 	assert.Equal(t, image.Rect(0, 0, 64, 32), rendered.Bounds())
-	_, _, _, alpha := rendered.At(8, 4).RGBA()
-	assert.Zero(t, alpha)
-	_, _, _, alpha = rendered.At(32, 16).RGBA()
-	assert.Equal(t, uint32(65535), alpha)
+	red, green, blue, alpha := rendered.At(8, 4).RGBA()
+	assert.Equal(t, [4]uint32{}, [4]uint32{red, green, blue, alpha})
+	red, green, blue, alpha = rendered.At(32, 16).RGBA()
+	assert.Equal(t, [4]uint32{0, 0, 0, 65535}, [4]uint32{red, green, blue, alpha})
 }
 
 func TestProduceVisualPreviewAcceptsWebP(t *testing.T) {

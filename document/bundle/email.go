@@ -30,8 +30,8 @@ func ValidateEmailPDFRoles(plan Plan, d Document) error {
 			continue
 		}
 		count++
-		if role.Status == "collapsed" {
-			role.Status = "available"
+		if role.Status == roleCollapsed {
+			role.Status = roleAvailable
 		}
 		if policy == nil || count != 1 || (policy.ProfileFingerprint == "") == (policy.RecipeSHA256 == "") {
 			return ErrConflict
@@ -43,7 +43,7 @@ func ValidateEmailPDFRoles(plan Plan, d Document) error {
 			continue
 		}
 		var receipt document.EmailPDFReceiptV1
-		if role.Status != "available" || json.Unmarshal(role.Recipe, &receipt, json.RejectUnknownMembers(true)) != nil {
+		if role.Status != roleAvailable || json.Unmarshal(role.Recipe, &receipt, json.RejectUnknownMembers(true)) != nil {
 			return ErrConflict
 		}
 		if receipt.Source != (document.EmailDocumentIdentity{NodeID: d.NodeID, VersionID: d.VersionID, SHA256: d.SHA256, Size: d.Size}) || document.ValidateEmailDocumentIdentity(receipt.Source) != nil {

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/jsontext"
@@ -229,7 +230,7 @@ func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.Pla
 					return err
 				}
 				current, err := canonical.Marshal(input)
-				if err != nil || string(current) != string(frozen) || artifact.Receipt.Source != m || artifact.Receipt.Profile != *r.PhotoRender {
+				if err != nil || !bytes.Equal(current, frozen) || artifact.Receipt.Source != m || artifact.Receipt.Profile != *r.PhotoRender {
 					return fmt.Errorf("%w: photo %d changed during preparation", bundle.ErrConflict, m.NodeID)
 				}
 				if err = s.EnsureBlobTx(tx, artifact.SHA256, artifact.Size, artifact.Physical); err != nil {

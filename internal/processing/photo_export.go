@@ -191,7 +191,7 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 			candidate.orientation, candidate.animated = p.orientation, p.animated
 			candidate.unsupportedColor = candidate.unsupportedColor || p.unsupportedColor
 
-			decoded, orientation, err = decodePhotoExport(ctx, preview, "jpeg", location.orientation, candidate, budget)
+			decoded, orientation, err = decodePhotoExport(ctx, preview, visualFormatJPEG, location.orientation, candidate, budget)
 			if err == nil {
 				packets = candidate
 				break
@@ -220,7 +220,7 @@ func photoExportError(input store.PhotoExportInput, err error) error {
 
 func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string, containerOrientation int, packets photoPackets, budget *photoExportBudget) (image.Image, int, error) {
 	orientation := packets.orientation
-	if format != "jpeg" && format != "png" && format != "webp" && format != "gif" {
+	if format != visualFormatJPEG && format != visualFormatPNG && format != visualFormatWebP && format != "gif" {
 		return nil, 0, fmt.Errorf("%w: unsupported photo media type", bundle.ErrUnavailable)
 	}
 	if packets.unsupportedColor && len(packets.icc) == 0 || packets.animated {
@@ -257,13 +257,13 @@ func encodePhotoExport(ctx context.Context, decoded image.Image, orientation int
 
 	receipt.Width, receipt.Height = oriented.Bounds().Dx(), oriented.Bounds().Dy()
 	var output bytes.Buffer
-	if profile.Format == "jpeg" {
+	if profile.Format == visualFormatJPEG {
 		matte := whitePhotoMatte(oriented)
 		if err := jpeg.Encode(&output, matte, &jpeg.Options{Quality: profile.Quality}); err != nil {
-			return nil, receipt, err
+			return nil, receipt, fmt.Errorf("encoding photo JPEG: %w", err)
 		}
 	} else if err := png.Encode(&output, oriented); err != nil {
-		return nil, receipt, err
+		return nil, receipt, fmt.Errorf("encoding photo PNG: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, receipt, err

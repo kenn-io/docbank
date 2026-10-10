@@ -33,7 +33,7 @@ type PreparedPhotoExport struct {
 
 func (a PreparedPhotoExport) role() (bundle.Role, error) {
 	raw, err := canonical.Marshal(a.Receipt)
-	return bundle.Role{Role: "photo_rendered", Status: "available", Path: bundle.PhotoRenderedPath(a.Receipt.Source, a.Receipt.Profile), SHA256: a.SHA256, Size: a.Size, MediaType: "image/" + a.Receipt.Profile.Format, Recipe: raw}, err
+	return bundle.Role{Role: "photo_rendered", Status: roleAvailable, Path: bundle.PhotoRenderedPath(a.Receipt.Source, a.Receipt.Profile), SHA256: a.SHA256, Size: a.Size, MediaType: "image/" + a.Receipt.Profile.Format, Recipe: raw}, err
 }
 
 func validatePhotoPlanRequest(r bundle.PlanRequest) error {
