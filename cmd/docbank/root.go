@@ -24,8 +24,8 @@ var rootCmd = &cobra.Command{
 over immutable, hash-verified content versions. A background daemon owns the
 vault; data commands start it automatically ("docbank daemon stop" ends it).
 
-DOCBANK_HOME selects the vault (default ~/.docbank); the first data command creates
-it. Run "docbank info" to confirm the selected vault's path and identity.
+DOCBANK_HOME selects the vault (default ~/.docbank); the first data command
+creates it. "docbank info" confirms the selected vault's path and identity.
 
 Start here:
   docbank add ./scans --dest /cases/acme   import files/folders (creates dirs)
@@ -33,7 +33,7 @@ Start here:
   docbank search invoice 2026 --json       find by name or text content
   docbank cat /cases/acme/notes.txt        print a file's original bytes
   docbank get id:12 ./invoice.pdf          save a verified local copy
-  docbank backup init --repo ~/db-backup   then: backup create --repo ~/db-backup
+  docbank backup init --repo ~/backup      then: backup create --repo ~/backup
 
 Concepts:
   path-or-id  a node is "/abs/path" or "id:N"; id:N survives mv and rename
@@ -51,10 +51,10 @@ Most read commands accept --json. Exit codes: 0 ok, 1 error, 2 usage,
 	// validate them here before the process boundary marks command execution.
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 		if err := cmd.ValidateRequiredFlags(); err != nil {
-			return fmt.Errorf("%w", err)
+			return usageError(err)
 		}
 		if err := cmd.ValidateFlagGroups(); err != nil {
-			return fmt.Errorf("%w", err)
+			return usageError(err)
 		}
 		commandStarted = true
 		return nil

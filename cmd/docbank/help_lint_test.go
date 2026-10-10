@@ -48,6 +48,9 @@ func TestHelpTreeLint(t *testing.T) {
 			if cmd.HasSubCommands() {
 				assert.NotEmpty(t, cmd.Long, "parents must explain their workflow")
 			}
+			for line := range strings.SplitSeq(cmd.Long, "\n") {
+				assert.LessOrEqual(t, utf8.RuneCountInString(line), 80, "wrap Long at 80 columns: %s", line)
+			}
 			if cmd != rootCmd && cmd.Name() != "tui" && cmd.Long != "" {
 				lineLimit := 12
 				if cmd.HasSubCommands() {

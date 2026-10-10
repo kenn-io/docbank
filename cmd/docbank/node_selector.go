@@ -47,7 +47,9 @@ func (s nodeSelector) resolve(ctx context.Context, c *daemonconn.Connection) (ap
 		return api.Node{}, err
 	}
 	if n.TrashedAt != "" {
-		return api.Node{}, fmt.Errorf("resolving %q: node is trashed: %w", s.raw, store.ErrNotFound)
+		return api.Node{}, withHint(
+			fmt.Errorf("resolving %q: node is trashed: %w", s.raw, store.ErrNotFound),
+			`list restorable nodes with "docbank trash list"`)
 	}
 	return n, nil
 }
@@ -65,7 +67,12 @@ func (s nodeSelector) resolveIncludingTrash(
 		n, err = c.API().ResolvePath(ctx, &apiclient.ResolvePathRequestOptions{Query: &apiclient.ResolvePathQuery{Path: s.path}})
 	}
 	if err != nil {
-		return api.Node{}, fmt.Errorf("resolving %q: %w", s.raw, err)
+		err = fmt.Errorf("resolving %q: %w", s.raw, err)
+		if s.id == 0 && errors.Is(err, store.ErrNotFound) {
+			err = withHint(err,
+				`list paths with "docbank tree" or find by name with "docbank search <name>"`)
+		}
+		return api.Node{}, err
 	}
 	return *n, nil
 }

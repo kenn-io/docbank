@@ -28,8 +28,9 @@ var (
 var peopleCmd = &cobra.Command{
 	Long: `Manage canonical people extracted from documents. <person-id> comes from list;
 --revision is the optimistic-lock value from show. Identity IDs for split come
-from show. Package assignment IDs come from GET /api/v1/packages/by-id/{package_id}/custodians
-or MCP list_package_custodians. All commands print JSON.`,
+from show. Package assignment IDs come from
+GET /api/v1/packages/by-id/{package_id}/custodians or MCP
+list_package_custodians. All commands print JSON.`,
 	GroupID: groupSources,
 	Use:     "people",
 	Short:   "Manage canonical people",
@@ -180,8 +181,9 @@ var peopleMergeCmd = &cobra.Command{
 var peopleSplitCmd = &cobra.Command{
 	Example: `  docbank people split <person-id> --revision 1 --display-name 'Acme Reviewer' --identity <identity-uuid> --operation-id <uuidv4>`,
 	Long: `Output: JSON. The person ID, revision, and identity IDs come from
-docbank people show. Package assignment IDs come from GET /api/v1/packages/by-id/{package_id}/custodians
-or MCP list_package_custodians.`,
+docbank people show. Package assignment IDs come from
+GET /api/v1/packages/by-id/{package_id}/custodians or MCP
+list_package_custodians.`,
 	Use:   "split <person-id>",
 	Short: "Split selected members into a new person",
 	Args:  cobra.ExactArgs(1),

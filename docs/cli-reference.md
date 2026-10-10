@@ -17,8 +17,10 @@ examples show where version, job, and snapshot IDs come from.
 Vault commands use `~/.docbank` unless `DOCBANK_HOME` selects another location.
 See [Configuration](configuration.md). Virtual paths are absolute,
 `/`-separated, and case-sensitive. Errors go to stderr and produce a nonzero
-exit code. Argument errors include usage or a help command; missing paths and
-busy work include a next-step hint. Hints stay on stderr.
+exit code. Parsing errors (unknown commands or flags, wrong argument counts,
+missing required flags) include usage or a help command. Missing paths, trashed
+nodes, missing tags, a locked backup repository, and busy vault maintenance
+include a next-step hint. Hints stay on stderr.
 
 Data commands send HTTP requests to the daemon and start it in the background
 if needed. They never open the vault directly. `docbank daemon status` and

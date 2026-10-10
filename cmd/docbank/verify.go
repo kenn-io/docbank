@@ -11,7 +11,8 @@ import (
 var verifyCmd = &cobra.Command{
 	Example: `  docbank verify`,
 	Long: `Re-hashes every stored blob and checks metadata. Exit 6 means integrity
-findings; exit 1 means the check could not finish.`,
+findings; exit 5 means the vault is busy; other nonzero codes mean the check
+could not finish.`,
 	GroupID: groupOperations,
 	Use:     "verify",
 	Short:   "Validate metadata and re-hash every stored blob",

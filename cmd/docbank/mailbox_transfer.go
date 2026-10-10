@@ -13,10 +13,11 @@ import (
 func newMailboxArchiveCommand() *cobra.Command {
 	return &cobra.Command{
 		Example: `  docbank mailbox register acme-mail 'Synthetic Acme mail archive'`,
-		Long:    `No output on success. Keep the archive ID you supplied for mailbox transfer --archive.`,
-		Use:     "register <archive-id> <description>",
-		Short:   "Register an application-independent EML archive identity",
-		Args:    cobra.ExactArgs(2),
+		Long: `No output on success. Keep the archive ID you supplied; mailbox transfer
+--archive needs it.`,
+		Use:   "register <archive-id> <description>",
+		Short: "Register an application-independent EML archive identity",
+		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {

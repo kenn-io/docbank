@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -177,6 +178,20 @@ func TestRunProcessErrorHints(t *testing.T) {
 	assert.Equal(t, exitNotFound, run("ls", "/missing"))
 	assert.True(t, strings.HasPrefix(stderr.String(), "error: "))
 	assert.Contains(t, stderr.String(), `hint: list paths with "docbank tree" or find by name with "docbank search <name>"`)
+	assert.Equal(t, exitNotFound, run("stat", "id:999"))
+	assert.NotContains(t, stderr.String(), "hint:")
+	assert.Equal(t, exitSuccess, run("mkdir", "/gone"))
+	assert.Equal(t, exitSuccess, run("stat", "/gone", "--json"))
+	var gone struct {
+		ID int64 `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &gone))
+	assert.Equal(t, exitSuccess, run("rm", "/gone"))
+	assert.Equal(t, exitNotFound, run("ls", formatNodeSelector(gone.ID)))
+	assert.Contains(t, stderr.String(), "node is trashed")
+	assert.Contains(t, stderr.String(), `hint: list restorable nodes with "docbank trash list"`)
+	assert.Equal(t, exitNotFound, run("tag", "show", "urgent"))
+	assert.Contains(t, stderr.String(), `hint: list tags with "docbank tag list"`)
 	assert.Equal(t, exitUsage, run("processing", "status", "abc"))
 	assert.Contains(t, stderr.String(), `job ID must be lowercase SHA-256; the job ID is printed by "docbank processing build"`)
 	for _, args := range [][]string{{"rendition", "window", "id:1", "--version", "abc", "--profile", "supplied-captions"}, {"processing", "coverage", "abc", "--profile", "supplied-captions"}} {
@@ -210,13 +225,10 @@ func TestCommandErrorHint(t *testing.T) {
 		{"suggestion", rootCmd, errors.New("unknown command; Did you mean stat?"), exitUsage, false, ""},
 		{"multiline", multiline, errors.New("bad argument"), exitUsage, false, `hint: run "sample --help"`},
 		{"started usage", searchCmd, usageError(errors.New("bad limit")), exitUsage, true, ""},
-		{"missing path", lsCmd, fmt.Errorf(`resolving "/missing": %w`, store.ErrNotFound), exitNotFound, true, `hint: list paths with "docbank tree" or find by name with "docbank search <name>"`},
-		{"missing node ID", statCmd, fmt.Errorf(`resolving "id:999": %w`, store.ErrNotFound), exitNotFound, true, ""},
-		{"trashed node", statCmd, fmt.Errorf(`resolving "/gone": node is trashed: %w`, store.ErrNotFound), exitNotFound, true, `hint: list restorable nodes with "docbank trash list"`},
-		{"missing tag", tagShowCmd, fmt.Errorf(`resolving tag "urgent": %w`, store.ErrNotFound), exitNotFound, true, `hint: list tags with "docbank tag list"`},
 		{"missing job", jobsShowCmd, fmt.Errorf(`showing operation "unknown": %w`, store.ErrNotFound), exitNotFound, true, ""},
 		{"unclassified missing resource", lsCmd, store.ErrNotFound, exitNotFound, true, ""},
-		{"busy", jobsCmd, home.ErrVaultLocked, exitBusy, true, `hint: wait and retry; "docbank jobs" shows active work`},
+		{"wrapped hint", lsCmd, fmt.Errorf("listing: %w", withHint(store.ErrNotFound, "try this")), exitNotFound, true, "hint: try this"},
+		{"vault locked", jobsCmd, home.ErrVaultLocked, exitBusy, true, ""},
 		{"backup repository locked", backupCreateCmd, backup.ErrRepoLocked, exitBusy, true, `hint: wait for the backup repository owner; use --force-unlock only when its owner is known to be gone`},
 		{"pack retirement deferred", storageRepackCmd, packstore.ErrPackRetirementDeferred, exitBusy, true, ""},
 		{"maintenance busy", jobsCmd, daemonconn.ErrMaintenanceBusy, exitBusy, true, `hint: wait and retry; "docbank jobs" shows active work`},

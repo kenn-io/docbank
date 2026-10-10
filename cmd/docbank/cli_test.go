@@ -1843,17 +1843,18 @@ func TestStorageRepackJSON(t *testing.T) {
 }
 
 func TestDeletionHelpSeparatesTrashGCAndRepack(t *testing.T) {
-	out, err := runCLI(t, "rm", "--help")
-	require.NoError(t, err)
-	assert.Contains(t, out, "rm never permanently deletes metadata or reclaims content")
+	help := func(args ...string) string {
+		out, err := runCLI(t, args...)
+		require.NoError(t, err)
+		return strings.Join(strings.Fields(out), " ")
+	}
+	assert.Contains(t, help("rm", "--help"), "rm never permanently deletes metadata or reclaims content")
 
-	out, err = runCLI(t, "trash", "empty", "--help")
-	require.NoError(t, err)
+	out := help("trash", "empty", "--help")
 	assert.Contains(t, out, "Content bytes remain")
 	assert.Contains(t, out, "packed space then requires repack")
 
-	out, err = runCLI(t, "gc", "--help")
-	require.NoError(t, err)
+	out = help("gc", "--help")
 	assert.Contains(t, out, "loose files are reclaimed immediately")
 	assert.Contains(t, out, "requires a separate storage repack")
 }

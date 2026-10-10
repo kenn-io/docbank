@@ -172,9 +172,10 @@ var exportCancelCmd = &cobra.Command{
 var exportReleaseCmd = &cobra.Command{
 	Example: `  docbank export release <job-id>`,
 	Use:     "release <job-id>",
-	Long: "Remove a finished job and its retained archive to free a slot.\n" +
-		"If export_retained is returned, retry release after the download finishes.\n" +
-		"Even download && release can need a retry; unused tickets expire after two minutes.",
+	Long: `Remove a finished job and its retained archive to free a slot.
+If export_retained is returned, retry release after the download finishes.
+Even download && release can need a retry; unused tickets expire after
+two minutes.`,
 	Short: "Remove a finished job and its retained archive to free a slot",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {

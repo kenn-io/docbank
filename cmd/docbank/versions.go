@@ -31,7 +31,8 @@ var (
 )
 
 var versionsCmd = &cobra.Command{
-	Long: `Every put, edit or revert adds an immutable content version (UUID).
+	Long: `Each put, revert, or edit that changes content adds an immutable content
+version (UUID).
 list shows them newest first; cat prints one; revert (top-level) makes an old
 one current; prune releases history.`,
 	GroupID: groupDocuments,
@@ -171,9 +172,9 @@ var versionsPruneCmd = &cobra.Command{
   docbank versions prune id:12 --keep-newest 3 --run`,
 	Use:   "prune <path-or-id>",
 	Short: "Preview or release selected version history",
-	Long: "Release selected immutable history while retaining the current content. " +
-		"This changes logical reachability only: run gc for loose bytes and storage repack " +
-		"for dead packed space. The default is a dry run.",
+	Long: `Release selected immutable history while retaining the current content. This
+changes logical reachability only: run gc for loose bytes and storage repack for
+dead packed space. The default is a dry run.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		request := api.VersionPruneRequest{

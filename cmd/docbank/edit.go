@@ -29,7 +29,7 @@ var (
 )
 
 var editCmd = &cobra.Command{
-	Example: `  EDITOR=vi docbank edit /cases/acme/notes.md`,
+	Example: `  docbank edit /cases/acme/notes.md --editor vi`,
 	GroupID: groupDocuments,
 	Use:     "edit <path-or-id>",
 	Short:   "Edit a file through a new immutable content version",

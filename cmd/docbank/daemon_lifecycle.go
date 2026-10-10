@@ -41,9 +41,10 @@ var daemonStartCmd = &cobra.Command{
 	Example: `  docbank daemon start`,
 	Use:     "start",
 	Short:   "Start the daemon in the background",
-	Long: "Start a daemon for this vault in the background, replacing a running daemon " +
-		"whose version or protocol does not match this binary. Same convergence as the data commands' " +
-		"auto-start: after `daemon start` succeeds, the one running daemon is current.",
+	Long: `Start a daemon for this vault in the background, replacing a running daemon
+whose version or protocol does not match this binary. Same convergence as the
+data commands' auto-start: after "daemon start" succeeds, the one running daemon
+is current.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		layout, err := home.Resolve()
@@ -123,8 +124,9 @@ var daemonRestartCmd = &cobra.Command{
 	Example: `  docbank daemon restart`,
 	Use:     "restart",
 	Short:   "Restart the daemon",
-	Long:    "Stop the daemon if one is running, then start it again. Tolerates the daemon not already running.",
-	Args:    cobra.NoArgs,
+	Long: `Stop the daemon if one is running, then start it again. Succeeds when no
+daemon was running.`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		layout, err := home.Resolve()
 		if err != nil {

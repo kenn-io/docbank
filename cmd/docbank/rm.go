@@ -20,9 +20,9 @@ var rmCmd = &cobra.Command{
 	GroupID: groupDocuments,
 	Use:     "rm <path-or-id>",
 	Short:   "Move a node (and its subtree) to the trash",
-	Long: "Move a node (and its subtree) to recoverable trash. rm never permanently " +
-		"deletes metadata or reclaims content; use trash empty, gc, and storage repack " +
-		"as separate explicit maintenance steps.",
+	Long: `Move a node (and its subtree) to recoverable trash. rm never permanently deletes
+metadata or reclaims content; use trash empty, gc, and storage repack as
+separate explicit maintenance steps.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		selector, err := parseNodeSelector(args[0])

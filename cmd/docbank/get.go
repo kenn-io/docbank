@@ -36,7 +36,8 @@ var getCmd = &cobra.Command{
   docbank get /cases/acme/invoice.pdf ./invoice.pdf --overwrite --json`,
 	Long: `Download the current version to <local-file>, verifying size and sha256 before
 the file is kept. Refuses to overwrite unless --overwrite.
-Output: --json prints the receipt (node_id, version_id, blob_hash, size, output).`,
+Output: --json prints the receipt
+(node_id, version_id, blob_hash, size, output).`,
 	GroupID: groupDocuments,
 	Use:     "get <path-or-id> <local-file>",
 	Short:   "Download one file with end-to-end verification",

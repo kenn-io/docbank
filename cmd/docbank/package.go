@@ -42,8 +42,9 @@ var (
 
 var packageCmd = &cobra.Command{
 	Long: `A load-file package is a litigation production (DAT/OPT/LFP).
-Received: preflight <local-dir> -> import <preflight-id> -> import status.
-Produced: export <snapshot-id> out.zip.
+Received: preflight <local-dir> --profile P --encoding E ->
+import <preflight-id> --name N --into /folder -> import status <operation-id>.
+Produced: export <snapshot-id> out.zip --profile P.
 <snapshot-id> must be a sealed collection snapshot UUID. A package import
 creates one; read snapshot_id with docbank package list --json or
 docbank package show <package-id> --json. The CLI does not create a sealed
@@ -101,7 +102,8 @@ var packagePreflightCmd = &cobra.Command{
 
 var packageImportCmd = &cobra.Command{
 	Example: `  docbank package import <preflight-id> --name acme-production --into /cases/acme --json`,
-	Long: `Requires: successful package preflight ID, --name and an existing destination folder.
+	Long: `Requires: successful package preflight ID, --name, and an existing
+destination folder (--into).
 Returns an operation ID; use import status <operation-id> until terminal,
 or import cancel <operation-id> to request cancellation.`,
 	Use:   "import <preflight-id>",

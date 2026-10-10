@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const maxTagLimit = 1000
@@ -310,16 +311,21 @@ func changeTagAssignmentCLI(
 }
 
 func resolveTag(cmd *cobra.Command, c *daemonconn.Connection, selector string) (api.Tag, error) {
+	var (
+		tag api.Tag
+		err error
+	)
 	if daemonconn.IsCanonicalUUIDv4(selector) {
-		tag, err := c.Tag(cmd.Context(), selector)
-		if err != nil {
-			return api.Tag{}, fmt.Errorf("resolving tag %q: %w", selector, err)
-		}
-		return tag, nil
+		tag, err = c.Tag(cmd.Context(), selector)
+	} else {
+		tag, err = c.TagByName(cmd.Context(), selector)
 	}
-	tag, err := c.TagByName(cmd.Context(), selector)
 	if err != nil {
-		return api.Tag{}, fmt.Errorf("resolving tag %q: %w", selector, err)
+		err = fmt.Errorf("resolving tag %q: %w", selector, err)
+		if errors.Is(err, store.ErrNotFound) {
+			err = withHint(err, `list tags with "docbank tag list"`)
+		}
+		return api.Tag{}, err
 	}
 	return tag, nil
 }

@@ -22,7 +22,7 @@ var (
 )
 
 var referencesCmd = &cobra.Command{
-	Example: `  docbank stat id:12 --json # sha256
+	Example: `  docbank stat id:12 --json # blob_hash
   docbank refs <sha256> --json`,
 	GroupID: groupDocuments,
 	Use:     "refs <sha256>",

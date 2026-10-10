@@ -18,7 +18,8 @@ var auditCmd = &cobra.Command{
 	Long: `Enable permanent, irreversible retention for a folder. enable previews the
 scope; enable --run --token T --acknowledge-permanent-retention commits it.
 Exit 4 means the preview went stale: review a new preview before retrying.
-status reports protection; history shows retained events; verify checks authority.`,
+status reports protection; history shows retained events;
+verify checks authority.`,
 	GroupID: groupOperations,
 	Use:     "audit",
 	Short:   "Protect permanent document history and inspect its evidence",
@@ -295,7 +296,7 @@ func init() {
 	auditEnableCmd.Flags().StringVar(&auditEnableAgentLabel, "agent-label", "",
 		"optional actor label retained in the enrollment event")
 	auditEnableCmd.Flags().BoolVar(&auditEnableRun, "run", false,
-		"apply the change (default is a dry run)")
+		"permanently enable the reviewed preview; requires --token")
 	auditEnableCmd.Flags().StringVar(&auditEnableToken, "token", "",
 		"one-use token printed by the preview run")
 	auditEnableCmd.Flags().BoolVar(&auditEnableAcknowledge,

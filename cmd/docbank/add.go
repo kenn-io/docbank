@@ -32,11 +32,13 @@ var addCmd = &cobra.Command{
   docbank add ./mail --include '*.eml' --exclude drafts --preflight
   docbank add report.pdf --dest /cases/acme --replace --json`,
 	Long: `Copy local files or folders into the vault under --dest (default /inbox).
-Missing destination directories are created. A name collision adds a suffixed
-sibling unless --replace adds a new version of the existing file instead.
+Missing destination directories are created. Re-adding the same content under
+the same name is skipped. Other name collisions add a suffixed sibling unless
+--replace adds a new version of the existing file instead.
 Text search covers text/*, JSON and email bodies once indexed (seconds); other
 formats are stored and verified but need "docbank processing" for text.
-Output: progress on stderr; --json prints {ingest_id, added, skipped, excluded, failed}.
+Output: progress on stderr; --json prints
+{ingest_id, added, skipped, excluded, failed}.
 Exit 1 if any file failed (each failure is listed).`,
 	GroupID: groupDocuments,
 	Use:     "add <path>...",

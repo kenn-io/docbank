@@ -14,7 +14,8 @@ var catCmd = &cobra.Command{
   docbank cat id:12 > invoice.pdf`,
 	Long: `Streams the current version's original bytes. For binary files prefer
 "docbank get" (verified copy on disk); for extracted text of PDFs and Office
-files use "docbank rendition window"; for an older version "docbank versions cat".`,
+files use "docbank rendition window"; for an older version use
+"docbank versions cat".`,
 	GroupID: groupDocuments,
 	Use:     "cat <path-or-id>",
 	Short:   "Print a file's original bytes to stdout",

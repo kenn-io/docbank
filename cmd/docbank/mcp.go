@@ -29,11 +29,12 @@ var mcpCmd = &cobra.Command{
 	Example: `  docbank mcp
   docbank mcp --transport http --listen 127.0.0.1:8765`,
 	Long: `Runs a Model Context Protocol server for the selected vault (DOCBANK_HOME),
-read-mostly by default; --allow-* flags expose specific write tools.
+read-only by default; --allow-* flags expose specific write tools.
 stdio (default): one JSON-RPC message per line on stdin/stdout; logs on stderr.
 Client config: {"command":"docbank","args":["mcp"]}
-http: needs --listen 127.0.0.1:<port> and an [mcp.http] bearer binding in
-config.toml.`,
+http: needs --listen 127.0.0.1:<port> and, in config.toml, [mcp.http]
+credential_binding = "credential:NAME" naming a [credential_bindings.NAME]
+whose environment_variable holds the bearer token.`,
 	GroupID: groupInterfaces,
 	Use:     "mcp",
 	Short:   "Serve the local vault over Model Context Protocol",

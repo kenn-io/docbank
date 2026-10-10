@@ -57,12 +57,12 @@ var searchCmd = &cobra.Command{
 content hits. Only current versions of live nodes are searched.
 Text content is indexed for text/* (txt, md, csv), JSON/JSONL and email
 bodies. PDFs, images and Office files match by name only until a processing
-profile builds a rendition; then use --mode with --profile.
+profile publishes a rendition; plain search then matches that text too.
 Output: table of SELECTOR, MATCH (name|content|filter), PATH; --json prints
 {hits:[{node,path,match}], limit, truncated}.
---mode (lexical|semantic|hybrid|auto) searches processing renditions and
+--mode (lexical|semantic|hybrid|auto) ranks one profile's renditions; it
 requires --profile (see "docbank processing profiles") and one or more
---source-version UUIDs; it cannot be combined with --tag/--under/--mime-type/
+--source-version UUIDs, and cannot be combined with --tag/--under/--mime-type/
 --modified-*.`,
 	GroupID: groupSearch,
 	Use:     "search [<query>...]",

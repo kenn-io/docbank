@@ -36,9 +36,11 @@ var mediaCmd = &cobra.Command{
 source ID: recording identity from submit or list.
 occurrence: one caller's reference and revision for that recording.
 origin: registered acquisition site from origins.
-consent: permission for one reviewed acquisition plan, granted with consent grant.
-acquisition plan: local recognition of a private reference, before network access.
-Typical flow: submit -> status -> transcript; acquisition-plan -> consent grant
+consent: permission for one reviewed acquisition plan (consent grant).
+acquisition plan: local recognition of a private reference, before any
+network access.
+Typical flow: submit --processing-profile P -> status -> transcript (without a
+profile, submit only retains the bytes); acquisition-plan -> consent grant
 before acquiring a remote reference.`,
 	GroupID: groupSources,
 	Use:     "media",

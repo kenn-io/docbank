@@ -20,7 +20,8 @@ var storageCmd = &cobra.Command{
 	Long: `Inspect physical blob placement. Most users need only status, pack and repack.
 Commands marked "Preview, then ..." run twice: first without --run (prints a
 one-use token), then with --run --token T. Store names/IDs come from list;
-blob hashes come from stat --json. Secondary stores are configured in config.toml.`,
+blob hashes come from stat --json (blob_hash). Secondary stores are
+configured in config.toml.`,
 	GroupID: groupOperations,
 	Use:     "storage",
 	Short:   "Inspect and maintain physical blob storage",
@@ -511,7 +512,7 @@ func newStorageRecoveryCommand(
 	command.Flags().StringVar(&flags.store, "store", "",
 		"damaged destination (repair) or fenced source (salvage)")
 	command.Flags().BoolVar(&flags.run, "run", false,
-		"apply the change (default is a dry run)")
+		"start the reviewed recovery; pass only --token with it")
 	command.Flags().StringVar(&flags.token, "token", "", "one-use token printed by the preview run")
 	command.Flags().BoolVar(&flags.json, "json", false, "print JSON to stdout")
 	return command
@@ -628,7 +629,7 @@ func init() {
 	storageAddCmd.Flags().BoolVar(&storageAddTakeover, "takeover", false,
 		"preview explicit takeover of a namespace owned elsewhere")
 	storageAddCmd.Flags().BoolVar(&storageAddRun, "run", false,
-		"apply the change (default is a dry run)")
+		"attach the reviewed preview; pass only --token with it")
 	storageAddCmd.Flags().StringVar(&storageAddToken, "token", "", "one-use token printed by the preview run")
 	storageAddCmd.Flags().BoolVar(&storageAddJSON, "json", false, "print JSON to stdout")
 	storageListCmd.Flags().BoolVar(&storageListRefresh, "refresh", false,
@@ -644,11 +645,11 @@ func init() {
 		"allow-audited-remote-only", false,
 		"acknowledge loss of the default primary pin for audited content")
 	storagePlaceCmd.Flags().BoolVar(&storagePlaceRun, "run", false,
-		"apply the change (default is a dry run)")
+		"start the reviewed placement; pass only --token with it")
 	storagePlaceCmd.Flags().StringVar(&storagePlaceToken, "token", "", "one-use token printed by the preview run")
 	storagePlaceCmd.Flags().BoolVar(&storagePlaceJSON, "json", false, "print JSON to stdout")
 	storageEvacuateCmd.Flags().BoolVar(&storageEvacuateRun, "run", false,
-		"apply the change (default is a dry run)")
+		"start the reviewed evacuation; pass only --token with it")
 	storageEvacuateCmd.Flags().StringVar(
 		&storageEvacuateToken, "token", "", "one-use token printed by the preview run",
 	)

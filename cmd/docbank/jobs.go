@@ -23,7 +23,8 @@ var jobsCmd = &cobra.Command{
 	Long: `Which status command? jobs: daemon workers (extract, derive, import) and
 storage operations; daemon status: is the daemon up; processing status: one
 processing job (ID from processing build); mailbox status, export status,
-package import status: their own job IDs.`,
+package import status: their own job IDs. jobs show takes the bare UUID from
+operation_id in jobs --json (text output names it storage:<uuid>).`,
 	GroupID: groupOperations,
 	Use:     "jobs",
 	Short:   "List daemon background workers and storage operations",

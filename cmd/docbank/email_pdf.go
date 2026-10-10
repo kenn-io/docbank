@@ -20,7 +20,8 @@ func init() {
 		Example: `  docbank stat /cases/acme/message.eml --json
   docbank email-pdf <version-uuid> ./message.pdf`,
 		Long: `Render one exact EML content version as a PDF. Get <version-uuid> from
-stat --json on the stored EML (current_version_id). Output: path, page count and SHA-256.`,
+stat --json on the stored EML (current_version_id).
+Output: path, page count and SHA-256.`,
 		GroupID: groupSources,
 		Use:     "email-pdf <version-uuid> <local-file>",
 		Short:   "Render and download one exact email version as a verified PDF",

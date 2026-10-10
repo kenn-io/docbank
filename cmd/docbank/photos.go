@@ -21,8 +21,10 @@ var (
 
 var photosCmd = &cobra.Command{
 	Long: `Assets group camera files (RAW, JPEG, sidecar). import groups a local folder;
-albums organize assets. <asset-id> comes from photos assets inspect <path-or-id>.
-Output: JSON asset and album receipts; import prints a job ID (or JSON with --json).`,
+albums organize assets. <asset-id> comes from
+photos assets inspect <path-or-id>.
+Output: JSON asset and album receipts; import prints a job ID
+(or JSON with --json).`,
 	GroupID: groupSources,
 	Use:     "photos",
 	Short:   "Manage photo assets",
@@ -142,7 +144,11 @@ var photoDetachCmd = &cobra.Command{
 }
 
 var photoTrashCmd = &cobra.Command{
-	Use: "trash <asset-id>", Short: "Move every asset member to recoverable trash", Args: cobra.ExactArgs(1),
+	Example: `  docbank photos assets trash <asset-id>
+  docbank trash list`,
+	Use:   "trash <asset-id>",
+	Short: "Move every asset member to recoverable trash",
+	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err

@@ -73,9 +73,9 @@ var trashEmptyCmd = &cobra.Command{
   docbank trash empty --older-than 30d --run`,
 	Use:   "empty",
 	Short: "Report or permanently delete trashed nodes",
-	Long: "Report or permanently delete trashed tree metadata. Content bytes remain " +
-		"until they are unreachable and an explicit gc run removes their authority; " +
-		"packed space then requires repack.",
+	Long: `Report or permanently delete trashed tree metadata. Content bytes remain until
+they are unreachable and an explicit gc run removes their authority; packed
+space then requires repack.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if _, err := api.ParseAge(trashOlderThan); err != nil {

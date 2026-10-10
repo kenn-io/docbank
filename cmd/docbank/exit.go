@@ -88,10 +88,27 @@ func commandExitCode(err error, started bool) int {
 	return exitGeneral
 }
 
+// hintedError attaches a next step where the CLI understands the failure.
+// runProcess prints it after the error, so the error text itself is unchanged.
+type hintedError struct {
+	err  error
+	hint string
+}
+
+func (e *hintedError) Error() string { return e.err.Error() }
+func (e *hintedError) Unwrap() error { return e.err }
+
+func withHint(err error, hint string) error {
+	return &hintedError{err: err, hint: hint}
+}
+
 // Hints belong to the CLI process boundary, not the daemon's problem contract.
 func commandErrorHint(cmd *cobra.Command, err error, code int, started bool) string {
 	if err == nil || strings.Contains(err.Error(), "Did you mean") {
 		return ""
+	}
+	if hinted, ok := errors.AsType[*hintedError](err); ok {
+		return "hint: " + hinted.hint
 	}
 	switch code {
 	case exitUsage:
@@ -106,28 +123,13 @@ func commandErrorHint(cmd *cobra.Command, err error, code int, started bool) str
 			return "hint: usage: " + usage
 		}
 		return fmt.Sprintf("hint: run %q", cmd.CommandPath()+" --help")
-	case exitNotFound:
-		message := err.Error()
-		if strings.Contains(message, `": node is trashed:`) {
-			return `hint: list restorable nodes with "docbank trash list"`
-		}
-		if strings.HasPrefix(message, `resolving tag "`) {
-			return `hint: list tags with "docbank tag list"`
-		}
-		if strings.HasPrefix(message, `resolving "id:`) {
-			return ""
-		}
-		if strings.HasPrefix(message, `resolving "`) {
-			return `hint: list paths with "docbank tree" or find by name with "docbank search <name>"`
-		}
-		return ""
 	case exitBusy:
+		// A vault lock can block the daemon itself, so "docbank jobs" would
+		// fail the same way; that error already names the likely holder.
 		switch {
 		case errors.Is(err, backup.ErrRepoLocked):
 			return `hint: wait for the backup repository owner; use --force-unlock only when its owner is known to be gone`
-		case errors.Is(err, packstore.ErrPackRetirementDeferred):
-			return ""
-		case errors.Is(err, home.ErrVaultLocked), errors.Is(err, daemonconn.ErrMaintenanceBusy):
+		case errors.Is(err, daemonconn.ErrMaintenanceBusy):
 			return `hint: wait and retry; "docbank jobs" shows active work`
 		default:
 			return ""
