@@ -165,10 +165,22 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 	if err != nil {
 		return out, err
 	}
+	countSQL, countArgs, err := bindQueryPopulation(compiledQueryFragment{
+		sql:  `SELECT COUNT(*) FROM ` + photoBrowseDisplayFrom + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(request.Hidden) + ` AND ` + match.sql,
+		args: match.args, relations: match.relations,
+	}, coverage, generation)
+	if err != nil {
+		return out, err
+	}
+	if err := q.QueryRowContext(ctx, countSQL, countArgs...).Scan(&out.Unchanged); err != nil {
+		return out, err
+	}
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{
 		sql: `SELECT a.asset_id,a.revision,member.file_id,member.role,member.flag,mn.revision,mn.trashed_at,mn.name FROM ` + photoBrowseDisplayFrom + `
  CROSS JOIN photo_files member ON member.asset_id=a.asset_id
- CROSS JOIN nodes mn ON mn.id=member.node_id WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(request.Hidden) + ` AND ` + match.sql + ` ORDER BY a.asset_id,member.file_id`,
+ CROSS JOIN nodes mn ON mn.id=member.node_id WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(request.Hidden) + ` AND ` + match.sql + `
+ AND EXISTS (SELECT 1 FROM photo_files rejected WHERE rejected.asset_id=a.asset_id AND rejected.role<>'sidecar' AND rejected.flag='reject')
+ ORDER BY a.asset_id,member.file_id`,
 		args: match.args, relations: match.relations,
 	}, coverage, generation)
 	if err != nil {
@@ -185,7 +197,6 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 		if len(members) == 0 {
 			return
 		}
-		out.Unchanged++
 		var memberRevision int64
 		originals, rejected, live := 0, 0, 0
 		for _, member := range members {
@@ -200,9 +211,6 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 			if member.Flag == "reject" {
 				rejected++
 			}
-		}
-		if rejected == 0 {
-			return
 		}
 		if rejected == originals {
 			out.Photos++

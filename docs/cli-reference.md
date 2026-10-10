@@ -187,10 +187,11 @@ docbank photos import <source-root> [destination] [--json]
 ```
 
 ```text
-docbank photos rejects [--query QUERY_JSON | --confirm FILE|-] [--coverage configured|unconfigured] [--profile-fingerprint SHA256]
+docbank photos rejects [--query QUERY_JSON] [--coverage configured|unconfigured] [--profile-fingerprint SHA256]
+docbank photos rejects --confirm FILE|-
 ```
 
-`rejects` previews the whole query in Library. The CLI covers Library only. Coverage filters use `--coverage configured --profile-fingerprint SHA256`, as photo queries and album membership commands do. Save the preview JSON to a file and review its counts and targets. `--confirm FILE` reads that preview file. `--query` and `--confirm` are mutually exclusive. Confirmation moves those targets and their sidecars atomically to recoverable trash; `--confirm -` reads the preview from stdin. A missing target, changed asset or member node revision, changed reject flag, or changed Library/Hidden scope refuses the whole batch and requires another preview. Invalid or duplicate targets, more than 1,000 targets or live files, and audited trash conflicts also refuse the batch. Each preview targets up to 1,000 live files in stable asset ID order. Preview output includes complete counts and `targets`; confirmation returns moved asset IDs. Preview and confirm again for the rest.
+`rejects` previews the whole query in Library. The CLI covers Library only. Coverage filters use `--coverage configured --profile-fingerprint SHA256`, as photo queries and album membership commands do. Save the preview JSON to a file and review its counts and targets. `--confirm FILE` reads that preview file. `--confirm` is mutually exclusive with each of `--query`, `--coverage`, and `--profile-fingerprint`. Confirmation moves those targets and their sidecars atomically to recoverable trash; `--confirm -` reads the preview from stdin. A missing target, changed asset or member node revision, changed reject flag, or changed Library/Hidden scope refuses the whole batch and requires another preview. Invalid or duplicate targets, more than 1,000 targets or live files, and audited trash conflicts also refuse the batch. Each preview targets up to 1,000 live files in stable asset ID order. Preview output includes complete counts and `targets`; confirmation returns moved asset IDs. Preview and confirm again for the rest.
 
 Photo commands emit JSON through the daemon. Image and concrete video files are
 enrolled when created. Generic RAW files require explicit promotion.

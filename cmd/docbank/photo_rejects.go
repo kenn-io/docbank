@@ -25,6 +25,8 @@ func init() {
 	command.Flags().StringVar(&coverage, "coverage", "", "coverage configuration: configured or unconfigured")
 	command.Flags().StringVar(&profile, "profile-fingerprint", "", "configured coverage profile fingerprint")
 	command.MarkFlagsMutuallyExclusive("query", "confirm")
+	command.MarkFlagsMutuallyExclusive("coverage", "confirm")
+	command.MarkFlagsMutuallyExclusive("profile-fingerprint", "confirm")
 	photosCmd.AddCommand(command)
 }
 

@@ -28,12 +28,14 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 	for _, flag := range []string{"hidden"} {
 		require.Nil(t, command.Flags().Lookup(flag))
 	}
-	require.NoError(t, command.Flags().Set("query", "{}"))
-	require.NoError(t, command.Flags().Set("confirm", "-"))
-	require.ErrorContains(t, command.ValidateFlagGroups(), "query confirm")
-	for _, name := range []string{"query", "confirm"} {
-		require.NoError(t, command.Flags().Lookup(name).Value.Set(command.Flags().Lookup(name).DefValue))
-		command.Flags().Lookup(name).Changed = false
+	for _, flag := range []string{"query", "coverage", "profile-fingerprint"} {
+		require.NoError(t, command.Flags().Set(flag, "{}"))
+		require.NoError(t, command.Flags().Set("confirm", "-"))
+		require.ErrorContains(t, command.ValidateFlagGroups(), flag+" confirm")
+		for _, name := range []string{flag, "confirm"} {
+			require.NoError(t, command.Flags().Lookup(name).Value.Set(command.Flags().Lookup(name).DefValue))
+			command.Flags().Lookup(name).Changed = false
+		}
 	}
 	preview := api.PhotoRejectsPreflight{Photos: 1001, Files: 1001, Targets: []store.PhotoRejectTarget{{AssetID: "11111111-1111-4111-8111-111111111111", Revision: 7, MemberRevision: 11}}, Mixed: []store.PhotoRejectMixed{}}
 	for group := range store.MaxPhotoRejectsMixed {

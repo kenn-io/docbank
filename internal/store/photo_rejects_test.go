@@ -27,6 +27,18 @@ func rejectsRequest() PhotoRejectsRequest {
 	return PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
 }
 
+func TestPhotoRejectsUnchanged(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := authoredPair(t, s)
+	rejectOriginals(t, s, asset)
+	_, err := s.CreateFile(t.Context(), s.RootID(), "retained.jpg", fakeHash("a1"), 4, "image/jpeg")
+	require.NoError(t, err)
+	preview, err := s.PreflightPhotoRejects(t.Context(), rejectsRequest())
+	require.NoError(t, err)
+	assert.Equal(t, 1, preview.Unchanged)
+}
+
 func TestPhotoRejectsCoverage(t *testing.T) {
 	t.Parallel()
 	s, _, _, profile := collectionCoverageFixture(t, 0)
