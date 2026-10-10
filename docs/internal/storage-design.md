@@ -161,7 +161,11 @@ compression minimum and 4 KiB. If the source ends before the buffer fills, Docba
 passes the complete bytes to Kit's in-memory writer. Kit hashes those bytes
 before touching staging, so a duplicate avoids a temporary write and its syncs.
 The existing object's type, size, and durability checks still apply. Larger
-sources continue through the streaming writer.
+sources continue through the streaming writer. Once it knows the hash, Kit
+checks for a durable existing object before syncing the staging file. A duplicate
+discards that unsynced temporary copy. This check holds the same per-hash lock as
+repair, so repair cannot change the object during verification. New content is
+synced outside that lock and checked again under the lock before publication.
 
 Content replacement uses the same ordering. A cheap node/revision check occurs
 before reading a potentially large request, but it is only an optimization.
