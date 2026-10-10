@@ -175,6 +175,16 @@ owns the separate lifetimes of live handles, saved history, and evidence ZIPs.
 
 ## API shape and errors
 
+### Document catalog pages
+
+Document listing reads the selected live subtree once per page. Page selection,
+previous/next availability, and traversal bounds share one SQL statement in the
+request's read snapshot. Processing state and active rendition identities are
+loaded for the returned documents. Continuation flags compare against those
+documents' first and last sort keys, so deleting or moving a cursor's original
+row does not restart traversal. Subsequent requests read current state rather
+than retaining the earlier snapshot.
+
 ### MCP response budgets
 
 MCP success results carry the payload as both JSON text and structured content.

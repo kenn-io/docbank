@@ -131,24 +131,14 @@ func (s *Store) ListDocuments(
 		return DocumentCatalogPage{}, fmt.Errorf("resolving document catalog prefix: %w", err)
 	}
 	args := documentCatalogArgs(root.ID, normalized.PathPrefix)
-	items, err := s.queryDocumentCatalogPage(ctx, tx, normalized, boundary, traversal, args)
+	page, err := s.queryDocumentCatalogPage(ctx, tx, normalized, boundary, traversal, args)
 	if err != nil {
 		return DocumentCatalogPage{}, err
 	}
-	page := DocumentCatalogPage{Query: normalized, Items: items}
-	if len(items) > 0 {
-		page.FirstPosition = documentCatalogPosition(normalized.Sort, items[0])
-		page.LastPosition = documentCatalogPosition(normalized.Sort, items[len(items)-1])
-		page.HasPrevious, err = s.documentCatalogHasRows(
-			ctx, tx, normalized, page.FirstPosition, DocumentCatalogTraversalPrevious, args)
-		if err != nil {
-			return DocumentCatalogPage{}, err
-		}
-		page.HasNext, err = s.documentCatalogHasRows(
-			ctx, tx, normalized, page.LastPosition, DocumentCatalogTraversalNext, args)
-		if err != nil {
-			return DocumentCatalogPage{}, err
-		}
+	page.Query = normalized
+	if len(page.Items) > 0 {
+		page.FirstPosition = documentCatalogPosition(normalized.Sort, page.Items[0])
+		page.LastPosition = documentCatalogPosition(normalized.Sort, page.Items[len(page.Items)-1])
 	}
 	if err := tx.Commit(); err != nil {
 		return DocumentCatalogPage{}, fmt.Errorf("closing document catalog page: %w", err)
@@ -196,7 +186,7 @@ func (s *Store) ResolveDocumentSummaries(
 		VALUES `+strings.Join(values, ",")+`
 	)
 	SELECT r.ordinal,d.node_id,d.content_version_id,d.path,d.name,d.media_type,d.size,d.modified_at,
-	       d.processing_state,h.profile_fingerprint,h.attachment_id,a.build_id
+	       `+documentCatalogProcessingState+`,h.profile_fingerprint,h.attachment_id,a.build_id
 	FROM requested r JOIN documents d ON d.node_id=r.node_id
 		AND d.content_version_id=r.content_version_id AND d.path=r.path
 	LEFT JOIN rendition_heads h ON h.content_version_id=d.content_version_id
@@ -318,16 +308,18 @@ live_nodes(id,path,depth) AS (
  WHERE n.trashed_at IS NULL AND p.path IS NOT NULL
 ), documents AS (
  SELECT n.id AS node_id,cv.version_id AS content_version_id,l.path,n.name,
-        COALESCE(cv.mime_type,'') AS media_type,cv.size,n.modified_at,
-        COALESCE((SELECT j.state
-          FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id
-          WHERE w.content_version_id=cv.version_id
-          ORDER BY j.updated_at DESC,j.job_id DESC LIMIT 1),'') AS processing_state
+        COALESCE(cv.mime_type,'') AS media_type,cv.size,n.modified_at
  FROM live_nodes l JOIN nodes n ON n.id=l.id
  JOIN content_versions cv ON cv.node_id=n.id AND cv.version_id=n.current_version_id
  WHERE n.kind='file' AND l.path IS NOT NULL
 )
 `
+
+// Enrich only selected documents, not every row in the shared catalog.
+const documentCatalogProcessingState = `COALESCE((SELECT j.state
+ FROM rendition_job_waiters w JOIN rendition_jobs j ON j.job_id=w.job_id
+ WHERE w.content_version_id=d.content_version_id
+ ORDER BY j.updated_at DESC,j.job_id DESC LIMIT 1),'')`
 
 func documentCatalogArgs(rootID int64, prefix string) []any {
 	return []any{MaxWalkDepth, MaxWalkPathBytes, MaxDocumentCatalogNameCharacters,
@@ -337,39 +329,56 @@ func documentCatalogArgs(rootID int64, prefix string) []any {
 func (s *Store) queryDocumentCatalogPage(
 	ctx context.Context, tx *sql.Tx, query DocumentCatalogQuery,
 	boundary *DocumentCatalogPosition, traversal DocumentCatalogTraversal, args []any,
-) ([]DocumentSummary, error) {
+) (DocumentCatalogPage, error) {
 	where, boundaryArgs := documentCatalogBoundary(query, boundary, traversal)
 	order := documentCatalogOrder(query, traversal)
+	keys := "path,node_id"
+	if query.Sort != DocumentCatalogSortPath {
+		keys = documentCatalogPrimaryExpression(query.Sort) + "," + keys
+	}
+	previousOp, nextOp := "<", ">"
+	if query.Direction == DocumentCatalogDirectionDescending {
+		previousOp, nextOp = ">", "<"
+	}
+	firstOrder := documentCatalogOrder(query, DocumentCatalogTraversalNext)
+	lastOrder := documentCatalogOrder(query, DocumentCatalogTraversalPrevious)
 	args = append(slices.Clone(args), boundaryArgs...)
 	args = append(args, query.PageSize)
+	// Page and continuation checks share the same recursive traversal. Compare
+	// against the returned edges so deleted or moved cursor rows remain valid.
 	rows, err := tx.QueryContext(ctx, documentCatalogCTE+`, page AS (
   SELECT * FROM documents `+where+` ORDER BY `+order+` LIMIT ?
  )
  SELECT COALESCE(d.node_id,0),COALESCE(d.content_version_id,''),COALESCE(d.path,''),
   COALESCE(d.name,''),COALESCE(d.media_type,''),COALESCE(d.size,0),
-  COALESCE(d.modified_at,''),COALESCE(d.processing_state,''),
+  COALESCE(d.modified_at,''),`+documentCatalogProcessingState+`,
   h.profile_fingerprint,h.attachment_id,a.build_id,
-  EXISTS(SELECT 1 FROM live_nodes WHERE path IS NULL)
+  EXISTS(SELECT 1 FROM live_nodes WHERE path IS NULL),
+  EXISTS(SELECT 1 FROM documents WHERE (`+keys+`) `+previousOp+`
+    (SELECT `+keys+` FROM page ORDER BY `+firstOrder+` LIMIT 1)),
+  EXISTS(SELECT 1 FROM documents WHERE (`+keys+`) `+nextOp+`
+    (SELECT `+keys+` FROM page ORDER BY `+lastOrder+` LIMIT 1))
  FROM (SELECT 1) LEFT JOIN page d ON 1
  LEFT JOIN rendition_heads h ON h.content_version_id=d.content_version_id
  LEFT JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
  ORDER BY d.`+strings.ReplaceAll(order, ",", ",d.")+`,h.profile_fingerprint,h.attachment_id`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("querying document catalog page: %w", err)
+		return DocumentCatalogPage{}, fmt.Errorf("querying document catalog page: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	items := make([]DocumentSummary, 0, query.PageSize)
+	var page DocumentCatalogPage
 	for rows.Next() {
 		var item DocumentSummary
 		var profile, attachment, build sql.NullString
 		var exceedsBounds bool
 		if err := rows.Scan(&item.NodeID, &item.ContentVersionID, &item.Path, &item.Name,
 			&item.MediaType, &item.Size, &item.ModifiedAt, &item.LatestProcessingState,
-			&profile, &attachment, &build, &exceedsBounds); err != nil {
-			return nil, fmt.Errorf("scanning document catalog page: %w", err)
+			&profile, &attachment, &build, &exceedsBounds, &page.HasPrevious, &page.HasNext); err != nil {
+			return DocumentCatalogPage{}, fmt.Errorf("scanning document catalog page: %w", err)
 		}
 		if exceedsBounds {
-			return nil, fmt.Errorf("%w: catalog traversal exceeds path, name, or depth bound", ErrInvalidDocumentQuery)
+			return DocumentCatalogPage{}, fmt.Errorf("%w: catalog traversal exceeds path, name, or depth bound", ErrInvalidDocumentQuery)
 		}
 		if item.NodeID == 0 {
 			continue
@@ -385,32 +394,13 @@ func (s *Store) queryDocumentCatalogPage(
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("reading document catalog page: %w", err)
+		return DocumentCatalogPage{}, fmt.Errorf("reading document catalog page: %w", err)
 	}
 	if traversal == DocumentCatalogTraversalPrevious {
 		slices.Reverse(items)
 	}
-	return items, nil
-}
-
-func (s *Store) documentCatalogHasRows(
-	ctx context.Context, tx *sql.Tx, query DocumentCatalogQuery,
-	position DocumentCatalogPosition, traversal DocumentCatalogTraversal, args []any,
-) (bool, error) {
-	// ponytail: continuation checks rescan the bounded prefix subtree; share one
-	// materialized catalog per page if repeated scans become a measured bottleneck.
-	where, boundaryArgs := documentCatalogBoundary(query, &position, traversal)
-	args = append(slices.Clone(args), boundaryArgs...)
-	var one int
-	err := tx.QueryRowContext(ctx, documentCatalogCTE+`
-  SELECT 1 FROM documents `+where+` LIMIT 1`, args...).Scan(&one)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("checking document catalog continuation: %w", err)
-	}
-	return true, nil
+	page.Items = items
+	return page, nil
 }
 
 func documentCatalogBoundary(
