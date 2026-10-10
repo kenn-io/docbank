@@ -2041,10 +2041,10 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 	var artifactRoles []document.EvidenceArtifactRole
 	for _, role := range profile.portable.Rendition.RequestedArtifacts {
 		if role == document.EvidenceArtifactMarkdown {
-			markdownMaximum = min(maximum, 64<<20)
+			markdownMaximum = min(maximum, document.MaxRenditionMarkdownBytes)
 		} else {
 			artifactRoles = append(artifactRoles, role)
-			artifactMaximum = min(maximum, 256<<20)
+			artifactMaximum = min(maximum, document.MaxRenditionArtifactBytes)
 		}
 	}
 	authorization := document.RenditionAuthorization{ProviderID: profile.provider.Descriptor().ID,

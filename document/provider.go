@@ -28,12 +28,19 @@ const (
 	maxRenditionArtifacts        = 64
 	maxRenditionMediaTypeBytes   = 255
 	maxRenditionSourceBytes      = int64(1 << 40)
-	maxRenditionMarkdownBytes    = 64 << 20
-	maxRenditionArtifactBytes    = 256 << 20
 	maxRenditionTotalResultBytes = 512 << 20
 	maxRenditionWarnings         = 64
 	maxRenditionUsageValue       = int64(1 << 50)
 	renditionTimestampForm       = "2006-01-02T15:04:05.000000000Z"
+)
+
+const (
+	// MaxRenditionMarkdownBytes is the largest provider Markdown a rendition
+	// authorization can allow.
+	MaxRenditionMarkdownBytes = 64 << 20
+	// MaxRenditionArtifactBytes is the largest single artifact a rendition
+	// authorization can allow.
+	MaxRenditionArtifactBytes = 256 << 20
 )
 
 // Provider-boundary failures that retrying the same sealed inputs cannot fix
@@ -1153,11 +1160,11 @@ func validateAuthorizationWithoutUpload(descriptor RenditionDescriptor, authoriz
 	if err := validateAuthorizedRoles(descriptor, authorization.AllowedArtifactRoles); err != nil {
 		return err
 	}
-	if authorization.MaxProviderMarkdownBytes < 0 || authorization.MaxProviderMarkdownBytes > maxRenditionMarkdownBytes ||
+	if authorization.MaxProviderMarkdownBytes < 0 || authorization.MaxProviderMarkdownBytes > MaxRenditionMarkdownBytes ||
 		(!descriptor.ReturnsMarkdown && authorization.MaxProviderMarkdownBytes != 0) {
 		return errors.New("authorization provider Markdown bytes are invalid")
 	}
-	if authorization.MaxArtifactBytes < 0 || authorization.MaxArtifactBytes > maxRenditionArtifactBytes {
+	if authorization.MaxArtifactBytes < 0 || authorization.MaxArtifactBytes > MaxRenditionArtifactBytes {
 		return errors.New("authorization artifact bytes are invalid")
 	}
 	if authorization.MaxArtifacts < 0 || authorization.MaxArtifacts > maxRenditionArtifacts ||

@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-09
+last_edited: 2026-10-11
 title: Configuration
 description: Vault location, data layout, config.toml, and environment variables.
 ---
@@ -351,13 +351,13 @@ Its environment variable is read only when a request is sent. A missing secret
 fails that attempt without sending the document. The endpoint must be an
 absolute root origin; redirects and ambient proxies are refused.
 
-HTTP requires `trust_boundary = "operator_network"`. For document conversion,
-every `allowed_cidrs` prefix at that boundary must fit entirely inside a
-loopback or private network: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
-`192.168.0.0/16`, `::1/128`, or `fc00::/7`. A public or broader prefix is
-rejected. Hosted deployments use `hosted_provider`, require HTTPS, and may
-allow explicit public networks. Optional `spki_sha256` pins require HTTPS and
-keep normal certificate verification.
+HTTP requires `trust_boundary = "operator_network"`. Every `allowed_cidrs`
+prefix at that boundary must fit entirely inside a loopback, private, or
+shared network: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16`, `100.64.0.0/10`, `::1/128`, or `fc00::/7`. A public or
+broader prefix is rejected. Hosted deployments use `hosted_provider`, require
+HTTPS, and may allow explicit public networks. Optional `spki_sha256` pins
+require HTTPS and keep normal certificate verification.
 
 `max_document_bytes` must be positive and at most 1 GiB;
 `max_response_bytes` must be positive and at most 512 MiB. Set `max_units` to
@@ -416,7 +416,10 @@ Use `adapter_contract = "docbank-docling-asr/v1"` and set
 transport timeout fields. `spki_sha256` can pin the deployment certificate.
 The endpoint must be a root origin. `allowed_cidrs` must contain at least one
 network, and `proxy_mode` must be `"disabled"`. HTTP endpoints require the
-`operator_network` trust boundary, and certificate pins require HTTPS. An
+`operator_network` trust boundary, and certificate pins require HTTPS. At the
+`operator_network` boundary, every `allowed_cidrs` prefix must be loopback,
+private, or shared, as for
+[document conversion](#document-conversion-with-docling). An
 explicit port must be between 1 and 65535. Redirects are not followed.
 
 Set a positive `max_transcript_chars` on the rendition profile. This limit
@@ -475,7 +478,7 @@ the endpoint, transport policy, or environment binding.
 | `endpoint` | Absolute root Docling Serve origin. |
 | `request_timeout`, `total_timeout` | Per-request and complete operation limits, each positive and at most 24 hours. |
 | `poll_interval`, `max_poll_attempts` | Delay and count bounds for polling. The interval cannot exceed `total_timeout`, and attempts range from 1 to 10,000. |
-| `allowed_cidrs`, `proxy_mode` | Non-empty IP network allowlist and `proxy_mode = "disabled"`. |
+| `allowed_cidrs`, `proxy_mode` | Non-empty IP network allowlist and `proxy_mode = "disabled"`. At `operator_network`, only loopback, private, or shared prefixes are allowed. |
 | `spki_sha256` | Optional lowercase SHA-256 SPKI pins for the provider certificate; requires HTTPS. |
 | `connect_timeout`, `keep_alive`, `tls_handshake_timeout` | Positive transport limits, each at most five minutes. |
 

@@ -33,3 +33,15 @@ func TestDocumentDescriptorAndDisclosure(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fingerprint, DocumentDisclosureFingerprint(again, endpoint, deployment))
 }
+
+// Operators copy these values from docs/configuration.md; update both together.
+func TestDocumentDescriptorFingerprintsMatchConfigurationGuide(t *testing.T) {
+	for boundary, want := range map[document.RenditionTrustBoundary]string{
+		document.RenditionTrustOperatorNetwork: "21bcb9a189ebd0c285637a3d0b7bb1f29310080b997a0c043ae5dce05c908b4f",
+		document.RenditionTrustHostedProvider:  "f5603a0b0cf6ea91a65a141323a025eb205bfb3278f2baffa46e893ebdff0357",
+	} {
+		descriptor, err := DocumentDescriptor(boundary)
+		require.NoError(t, err)
+		require.Equal(t, want, descriptor.Fingerprint, boundary)
+	}
+}
