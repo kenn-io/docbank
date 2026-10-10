@@ -93,7 +93,9 @@ JPEG inputs may be grayscale or three-component images. CMYK, YCCK, and
 embedded ICC profiles remain unsupported rather than receiving an unmanaged
 color conversion. PNG inputs apply bounded EXIF orientation, reject embedded ICC
 profiles, and composite transparency onto white because the canonical output
-is JPEG. GIF inputs use their primary frame, including for animated sources.
+is JPEG. PNG orientation comes from eXIf before or after the image data;
+trailing eXIf supplies orientation only. GIF inputs use their primary frame,
+including for animated sources.
 WebP inputs apply bounded EXIF orientation and reject embedded ICC profiles.
 Animated WebP remains unsupported by the built-in decoder.
 

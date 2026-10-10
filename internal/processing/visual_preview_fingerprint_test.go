@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	pinnedVisualPreviewProcessorFingerprint = "6391e667d07b0aab1622d2b4167ffe66496fe7d336beb603401d96cd8a11a641"
-	pinnedVisualPreviewRecipeFingerprint    = "03f89b744cc013004c89b1babe6d779ee043652519c586453bcde761bd7a4b04"
+	pinnedVisualPreviewProcessorFingerprint = "d36c2fa90498646614283303489e61a4bcdabbb8f8d1a1a397a0e06624b1123d"
+	pinnedVisualPreviewRecipeFingerprint    = "0ad743c037500e1a496fe4a2bc9ec51560e07ae9de356c58542fa1aca9a65324"
 )
 
 func TestVisualPreviewProcessorFingerprintIsPinned(t *testing.T) {
@@ -47,11 +47,6 @@ func TestProducedVisualPreviewCarriesPinnedRecipe(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
 	assert.Equal(t, CurrentVisualPreviewRecipe(), product.Preview.Recipe)
-	assert.Equal(t, pinnedVisualPreviewProcessorFingerprint,
-		product.Preview.Recipe.ProcessorFingerprint)
-	_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(product.Preview.Recipe)
-	require.NoError(t, err)
-	assert.Equal(t, pinnedVisualPreviewRecipeFingerprint, fingerprint)
 }
 
 func TestVisualPreviewDescriptorTracksLinkedDependenciesAndPolicy(t *testing.T) {
