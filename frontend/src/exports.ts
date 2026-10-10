@@ -178,7 +178,7 @@ async function boundedJSON(response: Response): Promise<unknown> {
 export async function retryExportRequest<T>(fn: () => Promise<T>, signal: AbortSignal): Promise<T> {
   try { return await fn(); } catch (error) {
     signal.throwIfAborted();
-    if (!(error instanceof TypeError) && !(error instanceof APIError && error.status >= 500)) throw error;
+    if (!(error instanceof TypeError) && !(error instanceof APIError && error.status >= 500 && error.code !== "export_timeout")) throw error;
     return fn();
   }
 }

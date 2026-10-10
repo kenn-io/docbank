@@ -203,4 +203,4 @@ Photo source resolution extends `ListPhotoAssets`, including its complete query 
 
 Rendered copies are temporary export artifacts. Their role roots protect them from garbage collection while retained, but authority backups exclude the photo plan and its generated output. Ordinary source versions retain their existing backup authority.
 
-Preparation admits one photo export per vault, up to 16 photos, 512 MiB of source bytes, 512 million decoded pixels, and 1 GiB of encoded output. The output limit counts delivered bytes; decoded images, transforms, and encoder buffers also consume memory.
+Preparation admits one photo export per vault, up to 16 photos, 512 MiB of source bytes, 512 million decoded pixels, and 1 GiB of encoded output. The output limit counts delivered bytes. At 100 million pixels, a 16-bit decoded image can occupy 800 MB, with up to 400 MB each for resize, orientation, and JPEG matte buffers, alongside source bytes, encoded output, and metadata rewrite buffers. Peak process memory can exceed several GiB; the 1 GiB output cap is not a heap limit.

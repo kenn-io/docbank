@@ -154,4 +154,8 @@ it("binds rendered photo profiles and RAW counts to the reviewed plan", async ()
   const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(response(photoSource));
   expect((await sealPhotoExportSource("session", selection, id, new AbortController().signal)).kind).toBe("photos");
   expect(JSON.parse(String(fetcher.mock.calls[0]![1]!.body))).toEqual({ operation_id: id, kind: "photos", photos: selection });
+  const { createExportPlan } = await import("./exports.js");
+  fetcher.mockClear().mockImplementation(async () => new Response(JSON.stringify({ code: "export_timeout", detail: "Photo preparation timed out" }), { status: 504 }));
+  await expect(createExportPlan("session", photoSource, photoPlan.roles, planID, new AbortController().signal, { photo_render: profile })).rejects.toMatchObject({ code: "export_timeout" });
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });

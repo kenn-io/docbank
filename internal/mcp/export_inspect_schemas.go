@@ -10,7 +10,7 @@ const schemaTotalField = "total"
 
 func exportRoleSchema() schema {
 	return enumSchema(
-		"original", "text", "pages", "email_pdf", "attachment_original", "attachment_pdf",
+		"original", "text", "pages", "email_pdf", "attachment_original", "attachment_pdf", "photo_rendered",
 	)
 }
 
@@ -20,7 +20,7 @@ func exportSourceSchema() schema {
 	return objectSchema(schema{
 		"id": uuidSchema(), "request_sha256": sha256Schema(),
 		"kind": enumSchema(
-			"explicit", "nodes", "query", "saved_query", "snapshot", "upload", "mailbox_collection",
+			"explicit", "nodes", "query", "saved_query", "snapshot", "upload", "mailbox_collection", "photos",
 		),
 		schemaStateField: enumSchema("sealed"), "member_hash": sha256Schema(),
 		schemaTotalField: integerSchema(1, bundle.MaxMembers),
@@ -52,6 +52,12 @@ func retainedExportPlanSchema() schema {
 		"toolchain": stringSchema(bundle.MaxMemberBytes), "source": exportSourceSchema(),
 		"roles": roles, schemaTotalField: integerSchema(1, bundle.MaxMembers),
 		"document_rows": integerSchema(1, bundle.MaxDocumentRows),
+		"photo_render": objectSchema(schema{
+			"format": enumSchema("jpeg", "png"), "quality": integerSchema(1, 100),
+			"long_edge": integerSchema(0, 100000), "include_metadata": booleanSchema(),
+			"remove_gps": booleanSchema(),
+		}, "format", "quality", "long_edge", "include_metadata", "remove_gps"),
+		"embedded_previews": integerSchema(0, bundle.MaxPhotoExportMembers),
 		"volume_limits": objectSchema(schema{
 			"role_bytes": integerSchema(1, bundle.MaxVolumeRoleBytes),
 			"roles":      integerSchema(1, bundle.MaxVolumeRoles),

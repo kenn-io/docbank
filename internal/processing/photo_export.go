@@ -128,9 +128,6 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 
 func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.PhotoExportInput, profile bundle.PhotoRenderProfile, budget *photoExportBudget) ([]byte, bundle.PhotoRenderReceipt, error) {
 	receipt := bundle.PhotoRenderReceipt{Version: bundle.PhotoRenderReceiptVersion, Profile: profile, Source: input.Member}
-	if err := profile.Validate(); err != nil {
-		return nil, receipt, err
-	}
 	if err := store.ValidatePhotoAuthored(input.Authored); err != nil {
 		return nil, receipt, err
 	}

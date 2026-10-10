@@ -47,7 +47,7 @@ func validatePhotoRoles(plan Plan, d Document) (int, error) {
 		if plan.PhotoRender == nil || role.Status != "available" && role.Status != "collapsed" || json.Unmarshal(role.Recipe, &receipt, json.RejectUnknownMembers(true)) != nil {
 			return 0, ErrConflict
 		}
-		if receipt.Profile != *plan.PhotoRender || receipt.Profile.Validate() != nil || receipt.Source != d.Member || receipt.Width < 1 || receipt.Height < 1 || int64(receipt.Width)*int64(receipt.Height) > 100000000 || receipt.Version != PhotoRenderReceiptVersion || !canonical.IsSHA256Hex(role.SHA256) || role.Size < 1 || role.Page != nil {
+		if receipt.Profile != *plan.PhotoRender || receipt.Source != d.Member || receipt.Width < 1 || receipt.Height < 1 || int64(receipt.Width)*int64(receipt.Height) > 100000000 || receipt.Version != PhotoRenderReceiptVersion || !canonical.IsSHA256Hex(role.SHA256) || role.Size < 1 || role.Page != nil {
 			return 0, ErrConflict
 		}
 		if receipt.Profile.LongEdge > 0 && max(receipt.Width, receipt.Height) > receipt.Profile.LongEdge {
