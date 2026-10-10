@@ -186,7 +186,7 @@ func TestPhotoExportMetadataFailureNamesPhoto(t *testing.T) {
 
 func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"non-photo", "trashed", "replaced", "mislabeled"} {
+	for _, state := range []string{"non-photo", "trashed", "replaced", "mislabeled", "missing-blob"} {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
 			ts, s := newTestServer(t, nil)
@@ -195,8 +195,10 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 				mediaType = "text/plain"
 			}
 			content := []byte("synthetic member")
-			if state == "mislabeled" {
-				mediaType = "image/png"
+			if state == "mislabeled" || state == "missing-blob" {
+				if state == "mislabeled" {
+					mediaType = "image/png"
+				}
 				var encoded bytes.Buffer
 				require.NoError(t, jpeg.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil))
 				content = encoded.Bytes()
@@ -208,6 +210,8 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			source, err := s.CreateExportSource(t.Context(), "master", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: hash, Size: size}}}, nil)
 			require.NoError(t, err)
 			switch state {
+			case "missing-blob":
+				err = s.Blobs.Remove(hash)
 			case "trashed":
 				_, _, err = s.Trash(t.Context(), n.ID, n.Revision)
 			case "replaced":
@@ -218,6 +222,11 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			require.NoError(t, err)
 			r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90}}
 			response, body := do(t, ts, http.MethodPost, "/api/v1/exports/plans", nil, r)
+			if state == "missing-blob" {
+				require.Equal(t, http.StatusInternalServerError, response.StatusCode, body)
+				require.Contains(t, body, "export_failed")
+				return
+			}
 			require.Contains(t, body, fmt.Sprintf("photo %d", n.ID))
 			if state == "mislabeled" {
 				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)

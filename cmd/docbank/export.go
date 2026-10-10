@@ -22,12 +22,12 @@ var (
 
 var exportCmd = &cobra.Command{
 	Use:   "export",
-	Short: "Export exact original versions as verified ZIP bundles",
+	Short: "Export originals or rendered photos as verified ZIP bundles",
 }
 
 var exportPreviewCmd = &cobra.Command{
 	Use:   "preview --request selection.json",
-	Short: "Freeze and review up to 1,000 exact original versions",
+	Short: "Review up to 1,000 original versions or 16 rendered photos",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		request, err := readExportRequest(exportRequestPath)
@@ -70,16 +70,16 @@ var exportPreviewCmd = &cobra.Command{
 
 func writeExportPreview(w io.Writer, plan bundle.Plan) error {
 	note := "Original contents are included without redaction or sanitization."
-	byteLabel := "original bytes"
+	byteLabel, memberLabel := "original bytes", "document versions"
 	if p := plan.PhotoRender; p != nil {
-		byteLabel = "output bytes"
+		byteLabel, memberLabel = "output bytes", "photos"
 		quality := ""
 		if p.Format == "jpeg" {
 			quality = fmt.Sprintf(", quality %d", p.Quality)
 		}
 		note = fmt.Sprintf("photo format %s%s, long edge %d pixels (0 keeps original size), metadata %t, remove GPS %t\nembedded RAW previews %d", p.Format, quality, p.LongEdge, p.IncludeMetadata, p.RemoveGPS, plan.EmbeddedPreviews)
 	}
-	_, err := fmt.Fprintf(w, "plan %s\nsource %s\nmember hash %s\nfingerprint %s\nplanned contents: %d document versions, %d %s, %d metadata bytes\nadmission expires %s\n%s\n", plan.ID, plan.Source.ID, plan.Source.MemberHash, plan.Fingerprint, plan.Total, plan.RoleBytes, byteLabel, plan.MetadataBytes, plan.ExpiresAt, note)
+	_, err := fmt.Fprintf(w, "plan %s\nsource %s\nmember hash %s\nfingerprint %s\nplanned contents: %d %s, %d %s, %d metadata bytes\nadmission expires %s\n%s\n", plan.ID, plan.Source.ID, plan.Source.MemberHash, plan.Fingerprint, plan.Total, memberLabel, plan.RoleBytes, byteLabel, plan.MetadataBytes, plan.ExpiresAt, note)
 	if err != nil {
 		return fmt.Errorf("writing export preview: %w", err)
 	}
@@ -241,7 +241,7 @@ func init() {
 	exportCmd.PersistentFlags().BoolVar(&exportJSON, "json", false, "Write the result as JSON")
 	exportPreviewCmd.Flags().StringVar(
 		&exportRequestPath, "request", "",
-		"Explicit document-version request JSON file (at most 1 MiB)",
+		"Original-version or photo-scope request JSON file (at most 1 MiB)",
 	)
 	exportStartCmd.Flags().StringVar(
 		&exportFingerprint, "fingerprint", "", "Reviewed plan fingerprint",

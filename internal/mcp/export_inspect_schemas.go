@@ -53,7 +53,7 @@ func retainedExportPlanSchema() schema {
 		"roles": roles, schemaTotalField: integerSchema(1, bundle.MaxMembers),
 		"document_rows": integerSchema(1, bundle.MaxDocumentRows),
 		"photo_render": objectSchema(schema{
-			"format": enumSchema("jpeg", "png"), "quality": integerSchema(1, 100),
+			"format": enumSchema("jpeg", "png"), "quality": integerSchema(0, 100),
 			"long_edge": integerSchema(0, 100000), "include_metadata": booleanSchema(),
 			"remove_gps": booleanSchema(),
 		}, "format", "quality", "long_edge", "include_metadata", "remove_gps"),

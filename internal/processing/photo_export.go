@@ -40,7 +40,7 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 		return plan, err
 	}
 	if blobs == nil {
-		return bundle.Plan{}, bundle.ErrUnavailable
+		return bundle.Plan{}, errors.New("photo export blob store unavailable")
 	}
 	inputs, err := catalog.ExportPhotoInputs(ctx, owner, request)
 	if err != nil {
@@ -79,7 +79,10 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 		}
 		output, receipt, err := renderPhotoExport(ctx, reader, input, *request.PhotoRender, &budget)
 		closeErr := reader.Close()
-		if err = errors.Join(err, closeErr); err != nil {
+		if closeErr != nil {
+			return bundle.Plan{}, photoExportError(input, closeErr)
+		}
+		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return bundle.Plan{}, err
 			}
@@ -149,7 +152,7 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 	}
 	packets, err := photoSourcePackets(ctx, data, profile.IncludeMetadata)
 	if err != nil {
-		return nil, receipt, err
+		return nil, receipt, photoExportContentError(err)
 	}
 	pixels := io.ReadSeeker(bytes.NewReader(data))
 	format := visualPreviewFormat(input.MediaType)
@@ -162,10 +165,10 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 			locations, malformed, err = visualPreviewRAWLocations(bytes.NewReader(data), input.MediaType, int64(len(data)))
 		}
 		if err != nil {
-			return nil, receipt, err
+			return nil, receipt, photoExportContentError(err)
 		}
 		if malformed {
-			return nil, receipt, errors.New("malformed RAW preview metadata")
+			return nil, receipt, fmt.Errorf("%w: malformed RAW preview metadata", bundle.ErrUnavailable)
 		}
 		if len(locations) == 0 {
 			return nil, receipt, fmt.Errorf("%w: embedded RAW preview unavailable", bundle.ErrUnavailable)
@@ -198,7 +201,7 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 			}
 		}
 		if err != nil {
-			return nil, receipt, err
+			return nil, receipt, photoExportContentError(err)
 		}
 		receipt.EmbeddedPreview = true
 		return encodePhotoExport(ctx, decoded, orientation, packets, input, receipt)
@@ -211,11 +214,14 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 }
 
 func photoExportError(input store.PhotoExportInput, err error) error {
-	category := bundle.ErrUnavailable
-	if errors.Is(err, bundle.ErrLimit) || errors.Is(err, bundle.ErrConflict) {
-		category = err
+	return fmt.Errorf("photo %d (%s): %w", input.Member.NodeID, input.Name, err)
+}
+
+func photoExportContentError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, bundle.ErrLimit) || errors.Is(err, bundle.ErrConflict) || errors.Is(err, bundle.ErrUnavailable) {
+		return err
 	}
-	return fmt.Errorf("%w: photo %d (%s): %w", category, input.Member.NodeID, input.Name, err)
+	return fmt.Errorf("%w: %w", bundle.ErrUnavailable, err)
 }
 
 func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string, containerOrientation int, packets photoPackets, budget *photoExportBudget) (image.Image, int, error) {
@@ -224,7 +230,7 @@ func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string,
 		return nil, 0, fmt.Errorf("%w: unsupported photo media type", bundle.ErrUnavailable)
 	}
 	if packets.unsupportedColor && len(packets.icc) == 0 || packets.animated {
-		return nil, 0, errors.New("unsupported color profile or animation")
+		return nil, 0, fmt.Errorf("%w: unsupported color profile or animation", bundle.ErrUnavailable)
 	}
 	if containerOrientation >= 1 && containerOrientation <= 8 {
 		orientation = containerOrientation
@@ -239,10 +245,10 @@ func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string,
 		if errors.Is(err, errVisualDimensions) {
 			err = fmt.Errorf("%w: %w", bundle.ErrLimit, err)
 		}
-		if errors.Is(err, errVisualFormat) || errors.Is(err, errVisualDecodeBounds) {
-			err = fmt.Errorf("%w: %w", bundle.ErrUnavailable, err)
+		if pixels.readErr != nil {
+			return nil, 0, err
 		}
-		return nil, 0, err
+		return nil, 0, photoExportContentError(err)
 	}
 	if budget != nil {
 		budget.pixels -= int64(pixels.config.Width) * int64(pixels.config.Height)
@@ -273,7 +279,7 @@ func encodePhotoExport(ctx context.Context, decoded image.Image, orientation int
 		var err error
 		result, err = photoExportMetadata(ctx, packets, input, receipt, result)
 		if err != nil {
-			return nil, receipt, err
+			return nil, receipt, photoExportContentError(err)
 		}
 	}
 	return result, receipt, nil

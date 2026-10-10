@@ -82,7 +82,7 @@ func TestExportInspectionRetainedHeaderFields(t *testing.T) {
 				selected.Source.SavedQueryRevision = 0
 			}
 			if kind == "photos" {
-				selected.PhotoRender = &bundle.PhotoRenderProfile{Format: "png", Quality: 90, LongEdge: 256, IncludeMetadata: true, RemoveGPS: true}
+				selected.PhotoRender = &bundle.PhotoRenderProfile{Format: "png", LongEdge: 256, IncludeMetadata: true, RemoveGPS: true}
 				selected.EmbeddedPreviews = 1
 				selected.Roles = []bundle.RolePolicy{{Role: "photo_rendered"}}
 				selected.Counts = nil

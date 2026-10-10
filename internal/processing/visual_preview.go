@@ -425,6 +425,10 @@ func walkVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, forma
 	}
 }
 
+func visualPreviewWebPFlags(flags byte) (unsupportedColor, animated bool) {
+	return flags&visualPreviewWebPICCProfile != 0, flags&visualPreviewWebPAnimation != 0
+}
+
 func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, size int64, format string) (orientation int, unsupportedColor, unsupportedMetadata, animated, malformed bool, err error) {
 	orientation = 1
 	err = walkVisualPreviewContainer(ctx, source, format, size, func(kind string, r io.Reader, n int64) error {
@@ -447,8 +451,9 @@ func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, si
 			if _, err := io.ReadFull(r, flags[:]); err != nil {
 				return err
 			}
-			animated = animated || flags[0]&visualPreviewWebPAnimation != 0
-			unsupportedColor = unsupportedColor || flags[0]&visualPreviewWebPICCProfile != 0
+			colorFlag, animationFlag := visualPreviewWebPFlags(flags[0])
+			animated = animated || animationFlag
+			unsupportedColor = unsupportedColor || colorFlag
 			return nil
 		}
 		if format != visualFormatJPEG && kind != "eXIf" && kind != "EXIF" {

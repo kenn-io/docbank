@@ -198,14 +198,17 @@ func TestPhotoExportRequestValidation(t *testing.T) {
 	require.NoError(t, validateExportRequest(request))
 	request.PhotoRender.Quality = 0
 	require.Error(t, validateExportRequest(request))
+	request.PhotoRender.Format = "png"
+	require.NoError(t, validateExportRequest(request))
 	request.PhotoRender = nil
 	require.Error(t, validateExportRequest(request))
 }
 func TestPhotoExportPreviewDescribesDeliveredCopies(t *testing.T) {
 	var output bytes.Buffer
-	plan := bundle.Plan{PhotoRender: &bundle.PhotoRenderProfile{Format: "png", Quality: 90, LongEdge: 2048, RemoveGPS: true}, EmbeddedPreviews: 2}
+	plan := bundle.Plan{PhotoRender: &bundle.PhotoRenderProfile{Format: "png", LongEdge: 2048, RemoveGPS: true}, EmbeddedPreviews: 2}
 	require.NoError(t, writeExportPreview(&output, plan))
 	require.Contains(t, output.String(), "photo format png")
+	require.Contains(t, output.String(), "planned contents: 0 photos")
 	require.Contains(t, output.String(), "long edge 2048 pixels")
 	require.Contains(t, output.String(), "metadata false, remove GPS true")
 	require.Contains(t, output.String(), "embedded RAW previews 2")

@@ -328,8 +328,9 @@ func photoSourcePackets(ctx context.Context, data []byte, metadata bool) (result
 			case visualFormatWebP:
 				switch kind {
 				case "VP8X":
-					result.animated = payload[0]&visualPreviewWebPAnimation != 0
-					result.unsupportedColor = result.unsupportedColor || payload[0]&visualPreviewWebPICCProfile != 0
+					colorFlag, animationFlag := visualPreviewWebPFlags(payload[0])
+					result.animated = result.animated || animationFlag
+					result.unsupportedColor = result.unsupportedColor || colorFlag
 				case "ICCP":
 					if len(result.icc) > 0 {
 						return errors.New("duplicate ICC profile")

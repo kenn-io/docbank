@@ -101,7 +101,7 @@ Choose **Prepare**, review the frozen plan, then **Start reviewed export** and *
 
 Each preparation allows at most 16 photos, 512 MiB of source bytes, 512 million decoded pixels and 1 GiB of rendered copies, within five minutes. Full-size 100-million-pixel exports can use several GiB of memory for source bytes, decoded pixels, transforms, and encoding; the 1 GiB limit covers encoded output. A changed or unavailable photo stops the complete preparation; the error names the photo so you can exclude it and retry. For unsupported color, export the untouched original through the document export flow.
 
-For the CLI, add `photo_render` to an exact-member request, or replace `members` with a `photos` selection. Both JPEG and PNG profiles require `quality` from 1 to 100; PNG encoding ignores it. This selection exports the complete current scope; `asset_ids` restricts it to selected display members:
+For the CLI, add `photo_render` to an exact-member request, or replace `members` with a `photos` selection. JPEG requires `quality` from 1 to 100. PNG accepts omitted or zero `quality` and ignores any supplied value from 0 to 100. This selection exports the complete current scope; `asset_ids` restricts it to selected display members:
 
 ```json
 {
@@ -111,7 +111,7 @@ For the CLI, add `photo_render` to an exact-member request, or replace `members`
     "query": {"v": 1, "syntax": "advanced", "mode": "lexical", "text": "", "sort": {"field": "name", "direction": "asc"}},
     "hidden": false
   },
-  "photo_render": {"format": "jpeg", "quality": 90, "long_edge": 2048, "include_metadata": true, "remove_gps": true}
+  "photo_render": {"format": "png", "long_edge": 2048, "include_metadata": true, "remove_gps": true}
 }
 ```
 

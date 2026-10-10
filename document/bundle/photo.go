@@ -17,8 +17,8 @@ type PhotoRenderProfile struct {
 }
 
 func (p PhotoRenderProfile) Validate() error {
-	if p.Format != "jpeg" && p.Format != "png" || p.Quality < 1 || p.Quality > 100 || p.LongEdge < 0 || p.LongEdge > 100000 {
-		return fmt.Errorf("%w: photo format must be jpeg or png, quality 1–100, long edge 0–100000", ErrConflict)
+	if p.Format != "jpeg" && p.Format != "png" || p.Quality < 0 || p.Quality > 100 || p.Format == "jpeg" && p.Quality == 0 || p.LongEdge < 0 || p.LongEdge > 100000 {
+		return fmt.Errorf("%w: photo format must be jpeg or png, JPEG quality 1–100 (optional for PNG), long edge 0–100000", ErrConflict)
 	}
 	return nil
 }
