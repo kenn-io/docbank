@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 	"unicode/utf8"
@@ -33,6 +34,10 @@ const (
 	StorageOperationFailed    StorageOperationState = "failed"
 	StorageOperationCancelled StorageOperationState = "cancelled"
 )
+
+var storageOperationKinds = []string{
+	storageOperationKindPlace, storageOperationKindEvacuate, "repair", "salvage", StorageOperationKindPhotoImport,
+}
 
 type StorageOperationCreate struct {
 	Kind            string
@@ -281,9 +286,7 @@ func activeStorageOperationsForStoreTx(
 func validateStorageOperationCreate(
 	input StorageOperationCreate,
 ) ([]StorageOperationStoreReference, error) {
-	switch input.Kind {
-	case storageOperationKindPlace, storageOperationKindEvacuate, "repair", "salvage", StorageOperationKindPhotoImport:
-	default:
+	if !slices.Contains(storageOperationKinds, input.Kind) {
 		return nil, fmt.Errorf("unsupported storage operation kind %q", input.Kind)
 	}
 	if input.Kind == storageOperationKindEvacuate {
@@ -363,25 +366,33 @@ func (s *Store) ClaimStorageOperation(
 	return s.StorageOperation(ctx, id)
 }
 
-// DeferStorageOperation records a retryable worker failure and returns the
+// DeferStorageOperation records a retryable failure or a clean operator pause and returns the
 // operation to the durable queue without presenting it as actively running.
 func (s *Store) DeferStorageOperation(ctx context.Context, id string, failure error) error {
-	if failure == nil {
-		return errors.New("deferred storage operation requires a failure")
+	message := ""
+	if failure != nil {
+		message = failure.Error()
 	}
-	message := failure.Error()
-	if len(message) > 4096 {
-		message = message[:4096]
-		for !utf8.ValidString(message) {
-			message = message[:len(message)-1]
-		}
-	}
+	message = boundedStorageOperationError(message)
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE storage_operations SET state=?,error=?,updated_at=?
 		WHERE operation_id=? AND state=?`,
 		StorageOperationQueued, message, nowRFC3339(), id, StorageOperationRunning,
 	)
 	return requireOneStorageOperationRow(result, err, id, "deferring")
+}
+
+// NoteQueuedStorageOperation records why a queued operation is waiting. A
+// later claim clears it. An operation that left the queue is unchanged.
+func (s *Store) NoteQueuedStorageOperation(ctx context.Context, id, message string) error {
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE storage_operations SET error=?,updated_at=?
+		WHERE operation_id=? AND state=?`,
+		boundedStorageOperationError(message), nowRFC3339(), id, StorageOperationQueued,
+	); err != nil {
+		return fmt.Errorf("noting queued storage operation %s: %w", id, err)
+	}
+	return nil
 }
 
 func (s *Store) AdvanceStorageOperation(
@@ -458,12 +469,7 @@ func (s *Store) FinishStorageOperation(
 	default:
 		return fmt.Errorf("storage operation terminal state %q is invalid", state)
 	}
-	if len(failure) > 4096 {
-		failure = failure[:4096]
-		for !utf8.ValidString(failure) {
-			failure = failure[:len(failure)-1]
-		}
-	}
+	failure = boundedStorageOperationError(failure)
 	now := nowRFC3339()
 	var retention any
 	if !retentionUntil.IsZero() {
@@ -477,6 +483,16 @@ func (s *Store) FinishStorageOperation(
 		StorageOperationQueued, StorageOperationRunning,
 	)
 	return requireOneStorageOperationRow(result, err, id, "finishing")
+}
+
+func boundedStorageOperationError(message string) string {
+	if len(message) > 4096 {
+		message = message[:4096]
+		for !utf8.ValidString(message) {
+			message = message[:len(message)-1]
+		}
+	}
+	return message
 }
 
 func requireOneStorageOperationRow(

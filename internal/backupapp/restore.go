@@ -235,7 +235,9 @@ func RestoreWithPlacement(
 			)
 		}
 	} else if primaryHandoff != nil {
-		if err := primaryHandoff.Commit(context.WithoutCancel(ctx)); err != nil {
+		if err := primaryHandoff.Commit(context.WithoutCancel(ctx), func(replaced bool) error {
+			return store.FinishRestoreLaneControls(opts.TargetDir, replaced)
+		}); err != nil {
 			restoreErr = fmt.Errorf("backupapp: completing primary restore handoff: %w", err)
 		}
 	}
@@ -353,7 +355,9 @@ func RecoverInterruptedPrimaryHandoff(
 		published = &ownership
 	}
 	if err := blob.RecoverPrimaryRestoreHandoff(
-		ctx, blobsDir, published, &databaseDigest,
+		ctx, blobsDir, published, &databaseDigest, func(replaced bool) error {
+			return store.FinishRestoreLaneControls(target, replaced)
+		},
 	); err != nil {
 		return errors.Join(
 			fmt.Errorf("backupapp: recovering interrupted primary handoff: %w", err),

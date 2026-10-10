@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +21,10 @@ func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, validateUUIDv4(created.ID))
 	assert.Equal(t, StorageOperationQueued, created.State)
+	require.NoError(t, s.NoteQueuedStorageOperation(t.Context(), created.ID, strings.Repeat("界", 2000)))
+	queued, err := s.StorageOperation(t.Context(), created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, strings.Repeat("界", 4096/3), queued.Error)
 
 	claimed, err := s.ClaimStorageOperation(t.Context(), created.ID)
 	require.NoError(t, err)

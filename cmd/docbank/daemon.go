@@ -651,7 +651,7 @@ func startProcessingJobs(
 	if err != nil {
 		return err
 	}
-	if err := supervisor.Start("derive:visual-previews", previews.Run); err != nil {
+	if err := supervisor.Start(store.VisualPreviewLane, previews.Run); err != nil {
 		return fmt.Errorf("starting visual preview backfill: %w", err)
 	}
 
@@ -719,6 +719,9 @@ func newVisualPreviewBackfill(
 	}
 	return &processing.Backfill[store.PhotoVisualPreviewTarget]{
 		Name: "visual-previews", Page: 10, IdleDelay: time.Second,
+		Control: func(ctx context.Context) (store.LaneControl, error) {
+			return s.LaneControl(ctx, store.VisualPreviewLane)
+		},
 		List: func(ctx context.Context, after string, limit int) ([]store.PhotoVisualPreviewTarget, error) {
 			return s.MissingPhotoVisualPreviewTargetsAfter(ctx, gridFingerprint, after, limit)
 		},

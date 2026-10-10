@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/pagerender"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -40,7 +41,7 @@ func (w *PageWorker) Run(ctx context.Context) error {
 			return err
 		}
 		if !processed {
-			if err := waitRenditionWorker(ctx, time.Second); err != nil {
+			if err := jobs.Wait(ctx, time.Second); err != nil {
 				return err
 			}
 		}
@@ -53,7 +54,7 @@ func (w *PageWorker) retryCatalogMutation(ctx context.Context, operation func() 
 		if !w.catalog.RenditionJobErrorRetryable(err) {
 			return err
 		}
-		if err := waitRenditionWorker(ctx, 250*time.Millisecond); err != nil {
+		if err := jobs.Wait(ctx, 250*time.Millisecond); err != nil {
 			return err
 		}
 	}

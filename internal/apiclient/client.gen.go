@@ -3888,6 +3888,99 @@ func (c *Client) ListJobs(ctx context.Context, reqEditors ...runtime.RequestEdit
 	return responseParser(ctx, resp)
 }
 
+// GetLaneControl Read durable lane controls
+func (c *Client) GetLaneControl(ctx context.Context, options *GetLaneControlRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetLaneControlResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/jobs/lanes/{lane}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetLaneControlResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetLaneControlResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetLaneControlResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetLaneControlErrorResponse](resp, "GetLaneControlErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/jobs/lanes/{lane}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SetLaneControl Pause, resume, or set photo preview concurrency
+func (c *Client) SetLaneControl(ctx context.Context, options *SetLaneControlRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetLaneControlResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/jobs/lanes/{lane}",
+		Method:      "PUT",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*SetLaneControlResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(SetLaneControlResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "SetLaneControlResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[SetLaneControlErrorResponse](resp, "SetLaneControlErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/jobs/lanes/{lane}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetStorageOperation Inspect one durable storage operation and its latest receipt
 func (c *Client) GetStorageOperation(ctx context.Context, options *GetStorageOperationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetStorageOperationResponse, error) {
 	var err error
@@ -15271,6 +15364,79 @@ func (o *StreamIngestRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// GetLaneControlRequestOptions is the options needed to make a request to GetLaneControl.
+type GetLaneControlRequestOptions struct {
+	PathParams *GetLaneControlPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetLaneControlRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetLaneControlRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetLaneControlRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetLaneControlRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SetLaneControlRequestOptions is the options needed to make a request to SetLaneControl.
+type SetLaneControlRequestOptions struct {
+	PathParams *SetLaneControlPath
+	Body       *SetLaneControlBody
+	Header     *SetLaneControlHeaders
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SetLaneControlRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *SetLaneControlRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SetLaneControlRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SetLaneControlRequestOptions) GetHeader() (map[string]string, error) {
+	encoded, err := json.Marshal(o.Header, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var headers map[string]string
+	err = json.Unmarshal(encoded, &headers)
+	return headers, err
+}
+
 // GetStorageOperationRequestOptions is the options needed to make a request to GetStorageOperation.
 type GetStorageOperationRequestOptions struct {
 	PathParams *GetStorageOperationPath
@@ -21378,6 +21544,10 @@ type SetCollectionLabelHeaders struct {
 	IfMatch string `json:"If-Match"`
 }
 
+type SetLaneControlHeaders struct {
+	IfMatch string `json:"If-Match"`
+}
+
 type UploadMailboxChunkHeaders struct {
 	XDocbankBlobHash string `json:"X-Docbank-Blob-Hash"`
 	XDocbankBlobSize int64  `json:"X-Docbank-Blob-Size"`
@@ -21657,6 +21827,14 @@ type GetExportEmailPDFRecipesPath struct {
 
 type SealExportSourcePath struct {
 	ID string `json:"id"`
+}
+
+type GetLaneControlPath struct {
+	Lane string `json:"lane"`
+}
+
+type SetLaneControlPath struct {
+	Lane string `json:"lane"`
 }
 
 type GetStorageOperationPath struct {
@@ -22176,6 +22354,8 @@ type IngestBody = IngestRequest
 type PreflightIngestBody = IngestPreflightRequest
 
 type StreamIngestBody = IngestRequest
+
+type SetLaneControlBody = SetLaneControlRequest
 
 type RegisterMailboxArchiveBody = MailboxArchiveInput
 
@@ -23002,6 +23182,14 @@ type StreamIngestErrorResponse = Error
 type ListJobsResponse = api.JobList
 
 type ListJobsErrorResponse = Error
+
+type GetLaneControlResponse = api.LaneControl
+
+type GetLaneControlErrorResponse = Error
+
+type SetLaneControlResponse = api.LaneControl
+
+type SetLaneControlErrorResponse = Error
 
 type GetStorageOperationResponse = api.StorageOperation
 
@@ -24371,6 +24559,8 @@ type JobList = api.JobList
 
 type JobRequest = bundle.JobRequest
 
+type LaneControl = api.LaneControl
+
 type Locator = report.Locator
 
 type MailboxArchive = store.MailboxArchive
@@ -24995,6 +25185,8 @@ type SetCollectionLabelRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Label  *string `json:"label,omitempty"`
 }
+
+type SetLaneControlRequest = api.SetLaneControlRequest
 
 type SetPhotoDisplayRequest = api.SetPhotoDisplayRequest
 

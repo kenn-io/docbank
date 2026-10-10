@@ -187,6 +187,26 @@ docbank jobs cancel <operation-id>
 ID. Follow and stop it like any other background job: `jobs show` reports
 progress and the import receipt, and `jobs cancel` stops it.
 
+Pause imports or previews before their next group or photo, then resume them:
+
+```text
+docbank jobs pause photo_import
+docbank jobs resume photo_import
+docbank jobs pause derive:visual-previews
+docbank jobs concurrency derive:visual-previews 3
+docbank jobs resume derive:visual-previews
+```
+
+Preview concurrency accepts 1 through 4. Pause and concurrency survive a daemon
+restart. Restoring a backup starts with unpaused lanes and concurrency 1.
+Storage lanes `place`, `evacuate`, `repair`, and `salvage` also accept pause and
+resume, keeping their existing concurrency. Cancellation uses the operation ID.
+Document workers show read-only controls in `jobs`.
+If lane settings cannot be read, the import waits and keeps its progress.
+It resumes when settings become readable; cancellation still works.
+Cancelling a waiting import keeps its saved count and receipt. After a daemon
+restart, imports scan again and skip content already imported.
+
 ![Photo import progress and its cancellation control in Background jobs](https://docbank.ai/assets/generated/web-photo-import-dark.png)
 
 The import reads RAW files (`.ARW`, `.CR2`, `.CR3`, `.DNG`, `.NEF`, `.ORF`,

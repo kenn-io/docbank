@@ -726,6 +726,12 @@ func TestFailedMappedOverwriteRestoresPrimaryOwnershipAndCanRetry(t *testing.T) 
 
 	target := filepath.Join(t.TempDir(), "existing-vault")
 	priorOwnership := seedOwnedVault(t, target)
+	seeded, err := store.Open(filepath.Join(target, "docbank.db"))
+	require.NoError(t, err)
+	_, err = seeded.SetLaneControl(t.Context(),
+		store.LaneControl{Lane: "place", Paused: true, Concurrency: 1}, 1)
+	require.NoError(t, err)
+	require.NoError(t, seeded.Close())
 	claimedPath := filepath.Join(t.TempDir(), "claimed-store")
 	claimedBinding := config.StoreBindingConfig{Kind: "filesystem", Path: claimedPath}
 	claimed, err := blob.NewConfiguredBackend(t.Context(), claimedBinding, nil)
@@ -775,6 +781,9 @@ func TestFailedMappedOverwriteRestoresPrimaryOwnershipAndCanRetry(t *testing.T) 
 	require.NoError(t, err)
 	restoredMetadata, err := store.Open(filepath.Join(target, "docbank.db"))
 	require.NoError(t, err)
+	reset, err := restoredMetadata.LaneControl(t.Context(), "place")
+	require.NoError(t, err)
+	assert.Equal(t, store.LaneControl{Lane: "place", Concurrency: 1, Revision: 1}, reset)
 	restoredBlobs, err := blob.New(
 		store.NewPackCatalog(restoredMetadata), filepath.Join(target, "blobs"),
 	)

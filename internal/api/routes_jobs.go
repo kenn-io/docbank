@@ -26,6 +26,21 @@ func observableJob(snapshot jobs.Snapshot) Job {
 }
 
 func registerJobRoutes(api huma.API, d Deps) {
+	applyControl := func(
+		job *Job, controls map[string]store.LaneControl, lane string, active bool,
+	) {
+		if !active {
+			return
+		}
+		control, found := controls[lane]
+		if !found {
+			return
+		}
+		job.Controllable = true
+		job.CanSetConcurrency = store.LaneConcurrencyAdjustable(lane)
+		job.Paused, job.Concurrency = control.Paused, control.Concurrency
+		job.ControlRevision = control.Revision
+	}
 	type output struct {
 		Body JobList
 	}
@@ -36,7 +51,16 @@ func registerJobRoutes(api huma.API, d Deps) {
 		out := &output{Body: JobList{Items: []Job{}}}
 		redactErrors := browserSessionRequest(ctx)
 		operationNames := make(map[string]struct{})
+		var controls map[string]store.LaneControl
 		if d.Store != nil {
+			var err error
+			controls, err = d.Store.LaneControls(ctx)
+			if err != nil {
+				out.Body.LaneControlsError = err.Error()
+				if redactErrors {
+					out.Body.LaneControlsError = "lane controls are unavailable; inspect with the Docbank CLI for details"
+				}
+			}
 			operations, err := d.Store.StorageOperations(ctx, 1000)
 			if err != nil {
 				return nil, FromStoreError(err)
@@ -57,7 +81,9 @@ func registerJobRoutes(api huma.API, d Deps) {
 					FinishedAt:       storageOperationAPI(operation).FinishedAt,
 					CancelRequested:  operation.CancelRequested,
 				}
-				job.CanCancel = operation.State == store.StorageOperationQueued || operation.State == store.StorageOperationRunning
+				job.CanCancel = operation.State == store.StorageOperationQueued ||
+					operation.State == store.StorageOperationRunning
+				applyControl(&job, controls, operation.Kind, job.CanCancel)
 				out.Body.Items = append(out.Body.Items, job)
 			}
 		}
@@ -67,6 +93,7 @@ func registerJobRoutes(api huma.API, d Deps) {
 					continue
 				}
 				job := observableJob(snapshot)
+				applyControl(&job, controls, snapshot.Name, snapshot.Status == jobs.StatusRunning)
 				if redactErrors && job.Error != "" {
 					job.Error = "background job failed; inspect with the Docbank CLI for details"
 				}
@@ -77,6 +104,63 @@ func registerJobRoutes(api huma.API, d Deps) {
 			return strings.Compare(a.Name, b.Name)
 		})
 		return out, nil
+	})
+
+	type controlOutput struct {
+		ETag string `header:"ETag"`
+		Body LaneControl
+	}
+	controlResult := func(control store.LaneControl) *controlOutput {
+		return &controlOutput{ETag: revisionETag(control.Revision), Body: LaneControl{
+			Lane: control.Lane, Paused: control.Paused, Concurrency: control.Concurrency,
+			Revision:          control.Revision,
+			CanSetConcurrency: store.LaneConcurrencyAdjustable(control.Lane),
+		}}
+	}
+	controlError := func(err error) error {
+		if errors.Is(err, store.ErrLaneControlsFile) {
+			// Lane routes are daemon-only, so the file path is safe to show.
+			return NewError(http.StatusInternalServerError, "lane_controls_unreadable",
+				err.Error()+"; repair or remove lane-controls.json")
+		}
+		if errors.Is(err, store.ErrLaneControl) {
+			return NewError(http.StatusBadRequest, "validation",
+				"lane is read-only or concurrency is unsupported")
+		}
+		return FromStoreError(err)
+	}
+	huma.Register(api, huma.Operation{
+		OperationID: "getLaneControl", Method: http.MethodGet,
+		Path: "/api/v1/jobs/lanes/{lane}", Summary: "Read durable lane controls",
+	}, func(ctx context.Context, in *struct {
+		Lane string `path:"lane"`
+	}) (*controlOutput, error) {
+		control, err := d.Store.LaneControl(ctx, in.Lane)
+		if err != nil {
+			return nil, controlError(err)
+		}
+		return controlResult(control), nil
+	})
+	huma.Register(api, huma.Operation{
+		OperationID: "setLaneControl", Method: http.MethodPut,
+		Path:    "/api/v1/jobs/lanes/{lane}",
+		Summary: "Pause, resume, or set photo preview concurrency",
+	}, func(ctx context.Context, in *struct {
+		Lane    string `path:"lane"`
+		IfMatch string `header:"If-Match"`
+		Body    SetLaneControlRequest
+	}) (*controlOutput, error) {
+		revision, err := parseIfMatch(in.IfMatch)
+		if err != nil {
+			return nil, err
+		}
+		control, err := d.Store.SetLaneControl(ctx, store.LaneControl{
+			Lane: in.Lane, Paused: in.Body.Paused, Concurrency: in.Body.Concurrency,
+		}, revision)
+		if err != nil {
+			return nil, controlError(err)
+		}
+		return controlResult(control), nil
 	})
 
 	type operationOutput struct{ Body StorageOperation }

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -86,7 +87,35 @@ func TestVisualPreviewBackfillProcessesGridAndLeavesLegacyHeadEmpty(t *testing.T
 	backfill, err := newVisualPreviewBackfill(catalog, blobs, api.NewOperationGate(), slog.Default())
 	require.NoError(t, err)
 	backfill.DrainOnce = true
+	control, err := catalog.SetLaneControl(t.Context(), store.LaneControl{Lane: store.VisualPreviewLane, Paused: true, Concurrency: 1}, 1)
+	require.NoError(t, err)
+	readControl := backfill.Control
+	process := backfill.Process
+	var processed atomic.Int32
+	backfill.Process = func(ctx context.Context, target store.PhotoVisualPreviewTarget) error {
+		processed.Add(1)
+		return process(ctx, target)
+	}
+	pausedReads := 0
+	backfill.Control = func(ctx context.Context) (store.LaneControl, error) {
+		current, err := readControl(ctx)
+		if err != nil || !current.Paused {
+			return current, err
+		}
+		pausedReads++
+		require.Zero(t, processed.Load())
+		_, err = catalog.ContentVersionVisualPreviewByRecipe(ctx, versions[1], fingerprint)
+		require.ErrorIs(t, err, store.ErrNotFound)
+		if pausedReads == 2 {
+			control.Paused = false
+			_, err = catalog.SetLaneControl(ctx, control, control.Revision)
+			require.NoError(t, err)
+		}
+		return current, nil
+	}
 	require.NoError(t, backfill.Run(t.Context()))
+	require.Equal(t, 2, pausedReads)
+	require.Equal(t, int32(1), processed.Load())
 	view, err := catalog.ContentVersionVisualPreviewByRecipe(t.Context(), versions[1], fingerprint)
 	require.NoError(t, err)
 	require.Equal(t, document.VisualPreviewReady, view.Generation.Preview.State)

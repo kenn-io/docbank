@@ -24,6 +24,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/blob"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -448,7 +449,7 @@ func TestEmbeddingRuntimeRegistryAndRunLifecycle(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan error, 1)
 		worker := fixture.worker(t)
-		worker.wait = waitEmbeddingWorker
+		worker.wait = jobs.Wait
 		go func() { done <- worker.Run(ctx) }()
 		synctest.Wait()
 		require.Equal(t, 1, fixture.catalog.headCount())

@@ -7487,11 +7487,21 @@ components:
       properties:
         can_cancel:
           type: boolean
+        can_set_concurrency:
+          type: boolean
         cancel_requested:
           type: boolean
         completed_objects:
           format: int64
           type: integer
+        concurrency:
+          format: int64
+          type: integer
+        control_revision:
+          format: int64
+          type: integer
+        controllable:
+          type: boolean
         error:
           type: string
         finished_at:
@@ -7503,6 +7513,8 @@ components:
         operation_id:
           format: uuid
           type: string
+        paused:
+          type: boolean
         started_at:
           type: string
         status:
@@ -7517,6 +7529,9 @@ components:
           format: int64
           type: integer
       required:
+        - controllable
+        - paused
+        - can_set_concurrency
         - name
         - status
         - started_at
@@ -7539,6 +7554,8 @@ components:
           items:
             $ref: "#/components/schemas/Job"
           type: array
+        lane_controls_error:
+          type: string
       required:
         - items
       type: object
@@ -7571,6 +7588,39 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    LaneControl:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/LaneControl.json
+          format: uri
+          readOnly: true
+          type: string
+        can_set_concurrency:
+          type: boolean
+        concurrency:
+          format: int64
+          type: integer
+        lane:
+          type: string
+        paused:
+          type: boolean
+        revision:
+          format: int64
+          type: integer
+      required:
+        - lane
+        - paused
+        - concurrency
+        - revision
+        - can_set_concurrency
+      type: object
+      x-go-type: api.LaneControl
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Locator:
       additionalProperties: false
       properties:
@@ -14739,6 +14789,31 @@ components:
       required:
         - label
       type: object
+    SetLaneControlRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/SetLaneControlRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        concurrency:
+          format: int64
+          maximum: 4
+          minimum: 1
+          type: integer
+        paused:
+          type: boolean
+      required:
+        - paused
+        - concurrency
+      type: object
+      x-go-type: api.SetLaneControlRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     SetPhotoDisplayRequest:
       additionalProperties: false
       properties:
@@ -19345,6 +19420,70 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: List daemon background jobs and their current status
+  /api/v1/jobs/lanes/{lane}:
+    get:
+      operationId: getLaneControl
+      parameters:
+        - in: path
+          name: lane
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LaneControl"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read durable lane controls
+    put:
+      operationId: setLaneControl
+      parameters:
+        - in: path
+          name: lane
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetLaneControlRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LaneControl"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Pause, resume, or set photo preview concurrency
   /api/v1/jobs/{operation_id}:
     get:
       operationId: getStorageOperation

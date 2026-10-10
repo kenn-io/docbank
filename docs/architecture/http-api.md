@@ -1024,7 +1024,29 @@ Malformed expected evidence is a `422 validation` request error.
 `started_at`. Terminal jobs add `finished_at`, and failures add a bounded
 `error`. Supervised task records describe this daemon run only and disappear
 when it restarts. Stopping one requires stopping or reconfiguring the daemon
-feature that owns it.
+feature that owns it. Photo previews additionally have durable lane controls.
+
+Every job includes `controllable`, `paused`, and `can_set_concurrency`.
+Controllable jobs also include `concurrency` and `control_revision`; `kind` or
+the supervisor `name` identifies the lane. Document and maintenance workers
+have read-only controls. `GET /jobs/lanes/{lane}` returns settings and their
+revision; `PUT /jobs/lanes/{lane}` accepts `paused` and `concurrency` with the
+current revision in `If-Match`. Missing preconditions return `428`; stale ones
+return `412`. Unsupported lanes and storage concurrency changes return `400`.
+An unreadable `lane-controls.json` returns `500` with code
+`lane_controls_unreadable`.
+Preview concurrency outside 1 through 4 returns `422`.
+
+Supported lanes are `derive:visual-previews`, `photo_import`, `place`, `evacuate`,
+`repair`, and `salvage`. Only previews accept concurrency changes. Storage lanes
+keep concurrency 1 in this contract and retain their existing execution limits.
+Pause finishes the current photo, import group, or storage object, then waits.
+Controls survive restart in the vault's `lane-controls.json` and stay out of
+backups; restored vaults use unpaused lanes with concurrency 1 and revision 1.
+When that file cannot be read, the job list still returns every job without
+control fields and adds `lane_controls_error`; browser sessions get a generic
+message. Lane-control reads and writes
+require the daemon API key.
 
 Durable storage operations, such as placement and photo imports, also appear as
 `storage:<operation_id>` items with `operation_id`, `kind`, object progress,

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -32,7 +33,11 @@ var jobsCmd = &cobra.Command{
 			return err
 		}
 		if jobsJSON {
-			return writeJobsJSON(cmd.OutOrStdout(), items.Items)
+			return writeJobsJSON(cmd.OutOrStdout(), items)
+		}
+		if items.LaneControlsError != "" {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+				"warning: lane controls unavailable: %s\n", items.LaneControlsError)
 		}
 		return writeJobs(cmd.OutOrStdout(), items.Items)
 	},
@@ -98,9 +103,9 @@ var jobsCancelCmd = &cobra.Command{
 	},
 }
 
-func writeJobsJSON(w io.Writer, items []api.Job) error {
+func writeJobsJSON(w io.Writer, list *api.JobList) error {
 	enc := jsontext.NewEncoder(w, jsontext.WithIndent("  "))
-	if err := json.MarshalEncode(enc, api.JobList{Items: items}); err != nil {
+	if err := json.MarshalEncode(enc, list); err != nil {
 		return fmt.Errorf("writing job status JSON: %w", err)
 	}
 	return nil
@@ -114,10 +119,23 @@ func writeJobs(w io.Writer, items []api.Job) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "NAME\tSTATUS\tSTARTED\tFINISHED\tERROR"); err != nil {
+	if _, err := fmt.Fprintln(tw, "NAME\tSTATUS\tCONTROL\tSTARTED\tFINISHED\tERROR"); err != nil {
 		return fmt.Errorf("writing job list header: %w", err)
 	}
 	for _, job := range items {
+		control := "read-only"
+		if job.Controllable {
+			control = "active"
+			if job.Paused {
+				control = "paused"
+			}
+			if job.CanSetConcurrency {
+				control += fmt.Sprintf(" limit=%d", job.Concurrency)
+			}
+			if job.Kind != "" {
+				control += " lane=" + job.Kind
+			}
+		}
 		finished, problem := job.FinishedAt, job.Error
 		if finished == "" {
 			finished = "-"
@@ -125,8 +143,8 @@ func writeJobs(w io.Writer, items []api.Job) error {
 		if problem == "" {
 			problem = "-"
 		}
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			job.Name, job.Status, job.StartedAt, finished, problem); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			job.Name, job.Status, control, job.StartedAt, finished, problem); err != nil {
 			return fmt.Errorf("writing job list row: %w", err)
 		}
 	}
@@ -136,9 +154,68 @@ func writeJobs(w io.Writer, items []api.Job) error {
 	return nil
 }
 
+func jobsControlCommand(action string) *cobra.Command {
+	use := action + " <lane>"
+	count := 1
+	if action == "concurrency" {
+		use += " <limit>"
+		count = 2
+	}
+	return &cobra.Command{
+		Use: use, Short: "Change durable background lane controls", Args: cobra.ExactArgs(count),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			lane := args[0]
+			limit := 0
+			if action == "concurrency" {
+				var err error
+				limit, err = strconv.Atoi(args[1])
+				if err != nil {
+					return usageError(fmt.Errorf("concurrency must be an integer: %w", err))
+				}
+			}
+			c, err := daemonconn.Ensure(cmd.Context())
+			if err != nil {
+				return err
+			}
+			control, err := c.API().GetLaneControl(cmd.Context(),
+				&apiclient.GetLaneControlRequestOptions{
+					PathParams: &apiclient.GetLaneControlPath{Lane: lane},
+				})
+			if err != nil {
+				return err
+			}
+			request := api.SetLaneControlRequest{
+				Paused: control.Paused, Concurrency: control.Concurrency,
+			}
+			if action == "concurrency" {
+				request.Concurrency = limit
+			} else {
+				request.Paused = action == "pause"
+			}
+			ifMatch := strconv.FormatInt(control.Revision, 10)
+			updated, err := c.API().SetLaneControl(cmd.Context(),
+				&apiclient.SetLaneControlRequestOptions{
+					PathParams: &apiclient.SetLaneControlPath{Lane: lane}, Body: &request,
+					Header: &apiclient.SetLaneControlHeaders{IfMatch: ifMatch},
+				})
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s paused=%t concurrency=%d\n",
+				updated.Lane, updated.Paused, updated.Concurrency)
+			if err != nil {
+				return fmt.Errorf("writing lane control: %w", err)
+			}
+			return nil
+		},
+	}
+}
+
 func init() {
 	jobsCmd.Flags().BoolVar(&jobsJSON, "json", false, "emit machine-readable JSON")
 	jobsShowCmd.Flags().BoolVar(&jobsShowJSON, "json", false, "emit machine-readable JSON")
 	jobsCmd.AddCommand(jobsShowCmd, jobsCancelCmd)
+	jobsCmd.AddCommand(jobsControlCommand("pause"), jobsControlCommand("resume"))
+	jobsCmd.AddCommand(jobsControlCommand("concurrency"))
 	rootCmd.AddCommand(jobsCmd)
 }
