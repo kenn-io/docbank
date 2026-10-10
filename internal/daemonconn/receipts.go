@@ -1340,6 +1340,8 @@ func validateAuditEvent(event api.AuditEvent, nodeID int64) error {
 func validateAuditAttachment(eventKind string, change *api.AuditAttachmentChange) error {
 	wantKind := ""
 	switch eventKind {
+	case "photo_authored":
+		wantKind = "photo_authored"
 	case "tag_define", "tag_rename", "tag_delete":
 		wantKind = "tag_definition"
 	case "tag_assign", "tag_unassign":
@@ -1369,6 +1371,10 @@ func validateAuditAttachment(eventKind string, change *api.AuditAttachmentChange
 		}
 	}
 	switch eventKind {
+	case "photo_authored":
+		if change.Before != nil && change.After != nil && change.After.Photo.Revision == change.Before.Photo.Revision+1 {
+			return nil
+		}
 	case "tag_rename":
 		if change.Before != nil && change.After != nil {
 			return nil
@@ -1412,6 +1418,10 @@ func validateAuditIngestObservation(event api.AuditEvent) error {
 
 func validateAuditAttachmentIdentity(kind string, identity api.AuditAttachmentIdentity) error {
 	switch kind {
+	case "photo_authored":
+		if validUUIDv4(identity.FileID) && identity.NodeID > 0 && identity.TagID == "" && identity.ProvenanceID == "" {
+			return nil
+		}
 	case "tag_definition":
 		if validUUIDv4(identity.TagID) && identity.NodeID == 0 && identity.ProvenanceID == "" {
 			return nil
@@ -1432,6 +1442,10 @@ func validateAuditAttachmentState(
 	kind string, identity api.AuditAttachmentIdentity, state api.AuditAttachmentState,
 ) error {
 	switch kind {
+	case "photo_authored":
+		if state.Photo != nil && state.Photo.FileID == identity.FileID && state.Photo.NodeID == identity.NodeID && state.Photo.Revision > 0 && store.ValidatePhotoAuthored(state.Photo.Values) == nil && state.TagID == "" && state.TagName == "" && state.NodeID == identity.NodeID && state.ProvenanceID == "" && state.IngestID == "" && state.OriginalPath == nil && state.OriginalMTime == nil && state.Supersedes == nil {
+			return nil
+		}
 	case "tag_definition":
 		if state.TagID == identity.TagID && state.TagName != "" && state.NodeID == 0 &&
 			state.ProvenanceID == "" && state.IngestID == "" && state.OriginalPath == nil &&

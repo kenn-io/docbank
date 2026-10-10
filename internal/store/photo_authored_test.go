@@ -34,6 +34,33 @@ func authoredPair(t *testing.T, s *Store) PhotoAsset {
 	return asset
 }
 
+func TestPhotoAuthoredConfirmationFields(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		bit   PhotoAuthoredFields
+		patch PhotoAuthoredPatch
+	}{
+		{"rating", PhotoConfirmedRating, PhotoAuthoredPatch{Rating: new(5)}},
+		{"flag", PhotoConfirmedFlag, PhotoAuthoredPatch{Flag: new("pick")}},
+		{"label", PhotoConfirmedLabel, PhotoAuthoredPatch{Label: new("red")}},
+		{"caption", PhotoConfirmedCaption, PhotoAuthoredPatch{Caption: new("River")}},
+		{"creator", PhotoConfirmedCreator, PhotoAuthoredPatch{Creator: new("Example photographer")}},
+		{"copyright", PhotoConfirmedCopyright, PhotoAuthoredPatch{Copyright: new("Example rights")}},
+		{"rotation", PhotoConfirmedRotation, PhotoAuthoredPatch{Rotation: new(90)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := test.patch.apply(PhotoAuthored{})
+			require.Equal(t, test.bit, value.Confirmed)
+			require.NoError(t, ValidatePhotoAuthored(value))
+			value.Confirmed = 0
+			require.ErrorIs(t, ValidatePhotoAuthored(value), ErrInvalidPhotoAsset)
+			require.NoError(t, ValidatePhotoAuthored(PhotoAuthored{Confirmed: test.bit}))
+		})
+	}
+	require.ErrorIs(t, ValidatePhotoAuthored(PhotoAuthored{Confirmed: 128}), ErrInvalidPhotoAsset)
+}
+
 func TestPhotoAuthoredReceiptRequiresCompleteValues(t *testing.T) {
 	t.Parallel()
 	const id = "40000000-0000-4000-8000-000000000001"
@@ -227,22 +254,36 @@ func TestPhotoAuthoredReleasedJSONLDefaults(t *testing.T) {
 	require.NoError(t, err)
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
-	lines := bytes.Split(backup.Bytes(), []byte{'\n'})
-	for i, line := range lines {
-		if bytes.Contains(line, []byte(`"type":"photo_file"`)) {
-			f := asset.Files[0]
-			old := metadataPhotoFileBeforeAuthored{Type: metadataPhotoFileType, FileID: f.ID, AssetID: f.AssetID, NodeID: f.NodeID, Role: f.Role, SidecarOfID: f.SidecarOfID, CreatedAt: f.CreatedAt}
-			lines[i], err = json.Marshal(old, json.Deterministic(true))
+	for _, test := range []string{"released defaults", "unconfirmed value"} {
+		t.Run(test, func(t *testing.T) {
+			lines := bytes.Split(backup.Bytes(), []byte{'\n'})
+			for i, line := range lines {
+				if bytes.Contains(line, []byte(`"type":"photo_file"`)) {
+					switch test {
+					case "unconfirmed value":
+						lines[i] = bytes.Replace(line, []byte(`"rating":0`), []byte(`"rating":3`), 1)
+					default:
+						f := asset.Files[0]
+						old := metadataPhotoFileBeforeAuthored{Type: metadataPhotoFileType, FileID: f.ID, AssetID: f.AssetID, NodeID: f.NodeID, Role: f.Role, SidecarOfID: f.SidecarOfID, CreatedAt: f.CreatedAt}
+						lines[i], err = json.Marshal(old, json.Deterministic(true))
+						require.NoError(t, err)
+					}
+				}
+			}
+			restored := newTestStore(t)
+			err := restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
+			if test != "released defaults" {
+				require.ErrorContains(t, err, "invalid authored photo decision")
+				_, err = restored.NodeByID(ctx, node.ID)
+				require.ErrorIs(t, err, ErrNotFound)
+				return
+			}
 			require.NoError(t, err)
-		}
+			got, err := restored.PhotoAssetByID(ctx, asset.ID)
+			require.NoError(t, err)
+			assert.Equal(t, asset.Files, got.Files)
+		})
 	}
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, restored.Close()) })
-	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'}))))
-	got, err := restored.PhotoAssetByID(ctx, asset.ID)
-	require.NoError(t, err)
-	assert.Equal(t, asset.Files, got.Files)
 }
 
 func TestPhotoAuthoredLegacyAuditDefaults(t *testing.T) {
@@ -328,31 +369,53 @@ func TestPhotoAuthoredAuditRoundTripAndRollback(t *testing.T) {
 	for _, f := range asset.Files {
 		targets = append(targets, PhotoAuthoredTarget{f.ID, 1, PhotoAuthoredPatch{Rating: new(5)}})
 	}
-	receipt, err := s.EditPhotoAuthored(ctx, targets)
+	_, err := s.EditPhotoAuthored(ctx, targets)
 	require.NoError(t, err)
 	require.NoError(t, s.ValidateMetadata(ctx))
 	history, err := s.AuditHistory(ctx, asset.Files[0].NodeID, 10, "")
 	require.NoError(t, err)
 	require.NotNil(t, history.Items[0].Attachment)
 	require.NotNil(t, history.Items[0].Attachment.After.Photo)
+	cleared, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{targets[0].FileID, 2, PhotoAuthoredPatch{Caption: new("")}}})
+	require.NoError(t, err)
+	require.Len(t, cleared.After, 1)
+	assert.Equal(t, PhotoConfirmedRating, cleared.Before[0].Values.Confirmed)
+	assert.Equal(t, PhotoConfirmedRating|PhotoConfirmedCaption, cleared.After[0].Values.Confirmed)
+	currentAsset, err := s.PhotoAssetByID(ctx, asset.ID)
+	require.NoError(t, err)
+	assert.True(t, currentAsset.Agreement["caption"])
+	for _, file := range currentAsset.Files {
+		assert.Empty(t, file.Caption)
+	}
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
 	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restored.Close()) })
 	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
-	_, err = restored.UndoPhotoAuthored(ctx, receipt.ReceiptID)
+	current, err := photoFileByIDQuery(ctx, restored.db, targets[0].FileID)
 	require.NoError(t, err)
+	assert.Equal(t, cleared.After[0].Values, current.Authored())
+	assert.Equal(t, PhotoConfirmedRating|PhotoConfirmedCaption, current.Confirmed)
+	undo, err := restored.UndoPhotoAuthored(ctx, cleared.ReceiptID)
+	require.NoError(t, err)
+	assert.Equal(t, PhotoConfirmedRating, undo.After[0].Values.Confirmed)
+	currentAsset, err = restored.PhotoAssetByID(ctx, asset.ID)
+	require.NoError(t, err)
+	assert.True(t, currentAsset.Agreement["caption"])
+	redo, err := restored.UndoPhotoAuthored(ctx, undo.ReceiptID)
+	require.NoError(t, err)
+	assert.Equal(t, cleared.After[0].Values, redo.After[0].Values)
 	require.NoError(t, restored.ValidateMetadata(ctx))
 	_, err = s.db.Exec(`CREATE TRIGGER reject_photo_audit BEFORE UPDATE ON audit_scopes BEGIN SELECT RAISE(ABORT,'forced photo audit failure'); END`)
 	require.NoError(t, err)
-	targets[0].Revision = 2
+	targets[0].Revision = 3
 	targets[0].Patch.Rating = new(4)
 	_, err = s.EditPhotoAuthored(ctx, targets[:1])
 	require.ErrorContains(t, err, "forced photo audit failure")
-	current, err := photoFileByIDQuery(ctx, s.db, targets[0].FileID)
+	current, err = photoFileByIDQuery(ctx, s.db, targets[0].FileID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), current.Revision)
+	assert.Equal(t, int64(3), current.Revision)
 	assert.Equal(t, 5, current.Rating)
 }
 
@@ -688,7 +751,7 @@ func TestPhotoSidecarIdleScanSkipsJudgedGeneration(t *testing.T) {
 			asset := authoredPair(t, s)
 			f := fileByRole(asset.Files, PhotoRoleRAW)
 			if test.matching {
-				_, err := s.db.ExecContext(ctx, `UPDATE photo_files SET rating=4 WHERE file_id=?`, f.ID)
+				_, err := s.db.ExecContext(ctx, `UPDATE photo_files SET rating=4,confirmed_fields=1 WHERE file_id=?`, f.ID)
 				require.NoError(t, err)
 			}
 			sidecar, err := s.CreateFile(ctx, s.RootID(), "empty.xmp", fakeHash("c3"), 4, "application/rdf+xml")

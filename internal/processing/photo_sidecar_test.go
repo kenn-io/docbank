@@ -26,6 +26,14 @@ func TestReadPhotoSidecar(t *testing.T) {
 	}{
 		{name: "unrelated root", packet: `<foo><r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><r:Description/></r:RDF></foo>`, invalid: true},
 		{name: "bare RDF root", packet: `<r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:a="http://ns.adobe.com/xap/1.0/"><r:Description a:Rating="3"/></r:RDF>`, invalid: true},
+		{name: "repeated values", packet: photoSidecarHeader + `><xmp:Rating><rdf:value>0</rdf:value><rdf:value>5</rdf:value></xmp:Rating>` + photoSidecarFooter, invalid: true},
+		{name: "text before value", packet: photoSidecarHeader + `><xmp:Rating>0<rdf:value>5</rdf:value></xmp:Rating>` + photoSidecarFooter, invalid: true},
+		{name: "text after value", packet: photoSidecarHeader + `><xmp:Rating><rdf:value>5</rdf:value>0</xmp:Rating>` + photoSidecarFooter, invalid: true},
+		{name: "text beside Alt", packet: photoSidecarHeader + `><dc:description>Caption<rdf:Alt><rdf:li>Other</rdf:li></rdf:Alt></dc:description>` + photoSidecarFooter, invalid: true},
+		{name: "text inside Alt", packet: photoSidecarHeader + `><dc:description><rdf:Alt>Caption<rdf:li>Other</rdf:li></rdf:Alt></dc:description>` + photoSidecarFooter, invalid: true},
+		{name: "two Alt containers", packet: photoSidecarHeader + `><dc:description><rdf:Alt/><rdf:Alt/></dc:description>` + photoSidecarFooter, invalid: true},
+		{name: "padded value", packet: photoSidecarHeader + "><xmp:Rating>\n <rdf:value>5</rdf:value>\n </xmp:Rating>" + photoSidecarFooter, want: store.PhotoAuthored{Rating: 5}},
+		{name: "resource wrapper", packet: photoSidecarHeader + `><dc:creator rdf:parseType="Resource"><rdf:value>Author</rdf:value></dc:creator>` + photoSidecarFooter, want: store.PhotoAuthored{Creator: "Author"}},
 		{name: "empty", packet: photoSidecarHeader + `>` + photoSidecarFooter},
 		{name: "empty containers", packet: photoSidecarHeader + "><dc:description>\n <rdf:Alt>\n </rdf:Alt>\n</dc:description><dc:creator>\n <rdf:Seq>\n </rdf:Seq>\n</dc:creator><dc:rights><rdf:Alt/></dc:rights>" + photoSidecarFooter},
 		{name: "blank scalar", packet: photoSidecarHeader + "><dc:description> \n\t </dc:description><dc:creator> </dc:creator><dc:rights>\n</dc:rights>" + photoSidecarFooter},
@@ -154,6 +162,7 @@ func TestPhotoSidecarSourceEvidence(t *testing.T) {
 
 func TestPhotoSidecarImportInitialization(t *testing.T) {
 	t.Parallel()
+	packet := photoSidecarHeader + ` xmp:Rating="0" ts:Rotation="0">` + photoSidecarFooter
 	ctx := t.Context()
 	root := t.TempDir()
 	catalog, err := store.Open(filepath.Join(root, "docbank.db"))
@@ -166,7 +175,7 @@ func TestPhotoSidecarImportInitialization(t *testing.T) {
 	for _, file := range []struct{ name, role, mime, payload string }{
 		{"capture.ARW", store.PhotoRoleRAW, "image/x-sony-arw", "synthetic RAW"},
 		{"capture.JPG", store.PhotoRoleImage, "image/jpeg", "synthetic JPEG"},
-		{"capture.XMP", store.PhotoRoleSidecar, "application/rdf+xml", photoSidecarHeader + ` xmp:Rating="4" xmp:Label="Red"><dc:description>River</dc:description>` + photoSidecarFooter},
+		{"capture.XMP", store.PhotoRoleSidecar, "application/rdf+xml", packet},
 	} {
 		receipt, writeErr := blobs.WriteDetailedContext(ctx, strings.NewReader(file.payload))
 		require.NoError(t, writeErr)
@@ -187,23 +196,26 @@ func TestPhotoSidecarImportInitialization(t *testing.T) {
 	sidecars, err := catalog.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
 	require.NoError(t, err)
 	require.Len(t, sidecars, 1)
+	_, err = catalog.InitializePhotoSidecar(ctx, sidecars[0])
+	require.NoError(t, err)
+	replacement := photoSidecarHeader + ` xmp:Rating="4" xmp:Label="Red"><dc:description>River</dc:description>` + photoSidecarFooter
+	written, err := blobs.WriteDetailedContext(ctx, strings.NewReader(replacement))
+	require.NoError(t, err)
+	encoding, err := written.EncodingName()
+	require.NoError(t, err)
+	sidecar := imported.Nodes[2]
+	sidecar, _, err = catalog.ReplaceContent(ctx, sidecar.ID, sidecar.Revision, written.Hash, written.Size, "application/rdf+xml", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize, PackEligible: written.PackEligible, Created: written.Created})
+	require.NoError(t, err)
+	count, err := BackfillSourceMetadataTargets(ctx, catalog, blobs, t.TempDir(), []store.SourceMetadataTarget{{SourceSHA256: sidecar.BlobHash, Size: sidecar.Size}})
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+	sidecars, err = catalog.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
+	require.NoError(t, err)
+	require.Len(t, sidecars, 1)
 	receipt, err := catalog.InitializePhotoSidecar(ctx, sidecars[0])
 	require.NoError(t, err)
 	require.NotEmpty(t, receipt.ReceiptID)
-	asset, err := catalog.PhotoAssetForNode(ctx, imported.Nodes[0].ID)
-	require.NoError(t, err)
-	for _, file := range asset.Files {
-		if file.Role == store.PhotoRoleRAW {
-			assert.Equal(t, 4, file.Rating)
-			assert.Equal(t, "red", file.Label)
-			assert.Equal(t, "River", file.Caption)
-			assert.Equal(t, int64(2), file.Revision)
-		}
-		if file.Role == store.PhotoRoleImage {
-			assert.Equal(t, 0, file.Rating)
-			assert.Equal(t, int64(1), file.Revision)
-		}
-	}
+	require.Equal(t, store.PhotoConfirmedRating|store.PhotoConfirmedLabel|store.PhotoConfirmedCaption, receipt.After[0].Values.Confirmed)
 }
 
 func TestMetadataCollectorAuthoredTextPresence(t *testing.T) {

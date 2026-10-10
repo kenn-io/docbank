@@ -31,6 +31,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	values := map[string]string{}
 	var field string
 	var fieldDepth int
+	var child xml.Name
 	var text strings.Builder
 	var items []string
 	var itemText strings.Builder
@@ -107,6 +108,11 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 			if field != "" && len(stack) > fieldDepth {
 				valid := t.Name.Space == rdfNamespace
 				if len(stack) == fieldDepth+1 {
+					if child != (xml.Name{}) || strings.TrimSpace(text.String()) != "" {
+						return result, errors.New("multiple authored RDF values")
+					}
+					child = t.Name
+					text.Reset()
 					valid = valid && (t.Name.Local == "value" || field == "creator" && t.Name.Local == "Seq" || (field == "description" || field == "rights") && t.Name.Local == "Alt")
 				} else {
 					valid = valid && len(stack) == fieldDepth+2 && t.Name.Local == "li" && parent.Space == rdfNamespace && (parent.Local == "Alt" || parent.Local == "Seq")
@@ -132,6 +138,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 					}
 					field = key
 					fieldDepth = len(stack)
+					child = xml.Name{}
 					text.Reset()
 					items = nil
 					hasDefault = false
@@ -158,8 +165,10 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 			if field != "" {
 				if itemDepth != 0 {
 					itemText.Write(t)
-				} else {
+				} else if child == (xml.Name{}) || len(stack) == fieldDepth+1 && child.Local == "value" {
 					text.Write(t)
+				} else if strings.TrimSpace(string(t)) != "" {
+					return result, errors.New("text beside authored RDF value")
 				}
 			}
 		case xml.EndElement:
@@ -227,7 +236,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 			result.Rotation = n
 		}
 	}
-	if err := store.ValidatePhotoAuthored(result); err != nil {
+	if err := store.ValidatePhotoAuthoredValues(result); err != nil {
 		return result, err
 	}
 	return result, nil

@@ -58,7 +58,7 @@ var (
 )
 
 var recordSchemas = map[string]recordSchema{
-	"photo_authored":          schema(field("file_id", uuidRule), field("node_id", unsignedRule), field("revision", unsignedRule), field("rating", unsignedRule), field("flag", textRule), field("label", textRule), field("caption", textRule), field("creator", textRule), field("copyright", textRule), field("rotation", unsignedRule)),
+	"photo_authored":          schema(field("file_id", uuidRule), field("node_id", unsignedRule), field("revision", unsignedRule), field("rating", unsignedRule), field("flag", textRule), field("label", textRule), field("caption", textRule), field("creator", textRule), field("copyright", textRule), field("rotation", unsignedRule), field("confirmed_fields", unsignedRule)),
 	"photo_authored_identity": schema(field("file_id", uuidRule)),
 	"unknown_origin": schema(
 		field("node_id", unsignedRule),

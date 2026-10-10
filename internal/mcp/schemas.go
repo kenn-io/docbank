@@ -832,6 +832,7 @@ func startProcessingSchemas() (schema, schema) {
 
 func photoFileSchema() schema {
 	return objectSchema(schema{
+		"confirmed_fields":  integerSchema(0, int64(store.PhotoConfirmedAll)),
 		schemaRevisionField: integerSchema(1, 0),
 		"rating":            integerSchema(0, 5),
 		"flag":              enumSchema(query.PhotoFlags()...),

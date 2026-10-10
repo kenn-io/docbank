@@ -15,17 +15,44 @@ import (
 
 const MaxPhotoAuthoredTextBytes = 16 << 10
 
+type PhotoAuthoredFields uint8
+
+const (
+	PhotoConfirmedRating PhotoAuthoredFields = 1 << iota
+	PhotoConfirmedFlag
+	PhotoConfirmedLabel
+	PhotoConfirmedCaption
+	PhotoConfirmedCreator
+	PhotoConfirmedCopyright
+	PhotoConfirmedRotation
+)
+
+const PhotoConfirmedAll = PhotoConfirmedRating | PhotoConfirmedFlag | PhotoConfirmedLabel | PhotoConfirmedCaption | PhotoConfirmedCreator | PhotoConfirmedCopyright | PhotoConfirmedRotation
+
 type PhotoAuthored struct {
-	Rating    int    `json:"rating"`
-	Flag      string `json:"flag"`
-	Label     string `json:"label"`
-	Caption   string `json:"caption"`
-	Creator   string `json:"creator"`
-	Copyright string `json:"copyright"`
-	Rotation  int    `json:"rotation"`
+	Confirmed PhotoAuthoredFields `json:"confirmed_fields,omitzero" maximum:"127" doc:"Confirmation mask. See PhotoFile.confirmed_fields for supported bits."`
+	Rating    int                 `json:"rating"`
+	Flag      string              `json:"flag"`
+	Label     string              `json:"label"`
+	Caption   string              `json:"caption"`
+	Creator   string              `json:"creator"`
+	Copyright string              `json:"copyright"`
+	Rotation  int                 `json:"rotation"`
 }
 
 func ValidatePhotoAuthored(v PhotoAuthored) error {
+	if v.Confirmed & ^PhotoConfirmedAll != 0 {
+		return fmt.Errorf("%w: invalid authored photo decision", ErrInvalidPhotoAsset)
+	}
+	for _, field := range photoAuthoredFields {
+		if v.Confirmed&field.bit == 0 && field.nonDefault(&v) {
+			return fmt.Errorf("%w: invalid authored photo decision: unconfirmed %s", ErrInvalidPhotoAsset, field.name)
+		}
+	}
+	return ValidatePhotoAuthoredValues(v)
+}
+
+func ValidatePhotoAuthoredValues(v PhotoAuthored) error {
 	if v.Rating < 0 || v.Rating > 5 || !query.ValidPhotoFlag(v.Flag) || !query.ValidPhotoColorLabel(v.Label) || !slices.Contains([]int{0, 90, 180, 270}, v.Rotation) {
 		return fmt.Errorf("%w: invalid authored photo decision", ErrInvalidPhotoAsset)
 	}
@@ -38,7 +65,7 @@ func ValidatePhotoAuthored(v PhotoAuthored) error {
 }
 
 func (f PhotoFile) Authored() PhotoAuthored {
-	return PhotoAuthored{f.Rating, f.Flag, f.Label, f.Caption, f.Creator, f.Copyright, f.Rotation}
+	return PhotoAuthored{Confirmed: f.Confirmed, Rating: f.Rating, Flag: f.Flag, Label: f.Label, Caption: f.Caption, Creator: f.Creator, Copyright: f.Copyright, Rotation: f.Rotation}
 }
 
 type PhotoAuthoredPatch struct {
@@ -49,29 +76,53 @@ type PhotoAuthoredPatch struct {
 	Creator   *string `json:"creator,omitzero"`
 	Copyright *string `json:"copyright,omitzero"`
 	Rotation  *int    `json:"rotation,omitzero"`
+	confirmed *PhotoAuthoredFields
+}
+
+type photoAuthoredField struct {
+	name       string
+	bit        PhotoAuthoredFields
+	nonDefault func(*PhotoAuthored) bool
+	equal      func(*PhotoAuthored, *PhotoAuthored) bool
+	setPatch   func(*PhotoAuthoredPatch, *PhotoAuthored)
+	apply      func(PhotoAuthoredPatch, *PhotoAuthored) bool
+}
+
+func authoredField[T comparable](name string, bit PhotoAuthoredFields, value func(*PhotoAuthored) *T, patch func(*PhotoAuthoredPatch) **T) photoAuthoredField {
+	var zero T
+	return photoAuthoredField{
+		name: name, bit: bit,
+		nonDefault: func(v *PhotoAuthored) bool { return *value(v) != zero },
+		equal:      func(a, b *PhotoAuthored) bool { return *value(a) == *value(b) },
+		setPatch:   func(p *PhotoAuthoredPatch, v *PhotoAuthored) { *patch(p) = value(v) },
+		apply: func(p PhotoAuthoredPatch, v *PhotoAuthored) bool {
+			if supplied := *patch(&p); supplied != nil {
+				*value(v) = *supplied
+				return true
+			}
+			return false
+		},
+	}
+}
+
+var photoAuthoredFields = [...]photoAuthoredField{
+	authoredField("rating", PhotoConfirmedRating, func(v *PhotoAuthored) *int { return &v.Rating }, func(p *PhotoAuthoredPatch) **int { return &p.Rating }),
+	authoredField("flag", PhotoConfirmedFlag, func(v *PhotoAuthored) *string { return &v.Flag }, func(p *PhotoAuthoredPatch) **string { return &p.Flag }),
+	authoredField("label", PhotoConfirmedLabel, func(v *PhotoAuthored) *string { return &v.Label }, func(p *PhotoAuthoredPatch) **string { return &p.Label }),
+	authoredField("caption", PhotoConfirmedCaption, func(v *PhotoAuthored) *string { return &v.Caption }, func(p *PhotoAuthoredPatch) **string { return &p.Caption }),
+	authoredField("creator", PhotoConfirmedCreator, func(v *PhotoAuthored) *string { return &v.Creator }, func(p *PhotoAuthoredPatch) **string { return &p.Creator }),
+	authoredField("copyright", PhotoConfirmedCopyright, func(v *PhotoAuthored) *string { return &v.Copyright }, func(p *PhotoAuthoredPatch) **string { return &p.Copyright }),
+	authoredField("rotation", PhotoConfirmedRotation, func(v *PhotoAuthored) *int { return &v.Rotation }, func(p *PhotoAuthoredPatch) **int { return &p.Rotation }),
 }
 
 func (p PhotoAuthoredPatch) apply(v PhotoAuthored) PhotoAuthored {
-	if p.Rating != nil {
-		v.Rating = *p.Rating
+	for _, field := range photoAuthoredFields {
+		if field.apply(p, &v) {
+			v.Confirmed |= field.bit
+		}
 	}
-	if p.Flag != nil {
-		v.Flag = *p.Flag
-	}
-	if p.Label != nil {
-		v.Label = *p.Label
-	}
-	if p.Caption != nil {
-		v.Caption = *p.Caption
-	}
-	if p.Creator != nil {
-		v.Creator = *p.Creator
-	}
-	if p.Copyright != nil {
-		v.Copyright = *p.Copyright
-	}
-	if p.Rotation != nil {
-		v.Rotation = *p.Rotation
+	if p.confirmed != nil {
+		v.Confirmed = *p.confirmed
 	}
 	return v
 }
@@ -165,7 +216,10 @@ func decodePhotoAuthoredReceipt(beforeJSON, afterJSON []byte, id string) (PhotoA
 }
 
 func photoAgreement(files []PhotoFile) map[string]bool {
-	result := map[string]bool{"rating": true, "flag": true, "label": true, "caption": true, "creator": true, "copyright": true, "rotation": true}
+	result := make(map[string]bool, len(photoAuthoredFields))
+	for _, field := range photoAuthoredFields {
+		result[field.name] = true
+	}
 	var first *PhotoAuthored
 	for _, f := range files {
 		if f.Role == PhotoRoleSidecar {
@@ -176,20 +230,16 @@ func photoAgreement(files []PhotoFile) map[string]bool {
 			first = &v
 			continue
 		}
-		result["rating"] = result["rating"] && v.Rating == first.Rating
-		result["flag"] = result["flag"] && v.Flag == first.Flag
-		result["label"] = result["label"] && v.Label == first.Label
-		result["caption"] = result["caption"] && v.Caption == first.Caption
-		result["creator"] = result["creator"] && v.Creator == first.Creator
-		result["copyright"] = result["copyright"] && v.Copyright == first.Copyright
-		result["rotation"] = result["rotation"] && v.Rotation == first.Rotation
+		for _, field := range photoAuthoredFields {
+			result[field.name] = result[field.name] && field.equal(&v, first)
+		}
 	}
 	return result
 }
 
 func photoFileByIDQuery(ctx context.Context, q metadataQuerier, id string) (PhotoFile, error) {
 	var f PhotoFile
-	err := q.QueryRowContext(ctx, `SELECT file_id,COALESCE(asset_id,''),node_id,role,sidecar_of_file_id,created_at,revision,rating,flag,label,caption,creator,copyright,rotation FROM photo_files WHERE file_id=?`, id).Scan(&f.ID, &f.AssetID, &f.NodeID, &f.Role, &f.SidecarOfID, &f.CreatedAt, &f.Revision, &f.Rating, &f.Flag, &f.Label, &f.Caption, &f.Creator, &f.Copyright, &f.Rotation)
+	err := q.QueryRowContext(ctx, `SELECT file_id,COALESCE(asset_id,''),node_id,role,sidecar_of_file_id,created_at,revision,rating,flag,label,caption,creator,copyright,rotation,confirmed_fields FROM photo_files WHERE file_id=?`, id).Scan(&f.ID, &f.AssetID, &f.NodeID, &f.Role, &f.SidecarOfID, &f.CreatedAt, &f.Revision, &f.Rating, &f.Flag, &f.Label, &f.Caption, &f.Creator, &f.Copyright, &f.Rotation, &f.Confirmed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return f, ErrNotFound
 	}
@@ -310,7 +360,7 @@ func (s *Store) applyPhotoAuthoredTx(ctx context.Context, tx *sql.Tx, targets []
 	now := nowRFC3339()
 	for i, a := range result.After {
 		v := a.Values
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET revision=?,rating=?,flag=?,label=?,caption=?,creator=?,copyright=?,rotation=? WHERE file_id=?`, a.Revision, v.Rating, v.Flag, v.Label, v.Caption, v.Creator, v.Copyright, v.Rotation, a.FileID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET revision=?,rating=?,flag=?,label=?,caption=?,creator=?,copyright=?,rotation=?,confirmed_fields=? WHERE file_id=?`, a.Revision, v.Rating, v.Flag, v.Label, v.Caption, v.Creator, v.Copyright, v.Rotation, v.Confirmed, a.FileID); err != nil {
 			return result, err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE nodes SET revision=revision+1,modified_at=? WHERE id=?`, now, a.NodeID); err != nil {
@@ -343,7 +393,7 @@ func (s *Store) UndoPhotoAuthored(ctx context.Context, id string) (PhotoAuthored
 		targets := make([]PhotoAuthoredTarget, len(receipt.After))
 		for i, a := range receipt.After {
 			v := receipt.Before[i].Values
-			targets[i] = PhotoAuthoredTarget{a.FileID, a.Revision, PhotoAuthoredPatch{&v.Rating, &v.Flag, &v.Label, &v.Caption, &v.Creator, &v.Copyright, &v.Rotation}}
+			targets[i] = PhotoAuthoredTarget{a.FileID, a.Revision, PhotoAuthoredPatch{Rating: &v.Rating, Flag: &v.Flag, Label: &v.Label, Caption: &v.Caption, Creator: &v.Creator, Copyright: &v.Copyright, Rotation: &v.Rotation, confirmed: &v.Confirmed}}
 		}
 		result, err = s.applyPhotoAuthoredTx(ctx, tx, targets, id, nil, true)
 		return err

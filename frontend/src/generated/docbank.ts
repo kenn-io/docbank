@@ -97,6 +97,12 @@ export const AuditAttachmentChangeKind = {
 
 export interface PhotoAuthored {
   caption: string;
+  /**
+     * Confirmation mask. See PhotoFile.confirmed_fields for supported bits.
+     * @minimum 0
+     * @maximum 127
+     */
+  confirmed_fields?: number;
   copyright: string;
   creator: string;
   flag: string;
@@ -4872,6 +4878,12 @@ export const PhotoFileRole = {
 export interface PhotoFile {
   asset_id: string;
   caption: string;
+  /**
+     * Confirmed fields bitmask: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, rotation=64. An absent key means no confirmed fields; zero is omitted. Empty text and zero values can be confirmed.
+     * @minimum 0
+     * @maximum 127
+     */
+  confirmed_fields?: number;
   copyright: string;
   created_at: string;
   creator: string;
