@@ -16,7 +16,7 @@ it("keeps failed confirmation visible and closes after cancellation or success",
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3)], total: 3 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-3", revision: 2 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(2)], total: 1 })));
-  vi.stubGlobal("fetch", fetcher);
+  vi.stubGlobal("fetch", (url: string, init: RequestInit) => url.endsWith("/photos/assets/query") && JSON.parse(init.body as string).page_size === 1 ? Promise.resolve(Response.json({ facets: [] })) : fetcher(url, init));
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();
   const cache = new PhotoPreviewCache("scoped", vi.fn());

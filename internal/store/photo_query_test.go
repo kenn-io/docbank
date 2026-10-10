@@ -808,6 +808,47 @@ func TestPhotoHiddenSavedDuplicateScope(t *testing.T) {
 		"document queries retain the hidden photo as their duplicate representative")
 }
 
+func TestPhotoSearchFacetsRespectVisibilityAndAuthoredDecisions(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
+	for i, rating := range []int{5, 5, 1} {
+		node := browsePhotoNode(t, s, fmt.Sprintf("harbor-%d.jpg", i), browseHash(fmt.Sprint("scope", i)), "image/jpeg")
+		browsePhotoMetadata(t, s, node, fmt.Sprint("scope", i), photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Canon")))
+		asset, err := s.PhotoAssetForNode(ctx, node.ID)
+		require.NoError(t, err)
+		_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{asset.Files[0].ID, 1, PhotoAuthoredPatch{Rating: new(rating), Flag: new("pick"), Label: new("red")}}})
+		require.NoError(t, err)
+		if i == 1 {
+			_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+			require.NoError(t, err)
+		}
+	}
+	_, err := s.CreateSavedQuery(ctx, "Rated harbor", "", SavedQueryKindQuery, []byte(`{"syntax":"advanced","text":"harbor AND rating:5 AND flag:pick AND label:red","filters":{"collapse_duplicates":true}}`))
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
+	require.NoError(t, err)
+	for _, hidden := range []bool{false, true} {
+		for _, field := range []string{"name", "relevance"} {
+			for _, raw := range []string{`{"filters":{"rating_min":5,"flags":["pick"],"labels":["red"]}}`, `{"syntax":"advanced","text":"saved:\"Rated harbor\""}`} {
+				value := snapshotTestQuery(t, raw)
+				value.Sort.Field = field
+				request := PhotoBrowseRequest{Query: value, Hidden: hidden, Facets: []string{"camera"}}
+				page, err := s.ListPhotoAssets(WithPhotoHiddenToken(ctx, token), request, nil)
+				require.NoError(t, err)
+				require.Equal(t, int64(1), page.Total)
+				require.Len(t, page.Items, 1)
+				require.Equal(t, int64(1), *page.Facets[0].Total)
+				require.Equal(t, int64(1), page.Facets[0].Values[0].Count)
+			}
+		}
+	}
+	require.NoError(t, s.LockPhotoHidden(ctx))
+	_, err = s.ListPhotoAssets(WithPhotoHiddenToken(ctx, token), PhotoBrowseRequest{Query: snapshotTestQuery(t, `{}`), Hidden: true, Facets: []string{"camera"}}, nil)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+}
+
 func TestPhotoBrowseRelevanceAndFacets(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

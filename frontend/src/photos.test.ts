@@ -4,12 +4,12 @@ import { photo } from "./photo-test-fixtures.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
-const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => Promise<Response>, facets: unknown[] = []) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => JSON.parse(init.body as string).page_size === 1 ? Promise.resolve(new Response(JSON.stringify({ facets }))) : fetcher(url, init));
+const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => Promise<Response>, facets: unknown[] = []) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => url.endsWith("/photos/assets/query") && JSON.parse(init.body as string).page_size === 1 ? Promise.resolve(new Response(JSON.stringify({ facets }))) : fetcher(url, init));
 
 it.each(["hide", "unhide", "trash"])("reconciles other views after a lost %s reply and retains uncertain targets", async kind => {
   const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Reply lost after commit"))
     .mockRejectedValueOnce(new Error("Refresh unavailable"));
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn(), kind === "unhide");
   photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
   const changed = vi.fn();
@@ -33,7 +33,7 @@ it.each([
 ])("explains a rejected hide with %s", async (code, status, message) => {
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ code, detail: "Server failure" }, { status: Number(status) }))
     .mockResolvedValueOnce(response([photo(1)]));
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const authFailure = vi.fn();
   const photos = new Photos("scoped", authFailure);
   photos.items = [photo(1)]; photos.started = true;
@@ -49,7 +49,7 @@ it("binds retries to captured or displayed revisions", async () => {
     .mockResolvedValueOnce(response([photo(3)]))
     .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-2", revision: 2 })))
     .mockResolvedValueOnce(response([photo(3)]));
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)];
   photos.started = true;
@@ -77,7 +77,7 @@ it("binds retries to captured or displayed revisions", async () => {
     .mockResolvedValueOnce(response([updated]))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed again" }), { status: 412 }))
     .mockResolvedValueOnce(response([{ ...updated, revision: 3 }]));
-  vi.stubGlobal("fetch", loadedFetcher);
+  stubPhotoFetch(loadedFetcher);
   const loaded = new Photos("scoped", vi.fn()); loaded.items = [photo(1)]; loaded.started = true; loaded.selectLoaded();
   expect(await loaded.trashSelected()).toBe(false);
   expect(await loaded.trashSelected()).toBe(false);
@@ -90,7 +90,7 @@ it("binds retries to captured or displayed revisions", async () => {
 it.each(["replace", "checkbox", "loaded", "add"])("uses current selection after a failure: %s", async mode => {
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
     .mockResolvedValueOnce(response(mode === "checkbox" ? [photo(1), photo(2)] : [photo(2)]));
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)]; photos.started = true;
   photos.select("photo-1", new MouseEvent("click"), ["photo-1", "photo-2"]);
@@ -320,7 +320,7 @@ it.each([
     .mockImplementationOnce(async (_url, options: RequestInit) => { writeSignal = options.signal!; return Response.json({ id: "photo-1", revision: 2 }); });
   if (partial) fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }));
   fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Listing unavailable" }), { status: 503 }));
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn(), kind === "unhide");
   await photos.loadMore();
   photos.total = 7;
@@ -360,7 +360,7 @@ it.each(["unhide", "trash"])("notifies after a pending %s finishes on a disposed
     signal = options.signal!;
     return new Promise<Response>(resolve => finish = resolve);
   });
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn(), true);
   photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();
   const changed = vi.fn();
@@ -382,10 +382,13 @@ it("bounds selection writes, rejects unconfirmed success and guards overlapping 
   const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1)]))
     .mockImplementationOnce(() => new Promise(resolve => finish = resolve))
     .mockResolvedValueOnce(response([photo(1)]));
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn());
   await photos.loadMore(); photos.selectLoaded();
   const write = photos.setHidden("photo-1");
+  await photos.setQuery({ ...photos.query, text: "harbor" });
+  expect(photos.query.text).toBe("");
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
   await photos.setHidden("photo-1");
   expect(await photos.trashSelected()).toBe(false);
   expect(fetcher).toHaveBeenCalledTimes(2);
@@ -398,7 +401,7 @@ it("bounds selection writes, rejects unconfirmed success and guards overlapping 
 });
 
 it("reports unresolved visibility selections before sending requests", async () => {
-  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+  const fetcher = vi.fn(); stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)]; photos.selectLoaded(); photos.selection.selectedIDs.add("unloaded");
   const report = vi.fn();

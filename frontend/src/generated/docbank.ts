@@ -5092,6 +5092,8 @@ export interface PhotoBrowseRequest {
   coverage?: WorkspaceQueryCoverage;
   /** @maxLength 32768 */
   cursor?: string;
+  /** @maxItems 5 */
+  facets?: PhotoBrowseRequestFacetsItem[];
   hidden?: boolean;
   /**
      * @minimum 1

@@ -16,7 +16,9 @@ it.each(["unhide", "trash"])("refreshes a remounted Hidden grid after a delayed 
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z" });
     if (url.includes("/assets/query")) {
-      const hidden = JSON.parse(String(options?.body)).hidden;
+      const request = JSON.parse(String(options?.body));
+      if (request.facets?.length) return Response.json({ items: [], total: 0, facets: [] });
+      const hidden = request.hidden;
       const items = hidden && !changed ? [photo(1)] : [];
       return Response.json({ items, total: items.length });
     }
@@ -115,7 +117,9 @@ it.each([false, true])("Hidden trash invalidates Documents and Trash restore ref
     if (url.endsWith("/photos/hidden/lock")) { unlocked = false; return Response.json({}); }
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z" } : {}) });
     if (url.includes("/assets/query")) {
-      const hidden = JSON.parse(String(options?.body)).hidden;
+      const request = JSON.parse(String(options?.body));
+      if (request.facets?.length) return Response.json({ items: [], total: 0, facets: [] });
+      const hidden = request.hidden;
       if (hidden) hiddenReads++;
       return Response.json({ items: hidden && !trashed ? [photo(1)] : [], total: hidden && !trashed ? 1 : 0 });
     }

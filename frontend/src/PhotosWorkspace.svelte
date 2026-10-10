@@ -75,8 +75,7 @@
   {#if photos.items.length}
     <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading} {cache} hidden={photos.hidden} onhidden={id => void setHidden(id)} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} />
   {:else if !photos.loading && !photos.error}
-  import { onMount, untrack } from "svelte";
-  import { Button, EmptyState, Modal, SelectDropdown, SearchInput, Spinner } from "@kenn-io/kit-ui";
+    <EmptyState title={filtered ? "No matching photos" : photos.hidden ? "No hidden photos" : "Your photo library is empty"} description={filtered ? "Clear a filter or try another search." : photos.hidden ? "Choose Hide from a photo's actions menu in Library." : "Import photos with docbank photos import to browse them here."}>
       {#snippet icon()}<ImageIcon size="24" />{/snippet}
     </EmptyState>
   {/if}

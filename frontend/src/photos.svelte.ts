@@ -49,6 +49,7 @@ export class Photos {
   constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false) {}
 
   setQuery(query: Query) {
+    if (this.disposed || this.hiding || this.trashing) return;
     this.cancelPending();
     try { this.query = parseQuery(canonicalQuery(query)); } catch (cause) { this.error = cause instanceof Error ? cause.message : String(cause); return; }
     this.items = []; this.facets = []; this.total = 0; this.cursor = undefined;

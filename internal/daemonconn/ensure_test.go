@@ -126,7 +126,7 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 	assert.True(t, discoverOptions(false).Accept(rec, info),
 		"status/stop discovery must still see incompatible daemons")
 
-	rec.Metadata[metaProtocolVersion] = "67"
+	rec.Metadata[metaProtocolVersion] = "71"
 	assert.False(t, discoverOptions(true).Accept(rec, info),
 		"same-version record with a mismatched protocol revision must be replaced")
 }
@@ -153,7 +153,7 @@ func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 
 func TestEnsureReplacesPreHiddenPhotosDaemon(t *testing.T) {
 	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
-	for _, protocol := range []string{"66", "67", "68", "69"} {
+	for _, protocol := range []string{"66", "67", "68", "69", "70", "71"} {
 		t.Run(protocol, func(t *testing.T) {
 			root, rec := startUnresponsiveRuntime(t)
 			assetID := "00000000-0000-4000-8000-000000000001"
