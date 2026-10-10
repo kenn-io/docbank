@@ -49,7 +49,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 				return n.Local
 			}
 		case xmpDublinCoreNamespace:
-			if n.Local == "description" || n.Local == "creator" || n.Local == "rights" {
+			if n.Local == "description" || n.Local == sourceMetadataCreatorField || n.Local == "rights" {
 				return n.Local
 			}
 		}
@@ -61,7 +61,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 		}
 		if strings.TrimSpace(value) == "" {
 			value = ""
-		} else if key != "description" && key != "creator" && key != "rights" {
+		} else if key != "description" && key != sourceMetadataCreatorField && key != "rights" {
 			value = strings.TrimSpace(value)
 		}
 		values[key] = value
@@ -107,7 +107,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 			if field != "" && len(stack) > fieldDepth {
 				valid := t.Name.Space == rdfNamespace
 				if len(stack) == fieldDepth+1 {
-					valid = valid && (t.Name.Local == "value" || field == "creator" && t.Name.Local == "Seq" || (field == "description" || field == "rights") && t.Name.Local == "Alt")
+					valid = valid && (t.Name.Local == "value" || field == sourceMetadataCreatorField && t.Name.Local == "Seq" || (field == "description" || field == "rights") && t.Name.Local == "Alt")
 				} else {
 					valid = valid && len(stack) == fieldDepth+2 && t.Name.Local == "li" && parent.Space == rdfNamespace && (parent.Local == "Alt" || parent.Local == "Seq")
 				}
@@ -185,7 +185,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 			if field != "" && fieldDepth == len(stack) {
 				value := text.String()
 				if len(items) > 0 {
-					if field == "creator" {
+					if field == sourceMetadataCreatorField {
 						value = items[0]
 					} else if hasDefault {
 						value = defaultText
@@ -210,7 +210,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 		key string
 		bit store.PhotoAuthoredFields
 	}{
-		{"Pick", store.PhotoConfirmedFlag}, {"Label", store.PhotoConfirmedLabel}, {"description", store.PhotoConfirmedCaption}, {"creator", store.PhotoConfirmedCreator}, {"rights", store.PhotoConfirmedCopyright},
+		{"Pick", store.PhotoConfirmedFlag}, {"Label", store.PhotoConfirmedLabel}, {"description", store.PhotoConfirmedCaption}, {sourceMetadataCreatorField, store.PhotoConfirmedCreator}, {"rights", store.PhotoConfirmedCopyright},
 	} {
 		if _, present := values[field.key]; present {
 			result.Confirmed |= field.bit
@@ -226,7 +226,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 		result.Confirmed &^= store.PhotoConfirmedLabel
 	}
 	result.Caption = values["description"]
-	result.Creator = values["creator"]
+	result.Creator = values[sourceMetadataCreatorField]
 	result.Copyright = values["rights"]
 	if value, ok := values["Rating"]; ok {
 		n, err := strconv.Atoi(value)

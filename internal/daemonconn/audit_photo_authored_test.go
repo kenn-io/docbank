@@ -35,11 +35,12 @@ func TestPhotoAuthoredAuditConfirmationBoundary(t *testing.T) {
 				e.Attachment.After = nil
 			}
 			err := validateAuditEvent(e, e.NodeID)
-			if bad == "" {
+			switch bad {
+			case "":
 				require.NoError(t, err)
-			} else if bad == "node" {
+			case "node":
 				require.ErrorContains(t, err, "photo attachment belongs to another node")
-			} else {
+			default:
 				require.Error(t, err)
 			}
 		})
