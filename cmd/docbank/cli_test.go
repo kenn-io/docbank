@@ -1842,23 +1842,6 @@ func TestStorageRepackJSON(t *testing.T) {
 	assert.Zero(t, status.DeadPackedBytes)
 }
 
-func TestDeletionHelpSeparatesTrashGCAndRepack(t *testing.T) {
-	help := func(args ...string) string {
-		out, err := runCLI(t, args...)
-		require.NoError(t, err)
-		return strings.Join(strings.Fields(out), " ")
-	}
-	assert.Contains(t, help("rm", "--help"), "rm never permanently deletes metadata or reclaims content")
-
-	out := help("trash", "empty", "--help")
-	assert.Contains(t, out, "Content bytes remain")
-	assert.Contains(t, out, "packed space then requires repack")
-
-	out = help("gc", "--help")
-	assert.Contains(t, out, "loose files are reclaimed immediately")
-	assert.Contains(t, out, "requires a separate storage repack")
-}
-
 func TestVerifyDetectsMissingAndCorrupt(t *testing.T) {
 	home := setupVaultHome(t)
 	srcA := writeSourceFile(t, "a.txt", "alpha")

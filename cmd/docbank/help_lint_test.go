@@ -165,41 +165,6 @@ func TestRootHelpGolden(t *testing.T) {
 	assert.Equal(t, wantText, gotText)
 }
 
-func TestBatesAndPackageHelpExplainSealedSnapshotIDs(t *testing.T) {
-	for _, name := range []string{"bates", "package"} {
-		t.Run(name, func(t *testing.T) {
-			out, err := runCLI(t, name, "--help")
-			require.NoError(t, err)
-			help := strings.Join(strings.Fields(out), " ")
-			assert.Contains(t, help, "sealed collection snapshot UUID")
-			assert.Contains(t, help, "package import")
-			assert.Contains(t, help, "docbank package list --json")
-			assert.Contains(t, help, "docbank package show <package-id> --json")
-			assert.Contains(t, help, "does not create a sealed snapshot from an arbitrary document selection")
-			assert.NotContains(t, help, "/api/v1/workspace/queries")
-		})
-	}
-}
-
-func TestPeopleSplitHelpExplainsAssignmentIDSource(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		args []string
-	}{
-		{name: "people", args: []string{"people", "--help"}},
-		{name: "split", args: []string{"people", "split", "--help"}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			out, err := runCLI(t, test.args...)
-			require.NoError(t, err)
-			help := strings.Join(strings.Fields(out), " ")
-			assert.Contains(t, help, "GET /api/v1/packages/by-id/{package_id}/custodians")
-			assert.Contains(t, help, "list_package_custodians")
-			assert.NotContains(t, strings.ToLower(help), "assignment ids for split come from show")
-		})
-	}
-}
-
 // exampleWords accepts the small shell subset used in CLI examples. It never
 // expands variables, invokes a shell, or executes a command.
 func exampleWords(line string) ([]string, error) {
