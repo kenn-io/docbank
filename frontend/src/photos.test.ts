@@ -1,9 +1,27 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { Photos, loadDensity } from "./photos.svelte.js";
+import { Photos, loadDensity, photoQuery } from "./photos.svelte.js";
 import { photo } from "./photo-test-fixtures.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
+
+it("cancels the previous scope and carries album sort through paging and refresh", async () => {
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve)).mockResolvedValueOnce(response([photo(2)], "album-next")).mockResolvedValueOnce(response([photo(3)])).mockResolvedValueOnce(response([photo(2), photo(3)]));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  const pending = photos.loadMore();
+  photos.scrollTop = 1200; photos.selectLoaded(); photos.allResults = true;
+  const query = { ...photoQuery, filters: { set_ids: ["album"] }, sort: { field: "added_time" as const, direction: "desc" as const } };
+  await photos.setQuery(query);
+  finish(response([photo(1)])); await pending;
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
+  expect(photos.selection.selectedIDs.size).toBe(0); expect(photos.allResults).toBe(false); expect(photos.scrollTop).toBe(0);
+  await photos.loadMore(); await photos.refresh();
+  expect(fetcher.mock.calls.slice(1).map(([, init]) => JSON.parse(init.body).query)).toEqual([query, query, query]);
+  expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
+  photos.dispose();
+});
 
 it.each([false, true])("removes confirmed trash successes when refresh fails, partial=%s", async partial => {
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })));
@@ -20,6 +38,16 @@ it.each([false, true])("removes confirmed trash successes when refresh fails, pa
   expect([...photos.selection.selectedIDs]).toEqual(partial ? ["photo-2"] : []);
   expect(photos.trashTargets.map(item => item.asset_id)).toEqual(partial ? ["photo-2"] : []);
   expect(photos.error).toBe("Refresh unavailable");
+  photos.dispose();
+});
+
+it("reports a trash request whose response was lost", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch")).mockResolvedValueOnce(response([photo(1)])));
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
+  const ontrashed = vi.fn();
+  expect(await photos.trashSelected(undefined, ontrashed)).toBe(false);
+  expect(ontrashed).toHaveBeenCalledOnce();
   photos.dispose();
 });
 
@@ -255,8 +283,15 @@ it("maps single, modifier and checkbox clicks to selection", () => {
   photos.dispose();
 });
 
-it("remembers density with safe defaults for unknown or unavailable storage", () => {
+it("remembers density with safe defaults for unknown or unavailable storage", async () => {
   const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.scrollTop = 750;
+  photos.items = [photo(1)];
+  new Photos("scoped", vi.fn()).setDensity("large");
+  expect(photos.density).toBe("large");
+  expect(photos.scrollTop).toBe(750);
+  expect(photos.items).toEqual([photo(1)]);
   photos.setDensity("compact");
   expect(new Photos("scoped", vi.fn()).density).toBe("compact");
   localStorage.setItem("docbank.photos.density", "__proto__");
@@ -284,4 +319,32 @@ it("times each replacement page separately", async () => {
   expect(photos.error).toBe("");
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-2"]);
   photos.dispose();
+});
+
+it("preserves a deselected range anchor through refresh", async () => {
+  const items = [photo(1), photo(2), photo(3)];
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(items)));
+  const photos = new Photos("scoped", vi.fn()); photos.items = items;
+  const ids = items.map(item => item.asset_id);
+  photos.select(ids[0], new MouseEvent("click"), ids);
+  photos.select(ids[1], new MouseEvent("click", { ctrlKey: true }), ids);
+  photos.select(ids[1], new MouseEvent("click", { ctrlKey: true }), ids);
+  await photos.refresh();
+  expect(photos.selection.anchorID).toBe(ids[1]);
+  photos.select(ids[2], new MouseEvent("click", { shiftKey: true }), ids);
+  expect([...photos.selection.selectedIDs]).toEqual(ids);
+});
+
+it("drops selections displaced beyond the refreshed pages without extra reads", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(2)], "next"));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn()); photos.items = [photo(1)]; photos.selectLoaded();
+  await photos.refresh();
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  expect(fetcher).toHaveBeenCalledOnce();
+  photos.selectAllResults();
+  fetcher.mockResolvedValueOnce(response([photo(3)], "next"));
+  await photos.refresh();
+  expect(photos.scope()).toEqual({ query: photoQuery });
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-3"]);
 });

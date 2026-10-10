@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { Button, EmptyState, Modal, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import { onDestroy, onMount } from "svelte";
+  import { Button, EmptyState, IconButton, Menu, MenuTrigger, MenuContent, MenuItem, Modal, TextInput, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { Photos } from "./photos.svelte.js";
   import { groupPhotos, ROW_HEIGHTS, type Density } from "./photoGrid.js";
@@ -8,12 +9,29 @@
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoGrid from "./PhotoGrid.svelte";
   import SelectionDock from "./SelectionDock.svelte";
+  import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
+  import PhotoAlbumPending from "./PhotoAlbumPending.svelte";
+  import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
 
-  let { photos, cache, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; ontrashed?: () => void } = $props();
+  let { photos, cache, albums, albumID = "", onnavigate = () => {}, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void } = $props();
+  const album = $derived(albums?.items.find(item => item.id === albumID));
+  let alive = true;
+  onDestroy(() => alive = false);
+  let picker = $state<{ focus: () => void; addToTarget: () => Promise<boolean> }>();
+  let renaming = $state(false);
+  let renameAlbum = $state<PhotoAlbumItem>();
+  let renameError = $state("");
+  let name = $state("");
+  let modal = $state<"delete" | "duplicate" | undefined>();
+  let modalError = $state("");
+  let modalAlbum = $state<PhotoAlbumItem>();
+  let duplicateName = $state("");
+  let renameInput = $state<HTMLInputElement>();
+  const sortOptions = [{ value: "added_time", label: "Added" }, { value: "capture_time", label: "Captured" }, { value: "import_time", label: "Imported" }];
   let trashOpen = $state(false);
   let grid = $state<{ preservePosition: () => (() => Promise<void>) }>();
   const preserve = () => grid?.preservePosition();
-  const groups = $derived(groupPhotos(photos.items, photos.grouping));
+  const groups = $derived(groupPhotos(photos.items, albumID && photos.query.sort?.field !== "capture_time" ? "flat" : photos.grouping));
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));
   const densityOptions = [{ value: "compact", label: "Compact" }, { value: "comfortable", label: "Comfortable" }, { value: "large", label: "Large" }];
   const groupingOptions = [{ value: "months", label: "Months" }, { value: "sessions", label: "Capture sessions" }];
@@ -29,34 +47,100 @@
   }
   function escape(event: KeyboardEvent) {
     if (event.key === "Escape" && !isAppShortcutSuppressed(event, false, document, ".photo-cell")) photos.clearSelection();
+    if (event.key.toLowerCase() === "b" && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !isAppShortcutSuppressed(event, !photos.selection.selectedIDs.size, document, ".photo-cell")) {
+      event.preventDefault();
+      if (albums?.rejectBusy()) return;
+      if (albums?.targetID) void picker?.addToTarget();
+      else picker?.focus();
+    }
   }
+  export function refreshPhotos() { return photos.refresh(preserve); }
+  async function refresh() { await Promise.all([refreshPhotos(), albums?.load()]); }
+  async function remove() {
+    if (!albums || !album) return;
+    await albums.members(album, photos.scope(), true);
+  }
+  async function rename() {
+    if (!albums || !renameAlbum || albums.busy || !name.trim()) return;
+    const inspected = renameAlbum;
+    renameError = "";
+    const result = await albums.update(inspected, { name: name.trim() });
+    if (!alive || !renaming || renameAlbum !== inspected) return;
+    if (result) renaming = false;
+    else { renameError = albums.error; albums.error = ""; if (!albums.loadError) renameAlbum = albums.items.find(item => item.id === inspected.id) ?? inspected; }
+  }
+  function beginRename() { renameError = ""; renameAlbum = album; name = album?.name ?? ""; renaming = true; }
+  function openModal(kind: "delete" | "duplicate") { modalError = ""; modalAlbum = album; modal = kind; duplicateName = `${album?.name ?? "Album"} copy`; }
+  async function confirm() {
+    if (!albums || !modal || !modalAlbum || albums.busy || modal === "duplicate" && albums.unconfirmed) return;
+    modalError = "";
+    const inspected = modalAlbum;
+    const result = modal === "delete" ? await albums.delete(inspected) : await albums.duplicate(inspected, duplicateName);
+    if (!alive || !modal) return;
+    if (!result) { modalError = albums.error; albums.error = ""; if (!albums.loadError) modalAlbum = albums.items.find(item => item.id === inspected.id) ?? inspected; }
+    if (result) { const deleting = modal === "delete"; modal = undefined; onnavigate(deleting ? "/photos/albums" : `/photos/albums/${result.id}`); }
+  }
+  $effect(() => { if (renaming && renameInput) { renameInput.focus(); renameInput.select(); } });
 </script>
 
+{#snippet sourceSummary(source: PhotoAlbumItem)}
+  <span>{source.name}{#if !albums?.loadError && source.included_count !== undefined}{" · "}{source.included_count.toLocaleString()} {source.included_count === 1 ? "photo" : "photos"}{/if}</span>
+{/snippet}
+
 <svelte:window onkeydown={escape} />
-<main class="photos-workspace" aria-label="Photo library">
+<main class="photos-workspace" aria-label={albumID ? "Photo album" : "Photo library"}>
   <div class="photo-toolbar browser-toolbar">
-    <div class="library-title"><h1>Library</h1><span>{photos.total.toLocaleString()} photos · {photos.items.length.toLocaleString()} loaded</span></div>
+    <div class="library-title">
+      {#if albumID}<button type="button" class="album-back" onclick={() => onnavigate("/photos/albums")}>Albums</button>{/if}
+      {#if renaming && renameAlbum}<form onsubmit={event => { event.preventDefault(); void rename(); }}>{@render sourceSummary(renameAlbum)}<TextInput ariaLabel="Album name" bind:value={name} bind:inputEl={renameInput} onkeydown={event => { if (event.key === "Escape") { event.preventDefault(); renaming = false; } }} /><Button type="submit" size="sm" disabled={albums?.busy || !name.trim()}>Save</Button><Button size="sm" onclick={() => renaming = false}>Cancel</Button>{#if renameError}<span role="alert">{renameError}</span>{/if}</form>
+      {:else}<h1>{albumID ? album?.name ?? "Album" : "Library"}</h1>{/if}
+      <span>{photos.total.toLocaleString()} photos · {photos.items.length.toLocaleString()} loaded</span>
+    </div>
     <div class="toolbar-actions">
       <div class="photo-options">
-        <SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => relayout(() => photos.grouping = value as "months" | "sessions")} />
+        {#if albumID}<SelectDropdown title="Sort photos" value={photos.query.sort?.field ?? "added_time"} options={sortOptions} onchange={value => void photos.setQuery({ ...photos.query, sort: { field: value as "added_time" | "capture_time" | "import_time", direction: "desc" } })} />{/if}
+        {#if !albumID || photos.query.sort?.field === "capture_time"}<SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => relayout(() => photos.grouping = value as "months" | "sessions")} />{/if}
         <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => relayout(() => photos.setDensity(value as Density))} />
       </div>
-      <Button size="sm" disabled={photos.loading} onclick={() => void photos.refresh(preserve)}>Refresh previews</Button>
+      {#if album && albums}
+        <IconButton ariaLabel={album.starred ? "Unstar album" : "Star album"} title={album.starred ? "Unstar album" : "Star album"} ariaPressed={album.starred} disabled={albums.busy || renaming} onclick={() => void albums!.update(album!, { starred: !album!.starred })}><StarIcon size="16" fill={album.starred ? "currentColor" : "none"} /></IconButton>
+        <Menu align="end"><MenuTrigger ariaLabel="Album actions" disabled={albums.busy || renaming}>More</MenuTrigger><MenuContent ariaLabel="Album actions"><MenuItem onselect={beginRename}>Rename</MenuItem><MenuItem onselect={() => openModal("duplicate")}>Duplicate…</MenuItem><MenuItem tone="danger" onselect={() => openModal("delete")}>Delete album…</MenuItem></MenuContent></Menu>
+      {/if}<Button size="sm" disabled={photos.loading || albums?.busy} onclick={() => void refresh()}>Refresh previews</Button>
     </div>
   </div>
+  {#if albums && modal !== "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
+  {#if albums?.error}<div class="photo-error" role="alert">{albums.error}</div>{/if}
+  {#if albums?.notice}<div class="photo-notice" role="status">{albums.notice}{#if albums.noticeID}<a href={`/photos/albums/${albums.noticeID}`} onclick={event => { event.preventDefault(); onnavigate(`/photos/albums/${albums!.noticeID}`); }}>Open album</a>{/if}</div>{/if}
   {#if photos.error}
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
   {/if}
-  {#if photos.items.length}
-    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} />
+  {#if albumID && albums && albums.initialized && !albums.loading && !albums.busy && modal !== "delete" && !albums.loadError && !album}<EmptyState title="Album not found"><Button onclick={() => onnavigate("/photos/albums")}>Back to albums</Button></EmptyState>
+  {:else if photos.items.length}
+    {#key photos.query}
+    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading} {cache} selectedIDs={photos.selection.selectedIDs} onselect={(id, event) => photos.select(id, event, orderedIDs)} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} ondragstart={(id, event) => albums?.startDrag(id, event, photos)} ondragend={() => { if (albums) albums.drag = undefined; }} />
+    {/key}
   {:else if !photos.loading && !photos.error}
-    <EmptyState title="Your photo library is empty" description="Import photos with docbank photos import to browse them here.">
+    <EmptyState title={albumID ? "This album is empty" : "Your photo library is empty"} description={albumID ? "Go to Library, select photos, then choose Add to album or press B." : "Import photos with docbank photos import to browse them here."}>
       {#snippet icon()}<ImageIcon size="24" />{/snippet}
+      {#if albumID}<Button onclick={() => onnavigate("/photos")}>Go to Library</Button>{/if}
     </EmptyState>
   {/if}
   <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
-  <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.loading} />
+  <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} loadedSelected={photos.items.every(item => photos.selection.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.total} allResults={photos.allResults} onallresults={() => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.loading || photos.allResults}>
+    {#snippet photoActions()}
+      {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} />{/if}
+      {#if album && albums}<Button size="sm" disabled={albums.busy || !photos.allResults && photos.selection.selectedIDs.size > 1000} onclick={() => void remove()}>Remove from album</Button><Button size="sm" disabled={albums.busy || photos.allResults || photos.selection.selectedIDs.size !== 1} onclick={() => void albums!.cover(album!, [...photos.selection.selectedIDs][0])}>Use as cover</Button>{/if}
+    {/snippet}
+  </SelectionDock>
 </main>
+{#if modal && modalAlbum && albums}
+  <Modal title={modal === "delete" ? "Delete album" : "Duplicate album"} onclose={() => { if (!albums.busy) modal = undefined; }}>
+    {#if modal === "delete"}<p>Delete "{modalAlbum.name}"? Its {albums.loadError || modalAlbum.included_count === undefined ? "" : `${modalAlbum.included_count.toLocaleString()} `}photos stay in your library.</p>{:else}{@render sourceSummary(modalAlbum)}<TextInput ariaLabel="Copy name" bind:value={duplicateName} />{/if}
+    {#if modalError}<p role="alert">{modalError}</p>{/if}
+    {#if modal === "duplicate"}<PhotoAlbumPending {albums} onnavigate={path => { modal = undefined; onnavigate(path); }} />{/if}
+    <div class="modal-actions"><Button disabled={albums.busy} onclick={() => modal = undefined}>Cancel</Button><Button tone={modal === "delete" ? "danger" : "info"} disabled={albums.busy || modal === "duplicate" && (!!albums.unconfirmed || !duplicateName.trim())} onclick={() => void confirm()}>{modal === "delete" ? "Delete album" : "Duplicate album"}</Button></div>
+  </Modal>
+{/if}
 
 {#if trashOpen}
   <Modal title="Move selected photos to trash?" tone="danger" ariaLabel="Move selected photos to trash" onclose={() => { if (!photos.trashing) trashOpen = false; }} closeOnOverlayClick={!photos.trashing}>
@@ -64,7 +148,7 @@
     {#if photos.trashError}<p role="alert">{photos.trashError} Failed photos remain selected for retry.</p>{/if}
     {#snippet footer()}
       <Button disabled={photos.trashing} onclick={() => trashOpen = false}>Keep in Docbank</Button>
-      <Button tone="danger" disabled={photos.trashing || photos.selection.selectedIDs.size === 0} onclick={async () => { if (await photos.trashSelected(preserve, ontrashed)) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
+      <Button tone="danger" disabled={photos.trashing || photos.selection.selectedIDs.size === 0} onclick={async () => { const source = photos; if (await source.trashSelected(preserve, () => ontrashed?.(source))) trashOpen = false; }}>{photos.trashing ? "Moving…" : "Move to trash"}</Button>
     {/snippet}
   </Modal>
 {/if}
@@ -76,5 +160,11 @@
   .library-title span { font-size: var(--font-size-xs); color: var(--text-muted); }
   .photo-options { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .photo-error { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-5); color: var(--text-primary); background: var(--bg-inset); }
+  .photo-notice { display: flex; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-2) var(--space-5); font-size: var(--font-size-sm); }
+  .photo-notice a { color: var(--accent-blue); }
+  .album-back { border: 0; padding: 0; background: transparent; color: var(--accent-blue); font-size: var(--font-size-xs); cursor: pointer; margin-bottom: 5px; }
+  form, .modal-actions { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+  .modal-actions { justify-content: flex-end; margin-top: var(--space-4); }
+  @media (max-width: 640px) { .photo-toolbar { flex-wrap: wrap; gap: var(--space-3); } }
   .photo-loading { height: 38px; flex-shrink: 0; display: flex; gap: var(--space-2); align-items: center; justify-content: center; padding: var(--space-2); color: var(--text-muted); font-size: var(--font-size-sm); }
 </style>

@@ -229,6 +229,9 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
+	if photoAlbumBrowserRequestAllowed(r) {
+		return true
+	}
 	if r.URL.Path == "/api/v1/photos/assets/query" {
 		return r.Method == http.MethodPost && r.URL.RawQuery == ""
 	}
@@ -507,6 +510,30 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	return len(parts) == 1 || parts[1] == "children" ||
 		parts[1] == "versions" || parts[1] == "provenance" ||
 		parts[1] == "tags"
+}
+
+func photoAlbumBrowserRequestAllowed(r *http.Request) bool {
+	if r.URL.RawQuery != "" {
+		return false
+	}
+	if r.URL.Path == "/api/v1/photos/albums" {
+		return r.Method == http.MethodGet || r.Method == http.MethodPost
+	}
+	after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/albums/")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(after, "/")
+	if query.ValidateTextOperand("set", parts[0]) != nil {
+		return false
+	}
+	if len(parts) == 1 {
+		return r.Method == http.MethodPut || r.Method == http.MethodDelete
+	}
+	if len(parts) == 2 {
+		return parts[1] == "cover" && r.Method == http.MethodPut || parts[1] == "duplicate" && r.Method == http.MethodPost
+	}
+	return len(parts) == 3 && parts[1] == "members" && (parts[2] == "add" || parts[2] == "remove") && r.Method == http.MethodPost
 }
 
 func boundedFormatCoverageQuery(rawQuery string) bool {

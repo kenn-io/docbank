@@ -1,9 +1,167 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import { photo, storage } from "./photo-test-fixtures.js";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { photo, photoAlbum, albumResponse, storage } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+it.each(["network", "server", "stale first page"])("refreshes an album opened again during a delayed membership write with a %s response", async outcome => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  const album = photoAlbum();
+  let included = false;
+  let finish!: () => void;
+  let releaseStale: (() => void) | undefined;
+  let scopedReads = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/albums")) return albumResponse([{ ...album, included_count: included ? 1 : 0 }]);
+    if (url.endsWith("/photos/assets/query")) {
+      const scoped = JSON.parse(init.body as string).query.filters?.set_ids?.includes(album.id);
+      if (outcome === "stale first page" && scoped && ++scopedReads === 1) { await new Promise<void>(resolve => releaseStale = resolve); return albumResponse({ items: [], total: 0 }); }
+      return albumResponse({ items: scoped && !included ? [] : [photo(1)], total: scoped && !included ? 0 : 1 });
+    }
+    if (url.endsWith(`/photos/albums/${album.id}/members/add`)) {
+      await new Promise<void>(resolve => finish = resolve);
+      included = true;
+      if (outcome === "network") throw new TypeError("Failed to fetch");
+      return outcome === "server" ? albumResponse({ detail: "Add unavailable" }, 503) : albumResponse({ ...album, revision: 2 });
+    }
+    if (url.includes("/nodes/1")) return albumResponse({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+    return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+  }));
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: /Add to album/ }));
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Trip" }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
+  if (outcome === "stale first page") {
+    await waitFor(() => expect(releaseStale).toBeTypeOf("function"));
+  } else {
+    await screen.findByText("This album is empty");
+    await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+    await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+    await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
+    await screen.findByText("This album is empty");
+  }
+  finish();
+  if (outcome === "stale first page") {
+    await waitFor(() => expect(scopedReads).toBe(2));
+    releaseStale!();
+  }
+  if (outcome !== "stale first page") await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  await screen.findByText("1 photos · 1 loaded");
+  expect(screen.queryByText("This album is empty")).toBeNull();
+});
+
+it("opens an album from the index, preserves its sort scope, and unstars without refetching", async () => {
+  history.replaceState(null, "", "/photos/albums#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  const album = photoAlbum({ starred: true, member_count: 1, included_count: 1 });
+  const queries: unknown[] = [];
+  const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/albums")) return new Response(JSON.stringify([album]));
+    if (url.endsWith(`/photos/albums/${album.id}`) && init.method === "PUT") return albumResponse({ ...album, revision: 2, starred: false });
+    if (url.endsWith("/photos/assets/query")) { queries.push(JSON.parse(init.body as string).query); return new Response(JSON.stringify({ items: [photo(1)], total: 1 })); }
+    if (url.includes("/nodes/1")) return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", revision: 1, path: "/" }));
+    return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(App);
+  await fireEvent.click(await screen.findByRole("link", { name: /Trip.*1 photo/ }));
+  expect(location.pathname).toBe(`/photos/albums/${album.id}`);
+  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  expect(queries[0]).toMatchObject({ filters: { set_ids: [album.id] }, sort: { field: "added_time", direction: "desc" } });
+  await fireEvent.click(screen.getByRole("combobox", { name: /Sort photos/ }));
+  await fireEvent.click(await screen.findByRole("option", { name: "Imported" }));
+  await waitFor(() => expect(queries.at(-1)).toMatchObject({ filters: { set_ids: [album.id] }, sort: { field: "import_time", direction: "desc" } }));
+  expect(screen.getByRole("combobox", { name: "Sort photos: Imported" })).toBeTruthy();
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  album.included_count = 7;
+  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  expect(location.pathname).toBe(`/photos/albums/${album.id}`);
+  expect(screen.getByRole("combobox", { name: "Sort photos: Imported" })).toBeTruthy();
+  await screen.findByText("1 selected photo");
+  await waitFor(() => expect(screen.getByRole("button", { name: /Trip/ }).textContent).toContain("7"));
+  const browseCount = queries.length;
+  await fireEvent.click(screen.getByRole("button", { name: "Unstar album" }));
+  await waitFor(() => expect(fetcher.mock.calls.some(([url, init]) => url.endsWith(`/photos/albums/${album.id}`) && init.method === "PUT")).toBe(true));
+  await waitFor(() => expect((screen.getByRole("button", { name: "Unstar album" }) as HTMLButtonElement).disabled).toBe(false));
+  expect(queries).toHaveLength(browseCount);
+});
+
+it.each(["document trash", "photo trash", "delayed photo trash", "restore"])("refreshes albums and both started photo views after %s", async operation => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  const album = photoAlbum({ member_count: 1, included_count: operation === "restore" ? 0 : 1 });
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  const node = { created_at: "2026-07-28T12:00:00Z", modified_at: "2026-07-28T12:00:00Z", revision: 1, size: 0 };
+  const root = { ...node, id: 1, name: "", kind: "dir", path: "/" };
+  const reports = { ...node, id: 2, parent_id: 1, name: "Reports", kind: "dir", path: "/Reports" };
+  const file = { ...node, id: 3, parent_id: 2, name: "photo-1.jpg", kind: "file", current_version_id: "11111111-1111-4111-8111-111111111111", blob_hash: "a".repeat(64), size: 74, mime_type: "image/jpeg", path: "/Reports/photo-1.jpg" };
+  const otherAlbum = photoAlbum({ id: "22222222-2222-4222-8222-000000000068", name: "Other" });
+  let finishTrash!: () => void;
+  let trashed = operation === "restore";
+  const reads = { albums: 0, album: 0, library: 0 };
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+    if (url.endsWith("/photos/albums")) { reads.albums++; return json([{ ...album, included_count: trashed ? 0 : 1 }, otherAlbum]); }
+    if (url.endsWith("/photos/assets/query")) { reads[JSON.parse(init!.body as string).query.filters?.set_ids ? "album" : "library"]++; return json({ items: trashed ? [] : [photo(1)], total: trashed ? 0 : 1 }); }
+    if (url === "/api/v1/path?path=%2F") return json(root);
+    if (url === "/api/v1/nodes/1/children?limit=1000&offset=0") return json({ directory: root, items: [reports], total: 1, limit: 1000, offset: 0 });
+    if (url === "/api/v1/nodes/2/children?limit=1000&offset=0") return json({ directory: reports, items: trashed ? [] : [file], total: trashed ? 0 : 1, limit: 1000, offset: 0 });
+    if (url.endsWith("/trash") && init?.method === "POST") {
+      if (operation === "delayed photo trash") await new Promise<void>(resolve => finishTrash = resolve);
+      trashed = true;
+      return json(url.includes("/photos/assets/") ? { id: "photo-1", revision: 2 } : { ...file, revision: 2, trashed_at: "2026-07-28T12:01:00Z" });
+    }
+    if (url.startsWith("/api/v1/trash?")) return json({ items: trashed ? [{ ...file, trashed_at: "2026-07-28T12:01:00Z" }] : [], total: trashed ? 1 : 0, limit: 1000, offset: 0 });
+    if (url.endsWith("/nodes/3/restore")) { trashed = false; return json({ ...file, revision: 2 }); }
+    if (url === "/api/v1/nodes/3") return json(file);
+    if (url.startsWith("/api/v1/audit/status")) return json({ enabled: false, scopes: [] });
+    return json({ items: [], total: 0, limit: 1000, offset: 0 });
+  }));
+  render(App);
+  await screen.findByText(operation === "restore" ? "Your photo library is empty" : "1 photos · 1 loaded");
+  await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
+  await screen.findByText(operation === "restore" ? "This album is empty" : "1 photos · 1 loaded");
+  const before = { ...reads };
+  if (operation === "document trash") {
+    await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+    await fireEvent.dblClick(await screen.findByRole("cell", { name: "Reports" }));
+    await screen.findByRole("cell", { name: "photo-1.jpg" });
+    await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+    await fireEvent.click(within(screen.getByRole("dialog", { name: "Move photo-1.jpg to trash" })).getByRole("button", { name: "Move to trash" }));
+  } else if (operation === "restore") {
+    await fireEvent.click(screen.getByRole("button", { name: "Recoverable trash" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+    await fireEvent.click(within(screen.getByRole("dialog", { name: "Restore photo-1.jpg from trash" })).getByRole("button", { name: "Restore" }));
+  } else {
+    await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
+    await fireEvent.click(within(screen.getByRole("dialog", { name: "Move selected photos to trash" })).getByRole("button", { name: "Move to trash" }));
+  }
+  if (operation === "delayed photo trash") {
+    await waitFor(() => expect(finishTrash).toBeTypeOf("function"));
+    await fireEvent.click(screen.getByRole("button", { name: /^Other/ }));
+    await screen.findByRole("heading", { name: "Other" });
+    await screen.findByText("1 photos · 1 loaded");
+    Object.assign(before, reads);
+    finishTrash();
+  }
+  await waitFor(() => { for (const key of ["albums", "album", "library"] as const) expect(reads[key]).toBeGreaterThan(before[key]); });
+  if (operation === "document trash") await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  await screen.findByText(operation === "restore" ? "1 photos · 1 loaded" : "This album is empty");
+});
 
 it("retains photo state and previews across sidebar switches until lock", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
@@ -13,6 +171,7 @@ it("retains photo state and previews across sidebar switches until lock", async 
   vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL() {} });
   const stored = storage();
   const fetcher = vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/albums")) return new Response("[]");
     if (url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: [{ ...photo(1), previews: { ...photo(1).previews, grid: { state: "ready", generation_id: "synthetic" } } }], total: 1 }));
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
     if (url.includes("/nodes/1")) return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", revision: 1, path: "/" }));
@@ -30,6 +189,8 @@ it("retains photo state and previews across sidebar switches until lock", async 
   expect(previews()).toBe(1);
   const historyLength = history.length;
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  expect(history.length).toBe(historyLength);
+  await fireEvent.click(screen.getByRole("button", { name: "Library" }));
   expect(history.length).toBe(historyLength);
   await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   expect(location.pathname).toBe("/");

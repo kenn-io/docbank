@@ -22,7 +22,7 @@ afterEach(() => {
 it("describes a truncated page-local selection and exposes local controls", async () => {
   const onclear = vi.fn();
   const onselectvisible = vi.fn();
-  render(SelectionDock, {
+  const { rerender } = render(SelectionDock, {
     selectedCount: 2,
     visibleDocumentCount: 4,
     truncated: true,
@@ -43,6 +43,10 @@ it("describes a truncated page-local selection and exposes local controls", asyn
   expect(document.activeElement).toBe(selectVisible);
   await fireEvent.click(selectVisible);
   expect(onselectvisible).toHaveBeenCalledOnce();
+  await rerender({ selectedCount: 4 });
+  expect((selectVisible as HTMLButtonElement).disabled).toBe(true);
+  await rerender({ selectedCount: 2 });
+  expect((selectVisible as HTMLButtonElement).disabled).toBe(false);
 
   await fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
   expect(onclear).toHaveBeenCalledOnce();

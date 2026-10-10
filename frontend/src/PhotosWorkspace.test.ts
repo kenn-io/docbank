@@ -5,7 +5,7 @@ import { Photos } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photo } from "./photo-test-fixtures.js";
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
 
 it("keeps failed confirmation visible and closes after cancellation or success", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -28,6 +28,7 @@ it("keeps failed confirmation visible and closes after cancellation or success",
   await fireEvent.click(within(dialog).getByRole("button", { name: "Move to trash" }));
   await within(dialog).findByText(/Photo changed/);
   expect(ontrashed).toHaveBeenCalledTimes(1);
+  expect(ontrashed).toHaveBeenCalledWith(photos);
   await fireEvent.click(await within(dialog).findByRole("button", { name: "Keep in Docbank" }));
   expect(screen.queryByRole("dialog", { name: "Move selected photos to trash" })).toBeNull();
   await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 3.jpg" }));
@@ -173,7 +174,21 @@ it("clears selection with Escape from focused photo controls while honoring shor
   await cache.dispose();
 });
 
-it("keeps loading pages that add no rows and keeps the top photo across density changes", async () => {
+it("keeps the retained scroll position when density changed in another view", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = Array.from({ length: 60 }, (_, index) => photo(index + 1)); photos.total = 60; photos.started = true; photos.scrollTop = 1000;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  new Photos("scoped", vi.fn()).setDensity("compact");
+  render(PhotosWorkspace, { photos, cache });
+  await waitFor(() => expect(screen.getByTestId("photo-scroll").scrollTop).toBe(1000));
+  photos.dispose();
+  await cache.dispose();
+});
+
+it.each(["density change", "album trash"])("keeps the top photo across %s and loads pages that add no rows", async kind => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
@@ -182,28 +197,46 @@ it("keeps loading pages that add no rows and keeps the top photo across density 
     const scroll = this.closest<HTMLElement>(".photo-scroll");
     return cell && scroll ? new DOMRect(0, Number.parseFloat(cell.style.top) + 56 - scroll.scrollTop, Number.parseFloat(cell.style.width), Number.parseFloat(cell.style.height)) : new DOMRect(0, 0, 1000, 400);
   });
-  const items = Array.from({ length: 60 }, (_, index) => photo(index + 1));
-  const page = (rows: typeof items, cursor?: string) => new Response(JSON.stringify({ items: rows, total: 60, next_cursor: cursor }));
-  const fetcher = vi.fn().mockResolvedValueOnce(page(items.slice(0, 2), "repeat")).mockResolvedValueOnce(page(items.slice(0, 2), "rest"))
-    .mockResolvedValueOnce(page(items.slice(2)));
-  vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  render(PhotosWorkspace, { photos, cache });
-  await screen.findByText("60 photos · 60 loaded");
-  expect(fetcher).toHaveBeenCalledTimes(3);
-  await waitFor(() => expect(photos.loading).toBe(false));
+  if (kind === "album trash") {
+    photos.query = { ...photos.query, filters: { set_ids: ["album"] }, sort: { field: "added_time", direction: "desc" } };
+    photos.items = Array.from({ length: 60 }, (_, index) => photo(index + 1)); photos.total = 60; photos.started = true;
+    const remaining = photos.items.slice(1);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 }))).mockResolvedValueOnce(new Response(JSON.stringify({ items: remaining, total: 59 }))));
+    const ontrashed = vi.fn();
+    render(PhotosWorkspace, { photos, cache, albumID: "album", ontrashed });
+    await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+  } else {
+    const items = Array.from({ length: 60 }, (_, index) => photo(index + 1));
+    const page = (rows: typeof items, cursor?: string) => new Response(JSON.stringify({ items: rows, total: 60, next_cursor: cursor }));
+    const fetcher = vi.fn().mockResolvedValueOnce(page(items.slice(0, 2), "repeat")).mockResolvedValueOnce(page(items.slice(0, 2), "rest"))
+      .mockResolvedValueOnce(page(items.slice(2)));
+    vi.stubGlobal("fetch", fetcher);
+    render(PhotosWorkspace, { photos, cache });
+    await screen.findByText("60 photos · 60 loaded");
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    await waitFor(() => expect(photos.loading).toBe(false));
+  }
   const scroll = screen.getByTestId("photo-scroll");
   scroll.scrollTop = 1000;
   await fireEvent.scroll(scroll);
   const anchor = [...scroll.querySelectorAll<HTMLElement>("[data-asset]")].find(cell => cell.getBoundingClientRect().bottom > 56)!;
   const offset = anchor.getBoundingClientRect().top;
-  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
-  await fireEvent.click(screen.getByRole("combobox", { name: "Grid density: Comfortable" }));
-  await fireEvent.click(screen.getByRole("option", { name: "Compact" }));
-  await waitFor(() => expect(scroll.scrollTop).not.toBe(1000));
-  const moved = scroll.querySelector<HTMLElement>(`[data-asset="${anchor.dataset.asset}"]`)!;
-  expect(moved.getBoundingClientRect().top).toBeCloseTo(offset);
+  if (kind === "album trash") {
+    photos.select("photo-1", new MouseEvent("click"), photos.items.map(item => item.asset_id));
+    await fireEvent.click(await screen.findByRole("button", { name: "Move to trash" }));
+    await fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Move to trash" }));
+    await waitFor(() => expect(photos.trashing).toBe(false));
+    expect(scroll.querySelector<HTMLElement>(`[data-asset="${anchor.dataset.asset}"]`)!.getBoundingClientRect().top).toBeCloseTo(offset);
+  } else {
+    Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+    await fireEvent.click(screen.getByRole("combobox", { name: "Grid density: Comfortable" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Compact" }));
+    await waitFor(() => expect(scroll.scrollTop).not.toBe(1000));
+    const moved = scroll.querySelector<HTMLElement>(`[data-asset="${anchor.dataset.asset}"]`)!;
+    expect(moved.getBoundingClientRect().top).toBeCloseTo(offset);
+  }
   photos.dispose();
   await cache.dispose();
 });

@@ -1,7 +1,7 @@
 ---
-last_edited: 2026-10-07
+last_edited: 2026-10-08
 title: Photo assets
-description: Group camera files, browse photos in the web app, and organize albums through the CLI or HTTP API.
+description: Group camera files, browse photos, and organize albums in the web app, CLI, or HTTP API.
 ---
 
 # Photo assets
@@ -44,13 +44,13 @@ grid density. The browser remembers the density across reloads and fresh
 Click a photo to select it. Shift-click adds the range from the previous
 selection, including loaded photos outside the screen. Ctrl-click or
 Command-click toggles a photo. Each photo also has a checkbox for touch.
-The selection dock can select all loaded photos or clear the selection.
+The selection dock can select loaded photos, select the complete live query, or clear the selection.
 
-Photos, selection, and scroll position stay in place across Documents/Photos switches until the session locks or ends. Switching workspaces stops unfinished photo reads while retaining loaded photos. Previews already seen stay in a private browser cache for that signed-in session. Only mounted photos keep image URLs. Docbank deletes the cache when the session locks or ends, or the page closes. If a page closes without that cleanup, for example after a browser crash, the next signed-in session at the same `docbank web` address deletes the leftover cache. Caches from earlier addresses stay in browser storage until site data is cleared. Previews still display when browser storage is unavailable, but revisiting them may download them again.
+Photos, selection, and scroll position stay in place across Documents/Photos switches until the session locks or ends. Leaving an album for Library, Albums, or another album resets that album's sort, selection, and scroll position. Library keeps its own selection and position. Switching workspaces stops unfinished photo reads while retaining loaded photos. Previews already seen stay in a private browser cache for that signed-in session. Only mounted photos keep image URLs. Docbank deletes the cache when the session locks or ends, or the page closes. If a page closes without that cleanup, for example after a browser crash, the next signed-in session at the same `docbank web` address deletes the leftover cache. Caches from earlier addresses stay in browser storage until site data is cleared. Previews still display when browser storage is unavailable, but revisiting them may download them again.
 Pending, unsupported, and failed previews have separate placeholders. Choose
 Refresh previews to reload the listing after background preview work finishes.
 If a page fails to load, the earlier photos remain visible. Retry requests the
-failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Selection retains photos in that range; imports or deletions may move the visible photo outside it. Failed attempts keep the earlier view available for Retry. Recovery stops after one minute and offers Retry if it needs more time.
+failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Refresh keeps selections and the range anchor only within the refreshed pages, plus failed trash targets. Whole-query selection keeps its query scope. Failed attempts keep the earlier view available for Retry. Each refresh page has a one-minute deadline.
 
 ## Previews
 
@@ -139,9 +139,14 @@ performs role, ownership, sidecar, display, and audit checks.
 
 ## Albums
 
-Albums group photo assets without moving their files. Manage albums through
-the CLI or HTTP API. The web app's Photos workspace browses the library;
-album management is not available there.
+Albums group photo assets without moving their files. Manage albums in the
+web app, CLI, or HTTP API.
+
+In the web app, open Photos, then Albums. Cards and sidebar entries show starred albums first, with included photo counts. Cards also show covers. Open an album to rename, star, duplicate, or delete it, or sort its photos by Added, Captured, or Imported. Select one photo and choose Use as cover. Removing photos from an album or deleting the album keeps the photos in Library.
+
+Select photos in Library or an album, then choose Add to album in the selection dock. Type to find an album or create one. B adds to the last album chosen until you reload or the session locks; the dock and sidebar show that target. Without a target, B opens the picker. You can also drag a photo or selection onto a sidebar album. After every album change, Docbank reloads the album list. Membership changes also refresh the affected album's photo view. Trash and restore reload albums and every started photo view. A failed create or duplicate also reloads Albums, where the album may already appear.
+
+Select loaded photos selects only the pages already loaded. Select all N photos selects the complete live query, including unloaded pages. Add to album, B, and drag use that same scope. The server resolves the query when you add, so the refreshed album count can reflect imports made since browsing. Explicit selections allow up to 1,000 photos per album change. For larger selections, choose Select all N photos to send one atomic query write. A revision conflict shows the server error and reloads the album list. An open form shows the reloaded album and keeps what you typed. Save again to retry with its current revision.
 
 Create an album, add selected asset UUIDs or a complete query result, then
 browse its members:

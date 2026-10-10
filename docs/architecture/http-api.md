@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-08
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -899,7 +899,7 @@ dropping it.
 
 These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
-and `/`, `/photos`, and `/assets/` (the static web application, when `[web] enabled`).
+and `/`, `/photos`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
 
 A hidden `POST /api/daemon/shutdown` (not in the OpenAPI document) backs
 `docbank daemon stop`. It isn't auth-exempt: it requires both the API key and
@@ -916,7 +916,7 @@ such as `app_opened` or `session_ended`, from a browser session or the API key. 
 See [anonymous usage telemetry](../configuration.md#anonymous-usage-telemetry).
 
 Browser session tokens authenticate only the routes used by the built-in
-document, tag-definition/assignment, saved-definition, recoverable-trash,
+document, photo browsing, album, tag-definition/assignment, saved-definition, recoverable-trash,
 storage, job, configured-backup, verified-download, and usage-event workflows.
 They are not another general API credential. Browser file bytes use the
 hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
@@ -1136,7 +1136,7 @@ as reads in this slice.
 
 `GET /photos/albums` lists albums with counts of members that still have a file and of included members and current ready grid covers. `POST /photos/albums` creates one; `GET /photos/albums/{set_id}` inspects it. `PUT /photos/albums/{set_id}` changes optional `name` or `starred`. `PUT /photos/albums/{set_id}/cover` chooses a member through `asset_id`, or clears the override when omitted. `POST /photos/albums/{set_id}/duplicate` supplies a new `name`. `DELETE /photos/albums/{set_id}` deletes the album while retaining its photos. Existing-album writes require `If-Match` and return the album with its ETag.
 
-`POST /photos/albums/{set_id}/members/add` and `/members/remove` accept either `asset_ids` with at most 1,000 entries or a strict `query`, with optional `coverage`. The full query scope resolves within the atomic write and, like photo browsing, covers only visible photos; removing hidden members requires their `asset_ids`. Changes advance the album revision once and record every changed asset ID across bounded receipts. No-ops preserve the revision. Album routes require daemon API-key access. Browser sessions can browse members through the existing photo query route with `filters.set_ids`, but cannot mutate or list albums. See [Albums](../usage/photos.md#albums) for member ordering, visibility, and cover selection.
+`POST /photos/albums/{set_id}/members/add` and `/members/remove` accept either `asset_ids` with at most 1,000 entries or a strict `query`, with optional `coverage`. The full query scope resolves within the atomic write and, like photo browsing, covers only visible photos; removing hidden members requires their `asset_ids`. Changes advance the album revision once and record every changed asset ID across bounded receipts. No-ops preserve the revision. Scoped browser sessions can list, create, update, duplicate, and delete albums, choose covers, and add or remove members through these exact method/path pairs with canonical UUIDv4 IDs and empty query strings. Existing-album writes retain the same revision checks. See [Albums](../usage/photos.md#albums) for member ordering, visibility, and cover selection.
 
 `POST /photos/imports` starts a folder import from a daemon-host path and
 returns `202` with the queued `StorageOperation`, or `422` when the path is not
@@ -1783,7 +1783,7 @@ would expose the key and vault contents in cleartext, and
 `docbank daemon run` refuses to start on one. Remote access goes through an SSH
 tunnel or VPN (see [Configuration](../configuration.md)). `/health`,
 `/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
-`/`, `/photos`, and `/assets/` are auth-exempt. Everything else, including the shutdown
+`/`, `/photos`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
 route, requires the key.
 
 ## Error mapping

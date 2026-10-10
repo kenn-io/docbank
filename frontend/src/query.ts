@@ -19,7 +19,7 @@ const optionalFilterFields = new Set([
   "modified_after", "modified_before", "size_min", "size_max", "text_coverage",
   "has_duplicates", "collapse_duplicates", "kinds", "cameras", "lenses", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds", "asset_ids", "set_ids",
 ]);
-const uuidV4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+export const uuidV4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const extensionPattern = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const colorPattern = /^#[0-9a-f]{6}$/;
 const encoder = new TextEncoder();

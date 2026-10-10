@@ -25,7 +25,7 @@ explains how.
   families, and custodian claims.
 - Group matching RAW, JPEG, and XMP files as one photo. Ambiguous groups are
   left for you to pair by hand.
-- Organize photos into albums through the CLI and HTTP API. Add selected photos
+- Organize photos into albums in the web app, CLI, or HTTP API. Add selected photos
   or a complete query result, choose covers, and star albums. Removing members
   or deleting an album keeps the files.
 - Upload a single document with a declared hash and size, which Docbank

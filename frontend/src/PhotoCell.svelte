@@ -2,14 +2,16 @@
   import { Checkbox } from "@kenn-io/kit-ui";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
-  import type { PhotoPreviewCache } from "./photoPreviewCache.js";
+  import { previewObjectURL, type PhotoPreviewCache } from "./photoPreviewCache.js";
 
-  let { photo, cache, selected, onclick, oncheck }: {
+  let { photo, cache, selected, onclick, oncheck, ondragstart, ondragend }: {
     photo: PhotoBrowseRow;
     cache: PhotoPreviewCache;
     selected: boolean;
     onclick: (event: MouseEvent) => void;
     oncheck: (checked: boolean, range: boolean) => void;
+    ondragstart?: (event: DragEvent) => void;
+    ondragend?: () => void;
   } = $props();
   let url = $state("");
   let failed = $state(false);
@@ -22,21 +24,15 @@
     failed = false;
     errorMessage = "";
     if (slot.state !== "ready" || !slot.generation_id) return;
-    const controller = new AbortController();
-    let current = true;
-    let objectURL = "";
-    void cache.get(photo.asset_id, slot.generation_id, controller.signal, retry > 0).then(blob => {
-      if (current) { objectURL = URL.createObjectURL(blob); url = objectURL; }
-    }).catch(cause => { if (current) { failed = true; errorMessage = cause instanceof Error ? cause.message : String(cause); } });
-    return () => { current = false; controller.abort(); if (objectURL) URL.revokeObjectURL(objectURL); };
+    return previewObjectURL(cache, photo.asset_id, slot.generation_id, value => url = value, cause => { failed = true; errorMessage = cause instanceof Error ? cause.message : String(cause); }, retry > 0);
   });
   const placeholder = $derived(failed || photo.previews.grid.state === "failed" ? "Preview failed" : photo.previews.grid.state === "unsupported" ? "Preview unsupported" : photo.previews.grid.state === "missing" ? "Preview pending" : "Loading preview");
 </script>
 
 <div class="photo-cell" class:selected data-asset={photo.asset_id}>
-  <button type="button" class="photo-image" aria-label={`Select ${photo.name}`} aria-pressed={selected} {onclick}>
+  <button type="button" class="photo-image" aria-label={`Select ${photo.name}`} aria-pressed={selected} {onclick} draggable={!!ondragstart} {ondragstart} {ondragend}>
     {#if url}
-      <img src={url} alt={photo.name} onerror={() => { url = ""; failed = true; }} />
+      <img src={url} alt={photo.name} draggable="false" onerror={() => { url = ""; failed = true; }} />
     {:else}
       <span class="placeholder" title={errorMessage} class:pending={placeholder === "Preview pending"}>
         <ImageIcon size="24" aria-hidden="true" />

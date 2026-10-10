@@ -13880,7 +13880,7 @@ export const getCreatePhotoAlbumUrl = () => {
 /**
  * @summary Create an empty album
  */
-export const createPhotoAlbum = async (photoAlbumNameRequest: NonReadonly<PhotoAlbumNameRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+export const createPhotoAlbum = (photoAlbumNameRequest: NonReadonly<PhotoAlbumNameRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -13896,7 +13896,7 @@ export const createPhotoAlbum = async (photoAlbumNameRequest: NonReadonly<PhotoA
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getCreatePhotoAlbumUrl(),
+return sessionResponse<PhotoAlbum>(getCreatePhotoAlbumUrl(),
   {
     ...options,
     method: 'POST',
@@ -13918,8 +13918,8 @@ export const getDeletePhotoAlbumUrl = (setId: string,) => {
 /**
  * @summary Delete an album and keep its photos
  */
-export const deletePhotoAlbum = async (setId: string,
-    headers: DeletePhotoAlbumHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+export const deletePhotoAlbum = (setId: string,
+    headers: DeletePhotoAlbumHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -13935,7 +13935,7 @@ export const deletePhotoAlbum = async (setId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getDeletePhotoAlbumUrl(setId),
+return sessionResponse<PhotoAlbum>(getDeletePhotoAlbumUrl(setId),
   {
     ...options,
     method: 'DELETE',
@@ -13981,9 +13981,9 @@ export const getUpdatePhotoAlbumUrl = (setId: string,) => {
 /**
  * @summary Rename or star an album
  */
-export const updatePhotoAlbum = async (setId: string,
+export const updatePhotoAlbum = (setId: string,
     updatePhotoAlbumRequest: NonReadonly<UpdatePhotoAlbumRequest>,
-    headers: UpdatePhotoAlbumHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+    headers: UpdatePhotoAlbumHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -13999,7 +13999,7 @@ export const updatePhotoAlbum = async (setId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getUpdatePhotoAlbumUrl(setId),
+return sessionResponse<PhotoAlbum>(getUpdatePhotoAlbumUrl(setId),
   {
     ...options,
     method: 'PUT',
@@ -14021,9 +14021,9 @@ export const getSetPhotoAlbumCoverUrl = (setId: string,) => {
 /**
  * @summary Choose or reset an album cover
  */
-export const setPhotoAlbumCover = async (setId: string,
+export const setPhotoAlbumCover = (setId: string,
     photoAlbumCoverRequest: NonReadonly<PhotoAlbumCoverRequest>,
-    headers: SetPhotoAlbumCoverHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+    headers: SetPhotoAlbumCoverHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -14039,7 +14039,7 @@ export const setPhotoAlbumCover = async (setId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getSetPhotoAlbumCoverUrl(setId),
+return sessionResponse<PhotoAlbum>(getSetPhotoAlbumCoverUrl(setId),
   {
     ...options,
     method: 'PUT',
@@ -14061,9 +14061,9 @@ export const getDuplicatePhotoAlbumUrl = (setId: string,) => {
 /**
  * @summary Duplicate an album and its member order
  */
-export const duplicatePhotoAlbum = async (setId: string,
+export const duplicatePhotoAlbum = (setId: string,
     photoAlbumNameRequest: NonReadonly<PhotoAlbumNameRequest>,
-    headers: DuplicatePhotoAlbumHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+    headers: DuplicatePhotoAlbumHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -14079,7 +14079,7 @@ export const duplicatePhotoAlbum = async (setId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getDuplicatePhotoAlbumUrl(setId),
+return sessionResponse<PhotoAlbum>(getDuplicatePhotoAlbumUrl(setId),
   {
     ...options,
     method: 'POST',
@@ -14101,9 +14101,9 @@ export const getAddPhotoAlbumMembersUrl = (setId: string,) => {
 /**
  * @summary Add explicit photos or complete search results
  */
-export const addPhotoAlbumMembers = async (setId: string,
+export const addPhotoAlbumMembers = (setId: string,
     photoAlbumMembersRequest: NonReadonly<PhotoAlbumMembersRequest>,
-    headers: AddPhotoAlbumMembersHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+    headers: AddPhotoAlbumMembersHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -14119,7 +14119,7 @@ export const addPhotoAlbumMembers = async (setId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getAddPhotoAlbumMembersUrl(setId),
+return sessionResponse<PhotoAlbum>(getAddPhotoAlbumMembersUrl(setId),
   {
     ...options,
     method: 'POST',
@@ -14141,9 +14141,9 @@ export const getRemovePhotoAlbumMembersUrl = (setId: string,) => {
 /**
  * @summary Remove explicit photos or complete search results
  */
-export const removePhotoAlbumMembers = async (setId: string,
+export const removePhotoAlbumMembers = (setId: string,
     photoAlbumMembersRequest: NonReadonly<PhotoAlbumMembersRequest>,
-    headers: RemovePhotoAlbumMembersHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+    headers: RemovePhotoAlbumMembersHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -14159,7 +14159,7 @@ export const removePhotoAlbumMembers = async (setId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getRemovePhotoAlbumMembersUrl(setId),
+return sessionResponse<PhotoAlbum>(getRemovePhotoAlbumMembersUrl(setId),
   {
     ...options,
     method: 'POST',

@@ -1,4 +1,4 @@
-import { listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema, type PhotoAlbumMembersRequest } from "./generated/docbank.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
@@ -15,6 +15,8 @@ export function loadDensity(): Density {
   return "comfortable";
 }
 
+let density = $state<Density>(loadDensity());
+
 export class Photos {
   items = $state<PhotoBrowseRow[]>([]);
   total = $state(0);
@@ -26,19 +28,34 @@ export class Photos {
   error = $state("");
   scrollTop = $state(0);
   grouping = $state<"months" | "sessions">("months");
-  density = $state<Density>(loadDensity());
+  get density() { return density; }
   selection = $state<SelectionState<string>>(clearSelection<string>());
+  allResults = $state(false);
+  query = $state.raw<SavedQueryV1Schema>(photoQuery);
   started = false;
   private expired = false;
   private replacement: "refresh" | "expiry" | undefined;
   private controller = new AbortController();
   private disposed = false;
 
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void) {}
+  constructor(private session: string, private onauthfailure: (cause: unknown) => void, query: SavedQueryV1Schema = photoQuery) { this.query = query; }
 
-  setDensity(density: Density) {
-    this.density = density;
-    try { localPreferenceStorage()?.setItem(densityKey, density); } catch { /* Keep the current session's preference. */ }
+  setQuery(query: SavedQueryV1Schema) {
+    this.cancelPending();
+    this.query = query;
+    this.items = []; this.total = 0; this.cursor = undefined; this.scrollTop = 0;
+    this.started = false; this.expired = false; this.replacement = undefined; this.error = "";
+    this.clearSelection();
+    return this.loadMore();
+  }
+
+  scope(): PhotoAlbumMembersRequest {
+    return this.allResults ? { query: structuredClone(this.query) } : { asset_ids: [...this.selection.selectedIDs] };
+  }
+
+  setDensity(value: Density) {
+    density = value;
+    try { localPreferenceStorage()?.setItem(densityKey, value); } catch { /* Keep the current session's preference. */ }
   }
 
   async loadMore(preserve?: () => (() => Promise<void>) | undefined) {
@@ -46,7 +63,7 @@ export class Photos {
     this.loading = true;
     const controller = this.controller;
     try {
-      const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
+      const page = await listPhotoAssets({ query: this.query, page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
       if (controller.signal.aborted) return;
       const seen = new Set(this.items.map(item => item.asset_id));
       const restore = preserve?.();
@@ -55,6 +72,7 @@ export class Photos {
         seen.add(item.asset_id);
         return true;
       })];
+      if (this.allResults) this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined };
       this.total = page.total;
       this.cursor = page.next_cursor;
       this.started = true;
@@ -111,7 +129,7 @@ export class Photos {
     try {
       do {
         signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
-        const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
+        const page = await listPhotoAssets({ query: this.query, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
         if (signal.aborted) throw signal.reason;
         const reachedPreviously = reachedPrefix;
         for (const item of page.items) candidate.set(item.asset_id, item);
@@ -121,19 +139,21 @@ export class Photos {
         if (reachedPrefix && (mode === "refresh" || reachedPreviously)) break;
       } while (cursor);
       if (signal.aborted) throw signal.reason;
+      if (controller.signal.aborted) return;
       const restore = preserve?.();
       this.items = [...candidate.values()];
       this.total = total;
       this.cursor = cursor;
       this.started = true;
-      this.selection = reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...this.trashTargets.map(item => item.asset_id)]));
+      this.selection = this.allResults ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined } : reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...this.trashTargets.map(item => item.asset_id)]));
+      if (!this.selection.selectedIDs.size) this.allResults = false;
       this.expired = false;
       this.replacement = undefined;
       await restore?.();
     } catch (cause) {
       if (controller.signal.aborted) return;
       if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
-      this.error = signal.aborted ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
+      this.error = signal.aborted || cause instanceof DOMException && cause.name === "TimeoutError" ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.loading = false;
     }
@@ -142,18 +162,18 @@ export class Photos {
   async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
     if (this.trashing || this.disposed) return false;
     this.pruneTrashTargets();
-    const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
-    const resolved = [...this.selection.selectedIDs].map(id => rows.get(id));
-    if (!resolved.length || resolved.some(item => !item)) {
-      this.trashError = "Load and select the photos again before moving them to trash.";
-      return false;
-    }
-    const selected = resolved.filter((item): item is PhotoBrowseRow => !!item).map(item => ({ ...item }));
-    this.trashTargets = selected;
     this.trashing = true;
-    this.trashError = "";
-    let successes = 0;
     try {
+      const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
+      const resolved = [...this.selection.selectedIDs].map(id => rows.get(id));
+      if (!resolved.length || resolved.some(item => !item)) {
+        this.trashError = "Load and select the photos again before moving them to trash.";
+        return false;
+      }
+      const selected = resolved.filter((item): item is PhotoBrowseRow => !!item).map(item => ({ ...item }));
+      this.trashTargets = selected;
+      this.trashError = "";
+      let successes = 0;
       for (const item of selected) {
         try {
           const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
@@ -174,7 +194,7 @@ export class Photos {
           this.trashError = cause instanceof Error ? cause.message : String(cause);
         }
       }
-      if (successes) ontrashed?.();
+      ontrashed?.();
       await this.refresh(preserve);
       return successes === selected.length;
     } finally { this.trashing = false; }
@@ -182,6 +202,7 @@ export class Photos {
 
   select(id: string, event: MouseEvent, orderedIDs: string[]) {
     if (event.button !== 0) return;
+    this.allResults = false;
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
       this.selection = toggleIDSelection(this.selection, orderedIDs, id, event.shiftKey || !this.selection.selectedIDs.has(id), event.shiftKey);
     } else this.selection = { selectedIDs: new Set([id]), anchorID: id };
@@ -189,13 +210,15 @@ export class Photos {
   }
 
   check(id: string, checked: boolean, range: boolean, orderedIDs: string[]) {
+    this.allResults = false;
     this.selection = toggleIDSelection(this.selection, orderedIDs, id, checked, range);
     this.pruneTrashTargets();
   }
 
   private pruneTrashTargets() { this.trashTargets = this.trashTargets.filter(item => this.selection.selectedIDs.has(item.asset_id)); }
 
-  clearSelection() { this.selection = clearSelection<string>(); this.trashTargets = []; }
-  selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
+  clearSelection() { this.allResults = false; this.selection = clearSelection<string>(); this.trashTargets = []; }
+  selectLoaded() { this.allResults = false; this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
+  selectAllResults() { this.selectLoaded(); this.allResults = true; }
   dispose() { this.disposed = true; this.controller.abort(); }
 }
