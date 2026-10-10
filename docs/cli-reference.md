@@ -1472,12 +1472,29 @@ it and starts the matching one. It prints
 
 ```
 docbank jobs [--json]
+docbank jobs show <operation-id> [--json]
+docbank jobs cancel <operation-id>
+docbank jobs pause <lane>
+docbank jobs resume <lane>
+docbank jobs concurrency derive:visual-previews <1-4>
 ```
 
 Shows daemon-owned background tasks in stable name order, including status,
 start and finish timestamps, and the bounded error recorded for a failed task.
 Running tasks have no finish timestamp. Terminal task records remain visible
 until the daemon restarts. `--json` emits `{"items": [...]}` for automation.
+The CONTROL column shows `read-only`, `active`, or `paused`; previews add
+`limit=N`, and controllable storage jobs add `lane=NAME` for pause and resume.
+Controllable lanes are `derive:visual-previews`, `photo_import`,
+`place`, `evacuate`, `repair`, and `salvage`. Pause finishes the current item or
+import group before waiting. Pause and preview concurrency survive restart;
+restored backups start unpaused with concurrency 1. Storage lanes keep their
+existing concurrency. Cancellation uses an operation ID. When lane controls
+cannot be read, `jobs` still lists every task and prints a warning to stderr;
+`--json` includes `lane_controls_error`.
+To recover malformed settings, repair or remove `lane-controls.json` in the
+vault directory. Removing it restores unpaused lanes with concurrency 1.
+Cancellation remains available while settings are unreadable.
 Every daemon registers `extract:plain-text`, `extract:source-metadata`, and
 `maintenance:auxiliary-checksums`; `process:renditions` appears only when a
 rendition provider is bound, `telemetry:heartbeat` appears while anonymous

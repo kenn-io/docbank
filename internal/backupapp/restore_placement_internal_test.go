@@ -3,6 +3,7 @@ package backupapp
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/blob"
@@ -140,6 +142,58 @@ func TestRestoredRenditionVerificationPreservesPreparedHandoff(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, pending, "verification must leave crash recovery authority intact")
 	require.NoError(t, RecoverInterruptedPrimaryHandoff(t.Context(), target, store.DefaultSQLiteDriver()))
+}
+
+func TestInterruptedRestoreResetsControlsOnlyAfterPublication(t *testing.T) {
+	for _, published := range []bool{false, true} {
+		t.Run(fmt.Sprintf("published=%t", published), func(t *testing.T) {
+			target := t.TempDir()
+			path := filepath.Join(target, "docbank.db")
+			metadata, err := store.Open(path)
+			require.NoError(t, err)
+			paused, err := metadata.SetLaneControl(t.Context(), store.LaneControl{Lane: store.VisualPreviewLane, Paused: true, Concurrency: 3}, 1)
+			require.NoError(t, err)
+			physical, err := blob.New(store.NewPackCatalog(metadata), filepath.Join(target, "blobs"))
+			require.NoError(t, err)
+			require.NoError(t, physical.Close())
+			require.NoError(t, metadata.Close())
+			controlsPath := filepath.Join(target, "lane-controls.json")
+			controls, err := os.ReadFile(controlsPath)
+			require.NoError(t, err)
+			priorDigest, err := restoreDatabaseDigest(path)
+			require.NoError(t, err)
+			staged := filepath.Join(target, "replacement.db")
+			nextMetadata, err := store.Open(staged)
+			require.NoError(t, err)
+			next := store.NewPackCatalog(nextMetadata).PrimaryOwnership()
+			require.NoError(t, nextMetadata.Close())
+			handoff, err := blob.NewPrimaryRestoreHandoff(filepath.Join(target, "blobs"), next, &priorDigest)
+			require.NoError(t, err)
+			require.NoError(t, handoff.Prepare(t.Context()))
+			if published {
+				require.NoError(t, atomicfile.Replace(staged, path))
+			}
+			require.NoError(t, RecoverInterruptedPrimaryHandoff(t.Context(), target, store.DefaultSQLiteDriver()))
+			pending, err := blob.PrimaryRestoreHandoffPending(filepath.Join(target, "blobs"))
+			require.NoError(t, err)
+			require.False(t, pending)
+			if !published {
+				retained, err := os.ReadFile(controlsPath)
+				require.NoError(t, err)
+				require.Equal(t, controls, retained)
+			}
+			metadata, err = store.Open(path)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, metadata.Close()) }()
+			current, err := metadata.LaneControl(t.Context(), store.VisualPreviewLane)
+			require.NoError(t, err)
+			if published {
+				require.Equal(t, store.LaneControl{Lane: store.VisualPreviewLane, Concurrency: 1, Revision: 1}, current)
+			} else {
+				require.Equal(t, paused, current)
+			}
+		})
+	}
 }
 
 func TestPrepareRestoreMappingsRejectsOverlappingFilesystemNamespaces(t *testing.T) {

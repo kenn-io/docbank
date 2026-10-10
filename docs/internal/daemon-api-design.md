@@ -247,6 +247,43 @@ and restart resume all come from the storage operation lifecycle. Status and
 cancellation use the shared `/api/v1/jobs/{operation_id}` routes; there is no
 photo-specific read or cancel route.
 
+Lane controls persist in `lane-controls.json` beside `docbank.db`, outside the
+SQLite schema and metadata JSONL. A missing file or lane means unpaused with
+concurrency 1 and revision 1. A malformed file fails control reads and writes;
+unknown fields are ignored so a file from a newer release still reads.
+Restore keeps controls until database publication. Completion and startup
+recovery reset and sync them before clearing the recovery marker when the
+replacement database is visible. A rollback preserves the original controls.
+`GET /api/v1/jobs/lanes/{lane}`
+reads settings; `PUT` requires `If-Match` and the complete `paused` and
+`concurrency` settings. Only `derive:visual-previews` accepts concurrency changes,
+bounded to 1 through 4. Storage-operation kinds accept pause and resume with
+concurrency 1, preserving each existing queue's concurrency.
+
+Preview admission runs before each target in the existing backfill page. Its
+owning loop collects results and maintains retries and its cursor. A failed
+control read keeps the cursor, so the page is listed again. Lowering the limit
+finishes active targets before admitting work under the new limit.
+Placement checks before claiming and between objects; imports check during
+preparation and between groups, outside mutation gates. Pausing a running
+operation defers it cleanly, preserves progress, and waits in the same supervised
+run. Resume reclaims the operation and continues that pass. Admission checks
+cancellation before reading lane controls, so cancellation works even when
+`lane-controls.json` is unreadable. A failed control read holds the lane
+paused: it defers the operation, preserves progress, and records the reason as
+the queued operation's error. The same run clears it and resumes when controls
+become readable. Shutdown leaves the operation queued for restart
+resume. A waiting photo import releases idle-shutdown activity.
+Recovery admission precedes publication, whose existing cancellation fence stays
+authoritative.
+
+Job listing includes control capability, paused flag, and applicable concurrency
+and control revision. An unreadable control file leaves the listing available,
+without control fields, and sets `lane_controls_error` so operations stay
+discoverable and cancellable. Kind or supervisor name identifies the lane. Rendition,
+embedding, export, and maintenance jobs remain read-only. Lane controls require
+the daemon API key. Existing operation routes own cancellation and receipts.
+
 Similar-document reads use the processing service and store authority through
 `POST /api/v1/search/similar`. Keep query encoding and provider authorization
 outside that call path. The store owns source validation, fenced membership,

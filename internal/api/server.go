@@ -336,6 +336,7 @@ func markRevisionPreconditionsRequired(api huma.API) {
 	for _, route := range []struct{ path, method string }{
 		{"/api/v1/nodes/{id}", http.MethodPatch},
 		{"/api/v1/collections/{id}/label", http.MethodPut},
+		{"/api/v1/jobs/lanes/{lane}", http.MethodPut},
 		{"/api/v1/nodes/{id}/trash", http.MethodPost},
 		{"/api/v1/nodes/{id}/restore", http.MethodPost},
 		{"/api/v1/nodes/{id}/verify", http.MethodPost},

@@ -3216,13 +3216,18 @@ export const JobStatus = {
 
 export interface Job {
   can_cancel?: boolean;
+  can_set_concurrency: boolean;
   cancel_requested?: boolean;
   completed_objects?: number;
+  concurrency?: number;
+  control_revision?: number;
+  controllable: boolean;
   error?: string;
   finished_at?: string;
   kind?: string;
   name: string;
   operation_id?: string;
+  paused: boolean;
   started_at: string;
   status: JobStatus;
   total_objects?: number;
@@ -3232,6 +3237,7 @@ export interface JobList {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   items: Job[];
+  lane_controls_error?: string;
 }
 
 export interface JobRequest {
@@ -3240,6 +3246,16 @@ export interface JobRequest {
   fingerprint: string;
   operation_id: string;
   plan_id: string;
+}
+
+export interface LaneControl {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  can_set_concurrency: boolean;
+  concurrency: number;
+  lane: string;
+  paused: boolean;
+  revision: number;
 }
 
 export interface MailboxArchive {
@@ -6121,6 +6137,17 @@ export interface SetCollectionLabelRequest {
   label: string | null;
 }
 
+export interface SetLaneControlRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /**
+     * @minimum 1
+     * @maximum 4
+     */
+  concurrency: number;
+  paused: boolean;
+}
+
 export interface SetPhotoDisplayRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -7076,6 +7103,10 @@ format?: string;
  * @maxLength 16
  */
 extension?: string;
+};
+
+export type SetLaneControlHeaders = {
+'If-Match': string;
 };
 
 export type UploadMailboxChunkHeaders = {
@@ -10698,6 +10729,70 @@ export const listJobs = async ( options?: Parameters<typeof sessionJSON>[1]): Pr
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export const getGetLaneControlUrl = (lane: string,) => {
+
+
+
+
+  return `/api/v1/jobs/lanes/${encodeURIComponent(String(lane))}`
+}
+
+/**
+ * @summary Read durable lane controls
+ */
+export const getLaneControl = async (lane: string, options?: Parameters<typeof sessionJSON>[1]): Promise<LaneControl> => {
+
+  return sessionJSON<LaneControl>(getGetLaneControlUrl(lane),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getSetLaneControlUrl = (lane: string,) => {
+
+
+
+
+  return `/api/v1/jobs/lanes/${encodeURIComponent(String(lane))}`
+}
+
+/**
+ * @summary Pause, resume, or set photo preview concurrency
+ */
+export const setLaneControl = async (lane: string,
+    setLaneControlRequest: NonReadonly<SetLaneControlRequest>,
+    headers: SetLaneControlHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<LaneControl> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<LaneControl>(getSetLaneControlUrl(lane),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json',...headers, ...getHeaders(options?.headers) },
+    body: JSON.stringify(setLaneControlRequest)
   }
 );}
 

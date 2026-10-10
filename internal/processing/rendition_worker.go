@@ -21,6 +21,7 @@ import (
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -334,7 +335,7 @@ func (worker *RenditionWorker) Run(ctx context.Context) error {
 				continue
 			}
 			if isRenditionWorkerRetryable(err) {
-				if err := waitRenditionWorker(ctx, min(worker.idleDelay, 250*time.Millisecond)); err != nil {
+				if err := jobs.Wait(ctx, min(worker.idleDelay, 250*time.Millisecond)); err != nil {
 					return err
 				}
 				continue
@@ -347,7 +348,7 @@ func (worker *RenditionWorker) Run(ctx context.Context) error {
 		if processed {
 			continue
 		}
-		if err := waitRenditionWorker(ctx, worker.idleDelay); err != nil {
+		if err := jobs.Wait(ctx, worker.idleDelay); err != nil {
 			return err
 		}
 	}
@@ -713,17 +714,6 @@ func (worker *RenditionWorker) catalogOnce(ctx context.Context, operation func()
 		return &renditionWorkerRetryableError{cause: err}
 	}
 	return renditionWorkerFatal(err)
-}
-
-func waitRenditionWorker(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }
 
 func (worker *RenditionWorker) stageArtifactsAndBuild(

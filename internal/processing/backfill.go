@@ -3,8 +3,12 @@ package processing
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
+
+	"go.kenn.io/docbank/internal/jobs"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const (
@@ -15,6 +19,8 @@ const (
 	backfillMaxIdleDelay    = 10 * time.Second
 	backfillDrainAttempts   = 3
 )
+
+var errBackfillControl = errors.New("reading backfill lane control")
 
 // Backfill walks a catalog listing in key order, processes every target under
 // the daemon's mutation gate, and retries failed targets with a per-target
@@ -47,6 +53,9 @@ type Backfill[T any] struct {
 	Logger *slog.Logger
 	// Now supplies the clock; nil means time.Now.
 	Now func() time.Time
+	// Control supplies pause and concurrency settings; nil means unpaused with
+	// concurrency 1.
+	Control func(context.Context) (store.LaneControl, error)
 }
 
 // Run executes the backfill until ctx ends, or until the scan drains when
@@ -70,7 +79,7 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 				return err
 			}
 			b.warn("listing backfill targets will retry", "error", err)
-			if err := waitBackfill(ctx, backfillListRetryDelay); err != nil {
+			if err := jobs.Wait(ctx, backfillListRetryDelay); err != nil {
 				return err
 			}
 			continue
@@ -82,15 +91,18 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 			if b.DrainOnce && len(retries) == 0 {
 				return nil
 			}
-			if err := waitBackfill(ctx, retries.waitDelay(b.now(), idleDelay)); err != nil {
+			if err := jobs.Wait(ctx, retries.waitDelay(b.now(), idleDelay)); err != nil {
 				return err
 			}
 			idleDelay = min(idleDelay*2, backfillMaxIdleDelay)
 			continue
 		}
-		cursor = b.Key(targets[len(targets)-1])
 		idleDelay = b.IdleDelay
 		attempted, err := b.processPage(ctx, targets, retries)
+		// A failed control read can stop mid-page; relist it instead of skipping the rest.
+		if !errors.Is(err, errBackfillControl) {
+			cursor = b.Key(targets[len(targets)-1])
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -111,37 +123,106 @@ func (b *Backfill[T]) Run(ctx context.Context) error {
 		if attempted == 0 {
 			delay = retries.waitDelay(b.now(), backfillMaxIdleDelay)
 		}
-		if err := waitBackfill(ctx, delay); err != nil {
+		if errors.Is(err, errBackfillControl) {
+			// The page is relisted, so an overdue retry must not make this a busy loop.
+			delay = backfillListRetryDelay
+		}
+		if err := jobs.Wait(ctx, delay); err != nil {
 			return err
 		}
 	}
 }
 
+// processPage dispatches ready targets in key order while the lane is
+// unpaused and below its concurrency, rereading the control before each
+// dispatch and every poll interval while it waits.
 func (b *Backfill[T]) processPage(
 	ctx context.Context, targets []T, retries backfillRetrySet,
-) (int, error) {
-	attempted := 0
-	var pageErr error
-	for _, target := range targets {
-		key := b.Key(target)
-		now := b.now()
-		if !retries.ready(key, now) {
-			retries.seen(key)
-			continue
-		}
-		attempted++
-		err := b.mutate(ctx, func() error { return b.Process(ctx, target) })
-		if err != nil {
-			if ctx.Err() != nil {
-				return attempted, ctx.Err()
-			}
-			retries.failed(key, now)
-			pageErr = errors.Join(pageErr, err)
-			continue
-		}
-		retries.succeeded(key)
+) (attempted int, pageErr error) {
+	type result struct {
+		key       string
+		started   time.Time
+		err       error
+		recovered any
 	}
-	return attempted, pageErr
+	results := make(chan result, len(targets))
+	active, next := 0, 0
+	var recovered any
+	record := func(done result) {
+		active--
+		if done.recovered != nil {
+			recovered = done.recovered
+			next = len(targets)
+		}
+		if done.err != nil {
+			retries.failed(done.key, done.started)
+			pageErr = errors.Join(pageErr, done.err)
+		} else {
+			retries.succeeded(done.key)
+		}
+	}
+	defer func() {
+		for active > 0 {
+			record(<-results)
+		}
+		if recovered != nil {
+			panic(recovered)
+		}
+	}()
+	for {
+		for next < len(targets) && !retries.ready(b.Key(targets[next]), b.now()) {
+			retries.seen(b.Key(targets[next]))
+			next++
+		}
+		if next == len(targets) && active == 0 {
+			return attempted, pageErr
+		}
+		if err := ctx.Err(); err != nil {
+			return attempted, err
+		}
+		var poll <-chan time.Time
+		if next < len(targets) {
+			control, err := b.control(ctx)
+			if err != nil {
+				return attempted, errors.Join(pageErr, err)
+			}
+			if !control.Paused && active < control.Concurrency {
+				target := targets[next]
+				next++
+				active++
+				attempted++
+				go func(done result) {
+					defer func() {
+						done.recovered = recover()
+						results <- done
+					}()
+					done.err = b.mutate(ctx, func() error { return b.Process(ctx, target) })
+				}(result{key: b.Key(target), started: b.now()})
+				continue
+			}
+			poll = time.After(jobs.LanePollInterval)
+		}
+		select {
+		case done := <-results:
+			record(done)
+		case <-ctx.Done():
+			return attempted, ctx.Err()
+		case <-poll:
+		}
+	}
+}
+
+// control reports the lane settings; a Backfill without Control runs one
+// target at a time and never pauses.
+func (b *Backfill[T]) control(ctx context.Context) (store.LaneControl, error) {
+	if b.Control == nil {
+		return store.LaneControl{Concurrency: 1}, nil
+	}
+	control, err := b.Control(ctx)
+	if err != nil {
+		return store.LaneControl{}, fmt.Errorf("%w: %w", errBackfillControl, err)
+	}
+	return control, nil
 }
 
 func (b *Backfill[T]) validate() error {
@@ -171,17 +252,6 @@ func (b *Backfill[T]) now() time.Time {
 func (b *Backfill[T]) warn(msg string, args ...any) {
 	if b.Logger != nil {
 		b.Logger.Warn(msg, append([]any{"backfill", b.Name}, args...)...)
-	}
-}
-
-func waitBackfill(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
 	}
 }
 

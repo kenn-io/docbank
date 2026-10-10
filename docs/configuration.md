@@ -56,6 +56,7 @@ The directory layout is created on first use:
 ├── telemetry-install.json # anonymous telemetry install ID (with its .lock); created only while telemetry is on, kept if it is later turned off
 ├── telemetry-screen-views.json # daily screen claims; created only while telemetry is on
 ├── config.toml          # optional; see below
+├── lane-controls.json   # local job pause and concurrency settings
 ├── vault.lock           # advisory lock, held by a daemon or target restore
 └── daemon.<pid>.json    # runtime record of a live daemon
 ```
@@ -69,7 +70,7 @@ Back up `config.toml` separately if you customize it. It can contain an
 `api_key`, filesystem paths, S3 coordinates, and credential-profile names.
 
 `vault.lock`, `daemon.<pid>.json`, `web-launch/`, and `web-downloads/` coordinate
-running processes. You can omit them from backups. Delete them only when no
+running processes. You can omit them and `lane-controls.json` from backups. Delete them only when no
 daemon or restore is running. `docbank daemon stop` removes its own runtime
 record on graceful shutdown.
 

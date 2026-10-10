@@ -29,6 +29,7 @@ import (
 	"go.kenn.io/docbank/document/upload"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/formatcoverage"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/maintenance"
 	"go.kenn.io/docbank/internal/retrieval"
 	"go.kenn.io/docbank/internal/store"
@@ -1127,7 +1128,7 @@ func (service *Service) runRenditionJob(ctx context.Context, jobID, waiterID str
 			return renditionRun{}, err
 		}
 		// Shared work and provider retries must finish before building embeddings.
-		if err := waitRenditionWorker(ctx, 100*time.Millisecond); err != nil {
+		if err := jobs.Wait(ctx, 100*time.Millisecond); err != nil {
 			return renditionRun{}, err
 		}
 	}
@@ -1664,7 +1665,7 @@ func (service *Service) runEmbeddings(ctx context.Context, version store.Content
 			if errors.Is(err, store.ErrVectorIndexBuildInProgress) || errors.Is(err, store.ErrVectorIndexBuildFenced) ||
 				errors.Is(err, store.ErrVectorIndexSourceStale) {
 				// Another request can publish embeddings while this index builds.
-				if err := waitRenditionWorker(ctx, 100*time.Millisecond); err != nil {
+				if err := jobs.Wait(ctx, 100*time.Millisecond); err != nil {
 					return jobIDs, err
 				}
 				continue

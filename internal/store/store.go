@@ -28,6 +28,7 @@ type Store struct {
 	primaryStoreID   string
 	driver           docsqlite.Driver
 	providerEgressMu sync.RWMutex
+	laneControlsMu   sync.Mutex
 }
 
 // currentStorageSchemaVersion identifies the canonical SQLite layout created

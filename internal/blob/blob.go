@@ -310,7 +310,7 @@ func newWithOptions(
 		}
 		if recoverRestoreHandoff {
 			if err := RecoverPrimaryRestoreHandoff(
-				context.Background(), blobsDir, &ownership, nil,
+				context.Background(), blobsDir, &ownership, nil, nil,
 			); err != nil {
 				return nil, fmt.Errorf("recovering primary restore ownership: %w", err)
 			}

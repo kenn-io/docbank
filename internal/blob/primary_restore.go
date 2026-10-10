@@ -122,6 +122,7 @@ func RecoverPrimaryRestoreHandoff(
 	blobsDir string,
 	published *packstore.Ownership,
 	publishedDatabaseDigest *string,
+	complete func(replaced bool) error,
 ) error {
 	record, exists, err := readPrimaryRestoreHandoff(blobsDir)
 	if err != nil || !exists {
@@ -148,11 +149,13 @@ func RecoverPrimaryRestoreHandoff(
 			packstore.ErrStoreFenced,
 		)
 	}
-	return reconcilePrimaryOwnership(ctx, blobsDir, record, desired)
+	return reconcilePrimaryOwnership(ctx, blobsDir, record, desired, complete)
 }
 
 // Commit verifies the post-restore marker and removes the recovery record.
-func (h *PrimaryRestoreHandoff) Commit(ctx context.Context) error {
+func (h *PrimaryRestoreHandoff) Commit(
+	ctx context.Context, complete func(replaced bool) error,
+) error {
 	record, exists, err := readPrimaryRestoreHandoff(h.blobsDir)
 	if err != nil {
 		return err
@@ -168,7 +171,7 @@ func (h *PrimaryRestoreHandoff) Commit(ctx context.Context) error {
 			packstore.ErrStoreFenced,
 		)
 	}
-	return reconcilePrimaryOwnership(ctx, h.blobsDir, record, &h.record.Next)
+	return reconcilePrimaryOwnership(ctx, h.blobsDir, record, &h.record.Next, complete)
 }
 
 func reconcilePrimaryOwnership(
@@ -176,6 +179,7 @@ func reconcilePrimaryOwnership(
 	blobsDir string,
 	record primaryRestoreHandoffRecord,
 	desired *packstore.Ownership,
+	complete func(replaced bool) error,
 ) error {
 	backend, actual, err := openPrimaryOwnershipBackend(ctx, blobsDir)
 	if err != nil {
@@ -206,6 +210,11 @@ func reconcilePrimaryOwnership(
 		verified, verifyErr := backend.Ownership(ctx)
 		if verifyErr != nil || verified != *desired {
 			return errors.Join(errors.New("reconciled primary ownership failed read-back"), verifyErr)
+		}
+	}
+	if complete != nil {
+		if err := complete(ownershipPointerEqual(desired, &record.Next)); err != nil {
+			return err
 		}
 	}
 	return removePrimaryRestoreHandoff(blobsDir)

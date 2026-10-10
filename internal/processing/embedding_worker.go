@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -296,7 +297,7 @@ func NewEmbeddingWorker(config EmbeddingWorkerConfig) (*EmbeddingWorker, error) 
 		config.Clock = func() time.Time { return time.Now().UTC() }
 	}
 	if config.Wait == nil {
-		config.Wait = waitEmbeddingWorker
+		config.Wait = jobs.Wait
 	}
 	return &EmbeddingWorker{
 		catalog: config.Catalog, authority: config.Authority, blobs: config.Blobs,
@@ -940,17 +941,6 @@ func workerHashString(value string) string { return workerHashBytes([]byte(value
 func workerHashBytes(value []byte) string {
 	digest := sha256.Sum256(value)
 	return hex.EncodeToString(digest[:])
-}
-
-func waitEmbeddingWorker(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }
 
 func closeEmbeddingInputs(inputs []document.EmbeddingInput) {

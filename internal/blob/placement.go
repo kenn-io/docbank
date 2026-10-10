@@ -8,8 +8,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/cenkalti/backoff/v7"
-
 	"go.kenn.io/kit/packstore"
 
 	"go.kenn.io/docbank/internal/jobs"
@@ -18,7 +16,7 @@ import (
 
 const storageOperationRetention = 30 * 24 * time.Hour
 
-var errStorageOperationDeferred = errors.New("storage operation deferred for retry")
+var errStorageOperationDeferred = jobs.ErrStorageOperationDeferred
 
 type PlacementObjectResult struct {
 	Hash                  string `json:"hash"`
@@ -75,24 +73,7 @@ func (r PlacementRunner) Start(
 		if delay <= 0 {
 			delay = time.Second
 		}
-		_, err := backoff.Retry(ctx, func() (struct{}, error) {
-			err := r.Run(ctx, operationID)
-			if err == nil {
-				return struct{}{}, nil
-			}
-			if !errors.Is(err, errStorageOperationDeferred) {
-				return struct{}{}, backoff.Permanent(err)
-			}
-			return struct{}{}, err
-		}, backoff.WithBackOff(backoff.NewConstantBackOff(delay)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0))
-		if err != nil {
-			retryErr := backoff.AsRetryError(err)
-			if !errors.Is(retryErr.Cause, backoff.ErrPermanent) && ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return retryErr.LastErr
-		}
-		return nil
+		return jobs.RetryStorageOperation(ctx, delay, func() error { return r.Run(ctx, operationID) })
 	})
 }
 
@@ -122,6 +103,9 @@ func (r PlacementRunner) Resume(
 func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr error) {
 	if r.Metadata == nil || r.Blobs == nil {
 		return errors.New("placement runner dependencies are incomplete")
+	}
+	if _, err := jobs.AdmitStorageOperation(ctx, r.Metadata, operationID); err != nil {
+		return jobs.DeferStorageAdmission(ctx, r.Metadata, operationID, err)
 	}
 	operation, err := r.Metadata.ClaimStorageOperation(ctx, operationID)
 	if err != nil {
@@ -172,11 +156,11 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 		return r.fail(ctx, operationID, err)
 	}
 	for index := operation.CompletedObjects; index < int64(len(plan.Hashes)); index++ {
-		current, err := r.Metadata.StorageOperation(ctx, operationID)
+		cancelled, err := jobs.AdmitStorageOperation(ctx, r.Metadata, operationID)
 		if err != nil {
-			return err
+			return jobs.DeferStorageAdmission(ctx, r.Metadata, operationID, err)
 		}
-		if current.CancelRequested {
+		if cancelled {
 			return r.cancel(ctx, operationID, receipt)
 		}
 		if err := ctx.Err(); err != nil {
@@ -308,13 +292,7 @@ func (r PlacementRunner) Run(ctx context.Context, operationID string) (resultErr
 func (r PlacementRunner) deferOperation(
 	ctx context.Context, operationID string, failure error,
 ) error {
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return ctxErr
-	}
-	deferErr := r.Metadata.DeferStorageOperation(
-		context.WithoutCancel(ctx), operationID, failure,
-	)
-	return errors.Join(errStorageOperationDeferred, failure, deferErr)
+	return jobs.DeferStorageOperation(ctx, r.Metadata, operationID, failure)
 }
 
 func retryStorageOperation(ctx context.Context, err error) error {

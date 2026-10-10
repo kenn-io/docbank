@@ -35,6 +35,8 @@ type PhotoImportOptions struct {
 	ActivityEnd    func()
 	// Cancelled reports operator cancellation during preparation and group admission.
 	Cancelled func(context.Context) (bool, error)
+	// Admit waits at preparation and group boundaries outside mutation gates.
+	Admit func(context.Context) (bool, error)
 	// Progress runs once with done=0 after discovery and after every group.
 	Progress func(ctx context.Context, done, total int, receipt store.PhotoImportReceipt) error
 }
@@ -227,17 +229,25 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 	operatorCancelled := errors.New("photo import cancelled by operator")
 	var nextCancelCheck time.Time
 	var cancelCheckErr error
-	check := func(force bool) error {
+	check := func(force, admission bool) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if report.Cancelled {
 			return operatorCancelled
 		}
-		if opts.Cancelled == nil || (!force && time.Now().Before(nextCancelCheck)) {
+		if !force && time.Now().Before(nextCancelCheck) {
 			return nil
 		}
-		cancelled, err := opts.Cancelled(ctx)
+		var cancelled bool
+		var err error
+		if admission && opts.Admit != nil {
+			cancelled, err = admitOutsideActivity(ctx, opts)
+		} else if opts.Cancelled != nil {
+			cancelled, err = opts.Cancelled(ctx)
+		} else {
+			return nil
+		}
 		nextCancelCheck = time.Now().Add(100 * time.Millisecond)
 		if err != nil {
 			cancelCheckErr = err
@@ -254,7 +264,8 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 			retErr = ctx.Err()
 		}
 	}()
-	checkPreparation := func() error { return check(false) }
+	admit := func() error { return check(true, true) }
+	checkPreparation := func() error { return check(false, true) }
 	mutate := func(fn func() error) error {
 		if opts.Mutate != nil {
 			return opts.Mutate(ctx, fn)
@@ -273,7 +284,7 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 			defer opts.ActivityEnd()
 		}
 	}
-	if err := check(true); err != nil {
+	if err := admit(); err != nil {
 		return report, err
 	}
 	candidates, unsupported, err := discoverPhotoCandidatesChecked(root, checkPreparation)
@@ -289,7 +300,7 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 	var dest store.Node
 	var run store.IngestRun
 	err = mutate(func() error {
-		if err := check(true); err != nil {
+		if err := check(true, false); err != nil {
 			return err
 		}
 		var err error
@@ -352,11 +363,11 @@ func (ing *Ingester) ImportPhotoDirectory(ctx context.Context, root, destination
 	}
 	report.Errors = make([]FileError, 0)
 	for index, group := range groups {
-		if err := check(true); err != nil {
+		if err := admit(); err != nil {
 			return report, err
 		}
 		result, groupErr := ing.importPhotoGroup(ctx, run, dest.ID, group, observations, observeErrors, mutate, func() error {
-			return check(true)
+			return check(true, false)
 		})
 		switch {
 		case groupErr != nil && ctx.Err() != nil:
@@ -435,11 +446,30 @@ func (ing *Ingester) importPhotoGroup(
 	return result, err
 }
 
+// admitOutsideActivity releases idle-tracking activity while Admit may wait
+// on a paused lane, so a paused import does not keep the daemon awake.
+func admitOutsideActivity(ctx context.Context, opts PhotoImportOptions) (bool, error) {
+	if opts.ActivityBegin != nil && opts.ActivityEnd != nil {
+		opts.ActivityEnd()
+		defer opts.ActivityBegin()
+	}
+	return opts.Admit(ctx)
+}
+
 // PhotoImportRunner runs photo_import operations as supervised jobs, sharing
 // the storage operation lifecycle: claim, progress, cancel, finish, resume.
 type PhotoImportRunner struct {
 	Ingester *Ingester
 	Options  PhotoImportOptions
+	// admit replaces jobs.AdmitStorageOperation in tests that inject read failures.
+	admit func(ctx context.Context, metadata *store.Store, id string) (bool, error)
+}
+
+func (r PhotoImportRunner) admitOperation(ctx context.Context, id string) (bool, error) {
+	if r.admit != nil {
+		return r.admit(ctx, r.Ingester.Store, id)
+	}
+	return jobs.AdmitStorageOperation(ctx, r.Ingester.Store, id)
 }
 
 func (r PhotoImportRunner) Start(supervisor *jobs.Supervisor, operationID string) error {
@@ -447,7 +477,7 @@ func (r PhotoImportRunner) Start(supervisor *jobs.Supervisor, operationID string
 		return errors.New("photo import runner requires a job supervisor")
 	}
 	return supervisor.Start("storage:"+operationID, func(ctx context.Context) error {
-		return r.Run(ctx, operationID)
+		return jobs.RetryStorageOperation(ctx, time.Second, func() error { return r.Run(ctx, operationID) })
 	})
 }
 
@@ -471,11 +501,30 @@ func (r PhotoImportRunner) Resume(ctx context.Context, supervisor *jobs.Supervis
 
 func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 	metadata := r.Ingester.Store
+	cancelled, admitErr := r.admitOperation(ctx, operationID)
+	if admitErr != nil {
+		return jobs.DeferStorageAdmission(ctx, metadata, operationID, admitErr)
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	operation, err := metadata.ClaimStorageOperation(ctx, operationID)
 	if err != nil {
 		return err
 	}
+	if cancelled || operation.CancelRequested {
+		finishErr := metadata.FinishStorageOperation(context.WithoutCancel(ctx), operationID,
+			store.StorageOperationCancelled, operation.ReceiptJSON, "", time.Now().Add(photoImportRetention))
+		return finishErr
+	}
 	opts := r.Options
+	opts.Admit = func(ctx context.Context) (bool, error) {
+		cancelled, err := r.admitOperation(ctx, operationID)
+		if err != nil {
+			admitErr = err
+		}
+		return cancelled, err
+	}
 	opts.Cancelled = func(ctx context.Context) (bool, error) {
 		current, err := metadata.StorageOperation(ctx, operationID)
 		return current.CancelRequested, err
@@ -505,6 +554,9 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 		// Daemon shutdown is not an operator cancellation; the next start resumes.
 		return ctx.Err()
 	}
+	if admitErr != nil {
+		return jobs.DeferStorageAdmission(ctx, metadata, operationID, admitErr)
+	}
 	if !report.Cancelled {
 		// A cancel accepted after the last group must still win; later ones are refused.
 		cancelled, err := metadata.FinalizeLocalOperation(context.WithoutCancel(ctx), operationID)
@@ -523,11 +575,11 @@ func (r PhotoImportRunner) Run(ctx context.Context, operationID string) error {
 		state = store.StorageOperationFailed
 		failure = fmt.Sprintf("%d photo groups failed; first %s: %v", len(report.Errors), report.Errors[0].Path, report.Errors[0].Err)
 	}
-	receipt, err := json.Marshal(report.Receipt)
+	encoded, err := json.Marshal(report.Receipt)
 	if err != nil {
 		return errors.Join(importErr, err)
 	}
 	finishErr := metadata.FinishStorageOperation(context.WithoutCancel(ctx), operationID, state,
-		string(receipt), failure, time.Now().Add(photoImportRetention))
+		string(encoded), failure, time.Now().Add(photoImportRetention))
 	return errors.Join(importErr, finishErr)
 }

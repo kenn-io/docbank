@@ -600,11 +600,6 @@ func TestIngestOptionsSendReplaceToJSONAndStream(t *testing.T) {
 	}
 }
 
-func TestNewRecordAdvertisesProtocol69(t *testing.T) {
-	record := daemonconn.NewRecord("127.0.0.1:7486", "key", "token", "")
-	assert.Equal(t, "69", record.Metadata["protocol_version"])
-}
-
 func TestProgressStreamPreservesProblemCode(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")

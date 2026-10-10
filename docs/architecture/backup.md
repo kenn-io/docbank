@@ -154,6 +154,9 @@ stops between those steps, the next restore compares the visible database with
 that fingerprint without opening unknown files for mutation. A normal vault
 open reconciles its validated catalog identity. Storage access begins only
 after the marker agrees with the database that actually became visible.
+Before clearing the recovery marker, Docbank resets and syncs lane controls
+when the replacement database is visible. A rollback preserves the original
+pauses and concurrency limits.
 
 !!! info "Historical snapshot format"
     Earlier development snapshots used Kit's SQLite page-map metadata. The
