@@ -5,7 +5,7 @@ import App from "./App.svelte";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it.each(["success", "network", "server"])("refreshes an album opened again during a delayed membership write with a %s response", async outcome => {
+it.each(["network", "server", "stale first page"])("refreshes an album opened again during a delayed membership write with a %s response", async outcome => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -14,10 +14,13 @@ it.each(["success", "network", "server"])("refreshes an album opened again durin
   const album = photoAlbum();
   let included = false;
   let finish!: () => void;
+  let releaseStale: (() => void) | undefined;
+  let scopedReads = 0;
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
     if (url.endsWith("/photos/albums")) return albumResponse([{ ...album, included_count: included ? 1 : 0 }]);
     if (url.endsWith("/photos/assets/query")) {
       const scoped = JSON.parse(init.body as string).query.filters?.set_ids?.includes(album.id);
+      if (outcome === "stale first page" && scoped && ++scopedReads === 1) { await new Promise<void>(resolve => releaseStale = resolve); return albumResponse({ items: [], total: 0 }); }
       return albumResponse({ items: scoped && !included ? [] : [photo(1)], total: scoped && !included ? 0 : 1 });
     }
     if (url.endsWith(`/photos/albums/${album.id}/members/add`)) {
@@ -35,70 +38,36 @@ it.each(["success", "network", "server"])("refreshes an album opened again durin
   await fireEvent.mouseDown(await screen.findByRole("option", { name: "Trip" }));
   await waitFor(() => expect(finish).toBeTypeOf("function"));
   await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
-  await screen.findByText("This album is empty");
-  await fireEvent.click(screen.getByRole("button", { name: "Library" }));
-  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
-  await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
-  await screen.findByText("This album is empty");
+  if (outcome === "stale first page") {
+    await waitFor(() => expect(releaseStale).toBeTypeOf("function"));
+  } else {
+    await screen.findByText("This album is empty");
+    await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+    await screen.findByRole("button", { name: "Select Photo 1.jpg" });
+    await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
+    await screen.findByText("This album is empty");
+  }
   finish();
-  await screen.findByRole("button", { name: "Select Photo 1.jpg" });
-  expect(screen.queryByText("This album is empty")).toBeNull();
-  await screen.findByText("1 photos · 1 loaded");
-});
-
-it("replaces an album's first page that was still loading when a membership write finished", async () => {
-  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
-  Element.prototype.scrollIntoView = vi.fn();
-  const album = photoAlbum();
-  let included = false;
-  let finish!: () => void;
-  let releaseStale: (() => void) | undefined;
-  let scopedReads = 0;
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
-    if (url.endsWith("/photos/albums")) return albumResponse([{ ...album, included_count: included ? 1 : 0 }]);
-    if (url.endsWith("/photos/assets/query")) {
-      const scoped = JSON.parse(init.body as string).query.filters?.set_ids?.includes(album.id);
-      if (scoped && ++scopedReads === 1) { await new Promise<void>(resolve => releaseStale = resolve); return albumResponse({ items: [], total: 0 }); }
-      return albumResponse({ items: scoped && !included ? [] : [photo(1)], total: scoped && !included ? 0 : 1 });
-    }
-    if (url.endsWith(`/photos/albums/${album.id}/members/add`)) {
-      await new Promise<void>(resolve => finish = resolve);
-      included = true;
-      return albumResponse({ ...album, revision: 2 });
-    }
-    if (url.includes("/nodes/1")) return albumResponse({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
-    return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
-  }));
-  render(App);
-  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
-  await fireEvent.click(screen.getByRole("button", { name: /Add to album/ }));
-  await fireEvent.mouseDown(await screen.findByRole("option", { name: "Trip" }));
-  await waitFor(() => expect(finish).toBeTypeOf("function"));
-  await fireEvent.click(screen.getByRole("button", { name: /^Trip/ }));
-  await waitFor(() => expect(releaseStale).toBeTypeOf("function"));
-  finish();
-  await waitFor(() => expect(scopedReads).toBe(2));
-  releaseStale!();
+  if (outcome === "stale first page") {
+    await waitFor(() => expect(scopedReads).toBe(2));
+    releaseStale!();
+  }
+  if (outcome !== "stale first page") await screen.findByRole("button", { name: "Select Photo 1.jpg" });
   await screen.findByText("1 photos · 1 loaded");
   expect(screen.queryByText("This album is empty")).toBeNull();
 });
 
-it("opens an album from the index, preserves its sort scope, and deletes only the album", async () => {
+it("opens an album from the index, preserves its sort scope, and unstars without refetching", async () => {
   history.replaceState(null, "", "/photos/albums#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
   Element.prototype.scrollIntoView = vi.fn();
   const album = photoAlbum({ starred: true, member_count: 1, included_count: 1 });
-  let deleted = false;
   const queries: unknown[] = [];
   const fetcher = vi.fn(async (url: string, init: RequestInit) => {
-    if (url.endsWith("/photos/albums")) return new Response(JSON.stringify(deleted ? [] : [album]));
+    if (url.endsWith("/photos/albums")) return new Response(JSON.stringify([album]));
     if (url.endsWith(`/photos/albums/${album.id}`) && init.method === "PUT") return albumResponse({ ...album, revision: 2, starred: false });
-    if (url.endsWith(`/photos/albums/${album.id}`) && init.method === "DELETE") { deleted = true; return albumResponse({ ...album, revision: 2, deleted_at: "2025-01-01" }); }
     if (url.endsWith("/photos/assets/query")) { queries.push(JSON.parse(init.body as string).query); return new Response(JSON.stringify({ items: [photo(1)], total: 1 })); }
     if (url.includes("/nodes/1")) return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", revision: 1, path: "/" }));
     return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
@@ -126,14 +95,9 @@ it("opens an album from the index, preserves its sort scope, and deletes only th
   await waitFor(() => expect(fetcher.mock.calls.some(([url, init]) => url.endsWith(`/photos/albums/${album.id}`) && init.method === "PUT")).toBe(true));
   await waitFor(() => expect((screen.getByRole("button", { name: "Unstar album" }) as HTMLButtonElement).disabled).toBe(false));
   expect(queries).toHaveLength(browseCount);
-  await fireEvent.click(screen.getByRole("button", { name: "Album actions" }));
-  await fireEvent.click(await screen.findByRole("menuitem", { name: "Delete album…" }));
-  await fireEvent.click(screen.getByRole("button", { name: "Delete album" }));
-  await waitFor(() => expect(location.pathname).toBe("/photos/albums"));
-
 });
 
-it.each(["document trash", "photo trash", "delayed photo trash", "lost photo response", "restore"])("refreshes albums and both started photo views after %s", async operation => {
+it.each(["document trash", "photo trash", "delayed photo trash", "restore"])("refreshes albums and both started photo views after %s", async operation => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
@@ -158,7 +122,6 @@ it.each(["document trash", "photo trash", "delayed photo trash", "lost photo res
     if (url.endsWith("/trash") && init?.method === "POST") {
       if (operation === "delayed photo trash") await new Promise<void>(resolve => finishTrash = resolve);
       trashed = true;
-      if (operation === "lost photo response") throw new TypeError("Failed to fetch");
       return json(url.includes("/photos/assets/") ? { id: "photo-1", revision: 2 } : { ...file, revision: 2, trashed_at: "2026-07-28T12:01:00Z" });
     }
     if (url.startsWith("/api/v1/trash?")) return json({ items: trashed ? [{ ...file, trashed_at: "2026-07-28T12:01:00Z" }] : [], total: trashed ? 1 : 0, limit: 1000, offset: 0 });

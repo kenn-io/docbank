@@ -72,26 +72,41 @@ it("sends whole-query membership in one atomic write and links its feedback", as
   expect(albums.noticeID).toBe(album.id);
 });
 
-it("rejects dragging 1,001 explicit IDs and allows the whole-query selection", async () => {
+it.each(["over-limit", "whole-query", "external payload", "unselected photo"])("uses the selection scope for a drag: %s", async kind => {
   const fetcher = vi.fn().mockResolvedValueOnce(response({ ...album, revision: 2 })).mockResolvedValueOnce(response([album]));
   vi.stubGlobal("fetch", fetcher);
   const albums = new PhotoAlbums("scoped", vi.fn());
   const photos = new Photos("scoped", vi.fn());
   photos.total = 12000;
   photos.selection.selectedIDs = new Set(Array.from({ length: 1001 }, (_, id) => String(id)));
+  photos.allResults = kind !== "over-limit";
   const transfer = { setData: vi.fn(), types: [photoDragType], effectAllowed: "" };
   const event = { dataTransfer: transfer, preventDefault: vi.fn() } as unknown as DragEvent;
-  albums.startDrag("0", event, photos);
-  expect(event.preventDefault).toHaveBeenCalledOnce();
-  expect(transfer.setData).not.toHaveBeenCalled();
-  await albums.drop(album, event);
-  expect(fetcher).not.toHaveBeenCalled();
-  expect(albums.error).toBe("Select all 12,000 photos to add more than 1,000 at once.");
-  photos.allResults = true;
-  albums.startDrag("0", event, photos);
-  await albums.drop(album, event);
-  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ query: photoQuery });
-  expect(albums.error).toBe("");
+  const members = vi.spyOn(albums, "members");
+  if (kind === "whole-query") {
+    photos.allResults = false;
+    albums.startDrag("0", event, photos);
+    await albums.drop(album, event);
+    photos.allResults = true;
+  }
+  albums.startDrag(kind === "unselected photo" ? "unselected" : "0", event, photos);
+  if (kind === "over-limit") {
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(transfer.setData).not.toHaveBeenCalled();
+    await albums.drop(album, event);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(albums.error).toBe("Select all 12,000 photos to add more than 1,000 at once.");
+  } else if (kind === "unselected photo") {
+    expect(albums.drag).toEqual({ asset_ids: ["unselected"] });
+  } else {
+    expect(albums.drag).toEqual({ query: photoQuery });
+    await albums.drop(album, event);
+    expect(members).toHaveBeenCalledWith(album, { query: photoQuery });
+    if (kind === "external payload") {
+      await albums.drop(album, event);
+      expect(members).toHaveBeenCalledOnce();
+    } else expect(albums.error).toBe("");
+  }
   photos.dispose();
 });
 
@@ -101,22 +116,6 @@ it.each([{ ...album, id: "invalid" }, { ...album, id: "22222222-2222-4222-8222-0
   expect(await albums.update(album, { starred: true })).toBeUndefined();
   expect(albums.error).toBe("Invalid album response.");
   expect(albums.items).toEqual([album]);
-});
-
-it("uses the selection scope for an in-app drag and rejects external payloads", async () => {
-  const albums = new PhotoAlbums("scoped", vi.fn());
-  const photos = new Photos("scoped", vi.fn()); photos.selection.selectedIDs.add("photo-1"); photos.allResults = true;
-  const transfer = { setData: vi.fn(), types: [photoDragType], effectAllowed: "" };
-  albums.startDrag("photo-1", { dataTransfer: transfer } as unknown as DragEvent, photos);
-  expect(albums.drag).toEqual({ query: photoQuery });
-  const members = vi.spyOn(albums, "members").mockResolvedValue(album);
-  await albums.drop(album, { dataTransfer: transfer, preventDefault: vi.fn() } as unknown as DragEvent);
-  expect(members).toHaveBeenCalledWith(album, { query: photoQuery });
-  await albums.drop(album, { dataTransfer: transfer, preventDefault: vi.fn() } as unknown as DragEvent);
-  expect(members).toHaveBeenCalledOnce();
-  albums.startDrag("unselected", { dataTransfer: transfer } as unknown as DragEvent, photos);
-  expect(albums.drag).toEqual({ asset_ids: ["unselected"] });
-  photos.dispose();
 });
 
 it.each([false, true])("keeps only the latest album list response, older failure=%s", async fails => {
