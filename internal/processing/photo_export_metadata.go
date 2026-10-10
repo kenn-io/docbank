@@ -22,6 +22,7 @@ import (
 
 const photoXMPJPEGPrefix = "http://ns.adobe.com/xap/1.0/\x00"
 const photoXMPPNGKeyword = "XML:com.adobe.xmp"
+const sourceMetadataCreatorField = "creator"
 
 type photoPackets struct {
 	exif, xmp, icc   []byte

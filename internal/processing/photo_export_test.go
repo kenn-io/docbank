@@ -128,6 +128,7 @@ func TestPhotoExportOrientationAndAuthoredRotation(t *testing.T) {
 			t.Run(fmt.Sprintf("%d/%d", orientation, rotation), func(t *testing.T) {
 				input := photoRenderInput(source.Bytes(), "image/png")
 				input.Authored.Rotation = rotation
+				input.Authored.Confirmed = store.PhotoConfirmedRotation
 				out, receipt, err := renderPhotoExport(t.Context(), source.Bytes(), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90})
 				require.NoError(t, err)
 				decoded, err := png.Decode(bytes.NewReader(out))
@@ -212,6 +213,7 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 	values, err := ReadPhotoSidecar(t.Context(), merged)
 	require.NoError(t, err)
 	expected := input.Authored
+	expected.Confirmed = 0
 	assert.Equal(t, expected, values)
 	assert.Contains(t, string(merged), "landscape")
 	assert.Contains(t, string(merged), "reviewed")
@@ -383,7 +385,17 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 				t.Run(alias.name+"/"+edit+"/"+format, func(t *testing.T) {
 					packet := []byte(photoSidecarHeader + ` xmlns:tiff="http://ns.adobe.com/tiff/1.0/" xmlns:keep="https://example.org/photo/" keep:Lens="Synthetic lens" tiff:` + alias.name + `="Old attribute"><tiff:` + alias.name + `>Old element</tiff:` + alias.name + `><keep:History>Unrelated history</keep:History>` + photoSidecarFooter)
 					for _, confirmed := range []store.PhotoAuthoredFields{0, alias.bit} {
-						packets, _ := render(nil, packet, store.PhotoAuthored{Confirmed: confirmed, Creator: edit, Copyright: edit, Caption: edit}, nil, format, false)
+						values := store.PhotoAuthored{Confirmed: confirmed}
+						switch confirmed {
+						case store.PhotoConfirmedCreator:
+							values.Creator = edit
+						case store.PhotoConfirmedCopyright:
+							values.Copyright = edit
+						case store.PhotoConfirmedCaption:
+							values.Caption = edit
+						default:
+						}
+						packets, _ := render(nil, packet, values, nil, format, false)
 						assert.Equal(t, confirmed == 0, strings.Contains(string(packets.xmp), "Old attribute"))
 						assert.Equal(t, confirmed == 0, strings.Contains(string(packets.xmp), "Old element"))
 						assert.Contains(t, string(packets.xmp), "Synthetic lens")
