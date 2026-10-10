@@ -14,13 +14,17 @@ describe("activity lanes", () => {
     expect(lane.control?.paused).toBe(true);
     expect(lane.status).toBe("cancelled");
     expect(lane.members.map((member) => member.operation_id)).toEqual(["c", "b", "a"]);
-    const idle = jobLanes([], [
-      { lane: "place", paused: true, concurrency: 1, revision: 4, can_set_concurrency: false },
+    const controls = [
       { lane: "repair", paused: false, concurrency: 1, revision: 1, can_set_concurrency: false },
-    ]);
+      { lane: "place", paused: true, concurrency: 1, revision: 4, can_set_concurrency: false },
+    ];
+    const idle = jobLanes([], controls);
     expect(idle).toHaveLength(2);
     expect(idle[0]).toMatchObject({ lane: "place", members: [], status: undefined });
     expect(idle[1]).toMatchObject({ lane: "repair", members: [], control: { paused: false } });
+    const after = jobLanes([job({ kind: "repair" })], controls);
+    expect(after.map(({ lane, key }) => [lane, key])).toEqual([["place", "place"], ["repair", "repair"]]);
+    expect(after.map(({ key }) => key)).toEqual(idle.map(({ key }) => key));
   });
 
   it("groups by storage kind and worker name, summing only active progress", () => {
@@ -35,18 +39,5 @@ describe("activity lanes", () => {
     expect(lanes[1].key).toBe("watch:inbox");
     const [unknown] = jobLanes([job({ total_objects: 5 }), job({ name: "storage:b", operation_id: "b", total_objects: 0 })]);
     expect(unknown.total).toBeUndefined();
-  });
-
-  it("keeps lane order and keys when an operation appears in an idle lane", () => {
-    const controls = [
-      { lane: "repair", paused: false, concurrency: 1, revision: 1, can_set_concurrency: false },
-      { lane: "place", paused: true, concurrency: 1, revision: 1, can_set_concurrency: false },
-    ];
-    const before = jobLanes([], controls);
-    const after = jobLanes([job({ kind: "repair" })], controls);
-    expect([before, after].map((lanes) => lanes.map(({ lane, key }) => [lane, key]))).toEqual([
-      [["place", "place"], ["repair", "repair"]],
-      [["place", "place"], ["repair", "repair"]],
-    ]);
   });
 });

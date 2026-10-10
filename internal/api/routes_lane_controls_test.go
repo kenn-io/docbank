@@ -76,23 +76,9 @@ func TestLaneControlRoutesAndReadonlyJobs(t *testing.T) {
 		{http.MethodDelete, "/api/v1/jobs/lanes/place"},
 		{http.MethodGet, "/api/v1/jobs/lanes/place/x"},
 	} {
-		t.Run(request.method+" "+request.path, func(t *testing.T) {
-			resp, body := do(t, ts, request.method, request.path, headers, nil)
-			assert.Equal(t, http.StatusForbidden, resp.StatusCode, body)
-		})
+		resp, body := do(t, ts, request.method, request.path, headers, nil)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode, body, request.method+" "+request.path)
 	}
-}
-
-func TestBrowserLaneControlBackendErrorIsRedacted(t *testing.T) {
-	t.Parallel()
-	ts, live := newTestServer(t, nil)
-	headers := map[string]string{api.WebSessionHeader: issueWebSession(t, ts), "X-Api-Key": "", "If-Match": "1"}
-	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(live.DBPath), "lane-controls.json"), []byte("{"), 0o600))
-	path := "/api/v1/jobs/lanes/" + store.VisualPreviewLane
-	resp, body := do(t, ts, http.MethodPut, path, headers, api.SetLaneControlRequest{Concurrency: 1})
-	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
-	assert.Contains(t, body, "inspect with the Docbank CLI")
-	assert.NotContains(t, body, "database")
 }
 
 func TestStorageJobControlsFollowOperationState(t *testing.T) {
@@ -163,6 +149,12 @@ func TestJobListSurvivesBrokenLaneControls(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
 	assert.Contains(t, body, "lane_controls_unreadable")
 	assert.Contains(t, body, "repair or remove lane-controls.json")
+
+	browser["If-Match"] = "1"
+	resp, body = do(t, ts, http.MethodPut, lane, browser, api.SetLaneControlRequest{Concurrency: 1})
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
+	assert.Contains(t, body, "inspect with the Docbank CLI")
+	assert.NotContains(t, body, "database")
 
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+operation.ID+"/cancel", nil, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
