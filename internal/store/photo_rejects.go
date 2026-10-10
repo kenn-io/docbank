@@ -13,8 +13,9 @@ const MaxPhotoRejectsMove = 1000
 const MaxPhotoRejectsMixed = 20
 
 type PhotoRejectsRequest struct {
-	Query  query.Query
-	Hidden bool
+	Query    query.Query
+	Hidden   bool
+	Coverage CoverageSelection
 }
 
 type PhotoRejectMember struct {
@@ -147,7 +148,15 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 			return out, err
 		}
 	}
-	coverage := CoverageSelection{}
+	coverage, err := normalizeCoverageSelection(request.Coverage)
+	if err != nil {
+		return out, err
+	}
+	if coverage.Configuration == photoBrowseConfiguredCoverage {
+		if err := validateSnapshotCoverageProfile(ctx, q, coverage); err != nil {
+			return out, err
+		}
+	}
 	compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: q})
 	if err != nil {
 		return out, err

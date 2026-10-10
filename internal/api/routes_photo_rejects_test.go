@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json/v2"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -19,7 +20,7 @@ func TestPhotoRejectRoutes(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.EditPhotoAuthored(t.Context(), []store.PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: store.PhotoAuthoredPatch{Flag: new("reject")}}})
 	require.NoError(t, err)
-	request := api.PhotoRejectsRequest{Query: api.QueryPayload(`{}`)}
+	request := api.PhotoRejectsRequest{Query: api.QueryPayload(`{"text":"text_coverage:unprocessed","syntax":"advanced"}`), Coverage: api.WorkspaceQueryCoverage{Configuration: "configured", ProfileFingerprint: strings.Repeat("a", 64)}}
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/rejects/preflight", nil, request)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var preview api.PhotoRejectsPreflight

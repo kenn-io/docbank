@@ -104,11 +104,14 @@ it.each(["Library", "selected", "oversized"])("bounds rejects requests while kee
   photos.dispose();
 });
 
-it.each(["confirmed", "network", "server"])("recovers the loaded rejects range and surviving selection after a %s move and failed refresh", async outcome => {
+it.each(["confirmed", "network", "server", "unknown ID", "missing ID", "duplicate ID"])("recovers the loaded rejects range and surviving selection after a %s move and failed refresh", async outcome => {
   let finish!: (response: Response) => void;
   const preview = { targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
   if (outcome === "confirmed") fetcher.mockResolvedValueOnce(Response.json({ moved: ["photo-1"] }));
+  else if (outcome === "unknown ID") fetcher.mockResolvedValueOnce(Response.json({ moved: ["photo-2"] }));
+  else if (outcome === "missing ID") fetcher.mockResolvedValueOnce(Response.json({ moved: [] }));
+  else if (outcome === "duplicate ID") fetcher.mockResolvedValueOnce(Response.json({ moved: ["photo-1", "photo-1"] }));
   else if (outcome === "server") fetcher.mockResolvedValueOnce(Response.json({ detail: "Internal error", code: "internal" }, { status: 500 }));
   else fetcher.mockRejectedValueOnce(new TypeError("Reply lost"));
   fetcher.mockResolvedValueOnce(Response.json({ detail: "Refresh unavailable" }, { status: 503 }))

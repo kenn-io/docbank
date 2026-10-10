@@ -9,20 +9,21 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/store"
 )
 
 func init() {
-	var raw, confirm string
+	var raw, confirm, coverage, profile string
 	command := &cobra.Command{Use: "rejects", Short: "Preview rejects or move previewed photos to trash", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
-		return runPhotoRejects(cmd, c, api.PhotoRejectsRequest{Query: api.QueryPayload(raw)}, confirm)
+		return runPhotoRejects(cmd, c, api.PhotoRejectsRequest{Query: api.QueryPayload(raw), Coverage: api.WorkspaceQueryCoverage{Configuration: coverage, ProfileFingerprint: profile}}, confirm)
 	}}
 	command.Flags().StringVar(&raw, "query", "{}", "QueryV1 JSON selecting the scope")
 	command.Flags().StringVar(&confirm, "confirm", "", "preview JSON file, or - for stdin")
+	command.Flags().StringVar(&coverage, "coverage", "", "coverage configuration: configured or unconfigured")
+	command.Flags().StringVar(&profile, "profile-fingerprint", "", "configured coverage profile fingerprint")
 	command.MarkFlagsMutuallyExclusive("query", "confirm")
 	photosCmd.AddCommand(command)
 }
@@ -38,10 +39,8 @@ func runPhotoRejects(cmd *cobra.Command, c *daemonconn.Connection, request api.P
 			defer func() { _ = file.Close() }()
 			reader = file
 		}
-		var preview struct {
-			Targets []store.PhotoRejectTarget `json:"targets"`
-		}
-		if err := json.UnmarshalRead(reader, &preview); err != nil {
+		var preview api.PhotoRejectsPreflight
+		if err := json.UnmarshalRead(reader, &preview, json.RejectUnknownMembers(true)); err != nil {
 			return fmt.Errorf("decoding rejects preview: %w", err)
 		}
 		if preview.Targets == nil {

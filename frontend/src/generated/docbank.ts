@@ -5149,6 +5149,7 @@ export interface PhotoRejectsPreflight {
 export interface PhotoRejectsRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  coverage?: WorkspaceQueryCoverage;
   hidden?: boolean;
   query: SavedQueryV1Schema;
 }

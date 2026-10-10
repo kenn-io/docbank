@@ -22,10 +22,10 @@ import (
 func TestPhotoRejectsCLIBoundary(t *testing.T) {
 	command, _, err := rootCmd.Find([]string{"photos", "rejects"})
 	require.NoError(t, err)
-	for _, flag := range []string{"query", "confirm"} {
+	for _, flag := range []string{"query", "confirm", "coverage", "profile-fingerprint"} {
 		require.NotNil(t, command.Flags().Lookup(flag))
 	}
-	for _, flag := range []string{"hidden", "coverage", "profile-fingerprint"} {
+	for _, flag := range []string{"hidden"} {
 		require.Nil(t, command.Flags().Lookup(flag))
 	}
 	require.NoError(t, command.Flags().Set("query", "{}"))
@@ -58,6 +58,9 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 				assert.Equal(t, http.MethodPost, r.Method)
 				if confirm == "" {
 					assert.Equal(t, "/api/v1/photos/rejects/preflight", r.URL.Path)
+					var body api.PhotoRejectsRequest
+					assert.NoError(t, json.UnmarshalRead(r.Body, &body))
+					assert.Equal(t, api.WorkspaceQueryCoverage{Configuration: "configured", ProfileFingerprint: strings.Repeat("a", 64)}, body.Coverage)
 					assert.NoError(t, json.MarshalWrite(w, preview))
 				} else {
 					assert.Equal(t, "/api/v1/photos/rejects/trash", r.URL.Path)
@@ -79,7 +82,7 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 				path = filepath.Join(t.TempDir(), "preview.json")
 				require.NoError(t, os.WriteFile(path, raw, 0600))
 			}
-			request := api.PhotoRejectsRequest{Query: api.QueryPayload(`{}`)}
+			request := api.PhotoRejectsRequest{Query: api.QueryPayload(`{}`), Coverage: api.WorkspaceQueryCoverage{Configuration: "configured", ProfileFingerprint: strings.Repeat("a", 64)}}
 			require.NoError(t, runPhotoRejects(cmd, daemonconn.New(server.URL, "synthetic-key"), request, path))
 			if confirm == "" {
 				assert.JSONEq(t, string(raw), out.String())
@@ -92,4 +95,7 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 	cmd.SetContext(t.Context())
 	cmd.SetIn(strings.NewReader(`{"digest":"old"}`))
 	require.ErrorContains(t, runPhotoRejects(cmd, nil, api.PhotoRejectsRequest{}, "-"), "decoding rejects preview")
+	path := filepath.Join(t.TempDir(), "newer-preview.json")
+	require.NoError(t, os.WriteFile(path, append([]byte(`{"unknown":true,`), raw[1:]...), 0600))
+	require.ErrorContains(t, runPhotoRejects(cmd, nil, api.PhotoRejectsRequest{}, path), "unknown")
 }

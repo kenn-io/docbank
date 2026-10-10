@@ -172,6 +172,7 @@ export class Photos {
     this.rejectsError = "";
     try {
       const result = await movePhotoRejects({ hidden: this.hidden, targets }, { session: this.session, signal: AbortSignal.timeout(60_000) });
+      if (result.moved.length !== targets.length || result.moved.some((id, i) => id !== targets[i].asset_id)) throw new Error("Invalid rejects move response");
       const restore = preserve?.();
       for (const id of result.moved) this.removeTarget(id);
       await restore?.();

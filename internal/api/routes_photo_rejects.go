@@ -10,8 +10,9 @@ import (
 )
 
 type PhotoRejectsRequest struct {
-	Query  QueryPayload `json:"query"`
-	Hidden bool         `json:"hidden,omitempty"`
+	Query    QueryPayload           `json:"query"`
+	Hidden   bool                   `json:"hidden,omitempty"`
+	Coverage WorkspaceQueryCoverage `json:"coverage,omitzero"`
 }
 
 type MovePhotoRejectsRequest struct {
@@ -28,7 +29,7 @@ func registerPhotoRejectRoutes(api huma.API, d Deps, g *gate) {
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 		}
-		result, err := d.Store.PreflightPhotoRejects(ctx, store.PhotoRejectsRequest{Query: value, Hidden: in.Body.Hidden})
+		result, err := d.Store.PreflightPhotoRejects(ctx, store.PhotoRejectsRequest{Query: value, Hidden: in.Body.Hidden, Coverage: store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint}})
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}

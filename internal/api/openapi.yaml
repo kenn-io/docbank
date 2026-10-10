@@ -12119,6 +12119,8 @@ components:
           format: uri
           readOnly: true
           type: string
+        coverage:
+          $ref: "#/components/schemas/WorkspaceQueryCoverage"
         hidden:
           type: boolean
         query:

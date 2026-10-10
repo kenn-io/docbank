@@ -27,6 +27,35 @@ func rejectsRequest() PhotoRejectsRequest {
 	return PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
 }
 
+func TestPhotoRejectsCoverage(t *testing.T) {
+	t.Parallel()
+	s, _, _, profile := collectionCoverageFixture(t, 0)
+	asset := authoredPair(t, s)
+	rejectOriginals(t, s, asset)
+	var display PhotoFile
+	for _, file := range asset.Files {
+		if file.ID == *asset.DisplayFileID {
+			display = file
+		}
+	}
+	node, err := s.NodeByID(t.Context(), display.NodeID)
+	require.NoError(t, err)
+	collectionCoveragePublish(t, s, node, profile, "complete")
+	request := rejectsRequest()
+	request.Query.Text = "text_coverage:complete"
+	_, err = s.PreflightPhotoRejects(t.Context(), request)
+	require.ErrorIs(t, err, ErrInvalidCoverageSelection)
+	request.Coverage = CoverageSelection{Configuration: "configured", ProfileFingerprint: profile.Fingerprint}
+	preview, err := s.PreflightPhotoRejects(t.Context(), request)
+	require.NoError(t, err)
+	require.Len(t, preview.Targets, 1)
+	assert.Equal(t, asset.ID, preview.Targets[0].AssetID)
+	request.Query.Text = "text_coverage:partial"
+	preview, err = s.PreflightPhotoRejects(t.Context(), request)
+	require.NoError(t, err)
+	assert.Empty(t, preview.Targets)
+}
+
 func TestPhotoRejectsPreviewDuringWrite(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
