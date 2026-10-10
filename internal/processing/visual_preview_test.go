@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
@@ -254,13 +255,21 @@ func TestInspectVisualPreviewPNGSkipsLargeIDAT(t *testing.T) {
 		Reader: bytes.NewReader(source), payloadStart: int64(len(original) - 12 + 8), payloadEnd: nextChunk - 4,
 	}
 
-	orientation, unsupportedColor, unsupportedMetadata, malformed, err := inspectVisualPreviewPNG(t.Context(), reader, int64(len(source)))
+	_, unsupportedColor, unsupportedMetadata, malformed, resumeOffset, err := inspectVisualPreviewPNG(t.Context(), reader, int64(len(source)))
+	require.NoError(t, err)
+	assert.False(t, unsupportedColor)
+	assert.False(t, unsupportedMetadata)
+	assert.False(t, malformed)
+	require.NotZero(t, resumeOffset)
+	_, err = reader.Seek(resumeOffset, io.SeekStart)
+	require.NoError(t, err)
+	orientation, unsupportedColor, unsupportedMetadata, malformed, _, err := walkVisualPreviewPNGChunks(t.Context(), reader, bufio.NewReaderSize(reader, 4096), int64(len(source)), resumeOffset, true)
 	require.NoError(t, err)
 	assert.Equal(t, 6, orientation)
 	assert.False(t, unsupportedColor)
 	assert.False(t, unsupportedMetadata)
 	assert.False(t, malformed)
-	assert.Equal(t, []int64{0, nextChunk}, reader.seeks)
+	assert.Equal(t, []int64{0, resumeOffset, nextChunk}, reader.seeks)
 	assert.False(t, reader.payloadRead, "large IDAT payload must be skipped without reading its bytes")
 }
 
@@ -549,6 +558,22 @@ func TestProduceVisualPreviewRejectsOversizedPNGDimensionsBeforeDecode(t *testin
 	assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
 	require.NotNil(t, product.Preview.Failure)
 	assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
+
+	t.Run("trailing chunks stay unread", func(t *testing.T) {
+		tailStart := int64(len(source) - 12)
+		trailing := appendSyntheticPNGChunk(bytes.Clone(source[:tailStart]), "tEXt", make([]byte, 64*1024))
+		trailing = appendSyntheticPNGChunk(trailing, "eXIf", syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
+		trailing = appendSyntheticPNGChunk(trailing, "IEND", nil)
+		reader := &recordingVisualPreviewReadSeeker{
+			Reader: bytes.NewReader(trailing), payloadStart: tailStart, payloadEnd: int64(len(trailing)),
+		}
+		product, err := produceVisualPreviewPNG(t.Context(), reader, int64(len(trailing)), document.VisualPreviewV1{})
+		require.NoError(t, err)
+		assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
+		require.NotNil(t, product.Preview.Failure)
+		assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
+		assert.False(t, reader.payloadRead, "rejected PNG must leave trailing chunks unread")
+	})
 }
 
 func TestProduceVisualPreviewRecordsMalformedJPEGFailure(t *testing.T) {
@@ -635,7 +660,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 	}{
 		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White), failAtSeeks: []int{3, 4}},
 		{name: "png", mediaType: "image/png", data: pngSource, failAtSeeks: []int{3, 4}},
-		{name: "png after IDAT", mediaType: "image/png", data: trailingPNG, failAtSeeks: []int{2}, failReadAt: failReadAt},
+		{name: "png after IDAT", mediaType: "image/png", data: trailingPNG, failAtSeeks: []int{3}, failReadAt: failReadAt},
 		{name: "gif", mediaType: "image/gif", data: mediatest.GIF(3, 2, 1), failAtSeeks: []int{2, 3}},
 		{name: "webp", mediaType: "image/webp", data: mustDecodeWebP(t), failAtSeeks: []int{3, 4}},
 	}
