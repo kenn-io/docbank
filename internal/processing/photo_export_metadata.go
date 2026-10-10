@@ -49,16 +49,6 @@ func photoExportMetadata(ctx context.Context, packets photoPackets, input store.
 	var out bytes.Buffer
 	if receipt.Profile.Format == "jpeg" {
 		out.Write(pixels[:2])
-		if len(packets.icc) > 0 {
-			const size = 65519
-			count := (len(packets.icc) + size - 1) / size
-			for i := 0; i < count; i++ {
-				payload := append([]byte("ICC_PROFILE\x00"), byte(i+1), byte(count))
-				payload = append(payload, packets.icc[i*size:min((i+1)*size, len(packets.icc))]...)
-				out.Write([]byte{0xff, 0xe2, byte((len(payload) + 2) >> 8), byte(len(payload) + 2)})
-				out.Write(payload)
-			}
-		}
 		for _, payload := range [][]byte{append([]byte("Exif\x00\x00"), exif...), append([]byte(photoXMPJPEGPrefix), packet...)} {
 			if !receipt.Profile.IncludeMetadata || bytes.HasPrefix(payload, []byte("Exif")) && len(exif) == 0 {
 				continue
@@ -68,6 +58,16 @@ func photoExportMetadata(ctx context.Context, packets photoPackets, input store.
 			}
 			out.Write([]byte{0xff, 0xe1, byte((len(payload) + 2) >> 8), byte(len(payload) + 2)})
 			out.Write(payload)
+		}
+		if len(packets.icc) > 0 {
+			const size = 65519
+			count := (len(packets.icc) + size - 1) / size
+			for i := 0; i < count; i++ {
+				payload := append([]byte("ICC_PROFILE\x00"), byte(i+1), byte(count))
+				payload = append(payload, packets.icc[i*size:min((i+1)*size, len(packets.icc))]...)
+				out.Write([]byte{0xff, 0xe2, byte((len(payload) + 2) >> 8), byte(len(payload) + 2)})
+				out.Write(payload)
+			}
 		}
 		out.Write(pixels[2:])
 	} else {
@@ -476,6 +476,31 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 		return authored(n) || receipt.Profile.RemoveGPS && strings.HasPrefix(strings.ToUpper(n.Local), "GPS")
 	}
 	depth, skip, roots, rdf := 0, 0, 0, 0
+	var ratingTokens []xml.Token
+	var ratingValue strings.Builder
+	ratingDepth := 0
+	emit := func(token xml.Token) error {
+		if ratingTokens == nil {
+			return encoder.EncodeToken(token)
+		}
+		ratingTokens = append(ratingTokens, xml.CopyToken(token))
+		if text, ok := token.(xml.CharData); ok {
+			ratingValue.Write(text)
+		}
+		if _, end := token.(xml.EndElement); !end || depth != ratingDepth-1 {
+			return nil
+		}
+		if strings.TrimSpace(ratingValue.String()) != "-1" {
+			for _, token := range ratingTokens {
+				if err := encoder.EncodeToken(token); err != nil {
+					return err
+				}
+			}
+		}
+		ratingTokens = nil
+		ratingValue.Reset()
+		return nil
+	}
 	normalized := func(name xml.Name) string {
 		if name.Space != "http://ns.adobe.com/tiff/1.0/" && name.Space != "http://ns.adobe.com/exif/1.0/" {
 			return ""
@@ -523,41 +548,9 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 				skip = 1
 				continue
 			}
-			if clearLegacyReject && isRating(t.Name) {
-				var value strings.Builder
-				tokens := []xml.Token{xml.CopyToken(t)}
-				for nested := 1; nested > 0; {
-					if err := ctx.Err(); err != nil {
-						return nil, err
-					}
-					next, err := decoder.Token()
-					if err != nil {
-						return nil, err
-					}
-					switch next.(type) {
-					case xml.StartElement:
-						nested++
-						if depth+nested-1 > maxSourceMetadataXMLDepth {
-							return nil, bundle.ErrLimit
-						}
-					case xml.EndElement:
-						nested--
-					case xml.CharData:
-						value.Write(next.(xml.CharData))
-					case xml.Directive:
-						return nil, errors.New("XMP directives are unsupported")
-					}
-					tokens = append(tokens, xml.CopyToken(next))
-				}
-				depth--
-				if strings.TrimSpace(value.String()) != "-1" {
-					for _, token := range tokens {
-						if err := encoder.EncodeToken(token); err != nil {
-							return nil, err
-						}
-					}
-				}
-				continue
+			if clearLegacyReject && isRating(t.Name) && ratingTokens == nil {
+				ratingTokens = []xml.Token{}
+				ratingDepth = depth
 			}
 			attrs := []xml.Attr{}
 			seen := map[xml.Name]bool{}
@@ -579,8 +572,10 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 			}
 			t.Attr = attrs
 			if value := normalized(t.Name); value != "" {
-				if err := encoder.EncodeElement(value, t); err != nil {
-					return nil, err
+				for _, token := range []xml.Token{t, xml.CharData(value), t.End()} {
+					if err := emit(token); err != nil {
+						return nil, err
+					}
 				}
 				skip = 1
 				continue
@@ -613,7 +608,7 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 				continue
 			}
 		}
-		if err := encoder.EncodeToken(token); err != nil {
+		if err := emit(token); err != nil {
 			return nil, err
 		}
 	}

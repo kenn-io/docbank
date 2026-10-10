@@ -68,6 +68,14 @@ func TestPhotoExportTrailingEXIFCreditsNamespacesAndICC(t *testing.T) {
 		assert.Empty(t, packets.xmp)
 		assert.Empty(t, packets.exif)
 	}
+	exifSource := syntheticJPEGSegment(t, jpegSource, 0xe1, append([]byte("Exif\x00\x00"), syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 1)}, nil)...))
+	out, _, err = RenderPhotoExport(t.Context(), bytes.NewReader(exifSource), photoRenderInput(exifSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true})
+	require.NoError(t, err)
+	require.Equal(t, []byte{0xff, 0xe1}, out[2:4])
+	require.Equal(t, "Exif\x00\x00", string(out[6:12]))
+	packets, err := photoSourcePackets(t.Context(), out, true)
+	require.NoError(t, err)
+	require.Equal(t, profile, packets.icc)
 	budget := photoExportBudget{pixels: 5}
 	_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(jpegSource), photoRenderInput(jpegSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: "png", Quality: 90}, &budget)
 	require.ErrorIs(t, err, bundle.ErrLimit)
@@ -249,16 +257,17 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 func TestPhotoExportConfirmedFlagClearsLegacyReject(t *testing.T) {
 	t.Parallel()
 	for _, flag := range []string{"pick", ""} {
-		for _, property := range []string{` xmp:Rating="-1">`, `><xmp:Rating>-<!--split-->1</xmp:Rating>`, `><xmp:Rating><rdf:value>-1</rdf:value></xmp:Rating>`, ` xmp:Rating="4">`, `><xmp:Rating>4</xmp:Rating>`, `><xmp:Rating><rdf:value>4</rdf:value></xmp:Rating>`} {
+		for _, property := range []string{` xmp:Rating="-1">`, `><xmp:Rating>-<!--split-->1</xmp:Rating>`, `><xmp:Rating><rdf:value>-1</rdf:value></xmp:Rating>`, ` xmp:Rating="4">`, `><xmp:Rating>4</xmp:Rating>`, `><xmp:Rating><rdf:value>4</rdf:value></xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/" exif:GPSLatitude="12,30N">4</xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/"><rdf:value>4</rdf:value><exif:GPSLatitude>12,30N</exif:GPSLatitude></xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/"><rdf:value>-1</rdf:value><exif:GPSLatitude>12,30N</exif:GPSLatitude></xmp:Rating>`} {
 			for _, format := range []string{"jpeg", "png"} {
 				packet := []byte(photoSidecarHeader + property + photoSidecarFooter)
 				data := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1, append([]byte(photoXMPJPEGPrefix), packet...))
 				input := photoRenderInput(data, "image/jpeg")
 				input.Authored = store.PhotoAuthored{Confirmed: store.PhotoConfirmedFlag, Flag: flag}
-				out, _, err := RenderPhotoExport(t.Context(), bytes.NewReader(data), input, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true})
+				out, _, err := RenderPhotoExport(t.Context(), bytes.NewReader(data), input, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true, RemoveGPS: true})
 				require.NoError(t, err)
 				packets, err := photoSourcePackets(t.Context(), out, true)
 				require.NoError(t, err)
+				require.NotContains(t, string(packets.xmp), "GPSLatitude")
 				actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
 				require.NoError(t, err)
 				require.Equal(t, flag, actual.Flag)
