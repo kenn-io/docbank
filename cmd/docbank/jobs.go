@@ -157,12 +157,15 @@ func writeJobs(w io.Writer, items []api.Job) error {
 func jobsControlCommand(action string) *cobra.Command {
 	use := action + " <lane>"
 	count := 1
+	example := "  docbank jobs " + action + " photo_import"
 	if action == "concurrency" {
 		use += " <limit>"
 		count = 2
+		example = "  docbank jobs concurrency derive:visual-previews 3"
 	}
 	return &cobra.Command{
 		Use: use, Short: "Change durable background lane controls", Args: cobra.ExactArgs(count),
+		Example: example,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			lane := args[0]
 			limit := 0
