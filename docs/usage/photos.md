@@ -360,6 +360,8 @@ with these fields. Camera and lens match the complete make or model, ignoring
 case using Unicode case folding. Values in one typed filter array combine with
 OR. Separate filters combine with AND.
 
+Use typed `flags:[""]` or `labels:[""]` to select unflagged or unlabeled photos. Expression operands must be nonempty. `NOT flag:pick` selects unflagged and rejected photos; `NOT label:red` selects unlabeled photos and other colors.
+
 Dates use the photo's recorded local calendar day, with an inclusive lower
 bound and exclusive upper bound. A January 1 photo remains in January 1 date
 filters even if its recorded UTC offset puts it on January 2 in UTC. GPS uses

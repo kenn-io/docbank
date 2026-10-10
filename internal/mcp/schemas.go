@@ -7,6 +7,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/loadfile"
 	"go.kenn.io/docbank/internal/pdfstamp"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -833,8 +834,8 @@ func photoFileSchema() schema {
 	return objectSchema(schema{
 		schemaRevisionField: integerSchema(1, 0),
 		"rating":            integerSchema(0, 5),
-		"flag":              enumSchema("", "pick", "reject"),
-		"label":             enumSchema("", "red", "yellow", "green", "blue", "purple"),
+		"flag":              enumSchema(query.PhotoFlags()...),
+		"label":             enumSchema(query.PhotoColorLabels()...),
 		"caption":           stringSchema(store.MaxPhotoAuthoredTextBytes), "creator": stringSchema(store.MaxPhotoAuthoredTextBytes), "copyright": stringSchema(store.MaxPhotoAuthoredTextBytes),
 		"rotation":           schema{"type": "integer", "enum": []int{0, 90, 180, 270}},
 		"id":                 uuidSchema(),

@@ -740,6 +740,36 @@ func TestPhotoSidecarIdleScanSkipsJudgedGeneration(t *testing.T) {
 	}
 }
 
+func TestPhotoSidecarIdleScanSkipsMatchingValues(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := authoredPair(t, s)
+	f := fileByRole(asset.Files, PhotoRoleRAW)
+	_, err := s.db.ExecContext(ctx, `UPDATE photo_files SET rating=4 WHERE file_id=?`, f.ID)
+	require.NoError(t, err)
+	sidecar, err := s.CreateFile(ctx, s.RootID(), "capture.xmp", fakeHash("c3"), 4, "application/rdf+xml")
+	require.NoError(t, err)
+	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &f.ID)
+	require.NoError(t, err)
+	publishPhotoPacket(t, s, sidecar.BlobHash, 4)
+	targets, err := s.MissingPhotoSidecarsAfter(ctx, fakeHash("ee"), "", 10)
+	require.NoError(t, err)
+	require.Len(t, targets, 1)
+	receipt, err := s.InitializePhotoSidecar(ctx, targets[0])
+	require.NoError(t, err)
+	assert.Empty(t, receipt.ReceiptID)
+	assert.Empty(t, receipt.After)
+	targets, err = s.MissingPhotoSidecarsAfter(ctx, fakeHash("ee"), "", 10)
+	require.NoError(t, err)
+	assert.Empty(t, targets)
+	file, err := photoFileByIDQuery(ctx, s.db, f.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), file.Revision)
+	assert.Equal(t, 4, file.Rating)
+	require.NoError(t, s.ValidateMetadata(ctx))
+}
+
 func TestPhotoAuthoredExpressionBrowse(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -773,7 +803,7 @@ func TestPhotoAuthoredExpressionBrowse(t *testing.T) {
 			{`rating_max:3`, `{"rating_max":3}`, imageMatch}, {`rating_max:2`, `{"rating_max":2}`, imageMatch},
 			{`rating_min:3 AND rating_max:3`, `{"rating_min":3,"rating_max":3}`, 0},
 			{`flag:pick`, `{"flags":["pick"]}`, rawMatch}, {`label:red`, `{"labels":["red"]}`, imageMatch},
-			{`NOT rating:5`, "", imageMatch}, {`NOT rating:1`, "", rawMatch}, {`NOT rating:4`, "", 1}, {`NOT flag:pick`, "", imageMatch},
+			{`NOT rating:5`, "", imageMatch}, {`NOT rating:1`, "", rawMatch}, {`NOT rating:4`, "", 1}, {`NOT flag:pick`, `{"flags":[""]}`, imageMatch},
 			{`NOT flag:reject`, "", 1}, {`NOT label:red`, "", rawMatch},
 			{`NOT (NOT rating:1 OR NOT label:red)`, "", imageMatch},
 			{`rating:5 AND label:red`, "", 0}, {`rating:1 AND label:red`, "", imageMatch},

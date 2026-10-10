@@ -835,6 +835,8 @@ fields, not additional parameters for `GET /search`:
 | `asset_ids` | At most 64 canonical UUIDv4 values |
 | `set_ids` | At most 64 canonical album UUIDv4 values |
 
+Typed `flags:[""]` and `labels:[""]` select unflagged and unlabeled files. Expression operands must be nonempty. `NOT flag:pick` selects unflagged and rejected files; `NOT label:red` selects unlabeled files and other colors.
+
 Quality filters follow the same version as other photo metadata filters. Photos uses the asset's selected display; Documents uses each document's own version. `unevaluated:true` applies only to versions eligible for measurement. Expressions reject `unevaluated:false`; use `focus_min:0` for measured photos.
 
 Photo browse returns quality `ready` with scores, `unavailable` with `signals: null` when the current grid preview is unsupported or failed or its verified bytes do not decode, and `pending` with `signals: null` otherwise.
