@@ -37,6 +37,7 @@ func TestDetectFormatAcceptsBoundedPDFTrailingData(t *testing.T) {
 		{"incremental update", incremental, scanner},
 		{"linearized scanner output", linearized, scanner},
 		{"linearized xref stream", linearizedStream, scanner},
+		{"linearized stream with table main xref", pdfTailLinearizedStreamWithTableMain(), scanner},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			content := append(bytes.Clone(test.pdf), test.suffix...)
@@ -134,32 +135,61 @@ func TestDetectFormatRejectsForgedIndirectStreamClosureOutsideTail(t *testing.T)
 	content = append(content, []byte("PK\x03\x04synthetic\nendstream\nendobj\nstartxref\n"+string(offset)+"\n%%EOF\n")...)
 
 	_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
-	require.Error(t, err)
+	require.ErrorContains(t, err, "PDF cross-reference data is invalid")
 }
 
-func TestDetectFormatRejectsUnresolvableIndirectPDFStreamLengths(t *testing.T) {
+// An indirect length cannot be followed outside the tail, so an xref stream
+// starting before the tail needs a direct length.
+func TestDetectFormatRejectsIndirectPDFStreamLengthStartingBeforeTail(t *testing.T) {
+	content := pdfTailXRefStream(12000, true)
+	_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+	require.ErrorContains(t, err, "PDF cross-reference data is invalid")
+}
+
+func TestDetectFormatAcceptsPDFXRefStreamClosureVariants(t *testing.T) {
+	streamVariant := func(old, replacement string) []byte {
+		content := testPDFXRefStreamWithPageBox()
+		require.Equal(t, 1, bytes.Count(content, []byte(old)))
+		return bytes.Replace(content, []byte(old), []byte(replacement), 1)
+	}
 	for _, test := range []struct {
 		name    string
 		content []byte
 	}{
-		{"filtered xref stream", pdfTailFilteredXRefStreamIndirectLength(t)},
-		{"compressed length object", pdfTailXRefStreamCompressedLengthObject()},
+		{"filtered stream with indirect length", pdfTailFilteredXRefStreamIndirectLength(t)},
+		{"length object in an object stream", pdfTailXRefStreamCompressedLengthObject()},
+		{"high-numbered length object after stream", pdfTailXRefStreamLengthObject(800, true, true, 799)},
+		{"length longer than data", streamVariant("/Length 35 ", "/Length 37 ")},
+		{"carriage return after stream keyword", streamVariant(">>\nstream\n", ">>\nstream\r")},
+		{"space before stream line feed", streamVariant(">>\nstream\n", ">>\nstream \n")},
+		{"object before startxref", streamVariant("endobj\nstartxref", "endobj\n9 0 obj\n<< /Producer (x) >>\nendobj\nstartxref")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := DetectFormat(bytes.NewReader(test.content), int64(len(test.content)), "application/pdf")
-			require.ErrorContains(t, err, "PDF cross-reference data is invalid")
+			format, err := DetectFormat(bytes.NewReader(test.content), int64(len(test.content)), "application/pdf")
+			require.NoError(t, err)
+			require.Equal(t, "pdf", format.ID)
 		})
 	}
 }
 
-func TestDetectFormatAcceptsIndirectLengthObjectCommentWithEndObj(t *testing.T) {
-	content := pdfTailXRefStreamWithLengthObjectComment(6, "producer note mentions endobj")
-	format, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
-	require.NoError(t, err)
-	require.Equal(t, "pdf", format.ID)
-	pages, err := formatdetect.CountPDFPages(content)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), pages)
+func TestDetectFormatRejectsUnparsedDataBeforePDFXRefStreamStartXRef(t *testing.T) {
+	for _, inserted := range []string{
+		"PK\x03\x04synthetic\n",
+		"9 0 obj\n<< /Length 1 >>\nstream\nx\nendstream\nendobj\n",
+		"9 0 obj\nstartxref\nendobj\n",
+		"9 0 obj\n<< /Producer (x) >>\n",
+		"trailer\n<< /Size 5 /Root 1 0 R >>\n",
+	} {
+		t.Run(fmt.Sprintf("%q", inserted), func(t *testing.T) {
+			content := testPDFXRefStreamWithPageBox()
+			startXRef := bytes.LastIndex(content, []byte("startxref\n"))
+			require.NotEqual(t, -1, startXRef)
+			content = bytes.Join([][]byte{content[:startXRef], []byte(inserted), content[startXRef:]}, nil)
+
+			_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+			require.ErrorContains(t, err, "PDF cross-reference data is invalid")
+		})
+	}
 }
 
 func TestDetectFormatPDFTailWindow(t *testing.T) {
@@ -231,37 +261,50 @@ func TestDetectFormatRejectsUnsafePDFTrailingData(t *testing.T) {
 		{"stream", testPDFXRefStreamWithPageBox()},
 		{"indirect stream", pdfTailXRefStream(6, true)},
 		{"linearized stream", linearizedStream},
+		{"linearized stream with table main xref", pdfTailLinearizedStreamWithTableMain()},
 	} {
 		t.Run(pdf.name, func(t *testing.T) {
 			xref := bytes.LastIndex(pdf.content, []byte("startxref\n"))
-			offset := bytes.Fields(pdf.content[xref+len("startxref\n"):])[0]
-			for _, suffix := range []string{
-				"PK\x03\x04synthetic", "padding\x00PK\x05\x06synthetic", "PK\x07\x08synthetic",
-				"<html><body>synthetic</body></html>", "<!DOCTYPE html>synthetic", "<HTML>synthetic</HTML>",
-				"4 0 obj\n<< >>\nendobj\n", "%%EOF\n", "%PDF-1.4\n",
-				"startxref\ninvalid\n%%EOF\n", "startxref\n0\n%%EOF\n",
-				"PK\x03\x04synthetic\nstartxref\n" + string(offset) + "\n%%EOF\n",
-				"<html>synthetic</html>\nstartxref\n" + string(offset) + "\n",
-				"PK\x03\x04synthetic\nendstream\nendobj\nstartxref\n" + string(offset) + "\n%%EOF\n",
-				"scanner residue\nstartxref\n" + string(offset) + "\n%%EOF\n",
+			offset := string(bytes.Fields(pdf.content[xref+len("startxref\n"):])[0])
+			const notFinal = "PDF trailer is not final"
+			const invalidXRef = "PDF cross-reference data is invalid"
+			for _, test := range []struct{ suffix, want string }{
+				{"PK\x03\x04synthetic", notFinal},
+				{"padding\x00PK\x05\x06synthetic", notFinal},
+				{"PK\x07\x08synthetic", notFinal},
+				{"<html><body>synthetic</body></html>", notFinal},
+				{"<!DOCTYPE html>synthetic", notFinal},
+				{"<HTML>synthetic</HTML>", notFinal},
+				{"4 0 obj\n<< >>\nendobj\n", notFinal},
+				{"%%EOF\n", notFinal},
+				{"%PDF-1.4\n", notFinal},
+				{"startxref\ninvalid\n%%EOF\n", "PDF startxref offset is invalid"},
+				{"startxref\n0\n%%EOF\n", "PDF startxref offset is outside the document"},
+				{"PK\x03\x04synthetic\nstartxref\n" + offset + "\n%%EOF\n", invalidXRef},
+				{"<html>synthetic</html>\nstartxref\n" + offset + "\n", invalidXRef},
+				{"PK\x03\x04synthetic\nendstream\nendobj\nstartxref\n" + offset + "\n%%EOF\n", invalidXRef},
+				{"scanner residue\nstartxref\n" + offset + "\n%%EOF\n", invalidXRef},
 			} {
-				t.Run(fmt.Sprintf("%q", suffix), func(t *testing.T) {
-					content := append(bytes.Clone(pdf.content), suffix...)
+				t.Run(fmt.Sprintf("%q", test.suffix), func(t *testing.T) {
+					content := append(bytes.Clone(pdf.content), test.suffix...)
 					_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
-					require.Error(t, err)
+					require.ErrorContains(t, err, test.want)
 				})
 			}
 		})
 	}
-	for _, content := range [][]byte{
-		[]byte("plain text\n%%EOF\nscanner padding"),
-		[]byte("%PDF-1.7\n%%EOF\nscanner padding"),
-		bytes.Replace(testPDF("bad-version"), []byte("%PDF-1.4"), []byte("%PDF-3.0"), 1),
-		bytes.Replace(testPDF("bad-xref"), []byte("xref\n"), []byte("xref garbage\n"), 1),
+	for _, test := range []struct {
+		content []byte
+		want    string
+	}{
+		{[]byte("plain text\n%%EOF\nscanner padding"), "no supported signature"},
+		{[]byte("%PDF-1.7\n%%EOF\nscanner padding"), "PDF startxref is missing"},
+		{bytes.Replace(testPDF("bad-version"), []byte("%PDF-1.4"), []byte("%PDF-3.0"), 1), "PDF header is invalid"},
+		{bytes.Replace(testPDF("bad-xref"), []byte("xref\n"), []byte("xref garbage\n"), 1), "PDF cross-reference data is invalid"},
 	} {
-		content = append(bytes.Clone(content), []byte("scanner padding\n")...)
+		content := append(bytes.Clone(test.content), []byte("scanner padding\n")...)
 		_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
-		require.Error(t, err)
+		require.ErrorContains(t, err, test.want)
 	}
 	content := append(testPDF("mime-mismatch"), []byte("scanner padding\n")...)
 	_, err = DetectFormat(bytes.NewReader(content), int64(len(content)), "text/plain")
@@ -275,17 +318,15 @@ func pdfTailXRefStream(count int, indirect bool) []byte {
 }
 
 func pdfTailXRefStreamLength(count int, indirect, after bool) []byte {
-	return pdfTailXRefStreamLengthWithComment(count, indirect, after, "")
+	return pdfTailXRefStreamLengthObject(count, indirect, after, 5)
 }
 
-func pdfTailXRefStreamWithLengthObjectComment(count int, comment string) []byte {
-	return pdfTailXRefStreamLengthWithComment(count, true, false, comment)
-}
-
-func pdfTailXRefStreamLengthWithComment(count int, indirect, after bool, lengthObjectComment string) []byte {
+// Producers that write an indirect length after its stream usually give the
+// length object the highest object number.
+func pdfTailXRefStreamLengthObject(count int, indirect, after bool, lengthNumber int) []byte {
 	var output bytes.Buffer
 	output.WriteString("%PDF-1.5\n")
-	offsets := make([]int, 6)
+	offsets := make([]int, max(6, lengthNumber+1))
 	for index, object := range []string{
 		"<< /Type /Catalog /Pages 2 0 R >>",
 		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -296,23 +337,19 @@ func pdfTailXRefStreamLengthWithComment(count int, indirect, after bool, lengthO
 	}
 	length := strconv.Itoa(count * 7)
 	if indirect && !after {
-		offsets[5] = output.Len()
-		if lengthObjectComment == "" {
-			_, _ = fmt.Fprintf(&output, "5 0 obj\n%s\nendobj\n", length)
-		} else {
-			_, _ = fmt.Fprintf(&output, "5 0 obj\n%s %% %s\nendobj\n", length, lengthObjectComment)
-		}
+		offsets[lengthNumber] = output.Len()
+		_, _ = fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", lengthNumber, length)
 	}
 	if indirect {
-		length = "5 0 R"
+		length = fmt.Sprintf("%d 0 R", lengthNumber)
 		if after {
-			length = "00005 00000 R"
+			length = fmt.Sprintf("%05d 00000 R", lengthNumber)
 		}
 	}
 	offsets[4] = output.Len()
 	header := fmt.Sprintf("4 0 obj\n<< /Type /XRef /Size %d /Root 1 0 R /W [1 4 2] /Length %s >>\nstream\n", count, length)
 	if indirect && after {
-		offsets[5] = output.Len() + len(header) + count*7 + len("\nendstream\nendobj\n")
+		offsets[lengthNumber] = output.Len() + len(header) + count*7 + len("\nendstream\nendobj\n")
 	}
 	entries := make([]byte, count*7)
 	for index := range count {
@@ -327,7 +364,7 @@ func pdfTailXRefStreamLengthWithComment(count int, indirect, after bool, lengthO
 	output.Write(entries)
 	output.WriteString("\nendstream\nendobj\n")
 	if indirect && after {
-		_, _ = fmt.Fprintf(&output, "5 0 obj\n%d\nendobj\n", len(entries))
+		_, _ = fmt.Fprintf(&output, "%d 0 obj\n%d\nendobj\n", lengthNumber, len(entries))
 	}
 	_, _ = fmt.Fprintf(&output, "startxref\n%d\n%%%%EOF\n", offsets[4])
 	return output.Bytes()
@@ -437,5 +474,43 @@ func pdfTailLinearizedStream(padding int) []byte {
 	}
 	putTestXRefEntry(entries, 6, 1, uint32(len(header)), 0)
 	putTestXRefEntry(entries, 7, 1, uint32(firstOffset), 0) // #nosec G115 -- bounded synthetic fixture.
+	return content
+}
+
+// A first-page xref stream may link forward to a main xref table whose trailer
+// inherits the first-page /Root.
+func pdfTailLinearizedStreamWithTableMain() []byte {
+	const header = "%PDF-1.5\n"
+	const linearization = "6 0 obj\n<< /Linearized 1 /H [0 0] >>\nendobj\n"
+	firstOffset := len(header) + len(linearization)
+	firstEntry := make([]byte, 7)
+	putTestXRefEntry(firstEntry, 0, 0, 0, 65535)
+	firstWithPrev := func(previous int) string {
+		return fmt.Sprintf("7 0 obj\n<< /Type /XRef /Size 8 /Root 1 0 R /W [1 4 2] /Index [0 1] "+
+			"/Length 7 /Prev %010d >>\nstream\n%s\nendstream\nendobj\n", previous, firstEntry)
+	}
+	var output bytes.Buffer
+	output.WriteString(header + linearization + firstWithPrev(0))
+	offsets := map[int]int{6: len(header), 7: firstOffset}
+	for index, object := range []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] >>",
+	} {
+		offsets[index+1] = output.Len()
+		_, _ = fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", index+1, object)
+	}
+	mainOffset := output.Len()
+	output.WriteString("xref\n0 8\n0000000000 65535 f \n")
+	for number := 1; number < 8; number++ {
+		if offset, ok := offsets[number]; ok {
+			_, _ = fmt.Fprintf(&output, "%010d 00000 n \n", offset)
+		} else {
+			output.WriteString("0000000000 65535 f \n")
+		}
+	}
+	_, _ = fmt.Fprintf(&output, "trailer\n<< /Size 8 >>\nstartxref\n%d\n%%%%EOF\n", firstOffset)
+	content := output.Bytes()
+	copy(content[firstOffset:], firstWithPrev(mainOffset))
 	return content
 }
