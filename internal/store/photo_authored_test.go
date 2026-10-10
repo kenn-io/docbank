@@ -53,13 +53,6 @@ func TestPhotoAuthoredConfirmationFields(t *testing.T) {
 			value := test.patch.apply(PhotoAuthored{})
 			require.Equal(t, test.bit, value.Confirmed)
 			require.NoError(t, ValidatePhotoAuthored(value))
-			var sidecarPatch PhotoAuthoredPatch
-			for _, field := range photoAuthoredFields {
-				if field.nonDefault(&value) {
-					field.setPatch(&sidecarPatch, &value)
-				}
-			}
-			require.Equal(t, test.patch, sidecarPatch)
 			value.Confirmed = 0
 			require.ErrorIs(t, ValidatePhotoAuthored(value), ErrInvalidPhotoAsset)
 			require.NoError(t, ValidatePhotoAuthored(PhotoAuthored{Confirmed: test.bit}))

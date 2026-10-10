@@ -5,7 +5,7 @@ import "go.kenn.io/docbank/internal/store"
 // PhotoFile is the daemon representation of one ordinary file node in an
 // asset. The node remains authoritative for bytes and content versions.
 type PhotoFile struct {
-	Confirmed store.PhotoAuthoredFields `json:"confirmed_fields,omitzero" maximum:"127" doc:"Confirmed fields bitmask: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, rotation=64. Zero means untouched. Empty text and zero values can be confirmed."`
+	Confirmed store.PhotoAuthoredFields `json:"confirmed_fields,omitzero" maximum:"127" doc:"Confirmed fields bitmask: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, rotation=64. An absent key means no confirmed fields; zero is omitted. Empty text and zero values can be confirmed."`
 	Revision  int64                     `json:"revision"`
 	Rating    int                       `json:"rating"`
 	Flag      string                    `json:"flag"`
