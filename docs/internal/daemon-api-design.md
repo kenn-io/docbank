@@ -187,6 +187,14 @@ documents' first and last sort keys, so deleting or moving a cursor's original
 row does not restart traversal. Subsequent requests read current state rather
 than retaining the earlier snapshot.
 
+Resolving selected summaries follows only the requested nodes and their
+ancestors to the vault root, sharing one path lookup per parent directory.
+Every node, current content version, and path must
+still match, and every ancestor must be live. The bounded batch resolves in one
+read snapshot and preserves request order; any stale identity rejects the whole
+batch. The same file-name, path-byte, and depth limits apply without traversing
+unrelated subtrees.
+
 ### MCP response budgets
 
 MCP success results carry the payload as both JSON text and structured content.
