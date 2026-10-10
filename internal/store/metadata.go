@@ -970,6 +970,9 @@ func (s *Store) importMetadata(ctx context.Context, r io.Reader) error {
 		if err := rebuildImportedTextExtractionStateTx(ctx, tx); err != nil {
 			return err
 		}
+		if err := markImportedSupersededLexicalGenerationsTx(ctx, tx); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE sqlite_sequence SET seq = ? WHERE name = 'nodes'`, header.NodeSequence); err != nil {
 			return fmt.Errorf("restoring node ID high-water mark: %w", err)
 		}
@@ -1902,4 +1905,19 @@ func loadWatchSourceNodes(
 		return nil, fmt.Errorf("iterating watched source %s: %w", kind, err)
 	}
 	return result, nil
+}
+
+// markImportedSupersededLexicalGenerationsTx restores the collection markers
+// that metadata JSONL does not carry. Export keeps a lexical generation only
+// while the head, a rendition job, or a durable root needs it. Every imported
+// generation other than the head is therefore superseded, and collection still
+// skips it while a job or an active root holds it.
+func markImportedSupersededLexicalGenerationsTx(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO rendition_lexical_superseded(generation_id)
+		SELECT g.generation_id FROM rendition_lexical_generations g
+		WHERE NOT EXISTS (SELECT 1 FROM rendition_lexical_heads h WHERE h.generation_id=g.generation_id)
+		ON CONFLICT(generation_id) DO NOTHING`); err != nil {
+		return fmt.Errorf("marking imported superseded lexical generations: %w", err)
+	}
+	return nil
 }

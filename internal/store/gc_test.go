@@ -2353,3 +2353,66 @@ func TestAllDerivativePurgeCollectsVectorsAfterVersionPrune(t *testing.T) {
 	assert.Equal(t, 1, report.RemovedEmbeddingVectorSets)
 	assert.Contains(t, report.PhysicalDerivativeBlobsPendingGC, set.VectorSet.PayloadBlobHash)
 }
+
+// Metadata JSONL keeps a superseded lexical generation while a durable root
+// holds it, but not the marker that lets publication collect it. Import must
+// mark it again, or releasing the root leaves it behind until a purge.
+func TestImportedSupersededLexicalGenerationIsCollectedAfterRootRelease(t *testing.T) {
+	t.Parallel()
+	s, versions := newRenditionCatalogFixture(t)
+	ctx := t.Context()
+	profile := catalogProcessingProfile(t, false)
+	selected := lexicalSearchBuild(s, profile, catalogBuildID, "superseded phrase")
+	require.NoError(t, s.StageRenditionBuild(ctx, selected))
+	replacement, replacementVersion := lexicalSearchReplacementBuild(
+		t, s, profile, fakeHash("be"), "current phrase",
+	)
+	require.NoError(t, s.StageRenditionBuild(ctx, replacement))
+	require.NoError(t, publishAttachmentForTest(t, s, RenditionAttachmentRecord{
+		ID: catalogAttachmentFirst, VaultID: s.VaultID(), ContentVersionID: versions[0],
+		BuildID: selected.ID, Profile: profile, AttachedAt: "2026-08-23T13:30:00.000000000Z",
+	}))
+	superseded, err := s.ActiveLexicalGeneration(ctx)
+	require.NoError(t, err)
+	root := CurrentRenditionRoot{
+		ID: "superseded-audit", Kind: RenditionRootAudit,
+		TargetKind: RenditionRootLexicalGeneration, TargetID: superseded.ID,
+		FencingToken: 1, RecordedAt: "2026-08-23T13:31:00.000000000Z",
+	}
+	require.NoError(t, s.PutCurrentRenditionRoot(ctx, root))
+	current, err := s.StageLexicalGeneration(ctx, fakeHash("bf"))
+	require.NoError(t, err)
+	replacementAttachment := RenditionAttachmentRecord{
+		ID: catalogAttachmentSecond, VaultID: s.VaultID(), ContentVersionID: replacementVersion,
+		BuildID: replacement.ID, Profile: profile, AttachedAt: "2026-08-23T13:32:00.000000000Z",
+	}
+	require.NoError(t, s.PublishRenditionAndLexicalHeads(ctx, replacementAttachment,
+		RenditionHeadRecord{
+			ContentVersionID: replacementVersion, ProcessingProfileFingerprint: profile.Fingerprint,
+			AttachmentID: replacementAttachment.ID, PublishedAt: "2026-08-23T13:33:00.000000000Z",
+		}, current.ID))
+
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &exported))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
+	countGeneration := func(id string) int {
+		var count int
+		require.NoError(t, restored.db.QueryRow(
+			`SELECT COUNT(*) FROM rendition_lexical_generations WHERE generation_id=?`, id).Scan(&count))
+		return count
+	}
+	require.Equal(t, 1, countGeneration(superseded.ID), "the durable root keeps the generation in JSONL")
+
+	released, err := restored.ReleaseCurrentRenditionRoot(ctx, root.ID, root.FencingToken)
+	require.NoError(t, err)
+	require.True(t, released)
+	var removed int
+	require.NoError(t, restored.withStorageTx(ctx, func(tx *sql.Tx) error {
+		removed, err = restored.collectSupersededLexicalGenerationsTx(ctx, tx)
+		return err
+	}))
+	assert.Equal(t, 1, removed)
+	assert.Zero(t, countGeneration(superseded.ID))
+	assert.Equal(t, 1, countGeneration(current.ID), "the head is never collected")
+}
