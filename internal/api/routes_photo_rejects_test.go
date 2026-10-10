@@ -25,6 +25,7 @@ func TestPhotoRejectRoutes(t *testing.T) {
 	var preview api.PhotoRejectsPreflight
 	require.NoError(t, json.Unmarshal([]byte(body), &preview))
 	require.Equal(t, 1, preview.Photos)
+	require.Equal(t, 1, preview.Movable)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, request)
 	require.Equal(t, http.StatusPreconditionFailed, response.StatusCode, body)
 	request.Digest = preview.Digest

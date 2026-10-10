@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button, Modal, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
-  import { photoRejectsMoveLimit, photoRejectsSelectionLimit, type Photos } from "./photos.svelte.js";
+  import { photoRejectsSelectionLimit, type Photos } from "./photos.svelte.js";
 
   let { photos, onclose, onmove }: { photos: Photos; onclose: () => void; onmove: () => Promise<void> } = $props();
 </script>
@@ -17,14 +17,14 @@
       <ul>{#each photos.rejects.mixed as pair}<li>{pair.members.map(member => `${member.name}: ${member.flag || "undecided"}${member.in_trash ? " (in Trash)" : ""}`).join(" · ")}</li>{/each}</ul>
       {#if photos.rejects.mixed_count > photos.rejects.mixed.length}<p>And {(photos.rejects.mixed_count - photos.rejects.mixed.length).toLocaleString()} more mixed pairs.</p>{/if}
     {/if}
-    {#if photos.rejects.photos > photoRejectsMoveLimit || photos.rejects.files > photoRejectsMoveLimit}<p role="alert">Select fewer photos. Each move allows up to {photoRejectsMoveLimit.toLocaleString()} photos and {photoRejectsMoveLimit.toLocaleString()} files.</p>{/if}
+    {#if photos.rejects.photos > photos.rejects.movable}<p>This moves {photos.rejects.movable.toLocaleString()} now. Choose Move rejects again for the remaining {(photos.rejects.photos - photos.rejects.movable).toLocaleString()}.</p>{/if}
     <p>You can restore these photos from Trash.</p>
   {/if}
   {#if photos.rejectsError}<p role="alert">{photos.rejectsError}</p>{/if}
   {#snippet footer()}
     <Button disabled={photos.trashing} onclick={onclose}>Keep in Docbank</Button>
     {#if !photos.rejects && !photos.rejectsLoading}<Button onclick={() => void photos.previewRejects(photos.rejectsSelected)}>Preview again</Button>{/if}
-    <Button tone="danger" disabled={photos.trashing || photos.rejectsLoading || !photos.rejects?.photos || photos.rejects.photos > photoRejectsMoveLimit || photos.rejects.files > photoRejectsMoveLimit} onclick={() => void onmove()}>{photos.trashing ? "Moving…" : `Move ${photos.rejects?.photos ?? 0} to trash`}</Button>
+    <Button tone="danger" disabled={photos.trashing || photos.rejectsLoading || !photos.rejects?.movable} onclick={() => void onmove()}>{photos.trashing ? "Moving…" : `Move ${photos.rejects?.movable ?? 0} to trash`}</Button>
   {/snippet}
 </Modal>
 

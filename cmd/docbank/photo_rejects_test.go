@@ -28,9 +28,9 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 			}
 			t.Run(strings.Join([]string{map[bool]string{false: "preview", true: "confirm"}[confirm], map[bool]string{false: "library", true: "hidden"}[hidden]}, "/"), func(t *testing.T) {
 				digest := strings.Repeat("a", 64)
-				photos := 1
+				photos, movable := 1001, 1000
 				if confirm && !hidden {
-					photos = 0
+					movable = 0
 				}
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
@@ -60,7 +60,7 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 					if hidden {
 						assert.Contains(t, r.Header.Get("Cookie"), "docbank-hidden-test=synthetic-token")
 					}
-					assert.NoError(t, json.MarshalWrite(w, api.PhotoRejectsPreflight{Digest: digest, Photos: photos, Files: photos, Unchanged: 1001}))
+					assert.NoError(t, json.MarshalWrite(w, api.PhotoRejectsPreflight{Digest: digest, Photos: photos, Files: photos, Movable: movable, Unchanged: 1001}))
 				}))
 				defer server.Close()
 				var out bytes.Buffer
@@ -73,8 +73,9 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 					request.Digest = digest
 				}
 				require.NoError(t, runPhotoRejects(cmd, daemonconn.New(server.URL, "synthetic-key"), request))
-				assert.Contains(t, out.String(), `"photos":`+map[int]string{0: "0", 1: "1"}[photos])
-				assert.Contains(t, out.String(), `"moved":`+map[bool]string{false: "false", true: "true"}[confirm && photos > 0])
+				assert.Contains(t, out.String(), `"photos":1001`)
+				assert.Contains(t, out.String(), `"remaining":`+map[int]string{0: "1001", 1000: "1"}[movable])
+				assert.Contains(t, out.String(), `"moved":`+map[bool]string{false: "false", true: "true"}[confirm && movable > 0])
 			})
 		}
 	}

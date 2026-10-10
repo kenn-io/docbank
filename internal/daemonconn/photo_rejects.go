@@ -8,6 +8,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/query"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func (c *Connection) PhotoRejects(ctx context.Context, request api.PhotoRejectsRequest, cookie string) (api.PhotoRejectsPreflight, error) {
@@ -41,7 +42,7 @@ func validatePhotoRejectsResponse(result *api.PhotoRejectsPreflight, digest stri
 	if result == nil {
 		return errors.New("missing rejects response")
 	}
-	if !validSHA256Hex(result.Digest) || digest != "" && result.Digest != digest || result.Photos < 0 || result.Files < result.Photos || result.Unchanged < 0 || result.MixedCount < len(result.Mixed) || result.MixedCount > result.Unchanged || len(result.Mixed) > 20 || digest != "" && (result.Photos > 1000 || result.Files > 1000) {
+	if !validSHA256Hex(result.Digest) || digest != "" && result.Digest != digest || result.Photos < 0 || result.Files < result.Photos || result.Unchanged < 0 || result.MixedCount < len(result.Mixed) || result.MixedCount > result.Unchanged || len(result.Mixed) > store.MaxPhotoRejectsMixed || result.Movable < 0 || result.Movable > result.Photos || result.Movable > store.MaxPhotoRejectsMove {
 		return errors.New("invalid rejects response")
 	}
 	for _, mixed := range result.Mixed {

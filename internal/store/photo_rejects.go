@@ -12,7 +12,8 @@ import (
 	"go.kenn.io/docbank/internal/query"
 )
 
-const maxPhotoRejectsMoveTargets = 1000
+const MaxPhotoRejectsMove = 1000
+const MaxPhotoRejectsMixed = 20
 
 type PhotoRejectsRequest struct {
 	Query    query.Query
@@ -35,6 +36,7 @@ type PhotoRejectMixed struct {
 type PhotoRejectsPreflight struct {
 	Digest     string             `json:"digest"`
 	Photos     int                `json:"photos"`
+	Movable    int                `json:"movable"`
 	Files      int                `json:"files"`
 	Unchanged  int                `json:"unchanged"`
 	Mixed      []PhotoRejectMixed `json:"mixed"`
@@ -52,7 +54,7 @@ func (s *Store) PreflightPhotoRejects(ctx context.Context, request PhotoRejectsR
 	return out, err
 }
 
-// MovePhotoRejects checks the preflight and trashes every eligible asset in one transaction.
+// MovePhotoRejects checks the preflight and trashes the reviewed batch in one transaction.
 func (s *Store) MovePhotoRejects(ctx context.Context, request PhotoRejectsRequest, digest string) (PhotoRejectsPreflight, error) {
 	var out PhotoRejectsPreflight
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
@@ -65,9 +67,6 @@ func (s *Store) MovePhotoRejects(ctx context.Context, request PhotoRejectsReques
 		out, ids, err = s.photoRejects(ctx, tx, generation.ID, request)
 		if err != nil {
 			return err
-		}
-		if out.Photos > maxPhotoRejectsMoveTargets || out.Files > maxPhotoRejectsMoveTargets {
-			return fmt.Errorf("%w: select fewer photos; moves allow at most %d photos or live files", ErrInvalidPhotoQuery, maxPhotoRejectsMoveTargets)
 		}
 		if digest == "" || digest != out.Digest {
 			return fmt.Errorf("%w: photo scope changed; preview rejects again", ErrStaleRevision)
@@ -188,12 +187,12 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 		if rejected == originals {
 			out.Photos++
 			out.Files += live
-			if out.Photos <= maxPhotoRejectsMoveTargets && out.Files <= maxPhotoRejectsMoveTargets {
+			if out.Photos <= MaxPhotoRejectsMove && out.Files <= MaxPhotoRejectsMove {
 				eligible = append(eligible, members[0].AssetID)
 			}
 		} else {
 			out.MixedCount++
-			if len(out.Mixed) < 20 {
+			if len(out.Mixed) < MaxPhotoRejectsMixed {
 				mixed := PhotoRejectMixed{AssetID: members[0].AssetID, Members: []PhotoRejectMember{}}
 				for _, member := range members {
 					if member.Role != PhotoRoleSidecar {
@@ -229,6 +228,7 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 	if closeErr != nil {
 		return out, nil, closeErr
 	}
+	out.Movable = len(eligible)
 	out.Unchanged -= out.Photos
 	out.Digest = hex.EncodeToString(hash.Sum(nil))
 	return out, eligible, nil

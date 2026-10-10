@@ -6,7 +6,6 @@ import { clearSelection, reconcileIDSelection, toggleIDSelection, type Selection
 
 export const photoQuery: SavedQueryV1Schema = { v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "capture_time", direction: "desc" } };
 export const photoRejectsSelectionLimit = 64;
-export const photoRejectsMoveLimit = 1000;
 const densityKey = "docbank.photos.density";
 
 export function loadDensity(): Density {
@@ -131,7 +130,8 @@ export class Photos {
     return this.loadMore(preserve);
   }
 
-  refresh(preserve?: () => (() => Promise<void>) | undefined) {
+  async refresh(preserve?: () => (() => Promise<void>) | undefined) {
+    if (this.trashing || this.hiding) return;
     return this.replace("refresh", preserve);
   }
 
@@ -159,7 +159,7 @@ export class Photos {
   }
 
   async trashRejects(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
-    if (this.disposed || this.listingInvalid || this.trashing || this.hiding || !this.rejects?.photos || this.rejects.photos > photoRejectsMoveLimit || this.rejects.files > photoRejectsMoveLimit) return false;
+    if (this.disposed || this.listingInvalid || this.trashing || this.hiding || !this.rejects?.movable) return false;
     if (this.rejectsScopeChanged()) {
       this.rejects = undefined;
       this.rejectsError = "Selection changed. Preview rejects again.";
@@ -174,7 +174,7 @@ export class Photos {
       this.rejects = undefined;
       this.invalidateRejectsListing();
       ontrashed?.();
-      await this.refresh(preserve);
+      await this.replace("refresh", preserve);
       return true;
     } catch (cause) {
       this.rejects = undefined;
@@ -184,7 +184,7 @@ export class Photos {
         this.rejectsError = "The move may have completed. Refresh Photos before trying again.";
         ontrashed?.();
       }
-      await this.refresh(preserve);
+      await this.replace("refresh", preserve);
       return false;
     } finally { this.trashing = false; }
   }
@@ -293,7 +293,7 @@ export class Photos {
         }
       }
       if (dispatched) oncomplete();
-      await this.refresh(preserve);
+      await this.replace("refresh", preserve);
       return successes;
     } finally { this[action] = false; }
   }

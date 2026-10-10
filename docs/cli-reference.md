@@ -187,7 +187,7 @@ docbank photos unhide <asset-id|node-selector> [--revision REV]
 docbank photos import <source-root> [destination] [--json]
 ```
 
-`rejects` previews the whole query, defaulting to Library. Repeat the same query with the returned digest in `--confirm` to move fully rejected photos and their sidecars atomically to recoverable trash. The response includes the pre-move counts and `moved: true` when confirmation moves at least one photo, otherwise `moved: false`. `--hidden` prompts for the passcode. `--coverage` and `--profile-fingerprint` select processing coverage. Moves are bounded to 1,000 eligible photos and 1,000 live files; retained photos do not consume the bound.
+`rejects` previews the whole query, defaulting to Library. Repeat the same query with the returned digest in `--confirm` to move fully rejected photos and their sidecars atomically to recoverable trash. The response includes the pre-move counts and `moved: true` when confirmation moves at least one photo, otherwise `moved: false`. `--hidden` prompts for the passcode. `--coverage` and `--profile-fingerprint` select processing coverage. Each confirmation moves a batch of up to 1,000 eligible photos and 1,000 live files in stable asset ID order; retained photos do not consume the bound. `movable` reports the batch size and `remaining` the eligible photos beyond it. Preview and confirm again for the rest.
 
 Photo commands emit JSON through the daemon. Image and concrete video files are
 enrolled when created. Generic RAW files require explicit promotion.

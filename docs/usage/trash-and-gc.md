@@ -55,7 +55,7 @@ Trashing a subtree stamps every node with the same trash time, so a nested
 directory trashed *before* its parent keeps its own trash entry. Restoring the
 parent leaves separately trashed items in trash unless photo-group recovery includes them.
 
-Photos' **Move to trash** action and `docbank photos assets trash <asset-id>` move all asset members together with an asset revision check. The browser trash drawer and paginated TUI list group independently trashed photo members into one row. The CLI's unpaged list keeps its ordinary node listing. Restoring any photo member restores its whole group, including companions in other folders. If that member belongs to a trashed folder, restore also recovers the folder's original subtree.
+Photos' **Move rejects** action and `docbank photos rejects` move a reviewed batch of fully rejected photos and their sidecars to recoverable trash. Photos' **Move to trash** action and `docbank photos assets trash <asset-id>` move all asset members together with an asset revision check. The browser trash drawer and paginated TUI list group independently trashed photo members into one row. The CLI's unpaged list keeps its ordinary node listing. Restoring any photo member restores its whole group, including companions in other folders. If that member belongs to a trashed folder, restore also recovers the folder's original subtree.
 
 Recovery follows companions transitively. A recovered folder brings back the companions of every photo inside it, and any trashed folder holding one of those companions returns with all its contents. One restore can therefore recover several folders. The restore response and `docbank restore` report only the selected node; list the trash afterward to see what remains.
 

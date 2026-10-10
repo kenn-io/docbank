@@ -12021,6 +12021,9 @@ components:
         mixed_count:
           format: int64
           type: integer
+        movable:
+          format: int64
+          type: integer
         photos:
           format: int64
           type: integer
@@ -12030,6 +12033,7 @@ components:
       required:
         - digest
         - photos
+        - movable
         - files
         - unchanged
         - mixed

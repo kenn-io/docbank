@@ -45,6 +45,7 @@ func runPhotoRejects(cmd *cobra.Command, c *daemonconn.Connection, request api.P
 	return writeCLIJSON(cmd.OutOrStdout(), struct {
 		api.PhotoRejectsPreflight
 
-		Moved bool `json:"moved"`
-	}{result, request.Digest != "" && result.Photos > 0})
+		Moved     bool `json:"moved"`
+		Remaining int  `json:"remaining"`
+	}{result, request.Digest != "" && result.Movable > 0, result.Photos - result.Movable})
 }

@@ -10,11 +10,12 @@ it("keeps Library preview available when selected scope exceeds 64 photos", asyn
   Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
   const photos = new Photos("scoped", vi.fn());
   photos.selection.selectedIDs = new Set(Array.from({ length: 65 }, (_, i) => `photo-${i}`));
-  photos.rejects = { digest: "a".repeat(64), photos: 2, files: 2, unchanged: 65, mixed: [{ asset_id: "mixed", members: [{ file_id: "raw", name: "photo.raw", flag: "reject", in_trash: false }, { file_id: "jpeg", name: "photo.jpg", flag: "pick", in_trash: true }] }], mixed_count: 1 };
+  photos.rejects = { digest: "a".repeat(64), photos: 1001, movable: 1000, files: 1001, unchanged: 65, mixed: [{ asset_id: "mixed", members: [{ file_id: "raw", name: "photo.raw", flag: "reject", in_trash: false }, { file_id: "jpeg", name: "photo.jpg", flag: "pick", in_trash: true }] }], mixed_count: 1 };
   render(PhotoRejectsModal, { photos, onclose: vi.fn(), onmove: vi.fn() });
-  expect(screen.getByText("2 photos · 2 files including sidecars")).toBeTruthy();
+  expect(screen.getByText("1,001 photos · 1,001 files including sidecars")).toBeTruthy();
   expect(screen.getByText("photo.raw: reject · photo.jpg: pick (in Trash)")).toBeTruthy();
-  expect((screen.getByRole("button", { name: "Move 2 to trash" }) as HTMLButtonElement).disabled).toBe(false);
+  expect((screen.getByRole("button", { name: "Move 1000 to trash" }) as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.getByText("This moves 1,000 now. Choose Move rejects again for the remaining 1.")).toBeTruthy();
   await fireEvent.click(screen.getByRole("combobox", { name: "Rejects scope: Library" }));
   expect((screen.getByRole("option", { name: "Selected photos (65)" }) as HTMLButtonElement).disabled).toBe(true);
   expect((screen.getByRole("option", { name: "Library" }) as HTMLButtonElement).disabled).toBe(false);
