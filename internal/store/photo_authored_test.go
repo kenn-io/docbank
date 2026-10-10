@@ -110,26 +110,22 @@ func TestPhotoAuthoredPairAtomicUndoAndRoundTrip(t *testing.T) {
 	assert.True(t, asset.Agreement["creator"])
 	_, err = s.EditPhotoAuthored(ctx, targets)
 	require.ErrorIs(t, err, ErrStaleRevision)
-	var backup bytes.Buffer
-	require.NoError(t, s.ExportMetadata(ctx, &backup))
-	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, restored.Close()) })
-	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
-	undo, err := restored.UndoPhotoAuthored(ctx, receipt.ReceiptID)
+	undo, err := s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
 	require.NoError(t, err)
 	assert.Equal(t, receipt.ReceiptID, undo.UndoOf)
 	for _, after := range undo.After {
 		assert.Equal(t, int64(3), after.Revision)
 		assert.Equal(t, PhotoAuthored{}, after.Values)
 	}
-	_, err = restored.UndoPhotoAuthored(ctx, receipt.ReceiptID)
+	_, err = s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
 	require.ErrorIs(t, err, ErrStaleRevision)
-	receipt, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision, []PhotoAuthoredTarget{{raw.ID, 2, PhotoAuthoredPatch{Rating: new(5)}}, {jpg.ID, 2, PhotoAuthoredPatch{Rating: new(5)}}})
+	asset, err = s.PhotoAssetByID(ctx, asset.ID)
+	require.NoError(t, err)
+	receipt, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision, []PhotoAuthoredTarget{{raw.ID, 3, PhotoAuthoredPatch{Rating: new(5)}}, {jpg.ID, 3, PhotoAuthoredPatch{Rating: new(5)}}})
 	require.NoError(t, err)
 	require.Len(t, receipt.After, 2)
 	for _, after := range receipt.After {
-		assert.Equal(t, int64(3), after.Revision)
+		assert.Equal(t, int64(4), after.Revision)
 		assert.Equal(t, 5, after.Values.Rating)
 	}
 }

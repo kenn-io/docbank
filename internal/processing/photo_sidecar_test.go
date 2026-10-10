@@ -184,7 +184,7 @@ func TestPhotoSidecarImportInitialization(t *testing.T) {
 	for _, file := range []struct{ name, role, mime, payload string }{
 		{"capture.ARW", store.PhotoRoleRAW, "image/x-sony-arw", "synthetic RAW"},
 		{"capture.JPG", store.PhotoRoleImage, "image/jpeg", "synthetic JPEG"},
-		{"capture.XMP", store.PhotoRoleSidecar, "application/rdf+xml", photoSidecarHeader + ` xmp:Rating="4" xmp:Label="Red"><dc:description>River</dc:description>` + photoSidecarFooter},
+		{"capture.XMP", store.PhotoRoleSidecar, "application/rdf+xml", photoSidecarHeader + ` xmp:Rating="4"><dc:creator rdf:nodeID="author"/>` + photoSidecarFooter},
 	} {
 		receipt, writeErr := blobs.WriteDetailedContext(ctx, strings.NewReader(file.payload))
 		require.NoError(t, writeErr)
@@ -207,6 +207,29 @@ func TestPhotoSidecarImportInitialization(t *testing.T) {
 	require.Len(t, sidecars, 1)
 	receipt, err := catalog.InitializePhotoSidecar(ctx, sidecars[0])
 	require.NoError(t, err)
+	require.Empty(t, receipt.ReceiptID)
+	undecided, err := catalog.PhotoAssetForNode(ctx, imported.Nodes[0].ID)
+	require.NoError(t, err)
+	for _, file := range undecided.Files {
+		assert.Equal(t, store.PhotoAuthored{}, file.Authored())
+		assert.Equal(t, int64(1), file.Revision)
+	}
+	replacement := photoSidecarHeader + ` xmp:Rating="4" xmp:Label="Red"><dc:description>River</dc:description>` + photoSidecarFooter
+	written, err := blobs.WriteDetailedContext(ctx, strings.NewReader(replacement))
+	require.NoError(t, err)
+	encoding, err := written.EncodingName()
+	require.NoError(t, err)
+	sidecar := imported.Nodes[2]
+	sidecar, _, err = catalog.ReplaceContent(ctx, sidecar.ID, sidecar.Revision, written.Hash, written.Size, "application/rdf+xml", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize, PackEligible: written.PackEligible, Created: written.Created})
+	require.NoError(t, err)
+	count, err := BackfillSourceMetadataTargets(ctx, catalog, blobs, t.TempDir(), []store.SourceMetadataTarget{{SourceSHA256: sidecar.BlobHash, Size: sidecar.Size}})
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+	sidecars, err = catalog.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
+	require.NoError(t, err)
+	require.Len(t, sidecars, 1)
+	receipt, err = catalog.InitializePhotoSidecar(ctx, sidecars[0])
+	require.NoError(t, err)
 	require.NotEmpty(t, receipt.ReceiptID)
 	require.Equal(t, store.PhotoConfirmedRating|store.PhotoConfirmedLabel|store.PhotoConfirmedCaption, receipt.After[0].Values.Confirmed)
 	asset, err := catalog.PhotoAssetForNode(ctx, imported.Nodes[0].ID)
@@ -224,38 +247,6 @@ func TestPhotoSidecarImportInitialization(t *testing.T) {
 			assert.Equal(t, int64(1), file.Revision)
 		}
 	}
-	emptyCatalog, emptyBlobs, photo, sidecar, _ := photoSidecarFixture(t, []byte(photoSidecarHeader+` xmp:Rating="4"><dc:creator rdf:nodeID="author"/>`+photoSidecarFooter))
-	initialize := func(node store.Node) store.PhotoAuthoredReceipt {
-		count, err := BackfillSourceMetadataTargets(ctx, emptyCatalog, emptyBlobs, t.TempDir(), []store.SourceMetadataTarget{{SourceSHA256: node.BlobHash, Size: node.Size}})
-		require.NoError(t, err)
-		require.Equal(t, 1, count)
-		targets, err := emptyCatalog.MissingPhotoSidecarsAfter(ctx, SourceMetadataExtractorFingerprint, "", 10)
-		require.NoError(t, err)
-		require.Len(t, targets, 1)
-		receipt, err := emptyCatalog.InitializePhotoSidecar(ctx, targets[0])
-		require.NoError(t, err)
-		return receipt
-	}
-	require.Empty(t, initialize(sidecar).ReceiptID)
-	undecided, err := emptyCatalog.PhotoAssetForNode(ctx, photo.ID)
-	require.NoError(t, err)
-	for _, file := range undecided.Files {
-		if file.NodeID == photo.ID {
-			assert.Equal(t, store.PhotoAuthored{}, file.Authored())
-			assert.Equal(t, int64(1), file.Revision)
-		}
-	}
-	replacement := []byte(photoSidecarHeader + ` xmp:Rating="4">` + photoSidecarFooter)
-	written, err := emptyBlobs.WriteDetailedContext(ctx, bytes.NewReader(replacement))
-	require.NoError(t, err)
-	encoding, err := written.EncodingName()
-	require.NoError(t, err)
-	sidecar, _, err = emptyCatalog.ReplaceContent(ctx, sidecar.ID, sidecar.Revision, written.Hash, written.Size, "application/rdf+xml", store.BlobPhysical{Encoding: encoding, StoredBytes: written.StoredSize, PackEligible: written.PackEligible, Created: written.Created})
-	require.NoError(t, err)
-	receipt = initialize(sidecar)
-	require.NotEmpty(t, receipt.ReceiptID)
-	require.Equal(t, store.PhotoConfirmedRating, receipt.After[0].Values.Confirmed)
-	require.Equal(t, 4, receipt.After[0].Values.Rating)
 }
 
 func TestMetadataCollectorAuthoredTextPresence(t *testing.T) {
