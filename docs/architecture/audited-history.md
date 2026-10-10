@@ -866,7 +866,7 @@ Nested record schemas are:
 | `known_origin` | `node_id:u64`, `parent_id:u64`, `name:bytes` |
 | `topology_node` | `node_id:u64`, `parent_id:?u64`, `name:bytes`, `node_kind:text`, `state:state`, `origin:?record`, `created_at:timestamp`, `modified_at:timestamp`, `trashed_at:?timestamp` |
 | `content_version` | `version_id:uuid`, `node_id:u64`, `blob_hash:digest`, `size:u64`, `media_type:?text`, `recorded_at:timestamp`, `node_revision:u64`, `introduced_operation_id:uuid`, `transition_kind:text`, `source_version_id:?uuid` |
-| `photo_authored` | `file_id:uuid`, `node_id:u64`, `revision:u64`, `rating:u64`, `flag:text`, `label:text`, `caption:text`, `creator:text`, `copyright:text`, `rotation:u64` |
+| `photo_authored` | `file_id:uuid`, `node_id:u64`, `revision:u64`, `rating:u64`, `flag:text`, `label:text`, `caption:text`, `creator:text`, `copyright:text`, `rotation:u64`, `confirmed_fields:u64` |
 | `photo_authored_identity` | `file_id:uuid` |
 | `tag_definition` | `tag_id:uuid`, `name:text` |
 | `tag_assignment` | `tag_id:uuid`, `node_id:u64` |
@@ -889,6 +889,8 @@ Nested record schemas are:
 | `witness_change` | `node_id:u64`, `generation_operation_id:uuid`, `action:action`, `state_digest:?digest` |
 | `attached_metadata_change` | `record_kind:text`, `stable_identity:record`, `pre:?record`, `post:?record` |
 | `audit_event` | `event_id:digest`, `operation_id:uuid`, `node_id:u64`, `event_kind:text`, `scope_id:uuid`, `target_node_id:?u64`, `attachment_kind:?text`, `attachment_identity:?record`, `source_version_id:?uuid`, `event_ordinal:u64`, `recorded_at:timestamp`, `prior_node_revision:u64`, `resulting_node_revision:u64`, `prior_current_version_id:?uuid`, `resulting_current_version_id:?uuid`, `origin:text`, `agent_label:?text`, `pre:?record`, `post:?record`, `topology_delta:?digest`, `baseline_digest:?digest` |
+
+`photo_authored.confirmed_fields` supports masks from 0 through 127. See [photo decisions](https://github.com/kenn-io/docbank/blob/main/docs/usage/photos.md#ratings-and-other-decisions) for the field bits.
 
 In that table, `record` means one complete nested canonical record of the applicable
 registered kind. An attached-metadata change permits only `tag_definition`,

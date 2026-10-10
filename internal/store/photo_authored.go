@@ -29,18 +29,8 @@ const (
 
 const PhotoConfirmedAll = PhotoConfirmedRating | PhotoConfirmedFlag | PhotoConfirmedLabel | PhotoConfirmedCaption | PhotoConfirmedCreator | PhotoConfirmedCopyright | PhotoConfirmedRotation
 
-func (fields PhotoAuthoredFields) Names() []string {
-	names := []string{}
-	for i, name := range []string{"rating", "flag", "label", "caption", "creator", "copyright", "rotation"} {
-		if fields&(1<<i) != 0 {
-			names = append(names, name)
-		}
-	}
-	return names
-}
-
 type PhotoAuthored struct {
-	Confirmed PhotoAuthoredFields `json:"confirmed_fields,omitzero" maximum:"127" doc:"Confirmed fields bitmask: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, rotation=64. Zero means untouched. Empty text and zero values can be confirmed."`
+	Confirmed PhotoAuthoredFields `json:"confirmed_fields,omitzero" maximum:"127" doc:"Confirmation mask. See PhotoFile.confirmed_fields for supported bits."`
 	Rating    int                 `json:"rating"`
 	Flag      string              `json:"flag"`
 	Label     string              `json:"label"`
@@ -54,14 +44,10 @@ func ValidatePhotoAuthored(v PhotoAuthored) error {
 	if v.Confirmed & ^PhotoConfirmedAll != 0 || v.Rating < 0 || v.Rating > 5 || !query.ValidPhotoFlag(v.Flag) || !query.ValidPhotoColorLabel(v.Label) || !slices.Contains([]int{0, 90, 180, 270}, v.Rotation) {
 		return fmt.Errorf("%w: invalid authored photo decision", ErrInvalidPhotoAsset)
 	}
-	if v.Confirmed&PhotoConfirmedRating == 0 && v.Rating != 0 ||
-		v.Confirmed&PhotoConfirmedFlag == 0 && v.Flag != "" ||
-		v.Confirmed&PhotoConfirmedLabel == 0 && v.Label != "" ||
-		v.Confirmed&PhotoConfirmedCaption == 0 && v.Caption != "" ||
-		v.Confirmed&PhotoConfirmedCreator == 0 && v.Creator != "" ||
-		v.Confirmed&PhotoConfirmedCopyright == 0 && v.Copyright != "" ||
-		v.Confirmed&PhotoConfirmedRotation == 0 && v.Rotation != 0 {
-		return fmt.Errorf("%w: invalid authored photo decision", ErrInvalidPhotoAsset)
+	for _, field := range photoAuthoredFields {
+		if v.Confirmed&field.bit == 0 && field.nonDefault(&v) {
+			return fmt.Errorf("%w: unconfirmed authored photo %s", ErrInvalidPhotoAsset, field.name)
+		}
 	}
 	for _, text := range []string{v.Caption, v.Creator, v.Copyright} {
 		if len(text) > MaxPhotoAuthoredTextBytes || !utf8.ValidString(text) || slices.Contains([]byte(text), byte(0)) {
@@ -83,36 +69,51 @@ type PhotoAuthoredPatch struct {
 	Creator   *string `json:"creator,omitzero"`
 	Copyright *string `json:"copyright,omitzero"`
 	Rotation  *int    `json:"rotation,omitzero"`
+	confirmed *PhotoAuthoredFields
+}
+
+type photoAuthoredField struct {
+	name       string
+	bit        PhotoAuthoredFields
+	nonDefault func(*PhotoAuthored) bool
+	setPatch   func(*PhotoAuthoredPatch, *PhotoAuthored)
+	apply      func(PhotoAuthoredPatch, *PhotoAuthored) bool
+}
+
+func authoredField[T comparable](name string, bit PhotoAuthoredFields, value func(*PhotoAuthored) *T, patch func(*PhotoAuthoredPatch) **T) photoAuthoredField {
+	var zero T
+	return photoAuthoredField{
+		name: name, bit: bit,
+		nonDefault: func(v *PhotoAuthored) bool { return *value(v) != zero },
+		setPatch:   func(p *PhotoAuthoredPatch, v *PhotoAuthored) { *patch(p) = value(v) },
+		apply: func(p PhotoAuthoredPatch, v *PhotoAuthored) bool {
+			if supplied := *patch(&p); supplied != nil {
+				*value(v) = *supplied
+				return true
+			}
+			return false
+		},
+	}
+}
+
+var photoAuthoredFields = [...]photoAuthoredField{
+	authoredField("rating", PhotoConfirmedRating, func(v *PhotoAuthored) *int { return &v.Rating }, func(p *PhotoAuthoredPatch) **int { return &p.Rating }),
+	authoredField("flag", PhotoConfirmedFlag, func(v *PhotoAuthored) *string { return &v.Flag }, func(p *PhotoAuthoredPatch) **string { return &p.Flag }),
+	authoredField("label", PhotoConfirmedLabel, func(v *PhotoAuthored) *string { return &v.Label }, func(p *PhotoAuthoredPatch) **string { return &p.Label }),
+	authoredField("caption", PhotoConfirmedCaption, func(v *PhotoAuthored) *string { return &v.Caption }, func(p *PhotoAuthoredPatch) **string { return &p.Caption }),
+	authoredField("creator", PhotoConfirmedCreator, func(v *PhotoAuthored) *string { return &v.Creator }, func(p *PhotoAuthoredPatch) **string { return &p.Creator }),
+	authoredField("copyright", PhotoConfirmedCopyright, func(v *PhotoAuthored) *string { return &v.Copyright }, func(p *PhotoAuthoredPatch) **string { return &p.Copyright }),
+	authoredField("rotation", PhotoConfirmedRotation, func(v *PhotoAuthored) *int { return &v.Rotation }, func(p *PhotoAuthoredPatch) **int { return &p.Rotation }),
 }
 
 func (p PhotoAuthoredPatch) apply(v PhotoAuthored) PhotoAuthored {
-	if p.Rating != nil {
-		v.Rating = *p.Rating
-		v.Confirmed |= PhotoConfirmedRating
+	for _, field := range photoAuthoredFields {
+		if field.apply(p, &v) {
+			v.Confirmed |= field.bit
+		}
 	}
-	if p.Flag != nil {
-		v.Flag = *p.Flag
-		v.Confirmed |= PhotoConfirmedFlag
-	}
-	if p.Label != nil {
-		v.Label = *p.Label
-		v.Confirmed |= PhotoConfirmedLabel
-	}
-	if p.Caption != nil {
-		v.Caption = *p.Caption
-		v.Confirmed |= PhotoConfirmedCaption
-	}
-	if p.Creator != nil {
-		v.Creator = *p.Creator
-		v.Confirmed |= PhotoConfirmedCreator
-	}
-	if p.Copyright != nil {
-		v.Copyright = *p.Copyright
-		v.Confirmed |= PhotoConfirmedCopyright
-	}
-	if p.Rotation != nil {
-		v.Rotation = *p.Rotation
-		v.Confirmed |= PhotoConfirmedRotation
+	if p.confirmed != nil {
+		v.Confirmed = *p.confirmed
 	}
 	return v
 }
@@ -241,7 +242,7 @@ func (s *Store) EditPhotoAuthored(ctx context.Context, targets []PhotoAuthoredTa
 	var result PhotoAuthoredReceipt
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		result, err = s.applyPhotoAuthoredTx(ctx, tx, targets, "", nil, false, nil)
+		result, err = s.applyPhotoAuthoredTx(ctx, tx, targets, "", nil, false)
 		return err
 	})
 	return result, err
@@ -270,13 +271,13 @@ func (s *Store) EditPhotoPair(ctx context.Context, assetID string, revision int6
 		if count != len(targets) {
 			return ErrInvalidPhotoAsset
 		}
-		result, err = s.applyPhotoAuthoredTx(ctx, tx, targets, "", nil, true, nil)
+		result, err = s.applyPhotoAuthoredTx(ctx, tx, targets, "", nil, true)
 		return err
 	})
 	return result, err
 }
 
-func (s *Store) applyPhotoAuthoredTx(ctx context.Context, tx *sql.Tx, targets []PhotoAuthoredTarget, undoOf string, sidecar *PhotoSidecarProvenance, force bool, restore map[string]PhotoAuthoredFields) (PhotoAuthoredReceipt, error) {
+func (s *Store) applyPhotoAuthoredTx(ctx context.Context, tx *sql.Tx, targets []PhotoAuthoredTarget, undoOf string, sidecar *PhotoSidecarProvenance, force bool) (PhotoAuthoredReceipt, error) {
 	result := PhotoAuthoredReceipt{UndoOf: undoOf, Sidecar: sidecar, Before: []PhotoAuthoredSnapshot{}, After: []PhotoAuthoredSnapshot{}}
 	if len(targets) < 1 || len(targets) > maxBatchTagTargets {
 		return result, ErrInvalidPhotoAsset
@@ -314,9 +315,6 @@ func (s *Store) applyPhotoAuthoredTx(ctx context.Context, tx *sql.Tx, targets []
 			return result, ErrNotFound
 		}
 		v := t.Patch.apply(f.Authored())
-		if restore != nil {
-			v.Confirmed = restore[t.FileID]
-		}
 		if err := ValidatePhotoAuthored(v); err != nil {
 			return result, err
 		}
@@ -385,13 +383,11 @@ func (s *Store) UndoPhotoAuthored(ctx context.Context, id string) (PhotoAuthored
 			return err
 		}
 		targets := make([]PhotoAuthoredTarget, len(receipt.After))
-		restore := make(map[string]PhotoAuthoredFields, len(targets))
 		for i, a := range receipt.After {
 			v := receipt.Before[i].Values
-			restore[a.FileID] = v.Confirmed
-			targets[i] = PhotoAuthoredTarget{a.FileID, a.Revision, PhotoAuthoredPatch{&v.Rating, &v.Flag, &v.Label, &v.Caption, &v.Creator, &v.Copyright, &v.Rotation}}
+			targets[i] = PhotoAuthoredTarget{a.FileID, a.Revision, PhotoAuthoredPatch{Rating: &v.Rating, Flag: &v.Flag, Label: &v.Label, Caption: &v.Caption, Creator: &v.Creator, Copyright: &v.Copyright, Rotation: &v.Rotation, confirmed: &v.Confirmed}}
 		}
-		result, err = s.applyPhotoAuthoredTx(ctx, tx, targets, id, nil, true, restore)
+		result, err = s.applyPhotoAuthoredTx(ctx, tx, targets, id, nil, true)
 		return err
 	})
 	return result, err
