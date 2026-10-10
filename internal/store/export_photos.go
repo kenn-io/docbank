@@ -146,6 +146,9 @@ func (s *Store) exportPhotoInput(ctx context.Context, q metadataQuerier, m bundl
 	if err != nil {
 		return i, err
 	}
+	if m.Revision != 0 && m.Revision != i.NodeRevision {
+		return i, bundle.ErrConflict
+	}
 	if hidden.Valid {
 		if _, err := s.hiddenSession(ctx, q); err != nil {
 			return i, err

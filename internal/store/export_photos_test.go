@@ -18,6 +18,10 @@ func TestPhotoExportPlanSealsFrozenInputsAndOwnsArtifact(t *testing.T) {
 	m := bundle.Member{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: n.BlobHash, Size: n.Size}
 	source, err := s.CreateExportSource(ctx, "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{m}}, nil)
 	require.NoError(t, err)
+	pinnedMember := m
+	pinnedMember.Revision = n.Revision
+	pinnedSource, err := s.CreateExportSource(ctx, "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{pinnedMember}}, nil)
+	require.NoError(t, err)
 	r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true, RemoveGPS: true}}
 	inputs, err := s.ExportPhotoInputs(ctx, "owner", r)
 	require.NoError(t, err)
@@ -28,6 +32,11 @@ func TestPhotoExportPlanSealsFrozenInputsAndOwnsArtifact(t *testing.T) {
 	rating := 4
 	_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision, Patch: PhotoAuthoredPatch{Rating: &rating}}})
 	require.NoError(t, err)
+	pinnedRequest := r
+	pinnedRequest.SourceID, pinnedRequest.MemberHash = pinnedSource.ID, pinnedSource.MemberHash
+	_, err = s.ExportPhotoInputs(ctx, "owner", pinnedRequest)
+	require.ErrorIs(t, err, bundle.ErrConflict)
+	require.ErrorContains(t, err, fmt.Sprintf("photo %d", n.ID))
 	_, err = s.SealPhotoExportPlan(ctx, "owner", r, []PreparedPhotoExport{a})
 	require.ErrorIs(t, err, bundle.ErrConflict)
 	require.ErrorContains(t, err, fmt.Sprintf("photo %d", n.ID))

@@ -2,6 +2,7 @@ package processing
 
 import (
 	"bytes"
+	"compress/zlib"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -46,6 +47,17 @@ func TestPhotoExportTrailingEXIFCreditsNamespacesAndICC(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, image.Rect(0, 0, 2, 3), decoded.Bounds())
 	packet := []byte(photoSidecarHeader + ` dc:creator="Embedded credit" dc:rights="Embedded rights" dc:description="Embedded caption" dc:subject="Embedded keyword" xmlns:keep="https://example.org/photo/" keep:Orientation="77"><keep:ImageWidth>12345</keep:ImageWidth>` + photoSidecarFooter)
+	var compressed, tagged bytes.Buffer
+	writer := zlib.NewWriter(&compressed)
+	_, err = writer.Write(packet)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	tagged.Write(source.Bytes()[:source.Len()-12])
+	writePhotoPNGChunk(&tagged, "iTXt", append([]byte(photoXMPPNGKeyword+"\x00\x01\x00\x00\x00"), compressed.Bytes()...))
+	tagged.Write(source.Bytes()[source.Len()-12:])
+	compressedPackets, err := photoSourcePackets(t.Context(), tagged.Bytes(), true)
+	require.NoError(t, err)
+	require.Equal(t, packet, compressedPackets.xmp)
 	input := store.PhotoExportInput{Authored: store.PhotoAuthored{Rating: 4, Confirmed: store.PhotoConfirmedRating}}
 	merged, err := mergePhotoXMP(t.Context(), packet, input, receipt)
 	require.NoError(t, err)
@@ -296,22 +308,48 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, input.Authored, actual)
 	}
-	for _, flag := range []string{"pick", ""} {
+	for _, flag := range []string{"pick", "", "reject"} {
 		for _, property := range []string{` xmp:Rating="-1">`, `><xmp:Rating>-<!--split-->1</xmp:Rating>`, `><xmp:Rating><rdf:value>-1</rdf:value></xmp:Rating>`, ` xmp:Rating="4">`, `><xmp:Rating>4</xmp:Rating>`, `><xmp:Rating><rdf:value>4</rdf:value></xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/" exif:GPSLatitude="12,30N">4</xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/"><rdf:value>4</rdf:value><exif:GPSLatitude>12,30N</exif:GPSLatitude></xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/"><rdf:value>-1</rdf:value><exif:GPSLatitude>12,30N</exif:GPSLatitude></xmp:Rating>`} {
-			for _, format := range []string{"jpeg", "png"} {
-				packet := []byte(photoSidecarHeader + property + photoSidecarFooter)
-				packets, _ := render(nil, packet, store.PhotoAuthored{Confirmed: store.PhotoConfirmedFlag, Flag: flag}, nil, format, true)
-				require.NotContains(t, string(packets.xmp), "GPSLatitude")
-				actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
-				require.NoError(t, err)
-				require.Equal(t, flag, actual.Flag)
-				if strings.Contains(property, "4") {
-					require.Equal(t, 4, actual.Rating)
-				} else {
-					require.Zero(t, actual.Rating)
+			for _, spelling := range []string{"-1", "-01"} {
+				property := strings.ReplaceAll(property, "-1", spelling)
+				property = strings.ReplaceAll(property, "-<!--split-->1", "-<!--split-->"+spelling[1:])
+				for _, confirmed := range []store.PhotoAuthoredFields{0, store.PhotoConfirmedFlag, store.PhotoConfirmedRating, store.PhotoConfirmedFlag | store.PhotoConfirmedRating} {
+					for _, format := range []string{"jpeg", "png"} {
+						packet := []byte(photoSidecarHeader + property + photoSidecarFooter)
+						packets, _ := render(nil, packet, store.PhotoAuthored{Confirmed: confirmed, Rating: 3, Flag: flag}, nil, format, true)
+						require.NotContains(t, string(packets.xmp), "GPSLatitude")
+						actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
+						require.NoError(t, err)
+						wantFlag, wantRating := "", 0
+						if strings.Contains(property, "4") {
+							wantRating = 4
+						} else {
+							wantFlag = "reject"
+						}
+						if confirmed&store.PhotoConfirmedFlag != 0 {
+							wantFlag = flag
+						}
+						if confirmed&store.PhotoConfirmedRating != 0 {
+							wantRating = 3
+						}
+						require.Equal(t, wantFlag, actual.Flag)
+						require.Equal(t, wantRating, actual.Rating)
+					}
 				}
 			}
 		}
+	}
+	for _, property := range []string{` ts:Pick="pick"><xmp:Rating>-01</xmp:Rating>`, `><ts:Pick>pick</ts:Pick><xmp:Rating>-01</xmp:Rating>`, `><xmp:Rating>-01</xmp:Rating><ts:Pick>pick</ts:Pick>`, ` ts:Pick="pick"><xmp:Rating>4</xmp:Rating>`} {
+		packet := []byte(photoSidecarHeader + property + photoSidecarFooter)
+		packets, _ := render(nil, packet, store.PhotoAuthored{Confirmed: store.PhotoConfirmedRating, Rating: 3}, nil, "png", true)
+		actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
+		require.NoError(t, err)
+		flag := "reject"
+		if strings.Contains(property, ">4<") {
+			flag = "pick"
+		}
+		require.Equal(t, flag, actual.Flag)
+		require.Equal(t, 3, actual.Rating)
 	}
 	var value []byte
 	for _, ch := range "Synthetic embedded credit" {
@@ -404,6 +442,50 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 	require.Error(t, err)
 	_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(bad), input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90}, nil)
 	require.NoError(t, err)
+	oversized := bytes.Repeat([]byte{'x'}, maxPhotoSidecarBytes+1)
+	var compressed bytes.Buffer
+	writer := zlib.NewWriter(&compressed)
+	_, err = writer.Write(oversized)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	for _, test := range []struct {
+		format, kind string
+		payload      []byte
+		skipped      bool
+	}{
+		{"png", "eXIf", oversized, false},
+		{"png", "iTXt", append([]byte(photoXMPPNGKeyword+"\x00\x00\x00\x00\x00"), oversized...), true},
+		{"png", "iTXt", append([]byte(photoXMPPNGKeyword+"\x00\x01\x00\x00\x00"), compressed.Bytes()...), true},
+		{"png", "iTXt", append([]byte(photoXMPPNGKeyword+"\x00\x00\x00"), oversized...), true},
+		{"png", "iCCP", append([]byte("Profile\x00\x00"), compressed.Bytes()...), false},
+		{"webp", "EXIF", oversized, false},
+		{"webp", "ICCP", oversized, false},
+		{"webp", "XMP ", oversized, true},
+	} {
+		var container bytes.Buffer
+		if test.format == "png" {
+			container.WriteString("\x89PNG\r\n\x1a\n")
+			writePhotoPNGChunk(&container, test.kind, test.payload)
+			writePhotoPNGChunk(&container, "IEND", nil)
+		} else {
+			container.WriteString("RIFF")
+			padding := len(test.payload) % 2
+			require.NoError(t, binary.Write(&container, binary.LittleEndian, uint32(12+len(test.payload)+padding)))
+			container.WriteString("WEBP" + test.kind)
+			require.NoError(t, binary.Write(&container, binary.LittleEndian, uint32(len(test.payload))))
+			container.Write(test.payload)
+			container.Write(make([]byte, padding))
+		}
+		_, err = photoSourcePackets(t.Context(), container.Bytes(), true)
+		require.ErrorIs(t, err, errVisualMetadataLimit, test.kind)
+		_, err = photoSourcePackets(t.Context(), container.Bytes(), false)
+		if test.skipped {
+			require.NoError(t, err, test.kind)
+		} else {
+			require.ErrorIs(t, err, errVisualMetadataLimit, test.kind)
+		}
+	}
+
 	input.Member.SHA256 = strings.Repeat("0", 64)
 	_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(bad), input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90}, nil)
 	require.Error(t, err)

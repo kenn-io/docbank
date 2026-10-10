@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"bufio"
 	"bytes"
 	"compress/zlib"
 	"context"
@@ -113,7 +114,7 @@ func photoSourcePackets(ctx context.Context, data []byte, metadata bool) (result
 	result.orientation = 1
 	inspectEXIF := func(payload []byte) error {
 		if len(payload) > visualPreviewMaxEXIFBytes {
-			return errors.New("EXIF exceeds inspection limit")
+			return errVisualMetadataLimit
 		}
 		if orientation, colorSpace, found := visualPreviewEXIF(payload); found {
 			result.orientation = orientation
@@ -178,6 +179,92 @@ func photoSourcePackets(ctx context.Context, data []byte, metadata bool) (result
 			if format == visualFormatWebP && !slices.Contains([]string{"VP8X", "ANIM", "ANMF", "ICCP", "EXIF", "XMP "}, kind) {
 				return nil
 			}
+			if kind == "ANIM" || kind == "ANMF" || kind == "acTL" {
+				result.animated = true
+				return nil
+			}
+			if !metadata && (kind == "iTXt" || kind == "XMP ") {
+				return nil
+			}
+			if format == visualFormatPNG && (kind == "iCCP" || kind == "iTXt") {
+				text := bufio.NewReader(r)
+				terminated := func(limit int) (int, error) {
+					for count := range limit {
+						b, e := text.ReadByte()
+						if e != nil {
+							return 0, fmt.Errorf("reading PNG text header: %w", e)
+						}
+						if b == 0 {
+							return count + 1, nil
+						}
+					}
+					return 0, errVisualMetadataLimit
+				}
+				compressed := true
+				header := 0
+				if kind == "iCCP" {
+					length, e := terminated(80)
+					method, methodErr := text.ReadByte()
+					if e != nil || methodErr != nil || length < 2 || method != 0 || len(result.icc) > 0 {
+						return errors.New("malformed PNG ICC profile")
+					}
+				} else {
+					prefix := make([]byte, len(photoXMPPNGKeyword)+1)
+					if n < int64(len(prefix)) {
+						return nil
+					}
+					if _, e := io.ReadFull(text, prefix); e != nil {
+						return fmt.Errorf("reading PNG text keyword: %w", e)
+					}
+					if string(prefix) != photoXMPPNGKeyword+"\x00" {
+						return nil
+					}
+					var controls [2]byte
+					if _, e := io.ReadFull(text, controls[:]); e != nil || controls[0] > 1 || controls[1] != 0 {
+						return errors.New("malformed PNG XMP")
+					}
+					compressed = controls[0] == 1
+					header = len(prefix) + len(controls)
+					for range 2 {
+						length, e := terminated(maxPhotoSidecarBytes - header)
+						if e != nil {
+							return e
+						}
+						header += length
+					}
+				}
+				var value []byte
+				var e error
+				if compressed {
+					value, e = readPhotoCompressedMetadata(text)
+				} else if n-int64(header) > maxPhotoSidecarBytes {
+					return errVisualMetadataLimit
+				} else {
+					value, e = io.ReadAll(text)
+				}
+				if e != nil {
+					return e
+				}
+				if kind == "iCCP" {
+					result.icc = value
+					return nil
+				}
+				return set(&packet, value)
+			}
+			if kind == "gAMA" && n != 4 || kind == "cHRM" && n != 32 {
+				result.unsupportedColor = true
+				return nil
+			}
+			if kind == "VP8X" && n != 10 {
+				return errors.New("malformed WebP flags")
+			}
+			limit := int64(maxPhotoSidecarBytes)
+			if format == visualFormatWebP && kind == "EXIF" {
+				limit += 6
+			}
+			if n > limit {
+				return errVisualMetadataLimit
+			}
 			payload, e := io.ReadAll(r)
 			if e != nil {
 				return e
@@ -220,30 +307,11 @@ func photoSourcePackets(ctx context.Context, data []byte, metadata bool) (result
 				}
 				return err
 			case visualFormatPNG:
-				if kind == "iCCP" {
-					index := bytes.IndexByte(payload, 0)
-					if index < 1 || index > 79 || index+2 > len(payload) || payload[index+1] != 0 || len(result.icc) > 0 {
-						return errors.New("malformed PNG ICC profile")
-					}
-					reader, e := zlib.NewReader(bytes.NewReader(payload[index+2:]))
-					if e != nil {
-						return fmt.Errorf("opening PNG ICC profile: %w", e)
-					}
-					profile, e := io.ReadAll(io.LimitReader(reader, maxPhotoSidecarBytes+1))
-					e = errors.Join(e, reader.Close())
-					if e != nil {
-						return e
-					}
-					result.icc = profile
-				}
 				if kind == "gAMA" && (len(payload) != 4 || binary.BigEndian.Uint32(payload) != 45455) {
 					result.unsupportedColor = true
 				}
 				if kind == "cHRM" && !bytes.Equal(payload, []byte{0, 0, 122, 38, 0, 0, 128, 132, 0, 0, 250, 0, 0, 0, 128, 232, 0, 0, 117, 48, 0, 0, 234, 96, 0, 0, 58, 152, 0, 0, 23, 112}) {
 					result.unsupportedColor = true
-				}
-				if kind == "acTL" {
-					result.animated = true
 				}
 				if kind == "eXIf" {
 					if e := inspectEXIF(payload); e != nil {
@@ -253,46 +321,15 @@ func photoSourcePackets(ctx context.Context, data []byte, metadata bool) (result
 				if metadata && kind == "eXIf" {
 					err = set(&exif, payload)
 				}
-				if metadata && kind == "iTXt" && bytes.HasPrefix(payload, []byte(photoXMPPNGKeyword+"\x00")) {
-					text := payload[len(photoXMPPNGKeyword)+1:]
-					if len(text) < 4 || text[0] > 1 || text[1] != 0 {
-						return errors.New("malformed PNG XMP")
-					}
-					compressed := text[0] == 1
-					text = text[2:]
-					for range 2 {
-						at := bytes.IndexByte(text, 0)
-						if at < 0 {
-							return errors.New("malformed PNG XMP")
-						}
-						text = text[at+1:]
-					}
-					if compressed {
-						reader, e := zlib.NewReader(bytes.NewReader(text))
-						if e != nil {
-							return fmt.Errorf("opening PNG XMP packet: %w", e)
-						}
-						text, e = io.ReadAll(io.LimitReader(reader, maxPhotoSidecarBytes+1))
-						e = errors.Join(e, reader.Close())
-						if e != nil {
-							return e
-						}
-					}
-					err = set(&packet, text)
-				}
+
 				if err != nil {
 					return err
 				}
 			case visualFormatWebP:
 				switch kind {
 				case "VP8X":
-					if len(payload) != 10 {
-						return errors.New("malformed WebP flags")
-					}
 					result.animated = payload[0]&visualPreviewWebPAnimation != 0
 					result.unsupportedColor = result.unsupportedColor || payload[0]&visualPreviewWebPICCProfile != 0
-				case "ANIM", "ANMF":
-					result.animated = true
 				case "ICCP":
 					if len(result.icc) > 0 {
 						return errors.New("duplicate ICC profile")
@@ -307,9 +344,6 @@ func photoSourcePackets(ctx context.Context, data []byte, metadata bool) (result
 					}
 					err = set(&exif, bytes.TrimPrefix(payload, []byte("Exif\x00\x00")))
 				case "XMP ":
-					if !metadata {
-						break
-					}
 					err = set(&packet, payload)
 				}
 				if err != nil {
@@ -355,6 +389,19 @@ func photoSourcePackets(ctx context.Context, data []byte, metadata bool) (result
 		return packets, err
 	}
 	return finish()
+}
+
+func readPhotoCompressedMetadata(source io.Reader) ([]byte, error) {
+	reader, err := zlib.NewReader(source)
+	if err != nil {
+		return nil, fmt.Errorf("opening compressed photo metadata: %w", err)
+	}
+	value, err := io.ReadAll(io.LimitReader(reader, maxPhotoSidecarBytes+1))
+	err = errors.Join(err, reader.Close())
+	if len(value) > maxPhotoSidecarBytes {
+		return nil, errVisualMetadataLimit
+	}
+	return value, err
 }
 
 // Rebuilding only reachable directories removes GPS payloads and stale thumbnails.
@@ -551,21 +598,42 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 	decoder := xml.NewDecoder(bytes.NewReader(bytes.TrimPrefix(packet, []byte{0xef, 0xbb, 0xbf})))
 	var out bytes.Buffer
 	encoder := &photoXMPEncoder{encoder: xml.NewEncoder(&out)}
-	clearLegacyReject := input.Authored.Confirmed&store.PhotoConfirmedFlag != 0 && input.Authored.Flag != "reject" && input.Authored.Confirmed&store.PhotoConfirmedRating == 0
+	ratingConfirmed := input.Authored.Confirmed&store.PhotoConfirmedRating != 0
+	flagConfirmed := input.Authored.Confirmed&store.PhotoConfirmedFlag != 0
+	embeddedReject := false
+	saveFlag := func(value string) {
+		if !embeddedReject {
+			input.Authored.Flag = strings.TrimSpace(value)
+		}
+		input.Authored.Confirmed |= store.PhotoConfirmedFlag
+	}
+	legacyReject := func(value string) bool {
+		rating, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || rating != -1 {
+			return false
+		}
+		if ratingConfirmed && !flagConfirmed {
+			embeddedReject = true
+			input.Authored.Flag = "reject"
+			input.Authored.Confirmed |= store.PhotoConfirmedFlag
+		}
+		return true
+	}
 	isRating := func(n xml.Name) bool { return n.Space == xmpBasicNamespace && n.Local == "Rating" }
-	authored := func(n xml.Name) bool {
-		return photoXMPConfirmed(n, input)
+	sourceFlag := func(n xml.Name) bool {
+		return ratingConfirmed && !flagConfirmed && n.Space == teststripXMPNamespace && n.Local == "Pick"
 	}
 	remove := func(n xml.Name) bool {
 		if n.Space == "xmlns" || n.Space == "" && n.Local == "xmlns" {
 			return false
 		}
-		return authored(n) || receipt.Profile.RemoveGPS && strings.HasPrefix(strings.ToUpper(n.Local), "GPS")
+		return photoXMPConfirmed(n, input) || receipt.Profile.RemoveGPS && strings.HasPrefix(strings.ToUpper(n.Local), "GPS")
 	}
 	depth, skip, roots, rdf := 0, 0, 0, 0
 	var ratingTokens []xml.Token
 	var ratingValue strings.Builder
 	ratingDepth := 0
+	flagTokens := false
 	emit := func(token xml.Token) error {
 		if ratingTokens == nil {
 			return encoder.EncodeToken(token)
@@ -577,7 +645,11 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 		if _, end := token.(xml.EndElement); !end || depth != ratingDepth-1 {
 			return nil
 		}
-		if strings.TrimSpace(ratingValue.String()) != "-1" {
+		if flagTokens {
+			saveFlag(ratingValue.String())
+		}
+		reject := !flagTokens && legacyReject(ratingValue.String())
+		if !flagTokens && !ratingConfirmed && (!flagConfirmed || !reject) {
 			for _, token := range ratingTokens {
 				if err := encoder.EncodeToken(token); err != nil {
 					return err
@@ -631,13 +703,14 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 				skip++
 				continue
 			}
-			if remove(t.Name) {
+			if remove(t.Name) && !isRating(t.Name) && !sourceFlag(t.Name) {
 				skip = 1
 				continue
 			}
-			if clearLegacyReject && isRating(t.Name) && ratingTokens == nil {
+			if ((ratingConfirmed || flagConfirmed) && isRating(t.Name) || sourceFlag(t.Name)) && ratingTokens == nil {
 				ratingTokens = []xml.Token{}
 				ratingDepth = depth
+				flagTokens = sourceFlag(t.Name)
 			}
 			attrs := []xml.Attr{}
 			seen := map[xml.Name]bool{}
@@ -646,7 +719,12 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 					return nil, errors.New("duplicate XMP attribute")
 				}
 				seen[a.Name] = true
-				if remove(a.Name) || clearLegacyReject && isRating(a.Name) && strings.TrimSpace(a.Value) == "-1" {
+				if sourceFlag(a.Name) {
+					saveFlag(a.Value)
+					continue
+				}
+				reject := isRating(a.Name) && legacyReject(a.Value)
+				if remove(a.Name) || flagConfirmed && reject {
 					continue
 				}
 				if value := normalized(a.Name); value != "" {
