@@ -26,7 +26,6 @@ import (
 )
 
 const (
-	sourceMetadataCreatorField           = "creator"
 	maxSourceMetadataOriginalBytes       = 64 << 20
 	maxSourceMetadataWindowBytes         = documentmedia.MaxBytes
 	maxSourceMetadataFTYPBytes           = 1 << 20
@@ -54,7 +53,7 @@ const (
 // vault then re-extracts every original, so the bump must be deliberate. The
 // shared email decoder recipe contributes its own identity to the fingerprint.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v19"
+	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v18"
 
 var (
 	// SourceMetadataImplementationID identifies the parsers qualified by fixtures,
@@ -1258,7 +1257,7 @@ func xmpPropertyAllowed(name xml.Name) bool {
 		return strings.EqualFold(name.Local, "CreateDate") || strings.EqualFold(name.Local, "ModifyDate")
 	case xmpDublinCoreNamespace:
 		switch strings.ToLower(name.Local) {
-		case "title", sourceMetadataCreatorField, "subject", "description", "language":
+		case "title", "creator", "subject", "description", "language":
 			return true
 		default:
 			return false
@@ -1285,7 +1284,7 @@ func (c *metadataCollector) extractXMLCollection(namespace, name string, members
 		return
 	}
 	switch strings.ToLower(name) {
-	case sourceMetadataCreatorField, "author":
+	case "creator", "author":
 		c.strings("creators", namespace, name, values)
 	case "keywords":
 		c.strings("keywords", namespace, name, values)
@@ -1301,7 +1300,7 @@ func (c *metadataCollector) extractXMLValue(namespace, name, text string) {
 	switch strings.ToLower(name) {
 	case "title":
 		c.string("title", namespace, name, text, false)
-	case sourceMetadataCreatorField, "author":
+	case "creator", "author":
 		c.strings("creators", namespace, name, splitValues(text))
 	case "subject":
 		c.string("subject", namespace, name, text, false)
@@ -2243,20 +2242,16 @@ func (c *metadataCollector) extractPhotoSidecar(ctx context.Context, data []byte
 		return nil
 	}
 	c.boolean("image.xmp.packet_valid", "image.xmp", "packet", true)
-	if values.Confirmed&store.PhotoConfirmedRating != 0 {
-		c.integer("image.xmp.rating", "image.xmp", "Rating", int64(values.Rating))
-	}
-	if values.Confirmed&store.PhotoConfirmedRotation != 0 {
-		c.integer("image.xmp.rotation", "image.xmp", "Rotation", int64(values.Rotation))
-	}
-	for _, field := range []struct {
-		key, source, value string
-		bit                store.PhotoAuthoredFields
-	}{
-		{"flag", "Pick", values.Flag, store.PhotoConfirmedFlag}, {"label", "Label", values.Label, store.PhotoConfirmedLabel}, {"caption", "description", values.Caption, store.PhotoConfirmedCaption}, {sourceMetadataCreatorField, sourceMetadataCreatorField, values.Creator, store.PhotoConfirmedCreator}, {"copyright", "rights", values.Copyright, store.PhotoConfirmedCopyright},
-	} {
-		if values.Confirmed&field.bit != 0 {
-			c.stringValue("image.xmp."+field.key, "image.xmp", field.source, field.value, false, true)
+	for _, field := range store.PhotoAuthoredFieldTable {
+		if values.Confirmed&field.Bit == 0 {
+			continue
+		}
+		key, source := "image.xmp."+field.Name, photoXMPProperties[field.Name]
+		switch value := field.Value(values).(type) {
+		case int:
+			c.integer(key, "image.xmp", source, int64(value))
+		case string:
+			c.stringValue(key, "image.xmp", source, value, false, true)
 		}
 	}
 	return nil

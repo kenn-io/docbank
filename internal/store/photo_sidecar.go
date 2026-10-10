@@ -109,26 +109,10 @@ func (s *Store) InitializePhotoSidecar(ctx context.Context, target PhotoSidecarT
 		if valid && values.Confirmed != 0 {
 			v := values
 			patch := PhotoAuthoredPatch{}
-			if v.Confirmed&PhotoConfirmedRating != 0 {
-				patch.Rating = &v.Rating
-			}
-			if v.Confirmed&PhotoConfirmedFlag != 0 {
-				patch.Flag = &v.Flag
-			}
-			if v.Confirmed&PhotoConfirmedLabel != 0 {
-				patch.Label = &v.Label
-			}
-			if v.Confirmed&PhotoConfirmedCaption != 0 {
-				patch.Caption = &v.Caption
-			}
-			if v.Confirmed&PhotoConfirmedCreator != 0 {
-				patch.Creator = &v.Creator
-			}
-			if v.Confirmed&PhotoConfirmedCopyright != 0 {
-				patch.Copyright = &v.Copyright
-			}
-			if v.Confirmed&PhotoConfirmedRotation != 0 {
-				patch.Rotation = &v.Rotation
+			for _, field := range PhotoAuthoredFieldTable {
+				if v.Confirmed&field.Bit != 0 {
+					field.patch(&patch, &v)
+				}
 			}
 			result, err = s.applyPhotoAuthoredTx(ctx, tx, []PhotoAuthoredTarget{{FileID: f.ID, Revision: 1, Patch: patch}}, "", &PhotoSidecarProvenance{NodeID: target.NodeID, VersionID: target.VersionID, FileID: target.SidecarFileID}, false, nil)
 			if err != nil || len(result.After) != 0 {
@@ -148,45 +132,34 @@ func photoSidecarValues(metadata document.SourceMetadataV1) (PhotoAuthored, bool
 		if field.Namespace != "image.xmp" {
 			continue
 		}
-		switch field.Key {
-		case "image.xmp.packet_valid":
+		if field.Key == "image.xmp.packet_valid" {
 			if field.Value.Boolean == nil {
 				return values, false, ErrSourceMetadataCorrupt
 			}
 			valid = *field.Value.Boolean
-		case "image.xmp.rating", "image.xmp.rotation":
-			if field.Value.Integer == nil || *field.Value.Integer < math.MinInt || *field.Value.Integer > math.MaxInt {
+			continue
+		}
+		for _, authored := range PhotoAuthoredFieldTable {
+			if field.Key != "image.xmp."+authored.Name {
+				continue
+			}
+			var value any
+			switch authored.Value(values).(type) {
+			case int:
+				if field.Value.Integer == nil || *field.Value.Integer < math.MinInt || *field.Value.Integer > math.MaxInt {
+					return values, false, ErrSourceMetadataCorrupt
+				}
+				value = int(*field.Value.Integer)
+			case string:
+				if field.Value.String == nil {
+					return values, false, ErrSourceMetadataCorrupt
+				}
+				value = *field.Value.String
+			}
+			if !authored.Set(&values, value) {
 				return values, false, ErrSourceMetadataCorrupt
 			}
-			n := int(*field.Value.Integer)
-			if field.Key == "image.xmp.rating" {
-				values.Confirmed |= PhotoConfirmedRating
-				values.Rating = n
-			} else {
-				values.Confirmed |= PhotoConfirmedRotation
-				values.Rotation = n
-			}
-		case "image.xmp.flag", "image.xmp.label", "image.xmp.caption", "image.xmp.creator", "image.xmp.copyright":
-			if field.Value.String == nil {
-				return values, false, ErrSourceMetadataCorrupt
-			}
-			switch field.Key {
-			case "image.xmp.flag":
-				values.Confirmed |= PhotoConfirmedFlag
-				values.Flag = *field.Value.String
-			case "image.xmp.label":
-				values.Confirmed |= PhotoConfirmedLabel
-				values.Label = *field.Value.String
-			case "image.xmp.caption":
-				values.Confirmed |= PhotoConfirmedCaption
-				values.Caption = *field.Value.String
-			case "image.xmp.creator":
-				values.Confirmed |= PhotoConfirmedCreator
-				values.Creator = *field.Value.String
-			case "image.xmp.copyright":
-				values.Confirmed |= PhotoConfirmedCopyright
-				values.Copyright = *field.Value.String
-			}
+			values.Confirmed |= authored.Bit
 		}
 	}
 	return values, valid, nil

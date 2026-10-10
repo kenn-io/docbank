@@ -90,7 +90,7 @@ are empty, `red`, `yellow`, `green`, `blue`, or `purple`. Rotation is 0, 90,
 180, or 270 degrees. Caption, creator, and copyright each allow 16 KiB of
 UTF-8 text.
 
-`confirmed_fields` records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32), and rotation (64). Zero means untouched. Supplied empty text and numeric zero confirm a clear; absent fields stay unconfirmed. Receipts, audit history, undo, and JSONL backup preserve each field's confirmation. Unknown bits are refused.
+`confirmed_fields` records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32), and rotation (64). Zero means untouched. Docbank edits with empty text or numeric zero confirm a clear; absent fields stay unconfirmed and hold default values. Receipts, audit history, undo, and JSONL backup preserve each field's confirmation. Unknown bits are refused.
 
 Authored edits use exact file IDs and revisions. A pair edit also checks the
 asset revision and includes every displayable member. One transaction changes
@@ -105,12 +105,12 @@ the whole edit. Grouping operations retain their existing audit restrictions.
 The daemon initializes each original file's decisions from the imported XMP
 sidecar linked to it. It reads
 rating, label, pick, rotation, caption, creator, and copyright, then records the
-sidecar node and content version in the receipt. XMP rating -1 confirms only the reject flag; rating stays unconfirmed. Unsupported custom color labels are omitted and stay unconfirmed; supported decisions
+sidecar node and content version in the receipt. XMP rating 0 means unrated and confirms nothing. XMP rating -1 confirms only the reject flag; rating stays unconfirmed. Unsupported custom color labels are omitted and stay unconfirmed; supported decisions
 and the original sidecar bytes are preserved. Competing sidecars are scanned in
 ascending node-ID order; the first successful initialization wins. Parsing
 verifies the complete blob and rejects malformed XML,
 packets over 1 MiB, and nesting over 64 elements. A caption, creator, or copyright
-over 16 KiB rejects the whole packet. Authored properties accept literal text, supported RDF containers, and `rdf:value`. RDF attributes on these values reject the whole packet; original bytes remain available and supported replacement bytes can initialize the photo. The existing source-metadata
+over 16 KiB rejects the whole packet. Each authored property accepts one literal, one supported RDF container, or one `rdf:value`. Multiple values or non-whitespace text beside a child reject the whole packet. RDF attributes on these values reject the whole packet; original bytes remain available and supported replacement bytes can initialize the photo. The existing source-metadata
 extractor publishes packet claims under `image.xmp.*`. Sidecar source-metadata
 detail shows a valid-packet fact for valid packets with no supported decisions or warnings for rejected
 packets, together with the exact source version. Packets with no supported decisions and rejected packets

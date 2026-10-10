@@ -165,8 +165,8 @@ The source extractor reads standalone XMP packets rooted at `x:xmpmeta` through
 the strict photo packet reader. Other XML, including bare `rdf:RDF`, RSS, and SVG,
 falls through to the existing format checks. Valid packets publish `image.xmp.packet_valid` and supported
 rating, flag, label, caption, creator, copyright, and rotation claims. Custom color
-labels and unsupported rotations are omitted. Invalid ratings or picks reject the whole packet. Present empty or whitespace-only caption, creator, and copyright properties emit empty claims and confirm a clear; absent properties stay unconfirmed. Meaningful text retains its whitespace. Malformed, oversized, or
-invalid packets publish warnings without a valid-packet fact. Authored properties accept literal text, supported RDF containers, and `rdf:value`, preserving `xml:lang`. RDF attributes on authored properties or their descendants reject the whole packet, preserving original bytes and later initialization. Unrelated RDF references remain outside this validation. The tolerant
+labels and unsupported rotations are omitted. XMP rating 0 means unrated and emits no rating claim or confirmation, even when other decisions are present. Invalid ratings or picks reject the whole packet. Present empty or whitespace-only caption, creator, and copyright properties emit empty claims and confirm a clear; absent properties stay unconfirmed. Meaningful text retains its whitespace. Malformed, oversized, or
+invalid packets publish warnings without a valid-packet fact. Each authored property accepts one literal, one supported RDF container, or one `rdf:value`, preserving `xml:lang`. Multiple values or non-whitespace text beside a child reject the whole packet. RDF attributes on authored properties or their descendants reject the whole packet, preserving original bytes and later initialization. Unrelated RDF references remain outside this validation. The tolerant
 embedded XMP reader retains its existing behavior.
 
 Photo initialization consumes checksum-checked evidence from the running extractor

@@ -18,6 +18,10 @@ import (
 const maxPhotoSidecarBytes = 1 << 20
 const teststripXMPNamespace = "https://teststrip.app/xmp/1.0/"
 
+var photoXMPProperties = map[string]string{
+	"rating": "Rating", "flag": "Pick", "label": "Label", "caption": "description", "creator": "creator", "copyright": "rights", "rotation": "Rotation",
+}
+
 // ReadPhotoSidecar validates the complete packet before returning supported decisions.
 func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, error) {
 	var result store.PhotoAuthored
@@ -31,6 +35,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	values := map[string]string{}
 	var field string
 	var fieldDepth int
+	var child xml.Name
 	var text strings.Builder
 	var items []string
 	var itemText strings.Builder
@@ -49,7 +54,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 				return n.Local
 			}
 		case xmpDublinCoreNamespace:
-			if n.Local == "description" || n.Local == sourceMetadataCreatorField || n.Local == "rights" {
+			if n.Local == "description" || n.Local == "creator" || n.Local == "rights" {
 				return n.Local
 			}
 		}
@@ -61,7 +66,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 		}
 		if strings.TrimSpace(value) == "" {
 			value = ""
-		} else if key != "description" && key != sourceMetadataCreatorField && key != "rights" {
+		} else if key != "description" && key != "creator" && key != "rights" {
 			value = strings.TrimSpace(value)
 		}
 		values[key] = value
@@ -107,7 +112,12 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 			if field != "" && len(stack) > fieldDepth {
 				valid := t.Name.Space == rdfNamespace
 				if len(stack) == fieldDepth+1 {
-					valid = valid && (t.Name.Local == "value" || field == sourceMetadataCreatorField && t.Name.Local == "Seq" || (field == "description" || field == "rights") && t.Name.Local == "Alt")
+					if child != (xml.Name{}) || strings.TrimSpace(text.String()) != "" {
+						return result, errors.New("multiple authored RDF values")
+					}
+					child = t.Name
+					text.Reset()
+					valid = valid && (t.Name.Local == "value" || field == "creator" && t.Name.Local == "Seq" || (field == "description" || field == "rights") && t.Name.Local == "Alt")
 				} else {
 					valid = valid && len(stack) == fieldDepth+2 && t.Name.Local == "li" && parent.Space == rdfNamespace && (parent.Local == "Alt" || parent.Local == "Seq")
 				}
@@ -132,6 +142,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 					}
 					field = key
 					fieldDepth = len(stack)
+					child = xml.Name{}
 					text.Reset()
 					items = nil
 					hasDefault = false
@@ -165,8 +176,10 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 			if field != "" {
 				if itemDepth != 0 {
 					itemText.Write(t)
-				} else {
+				} else if child == (xml.Name{}) || len(stack) == fieldDepth+1 && child.Local == "value" {
 					text.Write(t)
+				} else if strings.TrimSpace(string(t)) != "" {
+					return result, errors.New("text beside authored RDF value")
 				}
 			}
 		case xml.EndElement:
@@ -185,7 +198,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 			if field != "" && fieldDepth == len(stack) {
 				value := text.String()
 				if len(items) > 0 {
-					if field == sourceMetadataCreatorField {
+					if field == "creator" {
 						value = items[0]
 					} else if hasDefault {
 						value = defaultText
@@ -206,28 +219,25 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	if rootCount != 1 || len(stack) != 0 || !description {
 		return result, errors.New("photo sidecar needs an RDF description")
 	}
-	for _, field := range []struct {
-		key string
-		bit store.PhotoAuthoredFields
-	}{
-		{"Pick", store.PhotoConfirmedFlag}, {"Label", store.PhotoConfirmedLabel}, {"description", store.PhotoConfirmedCaption}, {sourceMetadataCreatorField, store.PhotoConfirmedCreator}, {"rights", store.PhotoConfirmedCopyright},
-	} {
-		if _, present := values[field.key]; present {
-			result.Confirmed |= field.bit
+	for _, field := range store.PhotoAuthoredFieldTable {
+		if field.Name == "rating" || field.Name == "rotation" {
+			continue
+		}
+		if value, present := values[photoXMPProperties[field.Name]]; present {
+			if !field.Set(&result, value) {
+				return result, errors.New("invalid authored XMP field")
+			}
+			result.Confirmed |= field.Bit
 		}
 	}
-	result.Flag = values["Pick"]
 	if !query.ValidPhotoFlag(result.Flag) {
 		return result, errors.New("invalid XMP pick")
 	}
-	result.Label = strings.ToLower(values["Label"])
+	result.Label = strings.ToLower(result.Label)
 	if !query.ValidPhotoColorLabel(result.Label) {
 		result.Label = ""
 		result.Confirmed &^= store.PhotoConfirmedLabel
 	}
-	result.Caption = values["description"]
-	result.Creator = values[sourceMetadataCreatorField]
-	result.Copyright = values["rights"]
 	if value, ok := values["Rating"]; ok {
 		n, err := strconv.Atoi(value)
 		if err != nil || n < -1 || n > 5 {
@@ -236,7 +246,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 		if n == -1 {
 			result.Flag = "reject"
 			result.Confirmed |= store.PhotoConfirmedFlag
-		} else {
+		} else if n != 0 {
 			result.Rating = n
 			result.Confirmed |= store.PhotoConfirmedRating
 		}

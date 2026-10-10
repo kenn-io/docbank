@@ -216,14 +216,17 @@ func TestPhotoAuthoredReleasedJSONLDefaults(t *testing.T) {
 	require.NoError(t, err)
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
-	for _, invalid := range []bool{false, true} {
-		t.Run(fmt.Sprintf("unknown confirmation=%t", invalid), func(t *testing.T) {
+	for _, test := range []string{"released defaults", "unknown confirmation", "unconfirmed value"} {
+		t.Run(test, func(t *testing.T) {
 			lines := bytes.Split(backup.Bytes(), []byte{'\n'})
 			for i, line := range lines {
 				if bytes.Contains(line, []byte(`"type":"photo_file"`)) {
-					if invalid {
+					switch test {
+					case "unknown confirmation":
 						lines[i] = bytes.Replace(line, []byte(`"confirmed_fields":0`), []byte(`"confirmed_fields":128`), 1)
-					} else {
+					case "unconfirmed value":
+						lines[i] = bytes.Replace(line, []byte(`"rating":0`), []byte(`"rating":3`), 1)
+					default:
 						f := asset.Files[0]
 						old := metadataPhotoFileBeforeAuthored{Type: metadataPhotoFileType, FileID: f.ID, AssetID: f.AssetID, NodeID: f.NodeID, Role: f.Role, SidecarOfID: f.SidecarOfID, CreatedAt: f.CreatedAt}
 						lines[i], err = json.Marshal(old, json.Deterministic(true))
@@ -233,7 +236,7 @@ func TestPhotoAuthoredReleasedJSONLDefaults(t *testing.T) {
 			}
 			restored := newTestStore(t)
 			err := restored.ImportMetadata(ctx, bytes.NewReader(bytes.Join(lines, []byte{'\n'})))
-			if invalid {
+			if test != "released defaults" {
 				require.ErrorContains(t, err, "invalid authored photo decision")
 				_, err = restored.NodeByID(ctx, node.ID)
 				require.ErrorIs(t, err, ErrNotFound)

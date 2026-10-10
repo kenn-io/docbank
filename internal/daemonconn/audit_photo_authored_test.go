@@ -10,7 +10,7 @@ import (
 )
 
 func TestPhotoAuthoredAuditConfirmationBoundary(t *testing.T) {
-	for _, bad := range []string{"", "mask", "revision", "node", "missing"} {
+	for _, bad := range []string{"", "mask", "revision", "missing"} {
 		t.Run(bad, func(t *testing.T) {
 			e := validAuditIngestObservation()
 			e.Kind = "photo_authored"
@@ -25,12 +25,6 @@ func TestPhotoAuthoredAuditConfirmationBoundary(t *testing.T) {
 				after.Values.Confirmed = 128
 			case "revision":
 				after.Revision++
-			case "node":
-				e.Attachment.Identity.NodeID++
-				e.Attachment.Before.NodeID = e.Attachment.Identity.NodeID
-				e.Attachment.After.NodeID = e.Attachment.Identity.NodeID
-				before.NodeID = e.Attachment.Identity.NodeID
-				after.NodeID = e.Attachment.Identity.NodeID
 			case "missing":
 				e.Attachment.After = nil
 			}
@@ -38,8 +32,6 @@ func TestPhotoAuthoredAuditConfirmationBoundary(t *testing.T) {
 			switch bad {
 			case "":
 				require.NoError(t, err)
-			case "node":
-				require.ErrorContains(t, err, "photo attachment belongs to another node")
 			default:
 				require.Error(t, err)
 			}

@@ -12,7 +12,7 @@ import (
 func TestSourceMetadataExtractorDescriptorIsPinned(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, "docbank-source-metadata:pdfcpu-info+xmp+pages,"+
-		"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v19",
+		"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v18",
 		sourceMetadataExtractorDescriptor)
 }
 

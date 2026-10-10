@@ -1331,9 +1331,6 @@ func validateAuditEvent(event api.AuditEvent, nodeID int64) error {
 	if err := validateAuditAttachment(event.Kind, event.Attachment); err != nil {
 		return err
 	}
-	if event.Kind == "photo_authored" && event.Attachment.Identity.NodeID != event.NodeID {
-		return errors.New("photo attachment belongs to another node")
-	}
 	if event.Kind == "ingest_observe" {
 		return validateAuditIngestObservation(event)
 	}
