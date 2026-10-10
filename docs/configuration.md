@@ -651,16 +651,17 @@ A mismatched descriptor prevents the daemon from starting that runtime.
 The operator owns the epoch. It attests that stored document vectors and new
 query vectors use the same model deployment; Voyage does not return an immutable
 revision. Change the epoch and rebuild vectors when the hosted model changes.
-Never use `mutable-alias-export-only` as an epoch. Unpinned embedded Voyage
-profiles remain export-only. Contextual and original-file profiles do not accept
-a text deployment epoch.
+Never use `mutable-alias-export-only` as an epoch. Voyage text profiles
+without an epoch remain export-only. Contextual and original-file profiles do
+not accept a text deployment epoch.
 
 The adapter sends `input_type = "document"` for chunks and `"query"` for text
 queries. It pins `output_dimension`, requests float vectors, disables provider
 truncation, and omits `encoding_format`. It checks unit length without
-renormalizing the response. Semantic and hybrid searches can select this binding;
-lexical search does not send a query to Voyage. Consent and retained input
-requirements still apply.
+renormalizing the response. Voyage may echo each input as a `text` member,
+so set `max_response_bytes` to cover the vectors plus the echoed text.
+Semantic and hybrid searches can select this binding; lexical search does not
+send a query to Voyage. Consent and retained input requirements still apply.
 
 #### Model input
 

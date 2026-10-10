@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/voyage"
+	"go.kenn.io/docbank/document/voyage/voyagetest"
 )
 
 func TestVoyageRetainedTextDocumentAndQuery(t *testing.T) {
@@ -125,7 +126,6 @@ func TestVoyageTextRetrievalIdentityAndNormalization(t *testing.T) {
 			p.Descriptor.ModelRevision = p.DeploymentEpoch
 		},
 		"missing query support": func(p *voyage.EmbeddingProfile) { p.Descriptor.SupportsTextQuery = false },
-		"contextual epoch":      func(p *voyage.EmbeddingProfile) { p.Mode = voyage.EmbeddingModeContextual },
 		"non-unit contract":     func(p *voyage.EmbeddingProfile) { p.Descriptor.Normalization = document.VectorNormalizationNone },
 		"dimensions":            func(p *voyage.EmbeddingProfile) { p.Descriptor.Dimension = 768 },
 	} {
@@ -162,6 +162,24 @@ func TestVoyageTextRetrievalIdentityAndNormalization(t *testing.T) {
 			} else {
 				require.ErrorIs(t, err, voyage.ErrMalformedResponse)
 			}
+		})
+	}
+}
+
+func TestVoyageDeploymentEpochIsTextOnly(t *testing.T) {
+	policy := testPolicy(t)
+	manifest, err := voyagetest.SyntheticManifest(policy)
+	require.NoError(t, err)
+	for name, profile := range map[string]voyage.EmbeddingProfile{
+		"contextual":  voyageTextProfile(t, voyage.EmbeddingModeContextual),
+		"direct file": voyageDirectFileProfile(t, policy, manifest),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := voyage.EmbeddingPolicyFingerprint(profile)
+			require.NoError(t, err, "the export-only profile must be valid before the epoch is added")
+			profile.DeploymentEpoch = "synthetic-v1"
+			_, err = voyage.EmbeddingPolicyFingerprint(profile)
+			require.ErrorContains(t, err, "deployment epoch is only supported for text retrieval")
 		})
 	}
 }
