@@ -21,7 +21,7 @@ func init() {
 	command.Flags().StringVar(&raw, "query", "{}", "QueryV1 JSON selecting the scope")
 	command.Flags().StringVar(&digest, "confirm", "", "preflight digest authorizing the move")
 	command.Flags().BoolVar(&hidden, "hidden", false, "use the unlocked Hidden scope")
-	command.Flags().StringVar(&coverage, "coverage", "", "coverage configuration")
+	command.Flags().StringVar(&coverage, "coverage", "", "coverage configuration: configured or unconfigured")
 	command.Flags().StringVar(&profile, "profile-fingerprint", "", "configured coverage profile fingerprint")
 	photosCmd.AddCommand(command)
 }

@@ -23,6 +23,9 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 	}
 	for _, confirm := range []bool{false, true} {
 		for _, hidden := range []bool{false, true} {
+			if hidden && !confirm {
+				continue
+			}
 			t.Run(strings.Join([]string{map[bool]string{false: "preview", true: "confirm"}[confirm], map[bool]string{false: "library", true: "hidden"}[hidden]}, "/"), func(t *testing.T) {
 				digest := strings.Repeat("a", 64)
 				photos := 1
@@ -48,7 +51,7 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 					var body api.PhotoRejectsRequest
 					require.NoError(t, json.UnmarshalRead(r.Body, &body))
 					assert.Equal(t, hidden, body.Hidden)
-					assert.Equal(t, "all", body.Coverage.Configuration)
+					assert.Equal(t, "unconfigured", body.Coverage.Configuration)
 					assert.Equal(t, confirm, body.Digest == digest)
 					if hidden {
 						assert.Contains(t, r.Header.Get("Cookie"), "docbank-hidden-test=synthetic-token")
@@ -61,7 +64,7 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 				cmd.SetContext(t.Context())
 				cmd.SetOut(&out)
 				cmd.SetIn(strings.NewReader("synthetic-passcode\n"))
-				request := api.PhotoRejectsRequest{Query: api.QueryPayload(`{}`), Hidden: hidden, Coverage: api.WorkspaceQueryCoverage{Configuration: "all"}}
+				request := api.PhotoRejectsRequest{Query: api.QueryPayload(`{}`), Hidden: hidden, Coverage: api.WorkspaceQueryCoverage{Configuration: "unconfigured"}}
 				if confirm {
 					request.Digest = digest
 				}

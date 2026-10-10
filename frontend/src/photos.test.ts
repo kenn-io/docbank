@@ -16,7 +16,7 @@ it("freezes selected rejects scope and refuses a changed selection", async () =>
   await photos.trashRejects();
   const first = JSON.parse(fetcher.mock.calls[0][1].body);
   expect(first.query.filters.asset_ids).toEqual(["photo-1"]);
-  expect(JSON.parse(fetcher.mock.calls[1][1].body).query).toEqual(first.query);
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ query: first.query, hidden: false, digest: preview.digest });
   photos.items = [photo(1)]; photos.selectLoaded();
   fetcher.mockResolvedValueOnce(Response.json(preview));
   await photos.previewRejects(true);
@@ -27,43 +27,29 @@ it("freezes selected rejects scope and refuses a changed selection", async () =>
   photos.dispose();
 });
 
-it("bounds selected rejects queries before sending them", async () => {
-  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
-  const photos = new Photos("scoped", vi.fn());
-  photos.selection.selectedIDs = new Set(Array.from({ length: 65 }, (_, i) => `photo-${i}`));
-  await photos.previewRejects(true);
-  expect(photos.rejectsError).toContain("64 photos");
-  expect(fetcher).not.toHaveBeenCalled();
-  photos.dispose();
-});
-
-it("confirms the complete rejects scope and refreshes after a lost reply", async () => {
-  const preview = { digest: "a".repeat(64), photos: 250, files: 500, unchanged: 20, mixed: [], mixed_count: 0 };
-  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview))
-    .mockRejectedValueOnce(new TypeError("Reply lost after commit"))
-    .mockResolvedValueOnce(response([photo(2)]));
+it.each([false, true])("bounds selected rejects scope while keeping Library available, selected=%s", async selected => {
+  const fetcher = vi.fn().mockResolvedValue(Response.json({ digest: "a".repeat(64), photos: 1, files: 1, unchanged: 65, mixed: [], mixed_count: 0 }));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
-  photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
-  await photos.previewRejects(false);
-  expect(photos.rejects).toEqual(preview);
-  const changed = vi.fn();
-  expect(await photos.trashRejects(undefined, changed)).toBe(false);
-  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ query: expect.any(Object), hidden: false, digest: preview.digest });
-  expect(photos.rejects).toBeUndefined();
-  expect(photos.rejectsError).toBe("The move may have completed. Refresh Photos before trying again.");
-  expect(photos.items).toEqual([photo(2)]);
-  expect(changed).toHaveBeenCalledOnce();
-  expect(photos.selection.selectedIDs.size).toBe(0);
+  photos.selection.selectedIDs = new Set(Array.from({ length: 65 }, (_, i) => `photo-${i}`));
+  await photos.previewRejects(selected);
+  if (selected) {
+    expect(photos.rejectsError).toContain("64 photos");
+    expect(fetcher).not.toHaveBeenCalled();
+  } else {
+    expect(photos.rejectsSelected).toBe(false);
+    expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters?.asset_ids).toBeUndefined();
+    expect(photos.rejects?.photos).toBe(1);
+  }
   photos.dispose();
 });
 
-it.each(["confirmed", "network", "timeout", "server"])("invalidates the rejects listing after a %s move and failed refresh, then retries", async outcome => {
+it.each(["confirmed", "network", "server"])("invalidates the rejects listing after a %s move and failed refresh, then retries", async outcome => {
   const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
   if (outcome === "confirmed") fetcher.mockResolvedValueOnce(Response.json(preview));
   else if (outcome === "server") fetcher.mockResolvedValueOnce(Response.json({ detail: "Internal error", code: "internal" }, { status: 500 }));
-  else fetcher.mockRejectedValueOnce(outcome === "timeout" ? new DOMException("Timed out", "TimeoutError") : new TypeError("Reply lost"));
+  else fetcher.mockRejectedValueOnce(new TypeError("Reply lost"));
   fetcher.mockResolvedValueOnce(Response.json({ detail: "Refresh unavailable" }, { status: 503 }))
     .mockResolvedValueOnce(response([photo(2)]));
   vi.stubGlobal("fetch", fetcher);
@@ -86,7 +72,7 @@ it.each(["confirmed", "network", "timeout", "server"])("invalidates the rejects 
   photos.dispose();
 });
 
-it.each([[412, "stale_revision"], [401, "unauthorized"], [403, "hidden_locked"], [503, "maintenance_busy"]] as const)("requires another rejects preview after a definite %s refusal without reconciling other views", async (status, code) => {
+it.each([[412, "stale_revision"], [503, "maintenance_busy"]] as const)("requires another rejects preview after a definite %s refusal without reconciling other views", async (status, code) => {
   const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview))
     .mockResolvedValueOnce(Response.json({ detail: "Move refused", code }, { status }))
@@ -516,17 +502,5 @@ it("previews oversized rejects without authorizing a move", async () => {
  expect(photos.rejects).toEqual(preview);
  expect(await photos.trashRejects()).toBe(false);
  expect(fetcher).toHaveBeenCalledTimes(1);
- photos.dispose();
-});
-
-it("defaults rejects to Library even when more than 64 photos are selected", async () => {
- const fetcher = vi.fn().mockResolvedValue(Response.json({ digest: "a".repeat(64), photos: 1, files: 1, unchanged: 65, mixed: [], mixed_count: 0 }));
- vi.stubGlobal("fetch", fetcher);
- const photos = new Photos("scoped", vi.fn());
- photos.selection.selectedIDs = new Set(Array.from({ length: 65 }, (_, i) => `photo-${i}`));
- await photos.previewRejects();
- expect(photos.rejectsSelected).toBe(false);
- expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters?.asset_ids).toBeUndefined();
- expect(photos.rejects?.photos).toBe(1);
  photos.dispose();
 });

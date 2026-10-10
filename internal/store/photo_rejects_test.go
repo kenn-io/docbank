@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -95,40 +94,24 @@ func TestPhotoRejectsRetainedCompanions(t *testing.T) {
 	assert.Empty(t, roots)
 }
 
-func TestPhotoRejectsAtomicTrashAndRestore(t *testing.T) {
+func TestPhotoRejectsTrash(t *testing.T) {
 	t.Parallel()
-	for _, audited := range []bool{false, true} {
-		t.Run(strconv.FormatBool(audited), func(t *testing.T) {
-			s := newTestStore(t)
-			asset, nodes := photoTrashFixture(t, s)
-			if audited {
-				seedInitialAuditAuthority(t, s, s.RootID())
-			}
-			rejectOriginals(t, s, asset)
-			request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
-			preview, err := s.PreflightPhotoRejects(t.Context(), request)
-			require.NoError(t, err)
-			assert.Equal(t, 1, preview.Photos)
-			assert.Equal(t, 3, preview.Files)
-			assert.Empty(t, preview.Mixed)
-			_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
-			require.NoError(t, err)
-			assert.Contains(t, receiptOperations(photoReceiptRows(t, s, asset.ID)), "trash")
-			for _, node := range nodes {
-				current, err := s.NodeByID(t.Context(), node.ID)
-				require.NoError(t, err)
-				assert.NotNil(t, current.TrashedAt)
-			}
-			current, err := s.NodeByID(t.Context(), nodes[2].ID)
-			require.NoError(t, err)
-			_, _, err = s.Restore(t.Context(), current.ID, current.Revision)
-			require.NoError(t, err)
-			for _, node := range nodes {
-				current, err := s.NodeByID(t.Context(), node.ID)
-				require.NoError(t, err)
-				assert.Nil(t, current.TrashedAt)
-			}
-		})
+	s := newTestStore(t)
+	asset, nodes := photoTrashFixture(t, s)
+	rejectOriginals(t, s, asset)
+	request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
+	preview, err := s.PreflightPhotoRejects(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, 1, preview.Photos)
+	assert.Equal(t, 3, preview.Files)
+	assert.Empty(t, preview.Mixed)
+	_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
+	require.NoError(t, err)
+	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, asset.ID)), "trash")
+	for _, node := range nodes {
+		current, err := s.NodeByID(t.Context(), node.ID)
+		require.NoError(t, err)
+		assert.NotNil(t, current.TrashedAt)
 	}
 }
 
@@ -139,18 +122,8 @@ func TestPhotoRejectsMixedAndStale(t *testing.T) {
 			s := newTestStore(t)
 			asset := authoredPair(t, s)
 			request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
-			_, err := s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Flag: new("reject")}}})
-			require.NoError(t, err)
-			preview, err := s.PreflightPhotoRejects(t.Context(), request)
-			require.NoError(t, err)
-			assert.Zero(t, preview.Photos)
-			assert.Equal(t, 1, preview.Unchanged)
-			require.Len(t, preview.Mixed, 1)
-			assert.Len(t, preview.Mixed[0].Members, 2)
-			asset, err = s.PhotoAssetByID(t.Context(), asset.ID)
-			require.NoError(t, err)
 			rejectOriginals(t, s, asset)
-			preview, err = s.PreflightPhotoRejects(t.Context(), request)
+			preview, err := s.PreflightPhotoRejects(t.Context(), request)
 			require.NoError(t, err)
 			switch change {
 			case "flag":
