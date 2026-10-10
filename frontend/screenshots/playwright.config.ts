@@ -22,7 +22,7 @@ export default defineConfig({
   use: {
     ...devices["Desktop Chrome"],
     viewport: { width: 1440, height: 960 },
-    deviceScaleFactor: 1,
+    deviceScaleFactor: Number(process.env.DOCBANK_SCREENSHOT_SCALE ?? 1),
     colorScheme: "dark",
     trace: "off",
   },
@@ -32,7 +32,7 @@ export default defineConfig({
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 1440, height: 960 },
-        deviceScaleFactor: 1,
+        deviceScaleFactor: Number(process.env.DOCBANK_SCREENSHOT_SCALE ?? 1),
         colorScheme: "dark",
       },
     },

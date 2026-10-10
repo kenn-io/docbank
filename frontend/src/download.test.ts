@@ -409,4 +409,13 @@ describe("exact selected-source preview", () => {
       "browser-session",
     );
   });
+  it("checks image/webp original eligibility through the existing browser download", async () => {
+    const mimeType = "image/webp";
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:verified-original") });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(ready()).mockResolvedValueOnce(body({ "Content-Type": mimeType })));
+    const result = await readVerifiedPreview("browser-session", { ...source, mimeType }, 11, new AbortController().signal, () => {});
+    expect(result).toEqual({ kind: "image", url: "blob:verified-original", mediaType: mimeType });
+    expect(URL.createObjectURL).toHaveBeenCalledOnce();
+  });
+
 });

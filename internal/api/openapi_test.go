@@ -774,6 +774,7 @@ func TestOpenAPIPhotoBrowseContract(t *testing.T) {
 	require.NotNil(t, list)
 	require.Equal(t, "listPhotoAssets", list.OperationID)
 	require.Equal(t, "readPhotoPreview", doc.Paths["/api/v1/photos/assets/{asset_id}/previews/{generation_id}"].Get.OperationID)
+	require.Equal(t, "preparePhotoPreview", doc.Paths["/api/v1/photos/assets/{asset_id}/preview"].Post.OperationID)
 	schemas := doc.Components.Schemas.Map()
 	require.True(t, schemas["PhotoBrowseRow"].Properties["capture_time"].Nullable)
 	require.ElementsMatch(t, []any{"missing", "ready", "unsupported", "failed"}, schemas["PhotoPreviewSlot"].Properties["state"].Enum)

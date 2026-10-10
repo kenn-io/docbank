@@ -8980,6 +8980,53 @@ func (c *Client) DetachPhotoFile(ctx context.Context, options *DetachPhotoFileRe
 	return responseParser(ctx, resp)
 }
 
+// PreparePhotoPreview Prepare a fit or large preview for the current photo display
+func (c *Client) PreparePhotoPreview(ctx context.Context, options *PreparePhotoPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreparePhotoPreviewResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/assets/{asset_id}/preview",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreparePhotoPreviewResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreparePhotoPreviewResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreparePhotoPreviewResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PreparePhotoPreviewErrorResponse](resp, "PreparePhotoPreviewErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/{asset_id}/preview")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ReadPhotoPreview Read verified bytes of an eligible exact photo preview
 func (c *Client) ReadPhotoPreview(ctx context.Context, options *ReadPhotoPreviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadPhotoPreviewResult, error) {
 	var err error
@@ -18809,6 +18856,41 @@ func (o *DetachPhotoFileRequestOptions) GetHeader() (map[string]string, error) {
 	return headers, err
 }
 
+// PreparePhotoPreviewRequestOptions is the options needed to make a request to PreparePhotoPreview.
+type PreparePhotoPreviewRequestOptions struct {
+	PathParams *PreparePhotoPreviewPath
+	Body       *PreparePhotoPreviewBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreparePhotoPreviewRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreparePhotoPreviewRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreparePhotoPreviewRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreparePhotoPreviewRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ReadPhotoPreviewRequestOptions is the options needed to make a request to ReadPhotoPreview.
 type ReadPhotoPreviewRequestOptions struct {
 	PathParams *ReadPhotoPreviewPath
@@ -21955,6 +22037,10 @@ type DetachPhotoFilePath struct {
 	FileID  string `json:"file_id"`
 }
 
+type PreparePhotoPreviewPath struct {
+	AssetID uuid.UUID `json:"asset_id"`
+}
+
 type ReadPhotoPreviewPath struct {
 	AssetID      string `json:"asset_id"`
 	GenerationID string `json:"generation_id"`
@@ -22287,6 +22373,8 @@ type SetPhotoDisplayBody = SetPhotoDisplayRequest
 type ExcludePhotoAssetBody = SetPhotoExcludedRequest
 
 type AttachPhotoFileBody = AttachPhotoFileRequest
+
+type PreparePhotoPreviewBody = PreparePhotoPreviewRequest
 
 type StartPhotoImportBody = PhotoImportStartRequest
 
@@ -23509,6 +23597,10 @@ type DetachPhotoFileResponse = api.PhotoAsset
 
 type DetachPhotoFileErrorResponse = Error
 
+type PreparePhotoPreviewResponse = api.PhotoPreviewSlot
+
+type PreparePhotoPreviewErrorResponse = Error
+
 type ReadPhotoPreviewResponse = []byte
 
 type TrashPhotoAssetResponse = api.PhotoAsset
@@ -24641,6 +24733,8 @@ type Plan = bundle.Plan
 type PlanPreview = bundle.PlanPreview
 
 type PlanRequest = bundle.PlanRequest
+
+type PreparePhotoPreviewRequest = api.PreparePhotoPreviewRequest
 
 type Preview = mailbox.Preview
 

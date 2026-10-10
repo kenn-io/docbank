@@ -12,7 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	// Register only the static raster decoders allowed by browser previews.
+	// Register the raster decoders allowed by browser previews.
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
@@ -27,6 +27,7 @@ import (
 
 	"go.kenn.io/docbank/internal/reporting"
 	"go.kenn.io/kit/safefileio"
+	_ "golang.org/x/image/webp" // Register WebP decoding for browser previews.
 )
 
 const (
@@ -541,7 +542,7 @@ func validateWebPreview(purpose, rawMediaType string, size int64) *Error {
 		}
 		return nil
 	}
-	if charset == "" && (mediaType == "image/png" || mediaType == "image/jpeg") {
+	if charset == "" && (mediaType == "image/png" || mediaType == "image/jpeg" || mediaType == "image/webp") {
 		if size > webPreviewImageMaxBytes {
 			return NewError(http.StatusRequestEntityTooLarge, "preview_too_large",
 				"image previews are limited to 32 MiB")
@@ -557,7 +558,7 @@ func validateStagedWebPreview(path, rawMediaType string) error {
 	if err != nil {
 		return fmt.Errorf("parse verified preview media type: %w", err)
 	}
-	if mediaType != "image/png" && mediaType != "image/jpeg" {
+	if mediaType != "image/png" && mediaType != "image/jpeg" && mediaType != "image/webp" {
 		return nil
 	}
 	file, err := os.Open(path)
@@ -567,7 +568,7 @@ func validateStagedWebPreview(path, rawMediaType string) error {
 	config, _, decodeErr := image.DecodeConfig(file)
 	closeErr := file.Close()
 	if decodeErr != nil || closeErr != nil || config.Width < 1 || config.Height < 1 {
-		return errors.New("the verified image does not have a valid static PNG or JPEG frame")
+		return errors.New("the verified image does not have a valid PNG, JPEG, or WebP frame")
 	}
 	if config.Width > webPreviewMaxDimension || config.Height > webPreviewMaxDimension ||
 		int64(config.Width)*int64(config.Height) > webPreviewMaxPixels {

@@ -72,7 +72,7 @@
   import SelectionDock from "./SelectionDock.svelte";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import { localPreferenceStorage } from "./browser-storage.js";
-  import { Photos } from "./photos.svelte.js";
+  import { Photos, type PhotoReturn } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { SelectionTarget } from "./selection.js";
@@ -182,6 +182,31 @@
   let webSession = $state("");
   let stopSessionReporting: (() => Promise<void>) | undefined;
   let photoMode = $state(location.pathname === "/photos");
+  let photoID = $state(new URLSearchParams(location.hash.slice(1)).get("photo") ?? "");
+  let photoWorkspace = $state<PhotosWorkspace>();
+  function syncPhotoLocation() {
+    const id = new URLSearchParams(location.hash.slice(1)).get("photo") ?? "", photos = photoState?.photos;
+    const record = history.state?.photoReturn as PhotoReturn | undefined;
+    if (id && photos) {
+      if (!photoID && photoMode && record?.contextID === photos.contextID && photoWorkspace) {
+        photoWorkspace.captureReturn();
+        history.replaceState({...history.state, photoReturn:photos.viewerReturn}, "", location.href);
+      } else {
+        photos.viewerReturn = record?.contextID === photos.contextID ? record : undefined;
+        if (photos.viewerReturn) photos.scrollTop = photos.viewerReturn.scrollTop;
+      }
+    } else if (location.pathname === "/photos" && photos?.viewerReturn) photos.scrollTop = photos.viewerReturn.scrollTop;
+    photoMode = location.pathname === "/photos"; photoID = id;
+  }
+  function changePhoto(id: string, mode: "open" | "step" | "close") {
+    if (mode === "close" && history.state?.photoReturn?.contextID === photoState?.photos.contextID) history.back();
+    else {
+      const url = new URL(location.href); url.hash = id ? `photo=${encodeURIComponent(id)}` : "";
+      if (mode === "open") history.pushState({photoReturn:photoState?.photos.viewerReturn}, "", url.href);
+      else history.replaceState(history.state, "", url.href);
+    }
+    photoID = id;
+  }
   let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
 
   $effect(() => {
@@ -194,8 +219,10 @@
   function switchWorkspace(photos: boolean) {
     navOpen = false;
     if (photoMode === photos) return;
+    if (photoMode && photoState) photoState.photos.viewerReturn = undefined;
     photoMode = photos;
-    history.pushState(null, "", `${photos ? "/photos" : "/"}${location.search}${location.hash}`);
+    photoID = "";
+    history.pushState(null, "", `${photos ? "/photos" : "/"}${location.search}${new URLSearchParams(location.hash.slice(1)).has("photo") ? "" : location.hash}`);
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
@@ -472,7 +499,10 @@
     };
 
     const session = takeFragmentSession();
-    if (savedQueryDraft) replaceQueryURL(savedQueryDraft);
+    if (photoMode && photoID) {
+      const url = new URL(location.href); url.hash = `photo=${encodeURIComponent(photoID)}`;
+      history.replaceState(null, "", url.href);
+    } else if (savedQueryDraft) replaceQueryURL(savedQueryDraft);
     if (session) {
       webSession = session.token;
       if (savedQueryDraft) queryBarOpen = true;
@@ -1851,7 +1881,7 @@
   }
 
   function closePanel(panel: Panel | null): () => void {
-    return () => { if (activePanel === panel) activePanel = null; };
+    return () => { if (activePanel === panel) { activePanel = null; if (photoID) void tick().then(() => document.querySelector<HTMLElement>(".photo-loupe")?.focus()); } };
   }
 
   let navOpen = $state(false);
@@ -1909,7 +1939,7 @@
   }
 </script>
 
-<svelte:window onpopstate={() => { photoMode = location.pathname === "/photos"; }} />
+<svelte:window onpopstate={syncPhotoLocation} onhashchange={syncPhotoLocation} />
 {#if !webSession}
   <main class="unlock-shell">
     <Card level="raised" title="Open your Docbank">
@@ -2061,7 +2091,7 @@
     </TopBar>
 
     {#if photoMode && photoState}
-      {#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} ontrashed={() => handleTrashed()} />{/key}
+      {#key photoState}<PhotosWorkspace bind:this={photoWorkspace} photos={photoState.photos} cache={photoState.cache} {photoID} onphotochange={changePhoto} ontrashed={() => handleTrashed()} />{/key}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
     {#if savedQueryDraft}

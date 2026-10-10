@@ -28,6 +28,41 @@ asset. Removing the selected member chooses another displayable member
 atomically, or stores a null display when none remains. Assets are limited to
 256 files.
 
+## Open and inspect a photo
+
+Double-click a photo to select it and open it above Library. Enter and Open
+open the photo while preserving any separate selection.
+On touch, tap a photo to open it when nothing is selected. Use the checkbox to
+start a selection. Taps then toggle selection.
+
+Use the arrow keys, Previous and Next buttons, or the thumbnail rail to move
+through the current result in query order, across calendar-month groups. Navigation loads the next page at the loaded edge
+and stops at the query boundary. If loading fails, Retry navigation resumes it
+inside the viewer, including after a cursor expires. Press I for available camera and exposure
+details. Wheel, pinch, or double-click to zoom, and press 0 to reset. Escape
+returns to the scroll position and focus left on entering the viewer, including
+when Forward reopens it.
+
+The viewer shows the cached grid preview first, then a fit preview. Zoom loads
+a large preview while preserving the zoom. It prepares only two neighboring
+fit previews in each direction. A failed upgrade keeps the useful image. Retry
+preview retries a failed request. Retained failed or unsupported previews have
+no Retry; download the photo from Documents.
+
+Use Reload photo after a temporary opening failure or when the photo version, display, or Library eligibility changes. Reloading unchanged content restarts preview loading, clears the failure, and keeps the zoom.
+
+View original reads verified JPEG, PNG, or WebP bytes through the browser's
+existing download path. Originals are limited to 32 MiB, 16,384 pixels per side,
+and 40 million pixels. Use verified download in Documents for larger images.
+Animated WebP originals may animate in the browser. RAW photos always use
+server-produced JPEG previews.
+
+A `/photos#photo=<asset-id>` URL opens that photo directly. Direct views have
+no query navigation or thumbnail rail. Close returns to Library. Back and
+Forward also update the viewer. Browser sessions stay in memory. After a reload,
+run `docbank web` for a fresh session, then append `&photo=<asset-id>` to its
+fragment to reopen the direct photo.
+
 ## Browse in the web app
 
 Open `docbank web` and choose **Photos** in the sidebar. Library opens at
@@ -58,7 +93,7 @@ The daemon produces a grid preview with a 512-pixel maximum edge for each
 included photo's selected display file. It discovers new imports continuously
 and resumes missing work after restart. It keeps completed results.
 
-Embedded applications can request fit previews at 2560 pixels or large
+The web viewer and embedded applications can request fit previews at 2560 pixels or large
 previews at 4096 pixels. All sizes preserve aspect ratio and never upscale.
 JPEG, PNG, GIF, still WebP, and supported embedded JPEGs in ARW, DNG, CR2,
 NEF, and RAF files have decoder paths. Format support does not guarantee that
@@ -322,6 +357,13 @@ never creates previews.
 The initial count evaluates the whole query. Later pages seek from the last
 sort key. Queries that collapse duplicate content still evaluate the complete
 matching population to choose representatives before returning a page.
+
+`POST /api/v1/photos/assets/{asset_id}/preview` prepares a `fit` or `large`
+preview for the supplied `content_version_id`. It returns the same preview
+slot shape as browsing, reuses retained terminal outcomes, and refuses an
+excluded, trashed, or changed display. Each request has a 30-second bound.
+Camera, lens, exposure, dimensions, and orientation come from the current
+display's technical metadata. Browser photo rows omit GPS coordinates.
 
 ## Move photos to trash
 

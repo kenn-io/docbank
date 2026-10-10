@@ -630,7 +630,7 @@ review and consent. See [Find similar documents](document-processing.md#find-sim
 ## Download verified content
 
 The selected document card previews PDF and PNG pages, eligible UTF-8 text,
-and bounded static PNG and JPEG images. Text is rendered as inert text, never as
+and bounded PNG, JPEG, and WebP images. Animated WebP images may animate in the browser. Text is rendered as inert text, never as
 document HTML. Docbank verifies the selected version UUID, size, media type, and
 SHA-256 after receiving the complete body and before publishing text or an
 image URL. Unsupported files
@@ -1055,8 +1055,8 @@ general metadata/content verification, or restore operations. Frozen-query tag
 actions are capped at 250,000 documents. Use an authenticated API client
 for larger or different bulk workflows.
 
-Original-file previews support UTF-8 or ASCII text up to 16 MiB and static PNG
-and JPEG images up to 32 MiB. PDF and PNG page rendering accepts sources up to
+Original-file previews support UTF-8 or ASCII text up to 16 MiB and PNG, JPEG,
+and WebP images up to 32 MiB. Animated WebP images may animate in the browser. PDF and PNG page rendering accepts sources up to
 64 MiB within the [page runtime limits](../architecture/page-images.md). Empty
 or larger sources offer verified download without a page preview. Other
 document, image, audio, video, and archive formats use verified download.

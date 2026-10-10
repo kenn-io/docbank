@@ -194,6 +194,8 @@ Display facts and ordering come from the persisted display file. Capture keys ca
 
 `GET /api/v1/photos/assets/{asset_id}/previews/{generation_id}` checks included live display membership and the exact retained generation in one read transaction, then either returns `304` for a matching generation validator or reads and verifies the complete bounded JPEG bytes. Both success responses use the generation ETag and `private, no-cache`, varying by credential headers. A byte response also includes Content-Digest, exact length and `nosniff`. Recipe discovery reads recorded outcomes without generating derivatives. Missing is absence; ready, unsupported and failed remain separate states.
 
+`POST /api/v1/photos/assets/{asset_id}/preview` uses the global mutation gate with a 30-second request timeout. Stale display admission returns `409`; a display change during production returns `404`. Timeout or cancellation returns `503 photo_preview_unavailable` with the corresponding interruption message.
+
 Browser sessions allow only these exact method/path pairs with empty query strings.
 
 ### Photo graph routes
