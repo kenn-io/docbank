@@ -239,7 +239,9 @@ func TestInspectVisualPreviewPNGSkipsLargeIDAT(t *testing.T) {
 	nextChunk := int64(len(source))
 	source = appendSyntheticPNGChunk(source, "eXIf", syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
 	source = appendSyntheticPNGChunk(source, "IEND", nil)
-	reader := &recordingVisualPreviewReadSeeker{Reader: bytes.NewReader(source)}
+	reader := &recordingVisualPreviewReadSeeker{
+		Reader: bytes.NewReader(source), payloadStart: int64(len(original) - 12 + 8), payloadEnd: nextChunk - 4,
+	}
 
 	orientation, unsupportedColor, unsupportedMetadata, malformed, err := inspectVisualPreviewPNG(t.Context(), reader, int64(len(source)))
 	require.NoError(t, err)
@@ -248,7 +250,7 @@ func TestInspectVisualPreviewPNGSkipsLargeIDAT(t *testing.T) {
 	assert.False(t, unsupportedMetadata)
 	assert.False(t, malformed)
 	assert.Equal(t, []int64{0, nextChunk}, reader.seeks)
-	assert.Equal(t, 4096+len(source)-int(nextChunk), reader.readBytes)
+	assert.False(t, reader.payloadRead, "large IDAT payload must be skipped without reading its bytes")
 }
 
 func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
@@ -622,7 +624,7 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 	}{
 		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White), failAtSeeks: []int{3, 4}},
 		{name: "png", mediaType: "image/png", data: pngSource, failAtSeeks: []int{3, 4}},
-		{name: "png after IDAT", mediaType: "image/png", data: trailingPNG, failAtSeeks: []int{0}, failReadAt: failReadAt},
+		{name: "png after IDAT", mediaType: "image/png", data: trailingPNG, failAtSeeks: []int{2}, failReadAt: failReadAt},
 		{name: "gif", mediaType: "image/gif", data: mediatest.GIF(3, 2, 1), failAtSeeks: []int{2, 3}},
 		{name: "webp", mediaType: "image/webp", data: mustDecodeWebP(t), failAtSeeks: []int{3, 4}},
 	}
@@ -641,11 +643,8 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 					phase = "trailing EXIF"
 				}
 				t.Run(phase, func(t *testing.T) {
-					var reader io.ReadSeeker = &failingVisualPreviewReadSeeker{
-						Reader: bytes.NewReader(source.data), failAtSeek: failAtSeek, err: readErr,
-					}
-					if source.failReadAt != 0 {
-						reader = &recordingVisualPreviewReadSeeker{Reader: bytes.NewReader(source.data), failReadAt: source.failReadAt, err: readErr}
+					reader := &failingVisualPreviewReadSeeker{
+						Reader: bytes.NewReader(source.data), failAtSeek: failAtSeek, failReadAt: source.failReadAt, err: readErr,
 					}
 
 					_, err := ProduceVisualPreview(t.Context(), reader, VisualPreviewTarget{
@@ -654,7 +653,10 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 					})
 					require.Error(t, err)
 					assert.True(t, IsSourceContentUnavailable(err))
-					assert.ErrorIs(t, err, readErr)
+					require.ErrorIs(t, err, readErr)
+					if source.failReadAt != 0 {
+						assert.ErrorContains(t, err, "inspecting visual preview PNG")
+					}
 				})
 			}
 		})
@@ -890,18 +892,20 @@ func syntheticExtendedWebP(
 type recordingVisualPreviewReadSeeker struct {
 	*bytes.Reader
 
-	seeks      []int64
-	readBytes  int
-	failReadAt int64
-	err        error
+	seeks        []int64
+	payloadStart int64
+	payloadEnd   int64
+	payloadRead  bool
 }
 
 func (r *recordingVisualPreviewReadSeeker) Read(target []byte) (int, error) {
-	if r.err != nil && r.Size()-int64(r.Len()) >= r.failReadAt {
-		return 0, r.err
+	position := r.Size() - int64(r.Len())
+	// Stop read-ahead at the payload boundary so the test can observe every payload read.
+	if position < r.payloadStart {
+		target = target[:min(int64(len(target)), r.payloadStart-position)]
 	}
 	n, err := r.Reader.Read(target)
-	r.readBytes += n
+	r.payloadRead = r.payloadRead || position < r.payloadEnd && position+int64(n) > r.payloadStart
 	return n, err //nolint:wrapcheck // The test double preserves Reader error identity.
 }
 
@@ -916,11 +920,12 @@ type failingVisualPreviewReadSeeker struct {
 
 	err        error
 	failAtSeek int
+	failReadAt int64
 	startSeeks int
 }
 
 func (r *failingVisualPreviewReadSeeker) Read(target []byte) (int, error) {
-	if r.startSeeks == r.failAtSeek {
+	if r.startSeeks == r.failAtSeek && r.Size()-int64(r.Len()) >= r.failReadAt {
 		return 0, r.err
 	}
 	return r.Reader.Read(target) //nolint:wrapcheck // The test double preserves Reader error identity.

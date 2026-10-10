@@ -416,6 +416,7 @@ func inspectVisualPreviewPNG(
 	orientation = 1
 	afterIDAT, sawEXIF := false, false
 	offset := int64(len(signature))
+	// After IDAT, each chunk consumes at least 12 verified, size-capped bytes, payloads skip by seek, and ctx is checked per chunk; a cap would leave fragmented PNGs sideways.
 	for chunks := 0; afterIDAT || chunks < visualPreviewMaxPNGChunks; chunks++ {
 		if err := ctx.Err(); err != nil {
 			return 0, false, false, false, err
