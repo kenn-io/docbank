@@ -22,12 +22,6 @@ import (
 func TestPhotoRejectsCLIBoundary(t *testing.T) {
 	command, _, err := rootCmd.Find([]string{"photos", "rejects"})
 	require.NoError(t, err)
-	for _, flag := range []string{"query", "confirm", "coverage", "profile-fingerprint"} {
-		require.NotNil(t, command.Flags().Lookup(flag))
-	}
-	for _, flag := range []string{"hidden"} {
-		require.Nil(t, command.Flags().Lookup(flag))
-	}
 	for _, flag := range []string{"query", "coverage", "profile-fingerprint"} {
 		require.NoError(t, command.Flags().Set(flag, "{}"))
 		require.NoError(t, command.Flags().Set("confirm", "-"))

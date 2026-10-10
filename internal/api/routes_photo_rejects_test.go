@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -29,10 +30,15 @@ func TestPhotoRejectRoutes(t *testing.T) {
 	require.Len(t, preview.Targets, 1)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, map[string]any{})
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	for _, targets := range [][]store.PhotoRejectTarget{{{AssetID: "bad", Revision: 1, MemberRevision: 1}}, make([]store.PhotoRejectTarget, 1001)} {
-		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, api.MovePhotoRejectsRequest{Targets: targets})
-		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, api.MovePhotoRejectsRequest{Targets: []store.PhotoRejectTarget{{AssetID: "bad", Revision: 1, MemberRevision: 1}}})
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	targets := make([]store.PhotoRejectTarget, 1001)
+	for i := range targets {
+		targets[i] = store.PhotoRejectTarget{AssetID: fmt.Sprintf("11111111-1111-4111-8111-%012d", i), Revision: 1, MemberRevision: 1}
 	}
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, api.MovePhotoRejectsRequest{Targets: targets})
+	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+	require.Contains(t, body, "expected array length <= 1000")
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, api.MovePhotoRejectsRequest{Targets: preview.Targets})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var moved api.PhotoRejectsMoved
