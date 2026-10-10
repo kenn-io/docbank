@@ -188,6 +188,7 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 	trailing := appendSyntheticPNGChunk(bytes.Clone(original[:len(original)-12]), "eXIf", exif)
 	trailing = appendSyntheticPNGChunk(trailing, "IEND", nil)
 	unusableTrailing := appendSyntheticPNGChunk(bytes.Clone(original[:len(original)-12]), "eXIf", nil)
+	unusableTrailing = appendSyntheticPNGChunk(unusableTrailing, "eXIf", []byte{0x49, 0x49, 0x2a, 0x00, 0xff, 0xff, 0xff, 0xff})
 	unusableTrailing = appendSyntheticPNGChunk(unusableTrailing, "eXIf", exif)
 	unusableTrailing = appendSyntheticPNGChunk(unusableTrailing, "IEND", nil)
 	unusableLeading := syntheticPNGChunk(t, original, "eXIf", nil)

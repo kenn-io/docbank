@@ -487,7 +487,7 @@ func walkVisualPreviewPNGChunks(
 				}
 				return 0, false, false, false, 0, err
 			}
-			if value, colorSpace, found := visualPreviewEXIF(payload); found {
+			if value, colorSpace, found, hasOrientation := visualPreviewEXIF(payload); found && (!afterIDAT || hasOrientation) {
 				orientation = value
 				unsupportedColor = unsupportedColor || !afterIDAT && colorSpace != 0 && colorSpace != 1
 				if afterIDAT {
@@ -591,7 +591,7 @@ func inspectVisualPreviewWebP(
 				return 0, false, false, false, false, err
 			}
 			payload = bytes.TrimPrefix(payload, []byte("Exif\x00\x00"))
-			if value, colorSpace, found := visualPreviewEXIF(payload); found {
+			if value, colorSpace, found, _ := visualPreviewEXIF(payload); found {
 				orientation = value
 				unsupportedColor = unsupportedColor || colorSpace != 0 && colorSpace != 1
 			}
@@ -659,7 +659,7 @@ func inspectVisualPreviewJPEG(
 		}
 		switch {
 		case marker == 0xe1 && bytes.HasPrefix(payload, []byte("Exif\x00\x00")):
-			if exifOrientation, colorSpace, found := visualPreviewEXIF(payload[6:]); found {
+			if exifOrientation, colorSpace, found, _ := visualPreviewEXIF(payload[6:]); found {
 				orientation = exifOrientation
 				unsupportedColor = unsupportedColor || colorSpace != 0 && colorSpace != 1
 			}
@@ -690,14 +690,15 @@ func readVisualPreviewJPEGMarker(source io.Reader) (byte, error) {
 	}
 }
 
-func visualPreviewEXIF(data []byte) (orientation, colorSpace int, found bool) {
+func visualPreviewEXIF(data []byte) (orientation, colorSpace int, found, hasOrientation bool) {
 	reader, root, ok := sourceMetadataTIFFRoot(data)
 	if !ok {
-		return 1, 0, false
+		return 1, 0, false, false
 	}
 	orientation = 1
 	if value, ok := exifUnsigned(reader, root[0x0112]); ok && value >= 1 && value <= 8 {
 		orientation = int(value)
+		hasOrientation = true
 	}
 	if raw := root[0x8769]; len(raw) >= 4 {
 		exif := reader.entries(reader.order.Uint32(raw))
@@ -705,7 +706,7 @@ func visualPreviewEXIF(data []byte) (orientation, colorSpace int, found bool) {
 			colorSpace = int(value)
 		}
 	}
-	return orientation, colorSpace, true
+	return orientation, colorSpace, true, hasOrientation
 }
 
 func visualPreviewJPEGColorModelSupported(model color.Model) bool {
