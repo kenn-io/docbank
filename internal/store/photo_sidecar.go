@@ -106,13 +106,15 @@ func (s *Store) InitializePhotoSidecar(ctx context.Context, target PhotoSidecarT
 		if err != nil {
 			return err
 		}
-		if !valid || values == (PhotoAuthored{}) {
-			_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO photo_sidecar_considered(sidecar_file_id,target_file_id,version_id,extractor_fingerprint) VALUES(?,?,?,?)`, target.SidecarFileID, target.FileID, target.VersionID, target.ExtractorFingerprint)
-			return err
+		if valid && values != (PhotoAuthored{}) {
+			v := values
+			patch := PhotoAuthoredPatch{&v.Rating, &v.Flag, &v.Label, &v.Caption, &v.Creator, &v.Copyright, &v.Rotation}
+			result, err = s.applyPhotoAuthoredTx(ctx, tx, []PhotoAuthoredTarget{{FileID: f.ID, Revision: 1, Patch: patch}}, "", &PhotoSidecarProvenance{NodeID: target.NodeID, VersionID: target.VersionID, FileID: target.SidecarFileID}, false)
+			if err != nil || len(result.After) != 0 {
+				return err
+			}
 		}
-		v := values
-		patch := PhotoAuthoredPatch{&v.Rating, &v.Flag, &v.Label, &v.Caption, &v.Creator, &v.Copyright, &v.Rotation}
-		result, err = s.applyPhotoAuthoredTx(ctx, tx, []PhotoAuthoredTarget{{FileID: f.ID, Revision: 1, Patch: patch}}, "", &PhotoSidecarProvenance{NodeID: target.NodeID, VersionID: target.VersionID, FileID: target.SidecarFileID}, false)
+		_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO photo_sidecar_considered(sidecar_file_id,target_file_id,version_id,extractor_fingerprint) VALUES(?,?,?,?)`, target.SidecarFileID, target.FileID, target.VersionID, target.ExtractorFingerprint)
 		return err
 	})
 	return result, err

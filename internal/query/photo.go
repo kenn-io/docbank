@@ -215,7 +215,12 @@ func CaptureTimeKey(normalized, precision, timezone, offset string) string {
 	return key
 }
 
-func ValidPhotoFlag(value string) bool { return oneOf(value, "", "pick", "reject") }
+func PhotoFlags() []string { return []string{"", "pick", "reject"} }
+func PhotoColorLabels() []string {
+	return []string{"", "red", "yellow", "green", "blue", "purple"}
+}
+
+func ValidPhotoFlag(value string) bool { return oneOf(value, PhotoFlags()...) }
 func ValidPhotoColorLabel(value string) bool {
-	return oneOf(value, "", "red", "yellow", "green", "blue", "purple")
+	return oneOf(value, PhotoColorLabels()...)
 }
