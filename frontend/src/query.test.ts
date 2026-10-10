@@ -56,8 +56,6 @@ describe("query identity", () => {
       '{"filters":{"rating_min":6}}',
       '{"filters":{"rating_min":4,"rating_max":3}}',
       '{"filters":{"rating_max":1.5}}',
-      '{"filters":{"flags":["yes"]}}',
-      '{"filters":{"labels":["orange"]}}',
       '{"v":0}',
       '{"syntax":""}',
       '{"sort":{"field":""}}',

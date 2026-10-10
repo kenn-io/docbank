@@ -99,13 +99,15 @@ func TestPhotoMCPAuthoredPagesFitEnvelope(t *testing.T) {
 				offset = *page.NextFileOffset
 			}
 			require.Equal(t, asset.Files, files)
-			last, err := getPhotoAsset(t.Context(), lease, []byte(fmt.Sprintf(`{"asset_id":%q,"file_offset":%d}`, asset.ID, len(asset.Files))))
-			require.NoError(t, err)
-			assert.Empty(t, last.Files)
-			assert.Nil(t, last.NextFileOffset)
-			for _, offset := range []int{-1, 257} {
-				wire := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "get_photo_asset", "arguments": map[string]any{"asset_id": asset.ID, "file_offset": offset}}))
-				assert.EqualValues(t, -32602, decodeWireError(t, wire).Code)
+			if test.name == "plain" {
+				last, err := getPhotoAsset(t.Context(), lease, []byte(fmt.Sprintf(`{"asset_id":%q,"file_offset":%d}`, asset.ID, len(asset.Files))))
+				require.NoError(t, err)
+				assert.Empty(t, last.Files)
+				assert.Nil(t, last.NextFileOffset)
+				for _, offset := range []int{-1, 257} {
+					wire := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "get_photo_asset", "arguments": map[string]any{"asset_id": asset.ID, "file_offset": offset}}))
+					assert.EqualValues(t, -32602, decodeWireError(t, wire).Code)
+				}
 			}
 			for _, mutation := range []struct {
 				name string

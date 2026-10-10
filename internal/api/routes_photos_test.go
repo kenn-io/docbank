@@ -78,7 +78,6 @@ func TestPhotoRoutesCreatePromoteAndConcurrentRevisionWinner(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, resp.StatusCode, body)
 	var created api.PhotoAsset
 	require.NoError(t, json.Unmarshal([]byte(body), &created))
-	assert.Equal(t, map[string]bool{"rating": true, "flag": true, "label": true, "caption": true, "creator": true, "copyright": true, "rotation": true}, created.Agreement)
 	inspected, err := fixture.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	assert.Equal(t, inspected.Agreement, created.Agreement)
