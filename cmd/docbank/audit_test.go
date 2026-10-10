@@ -32,7 +32,7 @@ func TestHumanAuditHistoryShowsPhotoDecisions(t *testing.T) {
 			} else {
 				require.NoError(t, writeAuditHistory(&output, api.AuditEventPage{Node: api.Node{ID: nodeID}, Items: events, Total: 1}))
 			}
-			for _, want := range []string{fileID, "on id:" + strconv.FormatInt(nodeID, 10), "revision 1", "revision 2", "rating 0", "rating 5", `flag "pick"`, `label "red"`, `caption "River\n\x1b[31m"`, `creator "Example photographer"`, `copyright "Example rights"`, "rotation 90", `confirmed ""`, `confirmed "caption"`} {
+			for _, want := range []string{fileID, "on id:" + strconv.FormatInt(nodeID, 10), "revision 1", "revision 2", "rating 0", "rating 5", `flag "pick"`, `label "red"`, `caption "River\n\x1b[31m"`, `creator "Example photographer"`, `copyright "Example rights"`, "rotation 90", `confirmed "(none)"`, `confirmed "caption"`} {
 				assert.Contains(t, output.String(), want)
 			}
 			assert.NotContains(t, output.String(), "\x1b")

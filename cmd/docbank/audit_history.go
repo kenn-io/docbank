@@ -216,8 +216,12 @@ func auditPhotoState(state *api.AuditAttachmentState) string {
 	}
 	photo := state.Photo
 	v := photo.Values
+	confirmed := strings.Join(v.Confirmed.Names(), ", ")
+	if confirmed == "" {
+		confirmed = "(none)"
+	}
 	return fmt.Sprintf("revision %d, rating %d, flag %s, label %s, caption %s, creator %s, copyright %s, rotation %d, confirmed %s",
-		photo.Revision, v.Rating, auditDisplayPath(v.Flag), auditDisplayPath(v.Label), auditDisplayPath(v.Caption), auditDisplayPath(v.Creator), auditDisplayPath(v.Copyright), v.Rotation, auditDisplayPath(strings.Join(v.Confirmed.Names(), ", ")))
+		photo.Revision, v.Rating, auditDisplayPath(v.Flag), auditDisplayPath(v.Label), auditDisplayPath(v.Caption), auditDisplayPath(v.Creator), auditDisplayPath(v.Copyright), v.Rotation, auditDisplayPath(confirmed))
 }
 
 func auditPresence(state *api.AuditAttachmentState) string {

@@ -1131,7 +1131,7 @@ func TestHistoryDetailShowsPhotoDecisions(t *testing.T) {
 	model = runModelCommand(t, model, cmd)
 	model, _ = updateModel(t, model, key(tea.KeyEnter))
 	detail := model.render()
-	for _, want := range []string{fileID, "Revision: 1", "Revision: 2", "Rating: 0", "Rating: 5", `Flag: "pick"`, `Label: "red"`, `Caption: "River\n\x1b[31m"`, `Creator: "Example photographer"`, `Copyright: "Example rights"`, "Rotation: 90", `Confirmed fields: ""`, `Confirmed fields: "caption"`} {
+	for _, want := range []string{fileID, "Revision: 1", "Revision: 2", "Rating: 0", "Rating: 5", `Flag: "pick"`, `Label: "red"`, `Caption: "River\n\x1b[31m"`, `Creator: "Example photographer"`, `Copyright: "Example rights"`, "Rotation: 90", `Confirmed fields: "(none)"`, `Confirmed fields: "caption"`} {
 		assert.Contains(t, detail, want)
 	}
 }
