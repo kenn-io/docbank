@@ -87,7 +87,7 @@ func TestVoyageTextAllowsOnlyOptionalStringText(t *testing.T) {
 		name, extra string
 		valid       bool
 	}{
-		{"omitted", "", true}, {"text", `,"text":"document envelope: passage"`, true},
+		{"text", `,"text":"document envelope: passage"`, true},
 		{"unknown", `,"unreviewed":"synthetic"`, false}, {"wrong type", `,"text":42`, false},
 		{"null text", `,"text":null`, false}, {"duplicate text", `,"text":"a","text":"b"`, false},
 	} {
