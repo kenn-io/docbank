@@ -26,10 +26,14 @@ func TestExportPreflightDoesNotContactDaemon(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", vault)
 	valid := `{"source_operation_id":"11111111-1111-4111-8111-111111111111","plan_operation_id":"22222222-2222-4222-8222-222222222222","members":[{"node_id":1,"version_id":"33333333-3333-4333-8333-333333333333","sha256":"` + strings.Repeat("a", 64) + `","size":0}]}`
 	member := valid[strings.Index(valid, `[{`)+1 : len(valid)-2]
-	photo := strings.TrimSuffix(valid, "}") + `,"photo_render":{"format":"png","include_metadata":true,"remove_gps":true}}`
+	photo := strings.TrimSuffix(valid, "}") + `,"photo_render":{"format":"png","long_edge":0,"include_metadata":true,"remove_gps":true}}`
 	for _, tc := range []struct{ name, body, field string }{
 		{"malformed", "{", "JSON"},
 		{"null GPS", strings.Replace(photo, `"remove_gps":true`, `"remove_gps":null`, 1), "photo_render.remove_gps"},
+		{"omitted GPS", strings.TrimSuffix(valid, "}") + `,"photo_render":{"format":"jpeg","quality":80,"include_metadata":true}}`, "photo_render.remove_gps"},
+		{"omitted metadata", strings.Replace(photo, `"include_metadata":true,`, "", 1), "photo_render.include_metadata"},
+		{"omitted long edge", strings.Replace(photo, `"long_edge":0,`, "", 1), "photo_render.long_edge"},
+		{"omitted format", strings.Replace(photo, `"format":"png",`, "", 1), "photo_render.format"},
 		{"unknown", strings.Replace(valid, `"size":0`, `"unknown":0`, 1), "JSON"},
 		{"source ID", strings.Replace(valid, "11111111-1111-4111-8111-111111111111", "bad", 1), "source_operation_id"},
 		{"plan ID", strings.Replace(valid, "22222222-2222-4222-8222-222222222222", "bad", 1), "plan_operation_id"},

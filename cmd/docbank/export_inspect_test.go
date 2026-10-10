@@ -149,4 +149,18 @@ func TestExportInspectionOutput(t *testing.T) {
 		"unavailable: 7", "unavailable inventories: 8"} {
 		require.Contains(t, output.String(), want)
 	}
+	require.NotContains(t, output.String(), "photo format:")
+	require.NotContains(t, output.String(), "embedded previews:")
+	output.Reset()
+	plan.PhotoRender = &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 80, LongEdge: 2048, IncludeMetadata: true, RemoveGPS: true}
+	plan.EmbeddedPreviews = 1
+	require.NoError(t, writeExportPlanHeader(&output, plan))
+	for _, want := range []string{"photo format: jpeg", "JPEG quality: 80", "long edge: 2048", "include metadata: true", "remove GPS: true", "embedded previews: 1"} {
+		require.Contains(t, output.String(), want)
+	}
+	output.Reset()
+	plan.PhotoRender.Format = "png"
+	require.NoError(t, writeExportPlanHeader(&output, plan))
+	require.Contains(t, output.String(), "photo format: png")
+	require.NotContains(t, output.String(), "JPEG quality:")
 }

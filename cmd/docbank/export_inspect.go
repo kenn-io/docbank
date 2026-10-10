@@ -77,6 +77,16 @@ func writeExportPlanHeader(output io.Writer, plan bundle.Plan) error {
 	fmt.Fprintf(&text, "selected members: %d\nrole entries: %d\nrole bytes: %d\nmetadata bytes: %d\n",
 		plan.Total, plan.RoleEntries, plan.RoleBytes, plan.MetadataBytes)
 	fmt.Fprintf(&text, "created: %s\nadmission deadline: %s\n", plan.CreatedAt, plan.ExpiresAt)
+	if profile := plan.PhotoRender; profile != nil {
+		fmt.Fprintf(&text, "photo format: %s\n", profile.Format)
+		if profile.Format == "jpeg" {
+			fmt.Fprintf(&text, "JPEG quality: %d\n", profile.Quality)
+		}
+		fmt.Fprintf(&text, "long edge: %d\ninclude metadata: %t\nremove GPS: %t\n", profile.LongEdge, profile.IncludeMetadata, profile.RemoveGPS)
+	}
+	if plan.EmbeddedPreviews != 0 {
+		fmt.Fprintf(&text, "embedded previews: %d\n", plan.EmbeddedPreviews)
+	}
 	for _, policy := range plan.Roles {
 		fmt.Fprintf(&text, "role: %s · allow unavailable: %t", policy.Role, policy.AllowUnavailable)
 		if policy.ProfileFingerprint != "" {

@@ -171,6 +171,22 @@ func TestPhotoExportResolvesCompleteScopeAndSelectedDisplayMembers(t *testing.T)
 	require.ErrorIs(t, err, ErrHiddenLocked)
 }
 
+func TestPhotoExportRejectsNonDisplayMember(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := authoredPair(t, s)
+	file := fileByRole(asset.Files, PhotoRoleImage)
+	n, err := s.NodeByID(ctx, file.NodeID)
+	require.NoError(t, err)
+	m := bundle.Member{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: n.BlobHash, Size: n.Size}
+	source, err := s.CreateExportSource(ctx, "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{m}}, nil)
+	require.NoError(t, err)
+	_, err = s.ExportPhotoInputs(ctx, "owner", bundle.PlanRequest{SourceID: source.ID, MemberHash: source.MemberHash})
+	require.ErrorIs(t, err, bundle.ErrConflict)
+	require.ErrorContains(t, err, "isn't the photo's display file")
+}
+
 func TestPhotoExportSourceRejectsTooManyAssetIDsBeforeReservation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

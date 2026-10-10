@@ -56,6 +56,11 @@ func readExportRequest(path string) (exportPreviewRequest, error) {
 				return fmt.Errorf("photo_render.%s must not be null", name)
 			}
 		}
+		for _, name := range []string{"format", "include_metadata", "remove_gps", "long_edge"} {
+			if _, present := fields[name]; !present {
+				return fmt.Errorf("photo_render.%s is required", name)
+			}
+		}
 		return json.Unmarshal(raw, profile, json.RejectUnknownMembers(true))
 	}))); err != nil {
 		return request, usageError(fmt.Errorf("invalid export request JSON: %w", err))

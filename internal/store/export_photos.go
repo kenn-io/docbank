@@ -121,7 +121,8 @@ func (s *Store) exportPhotoInput(ctx context.Context, q metadataQuerier, m bundl
 		}
 	}()
 	var hidden sql.NullString
-	err = q.QueryRowContext(ctx, `SELECT f.file_id,f.revision,a.revision,n.revision,v.mime_type,a.hidden_at,n.name FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id WHERE n.id=? AND v.version_id=? AND v.blob_hash=? AND v.size=? AND a.display_file_id=f.file_id AND a.excluded_at IS NULL AND n.trashed_at IS NULL`, m.NodeID, m.VersionID, m.SHA256, m.Size).Scan(&i.FileID, &i.FileRevision, &i.AssetRevision, &i.NodeRevision, &i.MediaType, &hidden, &i.Name)
+	var display sql.NullBool
+	err = q.QueryRowContext(ctx, `SELECT f.file_id,f.revision,a.revision,n.revision,v.mime_type,a.hidden_at,n.name,a.display_file_id=f.file_id FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id WHERE n.id=? AND v.version_id=? AND v.blob_hash=? AND v.size=? AND a.excluded_at IS NULL AND n.trashed_at IS NULL`, m.NodeID, m.VersionID, m.SHA256, m.Size).Scan(&i.FileID, &i.FileRevision, &i.AssetRevision, &i.NodeRevision, &i.MediaType, &hidden, &i.Name, &display)
 	if err != nil {
 		return i, err
 	}
@@ -132,6 +133,9 @@ func (s *Store) exportPhotoInput(ctx context.Context, q metadataQuerier, m bundl
 		if _, err := s.hiddenSession(ctx, q); err != nil {
 			return i, err
 		}
+	}
+	if !display.Bool {
+		return i, fmt.Errorf("%w: member isn't the photo's display file", bundle.ErrConflict)
 	}
 	f, err := photoFileByIDQuery(ctx, q, i.FileID)
 	if err != nil {

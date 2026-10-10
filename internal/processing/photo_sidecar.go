@@ -18,6 +18,14 @@ import (
 const maxPhotoSidecarBytes = 1 << 20
 const teststripXMPNamespace = "https://teststrip.app/xmp/1.0/"
 
+func photoXMPFlag(rating, pick string) (flag string, reject bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(rating))
+	if err == nil && n == -1 {
+		return "reject", true
+	}
+	return strings.TrimSpace(pick), false
+}
+
 // ReadPhotoSidecar validates the complete packet before returning supported decisions.
 func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, error) {
 	var result store.PhotoAuthored
@@ -208,7 +216,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	if rootCount != 1 || len(stack) != 0 || !description {
 		return result, errors.New("photo sidecar needs an RDF description")
 	}
-	result.Flag = values["Pick"]
+	result.Flag, _ = photoXMPFlag("", values["Pick"])
 	if !query.ValidPhotoFlag(result.Flag) {
 		return result, errors.New("invalid XMP pick")
 	}
@@ -224,8 +232,9 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 		if err != nil || n < -1 || n > 5 {
 			return result, errors.New("invalid XMP rating")
 		}
-		if n == -1 {
-			result.Flag = "reject"
+		flag, reject := photoXMPFlag(value, result.Flag)
+		if reject {
+			result.Flag = flag
 		} else {
 			result.Rating = n
 		}

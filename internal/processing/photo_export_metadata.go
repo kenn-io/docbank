@@ -602,18 +602,18 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 	embeddedReject := false
 	saveFlag := func(value string) {
 		if !embeddedReject {
-			input.Authored.Flag = strings.TrimSpace(value)
+			input.Authored.Flag, _ = photoXMPFlag("", value)
 		}
 		input.Authored.Confirmed |= store.PhotoConfirmedFlag
 	}
 	legacyReject := func(value string) bool {
-		rating, err := strconv.Atoi(strings.TrimSpace(value))
-		if err != nil || rating != -1 {
+		flag, reject := photoXMPFlag(value, input.Authored.Flag)
+		if !reject {
 			return false
 		}
 		if ratingConfirmed && !flagConfirmed {
 			embeddedReject = true
-			input.Authored.Flag = "reject"
+			input.Authored.Flag = flag
 			input.Authored.Confirmed |= store.PhotoConfirmedFlag
 		}
 		return true
