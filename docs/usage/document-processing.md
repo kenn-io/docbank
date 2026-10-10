@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-09
 title: Document processing
 description: Preview, consent to, and run document processing. The original version is never changed.
 ---
@@ -77,6 +77,33 @@ consent, run, status, rendition, and coverage contracts, plus search limited to
 an authorized source set (a source fence). See the
 [HTTP API](../architecture/http-api.md).
 
+## Convert documents with Docling
+
+Configure a [Docling document rendition profile](../configuration.md#document-conversion-with-docling)
+with the `docbank-docling-document/v1` adapter, then select it from a processing
+profile. The daemon can convert locally admitted PDFs, PPTX/XLSX files, plain
+text/Markdown, and PNG/JPEG images through your Docling Serve deployment.
+DOCX remains blocked by local inspection; this profile does not admit HTML,
+TIFF, legacy Office, audio, or video.
+
+Import the original, inspect its plan, and consent to the exact destination:
+
+```bash
+docbank add /path/to/report.pdf --dest /inbox
+docbank processing plan /inbox/report.pdf --profile <configured-profile>
+docbank processing build /inbox/report.pdf \
+  --profile <configured-profile> \
+  --plan-fingerprint <fingerprint-from-plan> \
+  --consent
+```
+
+The plan discloses the endpoint, deployment, trust boundary, filename policy,
+and retained artifacts. Import and preview send no document to Docling. Track
+the returned job with `processing status <job-id>`. When it completes, the
+retained Markdown is available through the rendition read API and lexical
+search. Original bytes stay unchanged. PDF output can retain exact page
+locations; other supported formats report degraded provenance.
+
 ## Find similar documents
 
 Choose a file's **Find similar** row action in the web app. The processing
@@ -115,7 +142,8 @@ useful shapes:
   rendition or embedding provider, may cross a hosted-provider trust boundary.
   The reviewed plan identifies the provider and the input class it receives:
   the original file, a rendition chunk, an original-file embedding input, or
-  query text. Docbank does not treat a hosted profile as private. A configured
+  query text. Docbank does not treat a hosted profile as private. A configured Docling document runtime can receive an original file and retain
+  searchable Markdown. A configured
   Docling ASR profile can receive an original supplied WAV or MP3 file and
   publish generated transcript evidence. The daemon reports the provider
   destination before the operator grants consent.
