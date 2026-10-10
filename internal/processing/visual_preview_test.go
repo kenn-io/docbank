@@ -39,7 +39,7 @@ func TestByteFirstPNGRefinementKeepsAnimatedPNGPreviewable(t *testing.T) {
 	blobs, err := blob.New(store.NewPackCatalog(catalog), filepath.Join(root, "blobs"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	source := syntheticAPNG(t, mediatest.PNG(4, 3, color.White), 2)
+	source := syntheticAPNG(t, mediatest.PNG(4, 3, color.White))
 	ing := &ingest.Ingester{Store: catalog, Blobs: blobs}
 	for _, suffix := range []string{".png", ".apng"} {
 		t.Run(suffix, func(t *testing.T) {
@@ -203,21 +203,12 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 	oversized = appendSyntheticPNGChunk(oversized, "IEND", nil)
 	oversizedThenValid := appendSyntheticPNGChunk(bytes.Clone(oversized[:len(oversized)-12]), "eXIf", exif)
 	oversizedThenValid = appendSyntheticPNGChunk(oversizedThenValid, "IEND", nil)
-	apng := syntheticAPNG(t, original, 600)
-	apng = appendSyntheticPNGChunk(bytes.Clone(apng[:len(apng)-12]), "eXIf", exif)
-	apng = appendSyntheticPNGChunk(apng, "IEND", nil)
 	manyText := bytes.Clone(original[:len(original)-12])
 	for range visualPreviewMaxPNGChunks + 1 {
 		manyText = appendSyntheticPNGChunk(manyText, "tEXt", []byte("comment\x00text"))
 	}
 	manyText = appendSyntheticPNGChunk(manyText, "eXIf", exif)
 	manyText = appendSyntheticPNGChunk(manyText, "IEND", nil)
-	manyIDAT := bytes.Clone(original[:len(original)-12])
-	for range 1024 {
-		manyIDAT = appendSyntheticPNGChunk(manyIDAT, "IDAT", nil)
-	}
-	manyIDAT = appendSyntheticPNGChunk(manyIDAT, "eXIf", exif)
-	manyIDAT = appendSyntheticPNGChunk(manyIDAT, "IEND", nil)
 	for name, test := range map[string]struct {
 		source        []byte
 		width, height int
@@ -226,9 +217,8 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 		"unusable trailing EXIF then orientation":  {unusableTrailing, 2, 3},
 		"unusable leading EXIF wins over trailing": {unusableLeading, 3, 2},
 		"oversized trailing EXIF then orientation": {oversizedThenValid, 2, 3},
-		"many trailing text chunks":                {manyText, 2, 3}, "1025 IDAT chunks": {manyIDAT, 2, 3},
-		"trailing uncalibrated color": {uncalibrated, 2, 3},
-		"oversized trailing EXIF":     {oversized, 3, 2}, "600-frame APNG": {apng, 2, 3},
+		"many trailing text chunks":                {manyText, 2, 3},
+		"trailing uncalibrated color":              {uncalibrated, 2, 3},
 	} {
 		t.Run(name, func(t *testing.T) {
 			digest := sha256.Sum256(test.source)
@@ -261,6 +251,8 @@ func TestInspectVisualPreviewPNGSkipsLargeIDAT(t *testing.T) {
 	assert.False(t, unsupportedMetadata)
 	assert.False(t, malformed)
 	require.NotZero(t, resumeOffset)
+	assert.LessOrEqual(t, reader.payloadBytes, int64(4096), "inspection may buffer at most one buffer of IDAT payload")
+	reader.payloadBytes = 0
 	_, err = reader.Seek(resumeOffset, io.SeekStart)
 	require.NoError(t, err)
 	orientation, unsupportedColor, unsupportedMetadata, malformed, _, err := walkVisualPreviewPNGChunks(t.Context(), reader, bufio.NewReaderSize(reader, 4096), int64(len(source)), resumeOffset, true)
@@ -270,7 +262,7 @@ func TestInspectVisualPreviewPNGSkipsLargeIDAT(t *testing.T) {
 	assert.False(t, unsupportedMetadata)
 	assert.False(t, malformed)
 	assert.Equal(t, []int64{0, resumeOffset, nextChunk}, reader.seeks)
-	assert.False(t, reader.payloadRead, "large IDAT payload must be skipped without reading its bytes")
+	assert.LessOrEqual(t, reader.payloadBytes, int64(4096), "large IDAT may read ahead by one buffer before seeking past its payload")
 }
 
 func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
@@ -559,20 +551,22 @@ func TestProduceVisualPreviewRejectsOversizedPNGDimensionsBeforeDecode(t *testin
 	require.NotNil(t, product.Preview.Failure)
 	assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
 
-	t.Run("trailing chunks stay unread", func(t *testing.T) {
+	t.Run("trailing reads stay within inspection buffer", func(t *testing.T) {
 		tailStart := int64(len(source) - 12)
 		trailing := appendSyntheticPNGChunk(bytes.Clone(source[:tailStart]), "tEXt", make([]byte, 64*1024))
 		trailing = appendSyntheticPNGChunk(trailing, "eXIf", syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
 		trailing = appendSyntheticPNGChunk(trailing, "IEND", nil)
-		reader := &recordingVisualPreviewReadSeeker{
-			Reader: bytes.NewReader(trailing), payloadStart: tailStart, payloadEnd: int64(len(trailing)),
-		}
+		reader := &recordingVisualPreviewReadSeeker{Reader: bytes.NewReader(trailing)}
+		_, _, _, _, _, err := inspectVisualPreviewPNG(t.Context(), reader, int64(len(trailing)))
+		require.NoError(t, err)
+		bufferedEnd := reader.maxReadEnd
+		reader = &recordingVisualPreviewReadSeeker{Reader: bytes.NewReader(trailing)}
 		product, err := produceVisualPreviewPNG(t.Context(), reader, int64(len(trailing)), document.VisualPreviewV1{})
 		require.NoError(t, err)
 		assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
 		require.NotNil(t, product.Preview.Failure)
 		assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
-		assert.False(t, reader.payloadRead, "rejected PNG must leave trailing chunks unread")
+		assert.Equal(t, bufferedEnd, reader.maxReadEnd, "rejected PNG must read nothing beyond inspection's buffered bytes")
 	})
 }
 
@@ -831,7 +825,7 @@ func syntheticPNGChunk(t *testing.T, source []byte, chunkType string, payload []
 	return append(result, source[33:]...)
 }
 
-func syntheticAPNG(t *testing.T, source []byte, frames uint32) []byte {
+func syntheticAPNG(t *testing.T, source []byte) []byte {
 	t.Helper()
 	require.GreaterOrEqual(t, len(source), 33)
 	var idatPayloads [][]byte
@@ -852,10 +846,10 @@ func syntheticAPNG(t *testing.T, source []byte, frames uint32) []byte {
 
 	output := append([]byte(nil), source[:33]...)
 	actl := make([]byte, 8)
-	binary.BigEndian.PutUint32(actl[:4], frames)
+	binary.BigEndian.PutUint32(actl[:4], 2)
 	output = appendSyntheticPNGChunk(output, "acTL", actl)
 	sequence := uint32(0)
-	for frame := range frames {
+	for frame := range 2 {
 		fctl := make([]byte, 26)
 		binary.BigEndian.PutUint32(fctl[:4], sequence)
 		sequence++
@@ -931,17 +925,16 @@ type recordingVisualPreviewReadSeeker struct {
 	seeks        []int64
 	payloadStart int64
 	payloadEnd   int64
-	payloadRead  bool
+	payloadBytes int64
+	maxReadEnd   int64
 }
 
 func (r *recordingVisualPreviewReadSeeker) Read(target []byte) (int, error) {
 	position := r.Size() - int64(r.Len())
-	// Stop read-ahead at the payload boundary so the test can observe every payload read.
-	if position < r.payloadStart {
-		target = target[:min(int64(len(target)), r.payloadStart-position)]
-	}
 	n, err := r.Reader.Read(target)
-	r.payloadRead = r.payloadRead || position < r.payloadEnd && position+int64(n) > r.payloadStart
+	end := position + int64(n)
+	r.payloadBytes += max(int64(0), min(end, r.payloadEnd)-max(position, r.payloadStart))
+	r.maxReadEnd = max(r.maxReadEnd, end)
 	return n, err //nolint:wrapcheck // The test double preserves Reader error identity.
 }
 

@@ -344,7 +344,8 @@ func produceVisualPreviewPNG(
 			return VisualPreviewProduct{}, sourceContentUnavailable(
 				fmt.Errorf("seeking visual preview source: %w", err))
 		}
-		orientation, _, _, _, _, err = walkVisualPreviewPNGChunks(ctx, source, bufio.NewReaderSize(source, 4096), sourceSize, resumeOffset, true)
+		orientation, _, _, _, _, err = walkVisualPreviewPNGChunks(
+			ctx, source, bufio.NewReaderSize(source, 4096), sourceSize, resumeOffset, true)
 		if err != nil {
 			return VisualPreviewProduct{}, sourceContentUnavailable(
 				fmt.Errorf("inspecting visual preview PNG: %w", err))

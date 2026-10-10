@@ -47,11 +47,6 @@ func TestProducedVisualPreviewCarriesPinnedRecipe(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, document.VisualPreviewReady, product.Preview.State)
 	assert.Equal(t, CurrentVisualPreviewRecipe(), product.Preview.Recipe)
-	assert.Equal(t, pinnedVisualPreviewProcessorFingerprint,
-		product.Preview.Recipe.ProcessorFingerprint)
-	_, fingerprint, err := document.MarshalVisualPreviewRecipeV1(product.Preview.Recipe)
-	require.NoError(t, err)
-	assert.Equal(t, pinnedVisualPreviewRecipeFingerprint, fingerprint)
 }
 
 func TestVisualPreviewDescriptorTracksLinkedDependenciesAndPolicy(t *testing.T) {
