@@ -160,7 +160,7 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 
 func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"non-photo", "trashed", "replaced", "mislabeled", "missing-blob", "damaged-blob", "unsupported", "oversized-metadata"} {
+	for _, state := range []string{"non-photo", "trashed", "selection-trashed", "replaced", "mislabeled", "missing-blob", "damaged-blob", "unsupported", "oversized-metadata"} {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
 			ts, s := newTestServer(t, nil)
@@ -196,6 +196,18 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			n, err := s.CreateFile(t.Context(), s.RootID(), "unavailable-member", hash, size, mediaType)
 			require.NoError(t, err)
 			members = append(members, bundle.Member{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: hash, Size: size})
+			if state == "selection-trashed" {
+				asset, err := s.PhotoAssetForNode(t.Context(), n.ID)
+				require.NoError(t, err)
+				_, _, err = s.Trash(t.Context(), n.ID, n.Revision)
+				require.NoError(t, err)
+				request := bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "photos", Photos: &bundle.PhotoExportSelection{AssetIDs: []string{asset.ID}, Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}}
+				response, body := do(t, ts, http.MethodPost, "/api/v1/exports/sources", nil, request)
+				require.Equal(t, http.StatusConflict, response.StatusCode, body)
+				require.Contains(t, body, fmt.Sprintf("photo %d (unavailable-member)", n.ID))
+				require.Contains(t, body, "no longer exportable")
+				return
+			}
 			if state == "oversized-metadata" {
 				asset, err := s.PhotoAssetForNode(t.Context(), n.ID)
 				require.NoError(t, err)

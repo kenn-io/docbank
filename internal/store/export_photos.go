@@ -103,7 +103,21 @@ func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.
 		out = append(out, m)
 	}
 	if len(selected) != 0 {
-		return nil, "", bundle.ErrConflict
+		for _, id := range selection.AssetIDs {
+			if !selected[id] {
+				continue
+			}
+			var nodeID int64
+			var name string
+			err := s.db.QueryRowContext(ctx, `SELECT n.id,n.name FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id WHERE f.asset_id=? ORDER BY f.file_id=a.display_file_id DESC,f.file_id LIMIT 1`, id).Scan(&nodeID, &name)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, "", fmt.Errorf("photo %s: %w: no longer exportable", id, bundle.ErrConflict)
+			}
+			if err != nil {
+				return nil, "", err
+			}
+			return nil, "", fmt.Errorf("photo %d (%s): %w: no longer exportable", nodeID, name, bundle.ErrConflict)
+		}
 	}
 	if identity != "" {
 		identity = "sha256:" + identity

@@ -168,10 +168,17 @@ func TestPhotoExportResolvesCompleteScopeAndSelectedDisplayMembers(t *testing.T)
 	selection.Query.Text = "name:frame-0000.jpg"
 	_, _, err = s.ResolvePhotoExportMembers(ctx, selection)
 	require.ErrorIs(t, err, bundle.ErrConflict)
+	require.ErrorContains(t, err, fmt.Sprintf("photo %d (frame-%04d.jpg)", members[0].NodeID, MaxDocumentCatalogPageSize))
+	_, _, err = s.Trash(ctx, members[0].NodeID, members[0].Revision)
+	require.NoError(t, err)
 	selection.Query.Text = ""
+	_, _, err = s.ResolvePhotoExportMembers(ctx, selection)
+	require.ErrorIs(t, err, bundle.ErrConflict)
+	require.ErrorContains(t, err, fmt.Sprintf("photo %d (frame-%04d.jpg)", members[0].NodeID, MaxDocumentCatalogPageSize))
 	selection.AssetIDs = []string{uuid.New().String()}
 	_, _, err = s.ResolvePhotoExportMembers(ctx, selection)
 	require.ErrorIs(t, err, bundle.ErrConflict)
+	require.ErrorContains(t, err, "photo "+selection.AssetIDs[0])
 	selection.Hidden = true
 	_, _, err = s.ResolvePhotoExportMembers(ctx, selection)
 	require.ErrorIs(t, err, ErrHiddenLocked)

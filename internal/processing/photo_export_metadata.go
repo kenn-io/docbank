@@ -627,7 +627,7 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 		if n.Space == "xmlns" || n.Space == "" && n.Local == "xmlns" {
 			return false
 		}
-		return photoXMPConfirmed(n, input) || receipt.Profile.RemoveGPS && strings.HasPrefix(strings.ToUpper(n.Local), "GPS")
+		return n.Space == "http://ns.adobe.com/xmp/note/" && n.Local == "HasExtendedXMP" || photoXMPConfirmed(n, input) || receipt.Profile.RemoveGPS && strings.HasPrefix(strings.ToUpper(n.Local), "GPS")
 	}
 	depth, skip, roots, rdf := 0, 0, 0, 0
 	var ratingTokens []xml.Token
@@ -849,7 +849,7 @@ func photoXMPConfirmed(n xml.Name, input store.PhotoExportInput) bool {
 			bit = store.PhotoConfirmedFlag
 		}
 		if n.Local == "Rotation" {
-			return true
+			bit = store.PhotoConfirmedRotation
 		}
 	case "http://ns.adobe.com/lightroom/1.0/":
 		return n.Local == "hierarchicalSubject" && len(input.Keywords) > 0

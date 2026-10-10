@@ -318,6 +318,26 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 		require.NotEmpty(t, packets.exif)
 		require.NotEmpty(t, packets.xmp)
 	}
+	for _, property := range []string{">", ` ts:Rotation="90">`, `><ts:Rotation>90</ts:Rotation>`} {
+		for _, confirmed := range []store.PhotoAuthoredFields{0, store.PhotoConfirmedRotation} {
+			for _, format := range []string{"jpeg", "png"} {
+				rotationPacket := []byte(photoSidecarHeader + property + photoSidecarFooter)
+				authored := store.PhotoAuthored{Confirmed: confirmed}
+				if confirmed != 0 {
+					authored.Rotation = 90
+				}
+				packets, _ := render(nil, rotationPacket, authored, nil, format, false)
+				actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
+				require.NoError(t, err)
+				assert.Equal(t, confirmed != 0 || property != ">", strings.Contains(string(packets.xmp), "Rotation"))
+				rotation := 0
+				if confirmed == 0 && property != ">" {
+					rotation = 90
+				}
+				assert.Equal(t, rotation, actual.Rotation)
+			}
+		}
+	}
 	for _, flag := range []string{"pick", "", "reject"} {
 		for _, property := range []string{` xmp:Rating="-1">`, `><xmp:Rating>-<!--split-->1</xmp:Rating>`, `><xmp:Rating><rdf:value>-1</rdf:value></xmp:Rating>`, ` xmp:Rating="4">`, `><xmp:Rating>4</xmp:Rating>`, `><xmp:Rating><rdf:value>4</rdf:value></xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/" exif:GPSLatitude="12,30N">4</xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/"><rdf:value>4</rdf:value><exif:GPSLatitude>12,30N</exif:GPSLatitude></xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/"><rdf:value>-1</rdf:value><exif:GPSLatitude>12,30N</exif:GPSLatitude></xmp:Rating>`} {
 			for _, spelling := range []string{"-1", "-01"} {
@@ -513,20 +533,25 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 	require.Error(t, err)
 	_, _, err = renderPhotoExport(t.Context(), bad, input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90})
 	require.NoError(t, err)
-	mainPacket := []byte(photoSidecarHeader + ` xmp:Rating="2" dc:creator="Embedded credit">` + photoSidecarFooter)
-	extended := syntheticJPEGSegment(t, preview, 0xe1, append([]byte(photoXMPJPEGPrefix), mainPacket...))
-	extended = syntheticJPEGSegment(t, extended, 0xe1, []byte("http://ns.adobe.com/xmp/extension/\x00discarded extension"))
-	input = photoRenderInput(extended, "image/jpeg")
-	input.Authored = store.PhotoAuthored{Rating: 4, Confirmed: store.PhotoConfirmedRating}
-	out, _, err = renderPhotoExport(t.Context(), extended, input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true})
-	require.NoError(t, err)
-	require.NotContains(t, string(out), "discarded extension")
-	packets, err = photoSourcePackets(t.Context(), out, true)
-	require.NoError(t, err)
-	require.Contains(t, string(packets.xmp), "Embedded credit")
-	actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
-	require.NoError(t, err)
-	require.Equal(t, 4, actual.Rating)
+	for _, property := range []string{` xmpNote:HasExtendedXMP="0123456789ABCDEF0123456789ABCDEF">`, `><xmpNote:HasExtendedXMP>0123456789ABCDEF0123456789ABCDEF</xmpNote:HasExtendedXMP>`} {
+		mainPacket := []byte(photoSidecarHeader + ` xmp:Rating="2" dc:creator="Embedded credit" xmlns:xmpNote="http://ns.adobe.com/xmp/note/"` + property + photoSidecarFooter)
+		extended := syntheticJPEGSegment(t, preview, 0xe1, append([]byte(photoXMPJPEGPrefix), mainPacket...))
+		extended = syntheticJPEGSegment(t, extended, 0xe1, []byte("http://ns.adobe.com/xmp/extension/\x00discarded extension"))
+		input = photoRenderInput(extended, "image/jpeg")
+		input.Authored = store.PhotoAuthored{Rating: 4, Confirmed: store.PhotoConfirmedRating}
+		for _, format := range []string{"jpeg", "png"} {
+			out, _, err = renderPhotoExport(t.Context(), extended, input, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true})
+			require.NoError(t, err)
+			require.NotContains(t, string(out), "discarded extension")
+			packets, err = photoSourcePackets(t.Context(), out, true)
+			require.NoError(t, err)
+			require.NotContains(t, string(packets.xmp), "HasExtendedXMP")
+			require.Contains(t, string(packets.xmp), "Embedded credit")
+			actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
+			require.NoError(t, err)
+			require.Equal(t, 4, actual.Rating)
+		}
+	}
 	oversized := bytes.Repeat([]byte{'x'}, maxPhotoSidecarBytes+1)
 	for _, tag := range []uint16{34675, 0x010e} {
 		raw := rawData(syntheticTIFFEntry{tag: tag, kind: 7, value: oversized})
