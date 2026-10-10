@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import type { PhotoBrowsePage } from "../src/generated/docbank.js";
 
 const exec = promisify(execFile);
 const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -11,7 +12,7 @@ const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "b
 const output = process.env.DOCBANK_PHOTOS_SCREENSHOT_DIR;
 test.skip(!output, "DOCBANK_PHOTOS_SCREENSHOT_DIR enables synthetic photo proof");
 
-test("photo search, whole-library facets and ordered continuation use the real vault", async ({ browser }) => {
+test("photo search, whole-library facets and bounded relevance use the real vault", async ({ browser }) => {
   test.setTimeout(900_000);
   const workspace = process.env.DOCBANK_PHOTO_PROOF_WORKSPACE ?? await mkdtemp(path.join(repository, ".superpowers", "photo-search-proof-"));
   const vault = path.join(workspace, "vault");
@@ -51,17 +52,19 @@ test("photo search, whole-library facets and ordered continuation use the real v
     await page.getByRole("searchbox", { name: "Search photos" }).fill("Canon");
     const searchPage = page.waitForResponse(response => response.url().includes("/photos/assets/query") && response.request().postDataJSON().query.text === "Canon" && response.request().postDataJSON().facets.length === 0);
     await page.getByRole("button", { name: "Search", exact: true }).click();
-    const first = await (await searchPage).json();
+    const first: PhotoBrowsePage = await (await searchPage).json();
     await expect(page.getByText(/5,000 photos/)).toBeVisible();
     await expect(page.getByRole("heading", { name: "Search results" })).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Photo years" })).toHaveCount(0);
     await expect(page.getByRole("group", { name: "Albums facet" }).getByRole("button", { name: "Paris walks, 5000 photos" })).toBeVisible();
-    const continuation = page.waitForResponse(response => response.url().includes("/photos/assets/query") && Boolean(response.request().postDataJSON().cursor));
-    await page.getByRole("button", { name: "Load more", exact: true }).click();
-    const next = await (await continuation).json();
-    const ids = [...first.items, ...next.items].map(item => item.asset_id);
+    expect(first.items).toHaveLength(250);
+    expect(first.total).toBe(5000);
+    expect(first.next_cursor).toBeUndefined();
+    await expect(page.getByText("Showing the best 250 of 5,000 matches. Refine the search or sort by capture date to see all.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Load more", exact: true })).toHaveCount(0);
+    const ids = first.items.map(item => item.asset_id);
     expect(new Set(ids).size).toBe(ids.length);
-    const order = [...first.items, ...next.items].map(item => item.capture_time ?? "");
+    const order = first.items.map(item => item.capture_time ?? "");
     expect(order).toEqual([...order].sort().reverse());
     await expect(page.getByRole("group", { name: "Lens facet" }).getByRole("button", { name: "RF 24-70mm F2.8, 5000 photos" })).toBeVisible();
     await page.waitForLoadState("networkidle");

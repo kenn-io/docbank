@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,7 +22,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryService, snapshots *store.QuerySnapshotService) {
+func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryService) {
 	recipes := make(map[string]string, 3)
 	for _, size := range []string{"grid", "fit", "large"} {
 		recipe, err := processing.VisualPreviewRecipeForSize(size)
@@ -50,47 +49,23 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			Coverage: store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint},
 			PageSize: in.Body.PageSize, Recipes: recipes, Facets: in.Body.Facets,
 		}
-		var page store.PhotoBrowsePage
-		var nextCursor string
-		if value.Sort.Field == "relevance" {
-			owner, ok := workspaceSnapshotOwner(ctx)
-			if !ok {
-				return nil, NewError(http.StatusUnauthorized, "unauthorized", "authenticated snapshot owner is missing")
+		var boundary *store.PhotoBrowsePosition
+		if in.Body.Cursor != "" {
+			if value.Sort.Field == "relevance" {
+				return nil, FromStoreError(store.ErrInvalidPhotoCursor)
 			}
-			var snapshot store.SnapshotPage
-			if in.Body.Cursor == "" {
-				snapshot, err = snapshots.CreatePhotoRanked(ctx, owner, request)
-			} else {
-				snapshot, err = snapshots.PagePhotoRanked(ctx, owner, in.Body.Cursor, request)
+			position, cursorErr := service.decodePhotoCursor(in.Body.Cursor)
+			if cursorErr != nil {
+				return nil, FromStoreError(cursorErr)
 			}
-			if errors.Is(err, store.ErrSnapshotGone) {
-				err = store.ErrDocumentCursorExpired
-			}
-			if errors.Is(err, store.ErrSnapshotCursor) {
-				err = store.ErrInvalidPhotoCursor
-			}
-			if err == nil {
-				page, err = d.Store.HydratePhotoRankedPage(ctx, request, snapshot)
-			}
-			if err == nil && snapshot.NextCursor != "" {
-				nextCursor = snapshot.NextCursor
-			}
-		} else {
-			var boundary *store.PhotoBrowsePosition
-			if in.Body.Cursor != "" {
-				position, cursorErr := service.decodePhotoCursor(in.Body.Cursor)
-				if cursorErr != nil {
-					return nil, FromStoreError(cursorErr)
-				}
-				boundary = &position
-			}
-			page, err = d.Store.ListPhotoAssets(ctx, request, boundary)
+			boundary = &position
 		}
+		page, err := d.Store.ListPhotoAssets(ctx, request, boundary)
 
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}
-		wire := PhotoBrowsePage{Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, NextCursor: nextCursor, Facets: fromStoreFacets(page.Facets)}
+		wire := PhotoBrowsePage{Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, Facets: fromStoreFacets(page.Facets)}
 		for i, row := range page.Items {
 			slots := map[string]PhotoPreviewSlot{}
 			for size, slot := range row.Previews {

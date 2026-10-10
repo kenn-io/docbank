@@ -858,44 +858,24 @@ func TestPhotoBrowseRelevanceAndFacets(t *testing.T) {
 		browsePhotoMetadata(t, s, node, strconv.Itoa(i), photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString(camera)), photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString(strings.Fields(camera)[0])), photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("RF 24-70mm")), photoMetadataField("created", "image.exif", "DateTimeOriginal", document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{Raw: "2024-06-15T12:00:00", Normalized: "2024-06-15T12:00:00", Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneOmitted}}))
 	}
 	request := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"text":"Canon","sort":{"field":"relevance","direction":"desc"}}`), PageSize: 3, Facets: []string{"camera", "lens", "year", "location", "set"}}
-	var charges int
-	service := newQuerySnapshotService(s, querySnapshotServiceOptions{ChargeHook: func(context.Context, string, int64, int64) error { charges++; return nil }})
-	t.Cleanup(func() { require.NoError(t, service.Close()) })
-	first, err := service.CreatePhotoRanked(t.Context(), "owner", request)
+	page, err := s.ListPhotoAssets(t.Context(), request, nil)
 	require.NoError(t, err)
-	require.Empty(t, first.Facets)
-	browsePhotoNode(t, s, "Canon later.jpg", browseHash("later-ranked-member"), "image/jpeg")
-	snapshot := first
-	var ids []string
-	for {
-		page, err := s.HydratePhotoRankedPage(t.Context(), request, snapshot)
-		require.NoError(t, err)
-		require.Equal(t, int64(7), page.Total)
-		require.Empty(t, page.Facets)
-		for _, row := range page.Items {
-			ids = append(ids, row.AssetID)
-		}
-		if snapshot.NextCursor == "" {
-			break
-		}
-		before := charges
-		snapshot, err = service.PagePhotoRanked(t.Context(), "owner", snapshot.NextCursor, request)
-		require.NoError(t, err)
-		require.Equal(t, before, charges)
-	}
-	require.Positive(t, charges)
-	require.Len(t, ids, 7)
-	require.Len(t, slices.Compact(slices.Clone(ids)), 7)
-	require.True(t, slices.IsSorted(ids), "equal scores use asset ID")
-	request.Facets = []string{"camera"}
-	_, err = service.PagePhotoRanked(t.Context(), "owner", first.NextCursor, request)
+	require.Equal(t, int64(7), page.Total)
+	require.Len(t, page.Items, 3)
+	require.Nil(t, page.Next)
+	require.Len(t, page.Facets, 5)
+	require.Equal(t, int64(7), *page.Facets[0].Total)
+	ids := []string{page.Items[0].AssetID, page.Items[1].AssetID, page.Items[2].AssetID}
+	require.True(t, slices.IsSorted(ids), "equal scores and capture times use asset ID")
+	_, err = s.ListPhotoAssets(t.Context(), request, &PhotoBrowsePosition{})
 	require.ErrorIs(t, err, ErrInvalidPhotoCursor)
+	request.Facets = []string{"camera"}
 	request.Query = snapshotTestQuery(t, `{"filters":{"cameras":["Absent"]},"sort":{"field":"relevance","direction":"desc"}}`)
-	page, err := browsePhotoFirst(t.Context(), t, s, request)
+	page, err = browsePhotoFirst(t.Context(), t, s, request)
 	require.NoError(t, err)
 	require.Empty(t, page.Items)
 	require.Zero(t, page.Total)
-	require.Equal(t, int64(9), *page.Facets[0].Total)
+	require.Equal(t, int64(8), *page.Facets[0].Total)
 	require.Equal(t, SnapshotFacetValue{Key: "Absent", Label: "Absent", Selected: true}, page.Facets[0].Values[4])
 }
 
@@ -1057,22 +1037,15 @@ func TestPhotoRankingRetainedContentEvidence(t *testing.T) {
 			metadata := browsePhotoNode(t, s, "metadata.jpg", browseHash("retained-metadata"), "image/jpeg")
 			browsePhotoMetadata(t, s, metadata, "retained-metadata-fields", photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("harbor")))
 			expected := []int64{filename.ID, metadata.ID, nodes[1].ID, nodes[0].ID}
-			service := NewQuerySnapshotService(s)
-			t.Cleanup(func() { require.NoError(t, service.Close()) })
-			snapshot, err := service.CreatePhotoRanked(t.Context(), "owner", request)
+			request.PageSize = len(expected)
+			page, err := s.ListPhotoAssets(t.Context(), request, nil)
 			require.NoError(t, err)
-			for _, id := range expected {
-				page, err := s.HydratePhotoRankedPage(t.Context(), request, snapshot)
-				require.NoError(t, err)
-				require.Equal(t, int64(4), page.Total)
-				require.Len(t, page.Items, 1)
-				require.Equal(t, id, page.Items[0].NodeID)
-				if snapshot.NextCursor != "" {
-					snapshot, err = service.PagePhotoRanked(t.Context(), "owner", snapshot.NextCursor, request)
-					require.NoError(t, err)
-				}
+			require.Equal(t, int64(4), page.Total)
+			require.Len(t, page.Items, len(expected))
+			require.Nil(t, page.Next)
+			for i, id := range expected {
+				require.Equal(t, id, page.Items[i].NodeID)
 			}
-			require.Empty(t, snapshot.NextCursor)
 			if source == "active_generation" {
 				request.Coverage = CoverageSelection{Configuration: "configured", ProfileFingerprint: browseHash("other-profile")}
 				page, err := browsePhotoFirst(t.Context(), t, s, request)
@@ -1198,46 +1171,7 @@ func TestPhotoOrdinarySeekAvoidsPopulationMaterialization(t *testing.T) {
 
 func browsePhotoFirst(ctx context.Context, t *testing.T, s *Store, request PhotoBrowseRequest) (PhotoBrowsePage, error) {
 	t.Helper()
-	if request.Query.Sort.Field != "relevance" {
-		return s.ListPhotoAssets(ctx, request, nil)
-	}
-	service := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, service.Close()) })
-	snapshot, err := service.CreatePhotoRanked(ctx, "owner", request)
-	if err != nil {
-		return PhotoBrowsePage{}, err
-	}
-	page, err := s.HydratePhotoRankedPage(ctx, request, snapshot)
-	if err != nil || len(request.Facets) == 0 {
-		return page, err
-	}
-	request.Query.Sort = query.Sort{Field: "capture_time", Direction: "desc"}
-	request.PageSize = 1
-	counts, err := s.ListPhotoAssets(ctx, request, nil)
-	page.Facets = counts.Facets
-	return page, err
-}
-
-func TestPhotoRankedSavedQueryRevision(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	for _, name := range []string{"first.jpg", "second.jpg"} {
-		browsePhotoNode(t, s, name, browseHash(name), "image/jpeg")
-	}
-	saved, err := s.CreateSavedQuery(t.Context(), "Photos", "", SavedQueryKindQuery, []byte(`{"filters":{"kinds":["photo"]}}`))
-	require.NoError(t, err)
-	request := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"syntax":"advanced","text":"saved:Photos","sort":{"field":"relevance","direction":"desc"}}`), PageSize: 1}
-	service := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, service.Close()) })
-	first, err := service.CreatePhotoRanked(t.Context(), "owner", request)
-	require.NoError(t, err)
-	_, err = service.PagePhotoRanked(t.Context(), "owner", first.NextCursor, request)
-	require.NoError(t, err)
-	payload := []byte(`{"filters":{"kinds":["video"]}}`)
-	_, err = s.UpdateSavedQuery(t.Context(), saved.ID, saved.Revision, SavedQueryPatch{Payload: &payload})
-	require.NoError(t, err)
-	_, err = service.PagePhotoRanked(t.Context(), "owner", first.NextCursor, request)
-	require.ErrorIs(t, err, ErrInvalidPhotoCursor)
+	return s.ListPhotoAssets(ctx, request, nil)
 }
 
 func TestPhotoRankedCaptureTimeTies(t *testing.T) {
@@ -1255,30 +1189,25 @@ func TestPhotoRankedCaptureTimeTies(t *testing.T) {
 	}
 	slices.Sort(expected[1:3])
 	expected = []string{expected[1], expected[2], expected[0], expected[3]}
-	request := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"text":"Canon","sort":{"field":"relevance","direction":"desc"}}`), PageSize: 1}
-	service := NewQuerySnapshotService(s)
-	t.Cleanup(func() { require.NoError(t, service.Close()) })
-	page, err := service.CreatePhotoRanked(t.Context(), "owner", request)
+	request := PhotoBrowseRequest{Query: snapshotTestQuery(t, `{"text":"Canon","sort":{"field":"relevance","direction":"desc"}}`), PageSize: 2}
+	page, err := s.ListPhotoAssets(t.Context(), request, nil)
 	require.NoError(t, err)
-	var actual []string
-	for {
-		actual = append(actual, page.Rows[0].PhotoAssetID)
-		if page.NextCursor == "" {
-			break
-		}
-		page, err = service.PagePhotoRanked(t.Context(), "owner", page.NextCursor, request)
-		require.NoError(t, err)
+	require.Equal(t, int64(4), page.Total)
+	require.Nil(t, page.Next)
+	actual := []string{page.Items[0].AssetID, page.Items[1].AssetID}
+	require.Equal(t, expected[:2], actual)
+	request.PageSize = 4
+	page, err = s.ListPhotoAssets(t.Context(), request, nil)
+	require.NoError(t, err)
+	actual = nil
+	for _, row := range page.Items {
+		actual = append(actual, row.AssetID)
 	}
 	require.Equal(t, expected, actual)
-	request.PageSize = 4
-	page, err = service.CreatePhotoRanked(t.Context(), "owner", request)
+	_, err = s.TrashPhotoAsset(t.Context(), page.Items[0].AssetID, page.Items[0].Revision)
 	require.NoError(t, err)
-	live, err := s.HydratePhotoRankedPage(t.Context(), request, page)
+	page, err = s.ListPhotoAssets(t.Context(), request, nil)
 	require.NoError(t, err)
-	_, err = s.TrashPhotoAsset(t.Context(), live.Items[0].AssetID, live.Items[0].Revision)
-	require.NoError(t, err)
-	live, err = s.HydratePhotoRankedPage(t.Context(), request, page)
-	require.NoError(t, err)
-	require.Equal(t, int64(4), live.Total)
-	require.Len(t, live.Items, 3)
+	require.Equal(t, int64(3), page.Total)
+	require.Len(t, page.Items, 3)
 }

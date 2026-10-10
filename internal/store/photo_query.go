@@ -8,7 +8,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"go.kenn.io/docbank/document"
@@ -101,6 +100,9 @@ func (s *Store) ListPhotoAssets(
 			return err
 		}
 		sortField := compiled.Query.Sort.Field
+		if sortField == "relevance" && boundary != nil {
+			return ErrInvalidPhotoCursor
+		}
 		from, sortKey, ok := photoBrowseOrder(sortField)
 		if sortField == "added_time" {
 			if len(compiled.Query.Filters.SetIDs) != 1 {
@@ -109,7 +111,7 @@ func (s *Store) ListPhotoAssets(
 			from = `photo_set_members sm CROSS JOIN photo_assets a ON a.asset_id=sm.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`)
 			sortKey, ok = "sm.added_at", true
 		}
-		if !ok {
+		if !ok && sortField != "relevance" {
 			return fmt.Errorf("%w: unsupported sort", ErrInvalidPhotoQuery)
 		}
 		if coverage.Configuration == photoBrowseConfiguredCoverage {
@@ -167,6 +169,13 @@ func (s *Store) ListPhotoAssets(
 			if err != nil {
 				return err
 			}
+		}
+		if sortField == "relevance" {
+			page.Items, err = rankedPhotoRows(ctx, q, compiled, generation.ID, coverage, request.PageSize)
+			if err != nil {
+				return err
+			}
+			return s.hydratePhotoPreviews(ctx, q, request, page.Items)
 		}
 		primary, comparison := "ASC", ">"
 		if compiled.Query.Sort.Direction == "desc" {
@@ -334,7 +343,7 @@ func photoBrowseMatch(compiled CompiledQuery, generation string, coverage Covera
 	return compiledQueryFragment{sql: `EXISTS (SELECT 1 FROM photo_files member CROSS JOIN (` + population.sql + `) matched ON matched.node_id=member.node_id WHERE member.asset_id=a.asset_id)`, args: population.args, relations: population.relations}, nil
 }
 
-func materializeRankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, options snapshotMaterializeOptions, projection *SnapshotProjection) error {
+func rankedPhotoRows(ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string, coverage CoverageSelection, pageSize int) ([]PhotoBrowseRow, error) {
 	var names, content []string
 	for _, operand := range compiled.predicate.lexical {
 		if operand.negated {
@@ -347,7 +356,7 @@ func materializeRankedPhotoRows(ctx context.Context, q metadataQuerier, compiled
 	}
 	population, err := photoBrowsePopulation(compiled, generation, coverage)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	candidates := sqlquery.Query{SQL: `SELECT 0 node_id,0 tier,0.0 score WHERE 0`}
 	if len(names) > 0 {
@@ -357,7 +366,7 @@ func materializeRankedPhotoRows(ctx context.Context, q metadataQuerier, compiled
 		}
 		candidates, err = photoSearchCandidates(strings.Join(names, " OR "), strings.Join(content, " OR "), generation, profile)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	ranking := `WITH eligible AS MATERIALIZED (` + population.sql + `), candidates AS (` + candidates.SQL + `), ranked AS (
@@ -370,46 +379,19 @@ func materializeRankedPhotoRows(ctx context.Context, q metadataQuerier, compiled
 	if compiled.Query.Sort.Direction == "asc" {
 		order = "ASC"
 	}
-	ranking += ` SELECT member.asset_id,n.id,v.version_id,v.blob_hash,v.size,n.revision FROM ranked member
+	ranking += ` SELECT ` + photoBrowseSelect + `,'' FROM ranked member
  CROSS JOIN photo_assets a ON a.asset_id=member.asset_id ` + strings.TrimPrefix(photoBrowseDisplayFrom, `photo_assets a`) +
-		` ORDER BY member.tier ` + order + `,member.score ` + order + `,COALESCE(p.capture_sort_key,'') DESC,member.asset_id ASC`
+		` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(compiled.photoHidden) + ` ORDER BY member.tier ` + order + `,member.score ` + order + `,COALESCE(p.capture_sort_key,'') DESC,member.asset_id ASC LIMIT ?`
+	args = append(args, pageSize)
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{sql: ranking, args: args, relations: population.relations}, coverage, generation)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rows, err := q.QueryContext(ctx, statement, args...)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, 2); err != nil {
-		return err
-	}
-	for rows.Next() {
-		if int64(len(projection.Rows)) >= options.MaxRows {
-			return ErrQuerySnapshotTooLarge
-		}
-		var row SnapshotRow
-		if err := rows.Scan(&row.PhotoAssetID, &row.NodeID, &row.ContentVersionID, &row.BlobHash, &row.Size, &row.Revision); err != nil {
-			return err
-		}
-		row.SortKey = fmt.Sprintf("%020d", len(projection.Rows))
-		encoded, err := json.Marshal(row)
-		if err != nil {
-			return err
-		}
-		bytes := int64(len(encoded)) + 1
-		if bytes > options.MaxRowBytes {
-			return ErrQuerySnapshotTooLarge
-		}
-		if err := chargeSnapshotMaterialization(options, &projection.SerializedBytes, 1, bytes); err != nil {
-			return err
-		}
-		projection.Rows = append(projection.Rows, row)
-		projection.TotalBytes += row.Size
-	}
-	projection.Total = int64(len(projection.Rows))
-	return rows.Err()
+	return scanPhotoBrowseRows(rows, PhotoBrowsePosition{})
 }
 
 var photoBrowseSelect = `a.asset_id,a.kind,a.revision,f.file_id,n.id,v.version_id,n.name,COALESCE(v.mime_type,''),n.created_at,v.blob_hash,` + photoTechnicalSelect
@@ -472,25 +454,6 @@ func (s *Store) hydratePhotoPreviews(ctx context.Context, q metadataQuerier, req
 	return nil
 }
 
-func photoRankedIdentity(request PhotoBrowseRequest) (string, error) {
-	canonical, err := query.Canonical(request.Query)
-	if err != nil {
-		return "", err
-	}
-	binding, err := json.Marshal(struct {
-		Query    []byte
-		Coverage CoverageSelection
-		Hidden   bool
-		PageSize int
-		Facets   []string
-	}{canonical, request.Coverage, request.Hidden, request.PageSize, request.Facets})
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(binding)
-	return hex.EncodeToString(digest[:]), nil
-}
-
 func normalizePhotoBrowseRequest(request PhotoBrowseRequest) (PhotoBrowseRequest, error) {
 	if request.PageSize == 0 {
 		request.PageSize = DefaultDocumentCatalogPageSize
@@ -508,129 +471,4 @@ func normalizePhotoBrowseRequest(request PhotoBrowseRequest) (PhotoBrowseRequest
 		return request, fmt.Errorf("%w: %w", ErrInvalidPhotoQuery, err)
 	}
 	return request, nil
-}
-
-func (s *Store) materializePhotoRankedSnapshot(ctx context.Context, request PhotoBrowseRequest, options snapshotMaterializeOptions) (SnapshotProjection, error) {
-	request, err := normalizePhotoBrowseRequest(request)
-	if err != nil {
-		return SnapshotProjection{}, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, options.BuildTimeout)
-	defer cancel()
-	var projection SnapshotProjection
-	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
-		if request.Hidden {
-			if _, err := s.hiddenSession(ctx, q); err != nil {
-				return err
-			}
-		}
-		compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: q})
-		if err != nil {
-			return err
-		}
-		if compiled.Query.Sort.Field != "relevance" {
-			return ErrInvalidPhotoQuery
-		}
-		if request.Coverage.Configuration == photoBrowseConfiguredCoverage {
-			if err := validateSnapshotCoverageProfile(ctx, q, request.Coverage); err != nil {
-				return err
-			}
-		}
-		identity, err := photoRankedIdentity(request)
-		if err != nil {
-			return err
-		}
-		projection = SnapshotProjection{
-			Query: compiled.Query, Dependencies: compiled.Dependencies, QueryFingerprint: identity,
-			Coverage: request.Coverage, PageSize: request.PageSize, ObservedAt: options.Now().UTC(),
-			Rows: make([]SnapshotRow, 0), Generation: SnapshotGeneration{Kind: "native"},
-		}
-		if generation.ID != "" {
-			projection.Generation = SnapshotGeneration{Kind: "rendition", GenerationID: generation.ID}
-		}
-		if err := materializeRankedPhotoRows(ctx, q, compiled, generation.ID, request.Coverage, options, &projection); err != nil {
-			return err
-		}
-		projection.MemberHash = snapshotMemberHash(snapshotMembers(projection.Rows))
-		projection.SnapshotFingerprint, err = snapshotProjectionFingerprint(projection)
-		if err != nil {
-			return err
-		}
-		bytes, err := snapshotProjectionMetadataBytes(projection)
-		if err != nil {
-			return err
-		}
-		return chargeSnapshotMaterialization(options, &projection.SerializedBytes, 0, bytes)
-	})
-	return projection, err
-}
-
-func (s *QuerySnapshotService) PagePhotoRanked(ctx context.Context, owner, cursor string, request PhotoBrowseRequest) (SnapshotPage, error) {
-	request, err := normalizePhotoBrowseRequest(request)
-	if err != nil {
-		return SnapshotPage{}, err
-	}
-	payload, err := s.decodeCursor(owner, cursor)
-	if err != nil {
-		return SnapshotPage{}, err
-	}
-	page, err := s.Page(ctx, owner, payload.SnapshotID, cursor)
-	if err != nil {
-		return SnapshotPage{}, err
-	}
-	identity, err := photoRankedIdentity(request)
-	if err != nil {
-		return SnapshotPage{}, err
-	}
-	if identity != page.QueryFingerprint {
-		return SnapshotPage{}, ErrInvalidPhotoCursor
-	}
-	err = s.store.withLexicalGenerationRead(ctx, func(q metadataQuerier, _ LexicalGeneration) error {
-		compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(ctx, request.Query, queryResolver{q: q})
-		if err != nil {
-			return err
-		}
-		if !slices.Equal(compiled.Dependencies, page.Dependencies) {
-			return ErrInvalidPhotoCursor
-		}
-		return nil
-	})
-	return page, err
-}
-
-func (s *Store) HydratePhotoRankedPage(ctx context.Context, request PhotoBrowseRequest, snapshot SnapshotPage) (PhotoBrowsePage, error) {
-	page := PhotoBrowsePage{Total: snapshot.Total, Items: make([]PhotoBrowseRow, 0)}
-	err := s.withLexicalGenerationRead(ctx, func(q metadataQuerier, _ LexicalGeneration) error {
-		if request.Hidden {
-			if _, err := s.hiddenSession(ctx, q); err != nil {
-				return err
-			}
-		}
-		if len(snapshot.Rows) == 0 {
-			return nil
-		}
-		args := make([]any, len(snapshot.Rows))
-		for i, row := range snapshot.Rows {
-			args[i] = row.PhotoAssetID
-		}
-		rows, err := q.QueryContext(ctx, `SELECT `+photoBrowseSelect+`,'' FROM `+photoBrowseDisplayFrom+` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(request.Hidden)+` AND a.asset_id IN (`+placeholders(len(args))+`)`, args...)
-		if err != nil {
-			return err
-		}
-		items, err := scanPhotoBrowseRows(rows, PhotoBrowsePosition{})
-		if err != nil {
-			return err
-		}
-		byID := make(map[string]PhotoBrowseRow, len(items))
-		for _, row := range items {
-			byID[row.AssetID] = row
-		}
-		for _, member := range snapshot.Rows {
-			if row, ok := byID[member.PhotoAssetID]; ok {
-				page.Items = append(page.Items, row)
-			}
-		}
-		return s.hydratePhotoPreviews(ctx, q, request, page.Items)
-	})
-	return page, err
 }

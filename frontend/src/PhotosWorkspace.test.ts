@@ -257,3 +257,23 @@ it("explains fixed count limits without offering retry", async () => {
   expect(screen.queryByRole("button", { name: "Retry counts" })).toBeNull();
   photos.dispose(); await cache.dispose();
 });
+
+it("explains the relevance limit and hides it for complete results or capture dates", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.items = [photo(1)];
+  photos.total = 5000;
+  photos.query = { ...photos.query, text: "Canon", sort: { field: "relevance", direction: "desc" } };
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  const note = "Showing the best 250 of 5,000 matches. Refine the search or sort by capture date to see all.";
+  await screen.findByText(note);
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  photos.total = 1;
+  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  photos.total = 5000;
+  photos.query = { ...photos.query, sort: { field: "capture_time", direction: "desc" } };
+  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  photos.dispose(); await cache.dispose();
+});

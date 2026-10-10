@@ -62,6 +62,9 @@
     <SelectDropdown disabled={photos.loading || photos.hiding || photos.trashing} title="Sort photos" value={photos.query.sort.field} options={sortOptions} onchange={value => void photos.setQuery({ ...photos.query, sort: { field: value as "capture_time" | "relevance", direction: "desc" } })} />
     <Button type="button" size="sm" disabled={photos.loading || photos.hiding || photos.trashing} onclick={() => { search = ""; void photos.setQuery({ ...photos.query, text: "", filters: {}, sort: { field: "capture_time", direction: "desc" } }); }}>Clear filters</Button>
   </form>
+  {#if photos.query.sort.field === "relevance" && photos.total > photos.items.length}
+    <p class="photo-search-limit">Showing the best 250 of {photos.total.toLocaleString()} matches. Refine the search or sort by capture date to see all.</p>
+  {/if}
   {#if photos.error}
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
   {/if}
@@ -98,6 +101,7 @@
 <style>
   .photos-workspace { max-height: calc(100dvh - var(--header-height)); display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; background: var(--bg-surface); }
   .photo-search { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-default); }
+  .photo-search-limit { margin: 0; padding: var(--space-3) var(--space-5); color: var(--text-muted); font-size: var(--font-size-sm); }
   .photo-browser { display: flex; flex: 1; min-height: 0; overflow: hidden; }
   .photo-facets { display: flex; flex-direction: column; width: 230px; flex-shrink: 0; overflow: auto; }
   .photo-facets :global(.facets) { flex: 1; }
