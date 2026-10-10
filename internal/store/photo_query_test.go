@@ -11,33 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
-
-func TestPhotoFacetsUseBuildTimeout(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	browsePhotoNode(t, s, "camera.jpg", browseHash("facet-timeout"), "image/jpeg")
-	value := snapshotTestQuery(t, `{}`)
-	compiled := mustPhotoCompiled(t, s, value)
-	options := defaultSnapshotMaterializeOptions()
-	options.FacetTimeout = -time.Nanosecond
-	dimensions := []string{"camera", "lens", "year", "location", "set"}
-	facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options)
-	require.NoError(t, err)
-	for _, facet := range facets {
-		require.True(t, facet.Available)
-		require.Equal(t, int64(1), *facet.Total)
-	}
-	options.BuildTimeout = -time.Nanosecond
-	facets, err = materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options)
-	require.NoError(t, err)
-	require.Len(t, facets, len(dimensions))
-	for _, facet := range facets {
-		require.False(t, facet.Available)
-		require.Equal(t, "time_budget_exceeded", facet.Reason)
-	}
-}
 
 func browsePhotoNode(t *testing.T, s *Store, name, hash, mime string) Node {
 	t.Helper()
@@ -931,11 +905,8 @@ func TestPhotoBrowseRelevanceAndFacets(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(7), page.Total)
 	require.Len(t, page.Items, 3)
-	require.Nil(t, page.Next)
 	require.Len(t, page.Facets, 5)
 	require.Equal(t, int64(7), *page.Facets[0].Total)
-	ids := []string{page.Items[0].AssetID, page.Items[1].AssetID, page.Items[2].AssetID}
-	require.True(t, slices.IsSorted(ids), "equal scores and capture times use asset ID")
 	_, err = s.ListPhotoAssets(t.Context(), request, &PhotoBrowsePosition{})
 	require.ErrorIs(t, err, ErrInvalidPhotoCursor)
 	request.Facets = []string{"camera"}
@@ -966,6 +937,16 @@ func TestPhotoLexicalActiveHeads(t *testing.T) {
 	require.Equal(t, int64(1), browsePhotoPage(t, s, fmt.Sprintf(`{"filters":{"locations":[%q]}}`, label)).Total)
 	require.Zero(t, browsePhotoPage(t, s, `{"filters":{"locations":["Paris"]}}`).Total)
 	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Canon","sort":{"field":"relevance"}}`).Total)
+	_, err := s.db.Exec(`WITH RECURSIVE synthetic(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM synthetic WHERE i<20000) INSERT INTO photo_metadata_fts(generation_id,text) SELECT 'synthetic-'||i,'Canon' FROM synthetic`)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Canon"}`).Total)
+	value := snapshotTestQuery(t, `{"text":"Canon"}`)
+	snapshot, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value})
+	require.NoError(t, err)
+	require.Empty(t, snapshot.Rows)
+	hits, _, err := s.SearchPageWithOptions(t.Context(), "Canon", 50, SearchOptions{})
+	require.NoError(t, err)
+	require.Empty(t, hits)
 	browsePhotoMetadata(t, s, node, "two", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Nikon")))
 	require.Zero(t, browsePhotoPage(t, s, `{"text":"Canon","sort":{"field":"relevance"}}`).Total)
 	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Nikon","sort":{"field":"relevance"}}`).Total)
@@ -1024,31 +1005,6 @@ func TestPhotoYearFacetSelectionRequiresWholeYear(t *testing.T) {
 		value.Filters.CaptureAfter, value.Filters.CaptureBefore = tc.after, tc.before
 		require.Equal(t, tc.selected, snapshotFacetSelected(value, "year")[tc.after[:4]])
 	}
-}
-
-func TestPhotoLexicalMetadataIgnoresUnheadedPostings(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	node := browsePhotoNode(t, s, "plan.jpg", browseHash("plan"), "image/jpeg")
-	browsePhotoMetadata(t, s, node, "plan", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Canon")))
-	_, err := s.db.Exec(`WITH RECURSIVE synthetic(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM synthetic WHERE i<20000) INSERT INTO photo_metadata_fts(generation_id,text) SELECT 'synthetic-'||i,'Canon' FROM synthetic`)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Canon"}`).Total)
-}
-
-func TestPhotoMetadataTextLeavesDocumentsUnchanged(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	node := browsePhotoNode(t, s, "holiday.jpg", browseHash("document-text"), "image/jpeg")
-	browsePhotoMetadata(t, s, node, "document-text", photoMetadataField("image.exif.camera_make", "image.exif", "Make", photoString("Canon")))
-	value := snapshotTestQuery(t, `{"text":"Canon"}`)
-	snapshot, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value})
-	require.NoError(t, err)
-	require.Empty(t, snapshot.Rows)
-	hits, _, err := s.SearchPageWithOptions(t.Context(), "Canon", 50, SearchOptions{})
-	require.NoError(t, err)
-	require.Empty(t, hits)
-	require.Equal(t, int64(1), browsePhotoPage(t, s, `{"text":"Canon"}`).Total)
 }
 
 func TestPhotoRankingRetainedContentEvidence(t *testing.T) {

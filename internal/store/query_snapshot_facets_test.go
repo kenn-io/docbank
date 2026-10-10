@@ -309,6 +309,18 @@ func TestQuerySnapshotFacetDeadlineKeepsCompletedRows(t *testing.T) {
 		assert.False(t, facet.Available)
 		assert.Equal(t, "time_budget_exceeded", facet.Reason)
 	}
+	browsePhotoNode(t, s, "camera.jpg", browseHash("facet-timeout"), "image/jpeg")
+	compiled := mustPhotoCompiled(t, s, snapshotTestQuery(t, `{}`))
+	options := defaultSnapshotMaterializeOptions()
+	options.BuildTimeout = -time.Nanosecond
+	dimensions := []string{"camera", "lens", "year", "location", "set"}
+	facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options)
+	require.NoError(t, err)
+	require.Len(t, facets, len(dimensions))
+	for _, facet := range facets {
+		require.False(t, facet.Available)
+		require.Equal(t, "time_budget_exceeded", facet.Reason)
+	}
 }
 
 // A selected value beyond the top fifty must be appended, while Other still

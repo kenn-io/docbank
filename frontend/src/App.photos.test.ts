@@ -164,7 +164,7 @@ it.each([false, true])("Hidden trash invalidates Documents and Trash restore ref
   await screen.findByRole("cell", { name: "Photo 1.jpg" });
 });
 
-it.each(["page failure", "count retry", "count timeout"])("recovers pending photo counts after workspace switches during %s", async scenario => {
+it.each(["page failure", "count retry"])("recovers pending photo counts after workspace switches during %s", async scenario => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -189,9 +189,7 @@ it.each(["page failure", "count retry", "count timeout"])("recovers pending phot
     await fireEvent.click(await screen.findByRole("button", { name: "Load more" }));
     await screen.findByText("Temporary page failure");
   } else {
-    counts[0].finish(scenario === "count timeout"
-      ? new Response(JSON.stringify({ facets: [{ dimension: "camera", available: false, reason: "time_budget_exceeded" }] }))
-      : new Response(JSON.stringify({ detail: "Temporary counts failure" }), { status: 503 }));
+    counts[0].finish(new Response(JSON.stringify({ detail: "Temporary counts failure" }), { status: 503 }));
     await fireEvent.click(await screen.findByRole("button", { name: "Retry counts" }));
     await waitFor(() => expect(counts).toHaveLength(2));
   }

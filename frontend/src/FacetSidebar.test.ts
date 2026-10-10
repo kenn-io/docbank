@@ -74,16 +74,6 @@ it("maps only tags missing and duplicate documents to supported QueryV1 filters"
   expect(screen.getByText("unique · 7 · informational")).toBeTruthy();
 });
 
-it("removes a selected folded camera key while keeping other selections", async () => {
- const onchange = vi.fn();
- render(FacetSidebar, { facets: [facet("camera", { values: [
-  { key: "sony", label: "SONY", count: 2, selected: true },
-  { key: "strasse", label: "Straße", count: 1, selected: true },
- ] })], query: { ...originalQuery, filters: { cameras: ["SoNy", "STRASSE"] } }, disabled: false, onchange });
- await fireEvent.click(screen.getByRole("button", { name: "SONY, 2 documents, selected" }));
- expect(onchange.mock.calls.at(-1)?.[0].filters.cameras).toEqual(["strasse"]);
-});
-
 it("submits original expanding names and leaves invalid or over-cap operands informational", async () => {
  const raw="ß".repeat(200), oversized="x".repeat(300), onchange=vi.fn();
  const values=[{key:raw,label:raw,count:2,selected:false},{key:oversized,label:oversized,count:1,selected:false}];
@@ -107,4 +97,10 @@ it("submits original expanding names and leaves invalid or over-cap operands inf
   await fireEvent.click(button);
   expect(onchange.mock.calls.at(-1)?.[0].filters[value.field]).toEqual([value.key]);
  }
+ await view.rerender({ facets: [facet("camera", { values: [
+  { key: "sony", label: "SONY", count: 2, selected: true },
+  { key: "strasse", label: "Straße", count: 1, selected: true },
+ ] })], query: { ...originalQuery, filters: { cameras: ["SoNy", "STRASSE"] } } });
+ await fireEvent.click(screen.getByRole("button", { name: "SONY, 2 documents, selected" }));
+ expect(onchange.mock.calls.at(-1)?.[0].filters.cameras).toEqual(["strasse"]);
 });

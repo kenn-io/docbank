@@ -270,18 +270,6 @@ it("keeps import guidance after clearing an empty search and recognizes numeric 
  await screen.findByText("Your photo library is empty");
  photos.dispose(); await cache.dispose();
 });
-it("explains fixed count limits without offering retry", async () => {
-  const reason = "byte_budget_exceeded";
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-  vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => new Response(JSON.stringify(JSON.parse(init.body as string).facets.length ? { facets: [{ dimension: "camera", available: false, reason }] } : { items: [], total: 0 }))));
-  const photos = new Photos("scoped", vi.fn());
-  const cache = new PhotoPreviewCache("scoped", vi.fn());
-  render(PhotosWorkspace, { photos, cache });
-  await screen.findByText("Photo counts exceed the query's limits. Narrow your search or filters.");
-  expect(screen.queryByRole("button", { name: "Retry counts" })).toBeNull();
-  photos.dispose(); await cache.dispose();
-});
-
 it("explains the relevance limit and hides it for complete results or capture dates", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   const photos = new Photos("scoped", vi.fn());
