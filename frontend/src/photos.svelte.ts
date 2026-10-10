@@ -136,11 +136,10 @@ export class Photos {
   }
 
   resume(preserve?: () => (() => Promise<void>) | undefined) {
-    const counts = this.needsFacets && !this.facetsError ? this.retryFacets() : undefined;
-    if (this.error) return counts;
+    if (this.needsFacets && !this.facetsError) void this.retryFacets();
+    if (this.error) return;
     if (this.replacement) return this.retry(preserve);
     if (!this.started) return this.loadMore(preserve);
-    return counts;
   }
 
   retry(preserve?: () => (() => Promise<void>) | undefined) {

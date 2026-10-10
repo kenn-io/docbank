@@ -431,13 +431,12 @@ it("publishes and pages rows before optional counts, and isolates count retry, c
   expect(rows.mock.calls.map(call => JSON.parse(call[1].body).facets)).toEqual([[], []]);
   photos.cancelPending();
   expect(counts[0].signal.aborted).toBe(true);
-  const resumed = photos.resume();
+  photos.resume();
   expect(counts).toHaveLength(2);
   const facet = { dimension: "camera", available: true, total: 3, values: [], missing: 3, other: 0 };
   counts[0].finish(new Response(JSON.stringify({ facets: [{ ...facet, total: 99 }] })));
   counts[1].finish(new Response(JSON.stringify({ items: [photo(99)], total: 99, next_cursor: "wrong", facets: [facet] })));
-  await resumed;
-  expect(photos.facets).toEqual([facet]);
+  await vi.waitFor(() => expect(photos.facets).toEqual([facet]));
   expect(photos.total).toBe(3);
   expect(photos.cursor).toBe("later");
   expect(photos.items).toHaveLength(2);

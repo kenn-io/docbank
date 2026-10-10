@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { photo, storage } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
 
@@ -162,6 +162,48 @@ it.each([false, true])("Hidden trash invalidates Documents and Trash restore ref
   await fireEvent.click(screen.getByRole("button", { name: "Close recoverable trash" }));
   await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   await screen.findByRole("cell", { name: "Photo 1.jpg" });
+});
+
+it("restores photo scroll before resumed counts finish and keeps subsequent scrolling", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  storage();
+  const counts: { signal: AbortSignal; finish: (response: Response) => void }[] = [];
+  let listings = 0;
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.includes("/photos/assets/query")) {
+      const request = JSON.parse(init!.body as string);
+      if (request.facets.length) return new Promise<Response>(finish => counts.push({ signal: init!.signal!, finish }));
+      listings++;
+      return Response.json({ items: Array.from({ length: 100 }, (_, index) => photo(index + 1)), total: 100 });
+    }
+    if (url.includes("/nodes/1")) return Response.json({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await waitFor(() => expect(counts).toHaveLength(1));
+  await act(async () => {});
+  const original = screen.getByTestId("photo-scroll");
+  original.scrollTop = 480;
+  await fireEvent.scroll(original);
+  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  expect(counts[0].signal.aborted).toBe(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  await waitFor(() => expect(counts).toHaveLength(2));
+  const resumed = screen.getByTestId("photo-scroll");
+  await waitFor(() => expect(resumed.scrollTop).toBe(480));
+  expect(listings).toBe(1);
+  resumed.scrollTop = 960;
+  await fireEvent.scroll(resumed);
+  await act(async () => {
+    counts[0].finish(Response.json({ items: [], total: 100, facets: [] }));
+    counts[1].finish(Response.json({ items: [], total: 100, facets: [] }));
+  });
+  await waitFor(() => expect(screen.queryByText(/Loading counts/)).toBeNull());
+  await act(async () => {});
+  expect(resumed.scrollTop).toBe(960);
 });
 
 it("cancels retried photo counts when switching workspaces", async () => {
