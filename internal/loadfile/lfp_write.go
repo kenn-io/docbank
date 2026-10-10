@@ -45,9 +45,9 @@ func WriteLFP(destination io.Writer, images []ImageRef, profile Profile) error {
 				return fmt.Errorf("%w: LFP page %d has unsafe path", ErrUnrepresentable, index+1)
 			}
 			directory, file := "", path
-			if lastSlash := strings.LastIndexByte(path, '/'); lastSlash >= 0 {
-				directory = strings.ReplaceAll(path[:lastSlash], "/", `\`)
-				file = path[lastSlash+1:]
+			if parent, name, found := strings.CutLast(path, "/"); found {
+				directory = strings.ReplaceAll(parent, "/", `\`)
+				file = name
 			}
 			group := "@" + image.Volume + ";" + directory + ";" + file + ";2"
 			if len(group) > MaxFieldValueBytes {
