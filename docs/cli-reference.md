@@ -172,7 +172,7 @@ that returns it to the live tree.
 docbank photos assets create <node-selector> [--kind photo|video] [--role ROLE]
 docbank photos assets inspect <asset-id|node-selector>
 docbank photos assets trash <asset-id> [--revision REV]
-docbank photos rejects [--query QUERY_JSON] [--confirm FILE|-]
+docbank photos rejects [--query QUERY_JSON | --confirm FILE|-]
 docbank photos assets attach <asset-id> <node-selector> [--revision REV] [--role ROLE] [--sidecar-of-file-id ID]
 docbank photos assets detach <asset-id> <file-id> [--revision REV]
 docbank photos assets exclude <asset-id> [--revision REV] [--excluded=true]
@@ -187,7 +187,7 @@ docbank photos unhide <asset-id|node-selector> [--revision REV]
 docbank photos import <source-root> [destination] [--json]
 ```
 
-`rejects` previews the whole query in Library. The CLI covers Library only. Save the preview JSON to a file and review its counts and targets. `--confirm FILE` reads that preview file and ignores `--query`. It moves those targets and their sidecars atomically to recoverable trash; `--confirm -` reads the preview from stdin. A changed asset revision, member node revision, or reject flag refuses the whole batch. Each preview targets up to 1,000 live files in stable asset ID order. Preview output includes complete counts and `targets`; confirmation returns moved asset IDs. Preview and confirm again for the rest.
+`rejects` previews the whole query in Library. The CLI covers Library only. Save the preview JSON to a file and review its counts and targets. `--confirm FILE` reads that preview file. `--query` and `--confirm` are mutually exclusive. It moves those targets and their sidecars atomically to recoverable trash; `--confirm -` reads the preview from stdin. A missing target, changed asset or member node revision, changed reject flag, or changed Library/Hidden scope refuses the whole batch and requires another preview. Invalid or duplicate targets, more than 1,000 targets or live files, and audited trash conflicts also refuse the batch. Each preview targets up to 1,000 live files in stable asset ID order. Preview output includes complete counts and `targets`; confirmation returns moved asset IDs. Preview and confirm again for the rest.
 
 Photo commands emit JSON through the daemon. Image and concrete video files are
 enrolled when created. Generic RAW files require explicit promotion.

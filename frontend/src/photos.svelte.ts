@@ -114,6 +114,10 @@ export class Photos {
     this.controller.abort();
     this.controller = new AbortController();
     this.loading = false;
+    this.cancelRejects();
+  }
+
+  cancelRejects() {
     this.rejectsController.abort();
     this.rejectsLoading = false;
   }

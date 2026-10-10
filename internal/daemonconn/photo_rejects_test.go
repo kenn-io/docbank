@@ -10,7 +10,7 @@ import (
 
 func TestPhotoRejectsResponse(t *testing.T) {
 	t.Parallel()
-	targets := []store.PhotoRejectTarget{{AssetID: "11111111-1111-4111-8111-111111111111", Revision: 1}}
+	targets := []store.PhotoRejectTarget{{AssetID: "11111111-1111-4111-8111-111111111111", Revision: 1, MemberRevision: 2}}
 	valid := api.PhotoRejectsPreflight{Targets: targets, Photos: 2, Files: 3, Unchanged: 10001}
 	require.NoError(t, validatePhotoRejectsResponse(&valid))
 	require.Error(t, validatePhotoRejectsResponse(nil))

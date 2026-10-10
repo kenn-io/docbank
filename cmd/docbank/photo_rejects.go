@@ -23,6 +23,7 @@ func init() {
 	}}
 	command.Flags().StringVar(&raw, "query", "{}", "QueryV1 JSON selecting the scope")
 	command.Flags().StringVar(&confirm, "confirm", "", "preview JSON file, or - for stdin")
+	command.MarkFlagsMutuallyExclusive("query", "confirm")
 	photosCmd.AddCommand(command)
 }
 

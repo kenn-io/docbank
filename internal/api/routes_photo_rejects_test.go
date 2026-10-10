@@ -28,7 +28,7 @@ func TestPhotoRejectRoutes(t *testing.T) {
 	require.Len(t, preview.Targets, 1)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, map[string]any{})
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	for _, targets := range [][]store.PhotoRejectTarget{{{AssetID: "bad", Revision: 1}}, make([]store.PhotoRejectTarget, 1001)} {
+	for _, targets := range [][]store.PhotoRejectTarget{{{AssetID: "bad", Revision: 1, MemberRevision: 1}}, make([]store.PhotoRejectTarget, 1001)} {
 		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/rejects/trash", nil, api.MovePhotoRejectsRequest{Targets: targets})
 		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	}

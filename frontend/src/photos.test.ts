@@ -6,7 +6,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clea
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
 
 it("finishes a pending rejects preview after the grid refreshes", async () => {
-  const preview = { targets: [{ asset_id: "photo-1", revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
+  const preview = { targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   let finish!: (response: Response) => void;
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve))
     .mockResolvedValueOnce(response([photo(1)]));
@@ -23,25 +23,35 @@ it("finishes a pending rejects preview after the grid refreshes", async () => {
 });
 
 it("ignores a closed rejects preview after reopening with a different selection", async () => {
-  const preview = { targets: [{ asset_id: "photo-2", revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
+  const preview = { targets: [{ asset_id: "photo-2", revision: 1, member_revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   let finishOld!: (response: Response) => void;
   let finishNew!: (response: Response) => void;
+  let finishGrid!: (response: Response) => void;
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finishOld = resolve))
+    .mockImplementationOnce(() => new Promise(resolve => finishGrid = resolve))
     .mockImplementationOnce(() => new Promise(resolve => finishNew = resolve));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.selection.selectedIDs = new Set(["photo-1"]);
   const old = photos.previewRejects(true);
   const signal = fetcher.mock.calls[0][1].signal as AbortSignal;
-  photos.cancelPending();
+  const grid = photos.refresh();
+  const gridSignal = fetcher.mock.calls[1][1].signal as AbortSignal;
+  photos.cancelRejects();
+  expect(gridSignal.aborted).toBe(false);
+  expect(photos.loading).toBe(true);
   expect(signal.aborted).toBe(true);
   photos.selection.selectedIDs = new Set(["photo-2"]);
   const current = photos.previewRejects(true);
-  finishOld(Response.json({ ...preview, targets: [{ asset_id: "photo-1", revision: 1 }] }));
+  finishOld(Response.json({ ...preview, targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }] }));
   await old;
   expect(photos.rejects).toBeUndefined();
   expect(photos.rejectsLoading).toBe(true);
-  expect(JSON.parse(fetcher.mock.calls[1][1].body).query.filters.asset_ids).toEqual(["photo-2"]);
+  expect(JSON.parse(fetcher.mock.calls[2][1].body).query.filters.asset_ids).toEqual(["photo-2"]);
+  finishGrid(response([photo(2)]));
+  await grid;
+  expect(photos.items).toEqual([photo(2)]);
+  expect(photos.loading).toBe(false);
   finishNew(Response.json(preview));
   await current;
   expect(photos.rejects).toEqual(preview);
@@ -50,7 +60,7 @@ it("ignores a closed rejects preview after reopening with a different selection"
 });
 
 it("moves the previewed selection after the selection changes and clears failed trash targets", async () => {
-  const preview = { targets: [{ asset_id: "photo-1", revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
+  const preview = { targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ detail: "Trash refused", code: "stale_revision" }, { status: 412 }))
     .mockResolvedValueOnce(response([photo(1), photo(2)]))
     .mockResolvedValueOnce(Response.json(preview))
@@ -73,7 +83,7 @@ it("moves the previewed selection after the selection changes and clears failed 
 
 it.each(["Library", "selected", "oversized"])("bounds rejects requests while keeping Library available, scope=%s", async scope => {
   const count = scope === "oversized" ? 1001 : 1;
-  const preview = { targets: [{ asset_id: "photo-1", revision: 1 }], photos: count, files: count, unchanged: 65, mixed: [], mixed_count: 0 };
+  const preview = { targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }], photos: count, files: count, unchanged: 65, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview)).mockResolvedValueOnce(Response.json({ moved: ["photo-1"] })).mockResolvedValueOnce(response([]));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
@@ -96,7 +106,7 @@ it.each(["Library", "selected", "oversized"])("bounds rejects requests while kee
 
 it.each(["confirmed", "network", "server"])("recovers the loaded rejects range and surviving selection after a %s move and failed refresh", async outcome => {
   let finish!: (response: Response) => void;
-  const preview = { targets: [{ asset_id: "photo-1", revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
+  const preview = { targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview));
   if (outcome === "confirmed") fetcher.mockResolvedValueOnce(Response.json({ moved: ["photo-1"] }));
   else if (outcome === "server") fetcher.mockResolvedValueOnce(Response.json({ detail: "Internal error", code: "internal" }, { status: 500 }));
@@ -142,7 +152,7 @@ it.each(["confirmed", "network", "server"])("recovers the loaded rejects range a
 });
 
 it.each([[412, "stale_revision"], [503, "maintenance_busy"]] as const)("requires another rejects preview after a definite %s refusal without reconciling other views", async (status, code) => {
-  const preview = { targets: [{ asset_id: "photo-1", revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
+  const preview = { targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview))
     .mockResolvedValueOnce(Response.json({ detail: "Move refused", code }, { status }))
     .mockResolvedValueOnce(response([photo(1)]));
@@ -160,7 +170,7 @@ it.each([[412, "stale_revision"], [503, "maintenance_busy"]] as const)("requires
 });
 
 it.each(["trash", "unhide", "rejects"])("reloads Hidden once when the %s callback refreshes the same instance", async kind => {
-  const preview = { targets: [{ asset_id: "photo-1", revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
+  const preview = { targets: [{ asset_id: "photo-1", revision: 1, member_revision: 1 }], photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(kind === "rejects" ? preview : { id: "photo-1", revision: 2 })).mockResolvedValueOnce(response([]));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn(), true);

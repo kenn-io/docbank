@@ -28,7 +28,14 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 	for _, flag := range []string{"hidden", "coverage", "profile-fingerprint"} {
 		require.Nil(t, command.Flags().Lookup(flag))
 	}
-	preview := api.PhotoRejectsPreflight{Photos: 1001, Files: 1001, Targets: []store.PhotoRejectTarget{{AssetID: "11111111-1111-4111-8111-111111111111", Revision: 7}}, Mixed: []store.PhotoRejectMixed{}}
+	require.NoError(t, command.Flags().Set("query", "{}"))
+	require.NoError(t, command.Flags().Set("confirm", "-"))
+	require.ErrorContains(t, command.ValidateFlagGroups(), "query confirm")
+	for _, name := range []string{"query", "confirm"} {
+		require.NoError(t, command.Flags().Lookup(name).Value.Set(command.Flags().Lookup(name).DefValue))
+		command.Flags().Lookup(name).Changed = false
+	}
+	preview := api.PhotoRejectsPreflight{Photos: 1001, Files: 1001, Targets: []store.PhotoRejectTarget{{AssetID: "11111111-1111-4111-8111-111111111111", Revision: 7, MemberRevision: 11}}, Mixed: []store.PhotoRejectMixed{}}
 	for group := range store.MaxPhotoRejectsMixed {
 		mixed := store.PhotoRejectMixed{AssetID: fmt.Sprintf("22222222-2222-4222-8222-%012d", group)}
 		for i := range 256 {
@@ -73,9 +80,6 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 				require.NoError(t, os.WriteFile(path, raw, 0600))
 			}
 			request := api.PhotoRejectsRequest{Query: api.QueryPayload(`{}`)}
-			if confirm != "" {
-				request.Query = api.QueryPayload(`invalid query ignored on confirm`)
-			}
 			require.NoError(t, runPhotoRejects(cmd, daemonconn.New(server.URL, "synthetic-key"), request, path))
 			if confirm == "" {
 				assert.JSONEq(t, string(raw), out.String())

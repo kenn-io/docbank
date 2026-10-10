@@ -46,7 +46,7 @@ func TestPhotoRejectsPreviewDuringWrite(t *testing.T) {
 
 func TestPhotoRejectsStaleTargets(t *testing.T) {
 	t.Parallel()
-	for _, change := range []string{"flag", "flag reread", "added", "removed", "trash", "hidden", "unhidden", "revision"} {
+	for _, change := range []string{"flag", "flag reread", "flag restored", "added", "removed", "trash", "all trashed", "restore", "hidden", "unhidden", "revision"} {
 		t.Run(change, func(t *testing.T) {
 			s := newTestStore(t)
 			asset := authoredPair(t, s)
@@ -65,14 +65,24 @@ func TestPhotoRejectsStaleTargets(t *testing.T) {
 					request.Hidden = true
 				}
 			}
+			if change == "restore" {
+				node, err := s.NodeByID(ctx, fileByRole(asset.Files, PhotoRoleImage).NodeID)
+				require.NoError(t, err)
+				_, _, err = s.Trash(ctx, node.ID, node.Revision)
+				require.NoError(t, err)
+			}
 			preview, err := s.PreflightPhotoRejects(ctx, request)
 			require.NoError(t, err)
 			require.Len(t, preview.Targets, 1)
 			asset, err = s.PhotoAssetByID(ctx, asset.ID)
 			require.NoError(t, err)
 			switch change {
-			case "flag":
+			case "flag", "flag restored":
 				_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
+				require.NoError(t, err)
+				if change == "flag restored" {
+					_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision + 1, Patch: PhotoAuthoredPatch{Flag: new("reject")}}})
+				}
 			case "flag reread":
 				_, err = s.db.Exec(`UPDATE photo_files SET flag='pick' WHERE file_id=?`, asset.Files[0].ID)
 			case "added":
@@ -81,13 +91,21 @@ func TestPhotoRejectsStaleTargets(t *testing.T) {
 				_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, node.ID, PhotoRoleRAW, nil)
 			case "removed":
 				_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
-			case "trash":
-				for _, file := range asset.Files {
+			case "trash", "all trashed":
+				files := asset.Files
+				if change == "trash" {
+					files = files[:1]
+				}
+				for _, file := range files {
 					node, readErr := s.NodeByID(ctx, file.NodeID)
 					require.NoError(t, readErr)
 					_, _, err = s.Trash(ctx, node.ID, node.Revision)
 					require.NoError(t, err)
 				}
+			case "restore":
+				node, readErr := s.NodeByID(ctx, fileByRole(asset.Files, PhotoRoleImage).NodeID)
+				require.NoError(t, readErr)
+				_, _, err = s.Restore(ctx, node.ID, node.Revision)
 			case "hidden", "unhidden":
 				_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, change == "hidden")
 			case "revision":
@@ -101,6 +119,39 @@ func TestPhotoRejectsStaleTargets(t *testing.T) {
 			current, err := s.TrashedRoots(ctx)
 			require.NoError(t, err)
 			assert.Equal(t, roots, current)
+		})
+	}
+}
+
+func TestPhotoRejectsContentReplacement(t *testing.T) {
+	t.Parallel()
+	for _, role := range []string{PhotoRoleRAW, PhotoRoleSidecar} {
+		t.Run(role, func(t *testing.T) {
+			s := newTestStore(t)
+			asset := authoredPair(t, s)
+			original := fileByRole(asset.Files, PhotoRoleRAW)
+			sidecar, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.xmp", fakeHash("a1"), 4, "application/rdf+xml")
+			require.NoError(t, err)
+			asset, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &original.ID)
+			require.NoError(t, err)
+			rejectOriginals(t, s, asset)
+			preview, err := s.PreflightPhotoRejects(t.Context(), rejectsRequest())
+			require.NoError(t, err)
+			require.Len(t, preview.Targets, 1)
+			node, err := s.NodeByID(t.Context(), fileByRole(asset.Files, role).NodeID)
+			require.NoError(t, err)
+			replaced, _, err := s.ReplaceContent(t.Context(), node.ID, node.Revision, fakeHash("bc"), 8, node.MimeType)
+			require.NoError(t, err)
+			require.Greater(t, replaced.Revision, node.Revision)
+			current, err := s.PhotoAssetByID(t.Context(), asset.ID)
+			require.NoError(t, err)
+			require.Equal(t, preview.Targets[0].Revision, current.Revision)
+			moved, err := s.MovePhotoRejects(t.Context(), false, preview.Targets)
+			require.ErrorIs(t, err, ErrStaleRevision)
+			assert.Empty(t, moved.Moved)
+			roots, err := s.TrashedRoots(t.Context())
+			require.NoError(t, err)
+			assert.Empty(t, roots)
 		})
 	}
 }
@@ -210,8 +261,14 @@ func TestPhotoRejectsFileBound(t *testing.T) {
 		require.NoError(t, s.db.QueryRow(`SELECT MAX(asset_id) FROM photo_files WHERE asset_id<>?`, lastID).Scan(&extraID))
 		extra, err := s.PhotoAssetByID(t.Context(), extraID)
 		require.NoError(t, err)
+		var memberRevision int64
+		for _, file := range extra.Files {
+			node, err := s.NodeByID(t.Context(), file.NodeID)
+			require.NoError(t, err)
+			memberRevision += node.Revision
+		}
 		oversized := append([]PhotoRejectTarget{}, preview.Targets...)
-		oversized = append(oversized, PhotoRejectTarget{extra.ID, extra.Revision})
+		oversized = append(oversized, PhotoRejectTarget{extra.ID, extra.Revision, memberRevision})
 		_, err = s.MovePhotoRejects(t.Context(), false, oversized)
 		require.ErrorIs(t, err, ErrInvalidPhotoAsset)
 		require.ErrorContains(t, err, "at most 1000 live files")

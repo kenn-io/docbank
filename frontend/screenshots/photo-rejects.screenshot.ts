@@ -1,27 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { output, withPhotoFixture } from "./photos-fixture.js";
 
-const exec = promisify(execFile);
-const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
-const output = process.env.DOCBANK_PHOTOS_SCREENSHOT_DIR;
 test.use({ viewport: { width: 1440, height: 720 }, deviceScaleFactor: Number(process.env.DOCBANK_SCREENSHOT_SCALE ?? 1) });
 test.skip(!output, "DOCBANK_PHOTOS_SCREENSHOT_DIR enables synthetic photo proof");
 
 test("Move rejects previews mixed flags and refreshes Photos and Trash", async ({ page }) => {
   test.setTimeout(480_000);
   page.setDefaultTimeout(15_000);
-  const workspace = await mkdtemp(path.join(repository, ".superpowers", "rejects-proof-"));
-  const vault = path.join(workspace, "vault");
-  const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0" };
-  const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
-  try {
-    await mkdir(output!, { recursive: true });
-    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault, "750", "--rejects"], { cwd: repository, env, timeout: 240_000 });
+  await withPhotoFixture(750, "rejects", async run => {
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
     await page.goto(webURL.href);
@@ -136,14 +123,5 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
     await page.clock.fastForward(301_000);
     await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
     await expect(modal).toHaveCount(0);
-  } finally {
-    if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {
-      const url = new URL(await run("web", "--no-browser"));
-      url.pathname = "/photos";
-      await writeFile(path.join(output!, "rejects-preview.json"), JSON.stringify({ url: url.href, workspace }, null, 2));
-    } else {
-      await run("daemon", "stop");
-      await rm(workspace, { recursive: true, force: true });
-    }
-  }
+  }, true);
 });

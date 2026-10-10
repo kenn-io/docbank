@@ -16,8 +16,16 @@ func (s *Store) TrashPhotoAsset(ctx context.Context, assetID string, revision in
 		if err != nil {
 			return err
 		}
+		nodes := make([]Node, 0, len(current.Files))
+		for _, file := range current.Files {
+			node, err := nodeByIDTx(tx, file.NodeID)
+			if err != nil {
+				return err
+			}
+			nodes = append(nodes, node)
+		}
 		var trashed int
-		asset, trashed, err = s.trashPhotoAssetTx(ctx, tx, current)
+		asset, trashed, err = s.trashPhotoAssetTx(ctx, tx, current, nodes)
 		if err == nil && trashed == 0 {
 			return fmt.Errorf("%w: photo has no live files to trash", ErrInvalidPhotoAsset)
 		}
@@ -26,18 +34,14 @@ func (s *Store) TrashPhotoAsset(ctx context.Context, assetID string, revision in
 	return asset, err
 }
 
-func (s *Store) trashPhotoAssetTx(ctx context.Context, tx *sql.Tx, asset PhotoAsset) (PhotoAsset, int, error) {
+func (s *Store) trashPhotoAssetTx(ctx context.Context, tx *sql.Tx, asset PhotoAsset, nodes []Node) (PhotoAsset, int, error) {
 	active, err := auditAuthorityActiveTx(ctx, tx)
 	if err != nil {
 		return PhotoAsset{}, 0, err
 	}
 	trashed := 0
 	now := nowRFC3339()
-	for _, file := range asset.Files {
-		n, err := nodeByIDTx(tx, file.NodeID)
-		if err != nil {
-			return PhotoAsset{}, 0, err
-		}
+	for _, n := range nodes {
 		if n.TrashedAt != nil {
 			continue
 		}

@@ -1,28 +1,15 @@
 import { revokeWebSession } from "../src/generated/docbank.js";
 import { expect, test } from "@playwright/test";
-import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { output, withPhotoFixture } from "./photos-fixture.js";
 
-const exec = promisify(execFile);
-const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
-const output = process.env.DOCBANK_PHOTOS_SCREENSHOT_DIR;
 test.skip(!output, "DOCBANK_PHOTOS_SCREENSHOT_DIR enables synthetic photo proof");
 
 test("Hidden photos lock, unlock, unhide, expire, and discard previews", async ({ page }) => {
   test.setTimeout(480_000);
   page.setDefaultTimeout(15_000);
   await page.setViewportSize({ width: 1440, height: 720 });
-  const workspace = await mkdtemp(path.join(repository, ".superpowers", "hidden-proof-"));
-  const vault = path.join(workspace, "vault");
-  const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0" };
-  const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
-  try {
-    await mkdir(output!, { recursive: true });
-    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault, "12"], { cwd: repository, env, timeout: 240_000 });
+  await withPhotoFixture(12, "hidden", async run => {
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos/hidden";
     await page.goto(webURL.href);
@@ -132,32 +119,18 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
     } finally { globalThis.fetch = fetcher; }
     await expect(page.getByText("The browser session expired or was rejected. Run `docbank web` again.")).toBeVisible({ timeout: 6000 });
     await expect(page.locator("[data-asset]")).toHaveCount(0);
-  } finally {
-    if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {
-      const previewURL = new URL(await run("web", "--no-browser"));
-      previewURL.pathname = "/photos/hidden";
-      await writeFile(path.join(output!, "hidden-preview.json"), JSON.stringify({ url: previewURL.href, workspace }, null, 2));
-    } else {
-      await run("daemon", "stop");
-      await rm(workspace, { recursive: true, force: true });
-    }
-  }
+  });
 });
 
 test("10,000 photos stay windowed, retain previews and selection, and remember density", async ({ page }) => {
   test.setTimeout(900_000);
-  const workspace = await mkdtemp(path.join(repository, ".superpowers", "photos-proof-"));
-  const vault = path.join(workspace, "vault");
-  const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0" };
-  const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
   const requests = new Map<string, number>();
   let listings = 0;
   page.on("request", request => {
     if (request.url().includes("/photos/assets/query")) listings++;
     if (request.url().includes("/previews/")) requests.set(request.url(), (requests.get(request.url()) ?? 0) + 1);
   });
-  try {
-    await mkdir(output!, { recursive: true });
+  await withPhotoFixture(10000, "photos", async run => {
     await page.addInitScript(() => {
       const active = new Set<string>();
       Object.assign(window, { photoActiveURLs: active });
@@ -166,7 +139,6 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       URL.createObjectURL = blob => { const url = create(blob); active.add(url); return url; };
       URL.revokeObjectURL = url => { active.delete(url); revoke(url); };
     });
-    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault], { cwd: repository, env, timeout: 480_000 });
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
     let releaseTransition!: () => void;
@@ -355,14 +327,5 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       }
     }
 
-  } finally {
-    if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {
-      const previewURL = new URL(await run("web", "--no-browser"));
-      previewURL.pathname = "/photos";
-      await writeFile(path.join(output!, "photos-preview.json"), JSON.stringify({ url: previewURL.href, workspace }, null, 2));
-    } else {
-      await run("daemon", "stop");
-      await rm(workspace, { recursive: true, force: true });
-    }
-  }
+  });
 });
