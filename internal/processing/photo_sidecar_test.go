@@ -28,8 +28,11 @@ func TestReadPhotoSidecar(t *testing.T) {
 		{name: "unrelated root", packet: `<foo><r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><r:Description/></r:RDF></foo>`, invalid: true},
 		{name: "bare RDF root", packet: `<r:RDF xmlns:r="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:a="http://ns.adobe.com/xap/1.0/"><r:Description a:Rating="3"/></r:RDF>`, invalid: true},
 		{name: "empty", packet: photoSidecarHeader + `>` + photoSidecarFooter},
-		{name: "explicit empty", confirmed: store.PhotoConfirmedCaption, packet: photoSidecarHeader + `><dc:description/>` + photoSidecarFooter},
-		{name: "numeric zero", confirmed: store.PhotoConfirmedRotation, packet: photoSidecarHeader + `><xmp:Rating>0</xmp:Rating><ts:Rotation>0</ts:Rotation>` + photoSidecarFooter},
+		{name: "explicit empty", packet: photoSidecarHeader + `><dc:description/>` + photoSidecarFooter},
+		{name: "numeric zero", packet: photoSidecarHeader + `><xmp:Rating>0</xmp:Rating><ts:Rotation>0</ts:Rotation>` + photoSidecarFooter},
+		{name: "empty label", packet: photoSidecarHeader + ` xmp:Label="">` + photoSidecarFooter},
+		{name: "empty Alt", packet: photoSidecarHeader + `><dc:description><rdf:Alt/></dc:description>` + photoSidecarFooter},
+		{name: "empty pick", packet: photoSidecarHeader + ` ts:Pick="">` + photoSidecarFooter},
 		{name: "unrated", packet: photoSidecarHeader + ` xmp:Rating="0">` + photoSidecarFooter},
 		{name: "repeated values", packet: photoSidecarHeader + `><xmp:Rating><rdf:value>0</rdf:value><rdf:value>5</rdf:value></xmp:Rating>` + photoSidecarFooter, invalid: true},
 		{name: "text before value", packet: photoSidecarHeader + `><xmp:Rating>0<rdf:value>5</rdf:value></xmp:Rating>` + photoSidecarFooter, invalid: true},
@@ -52,10 +55,10 @@ func TestReadPhotoSidecar(t *testing.T) {
 		{name: "typed property", packet: photoSidecarHeader + `><dc:creator rdf:datatype="https://example.org/type"/>` + photoSidecarFooter, invalid: true},
 		{name: "typed item", packet: photoSidecarHeader + `><dc:creator><rdf:Seq><rdf:li rdf:datatype="https://example.org/type"/></rdf:Seq></dc:creator>` + photoSidecarFooter, invalid: true},
 		{name: "typed value", packet: photoSidecarHeader + `><dc:creator><rdf:value rdf:datatype="https://example.org/type"/></dc:creator>` + photoSidecarFooter, invalid: true},
-		{name: "empty containers", confirmed: store.PhotoConfirmedCaption | store.PhotoConfirmedCreator | store.PhotoConfirmedCopyright, packet: photoSidecarHeader + "><dc:description>\n <rdf:Alt>\n </rdf:Alt>\n</dc:description><dc:creator>\n <rdf:Seq>\n </rdf:Seq>\n</dc:creator><dc:rights><rdf:Alt/></dc:rights>" + photoSidecarFooter},
-		{name: "blank scalar", confirmed: store.PhotoConfirmedCaption | store.PhotoConfirmedCreator | store.PhotoConfirmedCopyright, packet: photoSidecarHeader + "><dc:description> \n\t </dc:description><dc:creator> </dc:creator><dc:rights>\n</dc:rights>" + photoSidecarFooter},
-		{name: "blank selected items", confirmed: store.PhotoConfirmedCaption | store.PhotoConfirmedCreator | store.PhotoConfirmedCopyright, packet: photoSidecarHeader + `><dc:description><rdf:Alt><rdf:li>Other</rdf:li><rdf:li xml:lang="x-default"> </rdf:li></rdf:Alt></dc:description><dc:creator><rdf:Seq><rdf:li> </rdf:li><rdf:li>Other</rdf:li></rdf:Seq></dc:creator><dc:rights><rdf:Alt><rdf:li> </rdf:li></rdf:Alt></dc:rights>` + photoSidecarFooter},
-		{name: "blank attributes", confirmed: store.PhotoConfirmedCaption | store.PhotoConfirmedCreator | store.PhotoConfirmedCopyright, packet: photoSidecarHeader + ` dc:description=" &#10; " dc:creator=" " dc:rights="&#9;">` + photoSidecarFooter},
+		{name: "empty containers", packet: photoSidecarHeader + "><dc:description>\n <rdf:Alt>\n </rdf:Alt>\n</dc:description><dc:creator>\n <rdf:Seq>\n </rdf:Seq>\n</dc:creator><dc:rights><rdf:Alt/></dc:rights>" + photoSidecarFooter},
+		{name: "blank scalar", packet: photoSidecarHeader + "><dc:description> \n\t </dc:description><dc:creator> </dc:creator><dc:rights>\n</dc:rights>" + photoSidecarFooter},
+		{name: "blank selected items", packet: photoSidecarHeader + `><dc:description><rdf:Alt><rdf:li>Other</rdf:li><rdf:li xml:lang="x-default"> </rdf:li></rdf:Alt></dc:description><dc:creator><rdf:Seq><rdf:li> </rdf:li><rdf:li>Other</rdf:li></rdf:Seq></dc:creator><dc:rights><rdf:Alt><rdf:li> </rdf:li></rdf:Alt></dc:rights>` + photoSidecarFooter},
+		{name: "blank attributes", packet: photoSidecarHeader + ` dc:description=" &#10; " dc:creator=" " dc:rights="&#9;">` + photoSidecarFooter},
 		{name: "padded attributes", confirmed: store.PhotoConfirmedCaption | store.PhotoConfirmedCreator | store.PhotoConfirmedCopyright, packet: photoSidecarHeader + ` dc:description="&#10; River &#10;" dc:creator=" Creator " dc:rights=" Copyright ">` + photoSidecarFooter, want: store.PhotoAuthored{Caption: "\n River \n", Creator: " Creator ", Copyright: " Copyright "}},
 		{name: "duplicate blank property", packet: photoSidecarHeader + ` dc:description=" "><dc:description>Caption</dc:description>` + photoSidecarFooter, invalid: true},
 		{name: "attributes", confirmed: store.PhotoConfirmedRating | store.PhotoConfirmedFlag | store.PhotoConfirmedLabel | store.PhotoConfirmedRotation, packet: photoSidecarHeader + ` xmp:Rating="5" xmp:Label="Red" ts:Pick="pick" ts:Rotation="90">` + photoSidecarFooter, want: store.PhotoAuthored{Rating: 5, Label: "red", Flag: "pick", Rotation: 90}},
@@ -182,6 +185,9 @@ func TestPhotoSidecarImportInitialization(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct{ name, packet string }{
 		{"repeated values", photoSidecarHeader + `><xmp:Rating><rdf:value>0</rdf:value><rdf:value>5</rdf:value></xmp:Rating>` + photoSidecarFooter},
+		{"empty label", photoSidecarHeader + ` xmp:Label="">` + photoSidecarFooter},
+		{"empty Alt", photoSidecarHeader + `><dc:description><rdf:Alt/></dc:description>` + photoSidecarFooter},
+		{"numeric zero", photoSidecarHeader + ` ts:Rotation="0" xmp:Rating="0">` + photoSidecarFooter},
 		{"unrated", photoSidecarHeader + ` xmp:Rating="0">` + photoSidecarFooter},
 	} {
 		t.Run(test.name, func(t *testing.T) {

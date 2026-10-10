@@ -30,49 +30,42 @@ const (
 const PhotoConfirmedAll = PhotoConfirmedRating | PhotoConfirmedFlag | PhotoConfirmedLabel | PhotoConfirmedCaption | PhotoConfirmedCreator | PhotoConfirmedCopyright | PhotoConfirmedRotation
 
 type PhotoAuthoredField struct {
-	Name  string
-	Bit   PhotoAuthoredFields
-	Value func(PhotoAuthored) any
-	Set   func(*PhotoAuthored, any) bool
-	apply func(*PhotoAuthored, PhotoAuthoredPatch) bool
-	patch func(*PhotoAuthoredPatch, *PhotoAuthored)
+	Name         string
+	Bit          PhotoAuthoredFields
+	Integer      func(*PhotoAuthored) *int
+	Text         func(*PhotoAuthored) *string
+	patchInteger func(*PhotoAuthoredPatch) **int
+	patchText    func(*PhotoAuthoredPatch) **string
 }
 
-func photoAuthoredField[T int | string](name string, bit PhotoAuthoredFields, value func(*PhotoAuthored) *T, patch func(*PhotoAuthoredPatch) **T) PhotoAuthoredField {
-	return PhotoAuthoredField{
-		Name: name, Bit: bit,
-		Value: func(v PhotoAuthored) any { return *value(&v) },
-		Set: func(v *PhotoAuthored, input any) bool {
-			typed, ok := input.(T)
-			if ok {
-				*value(v) = typed
-			}
-			return ok
-		},
-		apply: func(v *PhotoAuthored, p PhotoAuthoredPatch) bool {
-			if input := *patch(&p); input != nil {
-				*value(v) = *input
-				return true
-			}
-			return false
-		},
-		patch: func(p *PhotoAuthoredPatch, v *PhotoAuthored) { *patch(p) = value(v) },
+func PhotoAuthoredFieldTable() [7]PhotoAuthoredField {
+	return photoAuthoredFieldTable
+}
+
+var photoAuthoredFieldTable = [...]PhotoAuthoredField{
+	{Name: "rating", Bit: PhotoConfirmedRating, Integer: func(v *PhotoAuthored) *int { return &v.Rating }, patchInteger: func(p *PhotoAuthoredPatch) **int { return &p.Rating }},
+	{Name: "flag", Bit: PhotoConfirmedFlag, Text: func(v *PhotoAuthored) *string { return &v.Flag }, patchText: func(p *PhotoAuthoredPatch) **string { return &p.Flag }},
+	{Name: "label", Bit: PhotoConfirmedLabel, Text: func(v *PhotoAuthored) *string { return &v.Label }, patchText: func(p *PhotoAuthoredPatch) **string { return &p.Label }},
+	{Name: "caption", Bit: PhotoConfirmedCaption, Text: func(v *PhotoAuthored) *string { return &v.Caption }, patchText: func(p *PhotoAuthoredPatch) **string { return &p.Caption }},
+	{Name: "creator", Bit: PhotoConfirmedCreator, Text: func(v *PhotoAuthored) *string { return &v.Creator }, patchText: func(p *PhotoAuthoredPatch) **string { return &p.Creator }},
+	{Name: "copyright", Bit: PhotoConfirmedCopyright, Text: func(v *PhotoAuthored) *string { return &v.Copyright }, patchText: func(p *PhotoAuthoredPatch) **string { return &p.Copyright }},
+	{Name: "rotation", Bit: PhotoConfirmedRotation, Integer: func(v *PhotoAuthored) *int { return &v.Rotation }, patchInteger: func(p *PhotoAuthoredPatch) **int { return &p.Rotation }},
+}
+
+func (field PhotoAuthoredField) XMPKey() string {
+	return "image.xmp." + field.Name
+}
+
+func (field PhotoAuthoredField) IsDefault(v *PhotoAuthored) bool {
+	if field.Integer != nil {
+		return *field.Integer(v) == 0
 	}
-}
-
-var PhotoAuthoredFieldTable = []PhotoAuthoredField{
-	photoAuthoredField("rating", PhotoConfirmedRating, func(v *PhotoAuthored) *int { return &v.Rating }, func(p *PhotoAuthoredPatch) **int { return &p.Rating }),
-	photoAuthoredField("flag", PhotoConfirmedFlag, func(v *PhotoAuthored) *string { return &v.Flag }, func(p *PhotoAuthoredPatch) **string { return &p.Flag }),
-	photoAuthoredField("label", PhotoConfirmedLabel, func(v *PhotoAuthored) *string { return &v.Label }, func(p *PhotoAuthoredPatch) **string { return &p.Label }),
-	photoAuthoredField("caption", PhotoConfirmedCaption, func(v *PhotoAuthored) *string { return &v.Caption }, func(p *PhotoAuthoredPatch) **string { return &p.Caption }),
-	photoAuthoredField("creator", PhotoConfirmedCreator, func(v *PhotoAuthored) *string { return &v.Creator }, func(p *PhotoAuthoredPatch) **string { return &p.Creator }),
-	photoAuthoredField("copyright", PhotoConfirmedCopyright, func(v *PhotoAuthored) *string { return &v.Copyright }, func(p *PhotoAuthoredPatch) **string { return &p.Copyright }),
-	photoAuthoredField("rotation", PhotoConfirmedRotation, func(v *PhotoAuthored) *int { return &v.Rotation }, func(p *PhotoAuthoredPatch) **int { return &p.Rotation }),
+	return *field.Text(v) == ""
 }
 
 func (fields PhotoAuthoredFields) Names() []string {
 	names := []string{}
-	for _, field := range PhotoAuthoredFieldTable {
+	for _, field := range photoAuthoredFieldTable {
 		if fields&field.Bit != 0 {
 			names = append(names, field.Name)
 		}
@@ -95,13 +88,15 @@ func ValidatePhotoAuthored(v PhotoAuthored) error {
 	if v.Confirmed & ^PhotoConfirmedAll != 0 || v.Rating < 0 || v.Rating > 5 || !query.ValidPhotoFlag(v.Flag) || !query.ValidPhotoColorLabel(v.Label) || !slices.Contains([]int{0, 90, 180, 270}, v.Rotation) {
 		return fmt.Errorf("%w: invalid authored photo decision", ErrInvalidPhotoAsset)
 	}
-	for _, field := range PhotoAuthoredFieldTable {
-		value := field.Value(v)
-		if v.Confirmed&field.Bit == 0 && value != field.Value(PhotoAuthored{}) {
+	for _, field := range photoAuthoredFieldTable {
+		if v.Confirmed&field.Bit == 0 && !field.IsDefault(&v) {
 			return fmt.Errorf("%w: invalid authored photo decision", ErrInvalidPhotoAsset)
 		}
-		if text, ok := value.(string); ok && (len(text) > MaxPhotoAuthoredTextBytes || !utf8.ValidString(text) || slices.Contains([]byte(text), byte(0))) {
-			return fmt.Errorf("%w: invalid authored photo text", ErrInvalidPhotoAsset)
+		if field.Text != nil {
+			text := *field.Text(&v)
+			if len(text) > MaxPhotoAuthoredTextBytes || !utf8.ValidString(text) || slices.Contains([]byte(text), byte(0)) {
+				return fmt.Errorf("%w: invalid authored photo text", ErrInvalidPhotoAsset)
+			}
 		}
 	}
 	return nil
@@ -122,8 +117,14 @@ type PhotoAuthoredPatch struct {
 }
 
 func (p PhotoAuthoredPatch) apply(v PhotoAuthored) PhotoAuthored {
-	for _, field := range PhotoAuthoredFieldTable {
-		if field.apply(&v, p) {
+	for _, field := range photoAuthoredFieldTable {
+		if field.Integer != nil {
+			if input := *field.patchInteger(&p); input != nil {
+				*field.Integer(&v) = *input
+				v.Confirmed |= field.Bit
+			}
+		} else if input := *field.patchText(&p); input != nil {
+			*field.Text(&v) = *input
 			v.Confirmed |= field.Bit
 		}
 	}
@@ -220,7 +221,7 @@ func decodePhotoAuthoredReceipt(beforeJSON, afterJSON []byte, id string) (PhotoA
 
 func photoAgreement(files []PhotoFile) map[string]bool {
 	result := map[string]bool{}
-	for _, field := range PhotoAuthoredFieldTable {
+	for _, field := range photoAuthoredFieldTable {
 		result[field.Name] = true
 	}
 	var first *PhotoAuthored
@@ -233,8 +234,14 @@ func photoAgreement(files []PhotoFile) map[string]bool {
 			first = &v
 			continue
 		}
-		for _, field := range PhotoAuthoredFieldTable {
-			result[field.Name] = result[field.Name] && field.Value(v) == field.Value(*first) && (v.Confirmed^first.Confirmed)&field.Bit == 0
+		for _, field := range photoAuthoredFieldTable {
+			var equal bool
+			if field.Integer != nil {
+				equal = *field.Integer(&v) == *field.Integer(first)
+			} else {
+				equal = *field.Text(&v) == *field.Text(first)
+			}
+			result[field.Name] = result[field.Name] && equal && (v.Confirmed^first.Confirmed)&field.Bit == 0
 		}
 	}
 	return result

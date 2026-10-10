@@ -18,8 +18,26 @@ import (
 const maxPhotoSidecarBytes = 1 << 20
 const teststripXMPNamespace = "https://teststrip.app/xmp/1.0/"
 
-var photoXMPProperties = map[string]string{
-	"rating": "Rating", "flag": "Pick", "label": "Label", "caption": "description", "creator": "creator", "copyright": "rights", "rotation": "Rotation",
+var photoXMPProperties = [...]struct {
+	Name  xml.Name
+	Field string
+}{
+	{xml.Name{Space: xmpBasicNamespace, Local: "Rating"}, "rating"},
+	{xml.Name{Space: teststripXMPNamespace, Local: "Pick"}, "flag"},
+	{xml.Name{Space: xmpBasicNamespace, Local: "Label"}, "label"},
+	{xml.Name{Space: xmpDublinCoreNamespace, Local: "description"}, "caption"},
+	{xml.Name{Space: xmpDublinCoreNamespace, Local: "creator"}, "creator"},
+	{xml.Name{Space: xmpDublinCoreNamespace, Local: "rights"}, "copyright"},
+	{xml.Name{Space: teststripXMPNamespace, Local: "Rotation"}, "rotation"},
+}
+
+func photoXMPProperty(field string) string {
+	for _, property := range photoXMPProperties {
+		if property.Field == field {
+			return property.Name.Local
+		}
+	}
+	return ""
 }
 
 // ReadPhotoSidecar validates the complete packet before returning supported decisions.
@@ -44,17 +62,8 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	var defaultText string
 	var hasDefault bool
 	fieldFor := func(n xml.Name) string {
-		switch n.Space {
-		case xmpBasicNamespace:
-			if n.Local == "Rating" || n.Local == "Label" {
-				return n.Local
-			}
-		case teststripXMPNamespace:
-			if n.Local == "Pick" || n.Local == "Rotation" {
-				return n.Local
-			}
-		case xmpDublinCoreNamespace:
-			if n.Local == "description" || n.Local == "creator" || n.Local == "rights" {
+		for _, property := range photoXMPProperties {
+			if property.Name == n {
 				return n.Local
 			}
 		}
@@ -219,15 +228,12 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	if rootCount != 1 || len(stack) != 0 || !description {
 		return result, errors.New("photo sidecar needs an RDF description")
 	}
-	for _, field := range store.PhotoAuthoredFieldTable {
-		if field.Name == "rating" || field.Name == "rotation" {
+	for _, field := range store.PhotoAuthoredFieldTable() {
+		if field.Text == nil {
 			continue
 		}
-		if value, present := values[photoXMPProperties[field.Name]]; present {
-			if !field.Set(&result, value) {
-				return result, errors.New("invalid authored XMP field")
-			}
-			result.Confirmed |= field.Bit
+		if value, present := values[photoXMPProperty(field.Name)]; present {
+			*field.Text(&result) = value
 		}
 	}
 	if !query.ValidPhotoFlag(result.Flag) {
@@ -236,7 +242,6 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	result.Label = strings.ToLower(result.Label)
 	if !query.ValidPhotoColorLabel(result.Label) {
 		result.Label = ""
-		result.Confirmed &^= store.PhotoConfirmedLabel
 	}
 	if value, ok := values["Rating"]; ok {
 		n, err := strconv.Atoi(value)
@@ -245,17 +250,19 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 		}
 		if n == -1 {
 			result.Flag = "reject"
-			result.Confirmed |= store.PhotoConfirmedFlag
-		} else if n != 0 {
+		} else {
 			result.Rating = n
-			result.Confirmed |= store.PhotoConfirmedRating
 		}
 	}
 	if value, ok := values["Rotation"]; ok {
 		n, err := strconv.Atoi(value)
 		if err == nil && (n == 0 || n == 90 || n == 180 || n == 270) {
 			result.Rotation = n
-			result.Confirmed |= store.PhotoConfirmedRotation
+		}
+	}
+	for _, field := range store.PhotoAuthoredFieldTable() {
+		if !field.IsDefault(&result) {
+			result.Confirmed |= field.Bit
 		}
 	}
 	if err := store.ValidatePhotoAuthored(result); err != nil {

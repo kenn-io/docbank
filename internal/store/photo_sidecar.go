@@ -109,9 +109,13 @@ func (s *Store) InitializePhotoSidecar(ctx context.Context, target PhotoSidecarT
 		if valid && values.Confirmed != 0 {
 			v := values
 			patch := PhotoAuthoredPatch{}
-			for _, field := range PhotoAuthoredFieldTable {
+			for _, field := range photoAuthoredFieldTable {
 				if v.Confirmed&field.Bit != 0 {
-					field.patch(&patch, &v)
+					if field.Integer != nil {
+						*field.patchInteger(&patch) = field.Integer(&v)
+					} else {
+						*field.patchText(&patch) = field.Text(&v)
+					}
 				}
 			}
 			result, err = s.applyPhotoAuthoredTx(ctx, tx, []PhotoAuthoredTarget{{FileID: f.ID, Revision: 1, Patch: patch}}, "", &PhotoSidecarProvenance{NodeID: target.NodeID, VersionID: target.VersionID, FileID: target.SidecarFileID}, false, nil)
@@ -139,25 +143,20 @@ func photoSidecarValues(metadata document.SourceMetadataV1) (PhotoAuthored, bool
 			valid = *field.Value.Boolean
 			continue
 		}
-		for _, authored := range PhotoAuthoredFieldTable {
-			if field.Key != "image.xmp."+authored.Name {
+		for _, authored := range photoAuthoredFieldTable {
+			if field.Key != authored.XMPKey() {
 				continue
 			}
-			var value any
-			switch authored.Value(values).(type) {
-			case int:
+			if authored.Integer != nil {
 				if field.Value.Integer == nil || *field.Value.Integer < math.MinInt || *field.Value.Integer > math.MaxInt {
 					return values, false, ErrSourceMetadataCorrupt
 				}
-				value = int(*field.Value.Integer)
-			case string:
+				*authored.Integer(&values) = int(*field.Value.Integer)
+			} else {
 				if field.Value.String == nil {
 					return values, false, ErrSourceMetadataCorrupt
 				}
-				value = *field.Value.String
-			}
-			if !authored.Set(&values, value) {
-				return values, false, ErrSourceMetadataCorrupt
+				*authored.Text(&values) = *field.Value.String
 			}
 			values.Confirmed |= authored.Bit
 		}
