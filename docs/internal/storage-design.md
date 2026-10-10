@@ -366,7 +366,9 @@ revise this envelope.
 Photo tables index ordinary file nodes; they do not copy blob hashes, sizes,
 MIME data, or content versions. `photo_assets` owns asset kind, exclusion,
 revision, and selected or overridden display pointers. `photo_files` owns the
-role and same-asset sidecar relationship for each node. A sidecar never
+role, revision, authored decisions, and same-asset sidecar relationship for each
+node. Detached rows have NULL asset membership and no sidecar pointer; reattachment
+reuses their stable identity and decisions. A sidecar never
 becomes a display member, and its source must be a RAW or image member in the
 same asset.
 
@@ -386,13 +388,13 @@ keep their revision and append no receipt.
 
 Hidden photos store nullable `photo_assets.hidden_at`. Revisioned hide/unhide writes use the existing asset receipts. Disable reads only hidden asset graphs and atomically clears their flags and authentication state. Reset preserves flags. Public Photos asset and preview reads require an active unlock for hidden assets; ordinary Documents reads retain access.
 
-Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart. JSONL v1 backs up hidden flags, credentials and decision receipts; restored vaults start without attempts or lockout. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 31 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schema 30 remains an unsupported, unreleased source.
+Vault-wide hidden credentials use fixed Argon2id parameters. Failure timestamps and five-minute lockout persist through restart. JSONL v1 backs up hidden flags, credentials and decision receipts; restored vaults start without attempts or lockout. Sessions store SHA-256 token digests, expire after five minutes, clear on restart, and stay outside backup. Schema 32 uses the existing deterministic JSONL rebuild for supported released schemas and retains the source database. Schemas 30 and 31 remain unsupported, unreleased sources.
 
-Schema version 31 exports assets, files, settings, albums, album members, and receipts in stable
+Schema version 32 exports assets, files, settings, albums, album members, and receipts in stable
 JSONL order. Restore requires a pristine target and validates node ownership,
 local pointers, sidecar targets, selected display state, enum-like text,
-revisions, receipt JSON, and the complete graph before commit. Released
-metadata streams remain readable and restore an empty photo authority.
+revisions, complete non-null authored receipt snapshots, and the graph before commit.
+Released photo files retain their graph and gain revision 1 with empty authored decisions.
 
 `photo_sets` owns album UUID, name, star, revision, optional member cover, and timestamps. `photo_set_members` owns each asset's added date. Membership survives exclusion, trash, detach, and purge. Empty assets retain album choices and added dates; counts, browsing, and effective covers skip them until a file is attached again. Only explicit album operations change album revisions and receipts. Deleting an album clears membership and cover but retains its identity and deletion timestamp for receipt references. Album decisions use the existing logical transaction and audit refusal. Query selection reuses the photo browse compiler, coverage binding, and complete matching population inside that transaction. All changed IDs are recorded in chunks of 256 in `photo_change_receipts` with optional `set_id`; every chunk shares one revision transition. Restore validates structural references, member covers, and deleted-album emptiness. Metadata JSONL remains v1, and older receipts can omit `set_id`.
 

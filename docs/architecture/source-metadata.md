@@ -97,8 +97,9 @@ An extractor fingerprint identifies the complete local parser bundle. A parser
 change creates a new immutable generation and moves the active head for that
 content SHA-256. Old generations remain evidence. Retrying the same generation
 is idempotent. Because the fingerprint covers every parser, any change to it
-makes the daemon re-read and re-extract every retained original in every
-vault. Tests pin the parser descriptor and check that the shared email recipe,
+makes the daemon re-read and re-extract every retained original once in every
+vault. Moving those heads also rebuilds the affected document-event generations.
+Tests pin the parser descriptor and check that the shared email recipe,
 including the actual Go version, contributes to the fingerprint. Format
 [qualification](format-coverage.md#keep-the-record-current) uses a separate
 implementation identity that excludes only the Go version.
@@ -157,3 +158,27 @@ change. Missing or corrupt physical source bytes retain the embedded API's
 `ErrContentUnavailable` identity. All read surfaces bind fields to the
 requested version and keep filename, path, ingest time, and filesystem time in
 separate attachment facts.
+
+## Standalone photo sidecars
+
+The source extractor reads standalone XMP packets rooted at `x:xmpmeta` through
+the strict photo packet reader. Other XML, including bare `rdf:RDF`, RSS, and SVG,
+falls through to the existing format checks. Valid packets publish `image.xmp.packet_valid` and supported
+rating, flag, label, caption, creator, copyright, and rotation claims. Custom color
+labels become empty; unsupported rotations become 0. Other supported decisions
+remain. Caption, creator, and copyright text retain their whitespace. Malformed, oversized, or
+invalid packets publish warnings without a valid-packet fact. The tolerant
+embedded XMP reader retains its existing behavior.
+
+Photo initialization consumes checksum-checked evidence from the running extractor
+fingerprint. It rechecks the sidecar version, bytes identity, membership, role,
+trash state, and target revision in its transaction. Empty or rejected packets
+make no owner edit; useful replacement bytes can initialize a revision-1 target.
+Schema 32 caches considered empty or rejected packets in `photo_sidecar_considered`,
+keyed by sidecar file, target file, content version, and extractor fingerprint.
+Idle listings use its primary-key index and skip canonical JSON parsing.
+Logical restore rebuilds this derived cache from retained source evidence.
+Applied decisions write the ordinary authored receipt with stable sidecar file,
+node, and content-version provenance. Later pairing corrections preserve that
+historical identity. Asset reads and initialization listings use source evidence
+rather than scanning owner receipts.

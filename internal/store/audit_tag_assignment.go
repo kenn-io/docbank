@@ -41,6 +41,20 @@ func persistAuditedTagAssignment(
 	nodeSequence int64, authority auditAuthorityState, scopes []auditScopeState,
 	priorNode, resultingNode Node, tagID string, assign bool,
 ) error {
+	assignment, err := auditTagAssignmentRecord(tagID, priorNode.ID)
+	if err != nil {
+		return err
+	}
+	pre, post := audit.Record{}, assignment
+	kind := "tag_assign"
+	if !assign {
+		pre, post = post, pre
+		kind = "tag_unassign"
+	}
+	return persistAuditedAttachmentChange(ctx, tx, vaultID, operationID, recordedAt, nodeSequence, authority, scopes, priorNode, resultingNode, pre, post, kind)
+}
+
+func persistAuditedAttachmentChange(ctx context.Context, tx *sql.Tx, vaultID, operationID, recordedAt string, nodeSequence int64, authority auditAuthorityState, scopes []auditScopeState, priorNode, resultingNode Node, pre, post audit.Record, kind string) error {
 	sequence, err := nextAuditInteger("operation sequence", authority.sequence)
 	if err != nil {
 		return err
@@ -51,11 +65,7 @@ func persistAuditedTagAssignment(
 	if err != nil {
 		return err
 	}
-	assignment, err := auditTagAssignmentRecord(tagID, priorNode.ID)
-	if err != nil {
-		return err
-	}
-	change, err := makeAttachedMetadataPresenceChange(assignment, assign)
+	change, err := makeAttachedMetadataChange(pre, post)
 	if err != nil {
 		return err
 	}
@@ -67,9 +77,9 @@ func persistAuditedTagAssignment(
 	}
 	events := make([]audit.Record, len(scopes))
 	for index, scope := range scopes {
-		events[index], err = makeAuditedTagAssignmentEvent(
+		events[index], err = makeAuditedAttachmentEvent(
 			values, scope.scopeID, uint64(index), priorNode, resultingNode,
-			assignment, assign,
+			pre, post, kind,
 		)
 		if err != nil {
 			return err
@@ -152,6 +162,20 @@ func makeAuditedTagAssignmentEvent(
 	values auditedMutationValues, scopeID string, ordinal uint64,
 	priorNode, resultingNode Node, assignment audit.Record, assign bool,
 ) (audit.Record, error) {
+	pre, post := audit.Record{}, assignment
+	kind := "tag_assign"
+	if !assign {
+		pre, post = post, pre
+		kind = "tag_unassign"
+	}
+	return makeAuditedAttachmentEvent(values, scopeID, ordinal, priorNode, resultingNode, pre, post, kind)
+}
+
+func makeAuditedAttachmentEvent(values auditedMutationValues, scopeID string, ordinal uint64, priorNode, resultingNode Node, preRecord, postRecord audit.Record, eventKind string) (audit.Record, error) {
+	assignment := postRecord
+	if assignment.Kind == "" {
+		assignment = preRecord
+	}
 	if priorNode.ID != resultingNode.ID {
 		return audit.Record{}, errors.New("audited tag assignment changes node identity")
 	}
@@ -182,10 +206,12 @@ func makeAuditedTagAssignmentEvent(
 	if err != nil {
 		return audit.Record{}, err
 	}
-	eventKind := "tag_assign"
-	pre, post := audit.Absent(), audit.Nested(assignment)
-	if !assign {
-		eventKind, pre, post = "tag_unassign", post, pre
+	pre, post := audit.Absent(), audit.Absent()
+	if preRecord.Kind != "" {
+		pre = audit.Nested(preRecord)
+	}
+	if postRecord.Kind != "" {
+		post = audit.Nested(postRecord)
 	}
 	eventKindValue, err := audit.Text(eventKind)
 	if err != nil {

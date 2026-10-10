@@ -835,6 +835,9 @@ fields, not additional parameters for `GET /search`:
 | `modified_after`, `modified_before` | RFC3339 timestamps, normalized to UTC |
 | `size_min`, `size_max` | Byte counts from 0 through 9,007,199,254,740,991 |
 | `text_coverage` | Array of at most 6 entries: `complete`, `partial`, `failed`, `unprocessed`, `none`, or `unavailable` |
+| `rating_min`, `rating_max` | Inclusive integer bounds from 0 through 5; minimum must be <= maximum |
+| `flags` | At most 64 entries: `""`, `pick`, or `reject` |
+| `labels` | At most 64 entries: `""`, `red`, `yellow`, `green`, `blue`, or `purple` |
 | `kinds` | At most 64 entries, `photo` or `video` |
 | `cameras`, `lenses` | At most 64 complete make/model strings, matched with Unicode case folding; each 1 through 256 Unicode characters |
 | `iso_min`, `iso_max` | Inclusive safe nonnegative integer bounds; zero is accepted |
@@ -844,6 +847,8 @@ fields, not additional parameters for `GET /search`:
 | `unevaluated` | `true` selects live, included photo display versions with pending or unavailable measurements; structured `false` acts as omission |
 | `asset_ids` | At most 64 canonical UUIDv4 values |
 | `set_ids` | At most 64 canonical album UUIDv4 values |
+
+Typed `flags:[""]` and `labels:[""]` select unflagged and unlabeled files. Expression operands must be nonempty. `NOT flag:pick` selects unflagged and rejected files; `NOT label:red` selects unlabeled files and other colors.
 
 Quality filters follow the same version as other photo metadata filters. Photos uses the asset's selected display; Documents uses each document's own version. `unevaluated:true` applies only to versions eligible for measurement. Expressions reject `unevaluated:false`; use `focus_min:0` for measured photos.
 

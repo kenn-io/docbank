@@ -9,12 +9,14 @@ func TestPhotoQueryContract(t *testing.T) {
 	t.Parallel()
 	for _, raw := range []string{
 		`{"filters":{"kinds":["photo","video"],"cameras":["Synthetic Camera"],"lenses":["Lens 雪"],"iso_min":0,"iso_max":400,"capture_after":"2024-02-29","gps_bounds":{"south":"-0.00","west":"170","north":"90","east":"-170"}}}`,
+		`{"filters":{"rating_min":0,"rating_max":5,"flags":["pick",""],"labels":["red","blue"]}}`,
 		`{"sort":{"field":"capture_time"}}`, `{"sort":{"field":"import_time"}}`,
 	} {
 		_, err := Parse([]byte(raw))
 		require.NoError(t, err)
 	}
 	for _, raw := range []string{
+		`{"filters":{"rating_min":6}}`, `{"filters":{"rating_min":4,"rating_max":3}}`, `{"filters":{"rating_min":1.0}}`, `{"filters":{"flags":["yes"]}}`, `{"filters":{"labels":["orange"]}}`,
 		`{"filters":{"kinds":["image"]}}`, `{"filters":{"cameras":[""]}}`, `{"filters":{"iso_min":-1}}`, `{"filters":{"iso_min":1.0}}`, `{"filters":{"iso_min":10,"iso_max":9}}`,
 		`{"filters":{"capture_after":"2023-02-29"}}`, `{"filters":{"capture_after":""}}`, `{"filters":{"capture_after":"0000-01-01"}}`, `{"filters":{"capture_after":"2024-02-01","capture_before":"2024-01-01"}}`,
 		`{"filters":{"gps_bounds":{"south":"0","west":"0","north":"91","east":"0"}}}`, `{"filters":{"gps_bounds":{"south":"1e1","west":"0","north":"90","east":"0"}}}`, `{"filters":{"gps_bounds":{"south":0,"west":"0","north":"90","east":"0"}}}`, `{"filters":{"gps_bounds":{"south":"1","west":"0","north":"0","east":"0"}}}`, `{"filters":{"gps_bounds":{"south":"0","west":"0","north":"90"}}}`, `{"filters":{"asset_ids":["invalid"]}}`,

@@ -2,6 +2,12 @@
   "format": "docbank-query-identity-v1",
   "queries": [
     {
+      "name": "query_photo_decision_expression",
+      "input_json": "{\"syntax\":\"advanced\",\"text\":\"rating:5 AND flag:pick AND label:red\"}",
+      "canonical_utf8": "{\"filters\":{},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"advanced\",\"text\":\"rating:5 AND flag:pick AND label:red\",\"v\":1}",
+      "fingerprint": "sha256:2e89f258712547b47451bf8b814e01fdad4301d8aed576254819a9882a62c98f"
+    },
+    {
       "name": "query_quality_optional_null_and_one",
       "input_json": "{\"filters\":{\"focus_max\":\"1.0\",\"unevaluated\":null}}",
       "canonical_utf8": "{\"filters\":{\"focus_max\":\"1\"},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",

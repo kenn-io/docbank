@@ -2165,12 +2165,20 @@ CREATE TABLE IF NOT EXISTS photo_assets (
 
 CREATE TABLE IF NOT EXISTS photo_files (
     file_id              TEXT PRIMARY KEY,
-    asset_id             TEXT NOT NULL REFERENCES photo_assets(asset_id)
+    asset_id             TEXT REFERENCES photo_assets(asset_id)
         ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
     node_id              INTEGER NOT NULL UNIQUE REFERENCES nodes(id)
         ON DELETE CASCADE,
     role                 TEXT NOT NULL,
     sidecar_of_file_id   TEXT,
+    revision             INTEGER NOT NULL DEFAULT 1,
+    rating               INTEGER NOT NULL DEFAULT 0,
+    flag                 TEXT NOT NULL DEFAULT '',
+    label                TEXT NOT NULL DEFAULT '',
+    caption              TEXT NOT NULL DEFAULT '',
+    creator              TEXT NOT NULL DEFAULT '',
+    copyright            TEXT NOT NULL DEFAULT '',
+    rotation             INTEGER NOT NULL DEFAULT 0,
     created_at           TEXT NOT NULL,
     FOREIGN KEY (sidecar_of_file_id) REFERENCES photo_files(file_id)
         ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED
@@ -2178,6 +2186,14 @@ CREATE TABLE IF NOT EXISTS photo_files (
 
 CREATE INDEX IF NOT EXISTS photo_files_asset ON photo_files(asset_id, role, file_id);
 CREATE INDEX IF NOT EXISTS photo_files_sidecar ON photo_files(sidecar_of_file_id);
+
+CREATE TABLE IF NOT EXISTS photo_sidecar_considered (
+    sidecar_file_id      TEXT NOT NULL REFERENCES photo_files(file_id) ON DELETE CASCADE,
+    target_file_id       TEXT NOT NULL REFERENCES photo_files(file_id) ON DELETE CASCADE,
+    version_id           TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    extractor_fingerprint TEXT NOT NULL,
+    PRIMARY KEY (sidecar_file_id, target_file_id, version_id, extractor_fingerprint)
+);
 
 CREATE TABLE IF NOT EXISTS photo_library_settings (
     singleton    INTEGER PRIMARY KEY,

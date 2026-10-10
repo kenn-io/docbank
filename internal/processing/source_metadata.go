@@ -40,6 +40,7 @@ const (
 	sourceMetadataRAFImageSizeTag        = 0x0111
 	sourceMetadataRAFSignature           = "FUJIFILMCCD-RAW"
 	sourceMetadataCR3Brand               = "crx "
+	xmpMetaNamespace                     = "adobe:ns:meta/"
 	rdfNamespace                         = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 	xmlNamespace                         = "http://www.w3.org/XML/1998/namespace"
 	xmpBasicNamespace                    = "http://ns.adobe.com/xap/1.0/"
@@ -52,7 +53,7 @@ const (
 // vault then re-extracts every original, so the bump must be deliberate. The
 // shared email decoder recipe contributes its own identity to the fingerprint.
 const sourceMetadataExtractorDescriptor = "docbank-source-metadata:pdfcpu-info+xmp+pages," +
-	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3:v17"
+	"ooxml-core+custom,emailmime,ical,visual-container+jpeg-tiff-raf-cr3-exif+mp4-created,media-id3+authored-xmp:v18"
 
 var (
 	// SourceMetadataImplementationID identifies the parsers qualified by fixtures,
@@ -783,6 +784,10 @@ func ExtractSourceMetadata(ctx context.Context, spoolParent string, data []byte)
 	result := emptySourceMetadata()
 	collector := metadataCollector{record: &result, seen: map[string]bool{}}
 	switch {
+	case isSourceMetadataXMP(data):
+		if err := collector.extractPhotoSidecar(ctx, data); err != nil {
+			return document.SourceMetadataV1{}, err
+		}
 	case bytes.HasPrefix(data, []byte("%PDF-")):
 		collector.extractPDF(data)
 	case bytes.HasPrefix(data, []byte("PK\x03\x04")):
@@ -821,6 +826,35 @@ func ExtractSourceMetadata(ctx context.Context, spoolParent string, data []byte)
 		}
 	}
 	return canonicalSourceMetadataResult(result), nil
+}
+
+func isXMPRoot(name xml.Name) bool {
+	return name == (xml.Name{Space: xmpMetaNamespace, Local: "xmpmeta"})
+}
+
+func isSourceMetadataXMP(data []byte) bool {
+	data = bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
+	if !bytes.HasPrefix(bytes.TrimSpace(data), []byte("<")) {
+		return false
+	}
+	decoder := xml.NewDecoder(io.LimitReader(bytes.NewReader(data), maxPhotoSidecarBytes))
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return false
+		}
+		switch value := token.(type) {
+		case xml.StartElement:
+			return isXMPRoot(value.Name)
+		case xml.ProcInst, xml.Comment:
+		case xml.CharData:
+			if strings.TrimSpace(string(value)) != "" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
 }
 
 func canonicalSourceMetadataResult(metadata document.SourceMetadataV1) document.SourceMetadataV1 {
@@ -872,8 +906,10 @@ func (c *metadataCollector) reserveValueBytes(size int, namespace, source string
 }
 
 func (c *metadataCollector) string(key, namespace, source, value string, sensitive bool) {
-	value = strings.TrimSpace(value)
-	if value == "" || c.seen[key] {
+	if key != "image.xmp.caption" && key != "image.xmp.creator" && key != "image.xmp.copyright" {
+		value = strings.TrimSpace(value)
+	}
+	if strings.TrimSpace(value) == "" || c.seen[key] {
 		return
 	}
 	if !c.fieldLabelsAllowed(key, namespace, source) {
@@ -2190,4 +2226,22 @@ func localTimestampLayout(value string) string {
 		return "2006-01-02T15:04:05.999999999"
 	}
 	return "2006-01-02T15:04:05"
+}
+
+func (c *metadataCollector) extractPhotoSidecar(ctx context.Context, data []byte) error {
+	values, err := ReadPhotoSidecar(ctx, data)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		c.warn("unparseable_metadata", "image.xmp", "packet", "standalone XMP packet could not be read")
+		return nil
+	}
+	c.boolean("image.xmp.packet_valid", "image.xmp", "packet", true)
+	c.integer("image.xmp.rating", "image.xmp", "Rating", int64(values.Rating))
+	c.integer("image.xmp.rotation", "image.xmp", "Rotation", int64(values.Rotation))
+	for _, field := range []struct{ key, source, value string }{{"flag", "Pick", values.Flag}, {"label", "Label", values.Label}, {"caption", "description", values.Caption}, {"creator", "creator", values.Creator}, {"copyright", "rights", values.Copyright}} {
+		c.string("image.xmp."+field.key, "image.xmp", field.source, field.value, false)
+	}
+	return nil
 }

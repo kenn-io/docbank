@@ -67,6 +67,10 @@ type savedQueryGPSBoundsSchema struct {
 }
 
 type savedQueryFiltersSchema struct {
+	RatingMin            *int64                             `json:"rating_min,omitempty" nullable:"true" minimum:"0" maximum:"5"`
+	RatingMax            *int64                             `json:"rating_max,omitempty" nullable:"true" minimum:"0" maximum:"5"`
+	Flags                []string                           `json:"flags,omitempty" maxItems:"64"`
+	Labels               []string                           `json:"labels,omitempty" maxItems:"64"`
 	Kinds                []string                           `json:"kinds,omitempty" maxItems:"64" enum:"photo,video"`
 	Cameras              []string                           `json:"cameras,omitempty" maxItems:"64"`
 	Lenses               []string                           `json:"lenses,omitempty" maxItems:"64"`
@@ -111,6 +115,16 @@ type savedQueryFiltersSchema struct {
 	TextCoverage         []string                           `json:"text_coverage,omitempty" maxItems:"6" enum:"complete,partial,failed,unprocessed,none,unavailable"`
 	HasDuplicates        *bool                              `json:"has_duplicates,omitempty" nullable:"true"`
 	CollapseDuplicates   *bool                              `json:"collapse_duplicates,omitempty" nullable:"true"`
+}
+
+func (savedQueryFiltersSchema) TransformSchema(_ huma.Registry, s *huma.Schema) *huma.Schema {
+	for _, value := range query.PhotoFlags() {
+		s.Properties["flags"].Items.Enum = append(s.Properties["flags"].Items.Enum, value)
+	}
+	for _, value := range query.PhotoColorLabels() {
+		s.Properties["labels"].Items.Enum = append(s.Properties["labels"].Items.Enum, value)
+	}
+	return s
 }
 
 type highlightSetV1Schema struct {

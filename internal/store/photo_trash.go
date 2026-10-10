@@ -89,7 +89,7 @@ func photoTrashGroupTx(ctx context.Context, tx *sql.Tx, root Node) (photoTrashGr
 			rows, err := tx.QueryContext(ctx, `WITH RECURSIVE tree(id) AS (
  SELECT id FROM nodes WHERE id=?
  UNION ALL SELECT child.id FROM nodes child JOIN tree ON child.parent_id=tree.id)
- SELECT DISTINCT asset_id FROM photo_files WHERE node_id IN (SELECT id FROM tree)`, node.ID)
+ SELECT DISTINCT asset_id FROM photo_files WHERE asset_id IS NOT NULL AND node_id IN (SELECT id FROM tree)`, node.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -267,7 +267,7 @@ type photoTrashSelection struct {
 func photoTrashSelectionTx(ctx context.Context, tx *sql.Tx, eligibleWhere string, args []any, maxRoots int) (photoTrashSelection, error) {
 	// Walk upward from photo members once, so ordinary folders need no inspection.
 	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE photo_nodes(id) AS (
- SELECT node_id FROM photo_files
+ SELECT node_id FROM photo_files WHERE asset_id IS NOT NULL
  UNION SELECT n.parent_id FROM nodes n JOIN photo_nodes p ON n.id=p.id WHERE n.parent_id IS NOT NULL)
  SELECT id, id IN (SELECT id FROM photo_nodes) FROM nodes WHERE `+eligibleWhere+` ORDER BY trashed_at ASC, id ASC`, args...)
 	if err != nil {

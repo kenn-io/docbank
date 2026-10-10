@@ -3,8 +3,10 @@ package mcp
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestPhotoMCPWorkflowAndWriteOptIn(t *testing.T) {
@@ -43,6 +46,92 @@ func TestPhotoMCPWorkflowAndWriteOptIn(t *testing.T) {
 	discovery := decodeResult(t, exchangeRaw(t, server, requestFor("server/discover", nil)))
 	assert.Equal(t, catalogInstructions(ServerOptions{AllowPhotoEdits: true}),
 		discovery["instructions"])
+}
+
+func TestPhotoMCPAuthoredPagesFitEnvelope(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		text  string
+		files int
+	}{{"plain", "x", 24}, {"escaped", "\x01", 2}} {
+		t.Run(test.name, func(t *testing.T) {
+			stamp := "2026-09-22T00:00:00Z"
+			asset := api.PhotoAsset{ID: "00000000-0000-4000-8000-000000000001", Kind: "photo", Revision: 2, DisplaySource: "default", CreatedAt: stamp, UpdatedAt: stamp, ExcludedAt: new(stamp)}
+			text := strings.Repeat(test.text, store.MaxPhotoAuthoredTextBytes)
+			for i := range test.files {
+				asset.Files = append(asset.Files, api.PhotoFile{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+10), AssetID: asset.ID, NodeID: int64(i + 7), Role: "raw", Revision: 1, Caption: text, Creator: text, Copyright: text, CreatedAt: stamp})
+			}
+			asset.DisplayFileID = new(asset.Files[0].ID)
+			var writes atomic.Int32
+			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("ETag", `"2"`)
+				if r.Method != http.MethodGet {
+					writes.Add(1)
+					if r.URL.Path == "/api/v1/photos/assets" {
+						w.WriteHeader(http.StatusCreated)
+					}
+				}
+				assert.NoError(t, json.MarshalWrite(w, asset))
+			}))
+			t.Cleanup(daemon.Close)
+			lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+				return daemonconn.New(daemon.URL, "synthetic-key"), nil
+			}, func(*daemonconn.Connection) error { return nil })
+			server := newServerWithOptionsAndDaemon(testImplementation(), ServerOptions{AllowPhotoEdits: true}, lease)
+			var files []api.PhotoFile
+			for offset := 0; ; {
+				wire := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "get_photo_asset", "arguments": map[string]any{"asset_id": asset.ID, "file_offset": offset}}))
+				require.Less(t, len(wire), maxToolResponseBytes)
+				result := decodeResult(t, wire)
+				encoded, err := json.Marshal(result["structuredContent"])
+				require.NoError(t, err)
+				var page photoAssetToolOutput
+				require.NoError(t, json.Unmarshal(encoded, &page))
+				require.Equal(t, len(asset.Files), page.TotalFiles)
+				require.Equal(t, offset, page.FileOffset)
+				require.NotEmpty(t, page.Files)
+				files = append(files, page.Files...)
+				if page.NextFileOffset == nil {
+					break
+				}
+				require.Equal(t, offset+len(page.Files), *page.NextFileOffset)
+				offset = *page.NextFileOffset
+			}
+			require.Equal(t, asset.Files, files)
+			if test.name == "plain" {
+				last, err := getPhotoAsset(t.Context(), lease, []byte(fmt.Sprintf(`{"asset_id":%q,"file_offset":%d}`, asset.ID, len(asset.Files))))
+				require.NoError(t, err)
+				assert.Empty(t, last.Files)
+				assert.Nil(t, last.NextFileOffset)
+				for _, offset := range []int{-1, 257} {
+					wire := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": "get_photo_asset", "arguments": map[string]any{"asset_id": asset.ID, "file_offset": offset}}))
+					assert.EqualValues(t, -32602, decodeWireError(t, wire).Code)
+				}
+			}
+			for _, mutation := range []struct {
+				name string
+				args map[string]any
+			}{
+				{"create_photo_asset", map[string]any{"node_id": 7}},
+				{"attach_photo_file", map[string]any{"asset_id": asset.ID, "revision": 1, "node_id": 7, "role": "raw"}},
+				{"detach_photo_file", map[string]any{"asset_id": asset.ID, "revision": 1, "file_id": "00000000-0000-4000-8000-000000000099"}},
+				{"exclude_photo_asset", map[string]any{"asset_id": asset.ID, "revision": 1, "excluded": true}},
+				{"promote_photo_asset", map[string]any{"node_id": 7}},
+			} {
+				before := writes.Load()
+				wire := exchangeRaw(t, server, requestFor("tools/call", map[string]any{"name": mutation.name, "arguments": mutation.args}))
+				require.Less(t, len(wire), maxToolResponseBytes)
+				result := decodeResult(t, wire)
+				assert.NotEqual(t, true, result["isError"], mutation.name)
+				output := objectField(t, result, "structuredContent")
+				assert.EqualValues(t, 2, output["revision"], mutation.name)
+				assert.EqualValues(t, test.files, output["total_files"], mutation.name)
+				assert.Contains(t, output, "next_file_offset", mutation.name)
+				assert.Equal(t, before+1, writes.Load(), mutation.name)
+			}
+		})
+	}
 }
 
 func TestPhotoWriteNoReplay(t *testing.T) {
@@ -93,7 +182,7 @@ func TestPhotoWriteTreatsMalformedSuccessAsUnknown(t *testing.T) {
 				ID: assetID, Kind: test.kind, Revision: test.revision,
 				DisplayFileID: &fileID, DisplaySource: "default",
 				CreatedAt: createdAt, UpdatedAt: createdAt,
-				Files: []api.PhotoFile{{ID: fileID, AssetID: assetID, NodeID: 7, Role: "raw", CreatedAt: createdAt}},
+				Files: []api.PhotoFile{{ID: fileID, AssetID: assetID, NodeID: 7, Role: "raw", Revision: 1, CreatedAt: createdAt}},
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				requests.Add(1)
@@ -155,19 +244,21 @@ func TestPhotoMCPCreateUsesDaemonRouteAndReturnsTimestamps(t *testing.T) {
 	fileID := "00000000-0000-4000-8000-000000000010"
 	createdAt := "2026-09-22T00:00:00Z"
 	asset := api.PhotoAsset{
-		ID: assetID, Kind: "photo", Revision: 1,
+		ID: assetID, Kind: "photo", Revision: 1, Agreement: map[string]bool{"rating": false, "flag": true},
 		DisplayFileID: &fileID, DisplaySource: "default",
 		CreatedAt: createdAt, UpdatedAt: createdAt,
-		Files: []api.PhotoFile{{ID: fileID, AssetID: assetID, NodeID: 7, Role: "raw", CreatedAt: createdAt}},
+		Files: []api.PhotoFile{{ID: fileID, AssetID: assetID, NodeID: 7, Role: "raw", Revision: 1, CreatedAt: createdAt}},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/photos/assets" {
+		if (r.Method != http.MethodPost || r.URL.Path != "/api/v1/photos/assets") && (r.Method != http.MethodGet || r.URL.Path != "/api/v1/photos/assets/"+assetID) {
 			http.NotFound(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("ETag", `"1"`)
-		w.WriteHeader(http.StatusCreated)
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+		}
 		if err := json.MarshalWrite(w, asset); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -186,4 +277,8 @@ func TestPhotoMCPCreateUsesDaemonRouteAndReturnsTimestamps(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, createdAt, structured["created_at"])
 	assert.Equal(t, createdAt, structured["updated_at"])
+	assert.Equal(t, map[string]any{"rating": false, "flag": true}, structured["agreement"])
+	inspection, err := getPhotoAsset(t.Context(), lease, []byte(`{"asset_id":"`+assetID+`"}`))
+	require.NoError(t, err)
+	assert.Equal(t, asset.Agreement, inspection.Agreement)
 }

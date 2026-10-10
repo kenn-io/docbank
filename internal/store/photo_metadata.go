@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 type metadataPhotoAsset struct {
@@ -33,6 +35,25 @@ type metadataPhotoAssetBeforeHidden struct {
 }
 
 type metadataPhotoFile struct {
+	Revision  int64  `json:"revision" db:"revision"`
+	Rating    int    `json:"rating" db:"rating"`
+	Flag      string `json:"flag" db:"flag"`
+	Label     string `json:"label" db:"label"`
+	Caption   string `json:"caption" db:"caption"`
+	Creator   string `json:"creator" db:"creator"`
+	Copyright string `json:"copyright" db:"copyright"`
+	Rotation  int    `json:"rotation" db:"rotation"`
+
+	Type        string  `json:"type"`
+	FileID      string  `json:"file_id" db:"file_id"`
+	AssetID     *string `json:"asset_id" db:"asset_id"`
+	NodeID      int64   `json:"node_id" db:"node_id"`
+	Role        string  `json:"role" db:"role"`
+	SidecarOfID *string `json:"sidecar_of_file_id" db:"sidecar_of_file_id"`
+	CreatedAt   string  `json:"created_at" db:"created_at"`
+}
+
+type metadataPhotoFileBeforeAuthored struct {
 	Type        string  `json:"type"`
 	FileID      string  `json:"file_id" db:"file_id"`
 	AssetID     string  `json:"asset_id" db:"asset_id"`
@@ -40,6 +61,33 @@ type metadataPhotoFile struct {
 	Role        string  `json:"role" db:"role"`
 	SidecarOfID *string `json:"sidecar_of_file_id" db:"sidecar_of_file_id"`
 	CreatedAt   string  `json:"created_at" db:"created_at"`
+}
+
+func (v metadataPhotoFileBeforeAuthored) current() metadataPhotoFile {
+	return metadataPhotoFile{Type: v.Type, FileID: v.FileID, AssetID: new(v.AssetID), NodeID: v.NodeID, Role: v.Role, SidecarOfID: v.SidecarOfID, CreatedAt: v.CreatedAt, Revision: 1}
+}
+
+var photoFileBeforeAuthoredMetadata = newMetadataTable(metadataTable[metadataPhotoFileBeforeAuthored]{record: metadataPhotoFileBeforeAuthored{Type: metadataPhotoFileType}, table: "photo_files", suffix: "ORDER BY file_id", validate: func(v metadataPhotoFileBeforeAuthored) error { return validatePhotoFileMetadataRecord(v.current()) }, checkExport: true})
+
+func normalizePhotoFileMetadata(raw jsontext.Value) (jsontext.Value, error) {
+	var fields map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	for _, name := range []string{"revision", "rating", "flag", "label", "caption", "creator", "copyright", "rotation"} {
+		if _, exists := fields[name]; exists {
+			return raw, nil
+		}
+	}
+	required, nullable := photoFileBeforeAuthoredMetadata.fields()
+	if err := requireMetadataFields(raw, required, nullable); err != nil {
+		return nil, err
+	}
+	var old metadataPhotoFileBeforeAuthored
+	if err := json.Unmarshal(raw, &old, json.RejectUnknownMembers(true)); err != nil {
+		return nil, err
+	}
+	return json.Marshal(old.current(), json.Deterministic(true))
 }
 
 type metadataPhotoSettings struct {
@@ -123,7 +171,7 @@ var photoMetadataTables = []metadataRecordCodec{
 // photoMetadataTablesV28 exports the photo records of v0.15.0, which predate
 // photo sets.
 var photoMetadataTablesV28 = []metadataRecordCodec{
-	photoAssetMetadata, photoFileMetadata, photoSettingsMetadata,
+	photoAssetMetadata, photoFileBeforeAuthoredMetadata, photoSettingsMetadata,
 	newMetadataTable(metadataTable[metadataPhotoReceiptV28]{record: metadataPhotoReceiptV28{Type: metadataPhotoReceiptType},
 		table: "photo_change_receipts", suffix: "ORDER BY receipt_id", validate: func(v metadataPhotoReceiptV28) error {
 			return validatePhotoReceiptMetadataRecord(metadataPhotoReceipt{
@@ -160,14 +208,23 @@ func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
 }
 
 func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
-	if v.Type != metadataPhotoFileType || validateUUIDv4(v.FileID) != nil || validateUUIDv4(v.AssetID) != nil || v.NodeID < 1 || !photoRoleValid(v.Role) {
+	if v.Type != metadataPhotoFileType || validateUUIDv4(v.FileID) != nil || v.AssetID != nil && validateUUIDv4(*v.AssetID) != nil || v.NodeID < 1 || !photoRoleValid(v.Role) {
 		return errors.New("invalid photo file metadata")
 	}
-	if v.Role == PhotoRoleSidecar && v.SidecarOfID == nil {
+	if v.AssetID == nil && v.SidecarOfID != nil {
+		return errors.New("detached photo file has a sidecar pointer")
+	}
+	if v.AssetID != nil && v.Role == PhotoRoleSidecar && v.SidecarOfID == nil {
 		return errors.New("invalid photo sidecar pointer")
 	}
 	if v.SidecarOfID != nil && validateUUIDv4(*v.SidecarOfID) != nil {
 		return errors.New("invalid photo sidecar pointer")
+	}
+	if v.Revision < 1 {
+		return errors.New("invalid photo file revision")
+	}
+	if err := ValidatePhotoAuthored(PhotoAuthored{Rating: v.Rating, Flag: v.Flag, Label: v.Label, Caption: v.Caption, Creator: v.Creator, Copyright: v.Copyright, Rotation: v.Rotation}); err != nil {
+		return err
 	}
 	return validateMetadataTime("photo file created_at", v.CreatedAt)
 }
@@ -183,8 +240,24 @@ func validatePhotoSettingsMetadataRecord(v metadataPhotoSettings) error {
 }
 
 func validatePhotoReceiptMetadataRecord(v metadataPhotoReceipt) error {
-	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON) > maxPhotoReceiptBytes || len(v.AfterJSON) > maxPhotoReceiptBytes {
+	if v.Type != metadataPhotoReceiptType || validateUUIDv4(v.ReceiptID) != nil || v.BeforeRevision < 0 || v.AfterRevision < 0 || len(v.BeforeJSON)+len(v.AfterJSON) > maxBatchTagReceiptJSONBytes {
 		return errors.New("invalid photo receipt metadata")
+	}
+	if slices.Contains([]string{"authored", "authored_undo", "authored_sidecar"}, v.Operation) {
+		if v.AssetID != nil || v.SettingsKey != nil || v.SetID != nil || v.BeforeRevision != 0 || v.AfterRevision != 1 {
+			return errors.New("invalid authored receipt identity")
+		}
+		r, err := decodePhotoAuthoredReceipt([]byte(v.BeforeJSON), []byte(v.AfterJSON), v.ReceiptID)
+		if err != nil {
+			return err
+		}
+		if (v.Operation == "authored_undo") != (r.UndoOf != "") || (v.Operation == "authored_sidecar") != (r.Sidecar != nil) {
+			return errors.New("authored receipt provenance differs from operation")
+		}
+		return validateMetadataTime("photo receipt created_at", v.CreatedAt)
+	}
+	if len(v.BeforeJSON) > maxPhotoReceiptBytes || len(v.AfterJSON) > maxPhotoReceiptBytes {
+		return errors.New("photo graph receipt too large")
 	}
 	switch v.Operation {
 	case "set_create", "set_duplicate", "set_update", "set_add", "set_remove", "set_delete":
@@ -240,6 +313,48 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 			return fmt.Errorf("validating photo metadata: %w", err)
 		}
 	}
+	if version >= 32 {
+		if err := validatePhotoAuthoredReferences(ctx, tx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validatePhotoAuthoredReferences(ctx context.Context, q metadataQuerier) error {
+	var invalid int
+	err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r,
+ json_each(r.after_json,'$.after') entry
+ LEFT JOIN photo_files f ON f.file_id=json_extract(entry.value,'$.file_id')
+ WHERE r.operation IN ('authored','authored_undo','authored_sidecar')
+ AND ((f.file_id IS NOT NULL AND f.node_id<>json_extract(entry.value,'$.node_id')) OR (f.file_id IS NULL AND EXISTS(SELECT 1 FROM nodes n WHERE n.id=json_extract(entry.value,'$.node_id'))))`).Scan(&invalid)
+	if err != nil {
+		return fmt.Errorf("checking authored receipt references: %w", err)
+	}
+	if invalid != 0 {
+		return errors.New("authored receipts reference missing or different file nodes")
+	}
+	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r
+ LEFT JOIN photo_files sidecar ON sidecar.file_id=json_extract(r.after_json,'$.sidecar.file_id')
+ LEFT JOIN content_versions version ON version.version_id=json_extract(r.after_json,'$.sidecar.version_id')
+ WHERE r.operation='authored_sidecar' AND
+ ((sidecar.file_id IS NOT NULL AND sidecar.node_id<>json_extract(r.after_json,'$.sidecar.node_id'))
+ OR (version.version_id IS NOT NULL AND version.node_id<>json_extract(r.after_json,'$.sidecar.node_id')) OR (sidecar.file_id IS NULL AND EXISTS(SELECT 1 FROM nodes n WHERE n.id=json_extract(r.after_json,'$.sidecar.node_id'))))`).Scan(&invalid)
+	if err != nil {
+		return err
+	}
+	if invalid != 0 {
+		return errors.New("authored receipt sidecar provenance references missing or different nodes")
+	}
+	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_change_receipts r
+ LEFT JOIN photo_change_receipts original ON original.receipt_id=json_extract(r.after_json,'$.undo_of')
+ WHERE r.operation='authored_undo' AND (original.receipt_id IS NULL OR original.receipt_id=r.receipt_id OR original.operation NOT IN ('authored','authored_undo','authored_sidecar'))`).Scan(&invalid)
+	if err != nil {
+		return err
+	}
+	if invalid != 0 {
+		return errors.New("authored undo references an invalid receipt")
+	}
 	return nil
 }
 
@@ -283,14 +398,17 @@ func validatePhotoSetGraph(ctx context.Context, q metadataQuerier) error {
 }
 
 func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
-	if version >= photoHiddenStorageSchemaVersion {
-		return append(append([]metadataRecordCodec(nil), photoMetadataTables...), photoHiddenMetadataTables...)
-	}
 	tables := photoMetadataTables
 	if version < photoSetsStorageSchemaVersion {
 		tables = photoMetadataTablesV28
 	}
 	tables = append([]metadataRecordCodec(nil), tables...)
+	if version < 32 {
+		tables[1] = photoFileBeforeAuthoredMetadata
+	}
+	if version >= photoHiddenStorageSchemaVersion {
+		return append(tables, photoHiddenMetadataTables...)
+	}
 	for i, table := range tables {
 		if table.kind() == metadataPhotoAssetType {
 			tables[i] = photoAssetMetadataBeforeHidden

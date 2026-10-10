@@ -10,7 +10,35 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
+
+func TestHumanAuditHistoryShowsPhotoDecisions(t *testing.T) {
+	const fileID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	const nodeID = int64(42)
+	before := store.PhotoAuthoredSnapshot{FileID: fileID, NodeID: nodeID, Revision: 1}
+	after := before
+	after.Revision = 2
+	after.Values = store.PhotoAuthored{Rating: 5, Flag: "pick", Label: "red", Caption: "River\n\x1b[31m", Creator: "Example photographer", Copyright: "Example rights", Rotation: 90}
+	events := []api.AuditEvent{{NodeID: nodeID, Kind: "photo_authored", Attachment: &api.AuditAttachmentChange{
+		Kind: "photo_authored", Identity: api.AuditAttachmentIdentity{FileID: fileID, NodeID: nodeID},
+		Before: &api.AuditAttachmentState{Photo: &before}, After: &api.AuditAttachmentState{Photo: &after},
+	}}}
+	for _, scope := range []bool{false, true} {
+		t.Run(strconv.FormatBool(scope), func(t *testing.T) {
+			var output bytes.Buffer
+			if scope {
+				require.NoError(t, writeAuditScopeHistory(&output, api.AuditScopeEventPage{Items: events, Total: 1}))
+			} else {
+				require.NoError(t, writeAuditHistory(&output, api.AuditEventPage{Node: api.Node{ID: nodeID}, Items: events, Total: 1}))
+			}
+			for _, want := range []string{fileID, "on id:" + strconv.FormatInt(nodeID, 10), "revision 1", "revision 2", "rating 0", "rating 5", `flag "pick"`, `label "red"`, `caption "River\n\x1b[31m"`, `creator "Example photographer"`, `copyright "Example rights"`, "rotation 90"} {
+				assert.Contains(t, output.String(), want)
+			}
+			assert.NotContains(t, output.String(), "\x1b")
+		})
+	}
+}
 
 func TestHumanAuditOutputQuotesPaths(t *testing.T) {
 	const unsafePath = "/Taxes/\n\x1b[31mFORGED"
@@ -102,7 +130,7 @@ func TestAuditRetentionDisclosureNamesEveryMetadataClass(t *testing.T) {
 	require.NoError(t, writeAuditPreview(&output, api.AuditEnrollmentPreview{}))
 	help := auditEnableCmd.Flags().Lookup("acknowledge-permanent-retention").Usage
 	for _, text := range []string{output.String(), help} {
-		for _, class := range []string{"names", "topology", "tags", "assignments", "ingests", "provenance"} {
+		for _, class := range []string{"names", "topology", "tags", "assignments", "ingests", "provenance", "photo decisions", "captions", "creators", "copyrights"} {
 			assert.Contains(t, text, class)
 		}
 	}

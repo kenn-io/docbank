@@ -139,6 +139,7 @@ components:
             - tag_definition
             - tag_assignment
             - provenance
+            - photo_authored
           type: string
       required:
         - kind
@@ -151,6 +152,9 @@ components:
     AuditAttachmentIdentity:
       additionalProperties: false
       properties:
+        file_id:
+          format: uuid
+          type: string
         node_id:
           format: int64
           minimum: 1
@@ -181,6 +185,8 @@ components:
           type: string
         original_path:
           type: string
+        photo:
+          $ref: "#/components/schemas/PhotoAuthoredSnapshot"
         provenance_id:
           pattern: ^[0-9a-f]{64}$
           type: string
@@ -6786,6 +6792,10 @@ components:
           items:
             type: string
           type: array
+        flags:
+          items:
+            type: string
+          type: array
         focus_max:
           type:
             - string
@@ -6820,6 +6830,10 @@ components:
           items:
             type: string
           type: array
+        labels:
+          items:
+            type: string
+          type: array
         lenses:
           items:
             type: string
@@ -6842,6 +6856,16 @@ components:
           items:
             type: string
           type: array
+        rating_max:
+          format: int64
+          type:
+            - integer
+            - "null"
+        rating_min:
+          format: int64
+          type:
+            - integer
+            - "null"
         set_ids:
           items:
             type: string
@@ -11400,6 +11424,10 @@ components:
           format: uri
           readOnly: true
           type: string
+        agreement:
+          additionalProperties:
+            type: boolean
+          type: object
         created_at:
           format: date-time
           type: string
@@ -11451,6 +11479,7 @@ components:
           format: date-time
           type: string
       required:
+        - agreement
         - id
         - kind
         - revision
@@ -11463,6 +11492,61 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoAuthored:
+      additionalProperties: false
+      properties:
+        caption:
+          type: string
+        copyright:
+          type: string
+        creator:
+          type: string
+        flag:
+          type: string
+        label:
+          type: string
+        rating:
+          format: int64
+          type: integer
+        rotation:
+          format: int64
+          type: integer
+      required:
+        - rating
+        - flag
+        - label
+        - caption
+        - creator
+        - copyright
+        - rotation
+      type: object
+      x-go-type: store.PhotoAuthored
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoAuthoredSnapshot:
+      additionalProperties: false
+      properties:
+        file_id:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          type: integer
+        values:
+          $ref: "#/components/schemas/PhotoAuthored"
+      required:
+        - file_id
+        - node_id
+        - revision
+        - values
+      type: object
+      x-go-type: store.PhotoAuthoredSnapshot
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoBrowsePage:
       additionalProperties: false
       properties:
@@ -11627,15 +11711,31 @@ components:
         asset_id:
           format: uuid
           type: string
+        caption:
+          type: string
+        copyright:
+          type: string
         created_at:
           format: date-time
+          type: string
+        creator:
+          type: string
+        flag:
           type: string
         id:
           format: uuid
           type: string
+        label:
+          type: string
         node_id:
           format: int64
           minimum: 1
+          type: integer
+        rating:
+          format: int64
+          type: integer
+        revision:
+          format: int64
           type: integer
         role:
           enum:
@@ -11644,12 +11744,23 @@ components:
             - video
             - sidecar
           type: string
+        rotation:
+          format: int64
+          type: integer
         sidecar_of_file_id:
           format: uuid
           type:
             - string
             - "null"
       required:
+        - revision
+        - rating
+        - flag
+        - label
+        - caption
+        - creator
+        - copyright
+        - rotation
         - id
         - asset_id
         - node_id
@@ -14268,6 +14379,15 @@ components:
             type: string
           maxItems: 32
           type: array
+        flags:
+          items:
+            enum:
+              - ""
+              - pick
+              - reject
+            type: string
+          maxItems: 64
+          type: array
         focus_max:
           maxLength: 64
           type:
@@ -14337,6 +14457,18 @@ components:
             type: string
           maxItems: 64
           type: array
+        labels:
+          items:
+            enum:
+              - ""
+              - red
+              - yellow
+              - green
+              - blue
+              - purple
+            type: string
+          maxItems: 64
+          type: array
         lenses:
           items:
             type: string
@@ -14385,6 +14517,20 @@ components:
             type: string
           maxItems: 64
           type: array
+        rating_max:
+          format: int64
+          maximum: 5
+          minimum: 0
+          type:
+            - integer
+            - "null"
+        rating_min:
+          format: int64
+          maximum: 5
+          minimum: 0
+          type:
+            - integer
+            - "null"
         set_ids:
           items:
             format: uuid
@@ -17274,7 +17420,7 @@ paths:
       summary: Issue a scoped browser session
   /api/v1/audit/enable:
     post:
-      description: Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, and provenance across the vault, including outside the selected scope; preview again after any stale-token response.
+      description: Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, provenance, photo decisions, captions, creators, and copyrights across the vault, including outside the selected scope; preview again after any stale-token response.
       operationId: enableAudit
       requestBody:
         content:

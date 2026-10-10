@@ -77,6 +77,62 @@ Passcodes must be 1 to 1,024 bytes. Canonically equivalent Unicode spellings use
 
 A hide retry that returns `hidden_locked` already took effect.
 
+## Ratings and other decisions
+
+Each RAW, image, and video member stores its own rating, flag, label, caption,
+creator, copyright, and rotation. A RAW rated 5 and a JPEG rated 3 keep those
+values. Inspection returns every file's revision and an `agreement` map.
+`false` for a field means the displayable members have mixed values. A new
+member starts at revision 1 with empty text, rating 0, and rotation 0.
+
+Ratings range from 0 through 5. Flags are empty, `pick`, or `reject`. Labels
+are empty, `red`, `yellow`, `green`, `blue`, or `purple`. Rotation is 0, 90,
+180, or 270 degrees. Caption, creator, and copyright each allow 16 KiB of
+UTF-8 text.
+
+Authored edits use exact file IDs and revisions. A pair edit also checks the
+asset revision and includes every displayable member. One transaction changes
+all targets and records their complete before and after values in one receipt.
+Undo checks every recorded result revision and restores the previous values
+with new revisions. Purged or edited targets make undo fail. Detach and reattach preserve each
+file's identity, decisions, and revision; a new member starts empty.
+Edits allow up to 1,000 files and reserve enough of the 1 MiB receipt bound
+for both the edit and its inverse. Audited files record each changed node in the same transaction; a failed audit rolls back
+the whole edit. Grouping operations retain their existing audit restrictions.
+
+The daemon initializes each original file's decisions from the imported XMP
+sidecar linked to it. It reads
+rating, label, pick, rotation, caption, creator, and copyright, then records the
+sidecar node and content version in the receipt. XMP rating -1 means reject
+with rating 0. Unsupported custom color labels become empty; supported decisions
+and the original sidecar bytes are preserved. Competing sidecars are scanned in
+ascending node-ID order; the first successful initialization wins. Parsing
+verifies the complete blob and rejects malformed XML,
+packets over 1 MiB, and nesting over 64 elements. A caption, creator, or copyright
+over 16 KiB rejects the whole packet. The existing source-metadata
+extractor publishes packet claims under `image.xmp.*`. Sidecar source-metadata
+detail shows a valid-packet fact for valid empty packets or warnings for rejected
+packets, together with the exact source version. Empty and rejected packets
+leave file and node revisions, modified time, and audit history unchanged.
+Replacement bytes can initialize a still-undecided photo. Cancellation, stale
+inputs, and blob or IO failures retry. Human edits and successful initialization
+advance the authored revision and protect those decisions from later packets.
+Whitespace-only caption, creator, and copyright values count as absent; meaningful
+text keeps its surrounding spaces and newlines. This slice doesn't import
+`dc:subject` as tags or `tiff:Orientation` as authored rotation.
+
+Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. In Photos,
+each decision filter reads the asset's display file. With the default RAW display
+rated 5/pick and a paired JPEG rated 1/red, `rating:5`, `flag:pick`,
+`NOT rating:1`, and `NOT label:red` match, including with a linked XMP sidecar.
+Both typed bounds from 3 through 3 and `rating_min:3 AND rating_max:3` exclude
+the photo. Selecting the JPEG reverses those rating, flag, and label matches.
+Changing the display file changes these decision matches.
+Documents queries read each file's own decisions. These
+values and complete receipts round-trip through JSONL backup and restore.
+Advanced expressions accept `rating:5`, `rating_min:4`, `rating_max:3`,
+`flag:pick`, and `label:red`.
+
 ## Previews
 
 The daemon produces a grid preview with a 512-pixel maximum edge for each
@@ -297,11 +353,14 @@ the previous page boundary.
 
 Use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`,
 `iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`,
-`capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, or `asset:` or `set:`
+`capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, `rating:5`, `flag:pick`,
+`label:red`, or `asset:` or `set:`
 followed by a canonical asset or album UUIDv4. Existing `collection:`, tag, and text predicates combine
 with these fields. Camera and lens match the complete make or model, ignoring
 case using Unicode case folding. Values in one typed filter array combine with
 OR. Separate filters combine with AND.
+
+Use typed `flags:[""]` or `labels:[""]` to select unflagged or unlabeled photos. Expression operands must be nonempty. `NOT flag:pick` selects unflagged and rejected photos; `NOT label:red` selects unlabeled photos and other colors.
 
 Dates use the photo's recorded local calendar day, with an inclusive lower
 bound and exclusive upper bound. A January 1 photo remains in January 1 date
