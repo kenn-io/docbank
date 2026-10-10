@@ -54,27 +54,42 @@ func (s *Store) PreflightPhotoRejects(ctx context.Context, request PhotoRejectsR
 	return out, err
 }
 
-// MovePhotoRejects checks the preflight and trashes the reviewed batch in one transaction.
+// MovePhotoRejects checks the scope in a read snapshot and trashes the fenced batch atomically.
 func (s *Store) MovePhotoRejects(ctx context.Context, request PhotoRejectsRequest, digest string) (PhotoRejectsPreflight, error) {
 	var out PhotoRejectsPreflight
-	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var ids []string
+	var batch [][]photoRejectMemberFence
+	err := s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
 		var err error
-		generation, err := readActiveLexicalGeneration(ctx, tx)
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return err
-		}
-		out, ids, err = s.photoRejects(ctx, tx, generation.ID, request)
+		out, batch, err = s.photoRejects(ctx, q, generation.ID, request)
 		if err != nil {
 			return err
 		}
 		if digest == "" || digest != out.Digest {
 			return fmt.Errorf("%w: photo scope changed; preview rejects again", ErrStaleRevision)
 		}
-		for _, id := range ids {
-			asset, err := s.photoAssetReadQuery(ctx, tx, id)
+		return nil
+	})
+	if err != nil {
+		return PhotoRejectsPreflight{}, err
+	}
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		for _, members := range batch {
+			asset, err := s.photoAssetForMutationTx(ctx, tx, members[0].AssetID, members[0].AssetRevision)
+			if errors.Is(err, ErrNotFound) {
+				return fmt.Errorf("%w: photo scope changed; preview rejects again", ErrStaleRevision)
+			}
 			if err != nil {
 				return err
+			}
+			// Authored edits and ordinary node writes advance member nodes, not the asset.
+			for _, member := range members {
+				node, err := nodeByIDTx(tx, member.NodeID)
+				if err != nil {
+					return err
+				}
+				if node.Revision != member.NodeRevision {
+					return fmt.Errorf("%w: photo scope changed; preview rejects again", ErrStaleRevision)
+				}
 			}
 			if _, err := s.trashPhotoAssetTx(ctx, tx, asset); err != nil {
 				return err
@@ -88,7 +103,21 @@ func (s *Store) MovePhotoRejects(ctx context.Context, request PhotoRejectsReques
 	return out, nil
 }
 
-func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation string, request PhotoRejectsRequest) (PhotoRejectsPreflight, []string, error) {
+type photoRejectMemberFence struct {
+	AssetID       string
+	AssetRevision int64
+	FileID        string
+	FileRevision  int64
+	Role          string
+	Flag          string
+	NodeID        int64
+	NodeRevision  int64
+	VersionID     string
+	TrashedAt     *string
+	Name          string
+}
+
+func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation string, request PhotoRejectsRequest) (PhotoRejectsPreflight, [][]photoRejectMemberFence, error) {
 	out := PhotoRejectsPreflight{Mixed: []PhotoRejectMixed{}}
 	if request.Hidden {
 		if _, err := s.hiddenSession(ctx, q); err != nil {
@@ -141,21 +170,8 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 		return out, nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	var eligible []string
-	type memberFence struct {
-		AssetID       string
-		AssetRevision int64
-		FileID        string
-		FileRevision  int64
-		Role          string
-		Flag          string
-		NodeID        int64
-		NodeRevision  int64
-		VersionID     string
-		TrashedAt     *string
-		Name          string
-	}
-	var members []memberFence
+	var eligible [][]photoRejectMemberFence
+	var members []photoRejectMemberFence
 	finish := func() error {
 		if len(members) == 0 {
 			return nil
@@ -187,8 +203,8 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 		if rejected == originals {
 			out.Photos++
 			out.Files += live
-			if out.Photos <= MaxPhotoRejectsMove && out.Files <= MaxPhotoRejectsMove {
-				eligible = append(eligible, members[0].AssetID)
+			if out.Files <= MaxPhotoRejectsMove {
+				eligible = append(eligible, append([]photoRejectMemberFence(nil), members...))
 			}
 		} else {
 			out.MixedCount++
@@ -205,7 +221,7 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 		return nil
 	}
 	for rows.Next() {
-		var member memberFence
+		var member photoRejectMemberFence
 		if err := rows.Scan(&member.AssetID, &member.AssetRevision, &member.FileID, &member.FileRevision, &member.Role, &member.Flag, &member.NodeID, &member.NodeRevision, &member.VersionID, &member.TrashedAt, &member.Name); err != nil {
 			return out, nil, err
 		}

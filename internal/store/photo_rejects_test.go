@@ -42,6 +42,8 @@ func TestPhotoRejectsPreviewDuringWrite(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, preview.Unchanged)
 	assert.Empty(t, preview.Mixed)
+	_, err = s.MovePhotoRejects(ctx, PhotoRejectsRequest{Query: value}, "stale")
+	require.ErrorIs(t, err, ErrStaleRevision)
 }
 
 func TestPhotoRejectsMixedAndStale(t *testing.T) {
@@ -232,27 +234,43 @@ func TestPhotoRejectsHiddenScope(t *testing.T) {
 
 func TestPhotoRejectsRollbackAllAssets(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	for i := range 2 {
-		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("reject-%d.jpg", i), fakeHash("a1"), 1, "image/jpeg")
-		require.NoError(t, err)
-		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
-		require.NoError(t, err)
-		rejectOriginals(t, s, asset)
+	for _, change := range []string{"failure", "asset", "member"} {
+		t.Run(change, func(t *testing.T) {
+			s := newTestStore(t)
+			for i := range 2 {
+				node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("reject-%d.jpg", i), fakeHash("a1"), 1, "image/jpeg")
+				require.NoError(t, err)
+				asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				rejectOriginals(t, s, asset)
+			}
+			request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
+			preview, err := s.PreflightPhotoRejects(t.Context(), request)
+			require.NoError(t, err)
+			trigger := `CREATE TRIGGER fail_second_trash BEFORE UPDATE OF trashed_at ON nodes WHEN NEW.trashed_at IS NOT NULL AND (SELECT COUNT(*) FROM nodes WHERE trashed_at IS NOT NULL)>0 BEGIN SELECT RAISE(ABORT,'synthetic trash failure'); END`
+			if change != "failure" {
+				update := `UPDATE photo_assets SET revision=revision+1 WHERE asset_id=(SELECT MAX(asset_id) FROM photo_assets);`
+				if change == "member" {
+					update = `UPDATE nodes SET revision=revision+1 WHERE id=(SELECT node_id FROM photo_files ORDER BY asset_id DESC LIMIT 1);`
+				}
+				trigger = `CREATE TRIGGER stale_second_photo AFTER UPDATE OF trashed_at ON nodes WHEN NEW.trashed_at IS NOT NULL BEGIN ` + update + ` END`
+			}
+			_, err = s.db.Exec(trigger)
+			require.NoError(t, err)
+			_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
+			if change == "failure" {
+				require.ErrorContains(t, err, "synthetic trash failure")
+			} else {
+				require.ErrorIs(t, err, ErrStaleRevision)
+			}
+			roots, err := s.TrashedRoots(t.Context())
+			require.NoError(t, err)
+			assert.Empty(t, roots)
+			current, err := s.PreflightPhotoRejects(t.Context(), request)
+			require.NoError(t, err)
+			assert.Equal(t, preview.Digest, current.Digest)
+		})
 	}
-	request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
-	preview, err := s.PreflightPhotoRejects(t.Context(), request)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`CREATE TRIGGER fail_second_trash BEFORE UPDATE OF trashed_at ON nodes WHEN NEW.trashed_at IS NOT NULL AND (SELECT COUNT(*) FROM nodes WHERE trashed_at IS NOT NULL)>0 BEGIN SELECT RAISE(ABORT,'synthetic trash failure'); END`)
-	require.NoError(t, err)
-	_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
-	require.ErrorContains(t, err, "synthetic trash failure")
-	roots, err := s.TrashedRoots(t.Context())
-	require.NoError(t, err)
-	assert.Empty(t, roots)
-	current, err := s.PreflightPhotoRejects(t.Context(), request)
-	require.NoError(t, err)
-	assert.Equal(t, preview.Digest, current.Digest)
 }
 
 func TestPhotoRejectsTrashedOriginalStillCounts(t *testing.T) {

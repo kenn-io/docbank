@@ -96,12 +96,11 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
     await modal.getByRole("button", { name: "Move 1 to trash", exact: true }).click();
     await expect(modal).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
-    await expect(scroll).toBeHidden();
-    await expect(scroll).toHaveAttribute("inert", "");
+    await expect(scroll).toBeVisible();
     expect(await mounted!.evaluate(element => element.isConnected)).toBe(true);
-    await expect(page.locator(".library-title span")).toBeHidden();
-    await expect(page.getByRole("button", { name: "Move to trash", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Move rejects", exact: true })).toBeDisabled();
+    await expect(page.locator(".library-title span")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Move to trash", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Move rejects", exact: true })).toBeEnabled();
     for (const theme of ["light", "dark"]) {
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
       await page.screenshot({ path: path.join(output!, `web-photo-rejects-retry-${theme}.png`), animations: "disabled" });

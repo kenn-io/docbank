@@ -21,7 +21,6 @@ export class Photos {
   total = $state(0);
   cursor = $state<string | undefined>();
   loading = $state(false);
-  listingInvalid = $state(false);
   trashing = $state(false);
   rejects = $state<PhotoRejectsPreflight>();
   rejectsLoading = $state(false);
@@ -51,7 +50,7 @@ export class Photos {
   }
 
   async loadMore(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.disposed || this.listingInvalid || this.hiding || this.trashing || this.loading || this.error || (this.started && !this.cursor)) return;
+    if (this.disposed || this.hiding || this.trashing || this.loading || this.error || (this.started && !this.cursor)) return;
     this.loading = true;
     const controller = this.controller;
     try {
@@ -79,7 +78,7 @@ export class Photos {
   }
 
   async setHidden(id: string, preserve?: () => (() => Promise<void>) | undefined, onhidden?: () => void, onactionerror?: (error: string) => void) {
-    if (this.listingInvalid || this.hiding || this.trashing || this.disposed) return;
+    if (this.hiding || this.trashing || this.disposed) return;
     const members = this.resolveTargets(this.selection.selectedIDs.has(id) ? this.selection.selectedIDs : [id]);
     if (!members) {
       this.actionError = "Load and select the photos again before changing their visibility.";
@@ -136,7 +135,7 @@ export class Photos {
   }
 
   async previewRejects(selected = false) {
-    if (this.disposed || this.listingInvalid || this.trashing || this.hiding || this.rejectsLoading) return;
+    if (this.disposed || this.trashing || this.hiding || this.rejectsLoading) return;
     this.rejects = undefined;
     this.rejectsError = "";
     this.rejectsSelected = selected;
@@ -159,7 +158,7 @@ export class Photos {
   }
 
   async trashRejects(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
-    if (this.disposed || this.listingInvalid || this.trashing || this.hiding || !this.rejects?.movable) return false;
+    if (this.disposed || this.trashing || this.hiding || !this.rejects?.movable) return false;
     if (this.rejectsScopeChanged()) {
       this.rejects = undefined;
       this.rejectsError = "Selection changed. Preview rejects again.";
@@ -172,7 +171,6 @@ export class Photos {
     try {
       await movePhotoRejects({ query: this.rejectsQuery!, hidden: this.hidden, digest }, { session: this.session, signal: AbortSignal.timeout(60_000) });
       this.rejects = undefined;
-      this.invalidateRejectsListing();
       ontrashed?.();
       await this.replace("refresh", preserve);
       return true;
@@ -180,7 +178,6 @@ export class Photos {
       this.rejects = undefined;
       this.rejectsFailure(cause);
       if (!(cause instanceof APIError) || cause.status >= 500 && cause.code !== "maintenance_busy") {
-        this.invalidateRejectsListing();
         this.rejectsError = "The move may have completed. Refresh Photos before trying again.";
         ontrashed?.();
       }
@@ -193,11 +190,6 @@ export class Photos {
     if (this.disposed) return;
     this.rejectsError = cause instanceof Error ? cause.message : String(cause);
     if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
-  }
-
-  private invalidateRejectsListing() {
-    this.listingInvalid = true;
-    this.trashTargets = [];
   }
 
   private rejectsScopeChanged() {
@@ -238,7 +230,6 @@ export class Photos {
       this.cursor = cursor;
       this.started = true;
       this.selection = reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...this.trashTargets.map(item => item.asset_id)]));
-      this.listingInvalid = false;
       this.expired = false;
       this.replacement = undefined;
       await restore?.();
@@ -252,7 +243,7 @@ export class Photos {
   }
 
   async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
-    if (this.listingInvalid || this.trashing || this.hiding || this.disposed) return false;
+    if (this.trashing || this.hiding || this.disposed) return false;
     const selected = this.resolveTargets(this.selection.selectedIDs);
     if (!selected) {
       this.trashError = "Load and select the photos again before moving them to trash.";
@@ -299,7 +290,7 @@ export class Photos {
   }
 
   select(id: string, event: MouseEvent, orderedIDs: string[]) {
-    if (this.listingInvalid || event.button !== 0) return;
+    if (event.button !== 0) return;
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
       this.selection = toggleIDSelection(this.selection, orderedIDs, id, event.shiftKey || !this.selection.selectedIDs.has(id), event.shiftKey);
     } else this.selection = { selectedIDs: new Set([id]), anchorID: id };
@@ -307,7 +298,6 @@ export class Photos {
   }
 
   check(id: string, checked: boolean, range: boolean, orderedIDs: string[]) {
-    if (this.listingInvalid) return;
     this.selection = toggleIDSelection(this.selection, orderedIDs, id, checked, range);
     this.pruneTrashTargets();
   }
@@ -333,7 +323,7 @@ export class Photos {
 
   private pruneTrashTargets() { this.trashTargets = this.trashTargets.filter(item => this.selection.selectedIDs.has(item.asset_id)); }
 
-  clearSelection() { if (this.listingInvalid) return; this.selection = clearSelection<string>(); this.trashTargets = []; }
-  selectLoaded() { if (this.listingInvalid) return; this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
+  clearSelection() { this.selection = clearSelection<string>(); this.trashTargets = []; }
+  selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
   dispose() { this.disposed = true; this.controller.abort(); }
 }

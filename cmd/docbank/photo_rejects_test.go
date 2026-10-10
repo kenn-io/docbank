@@ -23,9 +23,6 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 	}
 	for _, confirm := range []bool{false, true} {
 		for _, hidden := range []bool{false, true} {
-			if hidden && !confirm {
-				continue
-			}
 			t.Run(strings.Join([]string{map[bool]string{false: "preview", true: "confirm"}[confirm], map[bool]string{false: "library", true: "hidden"}[hidden]}, "/"), func(t *testing.T) {
 				digest := strings.Repeat("a", 64)
 				photos, movable := 1001, 1000
