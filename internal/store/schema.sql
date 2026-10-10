@@ -2151,6 +2151,7 @@ CREATE TABLE IF NOT EXISTS photo_assets (
     asset_id                  TEXT PRIMARY KEY,
     kind                      TEXT NOT NULL,
     revision                  INTEGER NOT NULL DEFAULT 1,
+    hidden_at                 TEXT,
     excluded_at               TEXT,
     display_file_id           TEXT,
     display_override_file_id  TEXT,
@@ -2496,4 +2497,16 @@ CREATE TABLE IF NOT EXISTS photo_quality_signals (
  color_red REAL, color_green REAL, color_blue REAL,
  framing REAL, aesthetics REAL,
  PRIMARY KEY(content_version_id,evaluator_fingerprint)
+);
+CREATE TABLE IF NOT EXISTS photo_hidden_credentials (
+    singleton INTEGER PRIMARY KEY,
+    passcode_hash TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS photo_hidden_lockout (
+    singleton INTEGER PRIMARY KEY,
+    locked_until TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS photo_hidden_failures (
+    failure_id INTEGER PRIMARY KEY,
+    occurred_at TEXT NOT NULL
 );

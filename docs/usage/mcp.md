@@ -173,6 +173,8 @@ Starting the server with `--allow-photo-edits` adds these write tools:
 | `exclude_photo_asset` | Changes inclusion at an expected asset revision. |
 | `promote_photo_asset` | Explicitly creates an asset for one live file node. |
 
+Run `docbank photos unhide /path/to/photo.jpg` and enter the passcode before using MCP photo commands on a hidden asset. Ordinary MCP document tools retain access to its files.
+
 Photo writes make one daemon request. An ambiguous transport failure returns
 `processing_outcome_unknown`. Inspect the asset before retrying. Display and
 vault settings writes remain HTTP and CLI operations.

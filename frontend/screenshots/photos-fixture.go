@@ -13,6 +13,7 @@ import (
 	"image/jpeg"
 	"math"
 	"os"
+	"strconv"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/blob"
@@ -28,8 +29,17 @@ func check(err error) {
 }
 
 func main() {
-	if len(os.Args) != 2 {
-		panic("usage: photos-fixture <vault>")
+	if len(os.Args) < 2 || len(os.Args) > 3 {
+		panic("usage: photos-fixture <vault> [count]")
+	}
+	count := 10_000
+	if len(os.Args) == 3 {
+		var err error
+		count, err = strconv.Atoi(os.Args[2])
+		check(err)
+		if count < 1 || count > 10_000 {
+			panic("count must be 1 to 10000")
+		}
 	}
 	ctx := context.Background()
 	layout := home.Layout{Root: os.Args[1]}
@@ -90,7 +100,7 @@ func main() {
 		check(err)
 		samples[index].metadata = metadata
 	}
-	for index := range 10_000 {
+	for index := range count {
 		sampleIndex := index % 10
 		if index >= 9000 {
 			sampleIndex = 10 + index%38
@@ -110,5 +120,5 @@ func main() {
 		check(err)
 	}
 	check(s.Checkpoint(ctx))
-	fmt.Println("seeded 10000 synthetic photos")
+	fmt.Printf("seeded %d synthetic photos\n", count)
 }

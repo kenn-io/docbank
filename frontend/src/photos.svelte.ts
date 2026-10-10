@@ -1,4 +1,4 @@
-import { listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { hidePhotoAsset, unhidePhotoAsset, listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
@@ -21,6 +21,8 @@ export class Photos {
   cursor = $state<string | undefined>();
   loading = $state(false);
   trashing = $state(false);
+  hiding = $state(false);
+  actionError = $state("");
   trashError = $state("");
   trashTargets = $state<PhotoBrowseRow[]>([]);
   error = $state("");
@@ -34,7 +36,7 @@ export class Photos {
   private controller = new AbortController();
   private disposed = false;
 
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void) {}
+  constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false) {}
 
   setDensity(density: Density) {
     this.density = density;
@@ -42,11 +44,11 @@ export class Photos {
   }
 
   async loadMore(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.disposed || this.loading || this.error || (this.started && !this.cursor)) return;
+    if (this.disposed || this.hiding || this.trashing || this.loading || this.error || (this.started && !this.cursor)) return;
     this.loading = true;
     const controller = this.controller;
     try {
-      const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
+      const page = await listPhotoAssets({ query: photoQuery, hidden: this.hidden, page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
       if (controller.signal.aborted) return;
       const seen = new Set(this.items.map(item => item.asset_id));
       const restore = preserve?.();
@@ -61,12 +63,44 @@ export class Photos {
       await restore?.();
     } catch (cause) {
       if (controller.signal.aborted) return;
-      if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
       this.expired = cause instanceof APIError && cause.code === "cursor_expired";
       this.error = cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.loading = false;
     }
+  }
+
+  async setHidden(id: string, preserve?: () => (() => Promise<void>) | undefined, onhidden?: () => void, onactionerror?: (error: string) => void) {
+    if (this.hiding || this.trashing || this.disposed) return;
+    const members = this.resolveTargets(this.selection.selectedIDs.has(id) ? this.selection.selectedIDs : [id]);
+    if (!members) {
+      this.actionError = "Load and select the photos again before changing their visibility.";
+      onactionerror?.(this.actionError);
+      return;
+    }
+    this.cancelPending();
+    this.hiding = true;
+    this.actionError = "";
+    let failure = "";
+    let failures = 0;
+    await this.mutateBatch(members, async member => {
+      const signal = AbortSignal.timeout(60_000);
+      const receipt = await (this.hidden ? unhidePhotoAsset : hidePhotoAsset)(member.asset_id, { "If-Match": String(member.revision) }, { session: this.session, signal });
+      if (signal.aborted) throw signal.reason;
+      return receipt;
+    }, cause => {
+      failures++;
+      failure = cause instanceof APIError && cause.code === "hidden_not_configured" ? "Set a passcode in the Hidden view first."
+        : cause instanceof APIError && cause.code === "hidden_locked" && !this.hidden ? "This photo is already hidden."
+        : cause instanceof Error ? cause.message : String(cause);
+      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); return true; }
+      return false;
+    }, () => {
+      this.actionError = failures ? `${failures} photo${failures === 1 ? "" : "s"} failed: ${failure}` : "";
+      onactionerror?.(this.actionError);
+      onhidden?.();
+    }, "hiding", preserve);
   }
 
   cancelPending() {
@@ -111,7 +145,7 @@ export class Photos {
     try {
       do {
         signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
-        const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
+        const page = await listPhotoAssets({ query: photoQuery, hidden: this.hidden, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
         if (signal.aborted) throw signal.reason;
         const reachedPreviously = reachedPrefix;
         for (const item of page.items) candidate.set(item.asset_id, item);
@@ -132,7 +166,7 @@ export class Photos {
       await restore?.();
     } catch (cause) {
       if (controller.signal.aborted) return;
-      if (cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
       this.error = signal.aborted ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.loading = false;
@@ -140,44 +174,50 @@ export class Photos {
   }
 
   async trashSelected(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
-    if (this.trashing || this.disposed) return false;
-    this.pruneTrashTargets();
-    const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
-    const resolved = [...this.selection.selectedIDs].map(id => rows.get(id));
-    if (!resolved.length || resolved.some(item => !item)) {
+    if (this.trashing || this.hiding || this.disposed) return false;
+    const selected = this.resolveTargets(this.selection.selectedIDs);
+    if (!selected) {
       this.trashError = "Load and select the photos again before moving them to trash.";
       return false;
     }
-    const selected = resolved.filter((item): item is PhotoBrowseRow => !!item).map(item => ({ ...item }));
-    this.trashTargets = selected;
+    this.cancelPending();
     this.trashing = true;
     this.trashError = "";
+    const successes = await this.mutateBatch(selected, item => {
+      const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
+      return trashPhotoAsset(item.asset_id, { "If-Match": String(item.revision) }, options);
+    }, cause => {
+      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); return true; }
+      this.trashError = cause instanceof Error ? cause.message : String(cause);
+      return false;
+    }, () => {
+      ontrashed?.();
+    }, "trashing", preserve);
+    return successes === selected.length;
+  }
+
+  private async mutateBatch(targets: PhotoBrowseRow[], request: (item: PhotoBrowseRow) => Promise<{ id: string; revision: number }>, onerror: (cause: unknown) => boolean, oncomplete: () => void, action: "hiding" | "trashing", preserve?: () => (() => Promise<void>) | undefined) {
     let successes = 0;
+    let dispatched = false;
     try {
-      for (const item of selected) {
+      for (const item of targets) {
         try {
-          const options = { session: this.session, signal: AbortSignal.timeout(60_000) };
-          const revision = item.revision;
-          const receipt = await trashPhotoAsset(item.asset_id, { "If-Match": String(revision) }, options);
-          if (receipt.id !== item.asset_id || receipt.revision <= revision) throw new Error("Photo trash response did not confirm the selected photo. Refresh and retry.");
+          dispatched = true;
+          const receipt = await request(item);
+          if (receipt.id !== item.asset_id || receipt.revision <= item.revision) throw new Error(`Photo${action === "trashing" ? " trash" : ""} response did not confirm the selected photo. Refresh and retry.`);
+          this.cancelPending();
           successes++;
           const restore = preserve?.();
-          this.items = this.items.filter(row => row.asset_id !== item.asset_id);
-          this.total = Math.max(0, this.total - 1);
-          this.trashTargets = this.trashTargets.filter(target => target.asset_id !== item.asset_id);
-          const ids = new Set(this.selection.selectedIDs);
-          ids.delete(item.asset_id);
-          this.selection = { selectedIDs: ids, anchorID: undefined };
+          this.removeTarget(item.asset_id);
           await restore?.();
         } catch (cause) {
-          if (cause instanceof APIError && cause.status === 401) { this.onauthfailure(cause); break; }
-          this.trashError = cause instanceof Error ? cause.message : String(cause);
+          if (onerror(cause)) break;
         }
       }
-      if (successes) ontrashed?.();
+      if (dispatched) oncomplete();
       await this.refresh(preserve);
-      return successes === selected.length;
-    } finally { this.trashing = false; }
+      return successes;
+    } finally { this[action] = false; }
   }
 
   select(id: string, event: MouseEvent, orderedIDs: string[]) {
@@ -191,6 +231,25 @@ export class Photos {
   check(id: string, checked: boolean, range: boolean, orderedIDs: string[]) {
     this.selection = toggleIDSelection(this.selection, orderedIDs, id, checked, range);
     this.pruneTrashTargets();
+  }
+
+  private resolveTargets(ids: Iterable<string>): PhotoBrowseRow[] | undefined {
+    this.pruneTrashTargets();
+    const rows = new Map([...this.trashTargets, ...this.items].map(item => [item.asset_id, item]));
+    const resolved = [...ids].map(id => rows.get(id));
+    if (!resolved.length || resolved.some(item => !item)) return;
+    const targets = resolved.filter((item): item is PhotoBrowseRow => !!item).map(item => ({ ...item }));
+    this.trashTargets = [...new Map([...this.trashTargets, ...targets].map(item => [item.asset_id, item])).values()];
+    return targets;
+  }
+
+  private removeTarget(id: string) {
+    this.items = this.items.filter(item => item.asset_id !== id);
+    this.total = Math.max(0, this.total - 1);
+    this.trashTargets = this.trashTargets.filter(item => item.asset_id !== id);
+    const ids = new Set(this.selection.selectedIDs);
+    ids.delete(id);
+    this.selection = { selectedIDs: ids, anchorID: undefined };
   }
 
   private pruneTrashTargets() { this.trashTargets = this.trashTargets.filter(item => this.selection.selectedIDs.has(item.asset_id)); }

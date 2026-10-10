@@ -314,6 +314,21 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	if packagesBrowserRequestAllowed(r) {
 		return true
 	}
+	if r.URL.RawQuery == "" {
+		if path == "/api/v1/photos/hidden" {
+			return method == http.MethodGet
+		}
+		switch path {
+		case "/api/v1/photos/hidden/setup", "/api/v1/photos/hidden/change", "/api/v1/photos/hidden/disable", "/api/v1/photos/hidden/unlock", "/api/v1/photos/hidden/lock":
+			return method == http.MethodPost
+		}
+		if after, ok := strings.CutPrefix(path, "/api/v1/photos/assets/"); ok {
+			parts := strings.Split(after, "/")
+			if len(parts) == 2 && query.ValidateTextOperand("asset", parts[0]) == nil && (parts[1] == "hide" || parts[1] == "unhide") {
+				return method == http.MethodPost
+			}
+		}
+	}
 	if batesBrowserRequestAllowed(r) {
 		return true
 	}

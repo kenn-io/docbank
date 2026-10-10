@@ -180,6 +180,9 @@ docbank photos assets display <asset-id> [file-id] [--revision REV]
 docbank photos settings show
 docbank photos settings set raw|image [--revision REV]
 docbank photos settings reset [--revision REV]
+docbank photos hidden setup|change|disable|lock|state|reset
+docbank photos hide <asset-id> [--revision REV]
+docbank photos unhide <asset-id|node-selector> [--revision REV]
 docbank photos import <source-root> [destination] [--json]
 ```
 
@@ -221,6 +224,10 @@ size can be 1–250. Omitting the asset ID from `cover` clears the chosen cover.
 Removing a photo from an album or deleting the album keeps every file. See
 [Albums](usage/photos.md#albums) for visibility, cover selection, and `set:`
 filters.
+
+### Hidden photos
+
+Hidden passcodes use protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks within that invocation. Disable returns all hidden photos to Library; reset preserves hidden flags while removing credentials. Passcode and hidden-flag changes require a writable vault. Unhide first to use other CLI or MCP photo commands on hidden assets. Documents and MCP document tools still expose their ordinary file nodes.
 
 ### Photo imports
 

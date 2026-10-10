@@ -149,19 +149,7 @@ func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
-	var buffer bytes.Buffer
-	require.NoError(t, jpeg.Encode(&buffer, image.NewRGBA(image.Rect(0, 0, 4, 3)), nil))
-	data := buffer.Bytes()
-	receipt, err := s.Blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
-	require.NoError(t, err)
-	encoding, err := receipt.EncodingName()
-	require.NoError(t, err)
-	recipe, err := processing.VisualPreviewRecipeForSize("grid")
-	require.NoError(t, err)
-	canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{ContractVersion: document.VisualPreviewContractV1, SourceSHA256: sourceHash, Recipe: recipe, State: document.VisualPreviewReady, Output: &document.VisualPreviewOutputV1{BlobSHA256: receipt.Hash, Size: receipt.Size, MediaType: "image/jpeg", Width: 4, Height: 3}})
-	require.NoError(t, err)
-	generation, err := s.PublishVisualPreviewGeneration(t.Context(), node.CurrentVersionID, canonical, &store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize, Created: receipt.Created, PackEligible: receipt.PackEligible})
-	require.NoError(t, err)
+	generation, data, previewHash := publishTestPhotoPreview(t, s, node)
 	path := "/api/v1/photos/assets/" + asset.ID + "/previews/" + generation.GenerationID
 	response, body := get(t, ts, path, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -171,7 +159,7 @@ func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
 	require.Equal(t, "nosniff", response.Header.Get("X-Content-Type-Options"))
 	etag := `"` + generation.GenerationID + `"`
 	require.Equal(t, etag, response.Header.Get("ETag"))
-	require.Equal(t, "X-Api-Key, Authorization, "+api.WebSessionHeader, response.Header.Get("Vary"))
+	require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, response.Header.Get("Vary"))
 	digest := sha256.Sum256(data)
 	require.Equal(t, "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":", response.Header.Get("Content-Digest"))
 	for _, condition := range []string{etag, `"another-generation", W/` + etag, "*"} {
@@ -180,7 +168,7 @@ func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
 		require.Empty(t, body)
 		require.Equal(t, etag, response.Header.Get("ETag"))
 		require.Equal(t, "private, no-cache", response.Header.Get("Cache-Control"))
-		require.Equal(t, "X-Api-Key, Authorization, "+api.WebSessionHeader, response.Header.Get("Vary"))
+		require.Equal(t, "X-Api-Key, Authorization, Cookie, "+api.WebSessionHeader, response.Header.Get("Vary"))
 	}
 	response, body = get(t, ts, path, map[string]string{"If-None-Match": `"another-generation"`})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -205,8 +193,8 @@ func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
 	var page api.PhotoBrowsePage
 	require.NoError(t, json.Unmarshal([]byte(body), &page))
 	require.Equal(t, path, page.Items[0].Previews.Grid.URL)
-	require.Equal(t, receipt.Hash, page.Items[0].Previews.Grid.SHA256)
-	blobPath := filepath.Join(s.BlobsDir, receipt.Hash[:2], receipt.Hash)
+	require.Equal(t, previewHash, page.Items[0].Previews.Grid.SHA256)
+	blobPath := filepath.Join(s.BlobsDir, previewHash[:2], previewHash)
 	for _, corrupt := range [][]byte{data[:len(data)-1], bytes.Repeat([]byte("x"), len(data))} {
 		require.NoError(t, os.WriteFile(blobPath, corrupt, 0o600))
 		response, body = get(t, ts, path, nil)
@@ -273,4 +261,22 @@ func TestPhotoBrowserSessionRevocation(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", headers, request)
 	require.Equal(t, http.StatusUnauthorized, response.StatusCode, body)
+}
+
+func publishTestPhotoPreview(t *testing.T, s *testStore, node store.Node) (store.VisualPreviewGeneration, []byte, string) {
+	t.Helper()
+	var buffer bytes.Buffer
+	require.NoError(t, jpeg.Encode(&buffer, image.NewRGBA(image.Rect(0, 0, 4, 3)), nil))
+	data := buffer.Bytes()
+	receipt, err := s.Blobs.WriteDetailedContext(t.Context(), bytes.NewReader(data))
+	require.NoError(t, err)
+	encoding, err := receipt.EncodingName()
+	require.NoError(t, err)
+	recipe, err := processing.VisualPreviewRecipeForSize("grid")
+	require.NoError(t, err)
+	canonical, _, err := document.MarshalVisualPreviewV1(document.VisualPreviewV1{ContractVersion: document.VisualPreviewContractV1, SourceSHA256: node.BlobHash, Recipe: recipe, State: document.VisualPreviewReady, Output: &document.VisualPreviewOutputV1{BlobSHA256: receipt.Hash, Size: receipt.Size, MediaType: "image/jpeg", Width: 4, Height: 3}})
+	require.NoError(t, err)
+	generation, err := s.PublishVisualPreviewGeneration(t.Context(), node.CurrentVersionID, canonical, &store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize, Created: receipt.Created, PackEligible: receipt.PackEligible})
+	require.NoError(t, err)
+	return generation, data, receipt.Hash
 }
