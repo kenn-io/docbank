@@ -906,14 +906,10 @@ func (c *metadataCollector) reserveValueBytes(size int, namespace, source string
 }
 
 func (c *metadataCollector) string(key, namespace, source, value string, sensitive bool) {
-	c.stringValue(key, namespace, source, value, sensitive, false)
-}
-
-func (c *metadataCollector) stringValue(key, namespace, source, value string, sensitive, allowEmpty bool) {
 	if key != "image.xmp.caption" && key != "image.xmp.creator" && key != "image.xmp.copyright" {
 		value = strings.TrimSpace(value)
 	}
-	if !allowEmpty && strings.TrimSpace(value) == "" || c.seen[key] {
+	if strings.TrimSpace(value) == "" || c.seen[key] {
 		return
 	}
 	if !c.fieldLabelsAllowed(key, namespace, source) {
@@ -2250,7 +2246,7 @@ func (c *metadataCollector) extractPhotoSidecar(ctx context.Context, data []byte
 		if field.Integer != nil {
 			c.integer(key, "image.xmp", source, int64(*field.Integer(&values)))
 		} else {
-			c.stringValue(key, "image.xmp", source, *field.Text(&values), false, true)
+			c.string(key, "image.xmp", source, *field.Text(&values), false)
 		}
 	}
 	return nil
