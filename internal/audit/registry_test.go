@@ -177,7 +177,7 @@ func TestAuditRegistryRegisteredGoldenHashes(t *testing.T) {
 		"path_effect":                           "e3a3edd499f4b82a44b52c1470172ae8b36ec452eebb8069b6f600bdc7b30997",
 		"path_effect_list":                      "d6a0e010be748988dffe32e19e031b3a56b0f216aae114b38d00350667b0c3b4",
 		"path_state":                            "bb358f2812f633c0139c639d0d9e1990a859bbb261f7825c30f00a42c5c10eda",
-		"photo_authored":                        "c8b10fb514f731759839b533e9651194eaa962e3ee8ebd70b387e3e737b404c3",
+		"photo_authored":                        "941cf357eb1f50c4e4305757fb10a742e43d1688c7a6af0969457b518ad28048",
 		"photo_authored_identity":               "f59e6cc106b96ac7a6ef89c1f69646ae03bdb832cee9331f844844924609f596",
 		"preview_token":                         "914b97b5a1f21c7c9336c35abd9e9ae4e3829b1e7c487e3fb2622bcd650c3372",
 		"provenance":                            "a6ce16f925767af1cb677963002b7403dd0a3ed419f68252c210cd3d68d00c54",

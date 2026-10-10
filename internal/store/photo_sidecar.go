@@ -106,10 +106,31 @@ func (s *Store) InitializePhotoSidecar(ctx context.Context, target PhotoSidecarT
 		if err != nil {
 			return err
 		}
-		if valid && values != (PhotoAuthored{}) {
+		if valid && values.Confirmed != 0 {
 			v := values
-			patch := PhotoAuthoredPatch{&v.Rating, &v.Flag, &v.Label, &v.Caption, &v.Creator, &v.Copyright, &v.Rotation}
-			result, err = s.applyPhotoAuthoredTx(ctx, tx, []PhotoAuthoredTarget{{FileID: f.ID, Revision: 1, Patch: patch}}, "", &PhotoSidecarProvenance{NodeID: target.NodeID, VersionID: target.VersionID, FileID: target.SidecarFileID}, false)
+			patch := PhotoAuthoredPatch{}
+			if v.Confirmed&PhotoConfirmedRating != 0 {
+				patch.Rating = &v.Rating
+			}
+			if v.Confirmed&PhotoConfirmedFlag != 0 {
+				patch.Flag = &v.Flag
+			}
+			if v.Confirmed&PhotoConfirmedLabel != 0 {
+				patch.Label = &v.Label
+			}
+			if v.Confirmed&PhotoConfirmedCaption != 0 {
+				patch.Caption = &v.Caption
+			}
+			if v.Confirmed&PhotoConfirmedCreator != 0 {
+				patch.Creator = &v.Creator
+			}
+			if v.Confirmed&PhotoConfirmedCopyright != 0 {
+				patch.Copyright = &v.Copyright
+			}
+			if v.Confirmed&PhotoConfirmedRotation != 0 {
+				patch.Rotation = &v.Rotation
+			}
+			result, err = s.applyPhotoAuthoredTx(ctx, tx, []PhotoAuthoredTarget{{FileID: f.ID, Revision: 1, Patch: patch}}, "", &PhotoSidecarProvenance{NodeID: target.NodeID, VersionID: target.VersionID, FileID: target.SidecarFileID}, false, nil)
 			if err != nil || len(result.After) != 0 {
 				return err
 			}
@@ -139,8 +160,10 @@ func photoSidecarValues(metadata document.SourceMetadataV1) (PhotoAuthored, bool
 			}
 			n := int(*field.Value.Integer)
 			if field.Key == "image.xmp.rating" {
+				values.Confirmed |= PhotoConfirmedRating
 				values.Rating = n
 			} else {
+				values.Confirmed |= PhotoConfirmedRotation
 				values.Rotation = n
 			}
 		case "image.xmp.flag", "image.xmp.label", "image.xmp.caption", "image.xmp.creator", "image.xmp.copyright":
@@ -149,14 +172,19 @@ func photoSidecarValues(metadata document.SourceMetadataV1) (PhotoAuthored, bool
 			}
 			switch field.Key {
 			case "image.xmp.flag":
+				values.Confirmed |= PhotoConfirmedFlag
 				values.Flag = *field.Value.String
 			case "image.xmp.label":
+				values.Confirmed |= PhotoConfirmedLabel
 				values.Label = *field.Value.String
 			case "image.xmp.caption":
+				values.Confirmed |= PhotoConfirmedCaption
 				values.Caption = *field.Value.String
 			case "image.xmp.creator":
+				values.Confirmed |= PhotoConfirmedCreator
 				values.Creator = *field.Value.String
 			case "image.xmp.copyright":
+				values.Confirmed |= PhotoConfirmedCopyright
 				values.Copyright = *field.Value.String
 			}
 		}

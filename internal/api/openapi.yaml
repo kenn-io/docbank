@@ -11497,6 +11497,10 @@ components:
       properties:
         caption:
           type: string
+        confirmed_fields:
+          format: int32
+          minimum: 0
+          type: integer
         copyright:
           type: string
         creator:
@@ -11713,6 +11717,10 @@ components:
           type: string
         caption:
           type: string
+        confirmed_fields:
+          format: int32
+          minimum: 0
+          type: integer
         copyright:
           type: string
         created_at:

@@ -134,6 +134,36 @@ func TestPhotoAuthoredPairAtomicUndoAndRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPhotoAuthoredEmptyConfirmationBackupAndUndo(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := authoredPair(t, s)
+	seedInitialAuditAuthority(t, s, s.RootID())
+	f := fileByRole(asset.Files, PhotoRoleImage)
+	_, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{f.ID, 1, PhotoAuthoredPatch{Rating: new(4)}}})
+	require.NoError(t, err)
+	cleared, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{f.ID, 2, PhotoAuthoredPatch{Caption: new("")}}})
+	require.NoError(t, err)
+	require.Len(t, cleared.After, 1)
+	assert.Equal(t, PhotoConfirmedRating, cleared.Before[0].Values.Confirmed)
+	assert.Equal(t, PhotoConfirmedRating|PhotoConfirmedCaption, cleared.After[0].Values.Confirmed)
+	var backup bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &backup))
+	restored := newTestStore(t)
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
+	current, err := photoFileByIDQuery(ctx, restored.db, f.ID)
+	require.NoError(t, err)
+	assert.Equal(t, cleared.After[0].Values, current.Authored())
+	undo, err := restored.UndoPhotoAuthored(ctx, cleared.ReceiptID)
+	require.NoError(t, err)
+	assert.Equal(t, PhotoConfirmedRating, undo.After[0].Values.Confirmed)
+	redo, err := restored.UndoPhotoAuthored(ctx, undo.ReceiptID)
+	require.NoError(t, err)
+	assert.Equal(t, cleared.After[0].Values, redo.After[0].Values)
+	require.NoError(t, restored.ValidateMetadata(ctx))
+}
+
 func TestPhotoAuthoredRollbackAndMembershipFence(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -688,7 +718,7 @@ func TestPhotoSidecarIdleScanSkipsJudgedGeneration(t *testing.T) {
 			asset := authoredPair(t, s)
 			f := fileByRole(asset.Files, PhotoRoleRAW)
 			if test.matching {
-				_, err := s.db.ExecContext(ctx, `UPDATE photo_files SET rating=4 WHERE file_id=?`, f.ID)
+				_, err := s.db.ExecContext(ctx, `UPDATE photo_files SET rating=4,confirmed_fields=1 WHERE file_id=?`, f.ID)
 				require.NoError(t, err)
 			}
 			sidecar, err := s.CreateFile(ctx, s.RootID(), "empty.xmp", fakeHash("c3"), 4, "application/rdf+xml")

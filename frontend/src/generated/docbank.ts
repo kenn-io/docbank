@@ -97,6 +97,8 @@ export const AuditAttachmentChangeKind = {
 
 export interface PhotoAuthored {
   caption: string;
+  /** @minimum 0 */
+  confirmed_fields?: number;
   copyright: string;
   creator: string;
   flag: string;
@@ -4872,6 +4874,8 @@ export const PhotoFileRole = {
 export interface PhotoFile {
   asset_id: string;
   caption: string;
+  /** @minimum 0 */
+  confirmed_fields?: number;
   copyright: string;
   created_at: string;
   creator: string;

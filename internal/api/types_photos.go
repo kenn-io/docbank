@@ -5,14 +5,15 @@ import "go.kenn.io/docbank/internal/store"
 // PhotoFile is the daemon representation of one ordinary file node in an
 // asset. The node remains authoritative for bytes and content versions.
 type PhotoFile struct {
-	Revision  int64  `json:"revision"`
-	Rating    int    `json:"rating"`
-	Flag      string `json:"flag"`
-	Label     string `json:"label"`
-	Caption   string `json:"caption"`
-	Creator   string `json:"creator"`
-	Copyright string `json:"copyright"`
-	Rotation  int    `json:"rotation"`
+	Confirmed store.PhotoAuthoredFields `json:"confirmed_fields,omitzero"`
+	Revision  int64                     `json:"revision"`
+	Rating    int                       `json:"rating"`
+	Flag      string                    `json:"flag"`
+	Label     string                    `json:"label"`
+	Caption   string                    `json:"caption"`
+	Creator   string                    `json:"creator"`
+	Copyright string                    `json:"copyright"`
+	Rotation  int                       `json:"rotation"`
 
 	ID          string  `json:"id" format:"uuid"`
 	AssetID     string  `json:"asset_id" format:"uuid"`
@@ -78,7 +79,7 @@ type photoSettingsOutput struct {
 }
 
 func fromStorePhotoFile(file store.PhotoFile) PhotoFile {
-	return PhotoFile{Revision: file.Revision, Rating: file.Rating, Flag: file.Flag, Label: file.Label, Caption: file.Caption, Creator: file.Creator, Copyright: file.Copyright, Rotation: file.Rotation, ID: file.ID, AssetID: file.AssetID, NodeID: file.NodeID, Role: file.Role, SidecarOfID: file.SidecarOfID, CreatedAt: file.CreatedAt}
+	return PhotoFile{Confirmed: file.Confirmed, Revision: file.Revision, Rating: file.Rating, Flag: file.Flag, Label: file.Label, Caption: file.Caption, Creator: file.Creator, Copyright: file.Copyright, Rotation: file.Rotation, ID: file.ID, AssetID: file.AssetID, NodeID: file.NodeID, Role: file.Role, SidecarOfID: file.SidecarOfID, CreatedAt: file.CreatedAt}
 }
 
 func fromStorePhotoAsset(asset store.PhotoAsset) PhotoAsset {
