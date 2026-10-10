@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -29,11 +30,11 @@ func check(err error) {
 }
 
 func main() {
-	if len(os.Args) < 2 || len(os.Args) > 3 {
-		panic("usage: photos-fixture <vault> [count]")
+	if len(os.Args) < 2 || len(os.Args) > 4 {
+		panic("usage: photos-fixture <vault> [count] [--rejects]")
 	}
 	count := 10_000
-	if len(os.Args) == 3 {
+	if len(os.Args) >= 3 {
 		var err error
 		count, err = strconv.Atoi(os.Args[2])
 		check(err)
@@ -119,6 +120,35 @@ func main() {
 		_, err = s.PublishVisualPreviewGeneration(ctx, node.CurrentVersionID, item.canonical, &item.physical)
 		check(err)
 	}
+	if len(os.Args) == 4 {
+		if os.Args[3] != "--rejects" || count < 4 {
+			panic("--rejects requires at least four photos")
+		}
+		seedRejects(ctx, s)
+	}
 	check(s.Checkpoint(ctx))
 	fmt.Printf("seeded %d synthetic photos\n", count)
+}
+
+func seedRejects(ctx context.Context, s *store.Store) {
+	value, err := query.Parse([]byte(`{"sort":{"field":"name","direction":"asc"}}`))
+	check(err)
+	page, err := s.ListPhotoAssets(ctx, store.PhotoBrowseRequest{Query: value}, nil)
+	check(err)
+	var targets []store.PhotoAuthoredTarget
+	for _, row := range page.Items[:3] {
+		asset, err := s.PhotoAssetByID(ctx, row.AssetID)
+		check(err)
+		targets = append(targets, store.PhotoAuthoredTarget{FileID: asset.Files[0].ID, Revision: 1, Patch: store.PhotoAuthoredPatch{Flag: new("reject")}})
+	}
+	_, err = s.EditPhotoAuthored(ctx, targets)
+	check(err)
+	member, err := s.PhotoAssetByID(ctx, page.Items[3].AssetID)
+	check(err)
+	_, err = s.DetachPhotoFile(ctx, member.ID, member.Revision, member.Files[0].ID, store.PhotoDetachOptions{})
+	check(err)
+	asset, err := s.PhotoAssetByID(ctx, page.Items[2].AssetID)
+	check(err)
+	_, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, member.Files[0].NodeID, store.PhotoRoleImage, nil)
+	check(err)
 }

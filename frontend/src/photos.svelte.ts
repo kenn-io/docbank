@@ -132,7 +132,7 @@ export class Photos {
     return this.replace("refresh", preserve);
   }
 
-  async previewRejects(selected = this.selection.selectedIDs.size > 0) {
+  async previewRejects(selected = false) {
     if (this.disposed || this.trashing || this.hiding || this.rejectsLoading) return;
     this.rejects = undefined;
     this.rejectsError = "";

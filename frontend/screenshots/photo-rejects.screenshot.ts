@@ -21,9 +21,7 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
   const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
   try {
     await mkdir(output!, { recursive: true });
-    for (const fixture of ["photos-fixture.go", "photo-rejects-fixture.go"]) {
-      await exec("go", ["run", "-tags", "fts5", `./frontend/screenshots/${fixture}`, vault, ...(fixture === "photos-fixture.go" ? ["12"] : [])], { cwd: repository, env, timeout: 240_000 });
-    }
+    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault, "12", "--rejects"], { cwd: repository, env, timeout: 240_000 });
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
     await page.goto(webURL.href);
@@ -41,6 +39,9 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
     await modal.getByRole("button", { name: "Keep in Docbank", exact: true }).click();
     await page.getByRole("checkbox", { name: "Select photo Synthetic-photo-00001.jpg", exact: true }).check();
     await page.getByRole("button", { name: "Move rejects", exact: true }).click();
+    await expect(modal.getByText("2 photos · 2 files including sidecars")).toBeVisible();
+    await modal.getByRole("combobox", { name: "Rejects scope: Library", exact: true }).click();
+    await page.getByRole("option", { name: "Selected photos (1)", exact: true }).click();
     await expect(modal.getByText("1 photo · 1 file including sidecars")).toBeVisible();
     for (const theme of ["light", "dark"]) {
       await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);

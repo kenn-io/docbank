@@ -21,9 +21,6 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 	for _, flag := range []string{"query", "confirm", "hidden", "coverage", "profile-fingerprint"} {
 		require.NotNil(t, command.Flags().Lookup(flag))
 	}
-	require.NoError(t, command.Flags().Set("query", `{"v":2}`))
-	require.Error(t, command.RunE(command, nil))
-	require.NoError(t, command.Flags().Set("query", `{}`))
 	for _, confirm := range []bool{false, true} {
 		for _, hidden := range []bool{false, true} {
 			t.Run(strings.Join([]string{map[bool]string{false: "preview", true: "confirm"}[confirm], map[bool]string{false: "library", true: "hidden"}[hidden]}, "/"), func(t *testing.T) {

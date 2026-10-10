@@ -12,14 +12,14 @@ it("freezes selected rejects scope and refuses a changed selection", async () =>
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)]; photos.selectLoaded();
-  await photos.previewRejects();
+  await photos.previewRejects(true);
   await photos.trashRejects();
   const first = JSON.parse(fetcher.mock.calls[0][1].body);
   expect(first.query.filters.asset_ids).toEqual(["photo-1"]);
   expect(JSON.parse(fetcher.mock.calls[1][1].body).query).toEqual(first.query);
   photos.items = [photo(1)]; photos.selectLoaded();
   fetcher.mockResolvedValueOnce(Response.json(preview));
-  await photos.previewRejects();
+  await photos.previewRejects(true);
   photos.clearSelection();
   expect(await photos.trashRejects()).toBe(false);
   expect(photos.rejectsError).toContain("Selection changed");
@@ -486,5 +486,17 @@ it("previews oversized rejects without authorizing a move", async () => {
  expect(photos.rejects).toEqual(preview);
  expect(await photos.trashRejects()).toBe(false);
  expect(fetcher).toHaveBeenCalledTimes(1);
+ photos.dispose();
+});
+
+it("defaults rejects to Library even when more than 64 photos are selected", async () => {
+ const fetcher = vi.fn().mockResolvedValue(Response.json({ digest: "a".repeat(64), photos: 1, files: 1, unchanged: 65, mixed: [], mixed_count: 0 }));
+ vi.stubGlobal("fetch", fetcher);
+ const photos = new Photos("scoped", vi.fn());
+ photos.selection.selectedIDs = new Set(Array.from({ length: 65 }, (_, i) => `photo-${i}`));
+ await photos.previewRejects();
+ expect(photos.rejectsSelected).toBe(false);
+ expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters?.asset_ids).toBeUndefined();
+ expect(photos.rejects?.photos).toBe(1);
  photos.dispose();
 });

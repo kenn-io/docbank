@@ -6,16 +6,12 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
-	"go.kenn.io/docbank/internal/query"
 )
 
 func init() {
 	var raw, digest, coverage, profile string
 	var hidden bool
 	command := &cobra.Command{Use: "rejects", Short: "Preview rejects or move a reviewed scope to trash", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		if _, err := query.Parse([]byte(raw)); err != nil {
-			return usageError(err)
-		}
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
