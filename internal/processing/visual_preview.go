@@ -428,10 +428,10 @@ func inspectVisualPreviewPNG(
 		}
 		var header [8]byte
 		if _, err := io.ReadFull(reader, header[:]); err != nil {
-			if afterIDAT {
-				return orientation, unsupportedColor, unsupportedMetadata, false, nil
-			}
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				if afterIDAT {
+					return orientation, unsupportedColor, unsupportedMetadata, false, nil
+				}
 				return 0, false, false, true, nil
 			}
 			return 0, false, false, false, err
@@ -461,10 +461,10 @@ func inspectVisualPreviewPNG(
 			}
 			payload := make([]byte, length)
 			if _, err := io.ReadFull(reader, payload); err != nil {
-				if afterIDAT {
-					return orientation, unsupportedColor, unsupportedMetadata, false, nil
-				}
 				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+					if afterIDAT {
+						return orientation, unsupportedColor, unsupportedMetadata, false, nil
+					}
 					return 0, false, false, true, nil
 				}
 				return 0, false, false, false, err
@@ -484,13 +484,17 @@ func inspectVisualPreviewPNG(
 			}
 			return 0, false, false, true, nil
 		}
-		if _, err := reader.Discard(int(length + 4)); err != nil {
-			if afterIDAT {
-				return orientation, unsupportedColor, unsupportedMetadata, false, nil
-			}
-			return 0, false, false, false, fmt.Errorf("skipping PNG chunk: %w", err)
-		}
 		offset += 12 + int64(binary.BigEndian.Uint32(header[:4]))
+		if length+4 <= int64(reader.Buffered()) {
+			if _, err := reader.Discard(int(length + 4)); err != nil {
+				return 0, false, false, false, fmt.Errorf("skipping PNG chunk: %w", err)
+			}
+		} else {
+			if _, err := source.Seek(offset, io.SeekStart); err != nil {
+				return 0, false, false, false, err
+			}
+			reader.Reset(source)
+		}
 	}
 	return 0, false, false, true, nil
 }

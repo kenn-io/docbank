@@ -232,6 +232,25 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 	}
 }
 
+func TestInspectVisualPreviewPNGSkipsLargeIDAT(t *testing.T) {
+	t.Parallel()
+	original := mediatest.PNG(3, 2, color.White)
+	source := appendSyntheticPNGChunk(bytes.Clone(original[:len(original)-12]), "IDAT", make([]byte, 64*1024))
+	nextChunk := int64(len(source))
+	source = appendSyntheticPNGChunk(source, "eXIf", syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
+	source = appendSyntheticPNGChunk(source, "IEND", nil)
+	reader := &recordingVisualPreviewReadSeeker{Reader: bytes.NewReader(source)}
+
+	orientation, unsupportedColor, unsupportedMetadata, malformed, err := inspectVisualPreviewPNG(t.Context(), reader, int64(len(source)))
+	require.NoError(t, err)
+	assert.Equal(t, 6, orientation)
+	assert.False(t, unsupportedColor)
+	assert.False(t, unsupportedMetadata)
+	assert.False(t, malformed)
+	assert.Equal(t, []int64{0, nextChunk}, reader.seeks)
+	assert.Equal(t, 4096+len(source)-int(nextChunk), reader.readBytes)
+}
+
 func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
 	t.Parallel()
 	palette := color.Palette{color.Black, color.White}
@@ -590,15 +609,22 @@ func TestVisualPreviewJPEGColorPolicyRejectsCMYK(t *testing.T) {
 func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 	t.Parallel()
 	readErr := errors.New("injected read failure")
+	pngSource := mediatest.PNG(3, 2, color.White)
+	trailingPNG := appendSyntheticPNGChunk(bytes.Clone(pngSource[:len(pngSource)-12]), "IDAT", make([]byte, 64*1024))
+	failReadAt := int64(len(trailingPNG))
+	trailingPNG = appendSyntheticPNGChunk(trailingPNG, "eXIf", syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
+	trailingPNG = appendSyntheticPNGChunk(trailingPNG, "IEND", nil)
 	sources := []struct {
 		name, mediaType string
 		data            []byte
-		failAtSeeks     [2]int
+		failAtSeeks     []int
+		failReadAt      int64
 	}{
-		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White), failAtSeeks: [2]int{3, 4}},
-		{name: "png", mediaType: "image/png", data: mediatest.PNG(3, 2, color.White), failAtSeeks: [2]int{3, 4}},
-		{name: "gif", mediaType: "image/gif", data: mediatest.GIF(3, 2, 1), failAtSeeks: [2]int{2, 3}},
-		{name: "webp", mediaType: "image/webp", data: mustDecodeWebP(t), failAtSeeks: [2]int{3, 4}},
+		{name: "jpeg", mediaType: "image/jpeg", data: mediatest.JPEG(3, 2, color.White), failAtSeeks: []int{3, 4}},
+		{name: "png", mediaType: "image/png", data: pngSource, failAtSeeks: []int{3, 4}},
+		{name: "png after IDAT", mediaType: "image/png", data: trailingPNG, failAtSeeks: []int{0}, failReadAt: failReadAt},
+		{name: "gif", mediaType: "image/gif", data: mediatest.GIF(3, 2, 1), failAtSeeks: []int{2, 3}},
+		{name: "webp", mediaType: "image/webp", data: mustDecodeWebP(t), failAtSeeks: []int{3, 4}},
 	}
 	phases := []struct {
 		name string
@@ -609,10 +635,17 @@ func TestProduceVisualPreviewKeepsImageReadErrorsRetryable(t *testing.T) {
 	for _, source := range sources {
 		t.Run(source.name, func(t *testing.T) {
 			digest := sha256.Sum256(source.data)
-			for index, phase := range phases {
-				t.Run(phase.name, func(t *testing.T) {
-					reader := &failingVisualPreviewReadSeeker{
-						Reader: bytes.NewReader(source.data), failAtSeek: source.failAtSeeks[index], err: readErr,
+			for index, failAtSeek := range source.failAtSeeks {
+				phase := phases[index].name
+				if source.failReadAt != 0 {
+					phase = "trailing EXIF"
+				}
+				t.Run(phase, func(t *testing.T) {
+					var reader io.ReadSeeker = &failingVisualPreviewReadSeeker{
+						Reader: bytes.NewReader(source.data), failAtSeek: failAtSeek, err: readErr,
+					}
+					if source.failReadAt != 0 {
+						reader = &recordingVisualPreviewReadSeeker{Reader: bytes.NewReader(source.data), failReadAt: source.failReadAt, err: readErr}
 					}
 
 					_, err := ProduceVisualPreview(t.Context(), reader, VisualPreviewTarget{
@@ -852,6 +885,30 @@ func syntheticExtendedWebP(
 	binary.LittleEndian.PutUint32(result[4:8], uint32(4+len(body)))
 	copy(result[8:12], "WEBP")
 	return append(result, body...)
+}
+
+type recordingVisualPreviewReadSeeker struct {
+	*bytes.Reader
+
+	seeks      []int64
+	readBytes  int
+	failReadAt int64
+	err        error
+}
+
+func (r *recordingVisualPreviewReadSeeker) Read(target []byte) (int, error) {
+	if r.err != nil && r.Size()-int64(r.Len()) >= r.failReadAt {
+		return 0, r.err
+	}
+	n, err := r.Reader.Read(target)
+	r.readBytes += n
+	return n, err //nolint:wrapcheck // The test double preserves Reader error identity.
+}
+
+func (r *recordingVisualPreviewReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	position, err := r.Reader.Seek(offset, whence)
+	r.seeks = append(r.seeks, position)
+	return position, err //nolint:wrapcheck // The test double preserves Seeker error identity.
 }
 
 type failingVisualPreviewReadSeeker struct {
