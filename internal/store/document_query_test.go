@@ -228,6 +228,12 @@ func TestDocumentCatalogPaginationMatrix(t *testing.T) {
 					assert.Equal(t, want[:2], documentCatalogPaths(first.Items))
 					assert.Equal(t, want[2:4], documentCatalogPaths(second.Items))
 					assert.Equal(t, want[4:], documentCatalogPaths(third.Items))
+					assert.False(t, first.HasPrevious)
+					assert.True(t, first.HasNext)
+					assert.True(t, second.HasPrevious)
+					assert.True(t, second.HasNext)
+					assert.True(t, third.HasPrevious)
+					assert.False(t, third.HasNext)
 
 					backSecond, err := s.ListDocuments(t.Context(), query, &third.FirstPosition,
 						DocumentCatalogTraversalPrevious)
@@ -237,6 +243,10 @@ func TestDocumentCatalogPaginationMatrix(t *testing.T) {
 					require.NoError(t, err)
 					assert.Equal(t, want[2:4], documentCatalogPaths(backSecond.Items))
 					assert.Equal(t, want[:2], documentCatalogPaths(backFirst.Items))
+					assert.True(t, backSecond.HasPrevious)
+					assert.True(t, backSecond.HasNext)
+					assert.False(t, backFirst.HasPrevious)
+					assert.True(t, backFirst.HasNext)
 
 					previousBoundary := third.FirstPosition
 					deletedPrevious := nodes[want[4]]
@@ -257,7 +267,39 @@ func TestDocumentCatalogPaginationMatrix(t *testing.T) {
 					require.NoError(t, err)
 					assert.Equal(t, want[2:4], documentCatalogPaths(afterDeletion.Items),
 						"deleting the exact boundary must not restart or skip the next live key")
+					assert.True(t, afterDeletion.HasPrevious)
+					assert.True(t, afterDeletion.HasNext)
 				})
+			}
+		}
+	}
+}
+
+func TestDocumentCatalogEmptyPagesHaveNoContinuations(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	_, err := s.CreateFile(t.Context(), s.RootID(), "only.bin", fakeHash("only"), 1, "")
+	require.NoError(t, err)
+	for _, sortBy := range []DocumentCatalogSort{DocumentCatalogSortPath, DocumentCatalogSortMediaType} {
+		for _, direction := range []DocumentCatalogDirection{
+			DocumentCatalogDirectionAscending, DocumentCatalogDirectionDescending,
+		} {
+			query := DocumentCatalogQuery{Sort: sortBy, Direction: direction, PageSize: 1}
+			page, err := s.ListDocuments(t.Context(), query, nil, DocumentCatalogTraversalNext)
+			require.NoError(t, err)
+			require.Len(t, page.Items, 1)
+			assert.False(t, page.HasPrevious)
+			assert.False(t, page.HasNext)
+			for _, traversal := range []DocumentCatalogTraversal{
+				DocumentCatalogTraversalNext, DocumentCatalogTraversalPrevious,
+			} {
+				empty, err := s.ListDocuments(t.Context(), query, &page.FirstPosition, traversal)
+				require.NoError(t, err)
+				assert.Empty(t, empty.Items)
+				assert.False(t, empty.HasPrevious)
+				assert.False(t, empty.HasNext)
+				assert.Zero(t, empty.FirstPosition)
+				assert.Zero(t, empty.LastPosition)
 			}
 		}
 	}
@@ -335,6 +377,17 @@ func TestDocumentCatalogReturnsOnlySummaryProcessingAndActiveRenditionIdentity(t
 		AttachmentID:       attachment.ID,
 		BuildID:            build.ID,
 	}, item.ActiveRenditions[0])
+	resolved, err := s.ResolveDocumentSummaries(t.Context(), []DocumentCatalogIdentity{{
+		NodeID: item.NodeID, ContentVersionID: versions[0], Path: item.Path,
+	}})
+	require.NoError(t, err)
+	require.Len(t, resolved, 1)
+	assert.Equal(t, "queued", resolved[0].LatestProcessingState)
+	assert.Equal(t, []DocumentRenditionIdentity{{
+		ProfileFingerprint: profile.Fingerprint,
+		AttachmentID:       attachment.ID,
+		BuildID:            build.ID,
+	}}, resolved[0].ActiveRenditions)
 }
 
 func TestDocumentCatalogLatestProcessingStateUsesJobTransitionRecency(t *testing.T) {
