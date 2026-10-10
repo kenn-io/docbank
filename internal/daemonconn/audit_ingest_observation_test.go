@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func TestValidateAuditIngestObservation(t *testing.T) {
@@ -15,7 +16,29 @@ func TestValidateAuditIngestObservation(t *testing.T) {
 }
 
 func TestValidateAuditIngestObservationRejectsMalformedEvent(t *testing.T) {
+	photoEvent := func(event *api.AuditEvent) {
+		event.Kind = "photo_authored"
+		id := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		before := store.PhotoAuthoredSnapshot{FileID: id, NodeID: event.NodeID, Revision: 1}
+		after := before
+		after.Revision++
+		after.Values.Confirmed = store.PhotoConfirmedCaption
+		event.Attachment = &api.AuditAttachmentChange{Kind: "photo_authored", Identity: api.AuditAttachmentIdentity{FileID: id, NodeID: event.NodeID}, Before: &api.AuditAttachmentState{NodeID: event.NodeID, Photo: &before}, After: &api.AuditAttachmentState{NodeID: event.NodeID, Photo: &after}}
+	}
 	tests := map[string]func(*api.AuditEvent){
+		"photo confirmation mask": func(event *api.AuditEvent) {
+			photoEvent(event)
+			event.Attachment.After.Photo.Values.Caption = "River"
+			event.Attachment.After.Photo.Values.Confirmed = 0
+		},
+		"photo revision jump": func(event *api.AuditEvent) {
+			photoEvent(event)
+			event.Attachment.After.Photo.Revision++
+		},
+		"missing photo after": func(event *api.AuditEvent) {
+			photoEvent(event)
+			event.Attachment.After = nil
+		},
 		"missing attachment": func(event *api.AuditEvent) {
 			event.Attachment = nil
 		},

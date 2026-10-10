@@ -890,7 +890,7 @@ Nested record schemas are:
 | `attached_metadata_change` | `record_kind:text`, `stable_identity:record`, `pre:?record`, `post:?record` |
 | `audit_event` | `event_id:digest`, `operation_id:uuid`, `node_id:u64`, `event_kind:text`, `scope_id:uuid`, `target_node_id:?u64`, `attachment_kind:?text`, `attachment_identity:?record`, `source_version_id:?uuid`, `event_ordinal:u64`, `recorded_at:timestamp`, `prior_node_revision:u64`, `resulting_node_revision:u64`, `prior_current_version_id:?uuid`, `resulting_current_version_id:?uuid`, `origin:text`, `agent_label:?text`, `pre:?record`, `post:?record`, `topology_delta:?digest`, `baseline_digest:?digest` |
 
-`photo_authored.confirmed_fields` supports masks from 0 through 127. See [photo decisions](https://github.com/kenn-io/docbank/blob/main/docs/usage/photos.md#ratings-and-other-decisions) for the field bits.
+`photo_authored.confirmed_fields` supports masks from 0 through 127. See [photo decisions](../usage/photos.md#ratings-and-other-decisions) for the field bits.
 
 In that table, `record` means one complete nested canonical record of the applicable
 registered kind. An attached-metadata change permits only `tag_definition`,

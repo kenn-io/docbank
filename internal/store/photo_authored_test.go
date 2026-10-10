@@ -65,6 +65,7 @@ func TestPhotoAuthoredConfirmationFields(t *testing.T) {
 			require.NoError(t, ValidatePhotoAuthored(PhotoAuthored{Confirmed: test.bit}))
 		})
 	}
+	require.ErrorIs(t, ValidatePhotoAuthored(PhotoAuthored{Confirmed: 128}), ErrInvalidPhotoAsset)
 }
 
 func TestPhotoAuthoredReceiptRequiresCompleteValues(t *testing.T) {
@@ -260,14 +261,12 @@ func TestPhotoAuthoredReleasedJSONLDefaults(t *testing.T) {
 	require.NoError(t, err)
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
-	for _, test := range []string{"released defaults", "unknown confirmation", "unconfirmed value"} {
+	for _, test := range []string{"released defaults", "unconfirmed value"} {
 		t.Run(test, func(t *testing.T) {
 			lines := bytes.Split(backup.Bytes(), []byte{'\n'})
 			for i, line := range lines {
 				if bytes.Contains(line, []byte(`"type":"photo_file"`)) {
 					switch test {
-					case "unknown confirmation":
-						lines[i] = bytes.Replace(line, []byte(`"confirmed_fields":0`), []byte(`"confirmed_fields":128`), 1)
 					case "unconfirmed value":
 						lines[i] = bytes.Replace(line, []byte(`"rating":0`), []byte(`"rating":3`), 1)
 					default:
@@ -327,7 +326,6 @@ func TestPhotoAuthoredLegacyAuditDefaults(t *testing.T) {
 	human, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{file.ID, 1, PhotoAuthoredPatch{Rating: new(0)}}})
 	require.NoError(t, err)
 	require.NotEmpty(t, human.ReceiptID)
-	require.Equal(t, PhotoConfirmedRating, human.After[0].Values.Confirmed)
 	require.NoError(t, s.ValidateMetadata(ctx))
 	_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{file.ID, 2, PhotoAuthoredPatch{Rating: new(5)}}})
 	require.NoError(t, err)

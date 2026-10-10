@@ -236,10 +236,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 			result.Rotation = n
 		}
 	}
-	// Source claims carry values; initialization decides which fields to confirm.
-	validated := result
-	validated.Confirmed = store.PhotoConfirmedAll
-	if err := store.ValidatePhotoAuthored(validated); err != nil {
+	if err := store.ValidatePhotoAuthoredValues(result); err != nil {
 		return result, err
 	}
 	return result, nil
