@@ -19,7 +19,7 @@ func TestHumanAuditHistoryShowsPhotoDecisions(t *testing.T) {
 	before := store.PhotoAuthoredSnapshot{FileID: fileID, NodeID: nodeID, Revision: 1}
 	after := before
 	after.Revision = 2
-	after.Values = store.PhotoAuthored{Confirmed: store.PhotoConfirmedAll, Rating: 5, Flag: "pick", Label: "red", Caption: "River\n\x1b[31m", Creator: "Example photographer", Copyright: "Example rights", Rotation: 90}
+	after.Values = store.PhotoAuthored{Rating: 5, Flag: "pick", Label: "red", Caption: "River\n\x1b[31m", Creator: "Example photographer", Copyright: "Example rights", Rotation: 90}
 	events := []api.AuditEvent{{NodeID: nodeID, Kind: "photo_authored", Attachment: &api.AuditAttachmentChange{
 		Kind: "photo_authored", Identity: api.AuditAttachmentIdentity{FileID: fileID, NodeID: nodeID},
 		Before: &api.AuditAttachmentState{Photo: &before}, After: &api.AuditAttachmentState{Photo: &after},
@@ -32,7 +32,7 @@ func TestHumanAuditHistoryShowsPhotoDecisions(t *testing.T) {
 			} else {
 				require.NoError(t, writeAuditHistory(&output, api.AuditEventPage{Node: api.Node{ID: nodeID}, Items: events, Total: 1}))
 			}
-			for _, want := range []string{fileID, "on id:" + strconv.FormatInt(nodeID, 10), "revision 1", "revision 2", "rating 0", "rating 5", `flag "pick"`, `label "red"`, `caption "River\n\x1b[31m"`, `creator "Example photographer"`, `copyright "Example rights"`, "rotation 90", `confirmed "(none)"`, `confirmed "rating, flag, label, caption, creator, copyright, rotation"`} {
+			for _, want := range []string{fileID, "on id:" + strconv.FormatInt(nodeID, 10), "revision 1", "revision 2", "rating 0", "rating 5", `flag "pick"`, `label "red"`, `caption "River\n\x1b[31m"`, `creator "Example photographer"`, `copyright "Example rights"`, "rotation 90"} {
 				assert.Contains(t, output.String(), want)
 			}
 			assert.NotContains(t, output.String(), "\x1b")

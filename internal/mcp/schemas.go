@@ -849,10 +849,6 @@ func photoFileSchema() schema {
 }
 
 func photoAssetOutputSchema() schema {
-	agreement := schema{}
-	for _, field := range store.PhotoAuthoredFieldTable() {
-		agreement[field.Name] = booleanSchema()
-	}
 	return rootObjectSchema(withPrivateCache(schema{
 		"id":                       uuidSchema(),
 		"kind":                     enumSchema("photo", "video"),
@@ -867,7 +863,7 @@ func photoAssetOutputSchema() schema {
 		"total_files":              integerSchema(0, 256),
 		"file_offset":              integerSchema(0, 256),
 		"next_file_offset":         integerSchema(1, 256),
-		"agreement":                objectSchema(agreement),
+		"agreement":                objectSchema(schema{"rating": booleanSchema(), "flag": booleanSchema(), "label": booleanSchema(), "caption": booleanSchema(), "creator": booleanSchema(), "copyright": booleanSchema(), "rotation": booleanSchema()}),
 	}), "id", "kind", schemaRevisionField, "display_source", schemaCreatedAtField, "updated_at", "files", "total_files", "file_offset", "ttlMs", "cacheScope")
 }
 

@@ -106,17 +106,29 @@ func (s *Store) InitializePhotoSidecar(ctx context.Context, target PhotoSidecarT
 		if err != nil {
 			return err
 		}
-		if valid && values.Confirmed != 0 {
+		if valid && values != (PhotoAuthored{}) {
 			v := values
 			patch := PhotoAuthoredPatch{}
-			for _, field := range photoAuthoredFieldTable {
-				if v.Confirmed&field.Bit != 0 {
-					if field.Integer != nil {
-						*field.patchInteger(&patch) = field.Integer(&v)
-					} else {
-						*field.patchText(&patch) = field.Text(&v)
-					}
-				}
+			if v.Rating != 0 {
+				patch.Rating = &v.Rating
+			}
+			if v.Flag != "" {
+				patch.Flag = &v.Flag
+			}
+			if v.Label != "" {
+				patch.Label = &v.Label
+			}
+			if v.Caption != "" {
+				patch.Caption = &v.Caption
+			}
+			if v.Creator != "" {
+				patch.Creator = &v.Creator
+			}
+			if v.Copyright != "" {
+				patch.Copyright = &v.Copyright
+			}
+			if v.Rotation != 0 {
+				patch.Rotation = &v.Rotation
 			}
 			result, err = s.applyPhotoAuthoredTx(ctx, tx, []PhotoAuthoredTarget{{FileID: f.ID, Revision: 1, Patch: patch}}, "", &PhotoSidecarProvenance{NodeID: target.NodeID, VersionID: target.VersionID, FileID: target.SidecarFileID}, false, nil)
 			if err != nil || len(result.After) != 0 {
@@ -136,29 +148,38 @@ func photoSidecarValues(metadata document.SourceMetadataV1) (PhotoAuthored, bool
 		if field.Namespace != "image.xmp" {
 			continue
 		}
-		if field.Key == "image.xmp.packet_valid" {
+		switch field.Key {
+		case "image.xmp.packet_valid":
 			if field.Value.Boolean == nil {
 				return values, false, ErrSourceMetadataCorrupt
 			}
 			valid = *field.Value.Boolean
-			continue
-		}
-		for _, authored := range photoAuthoredFieldTable {
-			if field.Key != authored.XMPKey() {
-				continue
+		case "image.xmp.rating", "image.xmp.rotation":
+			if field.Value.Integer == nil || *field.Value.Integer < math.MinInt || *field.Value.Integer > math.MaxInt {
+				return values, false, ErrSourceMetadataCorrupt
 			}
-			if authored.Integer != nil {
-				if field.Value.Integer == nil || *field.Value.Integer < math.MinInt || *field.Value.Integer > math.MaxInt {
-					return values, false, ErrSourceMetadataCorrupt
-				}
-				*authored.Integer(&values) = int(*field.Value.Integer)
+			n := int(*field.Value.Integer)
+			if field.Key == "image.xmp.rating" {
+				values.Rating = n
 			} else {
-				if field.Value.String == nil {
-					return values, false, ErrSourceMetadataCorrupt
-				}
-				*authored.Text(&values) = *field.Value.String
+				values.Rotation = n
 			}
-			values.Confirmed |= authored.Bit
+		case "image.xmp.flag", "image.xmp.label", "image.xmp.caption", "image.xmp.creator", "image.xmp.copyright":
+			if field.Value.String == nil {
+				return values, false, ErrSourceMetadataCorrupt
+			}
+			switch field.Key {
+			case "image.xmp.flag":
+				values.Flag = *field.Value.String
+			case "image.xmp.label":
+				values.Label = *field.Value.String
+			case "image.xmp.caption":
+				values.Caption = *field.Value.String
+			case "image.xmp.creator":
+				values.Creator = *field.Value.String
+			case "image.xmp.copyright":
+				values.Copyright = *field.Value.String
+			}
 		}
 	}
 	return values, valid, nil

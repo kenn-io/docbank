@@ -43,8 +43,6 @@
   let error = $state("");
   let generation = 0;
 
-  const photoFieldNames = ["rating", "flag", "label", "caption", "creator", "copyright", "rotation"];
-
   const selectedEvent = $derived(
     items.find((event) => event.id === selectedEventID),
   );
@@ -335,7 +333,6 @@
           <div><dt>Creator</dt><dd>{state.photo.values.creator || "(empty)"}</dd></div>
           <div><dt>Copyright</dt><dd>{state.photo.values.copyright || "(empty)"}</dd></div>
           <div><dt>Rotation</dt><dd>{state.photo.values.rotation}°</dd></div>
-          <div><dt>Confirmed fields</dt><dd>{photoFieldNames.filter((_, bit) => (state.photo!.values.confirmed_fields ?? 0) & (1 << bit)).join(", ") || "(none)"}</dd></div>
         {/if}
         {#if state.tag_name}<div><dt>Tag name</dt><dd>{state.tag_name}</dd></div>{/if}
         {#if state.ingest_id}<div><dt>Ingest</dt><dd><code>{state.ingest_id}</code></dd></div>{/if}

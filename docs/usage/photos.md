@@ -82,7 +82,7 @@ A hide retry that returns `hidden_locked` already took effect.
 Each RAW, image, and video member stores its own rating, flag, label, caption,
 creator, copyright, and rotation. A RAW rated 5 and a JPEG rated 3 keep those
 values. Inspection returns every file's revision and an `agreement` map.
-`false` for a field means the displayable members have mixed values or confirmation states. A new
+`false` for a field means the displayable members have mixed values. A new
 member starts at revision 1 with empty text, rating 0, and rotation 0.
 
 Ratings range from 0 through 5. Flags are empty, `pick`, or `reject`. Labels
@@ -90,7 +90,7 @@ are empty, `red`, `yellow`, `green`, `blue`, or `purple`. Rotation is 0, 90,
 180, or 270 degrees. Caption, creator, and copyright each allow 16 KiB of
 UTF-8 text.
 
-`confirmed_fields` records supplied rating (1), flag (2), label (4), caption (8), creator (16), copyright (32), and rotation (64). Zero means untouched. Docbank edits with empty text or numeric zero confirm a clear; absent fields stay unconfirmed and hold default values. Receipts, audit history, undo, and JSONL backup preserve each field's confirmation. Unknown bits are refused.
+`confirmed_fields` records supplied fields with bits rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, and rotation=64. Zero means untouched. Docbank edits with empty text or numeric zero confirm a clear. Unsupplied fields keep their earlier values and confirmation. Receipts, audit history, undo, and JSONL backup preserve the mask. Unknown bits and non-default values without confirmation are refused.
 
 Authored edits use exact file IDs and revisions. A pair edit also checks the
 asset revision and includes every displayable member. One transaction changes
@@ -110,7 +110,7 @@ and the original sidecar bytes are preserved. Competing sidecars are scanned in
 ascending node-ID order; the first successful initialization wins. Parsing
 verifies the complete blob and rejects malformed XML,
 packets over 1 MiB, and nesting over 64 elements. A caption, creator, or copyright
-over 16 KiB rejects the whole packet. Each authored property accepts one literal, one supported RDF container, or one `rdf:value`. Multiple values or non-whitespace text beside a child reject the whole packet. RDF attributes on these values reject the whole packet; original bytes remain available and supported replacement bytes can initialize the photo. The existing source-metadata
+over 16 KiB rejects the whole packet. Multiple value children or non-whitespace text beside a child reject the whole packet. The existing source-metadata
 extractor publishes packet claims under `image.xmp.*`. Sidecar source-metadata
 detail shows a valid-packet fact for valid packets with no supported decisions or warnings for rejected
 packets, together with the exact source version. Packets with no supported decisions and rejected packets
@@ -122,7 +122,8 @@ Empty or whitespace-only caption, creator, and copyright properties stay unconfi
 `dc:subject` as tags or `tiff:Orientation` as authored rotation.
 
 Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. In Photos,
-each decision filter reads the asset's display file. Filters use stored values, so `rating_max:0` also matches unconfirmed zeros. With the default RAW display rated 5/pick and a paired JPEG rated 1/red, `rating:5`, `flag:pick`,
+each decision filter reads the asset's display file. With the default RAW display
+rated 5/pick and a paired JPEG rated 1/red, `rating:5`, `flag:pick`,
 `NOT rating:1`, and `NOT label:red` match, including with a linked XMP sidecar.
 Both typed bounds from 3 through 3 and `rating_min:3 AND rating_max:3` exclude
 the photo. Selecting the JPEG reverses those rating, flag, and label matches.

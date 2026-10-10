@@ -9,7 +9,6 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
-	"go.kenn.io/docbank/internal/store"
 )
 
 const maxPhotoResponseFiles = 256
@@ -34,9 +33,6 @@ func validatePhotoAssetResponse(asset api.PhotoAsset, etag, requestedID string) 
 	for _, file := range asset.Files {
 		if !validUUIDv4(file.ID) || file.AssetID != asset.ID || file.NodeID < 1 {
 			return errors.New("photo response has invalid file identity")
-		}
-		if err := store.ValidatePhotoAuthored(store.PhotoAuthored{Confirmed: file.Confirmed, Rating: file.Rating, Flag: file.Flag, Label: file.Label, Caption: file.Caption, Creator: file.Creator, Copyright: file.Copyright, Rotation: file.Rotation}); err != nil {
-			return fmt.Errorf("photo response has invalid authored values: %w", err)
 		}
 	}
 	return validatePhotoETag(etag, asset.Revision)

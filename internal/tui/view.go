@@ -1121,10 +1121,6 @@ func auditAttachmentStateDetail(label string, state *api.AuditAttachmentState) [
 	if state.Photo != nil {
 		photo := state.Photo
 		v := photo.Values
-		confirmed := strings.Join(v.Confirmed.Names(), ", ")
-		if confirmed == "" {
-			confirmed = "(none)"
-		}
 		lines = append(lines,
 			fmt.Sprintf("   Revision: %d", photo.Revision),
 			fmt.Sprintf("   Rating: %d", v.Rating),
@@ -1134,7 +1130,6 @@ func auditAttachmentStateDetail(label string, state *api.AuditAttachmentState) [
 			"   Creator: "+quoted(v.Creator),
 			"   Copyright: "+quoted(v.Copyright),
 			fmt.Sprintf("   Rotation: %d", v.Rotation),
-			"   Confirmed fields: "+quoted(confirmed),
 		)
 	}
 	if state.TagName != "" {

@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
-	"go.kenn.io/docbank/internal/store"
 )
 
 func TestPhotoClientAcceptsCreateTimestampsAndNoOpMutations(t *testing.T) {
@@ -102,23 +101,6 @@ func TestPhotoNodeAddressedResponsesMustContainTheNode(t *testing.T) {
 	require.True(t, IsResponseDecodeError(err))
 	_, err = client.AttachPhotoFile(t.Context(), assetID, 1, 1, "image", nil)
 	require.NoError(t, err)
-	for _, values := range []struct {
-		name      string
-		confirmed store.PhotoAuthoredFields
-		rating    int
-	}{
-		{name: "unknown confirmation", confirmed: 128},
-		{name: "unconfirmed value", rating: 3},
-	} {
-		t.Run(values.name, func(t *testing.T) {
-			asset.Files[0].Confirmed = values.confirmed
-			asset.Files[0].Rating = values.rating
-			_, err := client.PhotoAssetForNode(t.Context(), 1)
-			require.ErrorContains(t, err, "invalid authored values")
-			_, err = client.AttachPhotoFile(t.Context(), assetID, 1, 1, "image", nil)
-			require.True(t, IsResponseDecodeError(err))
-		})
-	}
 }
 
 func TestPhotoImportClients(t *testing.T) {

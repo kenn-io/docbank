@@ -165,14 +165,16 @@ The source extractor reads standalone XMP packets rooted at `x:xmpmeta` through
 the strict photo packet reader. Other XML, including bare `rdf:RDF`, RSS, and SVG,
 falls through to the existing format checks. Valid packets publish `image.xmp.packet_valid` and supported
 rating, flag, label, caption, creator, copyright, and rotation claims. Custom color
-labels and unsupported rotations are omitted. Only non-default sidecar values emit claims and confirm decisions. Rating 0, empty text or containers, no label or pick, and rotation 0 confirm nothing because editors write defaults on untouched photos. Invalid ratings or picks reject the whole packet. Default and absent properties stay unconfirmed. Meaningful text retains its whitespace. Malformed, oversized, or
-invalid packets publish warnings without a valid-packet fact. Each authored property accepts one literal, one supported RDF container, or one `rdf:value`, preserving `xml:lang`. Multiple values or non-whitespace text beside a child reject the whole packet. RDF attributes on authored properties or their descendants reject the whole packet, preserving original bytes and later initialization. Unrelated RDF references remain outside this validation. The tolerant
+labels become empty; unsupported rotations become 0. Other supported decisions
+remain. Caption, creator, and copyright text retain their whitespace. Malformed, oversized, or
+invalid packets publish warnings without a valid-packet fact. The tolerant
 embedded XMP reader retains its existing behavior.
 
 Photo initialization consumes checksum-checked evidence from the running extractor
 fingerprint. It rechecks the sidecar version, bytes identity, membership, role,
-trash state, and target revision in its transaction. Packets with no supported decisions and rejected packets make no owner edit; replacement bytes can initialize a revision-1 target.
-Schema 32 caches considered undecided or rejected packets in `photo_sidecar_considered`,
+trash state, and target revision in its transaction. Empty or rejected packets
+make no owner edit; useful replacement bytes can initialize a revision-1 target.
+Schema 32 caches considered empty or rejected packets in `photo_sidecar_considered`,
 keyed by sidecar file, target file, content version, and extractor fingerprint.
 Idle listings use its primary-key index and skip canonical JSON parsing.
 Logical restore rebuilds this derived cache from retained source evidence.

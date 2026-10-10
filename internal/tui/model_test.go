@@ -1116,7 +1116,7 @@ func TestHistoryDetailShowsPhotoDecisions(t *testing.T) {
 	before := store.PhotoAuthoredSnapshot{FileID: fileID, NodeID: page.Node.ID, Revision: 1}
 	after := before
 	after.Revision = 2
-	after.Values = store.PhotoAuthored{Confirmed: store.PhotoConfirmedAll, Rating: 5, Flag: "pick", Label: "red", Caption: "River\n\x1b[31m", Creator: "Example photographer", Copyright: "Example rights", Rotation: 90}
+	after.Values = store.PhotoAuthored{Rating: 5, Flag: "pick", Label: "red", Caption: "River\n\x1b[31m", Creator: "Example photographer", Copyright: "Example rights", Rotation: 90}
 	page.Items = []api.AuditEvent{{Kind: "photo_authored", Attachment: &api.AuditAttachmentChange{
 		Kind: "photo_authored", Identity: api.AuditAttachmentIdentity{FileID: fileID, NodeID: page.Node.ID},
 		Before: &api.AuditAttachmentState{Photo: &before}, After: &api.AuditAttachmentState{Photo: &after},
@@ -1131,7 +1131,7 @@ func TestHistoryDetailShowsPhotoDecisions(t *testing.T) {
 	model = runModelCommand(t, model, cmd)
 	model, _ = updateModel(t, model, key(tea.KeyEnter))
 	detail := model.render()
-	for _, want := range []string{fileID, "Revision: 1", "Revision: 2", "Rating: 0", "Rating: 5", `Flag: "pick"`, `Label: "red"`, `Caption: "River\n\x1b[31m"`, `Creator: "Example photographer"`, `Copyright: "Example rights"`, "Rotation: 90", `Confirmed fields: "(none)"`, `Confirmed fields: "rating, flag, label, caption, creator, copyright, rotation"`} {
+	for _, want := range []string{fileID, "Revision: 1", "Revision: 2", "Rating: 0", "Rating: 5", `Flag: "pick"`, `Label: "red"`, `Caption: "River\n\x1b[31m"`, `Creator: "Example photographer"`, `Copyright: "Example rights"`, "Rotation: 90"} {
 		assert.Contains(t, detail, want)
 	}
 }

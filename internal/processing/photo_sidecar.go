@@ -18,28 +18,6 @@ import (
 const maxPhotoSidecarBytes = 1 << 20
 const teststripXMPNamespace = "https://teststrip.app/xmp/1.0/"
 
-var photoXMPProperties = [...]struct {
-	Name  xml.Name
-	Field string
-}{
-	{xml.Name{Space: xmpBasicNamespace, Local: "Rating"}, "rating"},
-	{xml.Name{Space: teststripXMPNamespace, Local: "Pick"}, "flag"},
-	{xml.Name{Space: xmpBasicNamespace, Local: "Label"}, "label"},
-	{xml.Name{Space: xmpDublinCoreNamespace, Local: "description"}, "caption"},
-	{xml.Name{Space: xmpDublinCoreNamespace, Local: "creator"}, "creator"},
-	{xml.Name{Space: xmpDublinCoreNamespace, Local: "rights"}, "copyright"},
-	{xml.Name{Space: teststripXMPNamespace, Local: "Rotation"}, "rotation"},
-}
-
-func photoXMPProperty(field string) string {
-	for _, property := range photoXMPProperties {
-		if property.Field == field {
-			return property.Name.Local
-		}
-	}
-	return ""
-}
-
 // ReadPhotoSidecar validates the complete packet before returning supported decisions.
 func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, error) {
 	var result store.PhotoAuthored
@@ -62,8 +40,17 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	var defaultText string
 	var hasDefault bool
 	fieldFor := func(n xml.Name) string {
-		for _, property := range photoXMPProperties {
-			if property.Name == n {
+		switch n.Space {
+		case xmpBasicNamespace:
+			if n.Local == "Rating" || n.Local == "Label" {
+				return n.Local
+			}
+		case teststripXMPNamespace:
+			if n.Local == "Pick" || n.Local == "Rotation" {
+				return n.Local
+			}
+		case xmpDublinCoreNamespace:
+			if n.Local == "description" || n.Local == "creator" || n.Local == "rights" {
 				return n.Local
 			}
 		}
@@ -158,13 +145,6 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 					defaultText = ""
 				}
 			}
-			if field != "" {
-				for _, attr := range t.Attr {
-					if attr.Name.Space == rdfNamespace {
-						return result, errors.New("unsupported authored RDF value")
-					}
-				}
-			}
 			if field != "" && t.Name.Space == rdfNamespace && t.Name.Local == "li" {
 				if itemDepth != 0 {
 					return result, errors.New("nested RDF item")
@@ -228,22 +208,18 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	if rootCount != 1 || len(stack) != 0 || !description {
 		return result, errors.New("photo sidecar needs an RDF description")
 	}
-	for _, field := range store.PhotoAuthoredFieldTable() {
-		if field.Text == nil {
-			continue
-		}
-		if value, present := values[photoXMPProperty(field.Name)]; present {
-			*field.Text(&result) = value
-		}
-	}
+	result.Flag = values["Pick"]
 	if !query.ValidPhotoFlag(result.Flag) {
 		return result, errors.New("invalid XMP pick")
 	}
-	result.Label = strings.ToLower(result.Label)
+	result.Label = strings.ToLower(values["Label"])
 	if !query.ValidPhotoColorLabel(result.Label) {
 		result.Label = ""
 	}
-	if value, ok := values[photoXMPProperty("rating")]; ok {
+	result.Caption = values["description"]
+	result.Creator = values["creator"]
+	result.Copyright = values["rights"]
+	if value, ok := values["Rating"]; ok {
 		n, err := strconv.Atoi(value)
 		if err != nil || n < -1 || n > 5 {
 			return result, errors.New("invalid XMP rating")
@@ -254,18 +230,16 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 			result.Rating = n
 		}
 	}
-	if value, ok := values[photoXMPProperty("rotation")]; ok {
+	if value, ok := values["Rotation"]; ok {
 		n, err := strconv.Atoi(value)
 		if err == nil && (n == 0 || n == 90 || n == 180 || n == 270) {
 			result.Rotation = n
 		}
 	}
-	for _, field := range store.PhotoAuthoredFieldTable() {
-		if !field.IsDefault(&result) {
-			result.Confirmed |= field.Bit
-		}
-	}
-	if err := store.ValidatePhotoAuthored(result); err != nil {
+	// Source claims carry values; initialization decides which fields to confirm.
+	validated := result
+	validated.Confirmed = store.PhotoConfirmedAll
+	if err := store.ValidatePhotoAuthored(validated); err != nil {
 		return result, err
 	}
 	return result, nil

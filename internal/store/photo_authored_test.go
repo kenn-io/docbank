@@ -34,6 +34,33 @@ func authoredPair(t *testing.T, s *Store) PhotoAsset {
 	return asset
 }
 
+func TestPhotoAuthoredConfirmationFields(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name  string
+		bit   PhotoAuthoredFields
+		patch PhotoAuthoredPatch
+	}{
+		{"rating", PhotoConfirmedRating, PhotoAuthoredPatch{Rating: new(5)}},
+		{"flag", PhotoConfirmedFlag, PhotoAuthoredPatch{Flag: new("pick")}},
+		{"label", PhotoConfirmedLabel, PhotoAuthoredPatch{Label: new("red")}},
+		{"caption", PhotoConfirmedCaption, PhotoAuthoredPatch{Caption: new("River")}},
+		{"creator", PhotoConfirmedCreator, PhotoAuthoredPatch{Creator: new("Example photographer")}},
+		{"copyright", PhotoConfirmedCopyright, PhotoAuthoredPatch{Copyright: new("Example rights")}},
+		{"rotation", PhotoConfirmedRotation, PhotoAuthoredPatch{Rotation: new(90)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := test.patch.apply(PhotoAuthored{})
+			require.Equal(t, test.bit, value.Confirmed)
+			require.Equal(t, []string{test.name}, value.Confirmed.Names())
+			require.NoError(t, ValidatePhotoAuthored(value))
+			value.Confirmed = 0
+			require.ErrorIs(t, ValidatePhotoAuthored(value), ErrInvalidPhotoAsset)
+			require.NoError(t, ValidatePhotoAuthored(PhotoAuthored{Confirmed: test.bit}))
+		})
+	}
+}
+
 func TestPhotoAuthoredReceiptRequiresCompleteValues(t *testing.T) {
 	t.Parallel()
 	const id = "40000000-0000-4000-8000-000000000001"
@@ -100,15 +127,6 @@ func TestPhotoAuthoredPairAtomicUndoAndRoundTrip(t *testing.T) {
 	jpg := fileByRole(asset.Files, PhotoRoleImage)
 	assert.Equal(t, int64(1), raw.Revision)
 	assert.Equal(t, PhotoAuthored{}, raw.Authored())
-	_, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5)}}, {jpg.ID, 1, PhotoAuthoredPatch{Rating: new(6)}}})
-	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
-	rawNow, err := photoFileByIDQuery(ctx, s.db, raw.ID)
-	require.NoError(t, err)
-	assert.Equal(t, raw, rawNow)
-	_, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision-1, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5)}}})
-	require.ErrorIs(t, err, ErrStaleRevision)
-	_, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5)}}})
-	require.ErrorIs(t, err, ErrStaleRevision)
 	targets := []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5), Flag: new("pick"), Caption: new("River"), Rotation: new(90)}}, {jpg.ID, 1, PhotoAuthoredPatch{Rating: new(3), Label: new("red")}}}
 	receipt, err := s.EditPhotoPair(ctx, asset.ID, asset.Revision, targets)
 	require.NoError(t, err)
@@ -119,27 +137,47 @@ func TestPhotoAuthoredPairAtomicUndoAndRoundTrip(t *testing.T) {
 	assert.True(t, asset.Agreement["creator"])
 	_, err = s.EditPhotoAuthored(ctx, targets)
 	require.ErrorIs(t, err, ErrStaleRevision)
-	undo, err := s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
+	var backup bytes.Buffer
+	require.NoError(t, s.ExportMetadata(ctx, &backup))
+	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, restored.Close()) })
+	require.NoError(t, restored.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
+	undo, err := restored.UndoPhotoAuthored(ctx, receipt.ReceiptID)
 	require.NoError(t, err)
 	assert.Equal(t, receipt.ReceiptID, undo.UndoOf)
 	for _, after := range undo.After {
 		assert.Equal(t, int64(3), after.Revision)
 		assert.Equal(t, PhotoAuthored{}, after.Values)
 	}
-	_, err = s.UndoPhotoAuthored(ctx, receipt.ReceiptID)
+	_, err = restored.UndoPhotoAuthored(ctx, receipt.ReceiptID)
 	require.ErrorIs(t, err, ErrStaleRevision)
-	asset, err = s.PhotoAssetByID(ctx, asset.ID)
-	require.NoError(t, err)
-	receipt, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision, []PhotoAuthoredTarget{{raw.ID, 3, PhotoAuthoredPatch{Rating: new(5)}}, {jpg.ID, 3, PhotoAuthoredPatch{Rating: new(5)}}})
+	receipt, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision, []PhotoAuthoredTarget{{raw.ID, 2, PhotoAuthoredPatch{Rating: new(5)}}, {jpg.ID, 2, PhotoAuthoredPatch{Rating: new(5)}}})
 	require.NoError(t, err)
 	require.Len(t, receipt.After, 2)
 	for _, after := range receipt.After {
-		assert.Equal(t, int64(4), after.Revision)
+		assert.Equal(t, int64(3), after.Revision)
 		assert.Equal(t, 5, after.Values.Rating)
 	}
-	receipt, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{raw.ID, 4, PhotoAuthoredPatch{Rating: new(4)}}})
+}
+
+func TestPhotoAuthoredRollbackAndMembershipFence(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := authoredPair(t, s)
+	raw := fileByRole(asset.Files, PhotoRoleRAW)
+	jpg := fileByRole(asset.Files, PhotoRoleImage)
+	_, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5)}}, {jpg.ID, 1, PhotoAuthoredPatch{Rating: new(6)}}})
+	require.ErrorIs(t, err, ErrInvalidPhotoAsset)
+	rawNow, err := photoFileByIDQuery(ctx, s.db, raw.ID)
 	require.NoError(t, err)
-	asset, err = s.PhotoAssetByID(ctx, asset.ID)
+	assert.Equal(t, raw, rawNow)
+	_, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision-1, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5)}}})
+	require.ErrorIs(t, err, ErrStaleRevision)
+	_, err = s.EditPhotoPair(ctx, asset.ID, asset.Revision, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5)}}})
+	require.ErrorIs(t, err, ErrStaleRevision)
+	receipt, err := s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{raw.ID, 1, PhotoAuthoredPatch{Rating: new(5)}}})
 	require.NoError(t, err)
 	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, raw.ID, PhotoDetachOptions{})
 	require.NoError(t, err)
@@ -348,7 +386,7 @@ func TestPhotoAuthoredAuditRoundTripAndRollback(t *testing.T) {
 	assert.Equal(t, PhotoConfirmedRating|PhotoConfirmedCaption, cleared.After[0].Values.Confirmed)
 	currentAsset, err := s.PhotoAssetByID(ctx, asset.ID)
 	require.NoError(t, err)
-	assert.False(t, currentAsset.Agreement["caption"])
+	assert.True(t, currentAsset.Agreement["caption"])
 	for _, file := range currentAsset.Files {
 		assert.Empty(t, file.Caption)
 	}

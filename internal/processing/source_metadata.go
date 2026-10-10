@@ -2238,16 +2238,10 @@ func (c *metadataCollector) extractPhotoSidecar(ctx context.Context, data []byte
 		return nil
 	}
 	c.boolean("image.xmp.packet_valid", "image.xmp", "packet", true)
-	for _, field := range store.PhotoAuthoredFieldTable() {
-		if values.Confirmed&field.Bit == 0 {
-			continue
-		}
-		key, source := field.XMPKey(), photoXMPProperty(field.Name)
-		if field.Integer != nil {
-			c.integer(key, "image.xmp", source, int64(*field.Integer(&values)))
-		} else {
-			c.string(key, "image.xmp", source, *field.Text(&values), false)
-		}
+	c.integer("image.xmp.rating", "image.xmp", "Rating", int64(values.Rating))
+	c.integer("image.xmp.rotation", "image.xmp", "Rotation", int64(values.Rotation))
+	for _, field := range []struct{ key, source, value string }{{"flag", "Pick", values.Flag}, {"label", "Label", values.Label}, {"caption", "description", values.Caption}, {"creator", "creator", values.Creator}, {"copyright", "rights", values.Copyright}} {
+		c.string("image.xmp."+field.key, "image.xmp", field.source, field.value, false)
 	}
 	return nil
 }
