@@ -21,10 +21,7 @@ import (
 )
 
 const maxPhotoExportSourceBytes = 512 << 20
-const maxPhotoExportDecodedPixels = 512_000_000
 const maxPhotoExportOutputBytes = 1 << 30
-
-type photoExportBudget struct{ pixels int64 }
 
 // PreparePhotoExportPlan renders sequentially before bounded artifact publication under the mutation lease.
 func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *blob.Store, spoolParent, owner string, request bundle.PlanRequest, publish func(context.Context, func() error) error) (bundle.Plan, error) {
@@ -72,7 +69,6 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 	if err := os.MkdirAll(spoolParent, 0700); err != nil {
 		return bundle.Plan{}, err
 	}
-	budget := photoExportBudget{pixels: maxPhotoExportDecodedPixels}
 	artifacts := make([]store.PreparedPhotoExport, 0, len(inputs))
 	var total int64
 	for _, input := range inputs {
@@ -86,7 +82,7 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 			}
 			return bundle.Plan{}, photoExportError(input, fmt.Errorf("source is missing or unreadable: %w", bundle.ErrUnavailable))
 		}
-		output, receipt, err := renderPhotoExport(renderCtx, data, input, *request.PhotoRender, &budget)
+		output, receipt, err := renderPhotoExport(renderCtx, data, input, *request.PhotoRender)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return bundle.Plan{}, err
@@ -134,13 +130,10 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 	return plan, err
 }
 
-func renderPhotoExport(ctx context.Context, data []byte, input store.PhotoExportInput, profile bundle.PhotoRenderProfile, budget *photoExportBudget) ([]byte, bundle.PhotoRenderReceipt, error) {
+func renderPhotoExport(ctx context.Context, data []byte, input store.PhotoExportInput, profile bundle.PhotoRenderProfile) ([]byte, bundle.PhotoRenderReceipt, error) {
 	receipt := bundle.PhotoRenderReceipt{Version: bundle.PhotoRenderReceiptVersion, Profile: profile, Source: input.Member}
 	if err := store.ValidatePhotoAuthored(input.Authored); err != nil {
 		return nil, receipt, err
-	}
-	if input.Member.Size < 1 || input.Member.Size > maxPhotoExportSourceBytes {
-		return nil, receipt, bundle.ErrLimit
 	}
 	packets, err := photoSourcePackets(ctx, data, profile.IncludeMetadata)
 	if err != nil {
@@ -188,7 +181,7 @@ func renderPhotoExport(ctx context.Context, data []byte, input store.PhotoExport
 			candidate.orientation, candidate.animated = p.orientation, p.animated
 			candidate.unsupportedColor = candidate.unsupportedColor || p.unsupportedColor
 
-			decoded, orientation, err = decodePhotoExport(ctx, preview, visualFormatJPEG, location.orientation, candidate, budget)
+			decoded, orientation, err = decodePhotoExport(ctx, preview, visualFormatJPEG, location.orientation, candidate)
 			if err == nil {
 				packets = candidate
 				break
@@ -200,7 +193,7 @@ func renderPhotoExport(ctx context.Context, data []byte, input store.PhotoExport
 		receipt.EmbeddedPreview = true
 		return encodePhotoExport(ctx, decoded, orientation, packets, input, receipt)
 	}
-	decoded, orientation, err := decodePhotoExport(ctx, pixels, format, 0, packets, budget)
+	decoded, orientation, err := decodePhotoExport(ctx, pixels, format, 0, packets)
 	if err != nil {
 		return nil, receipt, err
 	}
@@ -218,7 +211,7 @@ func photoExportContentError(err error) error {
 	return fmt.Errorf("%w: %w", bundle.ErrUnavailable, err)
 }
 
-func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string, containerOrientation int, packets photoPackets, budget *photoExportBudget) (image.Image, int, error) {
+func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string, containerOrientation int, packets photoPackets) (image.Image, int, error) {
 	orientation := packets.orientation
 	if format != visualFormatJPEG && format != visualFormatPNG && format != visualFormatWebP && format != "gif" {
 		return nil, 0, fmt.Errorf("%w: unsupported photo media type", bundle.ErrUnavailable)
@@ -229,12 +222,7 @@ func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string,
 	if containerOrientation >= 1 && containerOrientation <= 8 {
 		orientation = containerOrientation
 	}
-	pixels, err := decodePhotoPixels(ctx, source, format, func(config image.Config) error {
-		if budget != nil && int64(config.Width)*int64(config.Height) > budget.pixels {
-			return fmt.Errorf("%w: decoded pixels exceed 512 million", bundle.ErrLimit)
-		}
-		return nil
-	})
+	pixels, err := decodePhotoPixels(ctx, source, format)
 	if err != nil {
 		if errors.Is(err, errVisualDimensions) {
 			err = fmt.Errorf("%w: %w", bundle.ErrLimit, err)
@@ -243,9 +231,6 @@ func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string,
 			return nil, 0, err
 		}
 		return nil, 0, photoExportContentError(err)
-	}
-	if budget != nil {
-		budget.pixels -= int64(pixels.config.Width) * int64(pixels.config.Height)
 	}
 	return pixels.image, orientation, nil
 }
@@ -290,12 +275,12 @@ type photoPixels struct {
 	readErr error
 }
 
-func decodePhotoPixels(ctx context.Context, source io.ReadSeeker, format string, admit func(image.Config) error) (result photoPixels, err error) {
+func decodePhotoPixels(ctx context.Context, source io.ReadSeeker, format string) (result photoPixels, err error) {
 	if _, err = source.Seek(0, io.SeekStart); err != nil {
 		result.readErr = err
 		return result, err
 	}
-	reader := &visualPreviewReadErrorRecorder{reader: visualPreviewContextReader{ctx, source}}
+	reader := &visualPreviewReadErrorRecorder{reader: &contextReader{ctx, source}}
 	defer func() {
 		if reader.err != nil {
 			result.readErr = reader.err
@@ -314,11 +299,6 @@ func decodePhotoPixels(ctx context.Context, source io.ReadSeeker, format string,
 	}
 	if format == visualFormatJPEG && !visualPreviewJPEGColorModelSupported(result.config.ColorModel) {
 		return result, errVisualColor
-	}
-	if admit != nil {
-		if err = admit(result.config); err != nil {
-			return result, err
-		}
 	}
 	if _, err = source.Seek(0, io.SeekStart); err != nil {
 		result.readErr = err

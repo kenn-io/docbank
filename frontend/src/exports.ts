@@ -132,7 +132,6 @@ export function parseExportPreview(value: unknown, plan: ExportPlan): ExportPrev
   const summaries = r.roles.map((raw, i) => {
     const s = object(raw), policy = plan.roles[i]!;
     const summary: RoleSummary = { role: string(s.role), available_members: integer(s.available_members, plan.total), unavailable_members: integer(s.unavailable_members, plan.total), files: integer(s.files, maxRoles), bytes: integer(s.bytes, maxRoleBytes), ...(s.collapsed_files === undefined ? {} : { collapsed_files: integer(s.collapsed_files, 2_400_000) }), ...(s.unavailable_reason === undefined ? {} : { unavailable_reason: string(s.unavailable_reason) }) };
-    if (s.embedded_previews !== undefined) summary.embedded_previews = integer(s.embedded_previews, plan.total);
     const attachment = summary.role === "attachment_original" || summary.role === "attachment_pdf", outputs = summary.files + (summary.collapsed_files ?? 0);
     if (summary.role !== policy.role || (attachment ? summary.available_members + summary.unavailable_members < plan.total : summary.available_members + summary.unavailable_members !== plan.total || outputs < summary.available_members || summary.role !== "pages" && outputs !== summary.available_members) || (summary.unavailable_members > 0 && (!policy.allow_unavailable || !summary.unavailable_reason)) || (summary.files === 0 && summary.bytes !== 0) || (summary.collapsed_files ?? 0) > 0 && plan.duplicate_policy !== "collapse_exact_content") fail();
     files += summary.files; bytes += summary.bytes; collapsed += summary.collapsed_files ?? 0;

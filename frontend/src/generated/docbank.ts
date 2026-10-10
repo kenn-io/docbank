@@ -5221,7 +5221,6 @@ export interface RoleSummary {
   available_members: number;
   bytes: number;
   collapsed_files?: number;
-  embedded_previews?: number;
   files: number;
   role: string;
   unavailable_members: number;

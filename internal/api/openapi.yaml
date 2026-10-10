@@ -14212,9 +14212,6 @@ components:
         collapsed_files:
           format: int64
           type: integer
-        embedded_previews:
-          format: int64
-          type: integer
         files:
           format: int64
           type: integer

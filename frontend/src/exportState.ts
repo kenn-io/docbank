@@ -1,5 +1,5 @@
 import { APIError } from "./api-transport.js";
-import { cancelWebDownload, type PhotoExportSelection } from "./generated/docbank.js";
+import { cancelWebDownload, releaseExportJob, type PhotoExportSelection } from "./generated/docbank.js";
 import { captureSnapshotTargets, type SnapshotPage } from "./snapshots.js";
 import {
   assertExportAdvance, cancelExportJob, copyExportMembers, createExportPlan,
@@ -21,6 +21,7 @@ export interface ExportState {
   gap?: boolean;
   downloadOffered?: boolean;
   downloading?: boolean;
+  releasing?: boolean;
   recipes?: EmailPDFRecipeChoice[];
   publications?: AttachmentPublications;
   publicationSelections?: Record<string, string>;
@@ -254,17 +255,26 @@ export class ExportSession {
   close(): void {
     this.stop();
     const active = this.state.active;
-    this.emit({ ...this.state, downloading: false, ...(!active && this.state.status === "preparing" ? { status: "idle" as const } : {}), ...(active && (!active.job || ["queued", "running"].includes(active.job.state)) ? { status: "disconnected" } : {}) });
+    this.emit({ ...this.state, downloading: false, releasing: false, ...(!active && this.state.status === "preparing" ? { status: "idle" as const } : {}), ...(active && (!active.job || ["queued", "running"].includes(active.job.state)) ? { status: "disconnected" } : {}) });
   }
   resetPreparation(): void {
     if (this.disposed || this.state.active) return;
     this.stop(); this.members = undefined; this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
     this.emit({ status: "idle" });
   }
-  clearFinished(): void {
-    if (!this.state.active?.job || !["completed", "canceled", "failed"].includes(this.state.active.job.state)) return;
-    this.stop(); this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
-    this.emit({ status: "idle" });
+  async clearFinished(): Promise<void> {
+    const active = this.state.active;
+    if (!active?.job || !["completed", "canceled", "failed"].includes(active.job.state) || this.state.releasing) return;
+    const started = this.begin();
+    this.emit({ ...this.state, releasing: true, error: undefined });
+    try {
+      await releaseExportJob(active.id, { session: this.session, signal: started.signal }).catch(error => {
+        if (!(error instanceof APIError && error.status === 404)) throw error;
+      });
+      if (!this.current(started.generation)) return;
+      this.stop(); this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
+      this.emit({ status: "idle" });
+    } catch (error) { this.fail(started.generation, error); }
   }
   dispose(): void { this.close(); this.disposed = true; }
 
@@ -306,7 +316,7 @@ export class ExportSession {
   private fail(generation: number, cause: unknown, disconnected = false): void {
     if (!this.current(generation)) return;
     const error = cause instanceof Error ? cause : new Error("Export request failed.");
-    this.emit({ ...this.state, downloading: false, status: error instanceof APIError && error.status === 410 ? "expired" : disconnected && this.state.active ? "disconnected" : "error", error });
+    this.emit({ ...this.state, downloading: false, releasing: false, status: error instanceof APIError && error.status === 410 ? "expired" : disconnected && this.state.active ? "disconnected" : "error", error });
   }
   private begin(): { generation: number; signal: AbortSignal } {
     this.stop(); this.controller = new AbortController();

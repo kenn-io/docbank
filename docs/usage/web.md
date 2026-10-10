@@ -263,7 +263,7 @@ Ordinary live selections offer the same return path to the selected document.
 
 ## Export a verified ZIP
 
-In Photos, choose **Export photos** for the current scope or **Export selection** for checked photos. Prepare JPEG or PNG copies with size, image metadata and GPS choices. Each preparation allows up to 16 photos and 512 million decoded pixels in total. The verified ZIP retains original filenames, vault paths and source hashes. See [Export photos](export-bundles.md#export-photos).
+In Photos, choose **Export photos** for the current scope or **Export selection** for checked photos. Prepare JPEG or PNG copies with size, image metadata and GPS choices. Each preparation allows up to 16 photos, each at most 100 million pixels. The verified ZIP retains original filenames, vault paths and source hashes. See [Export photos](export-bundles.md#export-photos).
 
 Choose **Export selection** in the selection dock for the checked documents.
 The toolbar's **Export** opens the whole frozen query when one is active, or

@@ -39,7 +39,7 @@ func photoExportMetadata(ctx context.Context, packets photoPackets, input store.
 	var err error
 	if receipt.Profile.IncludeMetadata {
 		if len(exif) > 0 {
-			exif, err = rewritePhotoEXIF(exif, receipt.Width, receipt.Height, receipt.Profile.RemoveGPS, input.Authored)
+			exif, err = rewritePhotoEXIF(exif, receipt.Width, receipt.Height, receipt.Profile.RemoveGPS, input.Authored, len(input.Keywords) > 0)
 			if err != nil {
 				return nil, err
 			}
@@ -302,8 +302,6 @@ func photoSourcePackets(ctx context.Context, data []byte, metadata bool) (result
 					err = set(&exif, payload[6:])
 				case bytes.HasPrefix(payload, []byte(photoXMPJPEGPrefix)):
 					err = set(&packet, payload[len(photoXMPJPEGPrefix):])
-				case bytes.HasPrefix(payload, []byte("http://ns.adobe.com/xmp/extension/")):
-					return errors.New("extended XMP metadata is unsupported")
 				}
 				return err
 			case visualFormatPNG:
@@ -406,7 +404,7 @@ func readPhotoCompressedMetadata(source io.Reader) ([]byte, error) {
 }
 
 // Rebuilding only reachable directories removes GPS payloads and stale thumbnails.
-func rewritePhotoEXIF(data []byte, width, height int, removeGPS bool, authored store.PhotoAuthored) ([]byte, error) {
+func rewritePhotoEXIF(data []byte, width, height int, removeGPS bool, authored store.PhotoAuthored, replaceKeywords bool) ([]byte, error) {
 	r, ok := newExifReader(data)
 	if !ok || r.format != "tiff" {
 		return nil, errors.New("malformed EXIF header")
@@ -430,7 +428,7 @@ func rewritePhotoEXIF(data []byte, width, height int, removeGPS bool, authored s
 				delete(entries, tag)
 				continue
 			}
-			if slices.Contains([]uint16{0x4746, 0x4749}, tag) && authored.Confirmed&store.PhotoConfirmedRating != 0 || tag == 0x9c9e || slices.Contains([]uint16{0x010e, 0x9c9b, 0x9c9c, 0x9c9f}, tag) && authored.Confirmed&store.PhotoConfirmedCaption != 0 || slices.Contains([]uint16{0x013b, 0x9c9d}, tag) && authored.Confirmed&store.PhotoConfirmedCreator != 0 || tag == 0x8298 && authored.Confirmed&store.PhotoConfirmedCopyright != 0 {
+			if slices.Contains([]uint16{0x4746, 0x4749}, tag) && authored.Confirmed&store.PhotoConfirmedRating != 0 || tag == 0x9c9e && replaceKeywords || slices.Contains([]uint16{0x010e, 0x9c9b, 0x9c9c, 0x9c9f}, tag) && authored.Confirmed&store.PhotoConfirmedCaption != 0 || slices.Contains([]uint16{0x013b, 0x9c9d}, tag) && authored.Confirmed&store.PhotoConfirmedCreator != 0 || tag == 0x8298 && authored.Confirmed&store.PhotoConfirmedCopyright != 0 {
 				delete(entries, tag)
 				continue
 			}
@@ -853,9 +851,9 @@ func photoXMPConfirmed(n xml.Name, input store.PhotoExportInput) bool {
 			return true
 		}
 	case "http://ns.adobe.com/lightroom/1.0/":
-		return n.Local == "hierarchicalSubject"
+		return n.Local == "hierarchicalSubject" && len(input.Keywords) > 0
 	case xmpPDFNamespace:
-		return n.Local == "Keywords"
+		return n.Local == "Keywords" && len(input.Keywords) > 0
 	case xmpDublinCoreNamespace:
 		switch n.Local {
 		case "description":
@@ -865,7 +863,7 @@ func photoXMPConfirmed(n xml.Name, input store.PhotoExportInput) bool {
 		case "rights":
 			bit = store.PhotoConfirmedCopyright
 		case "subject":
-			return true
+			return len(input.Keywords) > 0
 		}
 	}
 	return bit != 0 && input.Authored.Confirmed&bit != 0

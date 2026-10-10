@@ -15,18 +15,6 @@ const (
 	visualFormatWebP = "webp"
 )
 
-type visualPreviewContextReader struct {
-	ctx    context.Context
-	reader io.Reader
-}
-
-func (r visualPreviewContextReader) Read(p []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.reader.Read(p)
-}
-
 var errVisualContainer = errors.New("malformed image container")
 var errVisualMetadataLimit = errors.New("image metadata exceeds inspection limit")
 
@@ -45,7 +33,7 @@ func walkPhotoContainer(ctx context.Context, source io.ReadSeeker, format string
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	r := bufio.NewReader(visualPreviewContextReader{ctx, io.LimitReader(source, size)})
+	r := bufio.NewReader(&contextReader{ctx, io.LimitReader(source, size)})
 	headerSize := map[string]int{visualFormatJPEG: 2, visualFormatPNG: 8, visualFormatWebP: 12}[format]
 	header := make([]byte, headerSize)
 	if _, err := io.ReadFull(r, header); err != nil {
@@ -120,7 +108,7 @@ func walkPhotoContainer(ctx context.Context, source io.ReadSeeker, format string
 				if _, err := source.Seek(offset, io.SeekStart); err != nil {
 					return err
 				}
-				r.Reset(visualPreviewContextReader{ctx, io.LimitReader(source, size-offset)})
+				r.Reset(&contextReader{ctx, io.LimitReader(source, size-offset)})
 				continue
 			}
 			pngChunks++

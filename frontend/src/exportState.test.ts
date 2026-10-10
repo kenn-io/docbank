@@ -383,3 +383,99 @@ it.each([503, 410])("keeps a reviewed plan independent of its initial details re
   }
   h.session.dispose();
 });
+
+it("releases each finished job before preparing three successive batches", async () => {
+  const h = await harness();
+  const original = h.fetcher.getMockImplementation()!;
+  const owned = new Set<string>();
+  h.fetcher.mockImplementation(async (url, init) => {
+    const path = String(url);
+    if (init?.method === "DELETE") {
+      owned.delete(path.split("/").at(-1)!);
+      return new Response(null, { status: 204 });
+    }
+    if (path.endsWith("/jobs")) {
+      const body = JSON.parse(String(init?.body));
+      if (!owned.has(body.operation_id) && owned.size >= 2) return new Response(null, { status: 429 });
+      owned.add(body.operation_id);
+    }
+    return original(url, init);
+  });
+  for (let batch = 0; batch < 3; batch++) {
+    await h.session.preview();
+    await h.session.start();
+    await h.session.cancel();
+    expect(h.state().status).toBe("canceled");
+    await h.session.clearFinished();
+    expect(h.state().status).toBe("idle");
+    expect(owned.size).toBe(0);
+  }
+  expect(h.fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(3);
+  h.session.dispose();
+});
+
+it("keeps the finished job until release succeeds and allows retry after failure", async () => {
+  const h = await harness();
+  await h.session.preview();
+  await h.session.start();
+  await h.session.cancel();
+  const active = h.state().active;
+  let respond!: (value: Response) => void;
+  h.fetcher.mockImplementationOnce(() => new Promise<Response>(resolve => respond = resolve));
+  const pending = h.session.clearFinished();
+  expect(h.state().active).toEqual(active);
+  expect(h.state().releasing).toBe(true);
+  await h.session.clearFinished();
+  respond(new Response(JSON.stringify({ detail: "Release failed" }), { status: 503 }));
+  await pending;
+  expect(h.state().active).toEqual(active);
+  expect(h.state().error?.message).toContain("Release failed");
+  h.fetcher.mockResolvedValueOnce(new Response(null, { status: 204 }));
+  await h.session.clearFinished();
+  expect(h.state().active).toBeUndefined();
+  expect(h.state().status).toBe("idle");
+  h.session.dispose();
+});
+
+it.each(["completed", "failed"])("releases a %s job through the generated route", async (terminal) => {
+  const h = await harness();
+  const original = h.fetcher.getMockImplementation()!;
+  h.fetcher.mockImplementation(async (url, init) => {
+    const path = String(url);
+    if (init?.method === "DELETE") return new Response(null, { status: 204 });
+    const result = await original(url, init);
+    if (path.includes("/jobs/") && !path.includes("/events")) {
+      const job = await result.json();
+      return response({ ...job, state: terminal, sequence: 2, ...(terminal === "completed" ? { completed_roles: 1, completed_bytes: 12, receipt: { format: "docbank-bundle-v1", plan_fingerprint: hash, sha256: hash, size: 512, entries: 4 } } : { failure: "Synthetic export failure" }) });
+    }
+    return result;
+  });
+  await h.session.preview();
+  await h.session.start();
+  expect(h.state().status).toBe(terminal);
+  const jobID = h.state().active!.id;
+  await h.session.clearFinished();
+  expect(h.fetcher.mock.calls.some(([url, init]) => String(url).endsWith(`/jobs/${jobID}`) && init?.method === "DELETE")).toBe(true);
+  expect(h.state().active).toBeUndefined();
+  h.session.dispose();
+});
+
+it("recovers an interrupted release when retry confirms the job is gone", async () => {
+  const h = await harness();
+  await h.session.preview();
+  await h.session.start();
+  await h.session.cancel();
+  let respond!: (value: Response) => void;
+  h.fetcher.mockImplementationOnce(() => new Promise<Response>(resolve => respond = resolve));
+  const pending = h.session.clearFinished();
+  h.session.close();
+  expect(h.state().releasing).toBe(false);
+  h.fetcher.mockResolvedValueOnce(new Response(null, { status: 404 }));
+  await h.session.clearFinished();
+  await h.session.preview();
+  expect(h.state().status).toBe("ready");
+  respond(new Response(null, { status: 204 }));
+  await pending;
+  expect(h.state().status).toBe("ready");
+  h.session.dispose();
+});

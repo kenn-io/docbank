@@ -97,7 +97,7 @@
             <div class="role-choice"><strong>Format</strong><SelectDropdown title="Photo format" value={photoFormat} options={[{ value: "jpeg", label: "JPEG" }, { value: "png", label: "PNG" }]} onchange={value => { photoFormat = value; if (value === "png") quality = "90"; }} /></div>
             {#if photoFormat === "jpeg"}<label for="photo-export-quality">JPEG quality, 1–100</label><TextInput id="photo-export-quality" ariaLabel="JPEG quality" bind:value={quality} block />{/if}
             <label for="photo-export-edge">Long edge, pixels</label><TextInput id="photo-export-edge" ariaLabel="Long edge, pixels" bind:value={longEdge} placeholder="Original size" block />
-            <p>Blank keeps the original size. Smaller originals keep their size. Up to 16 photos and 512 million decoded pixels per export.</p>
+            <p>Blank keeps the original size. Smaller originals keep their size. Up to 16 photos, each at most 100 million pixels.</p>
             <p>JPEG, PNG, GIF and static WebP; embedded JPEG previews from ARW, DNG, CR2, NEF and RAF.</p>
             <Checkbox label="Include image metadata" checked={includeMetadata} onchange={checked => includeMetadata = checked} />
             <Checkbox label="Remove GPS" checked={removeGPS} disabled={!includeMetadata} onchange={checked => removeGPS = checked} />
@@ -228,12 +228,12 @@
           {#if receipt}
             <dl><div><dt>Final ZIP size</dt><dd data-testid="export-archive-size" data-bytes={receipt.size} title={`${receipt.size.toLocaleString()} bytes`}>{formatBytes(receipt.size)}</dd></div><div><dt>Archive entries</dt><dd>{receipt.entries.toLocaleString()}</dd></div></dl>
             <div class="identity"><span>Archive SHA-256</span><code data-testid="export-archive-hash">{receipt.sha256}</code><CopyButton text={receipt.sha256} ariaLabel="Copy archive hash" /></div>
-            <Button tone="info" disabled={view.downloading || view.status === "expired"} onclick={() => void controller.download(basename)}>{view.downloading ? "Reverifying download…" : "Download verified ZIP"}</Button>
+            <Button tone="info" disabled={view.downloading || view.releasing || view.status === "expired"} onclick={() => void controller.download(basename)}>{view.downloading ? "Reverifying download…" : "Download verified ZIP"}</Button>
             <p>{view.downloadOffered ? "Download handed to your browser. Check its download list for completion." : "Docbank verified the server archive. Your browser handles the download; its completion is separate."}</p>
           {/if}
           <div class="actions">
             {#if !terminal}<Button disabled={view.status === "starting"} onclick={() => void controller.reconnect()}>Reconnect to same export</Button><Button onclick={() => void controller.cancel()}>Cancel export</Button>{/if}
-            {#if terminal}<Button onclick={() => controller.clearFinished()}>Prepare another export</Button>{/if}
+            {#if terminal}<Button disabled={view.releasing} onclick={() => void controller.clearFinished()}>Prepare another export</Button>{/if}
           </div>
           <p>Closing this drawer stops progress readers. It does not cancel the server job. Reopen in this browser session to reconnect.</p>
         </section>

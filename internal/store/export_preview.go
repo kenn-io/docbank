@@ -108,9 +108,6 @@ func (s *Store) ExportPlanPreview(ctx context.Context, owner, id string) (bundle
 	}
 	for i := range out.Roles {
 		r := &out.Roles[i]
-		if r.Role == "photo_rendered" {
-			r.EmbeddedPreviews = p.EmbeddedPreviews
-		}
 		if r.UnavailableMembers == 0 {
 			continue
 		}

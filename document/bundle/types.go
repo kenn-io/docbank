@@ -199,7 +199,6 @@ type PlanPreview struct {
 }
 
 type RoleSummary struct {
-	EmbeddedPreviews   int    `json:"embedded_previews,omitzero"`
 	Role               string `json:"role"`
 	AvailableMembers   int    `json:"available_members"`
 	UnavailableMembers int    `json:"unavailable_members"`
