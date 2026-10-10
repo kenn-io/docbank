@@ -186,6 +186,12 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 	leading := syntheticPNGChunk(t, original, "eXIf", exif)
 	trailing := appendSyntheticPNGChunk(bytes.Clone(original[:len(original)-12]), "eXIf", exif)
 	trailing = appendSyntheticPNGChunk(trailing, "IEND", nil)
+	unusableTrailing := appendSyntheticPNGChunk(bytes.Clone(original[:len(original)-12]), "eXIf", nil)
+	unusableTrailing = appendSyntheticPNGChunk(unusableTrailing, "eXIf", exif)
+	unusableTrailing = appendSyntheticPNGChunk(unusableTrailing, "IEND", nil)
+	unusableLeading := syntheticPNGChunk(t, original, "eXIf", nil)
+	unusableLeading = appendSyntheticPNGChunk(bytes.Clone(unusableLeading[:len(unusableLeading)-12]), "eXIf", exif)
+	unusableLeading = appendSyntheticPNGChunk(unusableLeading, "IEND", nil)
 	duplicate := appendSyntheticPNGChunk(bytes.Clone(leading[:len(leading)-12]), "eXIf",
 		syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 3)}, nil))
 	duplicate = appendSyntheticPNGChunk(duplicate, "IEND", nil)
@@ -194,6 +200,8 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 	uncalibrated = appendSyntheticPNGChunk(uncalibrated, "IEND", nil)
 	oversized := appendSyntheticPNGChunk(bytes.Clone(original[:len(original)-12]), "eXIf", make([]byte, visualPreviewMaxEXIFBytes+1))
 	oversized = appendSyntheticPNGChunk(oversized, "IEND", nil)
+	oversizedThenValid := appendSyntheticPNGChunk(bytes.Clone(oversized[:len(oversized)-12]), "eXIf", exif)
+	oversizedThenValid = appendSyntheticPNGChunk(oversizedThenValid, "IEND", nil)
 	apng := syntheticAPNG(t, original, 600)
 	apng = appendSyntheticPNGChunk(bytes.Clone(apng[:len(apng)-12]), "eXIf", exif)
 	apng = appendSyntheticPNGChunk(apng, "IEND", nil)
@@ -214,7 +222,10 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 		width, height int
 	}{
 		"before IDAT": {leading, 2, 3}, "after IDAT": {trailing, 2, 3}, "leading EXIF wins over trailing": {duplicate, 2, 3},
-		"many trailing text chunks": {manyText, 2, 3}, "1025 IDAT chunks": {manyIDAT, 2, 3},
+		"unusable trailing EXIF then orientation":  {unusableTrailing, 2, 3},
+		"unusable leading EXIF wins over trailing": {unusableLeading, 3, 2},
+		"oversized trailing EXIF then orientation": {oversizedThenValid, 2, 3},
+		"many trailing text chunks":                {manyText, 2, 3}, "1025 IDAT chunks": {manyIDAT, 2, 3},
 		"trailing uncalibrated color": {uncalibrated, 2, 3},
 		"oversized trailing EXIF":     {oversized, 3, 2}, "600-frame APNG": {apng, 2, 3},
 	} {

@@ -416,7 +416,7 @@ func inspectVisualPreviewPNG(
 	orientation = 1
 	afterIDAT, sawEXIF := false, false
 	offset := int64(len(signature))
-	// After IDAT, each chunk consumes at least 12 verified, size-capped bytes, payloads skip by seek, and ctx is checked per chunk; a cap would leave fragmented PNGs sideways.
+	// A trailing chunk cap would leave fragmented PNGs sideways.
 	for chunks := 0; afterIDAT || chunks < visualPreviewMaxPNGChunks; chunks++ {
 		if err := ctx.Err(); err != nil {
 			return 0, false, false, false, err
@@ -473,10 +473,10 @@ func inspectVisualPreviewPNG(
 			if value, colorSpace, found := visualPreviewEXIF(payload); found {
 				orientation = value
 				unsupportedColor = unsupportedColor || !afterIDAT && colorSpace != 0 && colorSpace != 1
-			}
-			if afterIDAT {
-				// Trailing EXIF supplies orientation only to preserve existing color support.
-				return orientation, unsupportedColor, unsupportedMetadata, false, nil
+				if afterIDAT {
+					// Trailing EXIF supplies orientation only to preserve existing color support.
+					return orientation, unsupportedColor, unsupportedMetadata, false, nil
+				}
 			}
 			length = 0
 		case "IEND":
