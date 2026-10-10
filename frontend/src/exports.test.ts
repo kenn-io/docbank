@@ -143,7 +143,7 @@ it("sends an explicit attachment set without requiring the plan header to echo i
 
 
 it("binds rendered photo profiles and RAW counts to the reviewed plan", async () => {
-  const photoSource = { ...source, kind: "photos", raw_members: 1 };
+  const photoSource = { ...source, kind: "photos" };
   const profile = { format: "jpeg", quality: 90, long_edge: 2048, include_metadata: true, remove_gps: true };
   const photoPlan = { ...plan, source: photoSource, roles: [{ role: "photo_rendered" }], photo_render: profile };
   expect(parseExportPlan(photoPlan, photoSource, photoPlan.roles, planID, { photo_render: profile }).photo_render).toEqual(profile);
@@ -152,6 +152,6 @@ it("binds rendered photo profiles and RAW counts to the reviewed plan", async ()
   expect(() => validateExportOptions({ photo_render: { ...profile, long_edge: -1 } })).toThrow();
   const selection = { query: { filters: {}, v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "name", direction: "asc" } }, hidden: false, asset_ids: [id] };
   const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(response(photoSource));
-  expect((await sealPhotoExportSource("session", selection, id, new AbortController().signal)).raw_members).toBe(1);
+  expect((await sealPhotoExportSource("session", selection, id, new AbortController().signal)).kind).toBe("photos");
   expect(JSON.parse(String(fetcher.mock.calls[0]![1]!.body))).toEqual({ operation_id: id, kind: "photos", photos: selection });
 });

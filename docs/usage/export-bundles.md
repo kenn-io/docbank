@@ -96,9 +96,11 @@ Download does not release the retained job automatically.
 
 ## Export photos
 
-In Photos, choose **Export photos** for the current scope or **Export selection** for selected photos. Choose JPEG or PNG, JPEG quality from 1 to 100, and an optional long edge in pixels. Blank keeps the original size; exports never enlarge an image. **Include metadata** carries source EXIF and unrelated XMP, then writes the current rating, flag, label, caption, creator, copyright, and keywords. **Remove GPS** starts checked. Turning metadata off removes EXIF and XMP from the copy. Source orientation and your rotation apply once; exported orientation is 1.
+In Photos, choose **Export photos** for the current scope or **Export selection** for selected photos. Choose JPEG or PNG, JPEG quality from 1 to 100, and an optional long edge in pixels. Blank keeps the original size; exports never enlarge an image. **Include metadata** carries source EXIF and unrelated XMP, then applies confirmed ratings, flags, labels, captions, creators, copyright and assigned keywords. Untouched embedded credits stay intact; confirmed empty values clear them. **Remove GPS** starts checked. Turning metadata off removes EXIF and XMP from every delivered file. Color profiles remain attached to preserve appearance without conversion. Source orientation and your rotation apply once; exported orientation is 1.
 
 Choose **Prepare**, review the frozen plan, then **Start reviewed export** and **Download verified ZIP**. RAW display members use their embedded JPEG previews; the drawer and manifest label that origin. A RAW file without a supported embedded preview stops preparation. Unsupported color profiles, malformed metadata, sources over 512 MiB, and images over 100 million pixels also stop preparation. Preparation has a five-minute deadline and can be canceled.
+
+Each preparation allows at most 16 photos, 512 MiB of source bytes, 512 million decoded pixels and 1 GiB of rendered copies, within five minutes. One unavailable photo stops the complete preparation; the error names the photo so you can exclude it and retry.
 
 For the CLI, add `photo_render` to an exact-member request, or replace `members` with a `photos` selection. This selection exports the complete current scope; `asset_ids` restricts it to selected display members:
 

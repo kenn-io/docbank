@@ -23,8 +23,7 @@
   }
   function exportPhotos(selected = false): void {
     const ids = selected ? [...photos.selection.selectedIDs] : [];
-    const rawCount = photos.items.filter(row => (!selected || ids.includes(row.asset_id)) && row.media_type.startsWith("image/x-")).length;
-    onexport?.({ label: selected ? "Selected photos" : title, photos: { query: photoQuery, asset_ids: ids, hidden: photos.hidden }, total: selected ? ids.length : photos.total, ...(selected || photos.items.length === photos.total ? { rawCount } : {}) });
+    onexport?.({ label: selected ? "Selected photos" : title, photos: { query: photoQuery, asset_ids: ids, hidden: photos.hidden }, total: selected ? ids.length : photos.total });
   }
   const groups = $derived(groupPhotos(photos.items, photos.grouping));
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));

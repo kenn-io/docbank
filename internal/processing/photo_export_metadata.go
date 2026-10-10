@@ -20,26 +20,44 @@ import (
 const photoXMPJPEGPrefix = "http://ns.adobe.com/xap/1.0/\x00"
 const photoXMPPNGKeyword = "XML:com.adobe.xmp"
 
-func photoExportMetadata(ctx context.Context, source []byte, input store.PhotoExportInput, receipt bundle.PhotoRenderReceipt, pixels []byte) ([]byte, error) {
-	exif, packet, err := photoSourcePackets(source)
-	if err != nil {
-		return nil, err
+type photoPackets struct {
+	exif, xmp, icc   []byte
+	unsupportedColor bool
+}
+
+func photoExportMetadata(ctx context.Context, packets photoPackets, input store.PhotoExportInput, receipt bundle.PhotoRenderReceipt, pixels []byte) ([]byte, error) {
+	exif, packet := packets.exif, packets.xmp
+	if !receipt.Profile.IncludeMetadata {
+		exif, packet = nil, nil
 	}
-	if len(exif) > 0 {
-		exif, err = rewritePhotoEXIF(exif, receipt.Width, receipt.Height, receipt.Profile.RemoveGPS)
+	var err error
+	if receipt.Profile.IncludeMetadata {
+		if len(exif) > 0 {
+			exif, err = rewritePhotoEXIF(exif, receipt.Width, receipt.Height, receipt.Profile.RemoveGPS, input.Authored)
+			if err != nil {
+				return nil, err
+			}
+		}
+		packet, err = mergePhotoXMP(ctx, packet, input, receipt)
 		if err != nil {
 			return nil, err
 		}
 	}
-	packet, err = mergePhotoXMP(ctx, packet, input, receipt)
-	if err != nil {
-		return nil, err
-	}
 	var out bytes.Buffer
 	if receipt.Profile.Format == "jpeg" {
 		out.Write(pixels[:2])
+		if len(packets.icc) > 0 {
+			const size = 65519
+			count := (len(packets.icc) + size - 1) / size
+			for i := 0; i < count; i++ {
+				payload := append([]byte("ICC_PROFILE\x00"), byte(i+1), byte(count))
+				payload = append(payload, packets.icc[i*size:min((i+1)*size, len(packets.icc))]...)
+				out.Write([]byte{0xff, 0xe2, byte((len(payload) + 2) >> 8), byte(len(payload) + 2)})
+				out.Write(payload)
+			}
+		}
 		for _, payload := range [][]byte{append([]byte("Exif\x00\x00"), exif...), append([]byte(photoXMPJPEGPrefix), packet...)} {
-			if bytes.HasPrefix(payload, []byte("Exif")) && len(exif) == 0 {
+			if !receipt.Profile.IncludeMetadata || bytes.HasPrefix(payload, []byte("Exif")) && len(exif) == 0 {
 				continue
 			}
 			if len(payload) > 65533 {
@@ -51,10 +69,22 @@ func photoExportMetadata(ctx context.Context, source []byte, input store.PhotoEx
 		out.Write(pixels[2:])
 	} else {
 		out.Write(pixels[:33])
+		if len(packets.icc) > 0 {
+			var compressed bytes.Buffer
+			w := zlib.NewWriter(&compressed)
+			_, err = w.Write(packets.icc)
+			err = errors.Join(err, w.Close())
+			if err != nil {
+				return nil, err
+			}
+			writePhotoPNGChunk(&out, "iCCP", append([]byte("Profile\x00\x00"), compressed.Bytes()...))
+		}
 		if len(exif) > 0 {
 			writePhotoPNGChunk(&out, "eXIf", exif)
 		}
-		writePhotoPNGChunk(&out, "iTXt", append([]byte(photoXMPPNGKeyword+"\x00\x00\x00\x00\x00"), packet...))
+		if receipt.Profile.IncludeMetadata {
+			writePhotoPNGChunk(&out, "iTXt", append([]byte(photoXMPPNGKeyword+"\x00\x00\x00\x00\x00"), packet...))
+		}
 		out.Write(pixels[33:])
 	}
 	return out.Bytes(), nil
@@ -74,7 +104,38 @@ func writePhotoPNGChunk(out *bytes.Buffer, kind string, payload []byte) {
 }
 
 // photoSourcePackets bounds metadata independently of the source's pixel bytes.
-func photoSourcePackets(data []byte) (exif, packet []byte, err error) {
+func photoSourcePackets(data []byte, metadata bool) (result photoPackets, err error) {
+	var exif, packet []byte
+	var iccParts [][]byte
+	iccBytes := 0
+	finish := func() (photoPackets, error) {
+		result.exif, result.xmp = exif, packet
+		if len(iccParts) > 0 {
+			for _, p := range iccParts {
+				if len(p) == 0 {
+					return result, errors.New("incomplete ICC profile")
+				}
+				result.icc = append(result.icc, p...)
+			}
+		}
+		if len(result.icc) > 0 && (len(result.icc) < 132 || len(result.icc) > maxPhotoSidecarBytes || int(binary.BigEndian.Uint32(result.icc)) != len(result.icc) || string(result.icc[36:40]) != "acsp" || string(result.icc[16:20]) != "RGB ") {
+			return result, errors.New("unsupported ICC profile")
+		}
+		if len(result.icc) > 0 {
+			count := int(binary.BigEndian.Uint32(result.icc[128:]))
+			if count < 1 || count > (len(result.icc)-132)/12 {
+				return result, errors.New("malformed ICC tag table")
+			}
+			for i := 0; i < count; i++ {
+				entry := result.icc[132+i*12:]
+				offset, size := uint64(binary.BigEndian.Uint32(entry[4:])), uint64(binary.BigEndian.Uint32(entry[8:]))
+				if offset < uint64(132+12*count) || size < 4 || offset+size > uint64(len(result.icc)) {
+					return result, errors.New("malformed ICC tag bounds")
+				}
+			}
+		}
+		return result, nil
+	}
 	set := func(destination *[]byte, value []byte) error {
 		if len(*destination) != 0 || len(value) == 0 || len(value) > maxPhotoSidecarBytes {
 			return errors.New("duplicate or oversized photo metadata")
@@ -87,32 +148,49 @@ func photoSourcePackets(data []byte) (exif, packet []byte, err error) {
 		position := 2
 		for range visualPreviewMaxJPEGSegments {
 			if position >= len(data) || data[position] != 0xff {
-				return nil, nil, errors.New("malformed JPEG metadata")
+				return result, errors.New("malformed JPEG metadata")
 			}
 			for position < len(data) && data[position] == 0xff {
 				position++
 			}
 			if position >= len(data) {
-				return nil, nil, io.ErrUnexpectedEOF
+				return result, io.ErrUnexpectedEOF
 			}
 			marker := data[position]
 			position++
 			if marker == 0xda || marker == 0xd9 {
-				return exif, packet, nil
+				return finish()
 			}
 			if marker == 0x01 || marker >= 0xd0 && marker <= 0xd7 {
 				continue
 			}
 			if position > len(data)-2 {
-				return nil, nil, io.ErrUnexpectedEOF
+				return result, io.ErrUnexpectedEOF
 			}
 			n := int(binary.BigEndian.Uint16(data[position:]))
 			if n < 2 || n > len(data)-position {
-				return nil, nil, io.ErrUnexpectedEOF
+				return result, io.ErrUnexpectedEOF
 			}
 			payload := data[position+2 : position+n]
 			position += n
-			if marker != 0xe1 {
+			if marker == 0xe2 && bytes.HasPrefix(payload, []byte("ICC_PROFILE\x00")) {
+				if len(payload) < 14 || payload[12] == 0 || payload[13] == 0 || payload[12] > payload[13] {
+					return result, errors.New("malformed JPEG ICC profile")
+				}
+				if len(iccParts) == 0 {
+					iccParts = make([][]byte, int(payload[13]))
+				}
+				index := int(payload[12]) - 1
+				if len(iccParts) != int(payload[13]) || iccParts[index] != nil {
+					return result, errors.New("duplicate ICC profile segment")
+				}
+				iccBytes += len(payload) - 14
+				if iccBytes > maxPhotoSidecarBytes {
+					return result, errors.New("ICC profile exceeds metadata limit")
+				}
+				iccParts[index] = payload[14:]
+			}
+			if !metadata || marker != 0xe1 {
 				continue
 			}
 			switch {
@@ -121,115 +199,154 @@ func photoSourcePackets(data []byte) (exif, packet []byte, err error) {
 			case bytes.HasPrefix(payload, []byte(photoXMPJPEGPrefix)):
 				err = set(&packet, payload[len(photoXMPJPEGPrefix):])
 			case bytes.HasPrefix(payload, []byte("http://ns.adobe.com/xmp/extension/")):
-				return nil, nil, errors.New("extended XMP metadata is unsupported")
+				return result, errors.New("extended XMP metadata is unsupported")
 			}
 			if err != nil {
-				return nil, nil, err
+				return result, err
 			}
 		}
-		return nil, nil, errors.New("too many JPEG segments")
+		return result, errors.New("too many JPEG segments")
 	case bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")):
 		position := 8
 		for range visualPreviewMaxPNGChunks {
 			if position > len(data)-12 {
-				return nil, nil, io.ErrUnexpectedEOF
+				return result, io.ErrUnexpectedEOF
 			}
 			n := int64(binary.BigEndian.Uint32(data[position:]))
 			if n > int64(len(data)-position-12) {
-				return nil, nil, io.ErrUnexpectedEOF
+				return result, io.ErrUnexpectedEOF
 			}
 			kind := string(data[position+4 : position+8])
 			payload := data[position+8 : position+8+int(n)]
 			position += 12 + int(n)
-			if kind == "eXIf" {
+			if kind == "iCCP" {
+				index := bytes.IndexByte(payload, 0)
+				if index < 1 || index > 79 || index+2 > len(payload) || payload[index+1] != 0 || len(result.icc) > 0 {
+					return result, errors.New("malformed PNG ICC profile")
+				}
+				reader, e := zlib.NewReader(bytes.NewReader(payload[index+2:]))
+				if e != nil {
+					return result, e
+				}
+				profile, e := io.ReadAll(io.LimitReader(reader, maxPhotoSidecarBytes+1))
+				e = errors.Join(e, reader.Close())
+				if e != nil {
+					return result, e
+				}
+				result.icc = profile
+			}
+			if kind == "gAMA" && (len(payload) != 4 || binary.BigEndian.Uint32(payload) != 45455) {
+				result.unsupportedColor = true
+			}
+			if kind == "cHRM" && !bytes.Equal(payload, []byte{0, 0, 122, 38, 0, 0, 128, 132, 0, 0, 250, 0, 0, 0, 128, 232, 0, 0, 117, 48, 0, 0, 234, 96, 0, 0, 58, 152, 0, 0, 23, 112}) {
+				result.unsupportedColor = true
+			}
+			if metadata && kind == "eXIf" {
 				err = set(&exif, payload)
 			}
-			if kind == "iTXt" && bytes.HasPrefix(payload, []byte(photoXMPPNGKeyword+"\x00")) {
+			if metadata && kind == "iTXt" && bytes.HasPrefix(payload, []byte(photoXMPPNGKeyword+"\x00")) {
 				text := payload[len(photoXMPPNGKeyword)+1:]
 				if len(text) < 4 || text[0] > 1 || text[1] != 0 {
-					return nil, nil, errors.New("malformed PNG XMP")
+					return result, errors.New("malformed PNG XMP")
 				}
 				compressed := text[0] == 1
 				text = text[2:]
 				for range 2 {
 					at := bytes.IndexByte(text, 0)
 					if at < 0 {
-						return nil, nil, errors.New("malformed PNG XMP")
+						return result, errors.New("malformed PNG XMP")
 					}
 					text = text[at+1:]
 				}
 				if compressed {
 					reader, e := zlib.NewReader(bytes.NewReader(text))
 					if e != nil {
-						return nil, nil, e
+						return result, e
 					}
 					text, e = io.ReadAll(io.LimitReader(reader, maxPhotoSidecarBytes+1))
 					e = errors.Join(e, reader.Close())
 					if e != nil {
-						return nil, nil, e
+						return result, e
 					}
 				}
 				err = set(&packet, text)
 			}
 			if err != nil {
-				return nil, nil, err
+				return result, err
 			}
 			if kind == "IEND" {
-				return exif, packet, nil
+				return finish()
 			}
 		}
-		return nil, nil, errors.New("too many PNG chunks")
+		return result, errors.New("too many PNG chunks")
 	case exifTIFFSignature(data):
 		reader, ok := newExifReader(data)
 		if !ok {
-			return nil, nil, errors.New("invalid RAW EXIF")
+			return result, errors.New("invalid RAW EXIF")
 		}
 		root, ok := reader.typedEntries(reader.u32(4))
 		if !ok {
-			return nil, nil, errors.New("invalid RAW EXIF directory")
+			return result, errors.New("invalid RAW EXIF directory")
 		}
-		if value, ok := root[700]; ok {
-			if err := set(&packet, value.value); err != nil {
-				return nil, nil, err
+		if value, ok := root[34675]; ok {
+			result.icc = value.value
+		}
+		if metadata {
+			if value, ok := root[700]; ok {
+				if err := set(&packet, value.value); err != nil {
+					return result, err
+				}
 			}
+			exif = data
 		}
-		return data, packet, nil
+		return finish()
 	case isSourceMetadataRAF(data):
 		location, found, malformed, err := inspectVisualPreviewRAF(bytes.NewReader(data), int64(len(data)))
 		if err != nil {
-			return nil, nil, err
+			return result, err
 		}
 		if malformed || !found {
-			return nil, nil, errors.New("invalid RAF metadata")
+			return result, errors.New("invalid RAF metadata")
 		}
-		return photoSourcePackets(data[location.offset : location.offset+location.length])
+		return photoSourcePackets(data[location.offset:location.offset+location.length], metadata)
 	case bytes.HasPrefix(data, []byte("RIFF")) && len(data) >= 12 && string(data[8:12]) == "WEBP":
 		for position, count := 12, 0; position < len(data); count++ {
 			if count >= visualPreviewMaxWebPChunks || position > len(data)-8 {
-				return nil, nil, errors.New("malformed WebP metadata")
+				return result, errors.New("malformed WebP metadata")
 			}
 			n := int64(binary.LittleEndian.Uint32(data[position+4:]))
 			if n > int64(len(data)-position-8) {
-				return nil, nil, io.ErrUnexpectedEOF
+				return result, io.ErrUnexpectedEOF
 			}
 			payload := data[position+8 : position+8+int(n)]
 			switch string(data[position : position+4]) {
+			case "ICCP":
+				if len(result.icc) > 0 {
+					return result, errors.New("duplicate ICC profile")
+				}
+				result.icc = payload
 			case "EXIF":
+				if !metadata {
+					break
+				}
 				err = set(&exif, bytes.TrimPrefix(payload, []byte("Exif\x00\x00")))
 			case "XMP ":
+				if !metadata {
+					break
+				}
 				err = set(&packet, payload)
 			}
 			if err != nil {
-				return nil, nil, err
+				return result, err
 			}
 			position += 8 + int(n) + int(n%2)
 		}
 	}
-	return exif, packet, nil
+	return finish()
 }
 
 // Rebuilding only reachable directories removes GPS payloads and stale thumbnails.
-func rewritePhotoEXIF(data []byte, width, height int, removeGPS bool) ([]byte, error) {
+func rewritePhotoEXIF(data []byte, width, height int, removeGPS bool, authored store.PhotoAuthored) ([]byte, error) {
 	r, ok := newExifReader(data)
 	if !ok || r.format != "tiff" {
 		return nil, errors.New("malformed EXIF header")
@@ -249,7 +366,11 @@ func rewritePhotoEXIF(data []byte, width, height int, removeGPS bool) ([]byte, e
 		}
 		for tag, entry := range entries {
 			// These fields address original pixels, alternate images, or duplicate XMP.
-			if slices.Contains([]uint16{0x0111, 0x0117, 0x0144, 0x0145, 0x014a, 0x0201, 0x0202, 700}, tag) || removeGPS && tag == 0x8825 {
+			if slices.Contains([]uint16{0x0111, 0x0117, 0x0144, 0x0145, 0x014a, 0x0201, 0x0202, 700, 0x927c, 0xc634}, tag) || removeGPS && tag == 0x8825 {
+				delete(entries, tag)
+				continue
+			}
+			if tag == 0x010e && authored.Confirmed&store.PhotoConfirmedCaption != 0 || tag == 0x013b && authored.Confirmed&store.PhotoConfirmedCreator != 0 || tag == 0x8298 && authored.Confirmed&store.PhotoConfirmedCopyright != 0 {
 				delete(entries, tag)
 				continue
 			}
@@ -337,14 +458,17 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 	var out bytes.Buffer
 	encoder := xml.NewEncoder(&out)
 	authored := func(n xml.Name) bool {
-		return n.Space == xmpBasicNamespace && (n.Local == "Rating" || n.Local == "Label") || n.Space == teststripXMPNamespace && (n.Local == "Pick" || n.Local == "Rotation") || n.Space == xmpDublinCoreNamespace && (n.Local == "description" || n.Local == "creator" || n.Local == "rights" || n.Local == "subject")
+		return photoXMPConfirmed(n, input)
 	}
 	remove := func(n xml.Name) bool {
 		return authored(n) || receipt.Profile.RemoveGPS && strings.HasPrefix(strings.ToUpper(n.Local), "GPS")
 	}
 	depth, skip, roots, rdf := 0, 0, 0, 0
-	normalized := func(name string) string {
-		switch name {
+	normalized := func(name xml.Name) string {
+		if name.Space != "http://ns.adobe.com/tiff/1.0/" && name.Space != "http://ns.adobe.com/exif/1.0/" {
+			return ""
+		}
+		switch name.Local {
 		case "Orientation":
 			return "1"
 		case "PixelXDimension", "ImageWidth":
@@ -400,13 +524,13 @@ func mergePhotoXMP(ctx context.Context, packet []byte, input store.PhotoExportIn
 				if a.Name.Space == "xmlns" {
 					a.Name = xml.Name{Local: "xmlns:" + a.Name.Local}
 				}
-				if value := normalized(a.Name.Local); value != "" {
+				if value := normalized(a.Name); value != "" {
 					a.Value = value
 				}
 				attrs = append(attrs, a)
 			}
 			t.Attr = attrs
-			if value := normalized(t.Name.Local); value != "" {
+			if value := normalized(t.Name); value != "" {
 				if err := encoder.EncodeElement(value, t); err != nil {
 					return nil, err
 				}
@@ -495,9 +619,44 @@ func writePhotoAuthoredXMP(encoder *xml.Encoder, input store.PhotoExportInput) e
 	}
 	v := input.Authored
 	for _, p := range [][4]string{{xmpBasicNamespace, "Rating", strconv.Itoa(v.Rating), ""}, {xmpBasicNamespace, "Label", v.Label, ""}, {teststripXMPNamespace, "Pick", v.Flag, ""}, {teststripXMPNamespace, "Rotation", "0", ""}, {xmpDublinCoreNamespace, "description", v.Caption, "Alt"}, {xmpDublinCoreNamespace, "creator", v.Creator, "Seq"}, {xmpDublinCoreNamespace, "rights", v.Copyright, "Alt"}, {xmpDublinCoreNamespace, "subject", "", "Bag"}} {
+		if !photoXMPConfirmed(xml.Name{Space: p[0], Local: p[1]}, input) {
+			continue
+		}
 		if err := write(p[0], p[1], p[2], p[3]); err != nil {
 			return err
 		}
 	}
 	return encoder.EncodeToken(description.End())
+}
+
+func photoXMPConfirmed(n xml.Name, input store.PhotoExportInput) bool {
+	var bit store.PhotoAuthoredFields
+	switch n.Space {
+	case xmpBasicNamespace:
+		if n.Local == "Rating" {
+			bit = store.PhotoConfirmedRating
+		}
+		if n.Local == "Label" {
+			bit = store.PhotoConfirmedLabel
+		}
+	case teststripXMPNamespace:
+		if n.Local == "Pick" {
+			bit = store.PhotoConfirmedFlag
+		}
+		if n.Local == "Rotation" {
+			return true
+		}
+	case xmpDublinCoreNamespace:
+		switch n.Local {
+		case "description":
+			bit = store.PhotoConfirmedCaption
+		case "creator":
+			bit = store.PhotoConfirmedCreator
+		case "rights":
+			bit = store.PhotoConfirmedCopyright
+		case "subject":
+			return len(input.Keywords) > 0
+		}
+	}
+	return bit != 0 && input.Authored.Confirmed&bit != 0
 }

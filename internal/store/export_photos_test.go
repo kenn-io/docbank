@@ -25,7 +25,7 @@ func TestPhotoExportPlanSealsFrozenInputsAndOwnsArtifact(t *testing.T) {
 	require.Len(t, inputs, 1)
 	raw, err := canonical.Marshal(inputs[0])
 	require.NoError(t, err)
-	a := PreparedPhotoExport{Receipt: bundle.PhotoRenderReceipt{Profile: *r.PhotoRender, Source: m, Input: raw, Width: 10, Height: 20}, SHA256: fakeHash("b3"), Size: 99, Physical: BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 99, Created: true}}
+	a := PreparedPhotoExport{Input: inputs[0], Receipt: bundle.PhotoRenderReceipt{Version: bundle.PhotoRenderReceiptVersion, Profile: *r.PhotoRender, Source: m, InputSHA256: pageChecksum(raw), Width: 10, Height: 20}, SHA256: fakeHash("b3"), Size: 99, Physical: BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 99, Created: true}}
 	asset, err := s.PhotoAssetForNode(ctx, n.ID)
 	require.NoError(t, err)
 	rating := 4
@@ -38,7 +38,9 @@ func TestPhotoExportPlanSealsFrozenInputsAndOwnsArtifact(t *testing.T) {
 	require.Zero(t, roots)
 	inputs, err = s.ExportPhotoInputs(ctx, "owner", r)
 	require.NoError(t, err)
-	a.Receipt.Input, err = canonical.Marshal(inputs[0])
+	a.Input = inputs[0]
+	raw, err = canonical.Marshal(inputs[0])
+	a.Receipt.InputSHA256 = pageChecksum(raw)
 	require.NoError(t, err)
 	plan, err := s.SealPhotoExportPlan(ctx, "owner", r, []PreparedPhotoExport{a})
 	require.NoError(t, err)
@@ -96,8 +98,8 @@ func TestPhotoExportResolvesCompleteScopeAndSelectedDisplayMembers(t *testing.T)
 	}
 	selection := bundle.PhotoExportSelection{Query: snapshotTestQuery(t, `{ "sort": { "field": "name", "direction": "asc" } }`)}
 	members, _, err := s.ResolvePhotoExportMembers(ctx, selection)
-	require.NoError(t, err)
-	require.Len(t, members, MaxDocumentCatalogPageSize+1)
+	require.ErrorIs(t, err, bundle.ErrLimit)
+	require.Empty(t, members)
 	selection.AssetIDs = selected
 	members, _, err = s.ResolvePhotoExportMembers(ctx, selection)
 	require.NoError(t, err)

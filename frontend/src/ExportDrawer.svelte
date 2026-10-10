@@ -4,7 +4,7 @@
   import { Button, Card, Chip, CopyButton, DetailDrawer, IconButton, SelectDropdown, Spinner, TextInput } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { ExportSession, type ExportInput, type ExportState } from "./exportState.js";
-  import { maxExportMembers, type RolePolicy, type ExportOptions } from "./exports.js";
+  import { maxExportMembers, maxPhotoExportMembers, type RolePolicy, type ExportOptions } from "./exports.js";
   import { formatBytes, formatDate } from "./format.js";
 
   interface Props { session: string; open: boolean; input: ExportInput | null; onclose: () => void; onauthfailure: (error: unknown) => void; onactivechange?: (active: boolean) => void }
@@ -20,6 +20,7 @@
   const controller = new ExportSession(untrack(() => session), next => view = next);
   let authFailureHandled = false;
   const options = [{ value: "omit", label: "Do not include" }, { value: "required", label: "Required — fail if unavailable" }, { value: "optional", label: "Optional — allow unavailable" }];
+  const memberLimit = $derived(photo ? maxPhotoExportMembers : maxExportMembers);
   const count = $derived(input ? ("members" in input ? input.members.length : "snapshot" in input ? input.snapshot.total : input.total) : 0);
   const recipeOptions = $derived([{ value: "", label: "Choose a retained recipe" }, ...(view.recipes ?? []).map(choice => ({ value: choice.recipe_sha256, label: `${choice.paper} · Chromium ${choice.renderer_version} · ${choice.messages}/${count} messages${choice.ambiguous ? ` · ${choice.ambiguous} ambiguous` : ""}` }))]);
   const busy = $derived(["preparing", "starting", "running"].includes(view.status));
@@ -79,10 +80,9 @@
       <section class="source" aria-label="Export source">
         <span>Source</span><strong>{admitted?.label ?? input?.label ?? "No source selected"}</strong>
         <p>{(plan?.total ?? count).toLocaleString()} {photo ? "photo" : "exact document"}{(plan?.total ?? count) === 1 ? "" : "s"}</p>
-        {#if photo && input && "photos" in input}<p>{plan?.source.raw_members ?? input.rawCount ?? "Uncounted"} RAW display members · embedded previews</p>{/if}
         {#if !admitted && input && "snapshot" in input}<p>All frozen pages are copied and checked before planning. Changes to the live query do not change this source.</p>{/if}
         {#if !admitted && input && "collectionID" in input}<p>Completed import receipts freeze the original imported versions. Later edits and changes to the live collection do not change this source.</p>{/if}
-        {#if count > maxExportMembers}<p class="error">Exports are limited to 100,000 documents. Refine the query and capture a new snapshot.</p>{/if}
+        {#if count > memberLimit}<p class="error">Choose at most {memberLimit.toLocaleString()} {photo ? "photos" : "documents"}.</p>{/if}
       </section>
 
       <section class="choices" aria-label="Download settings">
@@ -96,16 +96,17 @@
             <div class="role-choice"><strong>Format</strong><SelectDropdown title="Photo format" value={photoFormat} options={[{ value: "jpeg", label: "JPEG" }, { value: "png", label: "PNG" }]} onchange={value => { photoFormat = value; if (value === "png") quality = "90"; }} /></div>
             {#if photoFormat === "jpeg"}<label for="photo-export-quality">JPEG quality, 1–100</label><TextInput id="photo-export-quality" ariaLabel="JPEG quality" bind:value={quality} block />{/if}
             <label for="photo-export-edge">Long edge, pixels</label><TextInput id="photo-export-edge" ariaLabel="Long edge, pixels" bind:value={longEdge} placeholder="Original size" block />
-            <p>Blank keeps the original size. Smaller originals keep their size.</p>
+            <p>Blank keeps the original size. Smaller originals keep their size. Up to 16 photos per export.</p>
             <label><input type="checkbox" bind:checked={includeMetadata} /> Include metadata</label>
             <label><input type="checkbox" bind:checked={removeGPS} disabled={!includeMetadata} /> Remove GPS</label>
-            <Button tone="info" disabled={busy || count === 0 || count > maxExportMembers || !validPhotoSettings} onclick={() => void controller.preview()}>{view.status === "preparing" ? "Preparing…" : "Prepare"}</Button>
+            <p>Color profiles stay attached to preserve appearance.</p>
+            <Button tone="info" disabled={busy || count === 0 || count > memberLimit || !validPhotoSettings} onclick={() => void controller.preview()}>{view.status === "preparing" ? "Preparing…" : "Prepare"}</Button>
           {:else}
           <div class="role-choice"><strong>Email body PDFs</strong><SelectDropdown title="Email body PDF" value={emailPDF} options={[{ value: "omit", label: "Do not include" }, { value: "include", label: "Include retained body PDFs" }]} onchange={value => { emailPDF = value; if (value === "include") { original = "omit"; packaging = "bounded"; } }} /></div>
           {#if emailPDF !== "omit"}
             <div class="email-choices">
               <p>Each body stays a separate verified PDF. Choose a qualified retained recipe; this export does not render missing PDFs or concatenate attachments.</p>
-              <Button disabled={busy || count === 0 || count > maxExportMembers} onclick={() => void findRecipes()}>Find retained PDF recipes</Button>
+              <Button disabled={busy || count === 0 || count > memberLimit} onclick={() => void findRecipes()}>Find retained PDF recipes</Button>
               {#if view.recipes}
                 {#if view.recipes.length}<SelectDropdown title="Retained PDF recipe" value={recipe} options={recipeOptions} onchange={value => recipe = value} />
                 {:else}<p>No qualified retained body PDF recipe was found. Generate the message PDFs first, then find recipes again.</p>{/if}
@@ -144,7 +145,7 @@
           <p>Sharing is explicit and keeps every occurrence in the manifest. Equal subjects or Message-ID values never establish a duplicate.</p>
           <div class="role-choice"><strong>ZIP packaging</strong><SelectDropdown title="ZIP packaging" value={packaging} options={[{ value: "flat", label: "Single flat archive" }, { value: "bounded", label: "Up to 1,000 outputs / 512 MiB per volume" }, { value: "one", label: "One output / 512 MiB per volume" }]} onchange={value => packaging = value} /></div>
           {#if packaging !== "flat"}<p>One browser download contains numbered ZIP volumes and a complete parent manifest. No output is split; an output over 512 MiB stops planning.</p>{/if}
-          <Button tone="info" disabled={busy || count === 0 || count > maxExportMembers || [original, text, pages, emailPDF].every(value => value === "omit") || emailPDF !== "omit" && !recipe} onclick={() => void controller.preview()}>
+          <Button tone="info" disabled={busy || count === 0 || count > memberLimit || [original, text, pages, emailPDF].every(value => value === "omit") || emailPDF !== "omit" && !recipe} onclick={() => void controller.preview()}>
             {view.status === "preparing" ? "Copying source and freezing plan…" : "Preview export"}
           </Button>
           {/if}
@@ -163,7 +164,7 @@
         <Card level="default" padding="sm" title={admitted ? "Admitted export plan" : "Review this frozen plan"}>
           <dl>
             <div><dt>{plan.photo_render ? "Photos" : "Documents"}</dt><dd data-testid="export-total">{plan.total.toLocaleString()}</dd></div>
-            {#if plan.photo_render}<div><dt>Photo format</dt><dd>{plan.photo_render.format.toUpperCase()} · {plan.photo_render.long_edge || "Original"} pixels</dd></div><div><dt>Embedded RAW previews</dt><dd>{plan.source.raw_members ?? 0}</dd></div>{/if}
+            {#if plan.photo_render}<div><dt>Photo format</dt><dd>{plan.photo_render.format.toUpperCase()} · {plan.photo_render.long_edge || "Original"} pixels</dd></div><div><dt>Embedded RAW previews</dt><dd>{plan.embedded_previews ?? 0}</dd></div>{/if}
             <div><dt>Role bytes</dt><dd>{formatBytes(plan.role_bytes)} · {plan.role_entries.toLocaleString()} files</dd></div>
             {#if plan.counts && !plan.photo_render}
               <div><dt>Message occurrences</dt><dd data-testid="export-message-count">{plan.counts.messages.toLocaleString()}</dd></div>

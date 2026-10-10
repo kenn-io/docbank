@@ -357,22 +357,10 @@ func encodeVisualPreview(
 	decoded image.Image,
 	sourceWidth, sourceHeight, orientation int,
 ) (VisualPreviewProduct, error) {
-	orientedWidth, orientedHeight := visualPreviewOrientedDimensions(sourceWidth, sourceHeight, orientation)
-	width, height := boundedVisualPreviewDimensionsForEdge(orientedWidth, orientedHeight, base.Recipe.MaxEdgePixels)
-	resizeWidth, resizeHeight := width, height
-	if visualPreviewOrientationSwapsDimensions(orientation) {
-		resizeWidth, resizeHeight = height, width
-	}
-	resized := image.NewNRGBA(image.Rect(0, 0, resizeWidth, resizeHeight))
-	if resizeWidth == sourceWidth && resizeHeight == sourceHeight {
-		draw.Draw(resized, resized.Bounds(), decoded, decoded.Bounds().Min, draw.Src)
-	} else {
-		xdraw.CatmullRom.Scale(resized, resized.Bounds(), decoded, decoded.Bounds(), draw.Src, nil)
-	}
-	preview := applyVisualPreviewOrientation(resized, orientation)
-	matte := image.NewRGBA(preview.Bounds())
-	draw.Draw(matte, matte.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
-	draw.Draw(matte, matte.Bounds(), preview, preview.Bounds().Min, draw.Over)
+	preview := transformPhotoPixels(decoded, orientation, base.Recipe.MaxEdgePixels)
+	width, height := preview.Bounds().Dx(), preview.Bounds().Dy()
+	matte := whitePhotoMatte(preview)
+
 	var encoded bytes.Buffer
 	if err := jpeg.Encode(&encoded, matte, &jpeg.Options{Quality: visualPreviewJPEGQuality}); err != nil {
 		return VisualPreviewProduct{}, fmt.Errorf("encoding visual preview: %w", err)
@@ -432,9 +420,6 @@ func inspectVisualPreviewPNG(
 		if length > sourceSize-offset-12 {
 			return 0, false, false, true, nil
 		}
-		if chunkType == "IDAT" {
-			return orientation, unsupportedColor, unsupportedMetadata, false, nil
-		}
 		switch chunkType {
 		case "iCCP":
 			unsupportedColor = true
@@ -456,7 +441,10 @@ func inspectVisualPreviewPNG(
 			}
 			length = 0
 		case "IEND":
-			return 0, false, false, true, nil
+			if length != 0 {
+				return 0, false, false, true, nil
+			}
+			return orientation, unsupportedColor, unsupportedMetadata, false, nil
 		}
 		if _, err := source.Seek(length+4, io.SeekCurrent); err != nil {
 			return 0, false, false, false, err
@@ -802,4 +790,29 @@ func boundedVisualPreviewDimensionsForEdge(width, height, edge int) (int, int) {
 	}
 	return max(1, (width*edge+height/2)/height),
 		edge
+}
+
+func transformPhotoPixels(decoded image.Image, orientation, edge int) *image.NRGBA {
+	width, height := decoded.Bounds().Dx(), decoded.Bounds().Dy()
+	orientedWidth, orientedHeight := visualPreviewOrientedDimensions(width, height, orientation)
+	if edge == 0 {
+		edge = max(orientedWidth, orientedHeight)
+	}
+	w, h := boundedVisualPreviewDimensionsForEdge(orientedWidth, orientedHeight, edge)
+	if visualPreviewOrientationSwapsDimensions(orientation) {
+		w, h = h, w
+	}
+	resized := image.NewNRGBA(image.Rect(0, 0, w, h))
+	if w == width && h == height {
+		draw.Draw(resized, resized.Bounds(), decoded, decoded.Bounds().Min, draw.Src)
+	} else {
+		xdraw.CatmullRom.Scale(resized, resized.Bounds(), decoded, decoded.Bounds(), draw.Src, nil)
+	}
+	return applyVisualPreviewOrientation(resized, orientation)
+}
+func whitePhotoMatte(pixels image.Image) *image.RGBA {
+	matte := image.NewRGBA(pixels.Bounds())
+	draw.Draw(matte, matte.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
+	draw.Draw(matte, matte.Bounds(), pixels, pixels.Bounds().Min, draw.Over)
+	return matte
 }

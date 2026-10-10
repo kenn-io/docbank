@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -13,6 +12,7 @@ import (
 )
 
 type PhotoExportInput struct {
+	Name          string        `json:"name"`
 	Member        bundle.Member `json:"member"`
 	FileID        string        `json:"file_id"`
 	AssetRevision int64         `json:"asset_revision"`
@@ -24,6 +24,7 @@ type PhotoExportInput struct {
 }
 
 type PreparedPhotoExport struct {
+	Input    PhotoExportInput
 	Receipt  bundle.PhotoRenderReceipt
 	SHA256   string
 	Size     int64
@@ -61,6 +62,12 @@ func (s *Store) ExportPlanReplay(ctx context.Context, owner string, r bundle.Pla
 	if err := validatePhotoPlanRequest(r); err != nil {
 		return bundle.Plan{}, false, err
 	}
+	if err := bundle.ValidateVolumeLimits(r.VolumeLimits); err != nil {
+		return bundle.Plan{}, false, err
+	}
+	if err := bundle.ValidateDuplicatePolicy(r.DuplicatePolicy); err != nil {
+		return bundle.Plan{}, false, err
+	}
 	raw, err := canonical.Marshal(r)
 	if err != nil {
 		return bundle.Plan{}, false, err
@@ -85,6 +92,9 @@ func (s *Store) ExportPlanReplay(ctx context.Context, owner string, r bundle.Pla
 
 // ResolvePhotoExportMembers uses the same complete population as Photos browsing.
 func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.PhotoExportSelection) ([]bundle.Member, string, error) {
+	if len(selection.AssetIDs) > bundle.MaxPhotoExportMembers {
+		return nil, "", fmt.Errorf("%w: photo exports allow at most %d photos", bundle.ErrLimit, bundle.MaxPhotoExportMembers)
+	}
 	selected := make(map[string]bool, len(selection.AssetIDs))
 	for _, id := range selection.AssetIDs {
 		if validateUUIDv4(id) != nil || selected[id] {
@@ -99,6 +109,9 @@ func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.
 		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: selection.Query, Hidden: selection.Hidden, PageSize: MaxDocumentCatalogPageSize}, cursor)
 		if err != nil {
 			return nil, "", err
+		}
+		if len(selection.AssetIDs) == 0 && page.Total > bundle.MaxPhotoExportMembers {
+			return nil, "", fmt.Errorf("%w: photo exports allow at most %d photos", bundle.ErrLimit, bundle.MaxPhotoExportMembers)
 		}
 		if len(selection.AssetIDs) == 0 && page.Total > bundle.MaxMembers {
 			return nil, "", bundle.ErrLimit
@@ -138,7 +151,7 @@ func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.
 func (s *Store) exportPhotoInput(ctx context.Context, q metadataQuerier, m bundle.Member) (PhotoExportInput, error) {
 	i := PhotoExportInput{Member: m, Keywords: []string{}}
 	var hidden sql.NullString
-	err := q.QueryRowContext(ctx, `SELECT f.file_id,f.revision,a.revision,n.revision,v.mime_type,a.hidden_at FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id WHERE n.id=? AND v.version_id=? AND v.blob_hash=? AND v.size=? AND a.display_file_id=f.file_id AND a.excluded_at IS NULL AND n.trashed_at IS NULL`, m.NodeID, m.VersionID, m.SHA256, m.Size).Scan(&i.FileID, &i.FileRevision, &i.AssetRevision, &i.NodeRevision, &i.MediaType, &hidden)
+	err := q.QueryRowContext(ctx, `SELECT f.file_id,f.revision,a.revision,n.revision,v.mime_type,a.hidden_at,n.name FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id WHERE n.id=? AND v.version_id=? AND v.blob_hash=? AND v.size=? AND a.display_file_id=f.file_id AND a.excluded_at IS NULL AND n.trashed_at IS NULL`, m.NodeID, m.VersionID, m.SHA256, m.Size).Scan(&i.FileID, &i.FileRevision, &i.AssetRevision, &i.NodeRevision, &i.MediaType, &hidden, &i.Name)
 	if err != nil {
 		return i, err
 	}
@@ -175,6 +188,9 @@ func (s *Store) ExportPhotoInputs(ctx context.Context, owner string, r bundle.Pl
 	if err != nil {
 		return nil, err
 	}
+	if source.Total > bundle.MaxPhotoExportMembers {
+		return nil, fmt.Errorf("%w: photo exports allow at most %d photos", bundle.ErrLimit, bundle.MaxPhotoExportMembers)
+	}
 	if source.State != "sealed" || source.MemberHash != r.MemberHash {
 		return nil, bundle.ErrConflict
 	}
@@ -199,10 +215,11 @@ func (s *Store) SealPhotoExportPlan(ctx context.Context, owner string, r bundle.
 		if _, exists := prepared[a.Receipt.Source.VersionID]; exists {
 			return bundle.Plan{}, bundle.ErrConflict
 		}
-		var input PhotoExportInput
-		if json.Unmarshal(a.Receipt.Input, &input, json.RejectUnknownMembers(true)) != nil {
+		raw, err := canonical.Marshal(a.Input)
+		if err != nil || pageChecksum(raw) != a.Receipt.InputSHA256 || a.Input.Member != a.Receipt.Source {
 			return bundle.Plan{}, bundle.ErrConflict
 		}
+
 		prepared[a.Receipt.Source.VersionID] = a
 	}
 	return s.createExportPlan(ctx, owner, r, prepared)

@@ -10,7 +10,7 @@ import {
   type ExportSource, type RolePolicy, type ExportOptions, type EmailPDFRecipeChoice, type OutputProblems, type AttachmentPublications,
 } from "./exports.js";
 
-export type ExportInput = { label: string; photos: PhotoExportSelection; total: number; rawCount?: number } | { label: string; members: readonly ExportMember[] } | { label: string; snapshot: SnapshotPage } | { label: string; collectionID: string; total: number };
+export type ExportInput = { label: string; photos: PhotoExportSelection; total: number } | { label: string; members: readonly ExportMember[] } | { label: string; snapshot: SnapshotPage } | { label: string; collectionID: string; total: number };
 export interface ReviewedExport { plan: ExportPlan; preview: ExportPreview; label: string }
 export interface ActiveExport { plan: ExportPlan; label: string; id: string; job?: ExportJob }
 export interface ExportState {

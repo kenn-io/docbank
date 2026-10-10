@@ -353,17 +353,7 @@ func sealExportMembers(ctx context.Context, tx *sql.Tx, owner string, source *bu
 	source.Total = len(members)
 	source.MemberHash = hash
 	source.SourceBytes = total
-	if source.Kind == "photos" {
-		for _, m := range members {
-			var media string
-			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(mime_type,'') FROM content_versions WHERE version_id=?`, m.VersionID).Scan(&media); err != nil {
-				return err
-			}
-			if slices.Contains([]string{"image/x-sony-arw", "image/x-adobe-dng", "image/x-canon-cr2", "image/x-nikon-nef", "image/x-fuji-raf"}, media) {
-				source.RAWMembers++
-			}
-		}
-	}
+
 	source.ExpiresAt = exportDeadline(10 * time.Minute)
 	raw, err := canonical.Marshal(source)
 	if err != nil {

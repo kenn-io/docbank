@@ -2,6 +2,7 @@ package processing
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -23,6 +24,79 @@ import (
 func photoRenderInput(data []byte, mediaType string) store.PhotoExportInput {
 	h := sha256.Sum256(data)
 	return store.PhotoExportInput{Member: bundle.Member{NodeID: 1, VersionID: "11111111-1111-4111-8111-111111111111", SHA256: hex.EncodeToString(h[:]), Size: int64(len(data))}, MediaType: mediaType, Keywords: []string{}}
+}
+
+func TestPhotoExportTrailingEXIFCreditsNamespacesAndICC(t *testing.T) {
+	t.Parallel()
+	var source bytes.Buffer
+	require.NoError(t, png.Encode(&source, image.NewNRGBA(image.Rect(0, 0, 3, 2))))
+	var late bytes.Buffer
+	late.Write(source.Bytes()[:source.Len()-12])
+	writePhotoPNGChunk(&late, "eXIf", syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
+	late.Write(source.Bytes()[source.Len()-12:])
+	out, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(late.Bytes()), photoRenderInput(late.Bytes(), "image/png"), bundle.PhotoRenderProfile{Format: "png", Quality: 90, IncludeMetadata: true})
+	require.NoError(t, err)
+	assert.Equal(t, 2, receipt.Width)
+	decoded, err := png.Decode(bytes.NewReader(out))
+	require.NoError(t, err)
+	assert.Equal(t, image.Rect(0, 0, 2, 3), decoded.Bounds())
+	packet := []byte(photoSidecarHeader + ` dc:creator="Embedded credit" dc:rights="Embedded rights" dc:description="Embedded caption" xmlns:keep="https://example.org/photo/" keep:Orientation="77"><keep:ImageWidth>12345</keep:ImageWidth>` + photoSidecarFooter)
+	input := store.PhotoExportInput{Authored: store.PhotoAuthored{Rating: 4, Confirmed: store.PhotoConfirmedRating}}
+	merged, err := mergePhotoXMP(t.Context(), packet, input, receipt)
+	require.NoError(t, err)
+	for _, value := range []string{"Embedded credit", "Embedded rights", "Embedded caption", "77", "12345"} {
+		assert.Contains(t, string(merged), value)
+	}
+	input.Authored.Confirmed |= store.PhotoConfirmedCaption
+	merged, err = mergePhotoXMP(t.Context(), packet, input, receipt)
+	require.NoError(t, err)
+	assert.NotContains(t, string(merged), "Embedded caption")
+	assert.Contains(t, string(merged), "Embedded credit")
+	profile := syntheticPhotoICC()
+
+	jpegSource := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe2, append([]byte("ICC_PROFILE\x00\x01\x01"), profile...))
+	for _, format := range []string{"jpeg", "png"} {
+		out, _, err := RenderPhotoExport(t.Context(), bytes.NewReader(jpegSource), photoRenderInput(jpegSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: format, Quality: 90})
+		require.NoError(t, err)
+		packets, err := photoSourcePackets(out, true)
+		require.NoError(t, err)
+		assert.Equal(t, profile, packets.icc)
+		assert.Empty(t, packets.xmp)
+		assert.Empty(t, packets.exif)
+	}
+	budget := photoExportBudget{pixels: 5}
+	_, _, err = renderPhotoExport(t.Context(), bytes.NewReader(jpegSource), photoRenderInput(jpegSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: "png", Quality: 90}, &budget)
+	require.ErrorIs(t, err, bundle.ErrLimit)
+}
+
+func BenchmarkPhotoExport24MP(b *testing.B) {
+	frame := image.NewNRGBA(image.Rect(0, 0, 6000, 4000))
+	var seed uint32 = 1
+	for i := 0; i < len(frame.Pix); i += 4 {
+		seed = seed*1664525 + 1013904223
+		frame.Pix[i], frame.Pix[i+1], frame.Pix[i+2], frame.Pix[i+3] = byte(seed>>24), byte(seed>>16), byte(seed>>8), 255
+	}
+	var source bytes.Buffer
+	if err := jpeg.Encode(&source, frame, &jpeg.Options{Quality: 90}); err != nil {
+		b.Fatal(err)
+	}
+	input := photoRenderInput(source.Bytes(), "image/jpeg")
+	for _, setting := range []struct {
+		name, format string
+		edge         int
+	}{{"JPEG_original", "jpeg", 0}, {"JPEG_2048", "jpeg", 2048}, {"PNG_original", "png", 0}} {
+		b.Run(setting.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				if _, _, err := RenderPhotoExport(context.Background(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: setting.format, Quality: 90, LongEdge: setting.edge}); err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.StopTimer()
+			b.ReportMetric(b.Elapsed().Seconds()*bundle.MaxPhotoExportMembers/float64(b.N), "s/16photos")
+		})
+	}
 }
 
 func TestPhotoExportOrientationAndAuthoredRotation(t *testing.T) {
@@ -88,10 +162,10 @@ func TestPhotoExportSizeQualityAndMetadataOff(t *testing.T) {
 		out, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90, LongEdge: test.edge})
 		require.NoError(t, err)
 		assert.Equal(t, test.want, receipt.Width)
-		exif, xmp, err := photoSourcePackets(out)
+		packets, err := photoSourcePackets(out, true)
 		require.NoError(t, err)
-		assert.Empty(t, exif)
-		assert.Empty(t, xmp)
+		assert.Empty(t, packets.exif)
+		assert.Empty(t, packets.xmp)
 	}
 	var outputs [][]byte
 	for _, quality := range []int{10, 95} {
@@ -124,7 +198,7 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 	external := gpsOffset + 18
 	writeSyntheticTIFFIFD(exif, gpsOffset, []syntheticTIFFEntry{tiffASCII(0x001b, "GPS-PAYLOAD")}, &external)
 	packet := []byte(photoSidecarHeader + ` xmp:Rating="5" dc:description="Old caption" xmlns:exif="http://ns.adobe.com/exif/1.0/" exif:GPSLatitude="12,34N" xmlns:keep="https://example.org/photo/" keep:Lens="Synthetic lens"><exif:Orientation>6</exif:Orientation>` + photoSidecarFooter)
-	input := store.PhotoExportInput{Authored: store.PhotoAuthored{Flag: "reject"}, Keywords: []string{"landscape", "reviewed"}}
+	input := store.PhotoExportInput{Authored: store.PhotoAuthored{Confirmed: store.PhotoConfirmedAll, Flag: "reject"}, Keywords: []string{"landscape", "reviewed"}}
 	receipt := bundle.PhotoRenderReceipt{Profile: bundle.PhotoRenderProfile{RemoveGPS: true}, Width: 2, Height: 3}
 	merged, err := mergePhotoXMP(t.Context(), packet, input, receipt)
 	require.NoError(t, err)
@@ -133,11 +207,13 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 	assert.NotContains(t, string(merged), "Old caption")
 	values, err := ReadPhotoSidecar(t.Context(), merged)
 	require.NoError(t, err)
-	assert.Equal(t, input.Authored, values)
+	expected := input.Authored
+	expected.Confirmed = 0
+	assert.Equal(t, expected, values)
 	assert.Contains(t, string(merged), "landscape")
 	assert.Contains(t, string(merged), "reviewed")
 	for _, strip := range []bool{false, true} {
-		out, err := rewritePhotoEXIF(exif, 2, 3, strip)
+		out, err := rewritePhotoEXIF(exif, 2, 3, strip, input.Authored)
 		require.NoError(t, err)
 		reader, ok := newExifReader(out)
 		require.True(t, ok)
@@ -157,12 +233,14 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 		out, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(data), in, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true, RemoveGPS: true})
 		require.NoError(t, err)
 		assert.Equal(t, 2, receipt.Width)
-		outExif, outXMP, err := photoSourcePackets(out)
+		packets, err := photoSourcePackets(out, true)
 		require.NoError(t, err)
-		assert.NotContains(t, string(outExif), "GPS-PAYLOAD")
-		actual, err := ReadPhotoSidecar(t.Context(), outXMP)
+		assert.NotContains(t, string(packets.exif), "GPS-PAYLOAD")
+		actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
 		require.NoError(t, err)
-		assert.Equal(t, in.Authored, actual)
+		expected := in.Authored
+		expected.Confirmed = 0
+		assert.Equal(t, expected, actual)
 	}
 }
 
@@ -176,9 +254,9 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 	assert.True(t, receipt.EmbeddedPreview)
 	assert.Equal(t, 2, receipt.Width)
 	assert.Equal(t, 3, receipt.Height)
-	exif, _, err := photoSourcePackets(out)
+	packets, err := photoSourcePackets(out, true)
 	require.NoError(t, err)
-	reader, ok := newExifReader(exif)
+	reader, ok := newExifReader(packets.exif)
 	require.True(t, ok)
 	assert.Equal(t, uint16(1), reader.order.Uint16(reader.entries(reader.u32(4))[0x0112]))
 	missing := syntheticRAWPreviewTIFF(1)
@@ -193,4 +271,36 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 	input.Member.SHA256 = strings.Repeat("0", 64)
 	_, _, err = RenderPhotoExport(t.Context(), bytes.NewReader(bad), input, bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90})
 	require.Error(t, err)
+}
+
+func syntheticPhotoICC() []byte {
+	tags := []string{"wtpt", "rXYZ", "gXYZ", "bXYZ", "rTRC", "gTRC", "bTRC"}
+	profile := make([]byte, 132+12*len(tags))
+	copy(profile[12:16], "mntr")
+	copy(profile[16:20], "RGB ")
+	copy(profile[20:24], "XYZ ")
+	copy(profile[36:40], "acsp")
+	binary.BigEndian.PutUint32(profile[128:], uint32(len(tags)))
+	for i, tag := range tags {
+		entry := profile[132+i*12:]
+		copy(entry, tag)
+		binary.BigEndian.PutUint32(entry[4:], uint32(len(profile)))
+		var value []byte
+		if i < 4 {
+			value = make([]byte, 20)
+			copy(value, "XYZ ")
+			for j, n := range [3]uint32{0xf6d6, 0x10000, 0xd32d} {
+				binary.BigEndian.PutUint32(value[8+j*4:], n)
+			}
+		} else {
+			value = make([]byte, 16)
+			copy(value, "curv")
+			binary.BigEndian.PutUint32(value[8:], 1)
+			binary.BigEndian.PutUint16(value[12:], 563)
+		}
+		binary.BigEndian.PutUint32(entry[8:], uint32(len(value)))
+		profile = append(profile, value...)
+	}
+	binary.BigEndian.PutUint32(profile, uint32(len(profile)))
+	return profile
 }

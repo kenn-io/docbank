@@ -5179,7 +5179,6 @@ export interface Source {
   kind: string;
   member_hash: string;
   query_fingerprint?: string;
-  raw_members?: number;
   request_sha256: string;
   saved_query_id?: string;
   saved_query_revision?: number;
@@ -5200,6 +5199,7 @@ export interface Plan {
   created_at: string;
   document_rows?: number;
   duplicate_policy?: string;
+  embedded_previews?: number;
   expires_at: string;
   fingerprint: string;
   format: string;

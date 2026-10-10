@@ -59,6 +59,9 @@ func validateExportRequest(request exportPreviewRequest) error {
 		return err
 	}
 	if request.PhotoRender != nil {
+		if len(request.Members) > bundle.MaxPhotoExportMembers {
+			return usageError(fmt.Errorf("photo exports allow at most %d photos", bundle.MaxPhotoExportMembers))
+		}
 		if err := request.PhotoRender.Validate(); err != nil {
 			return usageError(err)
 		}
@@ -70,7 +73,7 @@ func validateExportRequest(request exportPreviewRequest) error {
 		if _, err := query.Canonical(request.Photos.Query); err != nil {
 			return usageError(err)
 		}
-		if len(request.Photos.AssetIDs) > bundle.MaxMembers {
+		if len(request.Photos.AssetIDs) > bundle.MaxPhotoExportMembers {
 			return usageError(bundle.ErrLimit)
 		}
 		for _, id := range request.Photos.AssetIDs {

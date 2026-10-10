@@ -8,6 +8,7 @@ export type { ExportSource, ExportPlan, ExportPreview, RolePolicy, RoleSummary, 
 export type ExportOptions = Pick<generated.PlanRequest, "duplicate_policy" | "volume_limits" | "publications" | "photo_render">;
 export type ExportMember = Omit<Member, "revision">;
 
+export const maxPhotoExportMembers = 16;
 export const maxExportMembers = 100_000;
 const maxRoleBytes = 50 * 2 ** 30;
 const maxArchiveBytes = 52 * 2 ** 30;
@@ -47,7 +48,6 @@ function parseSource(value: unknown): ExportSource {
   const r = object(value);
   const out = { id: identity(r.id), request_sha256: hash(r.request_sha256), kind: string(r.kind), state: string(r.state), member_hash: hash(r.member_hash), total: integer(r.total, maxExportMembers, 1), source_bytes: integer(r.source_bytes, maxRoleBytes), created_at: date(r.created_at), expires_at: date(r.expires_at), ...(r.collection_id === undefined ? {} : { collection_id: identity(r.collection_id) }) };
   if (!["photos", "explicit", "upload", "mailbox_collection"].includes(out.kind) || !["uploading", "sealed"].includes(out.state) || (out.kind === "mailbox_collection") !== !!out.collection_id) fail();
-  if (r.raw_members !== undefined) Object.assign(out, { raw_members: integer(r.raw_members, out.total) });
   return out;
 }
 
@@ -111,6 +111,7 @@ export function parseExportPlan(value: unknown, expected: ExportSource, policies
   delete expectedOptions.publications;
   if (JSON.stringify(actualOptions) !== JSON.stringify(expectedOptions)) fail();
   Object.assign(p, actualOptions);
+  if (r.embedded_previews !== undefined) p.embedded_previews = integer(r.embedded_previews, p.total);
   if (r.document_rows !== undefined) p.document_rows = integer(r.document_rows, maxExportMembers + maxRoles, p.total);
   if (r.volumes !== undefined) p.volumes = integer(r.volumes, p.role_entries);
   if ((p.volumes ?? 0) > 0 && !p.volume_limits || p.volume_limits && ((p.role_entries > 0) !== ((p.volumes ?? 0) > 0))) fail();

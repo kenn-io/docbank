@@ -11,7 +11,7 @@ const (
 	// VisualPreviewProcessorDescriptor names every byte-producing choice. Bump
 	// its revision when any of them changes.
 	VisualPreviewProcessorDescriptor = "docbank-visual-preview:jpeg+png+gif-stdlib+webp+embedded-camera-raw+" +
-		xImageDrawVersion + ":max-edge=%d:quality=%d:alpha=white:v7"
+		xImageDrawVersion + ":max-edge=%d:quality=%d:alpha=white:v8"
 )
 
 // BuiltInVisualPreviewRecipe returns a canonical built-in size recipe.

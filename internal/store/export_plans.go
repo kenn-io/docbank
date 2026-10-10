@@ -256,8 +256,12 @@ func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.Pla
 				if err != nil {
 					return err
 				}
+				frozen, err := canonical.Marshal(artifact.Input)
+				if err != nil {
+					return err
+				}
 				current, err := canonical.Marshal(input)
-				if err != nil || string(current) != string(artifact.Receipt.Input) || artifact.Receipt.Source != m || artifact.Receipt.Profile != *r.PhotoRender {
+				if err != nil || string(current) != string(frozen) || artifact.Receipt.Source != m || artifact.Receipt.Profile != *r.PhotoRender {
 					return bundle.ErrConflict
 				}
 				if err = s.EnsureBlobTx(tx, artifact.SHA256, artifact.Size, artifact.Physical); err != nil {
@@ -272,6 +276,9 @@ func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.Pla
 					return err
 				}
 				d.Roles = []bundle.Role{role}
+				if artifact.Receipt.EmbeddedPreview {
+					plan.EmbeddedPreviews++
+				}
 				return write(d)
 			}
 			return resolveExportDocumentRows(ctx, tx, m, r.Roles, publication, write)

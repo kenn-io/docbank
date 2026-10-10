@@ -27,6 +27,7 @@ type RowValidator struct {
 	paths                   map[string]bool
 	volumes                 VolumeCursor
 	duplicates              DuplicateCursor
+	embeddedPreviews        int
 }
 
 func (v *RowValidator) finishParent() error {
@@ -177,7 +178,7 @@ func (v *RowValidator) Add(d Document) error {
 }
 
 func (v *RowValidator) Finish() error {
-	if v.rows != v.Plan.Rows() || v.members != v.Plan.Total || v.volumes.Index != v.Plan.Volumes || v.Plan.Counts != nil && v.Counts != *v.Plan.Counts {
+	if v.embeddedPreviews != v.Plan.EmbeddedPreviews || v.rows != v.Plan.Rows() || v.members != v.Plan.Total || v.volumes.Index != v.Plan.Volumes || v.Plan.Counts != nil && v.Counts != *v.Plan.Counts {
 		return ErrConflict
 	}
 	return v.finishParent()
@@ -193,6 +194,15 @@ func (v *RowValidator) count(d Document) error {
 		v.Counts.UnavailableInventories++
 	}
 	for _, r := range d.Roles {
+		if r.Role == "photo_rendered" {
+			var receipt PhotoRenderReceipt
+			if json.Unmarshal(r.Recipe, &receipt, json.RejectUnknownMembers(true)) != nil {
+				return ErrConflict
+			}
+			if receipt.EmbeddedPreview {
+				v.embeddedPreviews++
+			}
+		}
 		switch r.Status {
 		case "unavailable":
 			v.Counts.Unavailable++

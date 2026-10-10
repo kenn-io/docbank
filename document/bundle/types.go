@@ -64,7 +64,6 @@ type SourceRequest struct {
 }
 
 type Source struct {
-	RAWMembers         int    `json:"raw_members,omitzero"`
 	ID                 string `json:"id"`
 	RequestSHA256      string `json:"request_sha256"`
 	Kind               string `json:"kind"`
@@ -159,25 +158,26 @@ type Document struct {
 // Plan is the bounded header. Documents are streamed separately in identity
 // order; Fingerprint covers the header with Fingerprint empty plus those rows.
 type Plan struct {
-	PhotoRender     *PhotoRenderProfile `json:"photo_render,omitzero"`
-	Format          string              `json:"format"`
-	ID              string              `json:"id"`
-	VaultID         string              `json:"vault_id"`
-	Toolchain       string              `json:"toolchain"`
-	Source          Source              `json:"source"`
-	Roles           []RolePolicy        `json:"roles"`
-	Fingerprint     string              `json:"fingerprint"`
-	Total           int                 `json:"total"`
-	DocumentRows    int                 `json:"document_rows,omitzero"`
-	VolumeLimits    *VolumeLimits       `json:"volume_limits,omitzero"`
-	Volumes         int                 `json:"volumes,omitzero"`
-	DuplicatePolicy string              `json:"duplicate_policy,omitzero"`
-	Counts          *OutputCounts       `json:"counts,omitzero"`
-	RoleEntries     int                 `json:"role_entries"`
-	RoleBytes       int64               `json:"role_bytes"`
-	MetadataBytes   int64               `json:"metadata_bytes"`
-	CreatedAt       string              `json:"created_at"`
-	ExpiresAt       string              `json:"expires_at"`
+	EmbeddedPreviews int                 `json:"embedded_previews,omitzero"`
+	PhotoRender      *PhotoRenderProfile `json:"photo_render,omitzero"`
+	Format           string              `json:"format"`
+	ID               string              `json:"id"`
+	VaultID          string              `json:"vault_id"`
+	Toolchain        string              `json:"toolchain"`
+	Source           Source              `json:"source"`
+	Roles            []RolePolicy        `json:"roles"`
+	Fingerprint      string              `json:"fingerprint"`
+	Total            int                 `json:"total"`
+	DocumentRows     int                 `json:"document_rows,omitzero"`
+	VolumeLimits     *VolumeLimits       `json:"volume_limits,omitzero"`
+	Volumes          int                 `json:"volumes,omitzero"`
+	DuplicatePolicy  string              `json:"duplicate_policy,omitzero"`
+	Counts           *OutputCounts       `json:"counts,omitzero"`
+	RoleEntries      int                 `json:"role_entries"`
+	RoleBytes        int64               `json:"role_bytes"`
+	MetadataBytes    int64               `json:"metadata_bytes"`
+	CreatedAt        string              `json:"created_at"`
+	ExpiresAt        string              `json:"expires_at"`
 }
 
 type JobRequest struct {

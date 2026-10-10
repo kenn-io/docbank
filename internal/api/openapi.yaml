@@ -12068,6 +12068,9 @@ components:
           type: integer
         duplicate_policy:
           type: string
+        embedded_previews:
+          format: int64
+          type: integer
         expires_at:
           type: string
         fingerprint:
@@ -15109,9 +15112,6 @@ components:
           type: string
         query_fingerprint:
           type: string
-        raw_members:
-          format: int64
-          type: integer
         request_sha256:
           type: string
         saved_query_id:

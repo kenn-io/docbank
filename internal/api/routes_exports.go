@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"go.kenn.io/docbank/internal/processing"
 	"net/http"
 	"path/filepath"
 	"reflect"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/internal/processing"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -186,15 +186,12 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 			return nil, NewError(400, "validation", "invalid export plan")
 		}
 		var p bundle.Plan
-		err = g.MutateContext(ctx, func() error {
-			var err error
-			if in.Body.PhotoRender != nil {
-				p, err = processing.PreparePhotoExportPlan(ctx, d.Store, d.Blobs, filepath.Join(d.VaultRoot, "tmp", "exports"), owner, in.Body)
-			} else {
-				p, err = d.Store.CreateExportPlan(ctx, owner, in.Body)
-			}
-			return err
-		})
+		if in.Body.PhotoRender != nil {
+			p, err = processing.PreparePhotoExportPlan(ctx, d.Store, d.Blobs, filepath.Join(d.VaultRoot, "tmp", "exports"), owner, in.Body, g.MutateContext)
+		} else {
+			err = g.MutateContext(ctx, func() error { var e error; p, e = d.Store.CreateExportPlan(ctx, owner, in.Body); return e })
+		}
+
 		if err != nil {
 			return nil, exportProblem(err)
 		}

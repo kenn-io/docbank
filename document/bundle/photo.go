@@ -1,7 +1,6 @@
 package bundle
 
 import (
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 
@@ -24,10 +23,14 @@ func (p PhotoRenderProfile) Validate() error {
 	return nil
 }
 
+const PhotoRenderReceiptVersion = 1
+const MaxPhotoExportMembers = 16
+
 type PhotoRenderReceipt struct {
+	Version         int                `json:"version"`
 	Profile         PhotoRenderProfile `json:"profile"`
 	Source          Member             `json:"source"`
-	Input           jsontext.Value     `json:"input"`
+	InputSHA256     string             `json:"input_sha256"`
 	Width           int                `json:"width"`
 	Height          int                `json:"height"`
 	EmbeddedPreview bool               `json:"embedded_preview"`
@@ -44,15 +47,13 @@ func ValidatePhotoRoles(plan Plan, d Document) error {
 		if plan.PhotoRender == nil || role.Status != "available" && role.Status != "collapsed" || json.Unmarshal(role.Recipe, &receipt, json.RejectUnknownMembers(true)) != nil {
 			return ErrConflict
 		}
-		if receipt.Profile != *plan.PhotoRender || receipt.Profile.Validate() != nil || receipt.Source != d.Member || receipt.Width < 1 || receipt.Height < 1 || int64(receipt.Width)*int64(receipt.Height) > 100000000 || len(receipt.Input) == 0 || !canonical.IsSHA256Hex(role.SHA256) || role.Size < 1 || role.Page != nil {
+		if receipt.Profile != *plan.PhotoRender || receipt.Profile.Validate() != nil || receipt.Source != d.Member || receipt.Width < 1 || receipt.Height < 1 || int64(receipt.Width)*int64(receipt.Height) > 100000000 || receipt.Version != PhotoRenderReceiptVersion || !canonical.IsSHA256Hex(receipt.InputSHA256) || !canonical.IsSHA256Hex(role.SHA256) || role.Size < 1 || role.Page != nil {
 			return ErrConflict
 		}
-		var input struct {
-			Member Member `json:"member"`
-		}
-		if json.Unmarshal(receipt.Input, &input) != nil || input.Member != d.Member || receipt.Profile.LongEdge > 0 && max(receipt.Width, receipt.Height) > receipt.Profile.LongEdge {
+		if receipt.Profile.LongEdge > 0 && max(receipt.Width, receipt.Height) > receipt.Profile.LongEdge {
 			return ErrConflict
 		}
+
 		ext := receipt.Profile.Format
 		if ext == "jpeg" {
 			ext = "jpg"
