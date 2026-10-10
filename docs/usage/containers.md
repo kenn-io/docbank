@@ -25,10 +25,12 @@ The Host allowlist rejects unconfigured names, including on wildcard binds.
 It does not authenticate peers. List the name and port clients use, such as
 `docbank:8485`, in `DOCBANK_ALLOWED_HOSTS`.
 
-Server-path ingest and preflight still require a loopback peer, regardless of
-its key, Host, or forwarding headers. Remote clients send document bytes to
-`POST /api/v1/uploads`; they cannot use those routes to read container-local
-files. Run local imports with `docker exec` when needed. A proxy on loopback
+Server-path ingest and preflight, backup restore, and explicit backup
+repository paths still require a loopback peer, regardless of its key, Host, or
+forwarding headers. Remote clients send document bytes to
+`POST /api/v1/uploads` and back up only to the configured `[backup] repo`; they
+cannot use the API to read or write other container-local paths. Run local
+imports and restores with `docker exec` when needed. A proxy on loopback
 makes its upstream requests local, so its own access policy must protect these
 routes.
 

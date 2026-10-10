@@ -986,7 +986,10 @@ behind the immutable manifests and pagination can be added later without
 changing a top-level array contract. A browser session may use this GET only
 without `repo`, which confines the web application to the daemon's configured
 repository. Backup mutations and arbitrary server-path selection still require
-the master API authority.
+the master API authority. Explicit `repo` values and every restore also require
+a loopback peer, because they name daemon-host paths; non-loopback clients get
+`403` (`loopback_only`) and may create, list, and verify snapshots only in the
+configured repository.
 
 Explicit repository paths are server filesystem paths and must be absolute.
 The CLI resolves a relative `--repo` against its own working directory before
@@ -1839,7 +1842,7 @@ include a `position` span:
 | `validation` | 400, 415, or 422 | malformed request (bad `If-Match`, paths, media type, multipart envelope, or generated validation) |
 | `precondition_required` | 428 | required `If-Match` header missing |
 | `host_forbidden` | 403 | Host is outside the configured authority allowlist |
-| `loopback_only` | 403 | server-path ingest or preflight called by a non-loopback peer |
+| `loopback_only` | 403 | server-path ingest, preflight, backup restore, or explicit backup `repo` called by a non-loopback peer |
 | `digest_mismatch` / `size_mismatch` | 422 | uploaded file bytes disagree with the required declaration; no node/blob authority committed |
 | `too_large` | 413 | upload exceeded its declared size plus bounded multipart overhead |
 | `maintenance_busy` | 503 | exclusive vault maintenance is running or queued; retry the mutation after it finishes |

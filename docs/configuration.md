@@ -784,8 +784,9 @@ The daemon validates its listening address at startup. An invalid setting makes
 - `api_port` must be between `0` and `65535`. Keys contain 1–4096 bytes without
   whitespace or control bytes. Invalid Host allowlist entries fail startup.
 
-Server-path ingest and preflight remain restricted to a loopback `RemoteAddr`.
-Host allowlists and forwarding headers do not change that peer check.
+Server-path ingest and preflight, backup restore, and explicit backup `repo`
+paths remain restricted to a loopback `RemoteAddr`. Host allowlists and
+forwarding headers do not change that peer check.
 
 ## Environment variables
 
