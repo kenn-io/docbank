@@ -13,16 +13,20 @@ import (
 )
 
 var watchCmd = &cobra.Command{
-	Use:   "watch",
-	Short: "Inspect configured watched inboxes",
+	Long: `Watched inboxes are configured in $DOCBANK_HOME/config.toml.
+This command only lists them; edit that config to change what is watched.`,
+	GroupID: groupSources,
+	Use:     "watch",
+	Short:   "Inspect configured watched inboxes",
 }
 
 var watchListJSON bool
 
 var watchListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List effective watch configuration and runner status",
-	Args:  cobra.NoArgs,
+	Example: `  docbank watch list --json`,
+	Use:     "list",
+	Short:   "List effective watch configuration and runner status",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -74,7 +78,7 @@ func writeWatchedInboxes(w io.Writer, items []api.WatchedInbox) error {
 }
 
 func init() {
-	watchListCmd.Flags().BoolVar(&watchListJSON, "json", false, "emit machine-readable JSON")
+	watchListCmd.Flags().BoolVar(&watchListJSON, "json", false, "print JSON to stdout")
 	watchCmd.AddCommand(watchListCmd)
 	rootCmd.AddCommand(watchCmd)
 }

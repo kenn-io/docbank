@@ -31,15 +31,22 @@ var (
 )
 
 var versionsCmd = &cobra.Command{
-	Use:   "versions",
-	Short: "Inspect and maintain immutable content versions",
-	Args:  cobra.NoArgs,
+	Long: `Each put, revert, or edit that changes content adds an immutable content
+version (UUID).
+list shows them newest first; cat prints one; revert (top-level) makes an old
+one current; prune releases history.`,
+	GroupID: groupDocuments,
+	Use:     "versions",
+	Short:   "Inspect and maintain immutable content versions",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
 	},
 }
 
 var versionsListCmd = &cobra.Command{
+	Example: `  docbank versions list id:12
+  docbank versions list /cases/acme/invoice.pdf --json`,
 	Use:   "list <path-or-id>",
 	Short: "List a file's immutable content versions",
 	Args:  cobra.ExactArgs(1),
@@ -94,9 +101,10 @@ var versionsListCmd = &cobra.Command{
 }
 
 var versionsShowCmd = &cobra.Command{
-	Use:   "show <version-id>",
-	Short: "Show one immutable content version",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank versions show <version-uuid> --json`,
+	Use:     "show <version-uuid>",
+	Short:   "Show one immutable content version",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateVersionID(args[0]); err != nil {
 			return err
@@ -135,9 +143,10 @@ var versionsShowCmd = &cobra.Command{
 }
 
 var versionsCatCmd = &cobra.Command{
-	Use:   "cat <version-id>",
-	Short: "Write one immutable content version to stdout",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank versions cat <version-uuid> > old.pdf`,
+	Use:     "cat <version-uuid>",
+	Short:   "Write one immutable content version to stdout",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateVersionID(args[0]); err != nil {
 			return err
@@ -159,11 +168,13 @@ var versionsCatCmd = &cobra.Command{
 }
 
 var versionsPruneCmd = &cobra.Command{
+	Example: `  docbank versions prune id:12 --keep-newest 3
+  docbank versions prune id:12 --keep-newest 3 --run`,
 	Use:   "prune <path-or-id>",
 	Short: "Preview or release selected version history",
-	Long: "Release selected immutable history while retaining the current content. " +
-		"This changes logical reachability only: run gc for loose bytes and storage repack " +
-		"for dead packed space. The default is a dry run.",
+	Long: `Release selected immutable history while retaining the current content. This
+changes logical reachability only: run gc for loose bytes and storage repack for
+dead packed space. The default is a dry run.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		request := api.VersionPruneRequest{
@@ -268,8 +279,8 @@ func validateVersionID(id string) error {
 func init() {
 	versionsListCmd.Flags().IntVar(&versionsLimit, "limit", 100, "maximum versions to return (1-1000)")
 	versionsListCmd.Flags().IntVar(&versionsOffset, "offset", 0, "number of newest versions to skip")
-	versionsListCmd.Flags().BoolVar(&versionsJSON, "json", false, "emit machine-readable JSON")
-	versionsShowCmd.Flags().BoolVar(&versionJSON, "json", false, "emit machine-readable JSON")
+	versionsListCmd.Flags().BoolVar(&versionsJSON, "json", false, "print JSON to stdout")
+	versionsShowCmd.Flags().BoolVar(&versionJSON, "json", false, "print JSON to stdout")
 	versionsPruneCmd.Flags().StringArrayVar(&pruneVersionIDs, "version", nil,
 		"select one version UUID (repeatable; commas are literal)")
 	versionsPruneCmd.Flags().IntVar(&pruneKeepNewest, "keep-newest", 0,
@@ -279,8 +290,8 @@ func init() {
 	versionsPruneCmd.Flags().BoolVar(&pruneAllPrior, "all-prior", false,
 		"remove the complete prior history while retaining current content")
 	versionsPruneCmd.Flags().BoolVar(&pruneRun, "run", false,
-		"actually prune (default is dry-run)")
-	versionsPruneCmd.Flags().BoolVar(&pruneJSON, "json", false, "emit a machine-readable report")
+		"apply the change (default is a dry run)")
+	versionsPruneCmd.Flags().BoolVar(&pruneJSON, "json", false, "print JSON to stdout")
 	versionsCmd.AddCommand(versionsListCmd, versionsShowCmd, versionsCatCmd, versionsPruneCmd)
 	rootCmd.AddCommand(versionsCmd)
 }

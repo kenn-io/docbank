@@ -12,11 +12,14 @@ import (
 var gcRun bool
 
 var gcCmd = &cobra.Command{
-	Use:   "gc",
-	Short: "Reclaim unreachable blobs (dry-run unless --run)",
-	Long: "Remove authority for blobs with no remaining references. With --run, loose " +
-		"files are reclaimed immediately; packed payload becomes logically dead and " +
-		"requires a separate storage repack to reclaim physical pack space.",
+	Example: `  docbank gc
+  docbank gc --run`,
+	GroupID: groupOperations,
+	Use:     "gc",
+	Short:   "Reclaim unreachable blobs (dry-run unless --run)",
+	Long: `Remove authority for blobs with no remaining references. With --run, loose files
+are reclaimed immediately; packed payload becomes logically dead and requires a
+separate storage repack to reclaim physical pack space.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
@@ -52,6 +55,6 @@ var gcCmd = &cobra.Command{
 }
 
 func init() {
-	gcCmd.Flags().BoolVar(&gcRun, "run", false, "actually delete (default is dry-run)")
+	gcCmd.Flags().BoolVar(&gcRun, "run", false, "apply the change (default is a dry run)")
 	rootCmd.AddCommand(gcCmd)
 }

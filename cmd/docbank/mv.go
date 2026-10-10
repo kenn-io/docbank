@@ -30,9 +30,14 @@ type batchMovePlanItem struct {
 }
 
 var mvCmd = &cobra.Command{
-	Use:   "mv <source-path-or-id> <dest-path>",
-	Short: "Move or rename a node (metadata only; bytes never move)",
-	Args:  cobra.ExactArgs(2),
+	Example: `  docbank mv id:12 /cases/acme/invoice-2026.pdf
+  docbank mv /inbox/scans /cases/acme/scans --json`,
+	Long: `Move or rename one node; id:N stays stable. batch applies a bounded JSON
+reorganization plan atomically when several nodes need to move together.`,
+	GroupID: groupDocuments,
+	Use:     "mv <path-or-id> <dest-path>",
+	Short:   "Move or rename a node (metadata only; bytes never move)",
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		source, err := parseNodeSelector(args[0])
 		if err != nil {
@@ -72,8 +77,9 @@ var mvCmd = &cobra.Command{
 }
 
 var mvBatchCmd = &cobra.Command{
-	Use:   "batch <plan.json|->",
-	Short: "Apply an all-or-nothing reorganization plan",
+	Example: `  docbank mv batch moves.json`,
+	Use:     "batch <plan.json|->",
+	Short:   "Apply an all-or-nothing reorganization plan",
 	Long: `Apply one bounded JSON plan as a single metadata transaction.
 
 Each item has "source" (an absolute path or id:<number>) and an absolute
@@ -164,8 +170,8 @@ func readBatchMovePlan(cmd *cobra.Command, path string) (batchMovePlanFile, erro
 }
 
 func init() {
-	mvCmd.Flags().BoolVar(&mvJSON, "json", false, "emit a machine-readable node receipt")
-	mvBatchCmd.Flags().BoolVar(&mvJSON, "json", false, "emit machine-readable move receipts")
+	mvCmd.Flags().BoolVar(&mvJSON, "json", false, "print JSON to stdout")
+	mvBatchCmd.Flags().BoolVar(&mvJSON, "json", false, "print JSON to stdout")
 	mvCmd.AddCommand(mvBatchCmd)
 	rootCmd.AddCommand(mvCmd)
 }

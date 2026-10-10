@@ -16,7 +16,12 @@ func runProcess(args []string, stdout, stderr io.Writer) int {
 	rootCmd.SetErr(stderr)
 	if err := Execute(); err != nil {
 		_, _ = fmt.Fprintln(stderr, "error:", err)
-		return commandExitCode(err, commandStarted)
+		code := commandExitCode(err, commandStarted)
+		cmd, _, _ := rootCmd.Find(args)
+		if hint := commandErrorHint(cmd, err, code, commandStarted); hint != "" {
+			_, _ = fmt.Fprintln(stderr, hint)
+		}
+		return code
 	}
 	return exitSuccess
 }

@@ -18,9 +18,12 @@ type directoryListing struct {
 }
 
 var lsCmd = &cobra.Command{
-	Use:   "ls [path-or-id]",
-	Short: "List a virtual directory",
-	Args:  cobra.MaximumNArgs(1),
+	Example: `  docbank ls
+  docbank ls /cases/acme --json`,
+	GroupID: groupDocuments,
+	Use:     "ls [path-or-id]",
+	Short:   "List one virtual directory (default /)",
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		raw := "/"
 		if len(args) == 1 {
@@ -63,6 +66,6 @@ var lsCmd = &cobra.Command{
 }
 
 func init() {
-	lsCmd.Flags().BoolVar(&lsJSON, "json", false, "emit machine-readable JSON")
+	lsCmd.Flags().BoolVar(&lsJSON, "json", false, "print JSON to stdout")
 	rootCmd.AddCommand(lsCmd)
 }

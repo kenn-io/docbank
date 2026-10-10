@@ -21,10 +21,18 @@ var (
 	labelLookupJSON       bool
 )
 
-var labelsCmd = &cobra.Command{Use: "labels", Short: "Look up package-scoped received and assigned labels"}
+var labelsCmd = &cobra.Command{
+	Long: `Find where a received or assigned Bates label lives. lookup returns all scoped
+matches; use package show or bates show to inspect their package/allocation IDs.`,
+	GroupID: groupProductions,
+	Use:     "labels",
+	Short:   "Look up package-scoped received and assigned labels"}
 
 var labelsLookupCmd = &cobra.Command{
-	Use: "lookup <label>", Short: "Find every scoped match for an exact Bates label", Args: cobra.ExactArgs(1),
+	Example: `  docbank labels lookup ACME000001 --json`,
+	Use:     "lookup <label>",
+	Short:   "Find every scoped match for an exact Bates label",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if labelLookupPackage != "" {
 			if _, err := uuid.Parse(labelLookupPackage); err != nil {
@@ -75,7 +83,7 @@ func init() {
 	labelsLookupCmd.Flags().StringVar(&labelLookupProvenance, "provenance", "", "scope to received or assigned labels")
 	labelsLookupCmd.Flags().StringVar(&labelLookupCursor, "cursor", "", "opaque continuation cursor")
 	labelsLookupCmd.Flags().IntVar(&labelLookupLimit, "limit", 100, "page size: 50, 100, or 250")
-	labelsLookupCmd.Flags().BoolVar(&labelLookupJSON, "json", false, "emit machine-readable JSON")
+	labelsLookupCmd.Flags().BoolVar(&labelLookupJSON, "json", false, "print JSON to stdout")
 	labelsCmd.AddCommand(labelsLookupCmd)
 	rootCmd.AddCommand(labelsCmd)
 }

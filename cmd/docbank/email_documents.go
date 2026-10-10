@@ -11,11 +11,21 @@ import (
 
 func init() {
 	command := &cobra.Command{
-		Use: "email-documents", Short: "Inspect and release email attachment relationships",
+		Long: `Inspect email attachment relationships. Parent/child version UUIDs are exact
+content versions from stat --json on an EML and its attachment documents.
+Operation IDs come from mailbox transfer receipts (document_publication_id),
+relations output, or POST /api/v1/email-document-publications. show reads the
+receipt, relations follows parent/child versions, release removes relationships.
+Output: show and relations print JSON; release prints a text confirmation.`,
+		GroupID: groupSources,
+		Use:     "email-documents",
+		Short:   "Inspect and release email attachment relationships",
 	}
 	show := &cobra.Command{
-		Use: "show <operation-id>", Short: "Read a publication receipt as JSON",
-		Args: cobra.ExactArgs(1),
+		Example: `  docbank email-documents show <operation-id>`,
+		Use:     "show <operation-id>",
+		Short:   "Read a publication receipt as JSON",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := document.ValidateEmailDocumentOperationID(args[0]); err != nil {
 				return usageError(err)
@@ -33,8 +43,10 @@ func init() {
 	}
 	var query document.EmailDocumentRelationQuery
 	relations := &cobra.Command{
-		Use: "relations", Short: "Read one page of exact parent or child relationships as JSON",
-		Args: cobra.NoArgs,
+		Example: `  docbank email-documents relations --parent-version <version-uuid>`,
+		Use:     "relations",
+		Short:   "Read one page of exact parent or child relationships as JSON",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if _, err := document.NormalizeEmailDocumentRelationQuery(query); err != nil {
 				return usageError(err)
@@ -57,10 +69,13 @@ func init() {
 	relations.Flags().IntVar(&query.AfterOrder, "after-order", 0, "next_order from a previous page")
 	var digest string
 	release := &cobra.Command{
-		Use: "release <operation-id>", Short: "Remove a receipt and its relationships, keeping the child documents",
-		Long: "Remove a receipt and its relationships, keeping the child documents. " +
-			"This releases deletion and purge blockers and relinquishes the operation's retry guarantee. " +
-			"Use show to inspect the receipt and copy its request_digest before releasing it.",
+		Example: `  docbank email-documents release <operation-id> --request-digest <sha256>`,
+		Use:     "release <operation-id>",
+		Short:   "Remove a receipt and its relationships, keeping the child documents",
+		Long: `Remove a receipt and its relationships, keeping the child documents. This
+releases deletion and purge blockers and gives up the operation's retry
+guarantee. Copy request_digest from show first. Publications still referenced by
+a mailbox transfer receipt or an export cannot be released (HTTP 409).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := document.ValidateEmailDocumentOperationID(args[0]); err != nil {

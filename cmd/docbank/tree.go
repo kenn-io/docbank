@@ -57,9 +57,13 @@ type treeWalker struct {
 }
 
 var treeCmd = &cobra.Command{
-	Use:   "tree [path-or-id]",
-	Short: "Print the virtual tree",
-	Args:  cobra.MaximumNArgs(1),
+	Example: `  docbank tree
+  docbank tree /cases --depth 2
+  docbank tree id:6 --json`,
+	GroupID: groupDocuments,
+	Use:     "tree [path-or-id]",
+	Short:   "Print the virtual folder tree with id:N selectors",
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if treeDepth < 1 {
 			return usageError(errors.New("tree --depth must be at least 1"))
@@ -217,7 +221,7 @@ func writeTree(w io.Writer, listing treeListing) error {
 }
 
 func init() {
-	treeCmd.Flags().BoolVar(&treeJSON, "json", false, "emit machine-readable JSON")
+	treeCmd.Flags().BoolVar(&treeJSON, "json", false, "print JSON to stdout")
 	treeCmd.Flags().IntVarP(&treeDepth, "depth", "L", defaultTreeDepth,
 		"maximum depth beneath the root")
 	treeCmd.Flags().IntVar(&treeMaxEntries, "max-entries", defaultTreeMaxEntries,

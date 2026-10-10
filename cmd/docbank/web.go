@@ -19,8 +19,10 @@ import (
 var webNoBrowser bool
 
 var webCmd = &cobra.Command{
-	Use:   "web",
-	Short: "Open the local web application",
+	Example: `  docbank web --no-browser`,
+	GroupID: groupInterfaces,
+	Use:     "web",
+	Short:   "Open the local web application",
 	Long: `Start or reconnect to the current vault's daemon and open its web application.
 
 The browser receives daemon-lifetime scoped credentials in a URL fragment,

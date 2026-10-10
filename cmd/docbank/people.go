@@ -26,16 +26,24 @@ var (
 )
 
 var peopleCmd = &cobra.Command{
-	Use:   "people",
-	Short: "Manage canonical people",
-	Args:  cobra.NoArgs,
-	RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+	Long: `Manage canonical people extracted from documents. <person-id> comes from list;
+--revision is the optimistic-lock value from show. Identity IDs for split come
+from show. Package assignment IDs come from
+GET /api/v1/packages/by-id/{package_id}/custodians or MCP
+list_package_custodians. All commands print JSON.`,
+	GroupID: groupSources,
+	Use:     "people",
+	Short:   "Manage canonical people",
+	Args:    cobra.NoArgs,
+	RunE:    func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 }
 
 var peopleListCmd = &cobra.Command{
-	Use:   "list [query]",
-	Short: "List or search active people",
-	Args:  cobra.MaximumNArgs(1),
+	Example: `  docbank people list Acme`,
+	Long:    `Output: JSON.`,
+	Use:     "list [query]",
+	Short:   "List or search active people",
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		query := ""
 		if len(args) == 1 {
@@ -54,9 +62,11 @@ var peopleListCmd = &cobra.Command{
 }
 
 var peopleShowCmd = &cobra.Command{
-	Use:   "show <person-id>",
-	Short: "Show one person and its selectors",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank people show <person-id>`,
+	Long:    `Output: JSON.`,
+	Use:     "show <person-id>",
+	Short:   "Show one person and its selectors",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -71,9 +81,11 @@ var peopleShowCmd = &cobra.Command{
 }
 
 var peopleCreateCmd = &cobra.Command{
-	Use:   "create <display-name>",
-	Short: "Create one canonical person",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank people create 'Acme Reviewer'`,
+	Long:    `Output: JSON.`,
+	Use:     "create <display-name>",
+	Short:   "Create one canonical person",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -88,9 +100,11 @@ var peopleCreateCmd = &cobra.Command{
 }
 
 var peopleRenameCmd = &cobra.Command{
-	Use:   "rename <person-id> <display-name>",
-	Short: "Rename one canonical person",
-	Args:  cobra.ExactArgs(2),
+	Example: `  docbank people rename <person-id> 'Acme Custodian' --revision 1`,
+	Long:    `Output: JSON.`,
+	Use:     "rename <person-id> <display-name>",
+	Short:   "Rename one canonical person",
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requirePeopleRevision(); err != nil {
 			return err
@@ -108,9 +122,11 @@ var peopleRenameCmd = &cobra.Command{
 }
 
 var peopleRetireCmd = &cobra.Command{
-	Use:   "retire <person-id>",
-	Short: "Retire one canonical person",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank people retire <person-id> --revision 1`,
+	Long:    `Output: JSON.`,
+	Use:     "retire <person-id>",
+	Short:   "Retire one canonical person",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requirePeopleRevision(); err != nil {
 			return err
@@ -128,9 +144,11 @@ var peopleRetireCmd = &cobra.Command{
 }
 
 var peopleMergeCmd = &cobra.Command{
-	Use:   "merge <survivor-id> <absorbed-id>",
-	Short: "Merge one person into another",
-	Args:  cobra.ExactArgs(2),
+	Example: `  docbank people merge <survivor-id> <absorbed-id> --revision 1 --absorbed-revision 1 --operation-id <uuidv4>`,
+	Long:    `Output: JSON.`,
+	Use:     "merge <survivor-id> <absorbed-id>",
+	Short:   "Merge one person into another",
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requirePeopleRevision(); err != nil {
 			return err
@@ -161,6 +179,11 @@ var peopleMergeCmd = &cobra.Command{
 }
 
 var peopleSplitCmd = &cobra.Command{
+	Example: `  docbank people split <person-id> --revision 1 --display-name 'Acme Reviewer' --identity <identity-uuid> --operation-id <uuidv4>`,
+	Long: `Output: JSON. The person ID, revision, and identity IDs come from
+docbank people show. Package assignment IDs come from
+GET /api/v1/packages/by-id/{package_id}/custodians or MCP
+list_package_custodians.`,
 	Use:   "split <person-id>",
 	Short: "Split selected members into a new person",
 	Args:  cobra.ExactArgs(1),

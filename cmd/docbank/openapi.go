@@ -7,9 +7,11 @@ import (
 )
 
 var openapiCmd = &cobra.Command{
-	Use:   "openapi",
-	Short: "Print the HTTP API's OpenAPI YAML document (no daemon needed)",
-	Args:  cobra.NoArgs,
+	Example: `  docbank openapi > openapi.yaml`,
+	GroupID: groupInterfaces,
+	Use:     "openapi",
+	Short:   "Print the HTTP API's OpenAPI YAML document (no daemon needed)",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		out, err := api.OpenAPIYAML()
 		if err != nil {

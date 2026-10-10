@@ -96,6 +96,31 @@ bytes and both filename-disclosure settings.
 
 ## Common change paths
 
+### Change command help
+
+Keep help in the owning Cobra command. Give every command with children a
+workflow description, including parents whose handler only shows help. Give
+runnable leaves and parents that perform work 1–4 synthetic example commands.
+Add working parents to `workParents` in `cmd/docbank/help_lint_test.go`.
+Prerequisite examples may invoke siblings; every line must parse and at least
+one must invoke the owning command. The lint clones flag values and checks
+syntax and arity without executing examples.
+
+Use a command group at the root, source each ID, and mark required flags.
+Keep descriptions short: at most 12 Long lines for leaves and 20 for parents;
+root help and the TUI key table have explicit exceptions. Root help is limited
+to 4,500 bytes and leaves to 2,500, except the TUI. Only root help has a golden,
+so command examples can improve without maintaining hundreds of snapshots.
+After an intentional root change, review and regenerate it from the repository
+root:
+
+```sh
+go test -tags fts5 ./cmd/docbank -run TestRootHelpGolden -update
+```
+
+Keep the CLI reference and guide examples in sync. Error next-step hints belong
+at the CLI process boundary; preserve error prefixes and daemon problem text.
+
 ### Add a data operation
 
 1. Add the transactional store operation and tests for its behavior.

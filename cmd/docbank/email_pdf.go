@@ -16,9 +16,18 @@ import (
 func init() {
 	var paper string
 	var overwrite bool
-	command := &cobra.Command{Use: "email-pdf <version-id> <local-file>", Short: "Render and download one exact email version as a verified PDF", Args: cobra.ExactArgs(2)}
-	command.Flags().StringVar(&paper, "paper", "A4", "Portrait paper: A4 or Letter")
-	command.Flags().BoolVar(&overwrite, "overwrite", false, "Replace an existing destination")
+	command := &cobra.Command{
+		Example: `  docbank stat /cases/acme/message.eml --json
+  docbank email-pdf <version-uuid> ./message.pdf`,
+		Long: `Render one exact EML content version as a PDF. Get <version-uuid> from
+stat --json on the stored EML (current_version_id).
+Output: path, page count and SHA-256.`,
+		GroupID: groupSources,
+		Use:     "email-pdf <version-uuid> <local-file>",
+		Short:   "Render and download one exact email version as a verified PDF",
+		Args:    cobra.ExactArgs(2)}
+	command.Flags().StringVar(&paper, "paper", "A4", "portrait paper: A4 or Letter")
+	command.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing destination")
 	command.RunE = func(cmd *cobra.Command, args []string) (retErr error) {
 		if paper != "A4" && paper != "Letter" {
 			return errors.New("email PDF paper must be A4 or Letter")

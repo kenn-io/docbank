@@ -12,18 +12,27 @@ import (
 var renditionMaxBytes int64
 
 var renditionCmd = &cobra.Command{
-	Use:   "rendition",
-	Short: "Read retained document renditions",
-	Args:  cobra.NoArgs,
+	Long: `A rendition is Markdown text derived from one document version by a processing
+profile (see docbank processing). window reads a bounded slice and prints the
+next-page command; get prints a whole verified rendition by attachment ID
+(from window --json).
+Requires: PDF/Office text needs a configured processing profile first; the
+default daemon's supplied-captions and supplied-transcript do not convert
+documents. List available profiles with "docbank processing profiles".`,
+	GroupID: groupSearch,
+	Use:     "rendition",
+	Short:   "Read retained document renditions",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		return cmd.Help()
 	},
 }
 
 var renditionGetCmd = &cobra.Command{
-	Use:   "get <attachment-id>",
-	Short: "Write one verified self-describing Markdown rendition to stdout",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank rendition get <attachment-sha256> > doc.md`,
+	Use:     "get <attachment-sha256>",
+	Short:   "Write one verified self-describing Markdown rendition to stdout",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if renditionMaxBytes < 1 || renditionMaxBytes > 64<<20 {
 			return usageError(errors.New("--max-bytes must be between 1 and 67108864"))

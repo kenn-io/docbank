@@ -20,13 +20,21 @@ var (
 )
 
 var photosCmd = &cobra.Command{
-	Use:   "photos",
-	Short: "Manage photo assets",
-	Args:  cobra.NoArgs,
-	RunE:  func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+	Long: `Assets group camera files (RAW, JPEG, sidecar). import groups a local folder;
+albums organize assets. <asset-id> comes from
+photos assets inspect <path-or-id>.
+Output: JSON asset and album receipts; import prints a job ID
+(or JSON with --json).`,
+	GroupID: groupSources,
+	Use:     "photos",
+	Short:   "Manage photo assets",
+	Args:    cobra.NoArgs,
+	RunE:    func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 }
 
 var photoAssetsCmd = &cobra.Command{
+	Long: `create or promote groups a file into an asset; inspect gives its asset ID and
+member file IDs for attach, detach, exclude and display. Output: JSON.`,
 	Use:   "assets",
 	Short: "Inspect and mutate photo assets",
 	Args:  cobra.NoArgs,
@@ -34,9 +42,10 @@ var photoAssetsCmd = &cobra.Command{
 }
 
 var photoCreateCmd = &cobra.Command{
-	Use:   "create <node-selector>",
-	Short: "Create an asset for one file",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank photos assets create id:12`,
+	Use:     "create <path-or-id>",
+	Short:   "Create an asset for one file",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, node, err := photoNode(cmd, args[0])
 		if err != nil {
@@ -51,9 +60,10 @@ var photoCreateCmd = &cobra.Command{
 }
 
 var photoInspectCmd = &cobra.Command{
-	Use:   "inspect <asset-id|node-selector>",
-	Short: "Inspect one asset by its ID or by a member file",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank photos assets inspect id:12`,
+	Use:     "inspect <asset-id|path-or-id>",
+	Short:   "Inspect one asset by its ID or by a member file",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var (
 			c     *daemonconn.Connection
@@ -84,9 +94,10 @@ var photoInspectCmd = &cobra.Command{
 }
 
 var photoAttachCmd = &cobra.Command{
-	Use:   "attach <asset-id> <node-selector>",
-	Short: "Attach one file to an asset",
-	Args:  cobra.ExactArgs(2),
+	Example: `  docbank photos assets attach <asset-id> id:12`,
+	Use:     "attach <asset-id> <path-or-id>",
+	Short:   "Attach one file to an asset",
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
@@ -110,9 +121,10 @@ var photoAttachCmd = &cobra.Command{
 }
 
 var photoDetachCmd = &cobra.Command{
-	Use:   "detach <asset-id> <file-id>",
-	Short: "Detach one file from an asset",
-	Args:  cobra.ExactArgs(2),
+	Example: `  docbank photos assets detach <asset-id> <file-id>`,
+	Use:     "detach <asset-id> <file-id>",
+	Short:   "Detach one file from an asset",
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
@@ -132,7 +144,11 @@ var photoDetachCmd = &cobra.Command{
 }
 
 var photoTrashCmd = &cobra.Command{
-	Use: "trash <asset-id>", Short: "Move every asset member to recoverable trash", Args: cobra.ExactArgs(1),
+	Example: `  docbank photos assets trash <asset-id>
+  docbank trash list`,
+	Use:   "trash <asset-id>",
+	Short: "Move every asset member to recoverable trash",
+	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
@@ -152,9 +168,10 @@ var photoTrashCmd = &cobra.Command{
 }
 
 var photoExcludeCmd = &cobra.Command{
-	Use:   "exclude <asset-id>",
-	Short: "Exclude or include an asset",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank photos assets exclude <asset-id>`,
+	Use:     "exclude <asset-id>",
+	Short:   "Exclude or include an asset",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
@@ -174,9 +191,10 @@ var photoExcludeCmd = &cobra.Command{
 }
 
 var photoPromoteCmd = &cobra.Command{
-	Use:   "promote <node-selector>",
-	Short: "Promote one file into an asset",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank photos assets promote id:12`,
+	Use:     "promote <path-or-id>",
+	Short:   "Promote one file into an asset",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
@@ -206,9 +224,10 @@ var photoPromoteCmd = &cobra.Command{
 }
 
 var photoDisplayCmd = &cobra.Command{
-	Use:   "display <asset-id> [file-id]",
-	Short: "Set or reset an asset display override",
-	Args:  cobra.RangeArgs(1, 2),
+	Example: `  docbank photos assets display <asset-id> <file-id>`,
+	Use:     "display <asset-id> [file-id]",
+	Short:   "Set or reset an asset display override",
+	Args:    cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
@@ -232,6 +251,8 @@ var photoDisplayCmd = &cobra.Command{
 }
 
 var photoSettingsCmd = &cobra.Command{
+	Long: `show reads the inherited RAW/image display preference; set overrides it;
+reset removes the override. Output: JSON.`,
 	Use:   "settings",
 	Short: "Inspect or change the inherited display preference",
 	Args:  cobra.NoArgs,
@@ -239,9 +260,10 @@ var photoSettingsCmd = &cobra.Command{
 }
 
 var photoSettingsShowCmd = &cobra.Command{
-	Use:   "show",
-	Short: "Show the display preference",
-	Args:  cobra.NoArgs,
+	Example: `  docbank photos settings show`,
+	Use:     "show",
+	Short:   "Show the display preference",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -256,9 +278,10 @@ var photoSettingsShowCmd = &cobra.Command{
 }
 
 var photoSettingsSetCmd = &cobra.Command{
-	Use:   "set <raw|image>",
-	Short: "Set the display preference",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank photos settings set image`,
+	Use:     "set <raw|image>",
+	Short:   "Set the display preference",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err
@@ -271,9 +294,10 @@ var photoSettingsSetCmd = &cobra.Command{
 }
 
 var photoSettingsResetCmd = &cobra.Command{
-	Use:   "reset",
-	Short: "Reset the display preference",
-	Args:  cobra.NoArgs,
+	Example: `  docbank photos settings reset`,
+	Use:     "reset",
+	Short:   "Reset the display preference",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if err := checkPhotoRevisionFlag(cmd); err != nil {
 			return err

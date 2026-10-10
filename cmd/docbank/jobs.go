@@ -18,9 +18,17 @@ import (
 var jobsJSON bool
 
 var jobsCmd = &cobra.Command{
-	Use:   "jobs",
-	Short: "Show daemon background-job status",
-	Args:  cobra.NoArgs,
+	Example: `  docbank jobs --json
+  docbank jobs show <operation-id>`,
+	Long: `Which status command? jobs: daemon workers (extract, derive, import) and
+storage operations; daemon status: is the daemon up; processing status: one
+processing job (ID from processing build); mailbox status, export status,
+package import status: their own job IDs. jobs show takes the bare UUID from
+operation_id in jobs --json (text output names it storage:<uuid>).`,
+	GroupID: groupOperations,
+	Use:     "jobs",
+	Short:   "List daemon background workers and storage operations",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -41,9 +49,10 @@ var jobsCmd = &cobra.Command{
 var jobsShowJSON bool
 
 var jobsShowCmd = &cobra.Command{
-	Use:   "show <operation-id>",
-	Short: "Show one durable storage operation and its receipt",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank jobs show <operation-id> --json`,
+	Use:     "show <operation-id>",
+	Short:   "Show one durable storage operation and its receipt",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !daemonconn.IsCanonicalUUIDv4(args[0]) {
 			return usageError(errors.New("operation ID must be a canonical UUIDv4"))
@@ -76,9 +85,10 @@ var jobsShowCmd = &cobra.Command{
 }
 
 var jobsCancelCmd = &cobra.Command{
-	Use:   "cancel <operation-id>",
-	Short: "Request cancellation at the next durable object boundary",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank jobs cancel <operation-id>`,
+	Use:     "cancel <operation-id>",
+	Short:   "Request cancellation at the next durable object boundary",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !daemonconn.IsCanonicalUUIDv4(args[0]) {
 			return usageError(errors.New("operation ID must be a canonical UUIDv4"))
@@ -137,8 +147,8 @@ func writeJobs(w io.Writer, items []api.Job) error {
 }
 
 func init() {
-	jobsCmd.Flags().BoolVar(&jobsJSON, "json", false, "emit machine-readable JSON")
-	jobsShowCmd.Flags().BoolVar(&jobsShowJSON, "json", false, "emit machine-readable JSON")
+	jobsCmd.Flags().BoolVar(&jobsJSON, "json", false, "print JSON to stdout")
+	jobsShowCmd.Flags().BoolVar(&jobsShowJSON, "json", false, "print JSON to stdout")
 	jobsCmd.AddCommand(jobsShowCmd, jobsCancelCmd)
 	rootCmd.AddCommand(jobsCmd)
 }

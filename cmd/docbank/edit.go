@@ -29,9 +29,11 @@ var (
 )
 
 var editCmd = &cobra.Command{
-	Use:   "edit <vault-path-or-id>",
-	Short: "Edit a file through a new immutable content version",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank edit /cases/acme/notes.md --editor vi`,
+	GroupID: groupDocuments,
+	Use:     "edit <path-or-id>",
+	Short:   "Edit a file through a new immutable content version",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runEdit(cmd, args[0])
 	},

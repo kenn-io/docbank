@@ -15,8 +15,14 @@ import (
 )
 
 var auditCmd = &cobra.Command{
-	Use:   "audit",
-	Short: "Protect permanent document history and inspect its evidence",
+	Long: `Enable permanent, irreversible retention for a folder. enable previews the
+scope; enable --run --token T --acknowledge-permanent-retention commits it.
+Exit 4 means the preview went stale: review a new preview before retrying.
+status reports protection; history shows retained events;
+verify checks authority.`,
+	GroupID: groupOperations,
+	Use:     "audit",
+	Short:   "Protect permanent document history and inspect its evidence",
 }
 
 var (
@@ -29,7 +35,9 @@ var (
 )
 
 var auditEnableCmd = &cobra.Command{
-	Use:   "enable [path-or-id]",
+	Example: `  docbank audit enable /cases/acme
+  docbank audit enable --run --token <preview-token> --acknowledge-permanent-retention`,
+	Use:   "enable [<path-or-id>]",
 	Short: "Preview permanent retention, then explicitly enable the reviewed scope",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -107,9 +115,10 @@ var (
 )
 
 var auditStatusCmd = &cobra.Command{
-	Use:   "status [path-or-id]",
-	Short: "Inspect vault audit authority and optional node protection",
-	Args:  cobra.MaximumNArgs(1),
+	Example: `  docbank audit status /cases/acme --json`,
+	Use:     "status [<path-or-id>]",
+	Short:   "Inspect vault audit authority and optional node protection",
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		nodeIDSet := cmd.Flags().Changed("node-id")
 		if len(args) == 1 && nodeIDSet {
@@ -287,16 +296,16 @@ func init() {
 	auditEnableCmd.Flags().StringVar(&auditEnableAgentLabel, "agent-label", "",
 		"optional actor label retained in the enrollment event")
 	auditEnableCmd.Flags().BoolVar(&auditEnableRun, "run", false,
-		"permanently enable the reviewed preview")
+		"permanently enable the reviewed preview; requires --token")
 	auditEnableCmd.Flags().StringVar(&auditEnableToken, "token", "",
-		"one-use token returned by a fresh preview")
+		"one-use token printed by the preview run")
 	auditEnableCmd.Flags().BoolVar(&auditEnableAcknowledge,
 		"acknowledge-permanent-retention", false,
 		"confirm permanent protected history and vault-wide metadata, including names, topology, tags, assignments, ingests, and provenance outside the selected scope")
-	auditEnableCmd.Flags().BoolVar(&auditEnableJSON, "json", false, "machine-readable output")
+	auditEnableCmd.Flags().BoolVar(&auditEnableJSON, "json", false, "print JSON to stdout")
 	auditStatusCmd.Flags().Int64Var(&auditStatusNodeID, "node-id", 0,
 		"inspect one stable node ID (alternative to path)")
-	auditStatusCmd.Flags().BoolVar(&auditStatusJSON, "json", false, "machine-readable output")
+	auditStatusCmd.Flags().BoolVar(&auditStatusJSON, "json", false, "print JSON to stdout")
 	auditCmd.AddCommand(auditEnableCmd, auditStatusCmd)
 	rootCmd.AddCommand(auditCmd)
 }

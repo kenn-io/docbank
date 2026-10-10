@@ -20,9 +20,10 @@ var (
 )
 
 var auditHistoryCmd = &cobra.Command{
-	Use:   "history [path-or-id]",
-	Short: "Read canonical events for one protected node or scope",
-	Args:  cobra.MaximumNArgs(1),
+	Example: `  docbank audit history /cases/acme --json`,
+	Use:     "history [<path-or-id>]",
+	Short:   "Read canonical events for one protected node or scope",
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		nodeIDSet := cmd.Flags().Changed("node-id")
 		scopeSet := cmd.Flags().Changed("scope")
@@ -241,6 +242,6 @@ func init() {
 	auditHistoryCmd.Flags().StringVar(&auditHistoryCursor, "cursor", "",
 		"opaque continuation cursor from the preceding page")
 	auditHistoryCmd.Flags().BoolVar(&auditHistoryJSON, "json", false,
-		"machine-readable output")
+		"print JSON to stdout")
 	auditCmd.AddCommand(auditHistoryCmd)
 }

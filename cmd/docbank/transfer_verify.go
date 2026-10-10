@@ -19,9 +19,10 @@ var (
 )
 
 var transferVerifyCmd = &cobra.Command{
-	Use:   "verify PACKAGE",
-	Short: "Verify a local transfer package without starting the daemon",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank transfer verify ./transfer.zip`,
+	Use:     "verify <package>",
+	Short:   "Verify a local transfer package without starting the daemon",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		reader, err := openLocalTransfer(cmd.Context(), args[0], transferVerifyArchiveID)
 		if err != nil {
@@ -123,5 +124,5 @@ func writeTransferVerification(w io.Writer, report transfer.Report, asJSON bool)
 func init() {
 	transferVerifyCmd.Flags().StringVar(&transferVerifyArchiveID, "archive-id", "",
 		"registered archive ID to bind when verifying a legacy JSONL export")
-	transferVerifyCmd.Flags().BoolVar(&transferVerifyJSON, "json", false, "emit machine-readable JSON")
+	transferVerifyCmd.Flags().BoolVar(&transferVerifyJSON, "json", false, "print JSON to stdout")
 }

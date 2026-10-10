@@ -13,9 +13,12 @@ import (
 var restoreJSON bool
 
 var restoreCmd = &cobra.Command{
-	Use:   "restore <node-id>",
-	Short: "Restore a trashed node to its original location",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank restore id:12`,
+	Long:    `Accepts id:N from docbank trash list (bare N still works).`,
+	GroupID: groupDocuments,
+	Use:     "restore <id:N>",
+	Short:   "Restore a trashed node to its original location",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := parseRestoreNodeID(args[0])
 		if err != nil {
@@ -46,6 +49,6 @@ var restoreCmd = &cobra.Command{
 
 func init() {
 	restoreCmd.Flags().BoolVar(&restoreJSON, "json", false,
-		"emit a machine-readable node receipt")
+		"print JSON to stdout")
 	rootCmd.AddCommand(restoreCmd)
 }

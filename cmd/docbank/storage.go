@@ -17,8 +17,14 @@ import (
 )
 
 var storageCmd = &cobra.Command{
-	Use:   "storage",
-	Short: "Inspect and maintain physical blob storage",
+	Long: `Inspect physical blob placement. Most users need only status, pack and repack.
+Commands marked "Preview, then ..." run twice: first without --run (prints a
+one-use token), then with --run --token T. Store names/IDs come from list;
+blob hashes come from stat --json (blob_hash). Secondary stores are
+configured in config.toml.`,
+	GroupID: groupOperations,
+	Use:     "storage",
+	Short:   "Inspect and maintain physical blob storage",
 }
 
 var (
@@ -27,9 +33,10 @@ var (
 )
 
 var storageStatusCmd = &cobra.Command{
-	Use:   "status [store]",
-	Short: "Report loose and packed storage usage",
-	Args:  cobra.MaximumNArgs(1),
+	Example: `  docbank storage status --json`,
+	Use:     "status [store]",
+	Short:   "Report loose and packed storage usage",
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -87,6 +94,8 @@ var (
 )
 
 var storageAddCmd = &cobra.Command{
+	Example: `  docbank storage add secondary --binding <binding>
+  docbank storage add --run --token <preview-token>`,
 	Use:   "add [name]",
 	Short: "Preview, then attach, one configured secondary store",
 	Args:  cobra.MaximumNArgs(1),
@@ -158,9 +167,10 @@ var (
 )
 
 var storageListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List primary and secondary physical stores",
-	Args:  cobra.NoArgs,
+	Example: `  docbank storage list --json`,
+	Use:     "list",
+	Short:   "List primary and secondary physical stores",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -186,9 +196,10 @@ var storageListCmd = &cobra.Command{
 var storageDetachJSON bool
 
 var storageDetachCmd = &cobra.Command{
-	Use:   "detach <store>",
-	Short: "Detach one empty secondary store",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank storage detach secondary`,
+	Use:     "detach <store>",
+	Short:   "Detach one empty secondary store",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -208,9 +219,10 @@ var storageDetachCmd = &cobra.Command{
 }
 
 var storageUnregisterCmd = &cobra.Command{
-	Use:   "unregister <store>",
-	Short: "Forget one detached and empty secondary store",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank storage unregister secondary`,
+	Use:     "unregister <store>",
+	Short:   "Forget one detached and empty secondary store",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -235,7 +247,9 @@ var (
 )
 
 var storagePlaceCmd = &cobra.Command{
-	Use:   "place <path|id:N>",
+	Example: `  docbank storage place id:12 --to secondary
+  docbank storage place --run --token <preview-token>`,
+	Use:   "place <path-or-id>",
 	Short: "Preview, then place, retained content in another store",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -330,6 +344,8 @@ var (
 )
 
 var storageEvacuateCmd = &cobra.Command{
+	Example: `  docbank storage evacuate secondary
+  docbank storage evacuate --run --token <preview-token>`,
 	Use:   "evacuate <store>",
 	Short: "Preview, then move, all authority from one secondary to primary",
 	Args:  cobra.MaximumNArgs(1),
@@ -417,9 +433,10 @@ func newStorageRecoveryCommand(
 	kind string, flags *storageRecoveryFlags,
 ) *cobra.Command {
 	command := &cobra.Command{
-		Use:   kind + " <blob-hash>",
-		Short: "Preview, then " + kind + ", one physical blob location",
-		Args:  cobra.MaximumNArgs(1),
+		Example: "  docbank stat id:12 --json # blob_hash\n  docbank storage " + kind + " <sha256> --store secondary\n  docbank storage " + kind + " --run --token <preview-token>",
+		Use:     kind + " <blob-hash>",
+		Short:   "Preview, then " + kind + ", one physical blob location",
+		Args:    cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if flags.run {
 				if len(args) != 0 || flags.store != "" {
@@ -495,9 +512,9 @@ func newStorageRecoveryCommand(
 	command.Flags().StringVar(&flags.store, "store", "",
 		"damaged destination (repair) or fenced source (salvage)")
 	command.Flags().BoolVar(&flags.run, "run", false,
-		"start the exact reviewed recovery")
-	command.Flags().StringVar(&flags.token, "token", "", "one-use preview token")
-	command.Flags().BoolVar(&flags.json, "json", false, "machine-readable output")
+		"start the reviewed recovery; pass only --token with it")
+	command.Flags().StringVar(&flags.token, "token", "", "one-use token printed by the preview run")
+	command.Flags().BoolVar(&flags.json, "json", false, "print JSON to stdout")
 	return command
 }
 
@@ -512,9 +529,10 @@ var (
 )
 
 var storagePackCmd = &cobra.Command{
-	Use:   "pack",
-	Short: "Pack authorized loose blobs into immutable pack files",
-	Args:  cobra.NoArgs,
+	Example: `  docbank storage pack --json`,
+	Use:     "pack",
+	Short:   "Pack authorized loose blobs into immutable pack files",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -569,9 +587,10 @@ var (
 )
 
 var storageRepackCmd = &cobra.Command{
-	Use:   "repack",
-	Short: "Rewrite sparse packs and retire dead pack files",
-	Args:  cobra.NoArgs,
+	Example: `  docbank storage repack --json`,
+	Use:     "repack",
+	Short:   "Rewrite sparse packs and retire dead pack files",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -603,20 +622,20 @@ var storageRepackCmd = &cobra.Command{
 }
 
 func init() {
-	storageStatusCmd.Flags().BoolVar(&storageStatusJSON, "json", false, "machine-readable output")
+	storageStatusCmd.Flags().BoolVar(&storageStatusJSON, "json", false, "print JSON to stdout")
 	storageStatusCmd.Flags().BoolVar(&storageStatusRefresh, "refresh", false,
 		"perform a fresh ownership-marker check")
 	storageAddCmd.Flags().StringVar(&storageAddBinding, "binding", "", "config.toml binding profile")
 	storageAddCmd.Flags().BoolVar(&storageAddTakeover, "takeover", false,
 		"preview explicit takeover of a namespace owned elsewhere")
 	storageAddCmd.Flags().BoolVar(&storageAddRun, "run", false,
-		"attach the exact reviewed preview")
-	storageAddCmd.Flags().StringVar(&storageAddToken, "token", "", "one-use preview token")
-	storageAddCmd.Flags().BoolVar(&storageAddJSON, "json", false, "machine-readable output")
+		"attach the reviewed preview; pass only --token with it")
+	storageAddCmd.Flags().StringVar(&storageAddToken, "token", "", "one-use token printed by the preview run")
+	storageAddCmd.Flags().BoolVar(&storageAddJSON, "json", false, "print JSON to stdout")
 	storageListCmd.Flags().BoolVar(&storageListRefresh, "refresh", false,
 		"perform fresh ownership-marker checks")
-	storageListCmd.Flags().BoolVar(&storageListJSON, "json", false, "machine-readable output")
-	storageDetachCmd.Flags().BoolVar(&storageDetachJSON, "json", false, "machine-readable output")
+	storageListCmd.Flags().BoolVar(&storageListJSON, "json", false, "print JSON to stdout")
+	storageDetachCmd.Flags().BoolVar(&storageDetachJSON, "json", false, "print JSON to stdout")
 	storagePlaceCmd.Flags().StringVar(&storagePlaceTo, "to", "", "destination store name or ID")
 	storagePlaceCmd.Flags().StringVar(&storagePlaceFrom, "from", "",
 		"source store name or ID (default primary)")
@@ -626,27 +645,27 @@ func init() {
 		"allow-audited-remote-only", false,
 		"acknowledge loss of the default primary pin for audited content")
 	storagePlaceCmd.Flags().BoolVar(&storagePlaceRun, "run", false,
-		"start the exact reviewed placement")
-	storagePlaceCmd.Flags().StringVar(&storagePlaceToken, "token", "", "one-use preview token")
-	storagePlaceCmd.Flags().BoolVar(&storagePlaceJSON, "json", false, "machine-readable output")
+		"start the reviewed placement; pass only --token with it")
+	storagePlaceCmd.Flags().StringVar(&storagePlaceToken, "token", "", "one-use token printed by the preview run")
+	storagePlaceCmd.Flags().BoolVar(&storagePlaceJSON, "json", false, "print JSON to stdout")
 	storageEvacuateCmd.Flags().BoolVar(&storageEvacuateRun, "run", false,
-		"start the exact reviewed evacuation")
+		"start the reviewed evacuation; pass only --token with it")
 	storageEvacuateCmd.Flags().StringVar(
-		&storageEvacuateToken, "token", "", "one-use preview token",
+		&storageEvacuateToken, "token", "", "one-use token printed by the preview run",
 	)
 	storageEvacuateCmd.Flags().BoolVar(
-		&storageEvacuateJSON, "json", false, "machine-readable output",
+		&storageEvacuateJSON, "json", false, "print JSON to stdout",
 	)
 	storagePackCmd.Flags().Int64Var(&storagePackMaxBytes, "max-bytes", 0,
 		"soft raw-byte work budget (0 is unlimited)")
-	storagePackCmd.Flags().BoolVar(&storagePackJSON, "json", false, "machine-readable output")
+	storagePackCmd.Flags().BoolVar(&storagePackJSON, "json", false, "print JSON to stdout")
 	storageRepackCmd.Flags().Int64Var(&storageRepackMaxBytes, "max-bytes", 0,
 		"soft live raw-byte work budget (0 is unlimited and fail-fast)")
 	storageRepackCmd.Flags().DurationVar(&storageRepackMinAge, "min-age", 24*time.Hour,
 		"minimum source pack age")
 	storageRepackCmd.Flags().Int64Var(&storageRepackMinDeadBytes, "min-dead-bytes", 8<<20,
 		"minimum dead stored payload in a sparse pack")
-	storageRepackCmd.Flags().BoolVar(&storageRepackJSON, "json", false, "machine-readable output")
+	storageRepackCmd.Flags().BoolVar(&storageRepackJSON, "json", false, "print JSON to stdout")
 	storageCmd.AddCommand(
 		storageStatusCmd, storageAddCmd, storageListCmd, storageDetachCmd,
 		storageUnregisterCmd, storagePlaceCmd, storageEvacuateCmd,

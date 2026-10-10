@@ -49,8 +49,9 @@ import (
 )
 
 var daemonRunCmd = &cobra.Command{
-	Use:   "run",
-	Short: "Run the daemon in the foreground",
+	Example: `  docbank daemon run # foreground, logs to stderr; DOCBANK_LOG_LEVEL=debug`,
+	Use:     "run",
+	Short:   "Run the daemon in the foreground",
 	Long: "Run the daemon in the foreground. Usually invoked by `docbank daemon start`\n" +
 		"in the background; useful directly for debugging.",
 	Args: cobra.NoArgs,

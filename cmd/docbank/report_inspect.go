@@ -16,10 +16,13 @@ import (
 )
 
 func newReportShowCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "show <report-id>", Short: "Inspect a live frozen report",
-		Args: cobra.ExactArgs(1)}
+	cmd := &cobra.Command{
+		Example: `  docbank search-export show <report-id>`,
+		Use:     "show <report-id>",
+		Short:   "Inspect a live frozen report",
+		Args:    cobra.ExactArgs(1)}
 	var asJSON bool
-	cmd.Flags().BoolVar(&asJSON, "json", false, "Print the full report summary as JSON")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON to stdout")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if !daemonconn.IsTermReportID(args[0]) {
 			return usageError(errors.New("report ID must be 48 lowercase hexadecimal characters"))
@@ -41,12 +44,16 @@ func newReportShowCommand() *cobra.Command {
 }
 
 func newReportHistoryCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "history", Short: "List recorded report runs", Args: cobra.NoArgs}
+	cmd := &cobra.Command{
+		Example: `  docbank search-export history`,
+		Use:     "history",
+		Short:   "List recorded report runs",
+		Args:    cobra.NoArgs}
 	var offset, limit int
 	var asJSON bool
-	cmd.Flags().IntVar(&offset, "offset", 0, "Number of recorded runs to skip (0–100)")
-	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum recorded runs on this page (1–50)")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "Print stored requests and summaries as JSON")
+	cmd.Flags().IntVar(&offset, "offset", 0, "number of recorded runs to skip (0–100)")
+	cmd.Flags().IntVar(&limit, "limit", 20, "maximum recorded runs on this page (1–50)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON to stdout")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		if offset < 0 || offset > 100 || limit < 1 || limit > 50 {
 			return usageError(errors.New("history offset must be 0–100 and limit must be 1–50"))

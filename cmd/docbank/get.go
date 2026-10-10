@@ -32,9 +32,16 @@ type getReceipt struct {
 }
 
 var getCmd = &cobra.Command{
-	Use:   "get <path-or-id> <local-file>",
-	Short: "Download one file with end-to-end verification",
-	Args:  cobra.ExactArgs(2),
+	Example: `  docbank get id:12 ./invoice.pdf
+  docbank get /cases/acme/invoice.pdf ./invoice.pdf --overwrite --json`,
+	Long: `Download the current version to <local-file>, verifying size and sha256 before
+the file is kept. Refuses to overwrite unless --overwrite.
+Output: --json prints the receipt
+(node_id, version_id, blob_hash, size, output).`,
+	GroupID: groupDocuments,
+	Use:     "get <path-or-id> <local-file>",
+	Short:   "Download one file with end-to-end verification",
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runGet(cmd, args[0], args[1])
 	},
@@ -230,7 +237,7 @@ func init() {
 	getCmd.Flags().BoolVar(&getOverwrite, "overwrite", false,
 		"replace an existing local file after the download verifies")
 	getCmd.Flags().BoolVar(&getJSON, "json", false,
-		"emit a machine-readable download receipt (progress suppressed)")
+		"print JSON to stdout (progress suppressed)")
 	getCmd.Flags().StringVar(&getProgress, "progress", "auto",
 		"progress output mode: auto, bar, or plain (suppressed by --json)")
 	rootCmd.AddCommand(getCmd)

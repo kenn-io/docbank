@@ -15,13 +15,30 @@ import (
 	"go.kenn.io/docbank/internal/pdfstamp"
 )
 
-var batesCmd = &cobra.Command{Use: "bates", Short: "Plan and reserve Bates labels for exported PDFs"}
+var batesCmd = &cobra.Command{
+	Long: `Bates labels are sequential page stamps. Typical flow:
+namespaces --create --prefix ACME --padding 6 -> plan <snapshot-id>
+--namespace <uuid> --recipe-out r.json -> reserve <snapshot-id> --recipe r.json
+-> export run <allocation-id> --recipe r.json -> export download.
+<snapshot-id> must be a sealed collection snapshot UUID. A package import
+creates one; read snapshot_id with docbank package list --json or
+docbank package show <package-id> --json. The CLI does not create a sealed
+snapshot from an arbitrary document selection; workspace query snapshots are
+temporary and cannot be used.
+Namespace IDs come from namespaces; allocation IDs come from reserve.`,
+	GroupID: groupProductions,
+	Use:     "bates",
+	Short:   "Plan and reserve Bates labels for exported PDFs"}
 
 func newBatesNamespacesCommand() *cobra.Command {
 	var create, asJSON bool
 	var prefix, suffix, cursor string
 	var padding, limit int
-	cmd := &cobra.Command{Use: "namespaces", Short: "List or create a Bates namespace", Args: cobra.NoArgs,
+	cmd := &cobra.Command{
+		Example: `  docbank bates namespaces --create --prefix ACME --padding 6 --json`,
+		Use:     "namespaces",
+		Short:   "List or create a Bates namespace",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if create {
 				if padding < 1 || padding > 10 {
@@ -77,12 +94,12 @@ func newBatesNamespacesCommand() *cobra.Command {
 			return nil
 		}}
 	cmd.Flags().BoolVar(&create, "create", false, "create or find the exact prefix and suffix namespace")
-	cmd.Flags().StringVar(&prefix, "prefix", "", "Bates label prefix")
-	cmd.Flags().StringVar(&suffix, "suffix", "", "Bates label suffix")
+	cmd.Flags().StringVar(&prefix, "prefix", "", "bates label prefix")
+	cmd.Flags().StringVar(&suffix, "suffix", "", "bates label suffix")
 	cmd.Flags().IntVar(&padding, "padding", 0, "digits in each Bates number")
 	cmd.Flags().StringVar(&cursor, "cursor", "", "continue listing namespaces after this cursor")
 	cmd.Flags().IntVar(&limit, "limit", 100, "maximum namespaces to list (1-250)")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON to stdout")
 	return cmd
 }
 
@@ -91,8 +108,11 @@ func newBatesPlanCommand() *cobra.Command {
 	var startAt int64
 	var margin int
 	var asJSON bool
-	cmd := &cobra.Command{Use: "plan <snapshot-id>", Short: "Preview Bates labels without reserving them",
-		Args: cobra.ExactArgs(1),
+	cmd := &cobra.Command{
+		Example: `  docbank bates plan <snapshot-id> --namespace <namespace-uuid> --recipe-out r.json`,
+		Use:     "plan <snapshot-id>",
+		Short:   "Preview Bates labels without reserving them",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if namespace == "" {
 				return usageError(errors.New("--namespace is required"))
@@ -131,12 +151,12 @@ func newBatesPlanCommand() *cobra.Command {
 			}
 			return nil
 		}}
-	cmd.Flags().StringVar(&namespace, "namespace", "", "Bates namespace ID for the exported PDFs")
+	cmd.Flags().StringVar(&namespace, "namespace", "", "bates namespace ID for the exported PDFs (required)")
 	cmd.Flags().Int64Var(&startAt, "start-at", 0, "first Bates number; zero continues the namespace cursor")
 	cmd.Flags().StringVar(&recipeOut, "recipe-out", "", "write the stamp recipe for this preview to a new file")
 	cmd.Flags().StringVar(&position, "position", "bottom-right", "stamp position written to --recipe-out")
 	cmd.Flags().IntVar(&margin, "margin", 24, "stamp margin in points written to --recipe-out")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON to stdout")
 	return cmd
 }
 
@@ -188,8 +208,11 @@ func readBatesRecipe(path string) (pdfstamp.Recipe, error) {
 func newBatesReserveCommand() *cobra.Command {
 	var recipePath, operation string
 	var asJSON bool
-	cmd := &cobra.Command{Use: "reserve <snapshot-id>", Short: "Reserve the Bates labels named by a stamp recipe",
-		Args: cobra.ExactArgs(1),
+	cmd := &cobra.Command{
+		Example: `  docbank bates reserve <snapshot-id> --recipe r.json`,
+		Use:     "reserve <snapshot-id>",
+		Short:   "Reserve the Bates labels named by a stamp recipe",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if recipePath == "" {
 				return usageError(errors.New("--recipe is required; create one with bates plan --recipe-out"))
@@ -236,13 +259,17 @@ func newBatesReserveCommand() *cobra.Command {
 		}}
 	cmd.Flags().StringVar(&recipePath, "recipe", "", "stamp recipe JSON from bates plan --recipe-out")
 	cmd.Flags().StringVar(&operation, "operation-id", "", "idempotency UUID for a reservation; generated when omitted")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON to stdout")
 	return cmd
 }
 
 func newBatesShowCommand() *cobra.Command {
 	var asJSON bool
-	cmd := &cobra.Command{Use: "show <allocation-id>", Short: "Show a reserved Bates allocation", Args: cobra.ExactArgs(1),
+	cmd := &cobra.Command{
+		Example: `  docbank bates show <allocation-id> --json`,
+		Use:     "show <allocation-id>",
+		Short:   "Show a reserved Bates allocation",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := uuid.Parse(args[0])
 			if err != nil {
@@ -267,7 +294,7 @@ func newBatesShowCommand() *cobra.Command {
 			}
 			return nil
 		}}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON to stdout")
 	return cmd
 }
 

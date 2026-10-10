@@ -94,7 +94,7 @@ Inspect that receipt before releasing its references:
 
 ```bash
 docbank email-documents show <operation-id>
-docbank email-documents relations --parent-version <version-id>
+docbank email-documents relations --parent-version <version-uuid>
 docbank email-documents release <operation-id> --request-digest <request-digest>
 ```
 

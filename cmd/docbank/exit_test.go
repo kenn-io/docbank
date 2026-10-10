@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/backup"
@@ -144,4 +147,96 @@ func TestRunProcessDistinguishesUsageAndMissingNodes(t *testing.T) {
 	code = run("--version")
 	require.Equal(t, exitUsage, code)
 	assert.Contains(t, stderr.String(), "unknown flag: --version")
+}
+
+func TestRunProcessRequiredFlagErrorsAreUsage(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	resetFlags(rootCmd)
+
+	code := runProcess([]string{"people", "rename", "id:5", "New Name"}, &stdout, &stderr)
+
+	assert.Equal(t, exitUsage, code, "stderr:\n%s", stderr.String())
+	assert.Contains(t, stderr.String(), `error: required flag(s) "revision" not set`)
+	assert.Contains(t, stderr.String(), "hint: usage: docbank people rename <person-id> <display-name>")
+	assert.Empty(t, stdout.String())
+}
+
+func TestRunProcessErrorHints(t *testing.T) {
+	_ = setupVaultHome(t)
+	var stdout, stderr bytes.Buffer
+	run := func(args ...string) int {
+		resetFlags(rootCmd)
+		stdout.Reset()
+		stderr.Reset()
+		return runProcess(args, &stdout, &stderr)
+	}
+	assert.Equal(t, exitUsage, run("get", "id:1"))
+	assert.Equal(t, "error: accepts 2 arg(s), received 1", strings.SplitN(stderr.String(), "\n", 2)[0])
+	assert.Contains(t, stderr.String(), "hint: usage: docbank get <path-or-id> <local-file>")
+	assert.Equal(t, 1, strings.Count(stderr.String(), "hint:"))
+	assert.Empty(t, stdout.String())
+	assert.Equal(t, exitNotFound, run("ls", "/missing"))
+	assert.True(t, strings.HasPrefix(stderr.String(), "error: "))
+	assert.Contains(t, stderr.String(), `hint: list paths with "docbank tree" or find by name with "docbank search <name>"`)
+	assert.Equal(t, exitNotFound, run("stat", "id:999"))
+	assert.NotContains(t, stderr.String(), "hint:")
+	assert.Equal(t, exitSuccess, run("mkdir", "/gone"))
+	assert.Equal(t, exitSuccess, run("stat", "/gone", "--json"))
+	var gone struct {
+		ID int64 `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &gone))
+	assert.Equal(t, exitSuccess, run("rm", "/gone"))
+	assert.Equal(t, exitNotFound, run("ls", formatNodeSelector(gone.ID)))
+	assert.Contains(t, stderr.String(), "node is trashed")
+	assert.Contains(t, stderr.String(), `hint: list restorable nodes with "docbank trash list"`)
+	assert.Equal(t, exitNotFound, run("tag", "show", "urgent"))
+	assert.Contains(t, stderr.String(), `hint: list tags with "docbank tag list"`)
+	assert.Equal(t, exitUsage, run("processing", "status", "abc"))
+	assert.Contains(t, stderr.String(), `job ID must be lowercase SHA-256; the job ID is printed by "docbank processing build"`)
+	for _, args := range [][]string{{"rendition", "window", "id:1", "--version", "abc", "--profile", "supplied-captions"}, {"processing", "coverage", "abc", "--profile", "supplied-captions"}} {
+		assert.Equal(t, exitUsage, run(args...))
+		assert.Contains(t, stderr.String(), `version must be a canonical lowercase UUIDv4; use current_version_id from "docbank stat <path-or-id> --json"`)
+	}
+	assert.Equal(t, exitUsage, run("processing", "plan", "id:1"))
+	assert.Contains(t, stderr.String(), `list profiles with "docbank processing profiles"`)
+	assert.Equal(t, exitUsage, run("search", "term", "--mode", "lexical"))
+	assert.Contains(t, stderr.String(), `list profiles with "docbank processing profiles"`)
+	assert.Equal(t, exitUsage, run("search", "term", "--mode", "lexical", "--profile", "supplied-captions"))
+	assert.Contains(t, stderr.String(), `use current_version_id from "docbank stat <path-or-id> --json"`)
+	assert.Equal(t, exitUsage, run("stta"))
+	assert.Contains(t, stderr.String(), "Did you mean")
+	assert.NotContains(t, stderr.String(), "hint:")
+}
+
+func TestCommandErrorHint(t *testing.T) {
+	multiline := &cobra.Command{Use: "sample <value>\n<other>", Run: func(*cobra.Command, []string) {}}
+	tests := []struct {
+		name    string
+		cmd     *cobra.Command
+		err     error
+		code    int
+		started bool
+		want    string
+	}{
+		{"arity", getCmd, errors.New("accepts 2 arg(s), received 1"), exitUsage, false, "hint: usage: docbank get <path-or-id> <local-file> [flags]"},
+		{"root flag", rootCmd, errors.New("unknown flag"), exitUsage, false, `hint: run "docbank --help"`},
+		{"unknown command", nil, errors.New("unknown command"), exitUsage, false, `hint: run "docbank --help"`},
+		{"suggestion", rootCmd, errors.New("unknown command; Did you mean stat?"), exitUsage, false, ""},
+		{"multiline", multiline, errors.New("bad argument"), exitUsage, false, `hint: run "sample --help"`},
+		{"started usage", searchCmd, usageError(errors.New("bad limit")), exitUsage, true, ""},
+		{"missing job", jobsShowCmd, fmt.Errorf(`showing operation "unknown": %w`, store.ErrNotFound), exitNotFound, true, ""},
+		{"unclassified missing resource", lsCmd, store.ErrNotFound, exitNotFound, true, ""},
+		{"wrapped hint", lsCmd, fmt.Errorf("listing: %w", withHint(store.ErrNotFound, "try this")), exitNotFound, true, "hint: try this"},
+		{"vault locked", jobsCmd, home.ErrVaultLocked, exitBusy, true, ""},
+		{"backup repository locked", backupCreateCmd, backup.ErrRepoLocked, exitBusy, true, `hint: wait for the backup repository owner; use --force-unlock only when its owner is known to be gone`},
+		{"pack retirement deferred", storageRepackCmd, packstore.ErrPackRetirementDeferred, exitBusy, true, ""},
+		{"maintenance busy", jobsCmd, daemonconn.ErrMaintenanceBusy, exitBusy, true, `hint: wait and retry; "docbank jobs" shows active work`},
+		{"stale", rmCmd, store.ErrStaleRevision, exitStale, true, ""},
+		{"integrity", verifyCmd, daemonconn.ErrIntegrity, exitIntegrity, true, ""},
+		{"general", verifyCmd, errors.New("failed"), exitGeneral, true, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) { assert.Equal(t, tt.want, commandErrorHint(tt.cmd, tt.err, tt.code, tt.started)) })
+	}
 }

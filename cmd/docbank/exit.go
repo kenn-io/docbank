@@ -2,6 +2,10 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/spf13/cobra"
 
 	"go.kenn.io/kit/backup"
 	"go.kenn.io/kit/packstore"
@@ -82,4 +86,55 @@ func commandExitCode(err error, started bool) int {
 		return exitUsage
 	}
 	return exitGeneral
+}
+
+// hintedError attaches a next step where the CLI understands the failure.
+// runProcess prints it after the error, so the error text itself is unchanged.
+type hintedError struct {
+	err  error
+	hint string
+}
+
+func (e *hintedError) Error() string { return e.err.Error() }
+func (e *hintedError) Unwrap() error { return e.err }
+
+func withHint(err error, hint string) error {
+	return &hintedError{err: err, hint: hint}
+}
+
+// Hints belong to the CLI process boundary, not the daemon's problem contract.
+func commandErrorHint(cmd *cobra.Command, err error, code int, started bool) string {
+	if err == nil || strings.Contains(err.Error(), "Did you mean") {
+		return ""
+	}
+	if hinted, ok := errors.AsType[*hintedError](err); ok {
+		return "hint: " + hinted.hint
+	}
+	switch code {
+	case exitUsage:
+		if started {
+			return ""
+		}
+		if cmd == nil || cmd == rootCmd {
+			return `hint: run "docbank --help"`
+		}
+		usage := cmd.UseLine()
+		if len(usage) <= 120 && !strings.ContainsAny(usage, "\n\r") {
+			return "hint: usage: " + usage
+		}
+		return fmt.Sprintf("hint: run %q", cmd.CommandPath()+" --help")
+	case exitBusy:
+		// A vault lock can block the daemon itself, so "docbank jobs" would
+		// fail the same way; that error already names the likely holder.
+		switch {
+		case errors.Is(err, backup.ErrRepoLocked):
+			return `hint: wait for the backup repository owner; use --force-unlock only when its owner is known to be gone`
+		case errors.Is(err, daemonconn.ErrMaintenanceBusy):
+			return `hint: wait and retry; "docbank jobs" shows active work`
+		default:
+			return ""
+		}
+	default:
+		return ""
+	}
 }

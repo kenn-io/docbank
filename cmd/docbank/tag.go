@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 const maxTagLimit = 1000
@@ -32,14 +33,18 @@ var (
 )
 
 var tagCmd = &cobra.Command{
-	Use:   "tag",
-	Short: "Define tags and organize nodes with them",
+	Long: `Typical flow: tag create urgent; tag assign urgent id:12;
+search --tag urgent (or tag nodes urgent).`,
+	GroupID: groupDocuments,
+	Use:     "tag",
+	Short:   "Define tags and organize nodes with them",
 }
 
 var tagListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List tag definitions",
-	Args:  cobra.NoArgs,
+	Example: `  docbank tag list`,
+	Use:     "list",
+	Short:   "List tag definitions",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if err := validateTagPagination(tagListLimit, tagListOffset); err != nil {
 			return err
@@ -79,9 +84,10 @@ var tagListCmd = &cobra.Command{
 }
 
 var tagShowCmd = &cobra.Command{
-	Use:   "show <name-or-id>",
-	Short: "Inspect one tag",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank tag show urgent --json`,
+	Use:     "show <name-or-id>",
+	Short:   "Inspect one tag",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -99,9 +105,10 @@ var tagShowCmd = &cobra.Command{
 }
 
 var tagCreateCmd = &cobra.Command{
-	Use:   "create <name>",
-	Short: "Define a tag with a new stable ID",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank tag create urgent`,
+	Use:     "create <name>",
+	Short:   "Define a tag with a new stable ID",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -120,9 +127,10 @@ var tagCreateCmd = &cobra.Command{
 }
 
 var tagRenameCmd = &cobra.Command{
-	Use:   "rename <name-or-id> <new-name>",
-	Short: "Rename a tag without changing its stable ID",
-	Args:  cobra.ExactArgs(2),
+	Example: `  docbank tag rename urgent priority`,
+	Use:     "rename <name-or-id> <new-name>",
+	Short:   "Rename a tag without changing its stable ID",
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -146,9 +154,10 @@ var tagRenameCmd = &cobra.Command{
 }
 
 var tagDeleteCmd = &cobra.Command{
-	Use:   "delete <name-or-id>",
-	Short: "Delete a tag and all of its assignments",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank tag delete urgent`,
+	Use:     "delete <name-or-id>",
+	Short:   "Delete a tag and all of its assignments",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -172,27 +181,30 @@ var tagDeleteCmd = &cobra.Command{
 }
 
 var tagAssignCmd = &cobra.Command{
-	Use:   "assign <name-or-id> <path-or-node-id>",
-	Short: "Assign a tag to a live node",
-	Args:  cobra.ExactArgs(2),
+	Example: `  docbank tag assign urgent id:12`,
+	Use:     "assign <name-or-id> <path-or-id>",
+	Short:   "Assign a tag to a live node",
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return changeTagAssignmentCLI(cmd, args[0], args[1], true, tagAssignJSON)
 	},
 }
 
 var tagUnassignCmd = &cobra.Command{
-	Use:   "unassign <name-or-id> <path-or-node-id>",
-	Short: "Remove a tag from a live node",
-	Args:  cobra.ExactArgs(2),
+	Example: `  docbank tag unassign urgent id:12`,
+	Use:     "unassign <name-or-id> <path-or-id>",
+	Short:   "Remove a tag from a live node",
+	Args:    cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return changeTagAssignmentCLI(cmd, args[0], args[1], false, tagUnassignJSON)
 	},
 }
 
 var tagNodesCmd = &cobra.Command{
-	Use:   "nodes <name-or-id>",
-	Short: "List live and trashed nodes carrying a tag",
-	Args:  cobra.ExactArgs(1),
+	Example: `  docbank tag nodes urgent --json`,
+	Use:     "nodes <name-or-id>",
+	Short:   "List live and trashed nodes carrying a tag",
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateTagPagination(tagNodesLimit, tagNodesOffset); err != nil {
 			return err
@@ -299,16 +311,21 @@ func changeTagAssignmentCLI(
 }
 
 func resolveTag(cmd *cobra.Command, c *daemonconn.Connection, selector string) (api.Tag, error) {
+	var (
+		tag api.Tag
+		err error
+	)
 	if daemonconn.IsCanonicalUUIDv4(selector) {
-		tag, err := c.Tag(cmd.Context(), selector)
-		if err != nil {
-			return api.Tag{}, fmt.Errorf("resolving tag %q: %w", selector, err)
-		}
-		return tag, nil
+		tag, err = c.Tag(cmd.Context(), selector)
+	} else {
+		tag, err = c.TagByName(cmd.Context(), selector)
 	}
-	tag, err := c.TagByName(cmd.Context(), selector)
 	if err != nil {
-		return api.Tag{}, fmt.Errorf("resolving tag %q: %w", selector, err)
+		err = fmt.Errorf("resolving tag %q: %w", selector, err)
+		if errors.Is(err, store.ErrNotFound) {
+			err = withHint(err, `list tags with "docbank tag list"`)
+		}
+		return api.Tag{}, err
 	}
 	return tag, nil
 }
@@ -353,16 +370,16 @@ func writeTagContinuation(w io.Writer, offset, count, total int) {
 func init() {
 	tagListCmd.Flags().IntVar(&tagListLimit, "limit", 100, "maximum tags to return (1-1000)")
 	tagListCmd.Flags().IntVar(&tagListOffset, "offset", 0, "number of tags to skip")
-	tagListCmd.Flags().BoolVar(&tagListJSON, "json", false, "emit machine-readable JSON")
-	tagShowCmd.Flags().BoolVar(&tagShowJSON, "json", false, "emit machine-readable JSON")
-	tagCreateCmd.Flags().BoolVar(&tagCreateJSON, "json", false, "emit machine-readable JSON")
-	tagRenameCmd.Flags().BoolVar(&tagRenameJSON, "json", false, "emit machine-readable JSON")
-	tagDeleteCmd.Flags().BoolVar(&tagDeleteJSON, "json", false, "emit machine-readable JSON")
-	tagAssignCmd.Flags().BoolVar(&tagAssignJSON, "json", false, "emit machine-readable JSON")
-	tagUnassignCmd.Flags().BoolVar(&tagUnassignJSON, "json", false, "emit machine-readable JSON")
+	tagListCmd.Flags().BoolVar(&tagListJSON, "json", false, "print JSON to stdout")
+	tagShowCmd.Flags().BoolVar(&tagShowJSON, "json", false, "print JSON to stdout")
+	tagCreateCmd.Flags().BoolVar(&tagCreateJSON, "json", false, "print JSON to stdout")
+	tagRenameCmd.Flags().BoolVar(&tagRenameJSON, "json", false, "print JSON to stdout")
+	tagDeleteCmd.Flags().BoolVar(&tagDeleteJSON, "json", false, "print JSON to stdout")
+	tagAssignCmd.Flags().BoolVar(&tagAssignJSON, "json", false, "print JSON to stdout")
+	tagUnassignCmd.Flags().BoolVar(&tagUnassignJSON, "json", false, "print JSON to stdout")
 	tagNodesCmd.Flags().IntVar(&tagNodesLimit, "limit", 100, "maximum nodes to return (1-1000)")
 	tagNodesCmd.Flags().IntVar(&tagNodesOffset, "offset", 0, "number of tagged nodes to skip")
-	tagNodesCmd.Flags().BoolVar(&tagNodesJSON, "json", false, "emit machine-readable JSON")
+	tagNodesCmd.Flags().BoolVar(&tagNodesJSON, "json", false, "print JSON to stdout")
 	tagCmd.AddCommand(tagListCmd, tagShowCmd, tagCreateCmd, tagRenameCmd,
 		tagDeleteCmd, tagAssignCmd, tagUnassignCmd, tagNodesCmd)
 	rootCmd.AddCommand(tagCmd)

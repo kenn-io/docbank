@@ -19,9 +19,15 @@ var (
 )
 
 var formatsCmd = &cobra.Command{
-	Use:   "formats",
-	Short: "Report per-format capability coverage",
-	Args:  cobra.NoArgs,
+	Example: `  docbank formats --extension pdf
+  docbank formats --json`,
+	Long: `Capabilities: detect, retain, metadata, expand, text (a rendition provider
+returns Markdown; not the same as plain-text search), pages, transcript.
+States: qualified, unqualified, unsupported, not_applicable.`,
+	GroupID: groupSearch,
+	Use:     "formats",
+	Short:   "Report per-format capability coverage",
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if formatsFormat != "" && formatsExtension != "" {
 			return usageError(errors.New("exactly one of --format or --extension may be set"))
@@ -84,6 +90,6 @@ func init() {
 	formatsCmd.Flags().StringVar(&formatsFamily, "family", "", "return only one query family")
 	formatsCmd.Flags().StringVar(&formatsFormat, "format", "", "look up one format id")
 	formatsCmd.Flags().StringVar(&formatsExtension, "extension", "", "look up one extension")
-	formatsCmd.Flags().BoolVar(&formatsJSON, "json", false, "machine-readable output")
+	formatsCmd.Flags().BoolVar(&formatsJSON, "json", false, "print JSON to stdout")
 	rootCmd.AddCommand(formatsCmd)
 }
