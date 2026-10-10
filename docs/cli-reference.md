@@ -187,7 +187,7 @@ docbank photos unhide <asset-id|node-selector> [--revision REV]
 docbank photos import <source-root> [destination] [--json]
 ```
 
-`rejects` previews the whole query, defaulting to Library. Save the preview JSON to a file and review its counts and targets. `--confirm FILE` moves those targets and their sidecars atomically to recoverable trash; `--confirm -` reads the preview from stdin. A changed asset revision, member node revision, or reject flag refuses the whole batch. Each preview targets up to 1,000 live files in stable asset ID order. Preview output includes complete counts, `movable` for the batch size, and `targets`; confirmation returns moved asset IDs. Preview and confirm again for the rest.
+`rejects` previews the whole query in Library. The CLI covers Library only. Save the preview JSON to a file and review its counts and targets. `--confirm FILE` reads that preview file and ignores `--query`. It moves those targets and their sidecars atomically to recoverable trash; `--confirm -` reads the preview from stdin. A changed asset revision, member node revision, or reject flag refuses the whole batch. Each preview targets up to 1,000 live files in stable asset ID order. Preview output includes complete counts and `targets`; confirmation returns moved asset IDs. Preview and confirm again for the rest.
 
 Photo commands emit JSON through the daemon. Image and concrete video files are
 enrolled when created. Generic RAW files require explicit promotion.

@@ -32,7 +32,6 @@ type PhotoRejectMixed struct {
 type PhotoRejectsPreflight struct {
 	Targets    []PhotoRejectTarget `json:"targets"`
 	Photos     int                 `json:"photos"`
-	Movable    int                 `json:"movable"`
 	Files      int                 `json:"files"`
 	Unchanged  int                 `json:"unchanged"`
 	Mixed      []PhotoRejectMixed  `json:"mixed"`
@@ -198,8 +197,8 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 		if rejected == originals {
 			out.Photos++
 			out.Files += live
-			if batchFiles+live <= MaxPhotoRejectsMove {
-				batchFiles += live
+			batchFiles += live
+			if batchFiles <= MaxPhotoRejectsMove {
 				out.Targets = append(out.Targets, PhotoRejectTarget{members[0].AssetID, members[0].AssetRevision, memberRevision})
 			}
 		} else {
@@ -235,7 +234,6 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 	if closeErr != nil {
 		return out, closeErr
 	}
-	out.Movable = len(out.Targets)
 	out.Unchanged -= out.Photos
 	return out, nil
 }

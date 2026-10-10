@@ -4,12 +4,12 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 )
 
 func init() {
@@ -37,24 +37,22 @@ func runPhotoRejects(cmd *cobra.Command, c *daemonconn.Connection, request api.P
 			defer func() { _ = file.Close() }()
 			reader = file
 		}
-		raw, err := io.ReadAll(io.LimitReader(reader, (1<<20)+1))
-		if err != nil {
-			return fmt.Errorf("reading rejects preview: %w", err)
+		var preview struct {
+			Targets []store.PhotoRejectTarget `json:"targets"`
 		}
-		if len(raw) > 1<<20 {
-			return errors.New("rejects preview exceeds 1 MiB")
-		}
-		var preview api.PhotoRejectsPreflight
-		if err := json.Unmarshal(raw, &preview, json.RejectUnknownMembers(true)); err != nil {
+		if err := json.UnmarshalRead(reader, &preview); err != nil {
 			return fmt.Errorf("decoding rejects preview: %w", err)
 		}
-		result, err := c.MovePhotoRejects(cmd.Context(), api.MovePhotoRejectsRequest{Targets: preview.Targets}, "")
+		if preview.Targets == nil {
+			return errors.New("decoding rejects preview: missing targets")
+		}
+		result, err := c.MovePhotoRejects(cmd.Context(), api.MovePhotoRejectsRequest{Targets: preview.Targets})
 		if err != nil {
 			return err
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), result)
 	}
-	result, err := c.PhotoRejects(cmd.Context(), request, "")
+	result, err := c.PhotoRejects(cmd.Context(), request)
 	if err != nil {
 		return err
 	}

@@ -5141,7 +5141,6 @@ export interface PhotoRejectsPreflight {
   files: number;
   mixed: PhotoRejectMixed[];
   mixed_count: number;
-  movable: number;
   photos: number;
   targets: PhotoRejectTarget[];
   unchanged: number;

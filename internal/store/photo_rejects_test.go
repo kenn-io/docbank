@@ -66,7 +66,7 @@ func TestPhotoRejectsStaleTargets(t *testing.T) {
 				}
 			}
 			if change == "restore" {
-				node, err := s.NodeByID(ctx, asset.Files[0].NodeID)
+				node, err := s.NodeByID(ctx, fileByRole(asset.Files, PhotoRoleImage).NodeID)
 				require.NoError(t, err)
 				_, _, err = s.Trash(ctx, node.ID, node.Revision)
 				require.NoError(t, err)
@@ -96,7 +96,7 @@ func TestPhotoRejectsStaleTargets(t *testing.T) {
 				require.NoError(t, readErr)
 				_, _, err = s.Trash(ctx, node.ID, node.Revision)
 			case "restore":
-				node, readErr := s.NodeByID(ctx, asset.Files[0].NodeID)
+				node, readErr := s.NodeByID(ctx, fileByRole(asset.Files, PhotoRoleImage).NodeID)
 				require.NoError(t, readErr)
 				_, _, err = s.Restore(ctx, node.ID, node.Revision)
 			case "hidden", "unhidden":
@@ -167,7 +167,7 @@ func TestPhotoRejectsFileBound(t *testing.T) {
 	t.Run("sidecar file cap", func(t *testing.T) {
 		s := newTestStore(t)
 		var targets []PhotoAuthoredTarget
-		for i := range 334 {
+		for i := range 335 {
 			dir, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("group-%03d", i))
 			require.NoError(t, err)
 			raw, err := s.CreateFile(t.Context(), dir.ID, "capture.raw", fakeHash("a1"), 1, "application/octet-stream")
@@ -195,25 +195,40 @@ func TestPhotoRejectsFileBound(t *testing.T) {
 		}
 		_, err := s.EditPhotoAuthored(t.Context(), targets)
 		require.NoError(t, err)
+		var lastID string
+		require.NoError(t, s.db.QueryRow(`SELECT MAX(asset_id) FROM photo_files`).Scan(&lastID))
+		last, err := s.PhotoAssetByID(t.Context(), lastID)
+		require.NoError(t, err)
+		for _, file := range last.Files {
+			if file.Role != PhotoRoleRAW {
+				node, readErr := s.NodeByID(t.Context(), file.NodeID)
+				require.NoError(t, readErr)
+				_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
+				require.NoError(t, err)
+			}
+		}
 		value, err := query.Parse([]byte(`{}`))
 		require.NoError(t, err)
 		preview, err := s.PreflightPhotoRejects(t.Context(), PhotoRejectsRequest{Query: value})
 		require.NoError(t, err)
-		assert.Equal(t, 334, preview.Photos)
-		assert.Equal(t, 1002, preview.Files)
-		assert.Equal(t, 333, preview.Movable)
+		assert.Equal(t, 335, preview.Photos)
+		assert.Equal(t, 1003, preview.Files)
+		assert.Len(t, preview.Targets, 333)
+		for _, target := range preview.Targets {
+			assert.Less(t, target.AssetID, lastID)
+		}
 		_, err = s.MovePhotoRejects(t.Context(), false, preview.Targets)
 		require.NoError(t, err)
 		preview, err = s.PreflightPhotoRejects(t.Context(), PhotoRejectsRequest{Query: value})
 		require.NoError(t, err)
-		assert.Equal(t, 1, preview.Photos)
-		assert.Equal(t, 1, preview.Movable)
-		assert.Equal(t, 3, preview.Files)
+		assert.Equal(t, 2, preview.Photos)
+		assert.Len(t, preview.Targets, 2)
+		assert.Equal(t, 4, preview.Files)
 		_, err = s.MovePhotoRejects(t.Context(), false, preview.Targets)
 		require.NoError(t, err)
 		roots, err := s.TrashedRoots(t.Context())
 		require.NoError(t, err)
-		assert.Len(t, roots, 1002)
+		assert.Len(t, roots, 1005)
 	})
 }
 

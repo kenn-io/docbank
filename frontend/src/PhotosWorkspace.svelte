@@ -70,7 +70,7 @@
 </main>
 
 {#if rejectsOpen}
-  <PhotoRejectsModal {photos} onclose={() => rejectsOpen = false} onmove={async () => { if (await photos.trashRejects(preserve, ontrashed)) rejectsOpen = false; }} />
+  <PhotoRejectsModal {photos} onclose={() => { photos.cancelPending(); rejectsOpen = false; }} onmove={async () => { if (await photos.trashRejects(preserve, ontrashed)) rejectsOpen = false; }} />
 {/if}
 
 {#if trashOpen}

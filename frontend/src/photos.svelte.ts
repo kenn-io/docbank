@@ -5,7 +5,7 @@ import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
 import { clearSelection, reconcileIDSelection, toggleIDSelection, type SelectionState } from "./selection.js";
 
 export const photoQuery: SavedQueryV1Schema = { v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "capture_time", direction: "desc" } };
-export const photoRejectsSelectionLimit = 64;
+export const photoRejectsSelectionLimit = 64; // Matches maxIDValues in internal/query/query.go.
 const densityKey = "docbank.photos.density";
 
 export function loadDensity(): Density {
@@ -113,6 +113,7 @@ export class Photos {
     this.controller.abort();
     this.controller = new AbortController();
     this.loading = false;
+    this.rejectsLoading = false;
   }
 
   resume(preserve?: () => (() => Promise<void>) | undefined) {
@@ -148,11 +149,12 @@ export class Photos {
       query.filters = { ...query.filters, asset_ids: ids };
     }
     this.rejectsLoading = true;
+    const controller = this.controller;
     try {
-      const result = await preflightPhotoRejects({ query, hidden: this.hidden }, { session: this.session, signal: AbortSignal.timeout(60_000) });
-      if (!this.disposed) this.rejects = result;
-    } catch (cause) { this.rejectsFailure(cause); }
-    finally { this.rejectsLoading = false; }
+      const result = await preflightPhotoRejects({ query, hidden: this.hidden }, { session: this.session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]) });
+      if (!controller.signal.aborted) this.rejects = result;
+    } catch (cause) { if (!controller.signal.aborted) this.rejectsFailure(cause); }
+    finally { if (!controller.signal.aborted) this.rejectsLoading = false; }
   }
 
   async trashRejects(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
