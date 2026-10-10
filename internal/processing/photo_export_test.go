@@ -11,6 +11,8 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -314,6 +316,12 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 		assert.NotContains(t, root, tag)
 	}
 	assert.Equal(t, "Synthetic Camera", exifASCII(root[0x010f]))
+	raf := syntheticRAF()
+	_, rafReceipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(raf), photoRenderInput(raf, "image/x-fuji-raf"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true})
+	require.NoError(t, err)
+	assert.True(t, rafReceipt.EmbeddedPreview)
+	assert.Equal(t, 30, rafReceipt.Width)
+	assert.Equal(t, 40, rafReceipt.Height)
 	missing := syntheticRAWPreviewTIFF(1)
 	_, _, err = RenderPhotoExport(t.Context(), bytes.NewReader(missing), photoRenderInput(missing, "image/x-adobe-dng"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90})
 	require.ErrorIs(t, err, bundle.ErrUnavailable)
@@ -387,6 +395,16 @@ func TestPhotoExportPNGPixelChunksDoNotConsumeMetadataBudget(t *testing.T) {
 		data = data[n+12:]
 	}
 	require.Greater(t, chunks, 1024)
+	path := filepath.Join(t.TempDir(), "many-chunks.png")
+	require.NoError(t, os.WriteFile(path, source.Bytes(), 0600))
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, file.Close()) }()
+	counted := &previewCountedFile{File: file}
+	_, _, _, _, malformed, err := inspectVisualPreviewContainer(t.Context(), counted, int64(source.Len()), "png")
+	require.NoError(t, err)
+	require.False(t, malformed)
+	require.Less(t, counted.reads, chunks/8)
 	input := photoRenderInput(source.Bytes(), "image/png")
 	output, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90})
 	require.NoError(t, err)
@@ -404,4 +422,51 @@ func TestPhotoExportPNGPixelChunksDoNotConsumeMetadataBudget(t *testing.T) {
 	exif := syntheticTIFF(42, []syntheticTIFFEntry{{tag: 0x010e, kind: 2}}, nil)
 	_, err = rewritePhotoEXIF(exif, 65, 64, false, store.PhotoAuthored{})
 	require.NoError(t, err)
+}
+
+type previewCountedFile struct {
+	*os.File
+	reads int
+}
+
+func (f *previewCountedFile) Read(p []byte) (int, error) {
+	f.reads++
+	return f.File.Read(p)
+}
+
+func TestPhotoExportClearsWindowsEXIFAliases(t *testing.T) {
+	t.Parallel()
+	var value []byte
+	for _, ch := range "Synthetic embedded credit" {
+		value = append(value, byte(ch), 0)
+	}
+	value = append(value, 0, 0)
+	var entries []syntheticTIFFEntry
+	for _, tag := range []uint16{0x9c9b, 0x9c9c, 0x9c9d, 0x9c9e, 0x9c9f, 0x9c90} {
+		entries = append(entries, syntheticTIFFEntry{tag: tag, kind: 1, value: value})
+	}
+	exif := syntheticTIFF(42, entries, nil)
+	data := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1, append([]byte("Exif\x00\x00"), exif...))
+	for _, confirmed := range []store.PhotoAuthoredFields{0, store.PhotoConfirmedCaption | store.PhotoConfirmedCreator} {
+		for _, format := range []string{"jpeg", "png"} {
+			input := photoRenderInput(data, "image/jpeg")
+			input.Authored.Confirmed = confirmed
+			out, _, err := RenderPhotoExport(t.Context(), bytes.NewReader(data), input, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true})
+			require.NoError(t, err)
+			packets, err := photoSourcePackets(t.Context(), out, true)
+			require.NoError(t, err)
+			r, ok := newExifReader(packets.exif)
+			require.True(t, ok)
+			root := r.entries(r.u32(4))
+			require.NotContains(t, root, uint16(0x9c9e))
+			require.Equal(t, value, root[0x9c90])
+			for _, tag := range []uint16{0x9c9b, 0x9c9c, 0x9c9d, 0x9c9f} {
+				if confirmed == 0 {
+					require.Equal(t, value, root[tag])
+				} else {
+					require.NotContains(t, root, tag)
+				}
+			}
+		}
+	}
 }

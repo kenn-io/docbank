@@ -1186,7 +1186,7 @@ func writeSyntheticTIFFIFD(data []byte, offset int, entries []syntheticTIFFEntry
 		base := offset + 2 + index*12
 		binary.LittleEndian.PutUint16(data[base:], entry.tag)
 		binary.LittleEndian.PutUint16(data[base+2:], entry.kind)
-		width := map[uint16]int{2: 1, 3: 2, 4: 4, 5: 8, 10: 8}[entry.kind]
+		width := map[uint16]int{1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 10: 8}[entry.kind]
 		binary.LittleEndian.PutUint32(data[base+4:], uint32(len(entry.value)/width))
 		if len(entry.value) <= 4 {
 			copy(data[base+8:base+12], entry.value)

@@ -162,7 +162,13 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 	pixels := io.ReadSeeker(bytes.NewReader(data))
 	format := visualPreviewFormat(input.MediaType)
 	if format == "raw" {
-		locations, malformed, err := visualPreviewRAWLocations(bytes.NewReader(data), input.MediaType, int64(len(data)))
+		var locations []visualPreviewRAWLocation
+		var malformed bool
+		if packets.rawPreview != nil {
+			locations = []visualPreviewRAWLocation{*packets.rawPreview}
+		} else {
+			locations, malformed, err = visualPreviewRAWLocations(bytes.NewReader(data), input.MediaType, int64(len(data)))
+		}
 		if err != nil {
 			return nil, receipt, err
 		}
@@ -177,10 +183,14 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 		for _, location := range locations {
 			preview := io.NewSectionReader(bytes.NewReader(data), location.offset, location.length)
 
-			p, e := photoSourcePackets(ctx, data[location.offset:location.offset+location.length], false)
-			if e != nil {
-				err = e
-				continue
+			p := packets
+			if packets.rawPreview == nil {
+				var e error
+				p, e = photoSourcePackets(ctx, data[location.offset:location.offset+location.length], false)
+				if e != nil {
+					err = e
+					continue
+				}
 			}
 			candidate := packets
 			if len(candidate.icc) == 0 {
@@ -227,47 +237,25 @@ func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string,
 	if containerOrientation >= 1 && containerOrientation <= 8 {
 		orientation = containerOrientation
 	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return nil, 0, err
-	}
-	config, actual, err := image.DecodeConfig(source)
-	if err != nil {
-		return nil, 0, err
-	}
-	if actual != format || !visualPreviewDimensionsAllowed(config.Width, config.Height) {
-		return nil, 0, bundle.ErrLimit
-	}
-	if budget != nil {
-		n := int64(config.Width) * int64(config.Height)
-		if n > budget.pixels {
-			return nil, 0, fmt.Errorf("%w: decoded pixels exceed 512 million", bundle.ErrLimit)
+	pixels, err := decodeVisualPreviewPixels(ctx, source, format, func(config image.Config) error {
+		if budget != nil && int64(config.Width)*int64(config.Height) > budget.pixels {
+			return fmt.Errorf("%w: decoded pixels exceed 512 million", bundle.ErrLimit)
 		}
-	}
-	if format == "jpeg" && !visualPreviewJPEGColorModelSupported(config.ColorModel) {
-		return nil, 0, errors.New("unsupported JPEG color model")
-	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return nil, 0, err
-	}
-	var decoded image.Image
-	if format == "gif" {
-		decoded, err = decodeGIFCanvas(source, config)
-	} else {
-		decoded, _, err = image.Decode(source)
-	}
+		return nil
+	})
 	if err != nil {
-		return nil, 0, err
-	}
-	if decoded.Bounds().Dx() != config.Width || decoded.Bounds().Dy() != config.Height {
-		return nil, 0, bundle.ErrConflict
-	}
-	if err := ctx.Err(); err != nil {
+		if errors.Is(err, errVisualDimensions) || errors.Is(err, errVisualFormat) {
+			err = bundle.ErrLimit
+		}
+		if errors.Is(err, errVisualDecodeBounds) {
+			err = bundle.ErrConflict
+		}
 		return nil, 0, err
 	}
 	if budget != nil {
-		budget.pixels -= int64(config.Width) * int64(config.Height)
+		budget.pixels -= int64(pixels.config.Width) * int64(pixels.config.Height)
 	}
-	return decoded, orientation, nil
+	return pixels.image, orientation, nil
 }
 
 func encodePhotoExport(ctx context.Context, decoded image.Image, orientation int, packets photoPackets, input store.PhotoExportInput, receipt bundle.PhotoRenderReceipt) ([]byte, bundle.PhotoRenderReceipt, error) {

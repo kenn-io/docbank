@@ -22,6 +22,7 @@ const photoXMPPNGKeyword = "XML:com.adobe.xmp"
 
 type photoPackets struct {
 	exif, xmp, icc   []byte
+	rawPreview       *visualPreviewRAWLocation
 	unsupportedColor bool
 	orientation      int
 	animated         bool
@@ -157,160 +158,166 @@ func photoSourcePackets(ctx context.Context, data []byte, metadata bool) (result
 		return nil
 	}
 	switch {
-	case bytes.HasPrefix(data, []byte{0xff, 0xd8}):
-		position := 2
-		for range visualPreviewMaxJPEGSegments {
-			if position >= len(data) || data[position] != 0xff {
-				return result, errors.New("malformed JPEG metadata")
-			}
-			for position < len(data) && data[position] == 0xff {
-				position++
-			}
-			if position >= len(data) {
-				return result, io.ErrUnexpectedEOF
-			}
-			marker := data[position]
-			position++
-			if marker == 0xda || marker == 0xd9 {
-				return finish()
-			}
-			if marker == 0x01 || marker >= 0xd0 && marker <= 0xd7 {
-				continue
-			}
-			if position > len(data)-2 {
-				return result, io.ErrUnexpectedEOF
-			}
-			n := int(binary.BigEndian.Uint16(data[position:]))
-			if n < 2 || n > len(data)-position {
-				return result, io.ErrUnexpectedEOF
-			}
-			payload := data[position+2 : position+n]
-			position += n
-			if marker == 0xe2 && bytes.HasPrefix(payload, []byte("ICC_PROFILE\x00")) {
-				if len(payload) < 14 || payload[12] == 0 || payload[13] == 0 || payload[12] > payload[13] {
-					return result, errors.New("malformed JPEG ICC profile")
-				}
-				if len(iccParts) == 0 {
-					iccParts = make([][]byte, int(payload[13]))
-				}
-				index := int(payload[12]) - 1
-				if len(iccParts) != int(payload[13]) || iccParts[index] != nil {
-					return result, errors.New("duplicate ICC profile segment")
-				}
-				iccBytes += len(payload) - 14
-				if iccBytes > maxPhotoSidecarBytes {
-					return result, errors.New("ICC profile exceeds metadata limit")
-				}
-				iccParts[index] = payload[14:]
-			}
-			if marker == 0xe1 && bytes.HasPrefix(payload, []byte("Exif\x00\x00")) {
-				if e := inspectEXIF(payload[6:]); e != nil {
-					return result, e
-				}
-			}
-			if !metadata || marker != 0xe1 {
-				continue
-			}
-			switch {
-			case bytes.HasPrefix(payload, []byte("Exif\x00\x00")):
-				err = set(&exif, payload[6:])
-			case bytes.HasPrefix(payload, []byte(photoXMPJPEGPrefix)):
-				err = set(&packet, payload[len(photoXMPJPEGPrefix):])
-			case bytes.HasPrefix(payload, []byte("http://ns.adobe.com/xmp/extension/")):
-				return result, errors.New("extended XMP metadata is unsupported")
-			}
-			if err != nil {
-				return result, err
-			}
+	case bytes.HasPrefix(data, []byte{0xff, 0xd8}), bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")), bytes.HasPrefix(data, []byte("RIFF")):
+		format := "webp"
+		if data[0] == 0xff {
+			format = "jpeg"
+		} else if data[0] == 0x89 {
+			format = "png"
 		}
-		return result, errors.New("too many JPEG segments")
-	case bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")):
-		position := 8
-		for position < len(data) {
-			if err := ctx.Err(); err != nil {
-				return result, err
+		err = walkVisualPreviewContainer(ctx, bytes.NewReader(data), format, int64(len(data)), func(kind string, r io.Reader, n int64) error {
+			if format == "jpeg" && kind != "\xe1" && kind != "\xe2" {
+				return nil
 			}
-			if position > len(data)-12 {
-				return result, io.ErrUnexpectedEOF
+			if format == "png" && !slices.Contains([]string{"iCCP", "gAMA", "cHRM", "acTL", "eXIf", "iTXt"}, kind) {
+				return nil
 			}
-			n := int64(binary.BigEndian.Uint32(data[position:]))
-			if n > int64(len(data)-position-12) {
-				return result, io.ErrUnexpectedEOF
+			if format == "webp" && !slices.Contains([]string{"VP8X", "ANIM", "ANMF", "ICCP", "EXIF", "XMP "}, kind) {
+				return nil
 			}
-			kind := string(data[position+4 : position+8])
-			payload := data[position+8 : position+8+int(n)]
-			position += 12 + int(n)
-			if kind == "iCCP" {
-				index := bytes.IndexByte(payload, 0)
-				if index < 1 || index > 79 || index+2 > len(payload) || payload[index+1] != 0 || len(result.icc) > 0 {
-					return result, errors.New("malformed PNG ICC profile")
-				}
-				reader, e := zlib.NewReader(bytes.NewReader(payload[index+2:]))
-				if e != nil {
-					return result, e
-				}
-				profile, e := io.ReadAll(io.LimitReader(reader, maxPhotoSidecarBytes+1))
-				e = errors.Join(e, reader.Close())
-				if e != nil {
-					return result, e
-				}
-				result.icc = profile
+			payload, e := io.ReadAll(r)
+			if e != nil {
+				return e
 			}
-			if kind == "gAMA" && (len(payload) != 4 || binary.BigEndian.Uint32(payload) != 45455) {
-				result.unsupportedColor = true
-			}
-			if kind == "cHRM" && !bytes.Equal(payload, []byte{0, 0, 122, 38, 0, 0, 128, 132, 0, 0, 250, 0, 0, 0, 128, 232, 0, 0, 117, 48, 0, 0, 234, 96, 0, 0, 58, 152, 0, 0, 23, 112}) {
-				result.unsupportedColor = true
-			}
-			if kind == "acTL" {
-				result.animated = true
-			}
-			if kind == "eXIf" {
-				if e := inspectEXIF(payload); e != nil {
-					return result, e
-				}
-			}
-			if metadata && kind == "eXIf" {
-				err = set(&exif, payload)
-			}
-			if metadata && kind == "iTXt" && bytes.HasPrefix(payload, []byte(photoXMPPNGKeyword+"\x00")) {
-				text := payload[len(photoXMPPNGKeyword)+1:]
-				if len(text) < 4 || text[0] > 1 || text[1] != 0 {
-					return result, errors.New("malformed PNG XMP")
-				}
-				compressed := text[0] == 1
-				text = text[2:]
-				for range 2 {
-					at := bytes.IndexByte(text, 0)
-					if at < 0 {
-						return result, errors.New("malformed PNG XMP")
+			switch format {
+			case "jpeg":
+				marker := kind[0]
+				if marker == 0xe2 && bytes.HasPrefix(payload, []byte("ICC_PROFILE\x00")) {
+					if len(payload) < 14 || payload[12] == 0 || payload[13] == 0 || payload[12] > payload[13] {
+						return errors.New("malformed JPEG ICC profile")
 					}
-					text = text[at+1:]
+					if len(iccParts) == 0 {
+						iccParts = make([][]byte, int(payload[13]))
+					}
+					index := int(payload[12]) - 1
+					if len(iccParts) != int(payload[13]) || iccParts[index] != nil {
+						return errors.New("duplicate ICC profile segment")
+					}
+					iccBytes += len(payload) - 14
+					if iccBytes > maxPhotoSidecarBytes {
+						return errors.New("ICC profile exceeds metadata limit")
+					}
+					iccParts[index] = payload[14:]
 				}
-				if compressed {
-					reader, e := zlib.NewReader(bytes.NewReader(text))
+				if marker == 0xe1 && bytes.HasPrefix(payload, []byte("Exif\x00\x00")) {
+					if e := inspectEXIF(payload[6:]); e != nil {
+						return e
+					}
+				}
+				if !metadata || marker != 0xe1 {
+					return nil
+				}
+				switch {
+				case bytes.HasPrefix(payload, []byte("Exif\x00\x00")):
+					err = set(&exif, payload[6:])
+				case bytes.HasPrefix(payload, []byte(photoXMPJPEGPrefix)):
+					err = set(&packet, payload[len(photoXMPJPEGPrefix):])
+				case bytes.HasPrefix(payload, []byte("http://ns.adobe.com/xmp/extension/")):
+					return errors.New("extended XMP metadata is unsupported")
+				}
+				return err
+			case "png":
+				if kind == "iCCP" {
+					index := bytes.IndexByte(payload, 0)
+					if index < 1 || index > 79 || index+2 > len(payload) || payload[index+1] != 0 || len(result.icc) > 0 {
+						return errors.New("malformed PNG ICC profile")
+					}
+					reader, e := zlib.NewReader(bytes.NewReader(payload[index+2:]))
 					if e != nil {
-						return result, e
+						return e
 					}
-					text, e = io.ReadAll(io.LimitReader(reader, maxPhotoSidecarBytes+1))
+					profile, e := io.ReadAll(io.LimitReader(reader, maxPhotoSidecarBytes+1))
 					e = errors.Join(e, reader.Close())
 					if e != nil {
-						return result, e
+						return e
+					}
+					result.icc = profile
+				}
+				if kind == "gAMA" && (len(payload) != 4 || binary.BigEndian.Uint32(payload) != 45455) {
+					result.unsupportedColor = true
+				}
+				if kind == "cHRM" && !bytes.Equal(payload, []byte{0, 0, 122, 38, 0, 0, 128, 132, 0, 0, 250, 0, 0, 0, 128, 232, 0, 0, 117, 48, 0, 0, 234, 96, 0, 0, 58, 152, 0, 0, 23, 112}) {
+					result.unsupportedColor = true
+				}
+				if kind == "acTL" {
+					result.animated = true
+				}
+				if kind == "eXIf" {
+					if e := inspectEXIF(payload); e != nil {
+						return e
 					}
 				}
-				err = set(&packet, text)
-			}
-			if err != nil {
-				return result, err
-			}
-			if kind == "IEND" {
-				if n != 0 {
-					return result, errors.New("malformed PNG end")
+				if metadata && kind == "eXIf" {
+					err = set(&exif, payload)
 				}
-				return finish()
+				if metadata && kind == "iTXt" && bytes.HasPrefix(payload, []byte(photoXMPPNGKeyword+"\x00")) {
+					text := payload[len(photoXMPPNGKeyword)+1:]
+					if len(text) < 4 || text[0] > 1 || text[1] != 0 {
+						return errors.New("malformed PNG XMP")
+					}
+					compressed := text[0] == 1
+					text = text[2:]
+					for range 2 {
+						at := bytes.IndexByte(text, 0)
+						if at < 0 {
+							return errors.New("malformed PNG XMP")
+						}
+						text = text[at+1:]
+					}
+					if compressed {
+						reader, e := zlib.NewReader(bytes.NewReader(text))
+						if e != nil {
+							return e
+						}
+						text, e = io.ReadAll(io.LimitReader(reader, maxPhotoSidecarBytes+1))
+						e = errors.Join(e, reader.Close())
+						if e != nil {
+							return e
+						}
+					}
+					err = set(&packet, text)
+				}
+				if err != nil {
+					return err
+				}
+			case "webp":
+				switch kind {
+				case "VP8X":
+					if len(payload) != 10 {
+						return errors.New("malformed WebP flags")
+					}
+					result.animated = payload[0]&visualPreviewWebPAnimation != 0
+					result.unsupportedColor = result.unsupportedColor || payload[0]&visualPreviewWebPICCProfile != 0
+				case "ANIM", "ANMF":
+					result.animated = true
+				case "ICCP":
+					if len(result.icc) > 0 {
+						return errors.New("duplicate ICC profile")
+					}
+					result.icc = payload
+				case "EXIF":
+					if e := inspectEXIF(bytes.TrimPrefix(payload, []byte("Exif\x00\x00"))); e != nil {
+						return e
+					}
+					if !metadata {
+						break
+					}
+					err = set(&exif, bytes.TrimPrefix(payload, []byte("Exif\x00\x00")))
+				case "XMP ":
+					if !metadata {
+						break
+					}
+					err = set(&packet, payload)
+				}
+				if err != nil {
+					return err
+				}
 			}
+			return err
+		})
+		if err != nil {
+			return result, err
 		}
-		return result, errors.New("missing PNG end")
 	case exifTIFFSignature(data):
 		reader, ok := newExifReader(data)
 		if !ok {
@@ -340,53 +347,9 @@ func photoSourcePackets(ctx context.Context, data []byte, metadata bool) (result
 		if malformed || !found {
 			return result, errors.New("invalid RAF metadata")
 		}
-		return photoSourcePackets(ctx, data[location.offset:location.offset+location.length], metadata)
-	case bytes.HasPrefix(data, []byte("RIFF")) && len(data) >= 12 && string(data[8:12]) == "WEBP":
-		if uint64(binary.LittleEndian.Uint32(data[4:8]))+8 != uint64(len(data)) {
-			return result, errors.New("malformed WebP size")
-		}
-		for position, count := 12, 0; position < len(data); count++ {
-			if count >= visualPreviewMaxWebPChunks || position > len(data)-8 {
-				return result, errors.New("malformed WebP metadata")
-			}
-			n := int64(binary.LittleEndian.Uint32(data[position+4:]))
-			if n+n%2 > int64(len(data)-position-8) {
-				return result, io.ErrUnexpectedEOF
-			}
-			payload := data[position+8 : position+8+int(n)]
-			switch string(data[position : position+4]) {
-			case "VP8X":
-				if len(payload) != 10 {
-					return result, errors.New("malformed WebP flags")
-				}
-				result.animated = payload[0]&visualPreviewWebPAnimation != 0
-				result.unsupportedColor = result.unsupportedColor || payload[0]&visualPreviewWebPICCProfile != 0
-			case "ANIM", "ANMF":
-				result.animated = true
-			case "ICCP":
-				if len(result.icc) > 0 {
-					return result, errors.New("duplicate ICC profile")
-				}
-				result.icc = payload
-			case "EXIF":
-				if e := inspectEXIF(bytes.TrimPrefix(payload, []byte("Exif\x00\x00"))); e != nil {
-					return result, e
-				}
-				if !metadata {
-					break
-				}
-				err = set(&exif, bytes.TrimPrefix(payload, []byte("Exif\x00\x00")))
-			case "XMP ":
-				if !metadata {
-					break
-				}
-				err = set(&packet, payload)
-			}
-			if err != nil {
-				return result, err
-			}
-			position += 8 + int(n) + int(n%2)
-		}
+		packets, err := photoSourcePackets(ctx, data[location.offset:location.offset+location.length], metadata)
+		packets.rawPreview = &location
+		return packets, err
 	}
 	return finish()
 }
@@ -416,7 +379,7 @@ func rewritePhotoEXIF(data []byte, width, height int, removeGPS bool, authored s
 				delete(entries, tag)
 				continue
 			}
-			if tag == 0x010e && authored.Confirmed&store.PhotoConfirmedCaption != 0 || tag == 0x013b && authored.Confirmed&store.PhotoConfirmedCreator != 0 || tag == 0x8298 && authored.Confirmed&store.PhotoConfirmedCopyright != 0 {
+			if tag == 0x9c9e || slices.Contains([]uint16{0x010e, 0x9c9b, 0x9c9c, 0x9c9f}, tag) && authored.Confirmed&store.PhotoConfirmedCaption != 0 || slices.Contains([]uint16{0x013b, 0x9c9d}, tag) && authored.Confirmed&store.PhotoConfirmedCreator != 0 || tag == 0x8298 && authored.Confirmed&store.PhotoConfirmedCopyright != 0 {
 				delete(entries, tag)
 				continue
 			}

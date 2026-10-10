@@ -91,7 +91,8 @@ test("selected JPEG and complete-scope PNG export through verified downloads", a
     await page.getByRole("checkbox", { name: "Include metadata", exact: true }).uncheck();
     await page.getByLabel("Downloaded ZIP filename", { exact: true }).fill("synthetic-scope.zip");
     await page.getByRole("button", { name: "Prepare", exact: true }).click();
-    await expect(page.getByTestId("export-total")).toHaveText("12");
+    await expect(page.getByTestId("export-total")).toHaveText(String(count));
+    await capture("scope-review");
     await download("synthetic-scope.zip");
   } finally {
     if (process.env.DOCBANK_KEEP_PHOTO_EXPORT_PREVIEW) {

@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"bufio"
 	"bytes"
 	"compress/flate"
 	"compress/zlib"
@@ -20,7 +21,7 @@ import (
 	"mime"
 
 	xdraw "golang.org/x/image/draw"
-	"golang.org/x/image/webp"
+	_ "golang.org/x/image/webp"
 
 	"go.kenn.io/docbank/document"
 )
@@ -128,14 +129,8 @@ func ProduceVisualPreviewForRecipe(
 	}
 	mediaType := visualPreviewSourceMediaType(target.MediaType)
 	switch visualPreviewFormat(mediaType) {
-	case "jpeg":
-		return produceVisualPreviewJPEG(ctx, source, base)
-	case "png":
-		return produceVisualPreviewPNG(ctx, source, target.Size, base)
-	case "gif":
-		return produceVisualPreviewGIF(source, base)
-	case "webp":
-		return produceVisualPreviewWebP(ctx, source, target.Size, base)
+	case "jpeg", "png", "gif", "webp":
+		return produceVisualPreviewImage(ctx, source, target.Size, visualPreviewFormat(mediaType), base, 0)
 	case "raw":
 		return produceVisualPreviewCameraRAW(ctx, source, target.Size, mediaType, base)
 	default:
@@ -148,205 +143,128 @@ func ProduceVisualPreviewForRecipe(
 	}
 }
 
-func produceVisualPreviewGIF(
-	source io.ReadSeeker, base document.VisualPreviewV1,
-) (VisualPreviewProduct, error) {
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(
-			fmt.Errorf("seeking visual preview source: %w", err))
-	}
-	configReader := &visualPreviewReadErrorRecorder{reader: source}
-	config, err := gif.DecodeConfig(configReader)
-	if err != nil {
-		return visualPreviewGIFDecodeResult(base, "the verified GIF header is malformed", configReader.err)
-	}
-	if !visualPreviewDimensionsAllowed(config.Width, config.Height) {
-		return failedVisualPreview(base, "source_dimensions_exceed_limit",
-			"the GIF dimensions exceed the built-in preview limit"), nil
-	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(
-			fmt.Errorf("seeking visual preview source: %w", err))
-	}
-	pixelReader := &visualPreviewReadErrorRecorder{reader: source}
-	canvas, err := decodeGIFCanvas(pixelReader, config)
-	if err != nil {
-		return visualPreviewGIFDecodeResult(base, "the verified GIF cannot be decoded", pixelReader.err)
-	}
-	return encodeVisualPreview(base, canvas, config.Width, config.Height, 1)
+func produceVisualPreviewJPEGWithOrientation(ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1, orientation int) (VisualPreviewProduct, error) {
+	return produceVisualPreviewImage(ctx, source, -1, "jpeg", base, orientation)
 }
 
-func produceVisualPreviewWebP(
-	ctx context.Context, source io.ReadSeeker, sourceSize int64, base document.VisualPreviewV1,
-) (VisualPreviewProduct, error) {
-	orientation, unsupportedColor, unsupportedMetadata, animated, malformed, err :=
-		inspectVisualPreviewWebP(ctx, source, sourceSize)
-	if err != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(
-			fmt.Errorf("inspecting visual preview WebP: %w", err))
-	}
-	if malformed {
-		return failedVisualPreview(base, "decode_failed", "the verified WebP container is malformed"), nil
-	}
-	if animated {
-		base.State = document.VisualPreviewUnsupported
-		base.Failure = &document.VisualPreviewFailureV1{
-			Code: "unsupported_webp_animation", Detail: "the built-in preview producer requires a still WebP original",
+func produceVisualPreviewImage(ctx context.Context, source io.ReadSeeker, size int64, format string, base document.VisualPreviewV1, containerOrientation int) (VisualPreviewProduct, error) {
+	orientation := 1
+	if format != "gif" {
+		value, color, metadata, animated, malformed, err := inspectVisualPreviewContainer(ctx, source, size, format)
+		if err != nil {
+			return VisualPreviewProduct{}, sourceContentUnavailable(fmt.Errorf("inspecting visual preview %s: %w", format, err))
 		}
-		return VisualPreviewProduct{Preview: base}, nil
-	}
-	if unsupportedColor {
-		base.State = document.VisualPreviewUnsupported
-		base.Failure = &document.VisualPreviewFailureV1{
-			Code: "unsupported_color_profile", Detail: "the built-in preview producer requires an sRGB WebP original",
+		if malformed {
+			return failedVisualPreview(base, "decode_failed", "the verified image container is malformed"), nil
 		}
-		return VisualPreviewProduct{Preview: base}, nil
-	}
-	if unsupportedMetadata {
-		base.State = document.VisualPreviewUnsupported
-		base.Failure = &document.VisualPreviewFailureV1{
-			Code: "unsupported_webp_metadata", Detail: "the WebP metadata exceeds the built-in preview limit",
+		var failure *document.VisualPreviewFailureV1
+		switch {
+		case animated:
+			failure = &document.VisualPreviewFailureV1{Code: "unsupported_webp_animation", Detail: "the built-in preview producer requires a still WebP original"}
+		case color:
+			failure = &document.VisualPreviewFailureV1{Code: "unsupported_color_profile", Detail: "the built-in preview producer requires sRGB originals"}
+		case metadata:
+			failure = &document.VisualPreviewFailureV1{Code: "unsupported_" + format + "_metadata", Detail: "the image metadata exceeds the built-in preview limit"}
 		}
-		return VisualPreviewProduct{Preview: base}, nil
-	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(
-			fmt.Errorf("seeking visual preview source: %w", err))
-	}
-	configReader := &visualPreviewReadErrorRecorder{reader: source}
-	config, err := webp.DecodeConfig(configReader)
-	if err != nil {
-		return visualPreviewWebPDecodeResult(base, "the verified WebP header is malformed", configReader.err)
-	}
-	if !visualPreviewDimensionsAllowed(config.Width, config.Height) {
-		return failedVisualPreview(base, "source_dimensions_exceed_limit",
-			"the WebP dimensions exceed the built-in preview limit"), nil
-	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(
-			fmt.Errorf("seeking visual preview source: %w", err))
-	}
-	pixelReader := &visualPreviewReadErrorRecorder{reader: source}
-	decoded, err := webp.Decode(pixelReader)
-	if err != nil {
-		return visualPreviewWebPDecodeResult(base, "the verified WebP cannot be decoded", pixelReader.err)
-	}
-	if decoded.Bounds().Dx() != config.Width || decoded.Bounds().Dy() != config.Height {
-		return failedVisualPreview(base, "decode_failed", "the WebP dimensions changed during decoding"), nil
-	}
-	return encodeVisualPreview(base, decoded, config.Width, config.Height, orientation)
-}
-
-func produceVisualPreviewJPEG(
-	ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1,
-) (VisualPreviewProduct, error) {
-	return produceVisualPreviewJPEGWithOrientation(ctx, source, base, 0)
-}
-
-func produceVisualPreviewJPEGWithOrientation(
-	ctx context.Context, source io.ReadSeeker, base document.VisualPreviewV1, containerOrientation int,
-) (VisualPreviewProduct, error) {
-	orientation, unsupportedColor, malformed, err := inspectVisualPreviewJPEG(ctx, source)
-	if err != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(
-			fmt.Errorf("inspecting visual preview JPEG: %w", err))
-	}
-	if malformed {
-		return failedVisualPreview(base, "decode_failed", "the verified JPEG header is malformed"), nil
-	}
-	if unsupportedColor {
-		base.State = document.VisualPreviewUnsupported
-		base.Failure = &document.VisualPreviewFailureV1{
-			Code: "unsupported_color_profile", Detail: "the built-in preview producer requires sRGB JPEG originals",
+		if failure != nil {
+			base.State, base.Failure = document.VisualPreviewUnsupported, failure
+			return VisualPreviewProduct{Preview: base}, nil
 		}
-		return VisualPreviewProduct{Preview: base}, nil
+		orientation = value
 	}
 	if containerOrientation >= 1 && containerOrientation <= 8 {
 		orientation = containerOrientation
 	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(
-			fmt.Errorf("seeking visual preview source: %w", err))
-	}
-	config, err := jpeg.DecodeConfig(source)
-	if err != nil {
-		return visualPreviewJPEGDecodeResult(base, "the verified JPEG header is malformed", err)
-	}
-	if !visualPreviewJPEGColorModelSupported(config.ColorModel) {
-		base.State = document.VisualPreviewUnsupported
-		base.Failure = &document.VisualPreviewFailureV1{
-			Code: "unsupported_color_profile", Detail: "the built-in preview producer requires sRGB JPEG originals",
-		}
-		return VisualPreviewProduct{Preview: base}, nil
-	}
-	if !visualPreviewDimensionsAllowed(config.Width, config.Height) {
-		return failedVisualPreview(base, "source_dimensions_exceed_limit",
-			"the JPEG dimensions exceed the built-in preview limit"), nil
-	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(
-			fmt.Errorf("seeking visual preview source: %w", err))
-	}
-	decoded, err := jpeg.Decode(source)
-	if err != nil {
-		return visualPreviewJPEGDecodeResult(base, "the verified JPEG cannot be decoded", err)
-	}
-	if decoded.Bounds().Dx() != config.Width || decoded.Bounds().Dy() != config.Height {
-		return failedVisualPreview(base, "decode_failed", "the JPEG dimensions changed during decoding"), nil
-	}
-	return encodeVisualPreview(base, decoded, config.Width, config.Height, orientation)
+	return produceDecodedVisualPreview(ctx, source, format, base, orientation)
 }
 
-func produceVisualPreviewPNG(
-	ctx context.Context, source io.ReadSeeker, sourceSize int64, base document.VisualPreviewV1,
-) (VisualPreviewProduct, error) {
-	orientation, unsupportedColor, unsupportedMetadata, malformed, err :=
-		inspectVisualPreviewPNG(ctx, source, sourceSize)
-	if err != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(
-			fmt.Errorf("inspecting visual preview PNG: %w", err))
+var errVisualDimensions = errors.New("source dimensions exceed the built-in limit")
+var errVisualColor = errors.New("unsupported JPEG color model")
+var errVisualFormat = errors.New("unexpected image format")
+var errVisualDecodeBounds = errors.New("image dimensions changed during decoding")
+
+type visualPreviewPixels struct {
+	image   image.Image
+	config  image.Config
+	readErr error
+}
+
+func decodeVisualPreviewPixels(ctx context.Context, source io.ReadSeeker, format string, admit func(image.Config) error) (result visualPreviewPixels, err error) {
+	if _, err = source.Seek(0, io.SeekStart); err != nil {
+		result.readErr = err
+		return
 	}
-	if malformed {
-		return failedVisualPreview(base, "decode_failed", "the verified PNG header is malformed"), nil
-	}
-	if unsupportedColor {
-		base.State = document.VisualPreviewUnsupported
-		base.Failure = &document.VisualPreviewFailureV1{
-			Code: "unsupported_color_profile", Detail: "the built-in preview producer requires sRGB PNG originals",
+	reader := &visualPreviewReadErrorRecorder{reader: visualPreviewContextReader{ctx, source}}
+	defer func() {
+		if reader.err != nil {
+			result.readErr = reader.err
 		}
-		return VisualPreviewProduct{Preview: base}, nil
+	}()
+	var actual string
+	result.config, actual, err = image.DecodeConfig(reader)
+	if err != nil {
+		return
 	}
-	if unsupportedMetadata {
-		base.State = document.VisualPreviewUnsupported
-		base.Failure = &document.VisualPreviewFailureV1{
-			Code: "unsupported_png_metadata", Detail: "the PNG EXIF metadata exceeds the built-in preview limit",
+	if actual != format {
+		return result, errVisualFormat
+	}
+	if !visualPreviewDimensionsAllowed(result.config.Width, result.config.Height) {
+		return result, errVisualDimensions
+	}
+	if format == "jpeg" && !visualPreviewJPEGColorModelSupported(result.config.ColorModel) {
+		return result, errVisualColor
+	}
+	if admit != nil {
+		if err = admit(result.config); err != nil {
+			return
 		}
-		return VisualPreviewProduct{Preview: base}, nil
 	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(
-			fmt.Errorf("seeking visual preview source: %w", err))
+	if _, err = source.Seek(0, io.SeekStart); err != nil {
+		result.readErr = err
+		return
 	}
-	config, err := png.DecodeConfig(source)
+	if format == "gif" {
+		result.image, err = decodeGIFCanvas(reader, result.config)
+	} else {
+		result.image, _, err = image.Decode(reader)
+	}
 	if err != nil {
-		return visualPreviewPNGDecodeResult(base, "the verified PNG header is malformed", err)
+		return
 	}
-	if !visualPreviewDimensionsAllowed(config.Width, config.Height) {
-		return failedVisualPreview(base, "source_dimensions_exceed_limit",
-			"the PNG dimensions exceed the built-in preview limit"), nil
+	if result.image.Bounds().Dx() != result.config.Width || result.image.Bounds().Dy() != result.config.Height {
+		return result, errVisualDecodeBounds
 	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(
-			fmt.Errorf("seeking visual preview source: %w", err))
-	}
-	decoded, err := png.Decode(source)
+	return result, ctx.Err()
+}
+
+func produceDecodedVisualPreview(ctx context.Context, source io.ReadSeeker, format string, base document.VisualPreviewV1, orientation int) (VisualPreviewProduct, error) {
+	pixels, err := decodeVisualPreviewPixels(ctx, source, format, nil)
 	if err != nil {
-		return visualPreviewPNGDecodeResult(base, "the verified PNG cannot be decoded", err)
+		if pixels.readErr != nil {
+			return VisualPreviewProduct{}, sourceContentUnavailable(fmt.Errorf("reading visual preview %s: %w", format, pixels.readErr))
+		}
+		if errors.Is(err, errVisualDimensions) {
+			return failedVisualPreview(base, "source_dimensions_exceed_limit", err.Error()), nil
+		}
+		if errors.Is(err, errVisualColor) {
+			base.State = document.VisualPreviewUnsupported
+			base.Failure = &document.VisualPreviewFailureV1{Code: "unsupported_color_profile", Detail: "the built-in preview producer requires sRGB JPEG originals"}
+			return VisualPreviewProduct{Preview: base}, nil
+		}
+		if errors.Is(err, errVisualFormat) || errors.Is(err, errVisualDecodeBounds) {
+			return failedVisualPreview(base, "decode_failed", err.Error()), nil
+		}
+		detail := "the verified " + format + " cannot be decoded"
+		switch format {
+		case "jpeg":
+			return visualPreviewJPEGDecodeResult(base, detail, err)
+		case "png":
+			return visualPreviewPNGDecodeResult(base, detail, err)
+		default:
+			return failedVisualPreview(base, "decode_failed", detail), nil
+		}
 	}
-	if decoded.Bounds().Dx() != config.Width || decoded.Bounds().Dy() != config.Height {
-		return failedVisualPreview(base, "decode_failed", "the PNG dimensions changed during decoding"), nil
-	}
-	return encodeVisualPreview(base, decoded, config.Width, config.Height, orientation)
+	return encodeVisualPreview(base, pixels.image, pixels.config.Width, pixels.config.Height, orientation)
 }
 
 func encodeVisualPreview(
@@ -380,228 +298,189 @@ func visualPreviewSourceMediaType(value string) string {
 	return mediaType
 }
 
-func inspectVisualPreviewPNG(
-	ctx context.Context, source io.ReadSeeker, sourceSize int64,
-) (orientation int, unsupportedColor, unsupportedMetadata, malformed bool, err error) {
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return 0, false, false, false, err
-	}
-	var signature [8]byte
-	if _, err := io.ReadFull(source, signature[:]); err != nil {
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			return 0, false, false, true, nil
-		}
-		return 0, false, false, false, err
-	}
-	if signature != [8]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'} {
-		return 0, false, false, true, nil
-	}
-	orientation = 1
-	offset := int64(len(signature))
-	for offset < sourceSize {
-		if err := ctx.Err(); err != nil {
-			return 0, false, false, false, err
-		}
-		if offset > sourceSize-12 {
-			return 0, false, false, true, nil
-		}
-		var header [8]byte
-		if _, err := io.ReadFull(source, header[:]); err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				return 0, false, false, true, nil
-			}
-			return 0, false, false, false, err
-		}
-		length := int64(binary.BigEndian.Uint32(header[:4]))
-		chunkType := string(header[4:])
-		if length > sourceSize-offset-12 {
-			return 0, false, false, true, nil
-		}
-		switch chunkType {
-		case "iCCP":
-			unsupportedColor = true
-		case "eXIf":
-			if length > visualPreviewMaxEXIFBytes {
-				unsupportedMetadata = true
-				break
-			}
-			payload := make([]byte, length)
-			if _, err := io.ReadFull(source, payload); err != nil {
-				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-					return 0, false, false, true, nil
-				}
-				return 0, false, false, false, err
-			}
-			if value, colorSpace, found := visualPreviewEXIF(payload); found {
-				orientation = value
-				unsupportedColor = unsupportedColor || colorSpace != 0 && colorSpace != 1
-			}
-			length = 0
-		case "IEND":
-			if length != 0 {
-				return 0, false, false, true, nil
-			}
-			return orientation, unsupportedColor, unsupportedMetadata, false, nil
-		}
-		if _, err := source.Seek(length+4, io.SeekCurrent); err != nil {
-			return 0, false, false, false, err
-		}
-		offset += 12 + int64(binary.BigEndian.Uint32(header[:4]))
-	}
-	return 0, false, false, true, nil
+type visualPreviewContextReader struct {
+	ctx    context.Context
+	reader io.Reader
 }
 
-func inspectVisualPreviewWebP(
-	ctx context.Context, source io.ReadSeeker, sourceSize int64,
-) (orientation int, unsupportedColor, unsupportedMetadata, animated, malformed bool, err error) {
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return 0, false, false, false, false, err
+func (r visualPreviewContextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
 	}
-	var header [12]byte
-	if _, err := io.ReadFull(source, header[:]); err != nil {
+	return r.reader.Read(p)
+}
+
+var errVisualContainer = errors.New("malformed image container")
+var errVisualMetadataLimit = errors.New("image metadata exceeds inspection limit")
+
+func walkVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, format string, size int64, visit func(string, io.Reader, int64) error) (err error) {
+	defer func() {
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			return 0, false, false, false, true, nil
+			err = errors.Join(errVisualContainer, err)
 		}
-		return 0, false, false, false, false, err
+	}()
+	if size < 0 {
+		size, err = source.Seek(0, io.SeekEnd)
+		if err != nil {
+			return err
+		}
 	}
-	if sourceSize < int64(len(header)) || string(header[:4]) != "RIFF" || string(header[8:]) != "WEBP" ||
-		uint64(binary.LittleEndian.Uint32(header[4:8]))+8 != uint64(sourceSize) {
-		return 0, false, false, false, true, nil
+	if _, err := source.Seek(0, io.SeekStart); err != nil {
+		return err
 	}
-	orientation = 1
-	offset := int64(len(header))
-	for range visualPreviewMaxWebPChunks {
+	r := bufio.NewReader(visualPreviewContextReader{ctx, io.LimitReader(source, size)})
+	headerSize := map[string]int{"jpeg": 2, "png": 8, "webp": 12}[format]
+	header := make([]byte, headerSize)
+	if _, err := io.ReadFull(r, header); err != nil {
+		return err
+	}
+	if format == "jpeg" && !bytes.Equal(header, []byte{0xff, 0xd8}) || format == "png" && string(header) != "\x89PNG\r\n\x1a\n" || format == "webp" && (string(header[:4]) != "RIFF" || string(header[8:]) != "WEBP" || uint64(binary.LittleEndian.Uint32(header[4:]))+8 != uint64(size)) {
+		return errVisualContainer
+	}
+	offset := int64(headerSize)
+	for count := 0; ; count++ {
 		if err := ctx.Err(); err != nil {
-			return 0, false, false, false, false, err
+			return err
 		}
-		if offset == sourceSize {
-			return orientation, unsupportedColor, unsupportedMetadata, animated, false, nil
+		if format == "webp" && offset == size {
+			return nil
 		}
-		if offset > sourceSize-8 {
-			return 0, false, false, false, true, nil
+		if format == "jpeg" && count >= visualPreviewMaxJPEGSegments {
+			return errVisualContainer
 		}
-		var chunkHeader [8]byte
-		if _, err := io.ReadFull(source, chunkHeader[:]); err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				return 0, false, false, false, true, nil
+		if format == "webp" && count >= visualPreviewMaxWebPChunks {
+			return errVisualMetadataLimit
+		}
+		var kind string
+		var length, overhead, padding int64
+		switch format {
+		case "jpeg":
+			marker, err := readVisualPreviewJPEGMarker(r)
+			if err != nil {
+				return err
 			}
-			return 0, false, false, false, false, err
+			if marker == 0xda || marker == 0xd9 {
+				return nil
+			}
+			if marker == 0x01 || marker >= 0xd0 && marker <= 0xd7 {
+				continue
+			}
+			var h [2]byte
+			if _, err := io.ReadFull(r, h[:]); err != nil {
+				return err
+			}
+			length = int64(binary.BigEndian.Uint16(h[:])) - 2
+			if length < 0 {
+				return errVisualContainer
+			}
+			kind = string([]byte{marker})
+		case "png", "webp":
+			overhead = 8
+			if format == "png" {
+				overhead = 12
+			}
+			if offset > size-overhead {
+				return errVisualContainer
+			}
+			var h [8]byte
+			if _, err := io.ReadFull(r, h[:]); err != nil {
+				return err
+			}
+			if format == "png" {
+				length, kind, padding = int64(binary.BigEndian.Uint32(h[:4])), string(h[4:]), 4
+			} else {
+				length, kind = int64(binary.LittleEndian.Uint32(h[4:])), string(h[:4])
+				padding = length % 2
+			}
+			if length > size-offset-overhead || format == "webp" && length+padding > size-offset-8 {
+				return errVisualContainer
+			}
 		}
-		length := int64(binary.LittleEndian.Uint32(chunkHeader[4:]))
-		paddedLength := length + length%2
-		if paddedLength > sourceSize-offset-8 {
-			return 0, false, false, false, true, nil
+		payload := &io.LimitedReader{R: r, N: length}
+		if err := visit(kind, payload, length); err != nil {
+			return err
 		}
-		seekLength := paddedLength
-		switch string(chunkHeader[:4]) {
-		case "VP8X":
-			if length != 10 {
-				return 0, false, false, false, true, nil
+		if _, err := io.Copy(io.Discard, payload); err != nil {
+			return err
+		}
+		if payload.N != 0 {
+			return io.ErrUnexpectedEOF
+		}
+		if _, err := io.CopyN(io.Discard, r, padding); err != nil {
+			return err
+		}
+		offset += overhead + length
+		if format == "webp" {
+			offset += padding
+		}
+		if format == "png" && kind == "IEND" {
+			if length != 0 {
+				return errVisualContainer
+			}
+			return nil
+		}
+	}
+}
+
+func inspectVisualPreviewContainer(ctx context.Context, source io.ReadSeeker, size int64, format string) (orientation int, unsupportedColor, unsupportedMetadata, animated, malformed bool, err error) {
+	orientation = 1
+	err = walkVisualPreviewContainer(ctx, source, format, size, func(kind string, r io.Reader, n int64) error {
+		if format == "jpeg" && kind != "\xe1" && kind != "\xe2" {
+			return nil
+		}
+		if format == "png" && kind == "iCCP" || format == "webp" && kind == "ICCP" {
+			unsupportedColor = true
+			return nil
+		}
+		if format == "webp" && (kind == "ANIM" || kind == "ANMF") {
+			animated = true
+			return nil
+		}
+		if format == "webp" && kind == "VP8X" {
+			if n != 10 {
+				return errVisualContainer
 			}
 			var flags [1]byte
-			if _, err := io.ReadFull(source, flags[:]); err != nil {
-				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-					return 0, false, false, false, true, nil
-				}
-				return 0, false, false, false, false, err
+			if _, err := io.ReadFull(r, flags[:]); err != nil {
+				return err
 			}
 			animated = animated || flags[0]&visualPreviewWebPAnimation != 0
 			unsupportedColor = unsupportedColor || flags[0]&visualPreviewWebPICCProfile != 0
-			seekLength--
-		case "ICCP":
-			unsupportedColor = true
-		case "ANIM", "ANMF":
-			animated = true
-		case "EXIF":
-			if length > visualPreviewMaxEXIFBytes {
-				unsupportedMetadata = true
-				break
-			}
-			payload := make([]byte, length)
-			if _, err := io.ReadFull(source, payload); err != nil {
-				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-					return 0, false, false, false, true, nil
-				}
-				return 0, false, false, false, false, err
-			}
-			payload = bytes.TrimPrefix(payload, []byte("Exif\x00\x00"))
-			if value, colorSpace, found := visualPreviewEXIF(payload); found {
-				orientation = value
-				unsupportedColor = unsupportedColor || colorSpace != 0 && colorSpace != 1
-			}
-			seekLength = length % 2
+			return nil
 		}
-		if _, err := source.Seek(seekLength, io.SeekCurrent); err != nil {
-			return 0, false, false, false, false, err
+		if format != "jpeg" && kind != "eXIf" && kind != "EXIF" {
+			return nil
 		}
-		offset += 8 + paddedLength
+		if n > visualPreviewMaxEXIFBytes {
+			unsupportedMetadata = true
+			return nil
+		}
+		payload, err := io.ReadAll(r)
+		if err != nil {
+			return err
+		}
+		if format == "jpeg" {
+			if kind == "\xe2" && bytes.HasPrefix(payload, []byte("ICC_PROFILE\x00")) {
+				unsupportedColor = true
+				return nil
+			}
+			if kind != "\xe1" || !bytes.HasPrefix(payload, []byte("Exif\x00\x00")) {
+				return nil
+			}
+		}
+		if value, colorSpace, found := visualPreviewEXIF(bytes.TrimPrefix(payload, []byte("Exif\x00\x00"))); found {
+			orientation = value
+			unsupportedColor = unsupportedColor || colorSpace != 0 && colorSpace != 1
+		}
+		return nil
+	})
+	if errors.Is(err, errVisualContainer) {
+		malformed, err = true, nil
 	}
-	return 0, false, true, false, false, nil
-}
-
-func inspectVisualPreviewJPEG(
-	ctx context.Context, source io.ReadSeeker,
-) (orientation int, unsupportedColor, malformed bool, err error) {
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return 0, false, false, err
+	if errors.Is(err, errVisualMetadataLimit) {
+		unsupportedMetadata, err = true, nil
 	}
-	var signature [2]byte
-	if _, err := io.ReadFull(source, signature[:]); err != nil {
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			return 0, false, true, nil
-		}
-		return 0, false, false, err
-	}
-	if signature != [2]byte{0xff, 0xd8} {
-		return 0, false, true, nil
-	}
-	orientation = 1
-	for range visualPreviewMaxJPEGSegments {
-		if err := ctx.Err(); err != nil {
-			return 0, false, false, err
-		}
-		marker, markerErr := readVisualPreviewJPEGMarker(source)
-		if markerErr != nil {
-			if errors.Is(markerErr, io.EOF) || errors.Is(markerErr, io.ErrUnexpectedEOF) {
-				return 0, false, true, nil
-			}
-			return 0, false, false, markerErr
-		}
-		if marker == 0xd9 || marker == 0xda {
-			return orientation, unsupportedColor, false, nil
-		}
-		if marker == 0x01 || marker >= 0xd0 && marker <= 0xd7 {
-			continue
-		}
-		var lengthBytes [2]byte
-		if _, err := io.ReadFull(source, lengthBytes[:]); err != nil {
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				return 0, false, true, nil
-			}
-			return 0, false, false, err
-		}
-		length := int(binary.BigEndian.Uint16(lengthBytes[:]))
-		if length < 2 {
-			return 0, false, true, nil
-		}
-		payload := make([]byte, length-2)
-		if _, err := io.ReadFull(source, payload); err != nil {
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				return 0, false, true, nil
-			}
-			return 0, false, false, err
-		}
-		switch {
-		case marker == 0xe1 && bytes.HasPrefix(payload, []byte("Exif\x00\x00")):
-			if exifOrientation, colorSpace, found := visualPreviewEXIF(payload[6:]); found {
-				orientation = exifOrientation
-				unsupportedColor = unsupportedColor || colorSpace != 0 && colorSpace != 1
-			}
-		case marker == 0xe2 && bytes.HasPrefix(payload, []byte("ICC_PROFILE\x00")):
-			unsupportedColor = true
-		}
-	}
-	return 0, false, true, nil
+	return
 }
 
 func readVisualPreviewJPEGMarker(source io.Reader) (byte, error) {
@@ -686,26 +565,6 @@ func visualPreviewPNGDecodeResult(
 	}
 	return VisualPreviewProduct{}, sourceContentUnavailable(
 		fmt.Errorf("reading visual preview PNG: %w", err))
-}
-
-func visualPreviewGIFDecodeResult(
-	base document.VisualPreviewV1, malformedDetail string, readErr error,
-) (VisualPreviewProduct, error) {
-	if readErr != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(
-			fmt.Errorf("reading visual preview GIF: %w", readErr))
-	}
-	return failedVisualPreview(base, "decode_failed", malformedDetail), nil
-}
-
-func visualPreviewWebPDecodeResult(
-	base document.VisualPreviewV1, malformedDetail string, readErr error,
-) (VisualPreviewProduct, error) {
-	if readErr != nil {
-		return VisualPreviewProduct{}, sourceContentUnavailable(
-			fmt.Errorf("reading visual preview WebP: %w", readErr))
-	}
-	return failedVisualPreview(base, "decode_failed", malformedDetail), nil
 }
 
 type visualPreviewReadErrorRecorder struct {
