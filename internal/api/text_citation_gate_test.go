@@ -19,6 +19,7 @@ import (
 
 type pausedCitationGate struct {
 	*api.OperationGate
+
 	entered, resume chan struct{}
 	once            sync.Once
 }
@@ -36,6 +37,7 @@ func (g *pausedCitationGate) CaptureContext(ctx context.Context, fn func() error
 }
 
 func TestTextCitationCaptureOrdering(t *testing.T) {
+	t.Parallel()
 	for _, cancelRead := range []bool{false, true} {
 		name := map[bool]string{false: "read then purge", true: "cancel then purge"}[cancelRead]
 		t.Run(name, func(t *testing.T) {
@@ -101,6 +103,7 @@ func TestTextCitationCaptureOrdering(t *testing.T) {
 }
 
 func TestTextCitationHTTPDeadline(t *testing.T) {
+	t.Parallel()
 	for _, cancelRead := range []bool{false, true} {
 		name := map[bool]string{false: "daemon timeout", true: "caller cancellation"}[cancelRead]
 		t.Run(name, func(t *testing.T) {
@@ -156,6 +159,7 @@ func TestTextCitationHTTPDeadline(t *testing.T) {
 }
 
 func TestTextCitationCaptureDuringBackupFreeze(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		gate := api.NewOperationGate()
 		f := newCitationHTTPFixture(t, gate)

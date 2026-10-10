@@ -3,6 +3,7 @@ package daemonconn
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -39,6 +40,7 @@ func (c *Connection) ResolveTextCitation(
 	}
 	var transport struct {
 		document.ResolvedTextCitation
+
 		Schema string `json:"$schema,omitzero"`
 	}
 	if err := json.Unmarshal(encoded, &transport, json.RejectUnknownMembers(true)); err != nil {
@@ -48,7 +50,7 @@ func (c *Connection) ResolveTextCitation(
 	digest := sha256.Sum256([]byte(result.Text))
 	if result.Citation != citation || !utf8.ValidString(result.Text) ||
 		utf8.RuneCountInString(result.Text) != citation.End-citation.Start ||
-		result.TextBytes != len(result.Text) || result.TextSHA256 != fmt.Sprintf("%x", digest) {
+		result.TextBytes != len(result.Text) || result.TextSHA256 != hex.EncodeToString(digest[:]) {
 		return document.ResolvedTextCitation{},
 			errors.New("text citation response does not match its quotation")
 	}

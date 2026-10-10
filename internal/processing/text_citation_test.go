@@ -54,7 +54,7 @@ func TestResolveTextCitationExactText(t *testing.T) {
 			require.Equal(t, citation, got.Citation)
 			require.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte(test.want))), got.TextSHA256)
 			got, err = readTextCitation(t.Context(), citationReadBoundary{source: f.blobs,
-				wrap: func(r io.Reader) io.Reader { return iotest.OneByteReader(r) }}, citation, size)
+				wrap: iotest.OneByteReader}, citation, size)
 			require.NoError(t, err)
 			require.Equal(t, test.want, got.Text)
 		})
@@ -130,6 +130,14 @@ func TestResolveTextCitationReadFailures(t *testing.T) {
 	}, citation, size)
 	require.ErrorIs(t, err, io.ErrClosedPipe)
 	require.Empty(t, got.Text)
+	// A range error is valid only after verification and close have succeeded.
+	beyond := citation
+	beyond.End = int(size) + 1
+	_, err = readTextCitation(t.Context(), citationReadBoundary{
+		source: f.blobs, closeErr: io.ErrClosedPipe,
+	}, beyond, size)
+	require.ErrorIs(t, err, io.ErrClosedPipe)
+	require.NotErrorIs(t, err, document.ErrInvalidCitationRange)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = readTextCitation(ctx, f.blobs, citation, size)
@@ -163,6 +171,7 @@ func (b citationReadBoundary) OpenStreamContext(
 
 type citationBoundaryStream struct {
 	packstore.VerifiedReadCloser
+
 	reader   io.Reader
 	closeErr error
 }
@@ -294,6 +303,7 @@ func TestResolveTextCitationMutationAfterSnapshot(t *testing.T) {
 
 type citationFirstRead struct {
 	io.Reader
+
 	entered, resume chan struct{}
 }
 

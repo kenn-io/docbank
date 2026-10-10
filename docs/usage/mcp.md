@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-10
 title: Model Context Protocol
 description: Connect a local MCP client to Docbank's read-mostly document tools through the daemon.
 ---
@@ -146,6 +146,7 @@ resource links, is capped at 1 MiB.
 | `search_documents` | Requires a 1–8,192-character query, a 1–128-character processing profile name, and exactly one source selector: 1–4,096 unique content-version IDs or metadata filters. Mode defaults to `auto` and may be `auto`, `lexical`, `semantic`, or `hybrid`; result limit defaults to 20 and is capped at 100. Optional binding IDs are capped at 128 characters. |
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
+| `resolve_text_citation` | Reopens a [saved quotation](#saved-text-citations) from exact retained rendition text. |
 | `read_rendition_text` | Reads the exact vault/node/version/attachment tuple described under [Resources](#resources-and-rendition-windows). |
 | `get_processing_plan` | Requires an exact node ID, content-version UUID, and 1–128-character processing profile name. Returns the complete provider, trust-boundary, retention, estimate, consent, and backup disclosure plus its fingerprint. |
 | `get_processing_status` | Reads one stable 64-hex-character job identity. A response contains at most 64 embedding job IDs. |
@@ -270,6 +271,53 @@ and end, next offset, EOF state, media type, checksum, response byte count, and
 source identities. `read_rendition_text` returns the same window data with the
 tool error codes above. Resource reads report unavailable identities and invalid
 windows as resource-not-found errors, and are capped at 1 MiB.
+
+## Saved text citations
+
+`resolve_text_citation` is a default read-only tool on stdio and HTTP. It reopens
+an exact quote after the source version or active rendition has been replaced,
+provided the cited evidence is still retained. It needs no write opt-in and does
+not create processing jobs or keep evidence alive.
+
+To save a reference:
+
+1. Discover a document and its active rendition with `list_documents`,
+   `search_documents`, or `get_document`.
+2. Use `list_document_versions` to obtain the selected version's `blob_hash`.
+   Keep it as `content_sha256`; this is the original hash, not the text hash.
+3. Read the desired `read_rendition_text` window. Keep its `vault_id` as
+   `vault_uid`, `node_id`, `content_version_id`, `attachment_id` as
+   `rendition_attachment_id`, `build_id`, and `checksum` as `rendition_sha256`.
+4. Save those fields with `version: 1`, `start`, and `end`. The range is measured
+   in Unicode code points in stored Markdown, with an inclusive start and
+   exclusive end. A whole nonempty window uses `actual_start` and `actual_end`.
+   A subquote adds its code-point offsets to `actual_start`. Search-segment
+   offsets and rendered Markdown positions cannot be substituted.
+
+Call `resolve_text_citation` with that flat object. Every field is required.
+UUIDs must be canonical lowercase UUIDv4; hashes and build/attachment IDs must
+be lowercase hex64. Ranges span 1–16,000 code points and end at or before
+2,147,483,647. The result returns the unchanged `citation`, exact `text`, its
+`text_sha256`, and UTF-8 `text_bytes`, with private cache scope and zero TTL.
+
+The daemon reads and verifies the **entire** retained rendition before returning
+a quote. Each call can read up to 64 MiB and uses the normal 60-second daemon
+deadline, including maintenance waits. Neither this reference nor the returned
+quote is an offline proof of the original document.
+
+`citation_unavailable` means to check the vault and evidence retention. Trash,
+version pruning, and rendition purge can make the reference unavailable;
+retrying alone cannot restore it. `invalid_citation_range` requires a range that
+exists in that exact rendition. `citation_limit` means the rendition exceeds
+this operation's size limit. `citation_integrity` returns no quote after failed
+verification; investigate the stored evidence. For `citation_failed`, check the
+daemon log. A `citation_timeout` or `citation_canceled` permits a later deliberate
+retry of the same reference. The read helper retries a disconnected daemon only
+before any response starts, never after a domain failure.
+
+The [HTTP contract](../architecture/http-api.md#retained-text-citations) owns the
+complete field and error table. Current/live rendition resources and windows
+retain their existing behavior.
 
 ## Optional processing start
 

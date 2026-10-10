@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-07
+last_edited: 2026-10-10
 title: Roadmap
 description: What Docbank does today, what it does not do yet, and what is planned.
 ---
@@ -62,6 +62,10 @@ inspect jobs, and read the stored sanitized renditions through the CLI, HTTP
 API, web app, and TUI. [Processing search](usage/search.md) has lexical,
 semantic, hybrid, and auto modes, and searches only the source versions you
 have authorized.
+
+HTTP and MCP clients can [save exact text citations](usage/mcp.md#saved-text-citations)
+and reopen retained quotations after source or rendition replacement. Citations
+do not prevent pruning or purge.
 
 New imports do not automatically run OCR or prepare semantic search. The
 default configuration has no processing profiles, and search without them uses

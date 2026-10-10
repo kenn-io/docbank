@@ -24,9 +24,9 @@ import (
 const citationPath = "/api/v1/text-citations/resolve"
 
 type citationTestGate interface {
-	MutateContext(context.Context, func() error) error
-	MaintainContext(context.Context, func() error) error
-	CaptureContext(context.Context, func() error) error
+	MutateContext(ctx context.Context, fn func() error) error
+	MaintainContext(ctx context.Context, fn func() error) error
+	CaptureContext(ctx context.Context, fn func() error) error
 }
 
 type citationHTTPFixture struct {
@@ -140,9 +140,10 @@ func TestTextCitationHTTPUUIDSyntax(t *testing.T) {
 	var fields map[string]any
 	require.NoError(t, json.Unmarshal(encoded, &fields))
 	for _, field := range []string{"vault_uid", "content_version_id"} {
-		original := fields[field].(string)
+		original, ok := fields[field].(string)
+		require.True(t, ok)
 		for _, invalid := range []string{
-			strings.ToUpper(original), "urn:uuid:" + original, "{" + original + "}",
+			"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", "urn:uuid:" + original, "{" + original + "}",
 			strings.ReplaceAll(original, "-", ""), "11111111-1111-1111-8111-111111111111",
 			"11111111-1111-4111-1111-111111111111",
 		} {
@@ -160,7 +161,7 @@ func TestTextCitationClientHTTP(t *testing.T) {
 	t.Parallel()
 	f := newCitationHTTPFixture(t, api.NewOperationGate())
 	connection := daemonconn.New(f.server.URL, testAPIKey)
-	defer connection.Close()
+	defer func() { require.NoError(t, connection.Close()) }()
 	got, err := connection.ResolveTextCitation(t.Context(), f.citation)
 	require.NoError(t, err)
 	require.Equal(t, f.citation, got.Citation)
@@ -185,6 +186,6 @@ func TestTextCitationHTTPBodyLimit(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := f.server.Client().Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { require.NoError(t, resp.Body.Close()) }()
 	require.Equal(t, 413, resp.StatusCode)
 }
