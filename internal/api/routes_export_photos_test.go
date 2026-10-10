@@ -141,7 +141,7 @@ func TestPhotoExportMetadataFailureNamesPhoto(t *testing.T) {
 
 func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"non-photo", "trashed", "replaced"} {
+	for _, state := range []string{"non-photo", "trashed", "replaced", "mislabeled"} {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
 			ts, s := newTestServer(t, nil)
@@ -149,7 +149,14 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			if state == "non-photo" {
 				mediaType = "text/plain"
 			}
-			hash, size, err := s.Blobs.Write(bytes.NewReader([]byte("synthetic member")))
+			content := []byte("synthetic member")
+			if state == "mislabeled" {
+				mediaType = "image/png"
+				var encoded bytes.Buffer
+				require.NoError(t, jpeg.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil))
+				content = encoded.Bytes()
+			}
+			hash, size, err := s.Blobs.Write(bytes.NewReader(content))
 			require.NoError(t, err)
 			n, err := s.CreateFile(t.Context(), s.RootID(), "unavailable-member", hash, size, mediaType)
 			require.NoError(t, err)
@@ -166,9 +173,14 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			require.NoError(t, err)
 			r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90}}
 			response, body := do(t, ts, http.MethodPost, "/api/v1/exports/plans", nil, r)
-			require.Equal(t, http.StatusConflict, response.StatusCode, body)
 			require.Contains(t, body, fmt.Sprintf("photo %d", n.ID))
-			require.Contains(t, body, "no longer exportable")
+			if state == "mislabeled" {
+				require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
+				require.Contains(t, body, "unexpected image format")
+			} else {
+				require.Equal(t, http.StatusConflict, response.StatusCode, body)
+				require.Contains(t, body, "no longer exportable")
+			}
 		})
 	}
 }

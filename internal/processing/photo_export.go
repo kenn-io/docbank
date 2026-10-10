@@ -236,11 +236,11 @@ func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string,
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, errVisualDimensions) || errors.Is(err, errVisualFormat) {
-			err = bundle.ErrLimit
+		if errors.Is(err, errVisualDimensions) {
+			err = fmt.Errorf("%w: %w", bundle.ErrLimit, err)
 		}
-		if errors.Is(err, errVisualDecodeBounds) {
-			err = bundle.ErrConflict
+		if errors.Is(err, errVisualFormat) || errors.Is(err, errVisualDecodeBounds) {
+			err = fmt.Errorf("%w: %w", bundle.ErrUnavailable, err)
 		}
 		return nil, 0, err
 	}

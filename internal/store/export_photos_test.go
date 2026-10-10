@@ -85,6 +85,32 @@ func TestPhotoExportPlanSealsFrozenInputsAndOwnsArtifact(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.SealPhotoExportPlan(ctx, "owner", r, []PreparedPhotoExport{a})
 	require.ErrorIs(t, err, bundle.ErrConflict)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	asset, err = s.PhotoAssetForNode(ctx, n.ID)
+	require.NoError(t, err)
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	unlocked := WithPhotoHiddenToken(ctx, token)
+	members, _, err := s.ResolvePhotoExportMembers(unlocked, bundle.PhotoExportSelection{Hidden: true, AssetIDs: []string{asset.ID}, Query: snapshotTestQuery(t, `{ "sort": { "field": "name", "direction": "asc" } }`)})
+	require.NoError(t, err)
+	source, err = s.CreateExportSource(unlocked, "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: members}, nil)
+	require.NoError(t, err)
+	r.SourceID, r.MemberHash = source.ID, source.MemberHash
+	inputs, err = s.ExportPhotoInputs(unlocked, "owner", r)
+	require.NoError(t, err)
+	a.Input, a.Receipt.Source = inputs[0], members[0]
+	plan, err = s.SealPhotoExportPlan(unlocked, "owner", r, []PreparedPhotoExport{a})
+	require.NoError(t, err)
+	r.OperationID = uuid.New().String()
+	require.NoError(t, s.LockPhotoHidden(ctx))
+	_, err = s.SealPhotoExportPlan(unlocked, "owner", r, []PreparedPhotoExport{a})
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	_, err = s.ExportPhotoInputs(unlocked, "owner", r)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	_, err = s.ExportPlan(ctx, "owner", plan.ID)
+	require.NoError(t, err)
 }
 
 func TestPhotoExportResolvesCompleteScopeAndSelectedDisplayMembers(t *testing.T) {
@@ -108,6 +134,10 @@ func TestPhotoExportResolvesCompleteScopeAndSelectedDisplayMembers(t *testing.T)
 	members, _, err = s.ResolvePhotoExportMembers(ctx, selection)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
+	selection.Query.Text = "name:frame-0000.jpg"
+	_, _, err = s.ResolvePhotoExportMembers(ctx, selection)
+	require.ErrorIs(t, err, bundle.ErrConflict)
+	selection.Query.Text = ""
 	selection.AssetIDs = []string{uuid.New().String()}
 	_, _, err = s.ResolvePhotoExportMembers(ctx, selection)
 	require.ErrorIs(t, err, bundle.ErrConflict)

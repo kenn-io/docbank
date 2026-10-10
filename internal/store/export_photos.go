@@ -90,7 +90,7 @@ func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.
 	var cursor *PhotoBrowsePosition
 	identity := ""
 	for {
-		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: selection.Query, Hidden: selection.Hidden, PageSize: MaxDocumentCatalogPageSize}, cursor)
+		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: selection.Query, Hidden: selection.Hidden, PageSize: MaxDocumentCatalogPageSize, assetIDs: selection.AssetIDs}, cursor)
 		if err != nil {
 			return nil, "", err
 		}
@@ -101,9 +101,6 @@ func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.
 			identity = page.Items[0].position.QueryIdentity
 		}
 		for _, row := range page.Items {
-			if len(selection.AssetIDs) > 0 && !selected[row.AssetID] {
-				continue
-			}
 			delete(selected, row.AssetID)
 			m := bundle.Member{NodeID: row.NodeID, VersionID: row.ContentVersionID}
 			if err := s.db.QueryRowContext(ctx, `SELECT v.blob_hash,v.size,n.revision FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=? AND n.current_version_id=v.version_id`, m.VersionID).Scan(&m.SHA256, &m.Size, &m.Revision); err != nil {

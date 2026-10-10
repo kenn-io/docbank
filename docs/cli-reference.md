@@ -1011,11 +1011,11 @@ Missing source embeddings return `unavailable`. Query text, `--mode`,
 
 ## docbank export
 
-Exports original document versions as verified ZIP bundles through the daemon.
+Exports original document versions or rendered photos as verified ZIP bundles through the daemon.
 
 | Command | Purpose |
 | --- | --- |
-| `preview --request selection.json` | Freeze and review up to 1,000 exact document versions. |
+| `preview --request selection.json` | Freeze and review up to 1,000 original document versions or 16 rendered photos. |
 | `start <plan-id> --fingerprint <sha256> --operation-id <job-id>` | Admit a job without waiting for completion. |
 | `show-plan <plan-id>` | Read the retained header, fingerprint, role policies, and admission deadline. |
 | `problems <plan-id> [--after N]` | Read one page of up to 50 frozen unavailable outputs. |
