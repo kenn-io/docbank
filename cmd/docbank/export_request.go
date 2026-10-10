@@ -10,12 +10,15 @@ import (
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/canonical"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/query"
 )
 
 type exportPreviewRequest struct {
-	SourceOperationID string          `json:"source_operation_id"`
-	PlanOperationID   string          `json:"plan_operation_id"`
-	Members           []bundle.Member `json:"members"`
+	PhotoRender       *bundle.PhotoRenderProfile   `json:"photo_render,omitzero"`
+	Photos            *bundle.PhotoExportSelection `json:"photos,omitzero"`
+	SourceOperationID string                       `json:"source_operation_id"`
+	PlanOperationID   string                       `json:"plan_operation_id"`
+	Members           []bundle.Member              `json:"members"`
 }
 
 func validateExportID(field, value string) error {
@@ -54,6 +57,28 @@ func validateExportRequest(request exportPreviewRequest) error {
 	}
 	if err := validateExportID("plan_operation_id", request.PlanOperationID); err != nil {
 		return err
+	}
+	if request.PhotoRender != nil {
+		if err := request.PhotoRender.Validate(); err != nil {
+			return usageError(err)
+		}
+	}
+	if request.Photos != nil {
+		if len(request.Members) != 0 || request.PhotoRender == nil {
+			return usageError(errors.New("photos requires photo_render and excludes members"))
+		}
+		if _, err := query.Canonical(request.Photos.Query); err != nil {
+			return usageError(err)
+		}
+		if len(request.Photos.AssetIDs) > bundle.MaxMembers {
+			return usageError(bundle.ErrLimit)
+		}
+		for _, id := range request.Photos.AssetIDs {
+			if err := validateExportID("photo asset ID", id); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	if len(request.Members) == 0 || len(request.Members) > bundle.ChunkMembers {
 		return usageError(errors.New("members must contain 1 to 1,000 document versions"))

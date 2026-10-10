@@ -27,7 +27,7 @@ func validateExportPolicies(roles []bundle.RolePolicy) error {
 		}
 		seen[p.Role] = true
 		switch p.Role {
-		case "original", "attachment_original":
+		case "original", "attachment_original", "photo_rendered":
 			if p.ProfileFingerprint != "" || p.RecipeSHA256 != "" {
 				return bundle.ErrConflict
 			}
@@ -90,6 +90,13 @@ func (s *Store) ExportPlan(ctx context.Context, owner, id string) (bundle.Plan, 
 }
 
 func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.PlanRequest) (bundle.Plan, error) {
+	return s.createExportPlan(ctx, owner, r, nil)
+}
+
+func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.PlanRequest, prepared map[string]PreparedPhotoExport) (bundle.Plan, error) {
+	if err := validatePhotoPlanRequest(r); err != nil {
+		return bundle.Plan{}, err
+	}
 	if owner == "" || validateUUIDv4(r.OperationID) != nil || validateUUIDv4(r.SourceID) != nil || !canonical.IsSHA256Hex(r.MemberHash) {
 		return bundle.Plan{}, bundle.ErrConflict
 	}
@@ -161,7 +168,7 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 		if count >= 32 {
 			return bundle.ErrLimit
 		}
-		plan = bundle.Plan{Format: bundle.Format, ID: r.OperationID, VaultID: s.vaultID, Toolchain: runtime.Version(), Source: source, Roles: slices.Clone(r.Roles), Total: source.Total, CreatedAt: nowRFC3339(), ExpiresAt: exportDeadline(10 * time.Minute)}
+		plan = bundle.Plan{PhotoRender: r.PhotoRender, Format: bundle.Format, ID: r.OperationID, VaultID: s.vaultID, Toolchain: runtime.Version(), Source: source, Roles: slices.Clone(r.Roles), Total: source.Total, CreatedAt: nowRFC3339(), ExpiresAt: exportDeadline(10 * time.Minute)}
 		if r.VolumeLimits != nil {
 			plan.VolumeLimits = new(*r.VolumeLimits)
 		}
@@ -240,6 +247,33 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 		err := walkExportMembers(ctx, tx, r.SourceID, func(m bundle.Member) error {
 			publication := publications[m.VersionID]
 			delete(publications, m.VersionID)
+			if r.PhotoRender != nil {
+				artifact, ok := prepared[m.VersionID]
+				if !ok {
+					return bundle.ErrUnavailable
+				}
+				input, err := s.exportPhotoInput(ctx, tx, m)
+				if err != nil {
+					return err
+				}
+				current, err := canonical.Marshal(input)
+				if err != nil || string(current) != string(artifact.Receipt.Input) || artifact.Receipt.Source != m || artifact.Receipt.Profile != *r.PhotoRender {
+					return bundle.ErrConflict
+				}
+				if err = s.EnsureBlobTx(tx, artifact.SHA256, artifact.Size, artifact.Physical); err != nil {
+					return err
+				}
+				d, err := resolveExportDocument(ctx, tx, m, nil, "")
+				if err != nil {
+					return err
+				}
+				role, err := artifact.role()
+				if err != nil {
+					return err
+				}
+				d.Roles = []bundle.Role{role}
+				return write(d)
+			}
 			return resolveExportDocumentRows(ctx, tx, m, r.Roles, publication, write)
 		})
 		if err != nil {

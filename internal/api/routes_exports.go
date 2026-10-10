@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"go.kenn.io/docbank/internal/processing"
 	"net/http"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -72,6 +74,13 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		}
 		var resolver func(context.Context) ([]bundle.Member, error)
 		var queryFingerprint string
+		if request.Kind == "photos" && request.Photos != nil {
+			resolver = func(ctx context.Context) ([]bundle.Member, error) {
+				members, identity, err := d.Store.ResolvePhotoExportMembers(ctx, *request.Photos)
+				queryFingerprint = identity
+				return members, err
+			}
+		}
 		if request.Kind == "mailbox_collection" {
 			// Mailbox imports are vault-scoped and already readable by this
 			// authenticated session. The resulting source/plan remains private
@@ -177,7 +186,15 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 			return nil, NewError(400, "validation", "invalid export plan")
 		}
 		var p bundle.Plan
-		err = g.MutateContext(ctx, func() error { var err error; p, err = d.Store.CreateExportPlan(ctx, owner, in.Body); return err })
+		err = g.MutateContext(ctx, func() error {
+			var err error
+			if in.Body.PhotoRender != nil {
+				p, err = processing.PreparePhotoExportPlan(ctx, d.Store, d.Blobs, filepath.Join(d.VaultRoot, "tmp", "exports"), owner, in.Body)
+			} else {
+				p, err = d.Store.CreateExportPlan(ctx, owner, in.Body)
+			}
+			return err
+		})
 		if err != nil {
 			return nil, exportProblem(err)
 		}

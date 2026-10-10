@@ -108,7 +108,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 		if err != nil {
 			return err
 		}
-		if plan.Fingerprint == "" {
+		if plan.Fingerprint == "" || plan.PhotoRender != nil {
 			continue
 		}
 		if plan.Format != bundle.Format || validateExportPolicies(plan.Roles) != nil || plan.Total < 1 || plan.Total > bundle.MaxMembers || plan.RoleEntries > bundle.MaxRoles || plan.RoleBytes > bundle.MaxRoleBytes {

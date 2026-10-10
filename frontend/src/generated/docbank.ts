@@ -5079,6 +5079,26 @@ export interface PhotoBrowseRequest {
   query: SavedQueryV1Schema;
 }
 
+export interface Sort {
+  direction: string;
+  field: string;
+}
+
+export interface Query {
+  filters: Filters;
+  mode: string;
+  sort: Sort;
+  syntax: string;
+  text: string;
+  v: number;
+}
+
+export interface PhotoExportSelection {
+  asset_ids?: string[];
+  hidden: boolean;
+  query: Query;
+}
+
 export interface PhotoHiddenPasscodeRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -5111,6 +5131,14 @@ export interface PhotoImportStartRequest {
      * @maxLength 4096
      */
   source_root: string;
+}
+
+export interface PhotoRenderProfile {
+  format: string;
+  include_metadata: boolean;
+  long_edge: number;
+  quality: number;
+  remove_gps: boolean;
 }
 
 /**
@@ -5151,6 +5179,7 @@ export interface Source {
   kind: string;
   member_hash: string;
   query_fingerprint?: string;
+  raw_members?: number;
   request_sha256: string;
   saved_query_id?: string;
   saved_query_revision?: number;
@@ -5176,6 +5205,7 @@ export interface Plan {
   format: string;
   id: string;
   metadata_bytes: number;
+  photo_render?: PhotoRenderProfile;
   role_bytes: number;
   role_entries: number;
   roles: RolePolicy[];
@@ -5191,6 +5221,7 @@ export interface RoleSummary {
   available_members: number;
   bytes: number;
   collapsed_files?: number;
+  embedded_previews?: number;
   files: number;
   role: string;
   unavailable_members: number;
@@ -5218,6 +5249,7 @@ export interface PlanRequest {
   duplicate_policy?: string;
   member_hash: string;
   operation_id: string;
+  photo_render?: PhotoRenderProfile;
   publications?: PublicationSelection[];
   roles: RolePolicy[];
   source_id: string;
@@ -5616,20 +5648,6 @@ export interface PutExportChunkRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
   members: Member[];
-}
-
-export interface Sort {
-  direction: string;
-  field: string;
-}
-
-export interface Query {
-  filters: Filters;
-  mode: string;
-  sort: Sort;
-  syntax: string;
-  text: string;
-  v: number;
 }
 
 export interface QueryDependency {
@@ -6271,6 +6289,7 @@ export interface SourceRequest {
   members?: Member[];
   node_ids?: number[];
   operation_id: string;
+  photos?: PhotoExportSelection;
   query?: Query;
   saved_query_id?: string;
   saved_query_revision?: number;

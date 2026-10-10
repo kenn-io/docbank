@@ -1879,7 +1879,7 @@ func (r exifReader) typedEntries(offset uint32) (map[uint16]exifEntry, bool) {
 		if _, duplicate := result[tag]; duplicate {
 			return result, false
 		}
-		width := map[uint16]uint64{1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8}[kind]
+		width := map[uint16]uint64{1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8, 13: 4}[kind]
 		result[tag] = exifEntry{kind: kind}
 		size := uint64(items) * width
 		if width == 0 || size > 1<<20 {

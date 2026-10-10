@@ -39,6 +39,9 @@ func validateExportSource(r bundle.SourceRequest) error {
 		return bundle.ErrConflict
 	}
 	choices := 0
+	if r.Photos != nil {
+		choices++
+	}
 	if len(r.Members) > 0 {
 		choices++
 	}
@@ -64,6 +67,10 @@ func validateExportSource(r bundle.SourceRequest) error {
 		return bundle.ErrConflict
 	}
 	switch r.Kind {
+	case "photos":
+		if r.Photos == nil || len(r.Photos.AssetIDs) > bundle.MaxMembers {
+			return bundle.ErrConflict
+		}
 	case "mailbox_collection":
 		if validateUUIDv4(r.CollectionID) != nil {
 			return bundle.ErrConflict
@@ -346,6 +353,17 @@ func sealExportMembers(ctx context.Context, tx *sql.Tx, owner string, source *bu
 	source.Total = len(members)
 	source.MemberHash = hash
 	source.SourceBytes = total
+	if source.Kind == "photos" {
+		for _, m := range members {
+			var media string
+			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(mime_type,'') FROM content_versions WHERE version_id=?`, m.VersionID).Scan(&media); err != nil {
+				return err
+			}
+			if slices.Contains([]string{"image/x-sony-arw", "image/x-adobe-dng", "image/x-canon-cr2", "image/x-nikon-nef", "image/x-fuji-raf"}, media) {
+				source.RAWMembers++
+			}
+		}
+	}
 	source.ExpiresAt = exportDeadline(10 * time.Minute)
 	raw, err := canonical.Marshal(source)
 	if err != nil {

@@ -2072,8 +2072,8 @@
     </TopBar>
 
     {#if photoMode && photoState}
-      {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} session={webSession} onauthfailure={handleFailure} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { refreshLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else}
-      {#key photoState}<PhotosWorkspace bind:this={libraryWorkspace} photos={photoState.photos} cache={photoState.cache} ontrashed={() => handleTrashed()} onhidden={() => void hiddenWorkspace?.refresh()} />{/key}
+      {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} onexport={input => { if (!exportHasJob) exportInput = input; activePanel = { kind: "export" }; }} session={webSession} onauthfailure={handleFailure} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { refreshLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else}
+      {#key photoState}<PhotosWorkspace bind:this={libraryWorkspace} photos={photoState.photos} cache={photoState.cache} onexport={input => { if (!exportHasJob) exportInput = input; activePanel = { kind: "export" }; }} ontrashed={() => handleTrashed()} onhidden={() => void hiddenWorkspace?.refresh()} />{/key}
       {/if}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}

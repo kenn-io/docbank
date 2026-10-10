@@ -38,18 +38,7 @@ func produceVisualPreviewCameraRAW(
 	base document.VisualPreviewV1,
 ) (VisualPreviewProduct, error) {
 	readerAt := &seekReaderAt{seeker: source}
-	var locations []visualPreviewRAWLocation
-	var malformed bool
-	var err error
-	if mediaType == "image/x-fuji-raf" {
-		location, found, invalid, inspectErr := inspectVisualPreviewRAF(readerAt, sourceSize)
-		if found {
-			locations = append(locations, location)
-		}
-		malformed, err = invalid, inspectErr
-	} else {
-		locations, malformed, err = inspectVisualPreviewTIFFRAW(readerAt, sourceSize)
-	}
+	locations, malformed, err := visualPreviewRAWLocations(readerAt, mediaType, sourceSize)
 	if err != nil {
 		return VisualPreviewProduct{}, sourceContentUnavailable(
 			fmt.Errorf("inspecting camera RAW preview: %w", err))
@@ -66,12 +55,6 @@ func produceVisualPreviewCameraRAW(
 		}
 		return VisualPreviewProduct{Preview: base}, nil
 	}
-	slices.SortFunc(locations, func(left, right visualPreviewRAWLocation) int {
-		if byLength := cmp.Compare(right.length, left.length); byLength != 0 {
-			return byLength
-		}
-		return cmp.Compare(left.offset, right.offset)
-	})
 	var firstTerminal VisualPreviewProduct
 	for index, location := range locations {
 		preview := io.NewSectionReader(readerAt, location.offset, location.length)
@@ -315,4 +298,26 @@ func visualPreviewRAWScalar(order binary.ByteOrder, kind uint16, items uint32, i
 	default:
 		return 0, false
 	}
+}
+
+func visualPreviewRAWLocations(reader io.ReaderAt, mediaType string, size int64) ([]visualPreviewRAWLocation, bool, error) {
+	var locations []visualPreviewRAWLocation
+	var malformed bool
+	var err error
+	if visualPreviewSourceMediaType(mediaType) == "image/x-fuji-raf" {
+		location, found, invalid, e := inspectVisualPreviewRAF(reader, size)
+		malformed, err = invalid, e
+		if found {
+			locations = append(locations, location)
+		}
+	} else {
+		locations, malformed, err = inspectVisualPreviewTIFFRAW(reader, size)
+	}
+	slices.SortFunc(locations, func(a, b visualPreviewRAWLocation) int {
+		if n := cmp.Compare(b.length, a.length); n != 0 {
+			return n
+		}
+		return cmp.Compare(a.offset, b.offset)
+	})
+	return locations, malformed, err
 }

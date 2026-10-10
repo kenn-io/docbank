@@ -7,9 +7,11 @@
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoGrid from "./PhotoGrid.svelte";
+  import { photoQuery } from "./photos.svelte.js";
+  import type { ExportInput } from "./exportState.js";
   import SelectionDock from "./SelectionDock.svelte";
 
-  let { photos, cache, title = "Library", ontrashed, onhidden, onactionerror }: { photos: Photos; cache: PhotoPreviewCache; title?: string; ontrashed?: () => void; onhidden?: () => void; onactionerror?: (error: string) => void } = $props();
+  let { photos, cache, title = "Library", ontrashed, onhidden, onactionerror, onexport }: { photos: Photos; cache: PhotoPreviewCache; title?: string; ontrashed?: () => void; onhidden?: () => void; onactionerror?: (error: string) => void; onexport?: (input: ExportInput) => void } = $props();
   let trashOpen = $state(false);
   let grid = $state<{ preservePosition: () => (() => Promise<void>); restoreScrollTop: (top: number) => Promise<void> }>();
   const preserve = () => grid?.preservePosition();
@@ -18,6 +20,11 @@
     if (photos.hiding || photos.trashing) return;
     onactionerror?.("");
     await photos.setHidden(id, preserve, onhidden, onactionerror);
+  }
+  function exportPhotos(selected = false): void {
+    const ids = selected ? [...photos.selection.selectedIDs] : [];
+    const rawCount = photos.items.filter(row => (!selected || ids.includes(row.asset_id)) && row.media_type.startsWith("image/x-")).length;
+    onexport?.({ label: selected ? "Selected photos" : title, photos: { query: photoQuery, asset_ids: ids, hidden: photos.hidden }, total: selected ? ids.length : photos.total, ...(selected || photos.items.length === photos.total ? { rawCount } : {}) });
   }
   const groups = $derived(groupPhotos(photos.items, photos.grouping));
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));
@@ -48,6 +55,7 @@
         <SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => relayout(() => photos.grouping = value as "months" | "sessions")} />
         <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => relayout(() => photos.setDensity(value as Density))} />
       </div>
+      <Button size="sm" disabled={photos.loading || photos.total === 0} onclick={() => exportPhotos()}>Export photos</Button>
       <Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing} onclick={() => void photos.refresh(preserve)}>Refresh previews</Button>
     </div>
   </div>
@@ -63,7 +71,7 @@
     </EmptyState>
   {/if}
   <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
-  <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.hiding || photos.loading} />
+  <SelectionDock onexport={() => exportPhotos(true)} context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.hiding || photos.loading} />
 </main>
 
 {#if trashOpen}

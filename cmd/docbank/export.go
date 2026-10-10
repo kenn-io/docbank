@@ -33,13 +33,21 @@ var exportPreviewCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		kind := "explicit"
+		if request.Photos != nil {
+			kind = "photos"
+		}
+		role := "original"
+		if request.PhotoRender != nil {
+			role = "photo_rendered"
+		}
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
 		}
 		source, err := connection.API().CreateExportSource(cmd.Context(),
 			&apiclient.CreateExportSourceRequestOptions{Body: &bundle.SourceRequest{
-				OperationID: request.SourceOperationID, Kind: "explicit", Members: request.Members,
+				OperationID: request.SourceOperationID, Kind: kind, Members: request.Members, Photos: request.Photos,
 			}})
 		if err != nil {
 			return err
@@ -47,7 +55,7 @@ var exportPreviewCmd = &cobra.Command{
 		plan, err := connection.API().CreateExportPlan(cmd.Context(),
 			&apiclient.CreateExportPlanRequestOptions{Body: &bundle.PlanRequest{
 				OperationID: request.PlanOperationID, SourceID: source.ID,
-				MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "original"}},
+				MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: role}}, PhotoRender: request.PhotoRender,
 			}})
 		if err != nil {
 			return err
@@ -57,7 +65,7 @@ var exportPreviewCmd = &cobra.Command{
 		}
 		_, err = fmt.Fprintf(cmd.OutOrStdout(),
 			"plan %s\nsource %s\nmember hash %s\nfingerprint %s\n"+
-				"planned contents: %d document versions, %d original bytes, %d metadata bytes\n"+
+				"planned contents: %d document versions, %d output bytes, %d metadata bytes\n"+
 				"admission expires %s\n"+
 				"Original contents are included without redaction or sanitization.\n",
 			plan.ID, plan.Source.ID, plan.Source.MemberHash, plan.Fingerprint,

@@ -1,0 +1,209 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"slices"
+
+	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/internal/canonical"
+)
+
+type PhotoExportInput struct {
+	Member        bundle.Member `json:"member"`
+	FileID        string        `json:"file_id"`
+	AssetRevision int64         `json:"asset_revision"`
+	FileRevision  int64         `json:"file_revision"`
+	NodeRevision  int64         `json:"node_revision"`
+	MediaType     string        `json:"media_type"`
+	Authored      PhotoAuthored `json:"authored"`
+	Keywords      []string      `json:"keywords"`
+}
+
+type PreparedPhotoExport struct {
+	Receipt  bundle.PhotoRenderReceipt
+	SHA256   string
+	Size     int64
+	Physical BlobPhysical
+}
+
+func (a PreparedPhotoExport) role() (bundle.Role, error) {
+	raw, err := canonical.Marshal(a.Receipt)
+	ext := a.Receipt.Profile.Format
+	if ext == "jpeg" {
+		ext = "jpg"
+	}
+	return bundle.Role{Role: "photo_rendered", Status: "available", Path: fmt.Sprintf("documents/%d/%s/photo.%s", a.Receipt.Source.NodeID, a.Receipt.Source.VersionID, ext), SHA256: a.SHA256, Size: a.Size, MediaType: "image/" + a.Receipt.Profile.Format, Recipe: raw}, err
+}
+
+func validatePhotoPlanRequest(r bundle.PlanRequest) error {
+	photo := slices.ContainsFunc(r.Roles, func(p bundle.RolePolicy) bool { return p.Role == "photo_rendered" })
+	if photo != (r.PhotoRender != nil) {
+		return bundle.ErrConflict
+	}
+	if photo && (len(r.Roles) != 1 || r.Roles[0] != (bundle.RolePolicy{Role: "photo_rendered"}) || len(r.Publications) != 0) {
+		return bundle.ErrConflict
+	}
+	if r.PhotoRender != nil {
+		return r.PhotoRender.Validate()
+	}
+	return nil
+}
+
+// ExportPlanReplay checks identity before expensive rendering and again at seal.
+func (s *Store) ExportPlanReplay(ctx context.Context, owner string, r bundle.PlanRequest) (bundle.Plan, bool, error) {
+	if owner == "" || validateUUIDv4(r.OperationID) != nil || validateUUIDv4(r.SourceID) != nil || !canonical.IsSHA256Hex(r.MemberHash) {
+		return bundle.Plan{}, false, bundle.ErrConflict
+	}
+	if err := validatePhotoPlanRequest(r); err != nil {
+		return bundle.Plan{}, false, err
+	}
+	raw, err := canonical.Marshal(r)
+	if err != nil {
+		return bundle.Plan{}, false, err
+	}
+	var actual, digest string
+	err = s.db.QueryRowContext(ctx, `SELECT owner,request_sha256 FROM export_plans WHERE id=?`, r.OperationID).Scan(&actual, &digest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return bundle.Plan{}, false, nil
+	}
+	if err != nil {
+		return bundle.Plan{}, false, err
+	}
+	if actual != owner {
+		return bundle.Plan{}, false, ErrNotFound
+	}
+	if digest != pageChecksum(raw) {
+		return bundle.Plan{}, false, bundle.ErrConflict
+	}
+	plan, err := s.ExportPlan(ctx, owner, r.OperationID)
+	return plan, true, err
+}
+
+// ResolvePhotoExportMembers uses the same complete population as Photos browsing.
+func (s *Store) ResolvePhotoExportMembers(ctx context.Context, selection bundle.PhotoExportSelection) ([]bundle.Member, string, error) {
+	selected := make(map[string]bool, len(selection.AssetIDs))
+	for _, id := range selection.AssetIDs {
+		if validateUUIDv4(id) != nil || selected[id] {
+			return nil, "", bundle.ErrConflict
+		}
+		selected[id] = true
+	}
+	var out []bundle.Member
+	var cursor *PhotoBrowsePosition
+	identity := ""
+	for {
+		page, err := s.ListPhotoAssets(ctx, PhotoBrowseRequest{Query: selection.Query, Hidden: selection.Hidden, PageSize: MaxDocumentCatalogPageSize}, cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(selection.AssetIDs) == 0 && page.Total > bundle.MaxMembers {
+			return nil, "", bundle.ErrLimit
+		}
+		if len(page.Items) > 0 {
+			identity = page.Items[0].position.QueryIdentity
+		}
+		for _, row := range page.Items {
+			if len(selection.AssetIDs) > 0 && !selected[row.AssetID] {
+				continue
+			}
+			delete(selected, row.AssetID)
+			m := bundle.Member{NodeID: row.NodeID, VersionID: row.ContentVersionID}
+			if err := s.db.QueryRowContext(ctx, `SELECT v.blob_hash,v.size,n.revision FROM content_versions v JOIN nodes n ON n.id=v.node_id WHERE v.version_id=? AND n.current_version_id=v.version_id`, m.VersionID).Scan(&m.SHA256, &m.Size, &m.Revision); err != nil {
+				return nil, "", err
+			}
+			out = append(out, m)
+			if len(out) > bundle.MaxMembers {
+				return nil, "", bundle.ErrLimit
+			}
+		}
+		if page.Next == nil {
+			break
+		}
+		cursor = page.Next
+		identity = cursor.QueryIdentity
+	}
+	if len(selected) != 0 {
+		return nil, "", bundle.ErrConflict
+	}
+	if identity != "" {
+		identity = "sha256:" + identity
+	}
+	return out, identity, nil
+}
+
+func (s *Store) exportPhotoInput(ctx context.Context, q metadataQuerier, m bundle.Member) (PhotoExportInput, error) {
+	i := PhotoExportInput{Member: m, Keywords: []string{}}
+	var hidden sql.NullString
+	err := q.QueryRowContext(ctx, `SELECT f.file_id,f.revision,a.revision,n.revision,v.mime_type,a.hidden_at FROM photo_files f JOIN photo_assets a ON a.asset_id=f.asset_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id WHERE n.id=? AND v.version_id=? AND v.blob_hash=? AND v.size=? AND a.display_file_id=f.file_id AND a.excluded_at IS NULL AND n.trashed_at IS NULL`, m.NodeID, m.VersionID, m.SHA256, m.Size).Scan(&i.FileID, &i.FileRevision, &i.AssetRevision, &i.NodeRevision, &i.MediaType, &hidden)
+	if err != nil {
+		return i, err
+	}
+	if hidden.Valid {
+		if _, err := s.hiddenSession(ctx, q); err != nil {
+			return i, err
+		}
+	}
+	f, err := photoFileByIDQuery(ctx, q, i.FileID)
+	if err != nil {
+		return i, err
+	}
+	i.Authored = f.Authored()
+	rows, err := q.QueryContext(ctx, `SELECT t.name FROM node_tags nt JOIN tags t ON t.id=nt.tag_id WHERE nt.node_id=? ORDER BY t.name,t.id`, m.NodeID)
+	if err != nil {
+		return i, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return i, err
+		}
+		i.Keywords = append(i.Keywords, name)
+		if len(i.Keywords) > 1000 {
+			return i, bundle.ErrLimit
+		}
+	}
+	return i, rows.Err()
+}
+
+func (s *Store) ExportPhotoInputs(ctx context.Context, owner string, r bundle.PlanRequest) ([]PhotoExportInput, error) {
+	source, err := s.ExportSource(ctx, owner, r.SourceID)
+	if err != nil {
+		return nil, err
+	}
+	if source.State != "sealed" || source.MemberHash != r.MemberHash {
+		return nil, bundle.ErrConflict
+	}
+	var inputs []PhotoExportInput
+	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return walkExportMembers(ctx, tx, r.SourceID, func(m bundle.Member) error {
+			i, err := s.exportPhotoInput(ctx, tx, m)
+			if err != nil {
+				return err
+			}
+			inputs = append(inputs, i)
+			return nil
+		})
+	})
+	return inputs, err
+}
+
+// SealPhotoExportPlan accepts artifacts only from the in-process renderer.
+func (s *Store) SealPhotoExportPlan(ctx context.Context, owner string, r bundle.PlanRequest, artifacts []PreparedPhotoExport) (bundle.Plan, error) {
+	prepared := make(map[string]PreparedPhotoExport, len(artifacts))
+	for _, a := range artifacts {
+		if _, exists := prepared[a.Receipt.Source.VersionID]; exists {
+			return bundle.Plan{}, bundle.ErrConflict
+		}
+		var input PhotoExportInput
+		if json.Unmarshal(a.Receipt.Input, &input, json.RejectUnknownMembers(true)) != nil {
+			return bundle.Plan{}, bundle.ErrConflict
+		}
+		prepared[a.Receipt.Source.VersionID] = a
+	}
+	return s.createExportPlan(ctx, owner, r, prepared)
+}

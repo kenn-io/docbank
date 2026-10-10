@@ -1,16 +1,16 @@
 import { APIError } from "./api-transport.js";
-import { cancelWebDownload } from "./generated/docbank.js";
+import { cancelWebDownload, type PhotoExportSelection } from "./generated/docbank.js";
 import { captureSnapshotTargets, type SnapshotPage } from "./snapshots.js";
 import {
   assertExportAdvance, cancelExportJob, copyExportMembers, createExportPlan,
   exportExpired, exportTicket, getExportJob, maxExportMembers, exportEmailPDFRecipes, exportOutputProblems, exportAttachmentPublications,
   offerExportDownload, readExportEvents, sealExportSource,
-  startExportJob, validateRolePolicies, validateExportOptions, sealMailboxExportSource,
+  sealPhotoExportSource, startExportJob, validateRolePolicies, validateExportOptions, sealMailboxExportSource,
   type ExportJob, type ExportMember, type ExportPlan, type ExportPreview,
   type ExportSource, type RolePolicy, type ExportOptions, type EmailPDFRecipeChoice, type OutputProblems, type AttachmentPublications,
 } from "./exports.js";
 
-export type ExportInput = { label: string; members: readonly ExportMember[] } | { label: string; snapshot: SnapshotPage } | { label: string; collectionID: string; total: number };
+export type ExportInput = { label: string; photos: PhotoExportSelection; total: number; rawCount?: number } | { label: string; members: readonly ExportMember[] } | { label: string; snapshot: SnapshotPage } | { label: string; collectionID: string; total: number };
 export interface ReviewedExport { plan: ExportPlan; preview: ExportPreview; label: string }
 export interface ActiveExport { plan: ExportPlan; label: string; id: string; job?: ExportJob }
 export interface ExportState {
@@ -52,7 +52,7 @@ export class ExportSession {
     this.stop();
     // Snapshot DTOs contain JSON data. Copy through JSON so reactive browser
     // proxies cannot fail structuredClone or remain mutable through the caller.
-    const copied = "members" in input ? { ...input, members: input.members.map(m => ({ ...m })) } : "snapshot" in input ? { ...input, snapshot: JSON.parse(JSON.stringify(input.snapshot)) as SnapshotPage } : { ...input };
+    const copied = "members" in input ? { ...input, members: input.members.map(m => ({ ...m })) } : "snapshot" in input ? { ...input, snapshot: JSON.parse(JSON.stringify(input.snapshot)) as SnapshotPage } : JSON.parse(JSON.stringify(input)) as ExportInput;
     const changed = JSON.stringify(copied) !== JSON.stringify(this.input);
     this.input = copied;
     this.policies = policies.map(p => ({ ...p }));
@@ -99,6 +99,11 @@ export class ExportSession {
       this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
     }
     if (this.source) return this.source;
+    if ("photos" in input) {
+      const source = await sealPhotoExportSource(this.session, input.photos, this.sourceID, started.signal);
+      if (!this.current(started.generation)) return;
+      return this.source = source;
+    }
     if ("collectionID" in input) {
       const source = await sealMailboxExportSource(this.session, input.collectionID, input.total, this.sourceID, started.signal);
       if (!this.current(started.generation)) return;
@@ -240,10 +245,16 @@ export class ExportSession {
     }
   }
 
+  cancelPreparation(): void {
+    if (this.state.status !== "preparing" || this.state.active) return;
+    this.stop(); this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
+    this.emit({ status: "idle" });
+  }
+
   close(): void {
     this.stop();
     const active = this.state.active;
-    this.emit({ ...this.state, downloading: false, ...(active && (!active.job || ["queued", "running"].includes(active.job.state)) ? { status: "disconnected" } : {}) });
+    this.emit({ ...this.state, downloading: false, ...(!active && this.state.status === "preparing" ? { status: "idle" as const } : {}), ...(active && (!active.job || ["queued", "running"].includes(active.job.state)) ? { status: "disconnected" } : {}) });
   }
   resetPreparation(): void {
     if (this.disposed || this.state.active) return;

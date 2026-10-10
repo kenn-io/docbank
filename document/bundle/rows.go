@@ -75,6 +75,9 @@ func (v *RowValidator) Add(d Document) error {
 		}
 		v.parent, v.children, v.paths = d, 0, map[string]bool{}
 		v.members++
+		if err := ValidatePhotoRoles(v.Plan, d); err != nil {
+			return err
+		}
 		if err := ValidateEmailPDFRoles(v.Plan, d); err != nil {
 			return err
 		}

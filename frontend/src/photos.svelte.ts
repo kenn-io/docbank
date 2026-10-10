@@ -4,7 +4,7 @@ import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
 import { clearSelection, reconcileIDSelection, toggleIDSelection, type SelectionState } from "./selection.js";
 
-export const photoQuery: SavedQueryV1Schema = { v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "capture_time", direction: "desc" } };
+export const photoQuery = { v: 1, syntax: "advanced", mode: "lexical", text: "", filters: {}, sort: { field: "capture_time", direction: "desc" } } satisfies SavedQueryV1Schema;
 const densityKey = "docbank.photos.density";
 
 export function loadDensity(): Density {

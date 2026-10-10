@@ -411,6 +411,10 @@ The initial count evaluates the whole query. Later pages seek from the last
 sort key. Queries that collapse duplicate content still evaluate the complete
 matching population to choose representatives before returning a page.
 
+## Export photos
+
+Choose **Export photos** for the whole current scope, or **Export selection** for selected photos. The [export drawer](export-bundles.md#export-photos) prepares JPEG or PNG copies with your size, metadata, and GPS choices, then delivers a verified ZIP. RAW display members export embedded previews and carry that label.
+
 ## Move photos to trash
 
 Select photos in Library and choose **Move to trash**. Confirming moves every member of each selected photo, including RAW files, images, videos, and sidecars, to recoverable trash together. A changed photo revision refuses the action; failed photos remain selected for retry. Each photo is atomic; a selection runs sequentially and can make partial progress. Changing the selection changes the next action's targets. A failed photo outside the loaded grid keeps its captured revision; load and select it again before accepting a newer revision.

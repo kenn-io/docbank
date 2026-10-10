@@ -4,10 +4,11 @@
   import { getPhotoHiddenState, setupPhotoHidden, unlockPhotoHidden, lockPhotoHidden, changePhotoHidden, disablePhotoHidden, type PhotoHiddenState } from "./generated/docbank.js";
   import { Photos } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
+  import type { ExportInput } from "./exportState.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import { APIError } from "./api-transport.js";
 
-  let { session, onauthfailure, photoActionError = "", ontrashed, onunhidden, onactionerror }: { session: string; onauthfailure: (cause: unknown) => void; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void } = $props();
+  let { session, onauthfailure, photoActionError = "", ontrashed, onunhidden, onactionerror, onexport }: { session: string; onauthfailure: (cause: unknown) => void; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void; onexport?: (input: ExportInput) => void } = $props();
   let hiddenState = $state<PhotoHiddenState>({ configured: false });
   let workspace = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
   let photoWorkspace = $state<{ refresh: () => Promise<void> }>();
@@ -145,7 +146,7 @@
     <div class="hidden-gate"><h1>Hidden</h1>{#if reading}<Spinner />{/if}</div>
   {:else if workspace && remaining}
     <div class="hidden-controls"><span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span><Button size="sm" disabled={actionPending} onclick={() => void action("lock")}>Lock</Button></div>
-    {#each [workspace] as current (current)}<PhotosWorkspace bind:this={photoWorkspace} photos={current.photos} cache={current.cache} title="Hidden" {ontrashed} onhidden={onunhidden} {onactionerror} />{/each}
+    {#each [workspace] as current (current)}<PhotosWorkspace bind:this={photoWorkspace} photos={current.photos} cache={current.cache} title="Hidden" {onexport} {ontrashed} onhidden={onunhidden} {onactionerror} />{/each}
   {:else}
     <div class="hidden-gate">
       <h1>Hidden</h1>

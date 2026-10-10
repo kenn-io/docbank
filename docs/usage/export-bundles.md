@@ -7,7 +7,7 @@ description: Download document versions, verified email PDFs, and attachment set
 # Verified export bundles
 
 Use the web app or authenticated HTTP API to export document versions,
-retained email PDFs, attachment originals, Markdown text, and page images.
+retained email PDFs, rendered photos, attachment originals, Markdown text, and page images.
 Use `docbank export` or the [native MCP export tools](mcp.md#native-export-jobs)
 for original files selected by exact document-version identity.
 
@@ -93,6 +93,28 @@ existing destination is preserved unless you pass `--overwrite`. Replacement
 happens only after verification. Pre-publication failures leave it untouched.
 An error after publication reports that the verified file is already saved.
 Download does not release the retained job automatically.
+
+## Export photos
+
+In Photos, choose **Export photos** for the current scope or **Export selection** for selected photos. Choose JPEG or PNG, JPEG quality from 1 to 100, and an optional long edge in pixels. Blank keeps the original size; exports never enlarge an image. **Include metadata** carries source EXIF and unrelated XMP, then writes the current rating, flag, label, caption, creator, copyright, and keywords. **Remove GPS** starts checked. Turning metadata off removes EXIF and XMP from the copy. Source orientation and your rotation apply once; exported orientation is 1.
+
+Choose **Prepare**, review the frozen plan, then **Start reviewed export** and **Download verified ZIP**. RAW display members use their embedded JPEG previews; the drawer and manifest label that origin. A RAW file without a supported embedded preview stops preparation. Unsupported color profiles, malformed metadata, sources over 512 MiB, and images over 100 million pixels also stop preparation. Preparation has a five-minute deadline and can be canceled.
+
+For the CLI, add `photo_render` to an exact-member request, or replace `members` with a `photos` selection. This selection exports the complete current scope; `asset_ids` restricts it to selected display members:
+
+```json
+{
+  "source_operation_id": "11111111-1111-4111-8111-111111111111",
+  "plan_operation_id": "22222222-2222-4222-8222-222222222222",
+  "photos": {
+    "query": {"v": 1, "syntax": "advanced", "mode": "lexical", "text": "", "sort": {"field": "name", "direction": "asc"}},
+    "hidden": false
+  },
+  "photo_render": {"format": "jpeg", "quality": 90, "long_edge": 2048, "include_metadata": true, "remove_gps": true}
+}
+```
+
+Use the same preview, start, status, download, and release commands shown above. The HTTP source request uses `kind: "photos"` with the same `photos` selection. Its plan request uses `roles: [{"role": "photo_rendered"}]` and `photo_render`. Preparation freezes the display version, decisions, keywords, and revisions; changes during rendering require a fresh preview. Generated copies remain retained for the export and stay outside authority backups.
 
 ## Inspect a retained plan
 

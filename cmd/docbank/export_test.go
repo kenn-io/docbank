@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/query"
 )
 
 func TestExportPreflightDoesNotContactDaemon(t *testing.T) {
@@ -189,4 +190,13 @@ func releaseCLIExport(t *testing.T, id string) string {
 	}, 30*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
 	return output
+}
+
+func TestPhotoExportRequestValidation(t *testing.T) {
+	request := exportPreviewRequest{SourceOperationID: uuid.New().String(), PlanOperationID: uuid.New().String(), Photos: &bundle.PhotoExportSelection{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true, RemoveGPS: true}}
+	require.NoError(t, validateExportRequest(request))
+	request.PhotoRender.Quality = 0
+	require.Error(t, validateExportRequest(request))
+	request.PhotoRender = nil
+	require.Error(t, validateExportRequest(request))
 }

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json/v2"
 
 	"go.kenn.io/docbank/document/bundle"
 )
@@ -75,6 +76,15 @@ func (s *Store) ExportPlanPreview(ctx context.Context, owner, id string) (bundle
 				return bundle.ErrConflict
 			}
 			summary := &out.Roles[i]
+			if r.Role == "photo_rendered" {
+				var receipt bundle.PhotoRenderReceipt
+				if json.Unmarshal(r.Recipe, &receipt) != nil {
+					return bundle.ErrConflict
+				}
+				if receipt.EmbeddedPreview {
+					summary.EmbeddedPreviews++
+				}
+			}
 			switch r.Status {
 			case "collapsed":
 				available[r.Role] = true
