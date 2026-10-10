@@ -246,6 +246,24 @@ func (s *Store) grantConsentTx(
 	if err != nil {
 		return err
 	}
+	// Clock ties or regressions must not let a random UUID select an older grant.
+	var latest sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(issued_at) FROM processing_consent_grants
+		WHERE vault_uid=? AND incarnation_id=? AND principal=? AND scope=?
+		AND profile_fingerprint=? AND disclosure_fingerprint=?
+		AND input_classes_json=? AND retained_classes_json=?`, s.vaultID, incarnationID,
+		authority.principal, authority.scope, authority.profile, authority.disclosure,
+		authority.inputsJSON, authority.retainedJSON).Scan(&latest); err != nil {
+		return fmt.Errorf("reading latest processing consent timestamp: %w", err)
+	}
+	if latest.Valid && issuedRaw <= latest.String {
+		previous, err := time.Parse(timestampLayout, latest.String)
+		if err != nil {
+			return fmt.Errorf("reading latest processing consent timestamp: %w", err)
+		}
+		grant.IssuedAt = previous.Add(time.Nanosecond)
+		issuedRaw = grant.IssuedAt.Format(timestampLayout)
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO processing_consent_grants(
 			grant_id,consent_set_id,vault_uid,incarnation_id,principal,scope,profile_fingerprint,
