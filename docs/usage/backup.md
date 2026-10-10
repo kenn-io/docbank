@@ -233,6 +233,15 @@ both `remote_only` and `allow_audited_remote_only`. See
 [Multi-store storage](storage.md#backup-and-restore) for the file format and
 trust boundary.
 
+The mapping path is resolved on the daemon host, not on the caller's host.
+Mapping-file read and parse errors never include the file contents.
+
+The restore API and explicit `repo` paths accept only loopback clients, because
+the daemon opens and writes those server-local paths. A network client of a
+daemon bound to a non-loopback address can create, list, and verify snapshots
+in the configured `[backup] repo`; run restores on the daemon host, for example
+with `docker exec`.
+
 Backups exclude `config.toml`. Reconfigure processing profiles and other local
 settings on the restored target before using them. Preserve the target's
 storage bindings described below.

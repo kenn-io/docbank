@@ -760,7 +760,7 @@ func TestPreflightCancellationDoesNotPersistReceipt(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	request := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/packages/preflights", strings.NewReader(string(body)))
+	request := httptest.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/api/v1/packages/preflights", strings.NewReader(string(body)))
 	request.RemoteAddr = "127.0.0.1:12345"
 	request.Header.Set("X-Api-Key", testAPIKey)
 	response := httptest.NewRecorder()

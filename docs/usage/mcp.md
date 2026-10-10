@@ -43,7 +43,7 @@ CRLF terminators, rejects embedded newlines, and limits the JSON payload before
 the terminator to 1 MiB. Stdout contains MCP frames only. Bounded, redacted
 diagnostics go to stderr.
 
-HTTP requires an explicit loopback IP and port plus a separate named bearer
+HTTP requires an explicit IP and port plus a separate named bearer
 binding:
 
 ```toml
@@ -63,9 +63,8 @@ docbank mcp --transport http --listen 127.0.0.1:7341
 ```
 
 Configure the client for `http://127.0.0.1:7341/mcp` and
-`Authorization: Bearer <token>`. `--listen` accepts an explicit IPv4 or IPv6
-loopback address, not a hostname, wildcard, private-LAN address, or public
-address.
+`Authorization: Bearer <token>`. `--listen` accepts an explicit IPv4 or IPv6 address and port, including
+wildcards. Hostnames and IPv6 zone identifiers are rejected.
 
 The HTTP credential is resolved from its environment binding when the MCP
 process starts and remains fixed for that process. Restart the MCP process to
@@ -74,7 +73,7 @@ the values match and repeats that check whenever it acquires a restarted
 daemon. The MCP bearer never appears in a flag, URL, runtime record, discovery
 result, log, or error.
 
-This bearer is a fixed local credential, not MCP OAuth. Docbank does not
+This bearer is a fixed credential, not MCP OAuth. Docbank does not
 publish protected-resource metadata, authorization-server discovery, dynamic
 client registration, scopes, or token refresh. A client may connect locally or
 through a trusted tunnel, but it must be able to set the Authorization header.
@@ -87,6 +86,43 @@ changes. `--allow-photo-edits` permits photo asset mutations.
 `--allow-export-writes` enables native export jobs and local downloads.
 `--allow-report-writes` enables frozen report creation, revision, local delivery,
 and explicit release. Each flag is independent. Enable the combination you need at startup.
+
+## Connect over a trusted network
+
+Choosing a non-loopback listener opts into sending the MCP bearer and returned
+vault data over the selected network. This is plain HTTP; use a trusted private
+container network, encrypted tunnel, or HTTPS proxy. The bearer grants the
+catalog selected by the MCP process's startup flags. It remains distinct from
+the daemon's full-authority API key. The MCP process still connects to its
+local daemon; remote-daemon configuration is not supported.
+
+You can start without `config.toml` using a mounted bearer file:
+
+```bash
+DOCBANK_MCP_HTTP_TOKEN_FILE=/run/secrets/mcp-bearer \
+DOCBANK_MCP_HTTP_ALLOWED_HOSTS=docbank:7341 \
+  docbank mcp --transport http --listen 0.0.0.0:7341
+```
+
+`DOCBANK_MCP_HTTP_TOKEN` or its `_FILE` form selects an environment-backed
+named credential binding, overriding a TOML binding for this process.
+Alternatively, retain the TOML example above and supply either its named
+variable or `<variable>_FILE`. Conflicting nonempty values and invalid selected
+files fail HTTP startup; they never fall back to another source. The daemon
+does not read the MCP bearer. Restart MCP to rotate it.
+
+List accepted client authorities in `[mcp.http] allowed_hosts`, the
+comma-separated `DOCBANK_MCP_HTTP_ALLOWED_HOSTS` replacement, or additive,
+repeatable `--allowed-host docbank:7341` flags. Values are IPs or ASCII DNS
+names, optionally with ports; a name without a port permits any port. Loopback
+hosts and a concrete listen IP are also accepted. Wildcard binds do not permit
+arbitrary Host names. The flags are valid only with HTTP.
+
+A network client uses `http://docbank:7341/mcp` and
+`Authorization: Bearer <token>`. Missing or invalid credentials return `401`;
+unconfigured Hosts and cross-origin requests return `403` before authentication.
+The [container guide](containers.md#run-mcp-in-the-same-container) shows how to
+start the second process in the stock image.
 
 ## Exact protocol contract
 
@@ -381,9 +417,9 @@ writes. The public limits are:
 | Header-read timeout | 10 seconds |
 | Idle connection timeout | 30 seconds |
 
-The request Host must identify a loopback address or `localhost`. An absent
-Origin is valid for non-browser clients. If Origin is present, exactly one
-plain-HTTP Origin must match that local Host and port. Unsafe or cross-origin
+The request Host must be loopback, the concrete listen IP, or an explicitly
+allowed authority. An absent Origin is valid for non-browser clients. If Origin
+is present, exactly one plain-HTTP Origin must match the request Host and port. Unsafe or cross-origin
 requests are rejected before authentication. Forwarded-host headers do not
 change this decision.
 

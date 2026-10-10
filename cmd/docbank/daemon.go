@@ -384,7 +384,13 @@ func runServe(ctx context.Context) (retErr error) {
 		return fmt.Errorf("binding API listener: %w", err)
 	}
 	defer func() { _ = listener.Close() }()
-	addr := listener.Addr().String()
+	localListener, addr, err := listenLocalDiscovery(ctx, listener)
+	if err != nil {
+		return fmt.Errorf("binding local API listener: %w", err)
+	}
+	if localListener != nil {
+		defer func() { _ = localListener.Close() }()
+	}
 
 	webListener, webURL, err := listenWebOrigin(
 		ctx, cfg.Web.Enabled && docweb.Available(),
@@ -419,7 +425,11 @@ func runServe(ctx context.Context) (retErr error) {
 	if webListener != nil {
 		webAddress = webListener.Addr().String()
 	}
-	recPath, err = rtStore.Write(daemonconn.NewRecord(addr, apiKey, shutdownToken, webAddress))
+	record := daemonconn.NewRecord(addr, apiKey, shutdownToken, webAddress)
+	if localListener != nil {
+		record.Metadata["network_address"] = listener.Addr().String()
+	}
+	recPath, err = rtStore.Write(record)
 	if err != nil {
 		return fmt.Errorf("writing daemon runtime record: %w", err)
 	}
@@ -526,6 +536,10 @@ func runServe(ctx context.Context) (retErr error) {
 		listener net.Listener
 	}
 	servers := []servingHTTP{{name: "API", server: newHTTPServer(), listener: listener}}
+	if localListener != nil {
+		servers = append(servers,
+			servingHTTP{name: "local API", server: newHTTPServer(), listener: localListener})
+	}
 	if webListener != nil {
 		servers = append(servers,
 			servingHTTP{name: "web", server: newHTTPServer(), listener: webListener})
@@ -551,7 +565,7 @@ func runServe(ctx context.Context) (retErr error) {
 			errCh <- serveResult{name: running.name, err: running.server.Serve(running.listener)}
 		}()
 	}
-	logger.Info("docbank daemon listening", "addr", addr, "pid", os.Getpid(), "background", background)
+	logger.Info("docbank daemon listening", "addr", listener.Addr().String(), "local_addr", addr, "pid", os.Getpid(), "background", background)
 	if webListener != nil {
 		logger.Info("docbank web application listening", "addr", webListener.Addr().String())
 	}
@@ -585,6 +599,40 @@ func runServe(ctx context.Context) (retErr error) {
 		return shutdownErr
 	}
 	return serveErr
+}
+
+// listenLocalDiscovery ensures CLI and MCP requests use a loopback peer so
+// server-path imports remain available locally without weakening their guard.
+// Wildcard listeners already accept loopback; concrete network binds need a
+// separate listener served by the same authenticated handler.
+func listenLocalDiscovery(ctx context.Context, listener net.Listener) (net.Listener, string, error) {
+	addr := listener.Addr().String()
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, "", fmt.Errorf("splitting API listener address: %w", err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, "", fmt.Errorf("API listener address is not an IP: %q", host)
+	}
+	if ip.IsLoopback() {
+		return nil, addr, nil
+	}
+	localHost := "127.0.0.1"
+	if ip.To4() == nil {
+		localHost = "::1"
+	}
+	if ip.IsUnspecified() {
+		return nil, net.JoinHostPort(localHost, port), nil
+	}
+	local, err := kitdaemon.Listen(ctx, kitdaemon.Endpoint{
+		Network: kitdaemon.NetworkTCP,
+		Address: net.JoinHostPort(localHost, "0"),
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("listening on loopback: %w", err)
+	}
+	return local, local.Addr().String(), nil
 }
 
 // startProcessingJobs registers the daemon jobs that derive data from stored

@@ -253,6 +253,7 @@ func NewServer(d Deps) *Server {
 	h := http.Handler(mux)
 	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
 	h = loopbackMiddleware(h)
+	h = hostMiddleware(h, d.Cfg.Server, d.WebURL)
 	h = timeoutMiddleware(h)
 	h = recoverMiddleware(h, d.Logger)
 	h = logMiddleware(h, d.Logger)

@@ -79,7 +79,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 	}
 
 	remote := httptest.NewRecorder()
-	remoteRequest := httptest.NewRequest(http.MethodPost, "/api/v1/photos/imports", bytes.NewReader(body))
+	remoteRequest := httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/photos/imports", bytes.NewReader(body))
 	remoteRequest.RemoteAddr = "192.0.2.1:1234"
 	remoteRequest.Header.Set("X-Api-Key", testAPIKey)
 	catalog.Server.Handler().ServeHTTP(remote, remoteRequest)

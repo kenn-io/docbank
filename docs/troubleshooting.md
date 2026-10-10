@@ -27,8 +27,8 @@ DOCBANK_LOG_LEVEL=debug docbank daemon run
 
 Common causes:
 
-- `config.toml` contains an unknown key, invalid duration, or non-loopback
-  bind address. The daemon rejects all three.
+- `config.toml` contains an unknown key, invalid duration, or a non-loopback
+  bind without an explicit key. The daemon rejects these settings.
 - Another process owns the same vault. Check `docbank daemon status`. Do not
   remove `vault.lock` while a daemon may still be alive.
 - The configured port is already in use. Set `api_port = 0` to let the OS

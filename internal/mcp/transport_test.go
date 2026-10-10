@@ -307,7 +307,7 @@ func testRequestMeta() map[string]any {
 	}
 }
 
-func TestHTTPListenAddressMustBeAnExplicitLoopbackIPAndPort(t *testing.T) {
+func TestHTTPListenAddressMustBeAnExplicitIPAndPort(t *testing.T) {
 	tests := []struct {
 		address string
 		valid   bool
@@ -317,8 +317,8 @@ func TestHTTPListenAddressMustBeAnExplicitLoopbackIPAndPort(t *testing.T) {
 		{address: "127.0.0.1:0", valid: true},
 		{address: "[::1%loopback]:7341"},
 		{address: "localhost:7341"},
-		{address: "0.0.0.0:7341"},
-		{address: "192.0.2.4:7341"},
+		{address: "0.0.0.0:7341", valid: true},
+		{address: "192.0.2.4:7341", valid: true},
 		{address: "127.0.0.1"},
 		{address: ":7341"},
 		{address: "127.0.0.1:70000"},

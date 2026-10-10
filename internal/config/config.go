@@ -1,6 +1,6 @@
 // Package config loads the optional $DOCBANK_HOME/config.toml. Every value
-// has a default; the file's absence is not an error. There are no per-field
-// env or flag overrides — the only environment knob is DOCBANK_HOME.
+// has a default; the file's absence is not an error. Nonempty startup
+// environment settings override the corresponding file values.
 package config
 
 import (
@@ -23,6 +23,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/embedding"
 	"go.kenn.io/docbank/document/pagerender"
+	"go.kenn.io/docbank/internal/httpboundary"
 	"go.kenn.io/docbank/internal/storenamespace"
 	"go.kenn.io/kit/embedconfig"
 )
@@ -50,10 +51,11 @@ func (d Duration) Std() time.Duration { return time.Duration(d) }
 // ServerConfig configures the docbank API daemon's listen address and idle
 // shutdown behavior.
 type ServerConfig struct {
-	BindAddr    string   `toml:"bind_addr"`    // default "127.0.0.1"
-	APIPort     int      `toml:"api_port"`     // default 0 (ephemeral)
-	APIKey      string   `toml:"api_key"`      // default "" (ephemeral per-run key on loopback)
-	IdleTimeout Duration `toml:"idle_timeout"` // default 30m; background daemons only
+	AllowedHosts []string `toml:"allowed_hosts"` // additional HTTP authorities
+	BindAddr     string   `toml:"bind_addr"`     // default "127.0.0.1"
+	APIPort      int      `toml:"api_port"`      // default 0 (ephemeral)
+	APIKey       string   `toml:"api_key"`       // default "" (ephemeral per-run key on loopback)
+	IdleTimeout  Duration `toml:"idle_timeout"`  // default 30m; background daemons only
 }
 
 // WebConfig controls the built-in web UI.
@@ -70,7 +72,8 @@ type MCPConfig struct {
 // MCPHTTPConfig names the machine-local credential used to authenticate MCP
 // clients. The credential value is resolved only when the HTTP process starts.
 type MCPHTTPConfig struct {
-	CredentialBinding string `toml:"credential_binding"`
+	AllowedHosts      []string `toml:"allowed_hosts"`
+	CredentialBinding string   `toml:"credential_binding"`
 }
 
 // BackupConfig configures the default immutable snapshot repository and its
@@ -352,6 +355,16 @@ func Default() Config {
 // Load reads <root>/config.toml, returning Default() if the file does not
 // exist. An unrecognized key is treated as a typo and rejected.
 func Load(root string) (Config, error) {
+	c, err := loadTOML(root)
+	if err != nil {
+		return Config{}, err
+	}
+	return applyEnvironment(c)
+}
+
+// loadTOML reads and resolves the vault-local configuration without applying
+// process startup environment overrides.
+func loadTOML(root string) (Config, error) {
 	c := Default()
 	path := filepath.Join(root, "config.toml")
 	file, err := openConfig(path)
@@ -504,13 +517,9 @@ func resolveBackupRepo(root string, backup *BackupConfig) error {
 	return nil
 }
 
-// Validate enforces the bind policy: loopback only. The API is plain HTTP,
-// so any non-loopback bind — even a keyed, private-network one — would put
-// the API key and vault contents on the wire in cleartext. Remote access
-// goes through an SSH tunnel or VPN to the loopback listener until the
-// daemon grows TLS. An unset api_key stays valid: the daemon generates and
-// self-publishes an ephemeral key rather than serving unauthenticated (see
-// cmd/docbank/daemon.go).
+// Validate requires an explicit key for opt-in non-loopback binds. Plain HTTP
+// exposes credentials and contents to the selected network; operators must
+// provide a trusted transport or network. Loopback can use an ephemeral key.
 func (c Config) Validate() error {
 	if c.PageRuntime != nil {
 		if err := c.PageRuntime.Validate(); err != nil {
@@ -546,6 +555,15 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
+	if c.Server.APIPort < 0 || c.Server.APIPort > 65535 {
+		return errors.New("[server] api_port must be from 0 through 65535")
+	}
+	if c.Server.APIKey != "" && !validSecret(c.Server.APIKey) {
+		return errors.New("[server] api_key must contain 1-4096 bytes without whitespace or control bytes")
+	}
+	if err := httpboundary.ValidateHosts(c.Server.AllowedHosts); err != nil {
+		return fmt.Errorf("[server] allowed_hosts: %w", err)
+	}
 	host := c.Server.BindAddr
 	if isLoopbackHost(host) {
 		return nil
@@ -553,11 +571,16 @@ func (c Config) Validate() error {
 	if net.ParseIP(host) == nil {
 		return fmt.Errorf("[server] bind_addr %q: not an IP address or localhost", host)
 	}
-	return fmt.Errorf("[server] bind_addr %q: the API is plain HTTP, so binds are "+
-		"loopback-only; reach a remote docbank through an SSH tunnel or VPN", host)
+	if c.Server.APIKey == "" {
+		return errors.New("[server] non-loopback bind_addr requires an explicit api_key; plain HTTP requires a trusted network or encrypted tunnel")
+	}
+	return nil
 }
 
 func validateMCPConfig(c Config) error {
+	if err := httpboundary.ValidateHosts(c.MCP.HTTP.AllowedHosts); err != nil {
+		return fmt.Errorf("[mcp.http] allowed_hosts: %w", err)
+	}
 	reference := c.MCP.HTTP.CredentialBinding
 	if reference == "" {
 		return nil

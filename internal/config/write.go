@@ -19,7 +19,7 @@ func EnsureStoreBindings(root string, bindings map[string]StoreBindingConfig) (r
 	}
 	path := filepath.Join(root, "config.toml")
 	if _, err := os.Lstat(path); err == nil {
-		current, loadErr := Load(root)
+		current, loadErr := loadTOML(root)
 		if loadErr != nil {
 			return loadErr
 		}

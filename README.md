@@ -71,6 +71,8 @@ make install
 ```
 
 The [setup guide](docs/setup.md) lists the build requirements for each platform.
+For a stock image configured through environment settings and mounted secrets,
+see [Run in a container](docs/usage/containers.md).
 
 ## Start a vault
 

@@ -246,7 +246,7 @@ func TestPackageZIPPreflightCleansUnsealedFailedUploads(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("container was not declared")
 			}
-			request := httptest.NewRequest(http.MethodGet, "/api/v1/packages/containers/"+containerID, nil)
+			request := httptest.NewRequest(http.MethodGet, "http://localhost/api/v1/packages/containers/"+containerID, nil)
 			request.Header.Set("X-Api-Key", cfg.Server.APIKey)
 			response := httptest.NewRecorder()
 			server.Handler().ServeHTTP(response, request)

@@ -60,6 +60,8 @@ func TestTermReportDirectDownloadsOutliveRequestTimeout(t *testing.T) {
 				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet,
 					server.URL+"/api/v1/search-exports/"+summary.ID+"/"+format, nil)
 				require.NoError(t, err)
+				// The simulated network uses a synthetic non-loopback authority.
+				req.Host = "localhost"
 				req.Header.Set("X-Api-Key", testAPIKey)
 				response, err := client.Do(req)
 				require.NoError(t, err)

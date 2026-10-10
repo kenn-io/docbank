@@ -34,6 +34,7 @@ nav = [
   ]},
   {"Protect and operate" = [
     {"Vault lifecycle" = "usage/lifecycle.md"},
+    {"Run in a container" = "usage/containers.md"},
     {"Permanent audited history" = "usage/audited-history.md"},
     {"Trash, garbage collection, repack, and verify" = "usage/trash-and-gc.md"},
     {"Multi-store storage" = "usage/storage.md"},

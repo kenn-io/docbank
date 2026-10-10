@@ -49,7 +49,7 @@ type backupRestoreRequest struct {
 	Overwrite   bool   `json:"overwrite,omitzero"`
 	Jobs        int    `json:"jobs,omitzero" minimum:"0"`
 	ForceUnlock bool   `json:"force_unlock,omitzero"`
-	StoreMap    string `json:"store_map,omitzero"`
+	StoreMap    string `json:"store_map,omitzero" doc:"Loopback-only server-local path to an owner-private TOML restore mapping file."`
 }
 
 func registerBackupRoutes(api huma.API, d Deps, g *gate) {
@@ -57,12 +57,12 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{
 		OperationID: "initBackupRepository", Method: http.MethodPost, Path: "/api/v1/backup/init",
 		Summary: "Initialize an immutable backup repository",
-	}, func(_ context.Context, in *struct {
+	}, func(ctx context.Context, in *struct {
 		Body struct {
 			Repo string `json:"repo,omitzero"`
 		}
 	}) (*initOutput, error) {
-		repoPath, err := backupRepoPath(d, in.Body.Repo)
+		repoPath, err := backupRepoPath(ctx, d, in.Body.Repo)
 		if err != nil {
 			return nil, err
 		}
@@ -80,7 +80,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct {
 		Body backupCreateRequest
 	}) (*createOutput, error) {
-		repo, err := openBackupRepository(d, in.Body.Repo)
+		repo, err := openBackupRepository(ctx, d, in.Body.Repo)
 		if err != nil {
 			return nil, err
 		}
@@ -107,10 +107,10 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 				},
 			},
 		},
-	}, func(_ context.Context, in *struct {
+	}, func(ctx context.Context, in *struct {
 		Body backupCreateRequest
 	}) (*huma.StreamResponse, error) {
-		repo, err := openBackupRepository(d, in.Body.Repo)
+		repo, err := openBackupRepository(ctx, d, in.Body.Repo)
 		if err != nil {
 			return nil, err
 		}
@@ -142,10 +142,10 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	huma.Register(api, huma.Operation{
 		OperationID: "listBackupSnapshots", Method: http.MethodGet, Path: "/api/v1/backup/snapshots",
 		Summary: "List snapshots in a backup repository",
-	}, func(_ context.Context, in *struct {
+	}, func(ctx context.Context, in *struct {
 		Repo string `query:"repo"`
 	}) (*listOutput, error) {
-		repoPath, err := backupRepoPath(d, in.Repo)
+		repoPath, err := backupRepoPath(ctx, d, in.Repo)
 		if err != nil {
 			return nil, err
 		}
@@ -178,7 +178,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct {
 		Body backupVerifyRequest
 	}) (*verifyOutput, error) {
-		repo, err := openBackupRepository(d, in.Body.Repo)
+		repo, err := openBackupRepository(ctx, d, in.Body.Repo)
 		if err != nil {
 			return nil, err
 		}
@@ -205,10 +205,10 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 				},
 			},
 		},
-	}, func(_ context.Context, in *struct {
+	}, func(ctx context.Context, in *struct {
 		Body backupVerifyRequest
 	}) (*huma.StreamResponse, error) {
-		repo, err := openBackupRepository(d, in.Body.Repo)
+		repo, err := openBackupRepository(ctx, d, in.Body.Repo)
 		if err != nil {
 			return nil, err
 		}
@@ -242,7 +242,7 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	}, func(ctx context.Context, in *struct {
 		Body backupRestoreRequest
 	}) (*restoreOutput, error) {
-		repo, target, err := prepareBackupRestore(d, in.Body)
+		repo, target, err := prepareBackupRestore(ctx, d, in.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -273,10 +273,10 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 				},
 			},
 		},
-	}, func(_ context.Context, in *struct {
+	}, func(ctx context.Context, in *struct {
 		Body backupRestoreRequest
 	}) (*huma.StreamResponse, error) {
-		repo, target, err := prepareBackupRestore(d, in.Body)
+		repo, target, err := prepareBackupRestore(ctx, d, in.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -308,8 +308,17 @@ func registerBackupRoutes(api huma.API, d Deps, g *gate) {
 	})
 }
 
-func openBackupRepository(d Deps, requested string) (*backup.Repo, error) {
-	repoPath, err := backupRepoPath(d, requested)
+// requireLoopbackPeer fences request fields that name daemon-host paths, so
+// network clients cannot read or write server-local files through them.
+func requireLoopbackPeer(ctx context.Context, message string) error {
+	if !isLoopbackContext(ctx) {
+		return NewError(http.StatusForbidden, "loopback_only", message)
+	}
+	return nil
+}
+
+func openBackupRepository(ctx context.Context, d Deps, requested string) (*backup.Repo, error) {
+	repoPath, err := backupRepoPath(ctx, d, requested)
 	if err != nil {
 		return nil, err
 	}
@@ -380,9 +389,13 @@ func verifyBackupRepository(
 }
 
 func prepareBackupRestore(
-	d Deps, in backupRestoreRequest,
+	ctx context.Context, d Deps, in backupRestoreRequest,
 ) (*backup.Repo, string, error) {
-	repo, err := openBackupRepository(d, in.Repo)
+	if err := requireLoopbackPeer(ctx,
+		"backup restore writes a daemon-host target and is loopback-only"); err != nil {
+		return nil, "", err
+	}
+	repo, err := openBackupRepository(ctx, d, in.Repo)
 	if err != nil {
 		return nil, "", err
 	}
@@ -459,7 +472,8 @@ func restoreBackupSnapshot(
 		mapping, err := backupapp.LoadRestoreStoreMap(in.StoreMap)
 		if err != nil {
 			return BackupRestoreReport{}, NewError(
-				http.StatusUnprocessableEntity, "restore_store_map_invalid", err.Error(),
+				http.StatusUnprocessableEntity, "restore_store_map_invalid",
+				"restore store map could not be loaded",
 			)
 		}
 		placement.Map = &mapping
@@ -710,9 +724,14 @@ func responseFlusher(w io.Writer) http.Flusher {
 	}
 }
 
-func backupRepoPath(d Deps, requested string) (string, error) {
+func backupRepoPath(ctx context.Context, d Deps, requested string) (string, error) {
 	repo := requested
-	if repo == "" {
+	if repo != "" {
+		if err := requireLoopbackPeer(ctx, "explicit backup repository paths are loopback-only; "+
+			"network clients use the configured [backup] repo"); err != nil {
+			return "", err
+		}
+	} else {
 		repo = d.Cfg.Backup.Repo
 	}
 	if repo == "" {

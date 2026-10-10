@@ -850,13 +850,12 @@ func TestValidate(t *testing.T) {
 		{"localhost keyless", "localhost", "", false},
 		{"ipv6 loopback keyless", "::1", "", false},
 		{"loopback with key", "127.0.0.1", "k", false},
-		// The API is plain HTTP: every non-loopback bind is refused, keyed
-		// or not - a key on the wire in cleartext is not protection.
+		// Network binds explicitly require a configured key.
 		{"private keyless", "192.168.1.5", "", true},
-		{"private with key", "192.168.1.5", "k", true},
-		{"public with key", "203.0.113.9", "k", true},
+		{"private with key", "192.168.1.5", "k", false},
+		{"public with key", "203.0.113.9", "k", false},
 		{"wildcard keyless", "0.0.0.0", "", true},
-		{"wildcard with key", "0.0.0.0", "k", true},
+		{"wildcard with key", "0.0.0.0", "k", false},
 		{"garbage host", "not an ip", "k", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

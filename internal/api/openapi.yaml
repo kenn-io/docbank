@@ -1079,6 +1079,7 @@ components:
         snapshot_id:
           type: string
         store_map:
+          description: Loopback-only server-local path to an owner-private TOML restore mapping file.
           type: string
         target:
           type: string

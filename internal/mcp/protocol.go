@@ -144,10 +144,15 @@ func (s *Server) Run(ctx context.Context, transport sdkmcp.Transport) error {
 // HTTPHandler returns the protocol-level stateless HTTP handler. Command,
 // authentication, origin, and listener policy are added by the transport task.
 func (s *Server) HTTPHandler() http.Handler {
+	return s.httpHandler(false)
+}
+
+func (s *Server) httpHandler(disableLocalhostProtection bool) http.Handler {
 	streamable := sdkmcp.NewStreamableHTTPHandler(func(*http.Request) *sdkmcp.Server {
 		return s.sdk
 	}, &sdkmcp.StreamableHTTPOptions{
 		Stateless:                    true,
+		DisableLocalhostProtection:   disableLocalhostProtection,
 		JSONResponse:                 true,
 		MaxRequestBodyBytes:          maxHTTPRequestBytes,
 		PropagateRequestCancellation: true,

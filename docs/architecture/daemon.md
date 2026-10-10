@@ -69,9 +69,13 @@ docbank daemon stop
 ## Discovery
 
 A running daemon writes a runtime record, `$DOCBANK_HOME/daemon.<pid>.json`.
-The record names the daemon's service (`docbank`), build version, and actual
-bound address. The configured `api_port` may be `0`, in which case the OS
-picks an ephemeral port and the record carries the real one. The record's
+The record names the daemon's service (`docbank`), build version, and loopback
+endpoint for local CLI and MCP discovery. A wildcard listener uses loopback
+on the same port. A concrete non-loopback bind adds a separate ephemeral
+loopback listener so local server-path imports remain available. Its
+`network_address` metadata carries the concrete network listener's actual
+endpoint, including the assigned port when `api_port` is `0`. Remote clients
+that cannot read the record need a fixed port. The record's
 metadata also carries the process's create-time, a random shutdown token
 generated at startup, and the daemon's effective API key (the configured
 `[server] api_key`, or a freshly generated one when it's unset).
