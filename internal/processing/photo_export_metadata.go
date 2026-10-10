@@ -854,6 +854,15 @@ func photoXMPConfirmed(n xml.Name, input store.PhotoExportInput) bool {
 		return n.Local == "hierarchicalSubject" && len(input.Keywords) > 0
 	case xmpPDFNamespace:
 		return n.Local == "Keywords" && len(input.Keywords) > 0
+	case "http://ns.adobe.com/tiff/1.0/":
+		switch n.Local {
+		case "ImageDescription":
+			bit = store.PhotoConfirmedCaption
+		case "Artist":
+			bit = store.PhotoConfirmedCreator
+		case "Copyright":
+			bit = store.PhotoConfirmedCopyright
+		}
 	case xmpDublinCoreNamespace:
 		switch n.Local {
 		case "description":

@@ -370,6 +370,34 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 	}
 	entries = append(entries, tiffShort(0x4746, 5), tiffShort(0x4749, 99), syntheticTIFFEntry{tag: 0x83bb, kind: 7, value: append([]byte{0x1c, 2, 25, 0, 16}, []byte("Embedded keyword")...)})
 	aliasEXIF := syntheticTIFF(42, entries, nil)
+	for _, alias := range []struct {
+		name string
+		bit  store.PhotoAuthoredFields
+	}{
+		{"Artist", store.PhotoConfirmedCreator},
+		{"Copyright", store.PhotoConfirmedCopyright},
+		{"ImageDescription", store.PhotoConfirmedCaption},
+	} {
+		for _, edit := range []string{"", "Confirmed replacement"} {
+			for _, format := range []string{"jpeg", "png"} {
+				t.Run(alias.name+"/"+edit+"/"+format, func(t *testing.T) {
+					packet := []byte(photoSidecarHeader + ` xmlns:tiff="http://ns.adobe.com/tiff/1.0/" xmlns:keep="https://example.org/photo/" keep:Lens="Synthetic lens" tiff:` + alias.name + `="Old attribute"><tiff:` + alias.name + `>Old element</tiff:` + alias.name + `><keep:History>Unrelated history</keep:History>` + photoSidecarFooter)
+					for _, confirmed := range []store.PhotoAuthoredFields{0, alias.bit} {
+						packets, _ := render(nil, packet, store.PhotoAuthored{Confirmed: confirmed, Creator: edit, Copyright: edit, Caption: edit}, nil, format, false)
+						assert.Equal(t, confirmed == 0, strings.Contains(string(packets.xmp), "Old attribute"))
+						assert.Equal(t, confirmed == 0, strings.Contains(string(packets.xmp), "Old element"))
+						assert.Contains(t, string(packets.xmp), "Synthetic lens")
+						assert.Contains(t, string(packets.xmp), "Unrelated history")
+						if confirmed != 0 {
+							actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
+							require.NoError(t, err)
+							assert.Equal(t, edit, map[store.PhotoAuthoredFields]string{store.PhotoConfirmedCreator: actual.Creator, store.PhotoConfirmedCopyright: actual.Copyright, store.PhotoConfirmedCaption: actual.Caption}[alias.bit])
+						}
+					}
+				})
+			}
+		}
+	}
 	for _, confirmed := range []store.PhotoAuthoredFields{0, store.PhotoConfirmedCaption | store.PhotoConfirmedCreator | store.PhotoConfirmedRating} {
 		for _, format := range []string{"jpeg", "png"} {
 			packets, _ := render(aliasEXIF, nil, store.PhotoAuthored{Confirmed: confirmed}, nil, format, false)

@@ -290,7 +290,7 @@ verified archive receipt. It displays the final size and SHA-256 so you can
 check the downloaded file independently. The browser saves the archive
 directly. Docbank does not load the entire ZIP into browser memory. Check your
 browser's download list for local completion.
-**Prepare another export** frees the finished export's slot for both photos and documents, and asks you to wait while a download is still running.
+**Prepare another export** releases the finished job for both photos and documents, and asks you to wait while a download is still running. Its source and plan [still count toward the shared export cap](export-bundles.md#export-photos) until the plan's admission deadline.
 
 Closing the drawer stops its progress reader, not the server job. Reopen
 **Export** in the same browser session to reconnect to that job, or choose

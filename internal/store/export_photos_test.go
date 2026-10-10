@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +18,10 @@ func TestPhotoExportPlanSealsFrozenInputsAndOwnsArtifact(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	s := newTestStore(t)
+	field, ok := reflect.TypeFor[bundle.Plan]().FieldByName("PhotoRender")
+	require.True(t, ok)
+	jsonName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+	require.Equal(t, BackupExportPlanPredicate, "json_extract(p.canonical_json, '$."+jsonName+"') IS NULL")
 	n := browsePhotoNode(t, s, "render.jpg", fakeHash("a3"), "image/jpeg")
 	m := bundle.Member{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: n.BlobHash, Size: n.Size}
 	source, err := s.CreateExportSource(ctx, "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{m}}, nil)
