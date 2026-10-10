@@ -172,8 +172,8 @@ func TestPhotoRoutesAndClientTraversal(t *testing.T) {
 	require.NotEmpty(t, history.Items)
 	change := history.Items[0].Attachment
 	require.NotNil(t, change)
-	require.Empty(t, change.Before.PhotoConfirmedFields)
-	require.Equal(t, []string{"caption"}, change.After.PhotoConfirmedFields)
+	require.Zero(t, change.Before.Photo.Values.Confirmed)
+	require.Equal(t, store.PhotoConfirmedCaption, change.After.Photo.Values.Confirmed)
 }
 
 func TestTrashEmptyReportsPhotoHeldRoots(t *testing.T) {

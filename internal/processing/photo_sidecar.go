@@ -243,7 +243,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 	if !query.ValidPhotoColorLabel(result.Label) {
 		result.Label = ""
 	}
-	if value, ok := values["Rating"]; ok {
+	if value, ok := values[photoXMPProperty("rating")]; ok {
 		n, err := strconv.Atoi(value)
 		if err != nil || n < -1 || n > 5 {
 			return result, errors.New("invalid XMP rating")
@@ -254,7 +254,7 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 			result.Rating = n
 		}
 	}
-	if value, ok := values["Rotation"]; ok {
+	if value, ok := values[photoXMPProperty("rotation")]; ok {
 		n, err := strconv.Atoi(value)
 		if err == nil && (n == 0 || n == 90 || n == 180 || n == 270) {
 			result.Rotation = n

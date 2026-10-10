@@ -817,16 +817,15 @@ type AuditAttachmentIdentity struct {
 
 // AuditAttachmentState is one typed side of a tag or provenance transition.
 type AuditAttachmentState struct {
-	PhotoConfirmedFields []string                     `json:"photo_confirmed_fields,omitempty"`
-	Photo                *store.PhotoAuthoredSnapshot `json:"photo,omitempty"`
-	TagID                string                       `json:"tag_id,omitzero" format:"uuid"`
-	NodeID               int64                        `json:"node_id,omitzero" minimum:"1"`
-	TagName              string                       `json:"tag_name,omitzero"`
-	ProvenanceID         string                       `json:"provenance_id,omitzero" pattern:"^[0-9a-f]{64}$"`
-	IngestID             string                       `json:"ingest_id,omitzero" format:"uuid"`
-	OriginalPath         *string                      `json:"original_path,omitempty"`
-	OriginalMTime        *string                      `json:"original_mtime,omitempty" format:"date-time"`
-	Supersedes           *string                      `json:"supersedes,omitempty" pattern:"^[0-9a-f]{64}$"`
+	Photo         *store.PhotoAuthoredSnapshot `json:"photo,omitempty"`
+	TagID         string                       `json:"tag_id,omitzero" format:"uuid"`
+	NodeID        int64                        `json:"node_id,omitzero" minimum:"1"`
+	TagName       string                       `json:"tag_name,omitzero"`
+	ProvenanceID  string                       `json:"provenance_id,omitzero" pattern:"^[0-9a-f]{64}$"`
+	IngestID      string                       `json:"ingest_id,omitzero" format:"uuid"`
+	OriginalPath  *string                      `json:"original_path,omitempty"`
+	OriginalMTime *string                      `json:"original_mtime,omitempty" format:"date-time"`
+	Supersedes    *string                      `json:"supersedes,omitempty" pattern:"^[0-9a-f]{64}$"`
 }
 
 // AuditAttachmentChange provides the stable identity and complete before/after

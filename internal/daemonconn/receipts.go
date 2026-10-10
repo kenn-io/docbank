@@ -22,7 +22,6 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1444,9 +1443,6 @@ func validateAuditAttachmentState(
 ) error {
 	switch kind {
 	case "photo_authored":
-		if state.Photo != nil && !slices.Equal(state.PhotoConfirmedFields, state.Photo.Values.Confirmed.Names()) {
-			return errors.New("audit attachment confirmed photo fields disagree with the mask")
-		}
 		if state.Photo != nil && state.Photo.FileID == identity.FileID && state.Photo.NodeID == identity.NodeID && state.Photo.Revision > 0 && store.ValidatePhotoAuthored(state.Photo.Values) == nil && state.TagID == "" && state.TagName == "" && state.NodeID == identity.NodeID && state.ProvenanceID == "" && state.IngestID == "" && state.OriginalPath == nil && state.OriginalMTime == nil && state.Supersedes == nil {
 			return nil
 		}

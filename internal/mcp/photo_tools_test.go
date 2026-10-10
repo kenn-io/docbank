@@ -57,6 +57,7 @@ func TestPhotoMCPAuthoredPagesFitEnvelope(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			stamp := "2026-09-22T00:00:00Z"
 			asset := api.PhotoAsset{ID: "00000000-0000-4000-8000-000000000001", Kind: "photo", Revision: 2, DisplaySource: "default", CreatedAt: stamp, UpdatedAt: stamp, ExcludedAt: new(stamp)}
+			asset.Agreement = map[string]bool{"rating": true, "flag": false, "label": true, "caption": false, "creator": true, "copyright": false, "rotation": true}
 			text := strings.Repeat(test.text, store.MaxPhotoAuthoredTextBytes)
 			for i := range test.files {
 				asset.Files = append(asset.Files, api.PhotoFile{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+10), AssetID: asset.ID, NodeID: int64(i + 7), Role: "raw", Revision: 1, Confirmed: store.PhotoConfirmedAll, Caption: text, Creator: text, Copyright: text, CreatedAt: stamp})
@@ -90,6 +91,7 @@ func TestPhotoMCPAuthoredPagesFitEnvelope(t *testing.T) {
 				require.NoError(t, json.Unmarshal(encoded, &page))
 				require.Equal(t, len(asset.Files), page.TotalFiles)
 				require.Equal(t, offset, page.FileOffset)
+				require.Equal(t, asset.Agreement, page.Agreement)
 				require.NotEmpty(t, page.Files)
 				files = append(files, page.Files...)
 				if page.NextFileOffset == nil {
