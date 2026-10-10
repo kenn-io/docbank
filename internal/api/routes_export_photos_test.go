@@ -9,8 +9,11 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/bundle"
@@ -28,8 +31,10 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 		t.Run(fmt.Sprint(metadata), func(t *testing.T) {
 			t.Parallel()
 			var worker *exporter.Worker
+			var vault string
 			ts, s := newTestServer(t, func(d *api.Deps) {
 				var err error
+				vault = d.VaultRoot
 				d.Gate = api.NewOperationGate()
 				worker, err = exporter.New(d.Store, d.Blobs, d.VaultRoot, d.Gate)
 				require.NoError(t, err)
@@ -51,8 +56,15 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 1, source.Total)
 			r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "png", Quality: 90, LongEdge: 3, IncludeMetadata: metadata, RemoveGPS: true}}
+			abandoned := filepath.Join(vault, "export-archives", ".photo-export-"+strings.Repeat("a", 32))
+			require.NoError(t, os.MkdirAll(abandoned, 0700))
+			require.NoError(t, os.WriteFile(filepath.Join(abandoned, "payload.tmp"), []byte("abandoned"), 0600))
+			old := time.Now().Add(-25 * time.Hour)
+			require.NoError(t, os.Chtimes(abandoned, old, old))
 			plan, err := client.CreateExportPlan(t.Context(), &apiclient.CreateExportPlanRequestOptions{Body: &r})
 			require.NoError(t, err)
+			_, err = os.Stat(abandoned)
+			require.ErrorIs(t, err, os.ErrNotExist)
 			retry, err := client.CreateExportPlan(t.Context(), &apiclient.CreateExportPlanRequestOptions{Body: &r})
 			require.NoError(t, err)
 			require.Equal(t, plan, retry)
@@ -94,6 +106,11 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 					} else {
 						require.NotContains(t, string(contents), "XML:com.adobe.xmp")
 					}
+				}
+				if !metadata {
+					require.NotContains(t, string(contents), "input_sha256")
+					require.NotContains(t, string(contents), "Synthetic private caption")
+					require.NotContains(t, string(contents), "Synthetic private creator")
 				}
 				if strings.HasSuffix(file.Name, "manifest.jsonl") {
 					require.Contains(t, string(contents), "photo_rendered")

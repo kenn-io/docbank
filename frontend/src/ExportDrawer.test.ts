@@ -132,3 +132,29 @@ it("keeps export start available when the first details page fails and retries t
   expect(detailRequests).toBe(2);
   expect(planRequests).toBe(1);
 });
+
+it("drops hidden document packaging and duplicate settings when switching to photos", async () => {
+  const { exportMemberHash } = await import("./exports.js");
+  const memberHash = await exportMemberHash(input.members);
+  let requested: any;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (String(url).endsWith("/sources")) return Response.json({ id: body.operation_id, request_sha256: "a".repeat(64), kind: "photos", state: "sealed", member_hash: memberHash, total: 1, source_bytes: 12, created_at: "2026-01-01T00:00:00Z", expires_at: "2099-01-01T00:00:00Z" });
+    requested = body;
+    return new Response(JSON.stringify({ detail: "Captured preparation" }), { status: 409 });
+  });
+  const view = render(ExportDrawer, { session: "s", input, open: true, onclose: vi.fn(), onauthfailure: vi.fn() });
+  await fireEvent.click(screen.getByRole("combobox", { name: /^ZIP packaging/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "One output / 512 MiB per volume" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: /^Duplicate outputs/ }));
+  await fireEvent.click(screen.getByRole("option", { name: "Share exact duplicate outputs" }));
+  const { photoQuery } = await import("./photos.svelte.js");
+  const photos = { label: "Selected photos", total: 1, photos: { hidden: false, query: photoQuery } };
+  await view.rerender({ input: photos });
+  expect(screen.queryByRole("combobox", { name: /^ZIP packaging/ })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
+  await screen.findByText("Captured preparation");
+  expect(requested.photo_render).toEqual( { format: "jpeg", quality: 90, long_edge: 0, include_metadata: true, remove_gps: true });
+  expect(requested.volume_limits).toBeUndefined();
+  expect(requested.duplicate_policy).toBeUndefined();
+});

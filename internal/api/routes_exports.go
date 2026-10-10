@@ -187,7 +187,7 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		}
 		var p bundle.Plan
 		if in.Body.PhotoRender != nil {
-			p, err = processing.PreparePhotoExportPlan(ctx, d.Store, d.Blobs, filepath.Join(d.VaultRoot, "tmp", "exports"), owner, in.Body, g.MutateContext)
+			p, err = processing.PreparePhotoExportPlan(ctx, d.Store, d.Blobs, filepath.Join(d.VaultRoot, "export-archives"), owner, in.Body, g.MutateContext)
 		} else {
 			err = g.MutateContext(ctx, func() error { var e error; p, e = d.Store.CreateExportPlan(ctx, owner, in.Body); return e })
 		}

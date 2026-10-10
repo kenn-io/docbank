@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/bundle"
-	"go.kenn.io/docbank/internal/canonical"
 	"uuid"
 )
 
@@ -23,9 +22,7 @@ func TestPhotoExportPlanSealsFrozenInputsAndOwnsArtifact(t *testing.T) {
 	inputs, err := s.ExportPhotoInputs(ctx, "owner", r)
 	require.NoError(t, err)
 	require.Len(t, inputs, 1)
-	raw, err := canonical.Marshal(inputs[0])
-	require.NoError(t, err)
-	a := PreparedPhotoExport{Input: inputs[0], Receipt: bundle.PhotoRenderReceipt{Version: bundle.PhotoRenderReceiptVersion, Profile: *r.PhotoRender, Source: m, InputSHA256: pageChecksum(raw), Width: 10, Height: 20}, SHA256: fakeHash("b3"), Size: 99, Physical: BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 99, Created: true}}
+	a := PreparedPhotoExport{Input: inputs[0], Receipt: bundle.PhotoRenderReceipt{Version: bundle.PhotoRenderReceiptVersion, Profile: *r.PhotoRender, Source: m, Width: 10, Height: 20}, SHA256: fakeHash("b3"), Size: 99, Physical: BlobPhysical{Encoding: looseEncodingRaw, StoredBytes: 99, Created: true}}
 	asset, err := s.PhotoAssetForNode(ctx, n.ID)
 	require.NoError(t, err)
 	rating := 4
@@ -39,9 +36,6 @@ func TestPhotoExportPlanSealsFrozenInputsAndOwnsArtifact(t *testing.T) {
 	inputs, err = s.ExportPhotoInputs(ctx, "owner", r)
 	require.NoError(t, err)
 	a.Input = inputs[0]
-	raw, err = canonical.Marshal(inputs[0])
-	a.Receipt.InputSHA256 = pageChecksum(raw)
-	require.NoError(t, err)
 	plan, err := s.SealPhotoExportPlan(ctx, "owner", r, []PreparedPhotoExport{a})
 	require.NoError(t, err)
 	preview, err := s.ExportPlanPreview(ctx, "owner", plan.ID)
@@ -121,4 +115,32 @@ func TestPhotoExportCancellationAndInvalidProfile(t *testing.T) {
 	require.Error(t, err)
 	_, err = s.CreateExportPlan(t.Context(), "owner", bundle.PlanRequest{PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 0}})
 	require.ErrorIs(t, err, bundle.ErrConflict)
+}
+
+func TestPhotoExportPreparationAdmissionAndCapacity(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	release, err := s.AcquirePhotoExportPreparation(t.Context())
+	require.NoError(t, err)
+	waiting, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = s.AcquirePhotoExportPreparation(waiting)
+	require.ErrorIs(t, err, context.Canceled)
+	release()
+	release, err = s.AcquirePhotoExportPreparation(t.Context())
+	require.NoError(t, err)
+	defer release()
+	n := browsePhotoNode(t, s, "capacity.jpg", fakeHash("a5"), "image/jpeg")
+	m := bundle.Member{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: n.BlobHash, Size: n.Size}
+	var source bundle.Source
+	for range 32 {
+		source, err = s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{m}}, nil)
+		require.NoError(t, err)
+	}
+	r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "png", Quality: 90}}
+	_, found, err := s.ExportPlanReplay(t.Context(), "owner", r)
+	require.False(t, found)
+	require.ErrorIs(t, err, bundle.ErrLimit)
+	_, err = s.SealPhotoExportPlan(t.Context(), "owner", r, nil)
+	require.ErrorIs(t, err, bundle.ErrLimit)
 }

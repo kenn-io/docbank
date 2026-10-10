@@ -94,37 +94,9 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 }
 
 func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.PlanRequest, prepared map[string]PreparedPhotoExport) (bundle.Plan, error) {
-	if err := validatePhotoPlanRequest(r); err != nil {
-		return bundle.Plan{}, err
-	}
-	if owner == "" || validateUUIDv4(r.OperationID) != nil || validateUUIDv4(r.SourceID) != nil || !canonical.IsSHA256Hex(r.MemberHash) {
-		return bundle.Plan{}, bundle.ErrConflict
-	}
-	if err := validateExportPolicies(r.Roles); err != nil {
-		return bundle.Plan{}, err
-	}
-	publications := map[string]string{}
-	for _, p := range r.Publications {
-		if validateUUIDv4(p.VersionID) != nil || document.ValidateEmailDocumentOperationID(p.OperationID) != nil || publications[p.VersionID] != "" {
-			return bundle.Plan{}, bundle.ErrConflict
-		}
-		publications[p.VersionID] = p.OperationID
-	}
-	if len(publications) > bundle.ChunkMembers {
-		return bundle.Plan{}, bundle.ErrLimit
-	}
-	if err := bundle.ValidateVolumeLimits(r.VolumeLimits); err != nil {
-		return bundle.Plan{}, err
-	}
-	if err := bundle.ValidateDuplicatePolicy(r.DuplicatePolicy); err != nil {
-		return bundle.Plan{}, err
-	}
-	request, err := canonical.Marshal(r)
+	request, publications, err := validateExportPlanRequest(owner, r)
 	if err != nil {
 		return bundle.Plan{}, err
-	}
-	if len(request) > 1<<20 {
-		return bundle.Plan{}, bundle.ErrLimit
 	}
 	digest := pageChecksum(request)
 	var plan bundle.Plan
@@ -161,12 +133,8 @@ func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.Pla
 		if source.State != "sealed" || source.MemberHash != r.MemberHash {
 			return bundle.ErrConflict
 		}
-		var count int
-		if e = tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM export_sources)+(SELECT count(*) FROM export_plans)`).Scan(&count); e != nil {
+		if e = checkExportPlanCapacity(ctx, tx); e != nil {
 			return e
-		}
-		if count >= 32 {
-			return bundle.ErrLimit
 		}
 		plan = bundle.Plan{PhotoRender: r.PhotoRender, Format: bundle.Format, ID: r.OperationID, VaultID: s.vaultID, Toolchain: runtime.Version(), Source: source, Roles: slices.Clone(r.Roles), Total: source.Total, CreatedAt: nowRFC3339(), ExpiresAt: exportDeadline(10 * time.Minute)}
 		if r.VolumeLimits != nil {
@@ -559,4 +527,51 @@ func resolveExportPages(ctx context.Context, q metadataQuerier, m bundle.Member,
 		roles = append(roles, bundle.Role{Role: "pages", Status: "available", Path: fmt.Sprintf("%spages/%06d.png", base, page), SHA256: view.Image.SHA256, Size: view.Image.Size, MediaType: "image/png", Recipe: raw, Page: &view.Image})
 	}
 	return roles, d.Frames, nil
+}
+
+func checkExportPlanCapacity(ctx context.Context, q metadataQuerier) error {
+	var count int
+	if err := q.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM export_sources)+(SELECT count(*) FROM export_plans)`).Scan(&count); err != nil {
+		return err
+	}
+	if count >= 32 {
+		return bundle.ErrLimit
+	}
+	return nil
+}
+
+func validateExportPlanRequest(owner string, r bundle.PlanRequest) ([]byte, map[string]string, error) {
+	if err := validatePhotoPlanRequest(r); err != nil {
+		return nil, nil, err
+	}
+	if owner == "" || validateUUIDv4(r.OperationID) != nil || validateUUIDv4(r.SourceID) != nil || !canonical.IsSHA256Hex(r.MemberHash) {
+		return nil, nil, bundle.ErrConflict
+	}
+	if err := validateExportPolicies(r.Roles); err != nil {
+		return nil, nil, err
+	}
+	publications := map[string]string{}
+	for _, p := range r.Publications {
+		if validateUUIDv4(p.VersionID) != nil || document.ValidateEmailDocumentOperationID(p.OperationID) != nil || publications[p.VersionID] != "" {
+			return nil, nil, bundle.ErrConflict
+		}
+		publications[p.VersionID] = p.OperationID
+	}
+	if len(publications) > bundle.ChunkMembers {
+		return nil, nil, bundle.ErrLimit
+	}
+	if err := bundle.ValidateVolumeLimits(r.VolumeLimits); err != nil {
+		return nil, nil, err
+	}
+	if err := bundle.ValidateDuplicatePolicy(r.DuplicatePolicy); err != nil {
+		return nil, nil, err
+	}
+	request, err := canonical.Marshal(r)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(request) > 1<<20 {
+		return nil, nil, bundle.ErrLimit
+	}
+	return request, publications, nil
 }

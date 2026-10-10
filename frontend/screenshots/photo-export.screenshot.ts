@@ -27,6 +27,14 @@ test("selected JPEG and complete-scope PNG export through verified downloads", a
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
     await page.goto(webURL.href);
+    await page.getByRole("button", { name: "Documents", exact: true }).click();
+    await page.getByRole("button", { name: "Export", exact: true }).click();
+    await page.getByRole("combobox", { name: /^ZIP packaging/ }).click();
+    await page.getByRole("option", { name: "One output / 512 MiB per volume", exact: true }).click();
+    await page.getByRole("combobox", { name: /^Duplicate outputs/ }).click();
+    await page.getByRole("option", { name: "Share exact duplicate outputs", exact: true }).click();
+    await page.getByRole("button", { name: "Close export", exact: true }).click();
+    await page.getByRole("button", { name: "Photos", exact: true }).click();
     await expect(page.locator("[data-asset]")).toHaveCount(count);
     const capture = async (state: string) => {
       for (const theme of ["light", "dark"]) {
@@ -53,7 +61,11 @@ test("selected JPEG and complete-scope PNG export through verified downloads", a
     await page.getByLabel("Long edge, pixels", { exact: true }).fill("256");
     await page.getByLabel("Downloaded ZIP filename", { exact: true }).fill("synthetic-selected.zip");
     await capture("settings");
+    const preparation = page.waitForRequest(request => request.url().endsWith("/exports/plans") && request.method() === "POST");
     await page.getByRole("button", { name: "Prepare", exact: true }).click();
+    const submitted = (await preparation).postDataJSON();
+    expect(submitted.volume_limits).toBeUndefined();
+    expect(submitted.duplicate_policy).toBeUndefined();
     await expect(page.getByTestId("export-total")).toHaveText("2");
     await expect(page.getByRole("button", { name: "Start reviewed export", exact: true })).toBeEnabled();
     await capture("review");

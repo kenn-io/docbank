@@ -77,3 +77,30 @@ func TestDerivativeAuthorityStatsRefuseUnregisteredRole(t *testing.T) {
 		})
 	}
 }
+
+func TestDerivativeAuthorityStatsExcludeRetainedPhotoExports(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "backup.db")
+	catalog, err := store.Open(path)
+	require.NoError(t, err)
+	require.NoError(t, catalog.Close())
+	db, err := store.DefaultSQLiteDriver().Open(path, docsqlite.OpenOptions{Access: docsqlite.Create, TransactionMode: docsqlite.Immediate})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, err = db.Exec(`INSERT INTO blobs(hash,size,created_at) VALUES('rendered',99,'2026-01-01T00:00:00Z'),('ordinary',7,'2026-01-01T00:00:00Z');
+        INSERT INTO export_sources(id,owner,request_sha256,request_json,state,canonical_json,expires_at) VALUES('source','owner','digest','{}','sealed','{}','2099-01-01T00:00:00Z');
+        INSERT INTO export_plans(id,owner,source_id,request_sha256,canonical_json,expires_at) VALUES('photo','owner','source','digest','{"photo_render":{"format":"png"}}','2099-01-01T00:00:00Z'),('ordinary','owner','source','digest','{}','2099-01-01T00:00:00Z');
+        INSERT INTO export_role_roots(plan_id,blob_hash) VALUES('photo','rendered'),('ordinary','ordinary');`)
+	require.NoError(t, err)
+	stats, present, err := computeDerivativeAuthorityStats(t.Context(), db)
+	require.NoError(t, err)
+	require.True(t, present)
+	require.Len(t, stats.Classes, 1)
+	assert.Equal(t, "export_role", stats.Classes[0].Class)
+	assert.Equal(t, int64(1), stats.Classes[0].Count)
+	assert.Equal(t, int64(1), stats.Classes[0].BlobCount)
+	assert.Equal(t, int64(7), stats.Classes[0].LogicalBytes)
+	var backedUp int
+	require.NoError(t, db.QueryRow(store.BackupBlobAuthorityCTE()+`SELECT count(*) FROM backup_authorized_blobs WHERE hash='rendered'`).Scan(&backedUp))
+	assert.Zero(t, backedUp)
+}

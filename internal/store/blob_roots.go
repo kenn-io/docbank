@@ -116,9 +116,12 @@ func BackupBlobAuthorityCTE() string {
 	references := append([]blobReference(nil), blobRootReferences...)
 	for i := range references {
 		if references[i].table == "export_role_roots" {
-			references[i].condition = "EXISTS (SELECT 1 FROM export_plans p WHERE p.id=r.plan_id AND json_extract(p.canonical_json, '$.photo_render') IS NULL)"
+			references[i].condition = "EXISTS (SELECT 1 FROM export_plans p WHERE p.id=r.plan_id AND " + BackupExportPlanPredicate + ")"
 		}
 	}
 	return "WITH backup_authorized_blobs(hash) AS (\n\t" +
 		blobReferenceSetSQL(references) + "\n)\n"
 }
+
+// BackupExportPlanPredicate excludes transient rendered copies from portable backup authority.
+const BackupExportPlanPredicate = "json_extract(p.canonical_json, '$.photo_render') IS NULL"

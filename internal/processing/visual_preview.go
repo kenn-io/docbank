@@ -31,7 +31,6 @@ const (
 	visualPreviewMaxSourcePixels     = 100_000_000
 	visualPreviewJPEGQuality         = document.VisualPreviewJPEGQuality
 	visualPreviewMaxJPEGSegments     = 1024
-	visualPreviewMaxPNGChunks        = 1024
 	visualPreviewMaxWebPChunks       = 1024
 	visualPreviewMaxEXIFBytes        = 1 << 20
 	visualPreviewWebPAnimation       = 1 << 1
@@ -170,12 +169,10 @@ func produceVisualPreviewGIF(
 			fmt.Errorf("seeking visual preview source: %w", err))
 	}
 	pixelReader := &visualPreviewReadErrorRecorder{reader: source}
-	decoded, err := gif.Decode(pixelReader)
+	canvas, err := decodeGIFCanvas(pixelReader, config)
 	if err != nil {
 		return visualPreviewGIFDecodeResult(base, "the verified GIF cannot be decoded", pixelReader.err)
 	}
-	canvas := image.NewNRGBA(image.Rect(0, 0, config.Width, config.Height))
-	draw.Draw(canvas, decoded.Bounds(), decoded, decoded.Bounds().Min, draw.Src)
 	return encodeVisualPreview(base, canvas, config.Width, config.Height, 1)
 }
 
@@ -401,7 +398,7 @@ func inspectVisualPreviewPNG(
 	}
 	orientation = 1
 	offset := int64(len(signature))
-	for chunks := 0; chunks < visualPreviewMaxPNGChunks; {
+	for offset < sourceSize {
 		if err := ctx.Err(); err != nil {
 			return 0, false, false, false, err
 		}
@@ -417,9 +414,6 @@ func inspectVisualPreviewPNG(
 		}
 		length := int64(binary.BigEndian.Uint32(header[:4]))
 		chunkType := string(header[4:])
-		if chunkType != "IDAT" {
-			chunks++
-		}
 		if length > sourceSize-offset-12 {
 			return 0, false, false, true, nil
 		}
@@ -818,4 +812,14 @@ func whitePhotoMatte(pixels image.Image) *image.RGBA {
 	draw.Draw(matte, matte.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 	draw.Draw(matte, matte.Bounds(), pixels, pixels.Bounds().Min, draw.Over)
 	return matte
+}
+
+func decodeGIFCanvas(source io.Reader, config image.Config) (image.Image, error) {
+	decoded, err := gif.Decode(source)
+	if err != nil {
+		return nil, err
+	}
+	canvas := image.NewNRGBA(image.Rect(0, 0, config.Width, config.Height))
+	draw.Draw(canvas, decoded.Bounds(), decoded, decoded.Bounds().Min, draw.Src)
+	return canvas, nil
 }

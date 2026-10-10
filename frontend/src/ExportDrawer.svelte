@@ -42,8 +42,8 @@
       if (attachments === "pdf") policies.push({ role: "attachment_pdf", recipe_sha256: recipe, ...optional });
     }
     const planOptions: ExportOptions = {
-      ...(duplicates === "preserve" ? {} : { duplicate_policy: "collapse_exact_content" }),
-      ...(packaging === "flat" ? {} : { volume_limits: { roles: packaging === "one" ? 1 : 1000, role_bytes: 512 * 2 ** 20 } }),
+      ...(!photo && duplicates !== "preserve" ? { duplicate_policy: "collapse_exact_content" } : {}),
+      ...(!photo && packaging !== "flat" ? { volume_limits: { roles: packaging === "one" ? 1 : 1000, role_bytes: 512 * 2 ** 20 } } : {}),
     };
     if (current && "photos" in current) {
       policies.splice(0, policies.length, { role: "photo_rendered" });

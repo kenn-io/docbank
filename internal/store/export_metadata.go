@@ -99,7 +99,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 			return bundle.ErrConflict
 		}
 	}
-	ids, err = pageMetadataKeys(ctx, q, `SELECT id FROM export_plans ORDER BY id`)
+	ids, err = pageMetadataKeys(ctx, q, `SELECT p.id FROM export_plans p WHERE `+BackupExportPlanPredicate+` ORDER BY p.id`)
 	if err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ func exportBundleMetadata(ctx context.Context, q metadataQuerier, write metadata
 		if err != nil {
 			return err
 		}
-		if plan.Fingerprint == "" || plan.PhotoRender != nil {
+		if plan.Fingerprint == "" {
 			continue
 		}
 		if plan.Format != bundle.Format || validateExportPolicies(plan.Roles) != nil || plan.Total < 1 || plan.Total > bundle.MaxMembers || plan.RoleEntries > bundle.MaxRoles || plan.RoleBytes > bundle.MaxRoleBytes {

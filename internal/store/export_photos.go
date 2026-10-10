@@ -33,11 +33,7 @@ type PreparedPhotoExport struct {
 
 func (a PreparedPhotoExport) role() (bundle.Role, error) {
 	raw, err := canonical.Marshal(a.Receipt)
-	ext := a.Receipt.Profile.Format
-	if ext == "jpeg" {
-		ext = "jpg"
-	}
-	return bundle.Role{Role: "photo_rendered", Status: "available", Path: fmt.Sprintf("documents/%d/%s/photo.%s", a.Receipt.Source.NodeID, a.Receipt.Source.VersionID, ext), SHA256: a.SHA256, Size: a.Size, MediaType: "image/" + a.Receipt.Profile.Format, Recipe: raw}, err
+	return bundle.Role{Role: "photo_rendered", Status: "available", Path: bundle.PhotoRenderedPath(a.Receipt.Source, a.Receipt.Profile), SHA256: a.SHA256, Size: a.Size, MediaType: "image/" + a.Receipt.Profile.Format, Recipe: raw}, err
 }
 
 func validatePhotoPlanRequest(r bundle.PlanRequest) error {
@@ -56,26 +52,14 @@ func validatePhotoPlanRequest(r bundle.PlanRequest) error {
 
 // ExportPlanReplay checks identity before expensive rendering and again at seal.
 func (s *Store) ExportPlanReplay(ctx context.Context, owner string, r bundle.PlanRequest) (bundle.Plan, bool, error) {
-	if owner == "" || validateUUIDv4(r.OperationID) != nil || validateUUIDv4(r.SourceID) != nil || !canonical.IsSHA256Hex(r.MemberHash) {
-		return bundle.Plan{}, false, bundle.ErrConflict
-	}
-	if err := validatePhotoPlanRequest(r); err != nil {
-		return bundle.Plan{}, false, err
-	}
-	if err := bundle.ValidateVolumeLimits(r.VolumeLimits); err != nil {
-		return bundle.Plan{}, false, err
-	}
-	if err := bundle.ValidateDuplicatePolicy(r.DuplicatePolicy); err != nil {
-		return bundle.Plan{}, false, err
-	}
-	raw, err := canonical.Marshal(r)
+	raw, _, err := validateExportPlanRequest(owner, r)
 	if err != nil {
 		return bundle.Plan{}, false, err
 	}
 	var actual, digest string
 	err = s.db.QueryRowContext(ctx, `SELECT owner,request_sha256 FROM export_plans WHERE id=?`, r.OperationID).Scan(&actual, &digest)
 	if errors.Is(err, sql.ErrNoRows) {
-		return bundle.Plan{}, false, nil
+		return bundle.Plan{}, false, checkExportPlanCapacity(ctx, s.db)
 	}
 	if err != nil {
 		return bundle.Plan{}, false, err
@@ -215,12 +199,21 @@ func (s *Store) SealPhotoExportPlan(ctx context.Context, owner string, r bundle.
 		if _, exists := prepared[a.Receipt.Source.VersionID]; exists {
 			return bundle.Plan{}, bundle.ErrConflict
 		}
-		raw, err := canonical.Marshal(a.Input)
-		if err != nil || pageChecksum(raw) != a.Receipt.InputSHA256 || a.Input.Member != a.Receipt.Source {
+		if a.Input.Member != a.Receipt.Source {
 			return bundle.Plan{}, bundle.ErrConflict
 		}
 
 		prepared[a.Receipt.Source.VersionID] = a
 	}
 	return s.createExportPlan(ctx, owner, r, prepared)
+}
+
+// AcquirePhotoExportPreparation bounds rendering for this vault before loading source pixels.
+func (s *Store) AcquirePhotoExportPreparation(ctx context.Context) (func(), error) {
+	select {
+	case s.photoExportSlot <- struct{}{}:
+		return func() { <-s.photoExportSlot }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }

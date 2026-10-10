@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/blob"
@@ -230,6 +231,17 @@ func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
 	assert.Greater(t, canvasRed, uint32(0xf000))
 	assert.Greater(t, canvasGreen, uint32(0xf000))
 	assert.Greater(t, canvasBlue, uint32(0xf000))
+	output, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(source), photoRenderInput(source, "image/gif"), bundle.PhotoRenderProfile{Format: "png", Quality: 90})
+	require.NoError(t, err)
+	assert.Equal(t, 64, receipt.Width)
+	assert.Equal(t, 32, receipt.Height)
+	rendered, err := png.Decode(bytes.NewReader(output))
+	require.NoError(t, err)
+	assert.Equal(t, image.Rect(0, 0, 64, 32), rendered.Bounds())
+	_, _, _, alpha := rendered.At(8, 4).RGBA()
+	assert.Zero(t, alpha)
+	_, _, _, alpha = rendered.At(32, 16).RGBA()
+	assert.Equal(t, uint32(65535), alpha)
 }
 
 func TestProduceVisualPreviewAcceptsWebP(t *testing.T) {

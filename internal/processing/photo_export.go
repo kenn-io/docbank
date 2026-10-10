@@ -3,8 +3,6 @@ package processing
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
@@ -12,12 +10,11 @@ import (
 	"image/png"
 	"io"
 	"os"
-	"path/filepath"
 	"time"
 
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/blob"
-	"go.kenn.io/docbank/internal/canonical"
+	"go.kenn.io/docbank/internal/filepublish"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -32,14 +29,19 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 	if request.PhotoRender == nil {
 		return bundle.Plan{}, bundle.ErrConflict
 	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	release, err := catalog.AcquirePhotoExportPreparation(ctx)
+	if err != nil {
+		return bundle.Plan{}, err
+	}
+	defer release()
 	if plan, found, err := catalog.ExportPlanReplay(ctx, owner, request); found || err != nil {
 		return plan, err
 	}
 	if blobs == nil {
 		return bundle.Plan{}, bundle.ErrUnavailable
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
 	inputs, err := catalog.ExportPhotoInputs(ctx, owner, request)
 	if err != nil {
 		return bundle.Plan{}, err
@@ -47,11 +49,12 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 	if err := os.MkdirAll(spoolParent, 0700); err != nil {
 		return bundle.Plan{}, err
 	}
-	spool, err := os.MkdirTemp(spoolParent, "photo-export-")
-	if err != nil {
-		return bundle.Plan{}, err
-	}
-	defer func() { _ = os.RemoveAll(spool) }()
+	var stages []*filepublish.Stage
+	defer func() {
+		for _, stage := range stages {
+			_ = stage.Cleanup()
+		}
+	}()
 	var sourceBytes int64
 	for _, input := range inputs {
 		if input.Member.Size > maxPhotoExportSourceBytes-sourceBytes {
@@ -62,7 +65,7 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 	budget := photoExportBudget{pixels: maxPhotoExportDecodedPixels}
 	artifacts := make([]store.PreparedPhotoExport, 0, len(inputs))
 	var total int64
-	for index, input := range inputs {
+	for _, input := range inputs {
 		if err := ctx.Err(); err != nil {
 			return bundle.Plan{}, err
 		}
@@ -86,7 +89,12 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 			return bundle.Plan{}, bundle.ErrLimit
 		}
 		total += int64(len(output))
-		if err := os.WriteFile(filepath.Join(spool, fmt.Sprint(index)), output, 0600); err != nil {
+		stage, err := filepublish.CreateStage(spoolParent, ".photo-export-")
+		if err != nil {
+			return bundle.Plan{}, err
+		}
+		stages = append(stages, stage)
+		if _, err = stage.File.Write(output); err != nil {
 			return bundle.Plan{}, err
 		}
 		artifacts = append(artifacts, store.PreparedPhotoExport{Receipt: receipt, Input: input})
@@ -95,12 +103,12 @@ func PreparePhotoExportPlan(ctx context.Context, catalog *store.Store, blobs *bl
 	err = publish(ctx, func() error {
 		return blobs.WithMutation(ctx, func() error {
 			for index := range artifacts {
-				file, err := os.Open(filepath.Join(spool, fmt.Sprint(index)))
-				if err != nil {
+				file := stages[index].File
+				if _, err := file.Seek(0, io.SeekStart); err != nil {
 					return err
 				}
 				written, err := blobs.WriteDetailedContext(ctx, file)
-				if err = errors.Join(err, file.Close()); err != nil {
+				if err != nil {
 					return err
 				}
 				encoding, err := written.EncodingName()
@@ -147,7 +155,7 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 	if int64(len(data)) != input.Member.Size {
 		return nil, receipt, bundle.ErrConflict
 	}
-	packets, err := photoSourcePackets(data, profile.IncludeMetadata)
+	packets, err := photoSourcePackets(ctx, data, profile.IncludeMetadata)
 	if err != nil {
 		return nil, receipt, err
 	}
@@ -170,7 +178,7 @@ func renderPhotoExport(ctx context.Context, source io.ReadSeeker, input store.Ph
 		for _, location := range locations {
 			preview := io.NewSectionReader(bytes.NewReader(data), location.offset, location.length)
 
-			p, e := photoSourcePackets(data[location.offset:location.offset+location.length], false)
+			p, e := photoSourcePackets(ctx, data[location.offset:location.offset+location.length], false)
 			if e != nil {
 				err = e
 				continue
@@ -243,7 +251,12 @@ func decodePhotoExport(ctx context.Context, source io.ReadSeeker, format string,
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return nil, 0, err
 	}
-	decoded, _, err := image.Decode(source)
+	var decoded image.Image
+	if format == "gif" {
+		decoded, err = decodeGIFCanvas(source, config)
+	} else {
+		decoded, _, err = image.Decode(source)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -279,14 +292,5 @@ func encodePhotoExport(ctx context.Context, decoded image.Image, orientation int
 			return nil, receipt, err
 		}
 	}
-	raw, err := canonical.Marshal(input)
-	if err == nil {
-		receipt.InputSHA256 = photoInputDigest(raw)
-	}
-	return result, receipt, err
-}
-
-func photoInputDigest(raw []byte) string {
-	d := sha256.Sum256(raw)
-	return hex.EncodeToString(d[:])
+	return result, receipt, nil
 }

@@ -1679,3 +1679,18 @@ func (r *verifiedSourceMetadataReader) Verified() bool { return r.closeErr == ni
 func (r *verifiedSourceMetadataReader) Verify() error  { return r.closeErr }
 
 var _ packstore.VerifiedReadCloser = (*verifiedSourceMetadataReader)(nil)
+
+func TestExtractSourceMetadataSkipsExportOnlyTIFFKinds(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []uint16{6, 8, 11, 12, 13} {
+		data := syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6), tiffLong(0x9999, 1)}, nil)
+		binary.LittleEndian.PutUint16(data[24:26], kind)
+		binary.LittleEndian.PutUint32(data[26:30], 100)
+		binary.LittleEndian.PutUint32(data[30:34], 0xfffffff0)
+		metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), data)
+		require.NoError(t, err)
+		orientation, found := sourceMetadataInteger(metadata, "image.exif.orientation")
+		require.True(t, found)
+		assert.Equal(t, int64(6), orientation)
+	}
+}

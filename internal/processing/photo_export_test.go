@@ -58,7 +58,7 @@ func TestPhotoExportTrailingEXIFCreditsNamespacesAndICC(t *testing.T) {
 	for _, format := range []string{"jpeg", "png"} {
 		out, _, err := RenderPhotoExport(t.Context(), bytes.NewReader(jpegSource), photoRenderInput(jpegSource, "image/jpeg"), bundle.PhotoRenderProfile{Format: format, Quality: 90})
 		require.NoError(t, err)
-		packets, err := photoSourcePackets(out, true)
+		packets, err := photoSourcePackets(t.Context(), out, true)
 		require.NoError(t, err)
 		assert.Equal(t, profile, packets.icc)
 		assert.Empty(t, packets.xmp)
@@ -162,7 +162,7 @@ func TestPhotoExportSizeQualityAndMetadataOff(t *testing.T) {
 		out, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90, LongEdge: test.edge})
 		require.NoError(t, err)
 		assert.Equal(t, test.want, receipt.Width)
-		packets, err := photoSourcePackets(out, true)
+		packets, err := photoSourcePackets(t.Context(), out, true)
 		require.NoError(t, err)
 		assert.Empty(t, packets.exif)
 		assert.Empty(t, packets.xmp)
@@ -232,7 +232,7 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 		out, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(data), in, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true, RemoveGPS: true})
 		require.NoError(t, err)
 		assert.Equal(t, 2, receipt.Width)
-		packets, err := photoSourcePackets(out, true)
+		packets, err := photoSourcePackets(t.Context(), out, true)
 		require.NoError(t, err)
 		assert.NotContains(t, string(packets.exif), "GPS-PAYLOAD")
 		actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
@@ -252,7 +252,7 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 	assert.True(t, receipt.EmbeddedPreview)
 	assert.Equal(t, 2, receipt.Width)
 	assert.Equal(t, 3, receipt.Height)
-	packets, err := photoSourcePackets(out, true)
+	packets, err := photoSourcePackets(t.Context(), out, true)
 	require.NoError(t, err)
 	reader, ok := newExifReader(packets.exif)
 	require.True(t, ok)
@@ -329,7 +329,7 @@ func TestPhotoExportPNGPixelChunksDoNotConsumeMetadataBudget(t *testing.T) {
 		}
 		data = data[n+12:]
 	}
-	require.Greater(t, chunks, visualPreviewMaxPNGChunks)
+	require.Greater(t, chunks, 1024)
 	input := photoRenderInput(source.Bytes(), "image/png")
 	output, receipt, err := RenderPhotoExport(t.Context(), bytes.NewReader(source.Bytes()), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90})
 	require.NoError(t, err)

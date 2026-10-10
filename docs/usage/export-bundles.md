@@ -389,4 +389,4 @@ release or cleanup removes them. All clients using the daemon API key share the
 `master` owner and its two-job allowance. Over-limit work fails without
 truncating the selection.
 
-The preview processor advances to v8 to apply EXIF stored after PNG pixel chunks. Existing grid, fit and large previews regenerate under the new recipe.
+Photo preparation renders one request at a time per vault. Locking Hidden prevents new preparation; already issued exports follow ordinary retention, release, and download expiry.

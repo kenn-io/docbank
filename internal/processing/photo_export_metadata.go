@@ -106,7 +106,7 @@ func writePhotoPNGChunk(out *bytes.Buffer, kind string, payload []byte) {
 }
 
 // photoSourcePackets bounds metadata independently of the source's pixel bytes.
-func photoSourcePackets(data []byte, metadata bool) (result photoPackets, err error) {
+func photoSourcePackets(ctx context.Context, data []byte, metadata bool) (result photoPackets, err error) {
 	result.orientation = 1
 	inspectEXIF := func(payload []byte) error {
 		if len(payload) > visualPreviewMaxEXIFBytes {
@@ -226,7 +226,10 @@ func photoSourcePackets(data []byte, metadata bool) (result photoPackets, err er
 		return result, errors.New("too many JPEG segments")
 	case bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")):
 		position := 8
-		for chunks := 0; chunks < visualPreviewMaxPNGChunks; {
+		for position < len(data) {
+			if err := ctx.Err(); err != nil {
+				return result, err
+			}
 			if position > len(data)-12 {
 				return result, io.ErrUnexpectedEOF
 			}
@@ -235,9 +238,6 @@ func photoSourcePackets(data []byte, metadata bool) (result photoPackets, err er
 				return result, io.ErrUnexpectedEOF
 			}
 			kind := string(data[position+4 : position+8])
-			if kind != "IDAT" {
-				chunks++
-			}
 			payload := data[position+8 : position+8+int(n)]
 			position += 12 + int(n)
 			if kind == "iCCP" {
@@ -310,13 +310,13 @@ func photoSourcePackets(data []byte, metadata bool) (result photoPackets, err er
 				return finish()
 			}
 		}
-		return result, errors.New("too many PNG chunks")
+		return result, errors.New("missing PNG end")
 	case exifTIFFSignature(data):
 		reader, ok := newExifReader(data)
 		if !ok {
 			return result, errors.New("invalid RAW EXIF")
 		}
-		root, ok := reader.typedEntries(reader.u32(4))
+		root, ok := reader.readTypedEntries(reader.u32(4), true)
 		if !ok {
 			return result, errors.New("invalid RAW EXIF directory")
 		}
@@ -340,7 +340,7 @@ func photoSourcePackets(data []byte, metadata bool) (result photoPackets, err er
 		if malformed || !found {
 			return result, errors.New("invalid RAF metadata")
 		}
-		return photoSourcePackets(data[location.offset:location.offset+location.length], metadata)
+		return photoSourcePackets(ctx, data[location.offset:location.offset+location.length], metadata)
 	case bytes.HasPrefix(data, []byte("RIFF")) && len(data) >= 12 && string(data[8:12]) == "WEBP":
 		if uint64(binary.LittleEndian.Uint32(data[4:8]))+8 != uint64(len(data)) {
 			return result, errors.New("malformed WebP size")
@@ -406,7 +406,7 @@ func rewritePhotoEXIF(data []byte, width, height int, removeGPS bool, authored s
 			return 0, errors.New("cyclic EXIF directory")
 		}
 		seen[offset] = true
-		entries, ok := r.typedEntries(offset)
+		entries, ok := r.readTypedEntries(offset, true)
 		if !ok {
 			return 0, errors.New("malformed EXIF directory")
 		}

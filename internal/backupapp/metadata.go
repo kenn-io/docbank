@@ -222,7 +222,7 @@ func computeDerivativeAuthorityStats(ctx context.Context, q rowQuerier) (*Deriva
 		if !present {
 			return nil
 		}
-		rows, err := q.QueryContext(ctx, `SELECT r.plan_id,r.blob_hash,b.size FROM export_role_roots r JOIN blobs b ON b.hash=r.blob_hash ORDER BY r.plan_id,r.blob_hash`)
+		rows, err := q.QueryContext(ctx, `SELECT r.plan_id,r.blob_hash,b.size FROM export_role_roots r JOIN blobs b ON b.hash=r.blob_hash JOIN export_plans p ON p.id=r.plan_id WHERE `+store.BackupExportPlanPredicate+` ORDER BY r.plan_id,r.blob_hash`)
 		if err != nil {
 			return err
 		}
