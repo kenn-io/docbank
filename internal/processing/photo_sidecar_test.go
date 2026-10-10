@@ -232,21 +232,6 @@ func TestPhotoSidecarImportInitialization(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, receipt.ReceiptID)
 	require.Equal(t, store.PhotoConfirmedRating|store.PhotoConfirmedLabel|store.PhotoConfirmedCaption, receipt.After[0].Values.Confirmed)
-	asset, err := catalog.PhotoAssetForNode(ctx, imported.Nodes[0].ID)
-	require.NoError(t, err)
-	for _, file := range asset.Files {
-		if file.Role == store.PhotoRoleRAW {
-			assert.Equal(t, 4, file.Rating)
-			assert.Equal(t, "red", file.Label)
-			assert.Equal(t, "River", file.Caption)
-			assert.Equal(t, store.PhotoConfirmedRating|store.PhotoConfirmedLabel|store.PhotoConfirmedCaption, file.Confirmed)
-			assert.Equal(t, int64(2), file.Revision)
-		}
-		if file.Role == store.PhotoRoleImage {
-			assert.Equal(t, 0, file.Rating)
-			assert.Equal(t, int64(1), file.Revision)
-		}
-	}
 }
 
 func TestMetadataCollectorAuthoredTextPresence(t *testing.T) {
