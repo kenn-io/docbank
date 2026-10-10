@@ -59,6 +59,33 @@ func TestListJobsReturnsStableObservableState(t *testing.T) {
 	close(release)
 }
 
+func TestListJobsOmitsFinishedStorageSnapshotsWithoutDurableRows(t *testing.T) {
+	t.Parallel()
+	supervisor := jobs.New(t.Context(), slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { require.NoError(t, supervisor.Shutdown(context.Background())) })
+	for _, name := range []string{"storage:11111111-1111-4111-8111-111111111111", "storage:pack"} {
+		require.NoError(t, supervisor.Start(name, func(context.Context) error { return nil }))
+	}
+	require.Eventually(t, func() bool {
+		items := supervisor.Snapshot()
+		return len(items) == 2 && items[0].Status == jobs.StatusCompleted && items[1].Status == jobs.StatusCompleted
+	}, time.Second, time.Millisecond)
+
+	ts, _ := newTestServer(t, func(d *api.Deps) { d.Jobs = supervisor })
+	resp, body := get(t, ts, "/api/v1/jobs", nil)
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var got api.JobList
+	require.NoError(t, json.Unmarshal([]byte(body), &got))
+	require.Len(t, got.Items, 1)
+	assert.Equal(t, "storage:pack", got.Items[0].Name)
+	assert.Equal(t, "completed", got.Items[0].Status)
+	var lanes []string
+	for _, lane := range got.Lanes {
+		lanes = append(lanes, lane.Lane)
+	}
+	assert.Contains(t, lanes, "place")
+}
+
 func TestListJobsWithoutSupervisorReturnsEmptyObject(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)

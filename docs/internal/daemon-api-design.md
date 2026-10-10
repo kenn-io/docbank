@@ -288,9 +288,11 @@ authoritative.
 Job listing includes control capability, paused flag, and applicable concurrency
 and control revision. An unreadable control file leaves the listing available,
 without control fields, and sets `lane_controls_error` so operations stay
-discoverable and cancellable. Kind or supervisor name identifies the lane. Rendition,
-embedding, export, and maintenance jobs remain read-only. Lane controls require
-the daemon API key. Existing operation routes own cancellation and receipts.
+discoverable and cancellable. Kind or supervisor name identifies the lane.
+Rendition, embedding, export, and maintenance jobs remain read-only. Lane-control
+reads require the daemon API key. Browser sessions read settings through
+`GET /api/v1/jobs` and may `PUT` supported lanes without query parameters.
+Existing operation routes own cancellation and receipts.
 
 Similar-document reads use the processing service and store authority through
 `POST /api/v1/search/similar`. Keep query encoding and provider authorization

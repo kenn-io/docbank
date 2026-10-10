@@ -1220,7 +1220,7 @@ type VerifyReport struct {
 }
 
 // Job is the observable state of one daemon-owned background task. Names are
-// stable within a daemon run and terminal records remain visible until restart.
+// stable within a daemon run; durable storage operations follow their retention.
 type Job struct {
 	Controllable      bool   `json:"controllable"`
 	Paused            bool   `json:"paused"`
@@ -1256,7 +1256,8 @@ type SetLaneControlRequest struct {
 // JobList is returned as an object so the contract can gain aggregate state
 // without changing a top-level JSON array.
 type JobList struct {
-	Items []Job `json:"items"`
+	Items []Job         `json:"items"`
+	Lanes []LaneControl `json:"lanes,omitzero"`
 	// LaneControlsError reports why lane controls could not be read. Jobs are
 	// still listed, without control fields, so operations stay discoverable.
 	LaneControlsError string `json:"lane_controls_error,omitzero"`

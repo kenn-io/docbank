@@ -3233,21 +3233,6 @@ export interface Job {
   total_objects?: number;
 }
 
-export interface JobList {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  items: Job[];
-  lane_controls_error?: string;
-}
-
-export interface JobRequest {
-  /** A URL to the JSON Schema for this object. */
-  readonly $schema?: string;
-  fingerprint: string;
-  operation_id: string;
-  plan_id: string;
-}
-
 export interface LaneControl {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -3256,6 +3241,22 @@ export interface LaneControl {
   lane: string;
   paused: boolean;
   revision: number;
+}
+
+export interface JobList {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  items: Job[];
+  lane_controls_error?: string;
+  lanes?: LaneControl[];
+}
+
+export interface JobRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  fingerprint: string;
+  operation_id: string;
+  plan_id: string;
 }
 
 export interface MailboxArchive {

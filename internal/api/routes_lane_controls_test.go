@@ -58,11 +58,27 @@ func TestLaneControlRoutesAndReadonlyJobs(t *testing.T) {
 		resp, body = do(t, ts, http.MethodPut, path, map[string]string{"If-Match": "2"}, api.SetLaneControlRequest{Concurrency: limit})
 		assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, body)
 	}
-	headers := map[string]string{api.WebSessionHeader: issueWebSession(t, ts), "X-Api-Key": "", "If-Match": "1"}
+	headers := map[string]string{api.WebSessionHeader: issueWebSession(t, ts), "X-Api-Key": "", "If-Match": "2"}
 	resp, body = get(t, ts, path, headers)
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPut, path, headers, api.SetLaneControlRequest{Paused: true, Concurrency: 1})
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode, body)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
+	for _, request := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPut, "/api/v1/jobs/lanes/place?x=1"},
+		{http.MethodPut, "/api/v1/jobs/lanes/unknown"},
+		{http.MethodPut, "/api/v1/jobs/lanes/place/x"},
+		{http.MethodGet, "/api/v1/jobs/lanes/place?x=1"},
+		{http.MethodGet, "/api/v1/jobs/lanes/unknown"},
+		{http.MethodPost, "/api/v1/jobs/lanes/place"},
+		{http.MethodDelete, "/api/v1/jobs/lanes/place"},
+		{http.MethodGet, "/api/v1/jobs/lanes/place/x"},
+	} {
+		resp, body := do(t, ts, request.method, request.path, headers, nil)
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode, body, request.method+" "+request.path)
+	}
 }
 
 func TestStorageJobControlsFollowOperationState(t *testing.T) {
@@ -133,6 +149,12 @@ func TestJobListSurvivesBrokenLaneControls(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
 	assert.Contains(t, body, "lane_controls_unreadable")
 	assert.Contains(t, body, "repair or remove lane-controls.json")
+
+	browser["If-Match"] = "1"
+	resp, body = do(t, ts, http.MethodPut, lane, browser, api.SetLaneControlRequest{Concurrency: 1})
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
+	assert.Contains(t, body, "inspect with the Docbank CLI")
+	assert.NotContains(t, body, "database")
 
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+operation.ID+"/cancel", nil, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
