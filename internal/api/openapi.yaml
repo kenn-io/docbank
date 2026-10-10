@@ -11961,6 +11961,107 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    PhotoRejectMember:
+      additionalProperties: false
+      properties:
+        file_id:
+          type: string
+        flag:
+          type: string
+        name:
+          type: string
+      required:
+        - file_id
+        - name
+        - flag
+      type: object
+      x-go-type: store.PhotoRejectMember
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoRejectMixed:
+      additionalProperties: false
+      properties:
+        asset_id:
+          type: string
+        members:
+          items:
+            $ref: "#/components/schemas/PhotoRejectMember"
+          type: array
+      required:
+        - asset_id
+        - members
+      type: object
+      x-go-type: store.PhotoRejectMixed
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoRejectsPreflight:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoRejectsPreflight.json
+          format: uri
+          readOnly: true
+          type: string
+        checkout_skipped:
+          format: int64
+          type: integer
+        digest:
+          type: string
+        files:
+          format: int64
+          type: integer
+        mixed:
+          items:
+            $ref: "#/components/schemas/PhotoRejectMixed"
+          type: array
+        photos:
+          format: int64
+          type: integer
+        unchanged:
+          format: int64
+          type: integer
+      required:
+        - digest
+        - photos
+        - files
+        - unchanged
+        - checkout_skipped
+        - mixed
+      type: object
+      x-go-type: store.PhotoRejectsPreflight
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoRejectsRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoRejectsRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        coverage:
+          $ref: "#/components/schemas/WorkspaceQueryCoverage"
+        digest:
+          maxLength: 64
+          type: string
+        hidden:
+          type: boolean
+        query:
+          $ref: "#/components/schemas/SavedQueryV1Schema"
+      required:
+        - query
+      type: object
+      x-go-type: api.PhotoRejectsRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PhotoSettings:
       additionalProperties: false
       properties:
@@ -23618,6 +23719,52 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Promote one node into a photo asset
+  /api/v1/photos/rejects/preflight:
+    post:
+      operationId: preflightPhotoRejects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoRejectsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoRejectsPreflight"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Preview rejected photos in the current scope
+  /api/v1/photos/rejects/trash:
+    post:
+      operationId: movePhotoRejects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoRejectsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoRejectsPreflight"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Move confirmed rejects to recoverable trash
   /api/v1/photos/settings:
     get:
       operationId: getPhotoSettings

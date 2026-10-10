@@ -1,0 +1,188 @@
+package store
+
+import (
+	"fmt"
+	"strconv"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/query"
+)
+
+func rejectOriginals(t *testing.T, s *Store, asset PhotoAsset) {
+	t.Helper()
+	var targets []PhotoAuthoredTarget
+	for _, file := range asset.Files {
+		if file.Role != PhotoRoleSidecar {
+			targets = append(targets, PhotoAuthoredTarget{FileID: file.ID, Revision: file.Revision, Patch: PhotoAuthoredPatch{Flag: new("reject")}})
+		}
+	}
+	_, err := s.EditPhotoAuthored(t.Context(), targets)
+	require.NoError(t, err)
+}
+
+func TestPhotoRejectsAtomicTrashAndRestore(t *testing.T) {
+	t.Parallel()
+	for _, audited := range []bool{false, true} {
+		t.Run(strconv.FormatBool(audited), func(t *testing.T) {
+			s := newTestStore(t)
+			asset, nodes := photoTrashFixture(t, s)
+			if audited {
+				seedInitialAuditAuthority(t, s, s.RootID())
+			}
+			rejectOriginals(t, s, asset)
+			request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
+			preview, err := s.PreflightPhotoRejects(t.Context(), request)
+			require.NoError(t, err)
+			assert.Equal(t, 1, preview.Photos)
+			assert.Equal(t, 3, preview.Files)
+			assert.Zero(t, preview.CheckoutSkipped)
+			assert.Empty(t, preview.Mixed)
+			_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
+			require.NoError(t, err)
+			assert.Contains(t, receiptOperations(photoReceiptRows(t, s, asset.ID)), "trash")
+			for _, node := range nodes {
+				current, err := s.NodeByID(t.Context(), node.ID)
+				require.NoError(t, err)
+				assert.NotNil(t, current.TrashedAt)
+			}
+			current, err := s.NodeByID(t.Context(), nodes[2].ID)
+			require.NoError(t, err)
+			_, _, err = s.Restore(t.Context(), current.ID, current.Revision)
+			require.NoError(t, err)
+			for _, node := range nodes {
+				current, err := s.NodeByID(t.Context(), node.ID)
+				require.NoError(t, err)
+				assert.Nil(t, current.TrashedAt)
+			}
+		})
+	}
+}
+
+func TestPhotoRejectsMixedAndStale(t *testing.T) {
+	t.Parallel()
+	for _, change := range []string{"flag", "membership", "scope", "node"} {
+		t.Run(change, func(t *testing.T) {
+			s := newTestStore(t)
+			asset := authoredPair(t, s)
+			request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
+			_, err := s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Flag: new("reject")}}})
+			require.NoError(t, err)
+			preview, err := s.PreflightPhotoRejects(t.Context(), request)
+			require.NoError(t, err)
+			assert.Zero(t, preview.Photos)
+			assert.Equal(t, 1, preview.Unchanged)
+			require.Len(t, preview.Mixed, 1)
+			assert.Len(t, preview.Mixed[0].Members, 2)
+			asset, err = s.PhotoAssetByID(t.Context(), asset.ID)
+			require.NoError(t, err)
+			rejectOriginals(t, s, asset)
+			preview, err = s.PreflightPhotoRejects(t.Context(), request)
+			require.NoError(t, err)
+			switch change {
+			case "flag":
+				asset, err = s.PhotoAssetByID(t.Context(), asset.ID)
+				require.NoError(t, err)
+				_, err = s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision, Patch: PhotoAuthoredPatch{Flag: new("pick")}}})
+			case "membership":
+				asset, err = s.PhotoAssetByID(t.Context(), asset.ID)
+				require.NoError(t, err)
+				_, err = s.DetachPhotoFile(t.Context(), asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
+			case "scope":
+				_, err = s.CreateFile(t.Context(), s.RootID(), "new.jpg", fakeHash("c3"), 2, "image/jpeg")
+			case "node":
+				_, err = s.db.Exec(`UPDATE nodes SET revision=revision+1 WHERE id=?`, asset.Files[0].NodeID)
+			}
+			require.NoError(t, err)
+			_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
+			require.ErrorIs(t, err, ErrStaleRevision)
+			for _, file := range asset.Files {
+				node, err := s.NodeByID(t.Context(), file.NodeID)
+				require.NoError(t, err)
+				assert.Nil(t, node.TrashedAt)
+			}
+		})
+	}
+}
+
+func TestPhotoRejectsBeyondPageAndOverflow(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	var targets []PhotoAuthoredTarget
+	for i := 0; i < MaxDocumentCatalogPageSize+1; i++ {
+		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("photo-%04d.jpg", i), fakeHash("a1"), 1, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		targets = append(targets, PhotoAuthoredTarget{FileID: asset.Files[0].ID, Revision: 1, Patch: PhotoAuthoredPatch{Flag: new("reject")}})
+	}
+	_, err := s.EditPhotoAuthored(t.Context(), targets)
+	require.NoError(t, err)
+	request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
+	preview, err := s.PreflightPhotoRejects(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, MaxDocumentCatalogPageSize+1, preview.Photos)
+	for i := len(targets); i <= maxBatchTagTargets; i++ {
+		_, err = s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("overflow-%d.jpg", i), fakeHash("a1"), 1, "image/jpeg")
+		require.NoError(t, err)
+	}
+	_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
+	require.ErrorIs(t, err, ErrInvalidPhotoQuery)
+	roots, err := s.TrashedRoots(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, roots)
+}
+
+func TestPhotoRejectsHiddenScope(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	asset := authoredPair(t, s)
+	rejectOriginals(t, s, asset)
+	require.NoError(t, s.SetupPhotoHidden(t.Context(), "synthetic-passcode"))
+	_, err := s.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}, Hidden: true}
+	_, err = s.PreflightPhotoRejects(t.Context(), request)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	token, _, err := s.UnlockPhotoHidden(t.Context(), "synthetic-passcode")
+	require.NoError(t, err)
+	ctx := WithPhotoHiddenToken(t.Context(), token)
+	visible, err := s.PreflightPhotoRejects(ctx, PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}})
+	require.NoError(t, err)
+	assert.Zero(t, visible.Photos)
+	preview, err := s.PreflightPhotoRejects(ctx, request)
+	require.NoError(t, err)
+	assert.Equal(t, 1, preview.Photos)
+	require.NoError(t, s.LockPhotoHidden(ctx))
+	_, err = s.MovePhotoRejects(ctx, request, preview.Digest)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	node, err := s.NodeByID(t.Context(), asset.Files[0].NodeID)
+	require.NoError(t, err)
+	assert.Nil(t, node.TrashedAt)
+}
+
+func TestPhotoRejectsRollbackAllAssets(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	for i := 0; i < 2; i++ {
+		node, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("reject-%d.jpg", i), fakeHash("a1"), 1, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+		require.NoError(t, err)
+		rejectOriginals(t, s, asset)
+	}
+	request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
+	preview, err := s.PreflightPhotoRejects(t.Context(), request)
+	require.NoError(t, err)
+	_, err = s.db.Exec(`CREATE TRIGGER fail_second_trash BEFORE UPDATE OF trashed_at ON nodes WHEN NEW.trashed_at IS NOT NULL AND (SELECT COUNT(*) FROM nodes WHERE trashed_at IS NOT NULL)>0 BEGIN SELECT RAISE(ABORT,'synthetic trash failure'); END`)
+	require.NoError(t, err)
+	_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
+	require.ErrorContains(t, err, "synthetic trash failure")
+	roots, err := s.TrashedRoots(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, roots)
+	current, err := s.PreflightPhotoRejects(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, preview.Digest, current.Digest)
+}

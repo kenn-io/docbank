@@ -9628,6 +9628,100 @@ func (c *Client) PromotePhotoNode(ctx context.Context, options *PromotePhotoNode
 	return responseParser(ctx, resp)
 }
 
+// PreflightPhotoRejects Preview rejected photos in the current scope
+func (c *Client) PreflightPhotoRejects(ctx context.Context, options *PreflightPhotoRejectsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreflightPhotoRejectsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/rejects/preflight",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*PreflightPhotoRejectsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(PreflightPhotoRejectsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "PreflightPhotoRejectsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[PreflightPhotoRejectsErrorResponse](resp, "PreflightPhotoRejectsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/rejects/preflight")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// MovePhotoRejects Move confirmed rejects to recoverable trash
+func (c *Client) MovePhotoRejects(ctx context.Context, options *MovePhotoRejectsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*MovePhotoRejectsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/rejects/trash",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*MovePhotoRejectsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(MovePhotoRejectsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "MovePhotoRejectsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[MovePhotoRejectsErrorResponse](resp, "MovePhotoRejectsErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/rejects/trash")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetPhotoSettings Inspect the photo display preference
 func (c *Client) GetPhotoSettings(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetPhotoSettingsResponse, error) {
 	var err error
@@ -19649,6 +19743,62 @@ func (o *PromotePhotoNodeRequestOptions) GetHeader() (map[string]string, error) 
 	return headers, err
 }
 
+// PreflightPhotoRejectsRequestOptions is the options needed to make a request to PreflightPhotoRejects.
+type PreflightPhotoRejectsRequestOptions struct {
+	Body *PreflightPhotoRejectsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreflightPhotoRejectsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreflightPhotoRejectsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreflightPhotoRejectsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreflightPhotoRejectsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// MovePhotoRejectsRequestOptions is the options needed to make a request to MovePhotoRejects.
+type MovePhotoRejectsRequestOptions struct {
+	Body *MovePhotoRejectsBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *MovePhotoRejectsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *MovePhotoRejectsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *MovePhotoRejectsRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *MovePhotoRejectsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // SetPhotoSettingsRequestOptions is the options needed to make a request to SetPhotoSettings.
 type SetPhotoSettingsRequestOptions struct {
 	Body   *SetPhotoSettingsBody
@@ -23002,6 +23152,10 @@ type StartPhotoImportBody = PhotoImportStartRequest
 
 type PromotePhotoNodeBody = PromotePhotoNodeRequest
 
+type PreflightPhotoRejectsBody = PhotoRejectsRequest
+
+type MovePhotoRejectsBody = PhotoRejectsRequest
+
 type SetPhotoSettingsBody = SetPhotoSettingsRequest
 
 type GrantDocumentProcessingConsentBody = ProcessingConsentGrantRequest
@@ -24273,6 +24427,14 @@ type PromotePhotoNodeResponse = api.PhotoAsset
 
 type PromotePhotoNodeErrorResponse = Error
 
+type PreflightPhotoRejectsResponse = store.PhotoRejectsPreflight
+
+type PreflightPhotoRejectsErrorResponse = Error
+
+type MovePhotoRejectsResponse = store.PhotoRejectsPreflight
+
+type MovePhotoRejectsErrorResponse = Error
+
 type GetPhotoSettingsResponse = api.PhotoSettings
 
 type GetPhotoSettingsErrorResponse = Error
@@ -25387,6 +25549,14 @@ type PhotoPreviewSlot = api.PhotoPreviewSlot
 type PhotoPreviewSlots = api.PhotoPreviewSlots
 
 type PhotoQualitySignals = document.PhotoQualitySignals
+
+type PhotoRejectMember = store.PhotoRejectMember
+
+type PhotoRejectMixed = store.PhotoRejectMixed
+
+type PhotoRejectsPreflight = store.PhotoRejectsPreflight
+
+type PhotoRejectsRequest = api.PhotoRejectsRequest
 
 type PhotoSettings = api.PhotoSettings
 

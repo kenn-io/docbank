@@ -1,4 +1,4 @@
-import { hidePhotoAsset, unhidePhotoAsset, listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { hidePhotoAsset, unhidePhotoAsset, listPhotoAssets, trashPhotoAsset, preflightPhotoRejects, movePhotoRejects, type PhotoRejectsPreflight, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
@@ -21,6 +21,9 @@ export class Photos {
   cursor = $state<string | undefined>();
   loading = $state(false);
   trashing = $state(false);
+  rejects = $state<PhotoRejectsPreflight>();
+  rejectsLoading = $state(false);
+  rejectsError = $state("");
   hiding = $state(false);
   actionError = $state("");
   trashError = $state("");
@@ -125,6 +128,46 @@ export class Photos {
 
   refresh(preserve?: () => (() => Promise<void>) | undefined) {
     return this.replace("refresh", preserve);
+  }
+
+  async previewRejects() {
+    if (this.disposed || this.trashing || this.hiding || this.rejectsLoading) return;
+    this.rejects = undefined;
+    this.rejectsError = "";
+    this.rejectsLoading = true;
+    try {
+      const result = await preflightPhotoRejects({ query: photoQuery, hidden: this.hidden }, { session: this.session, signal: AbortSignal.timeout(60_000) });
+      if (!this.disposed) this.rejects = result;
+    } catch (cause) { this.rejectsFailure(cause); }
+    finally { this.rejectsLoading = false; }
+  }
+
+  async trashRejects(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
+    if (this.disposed || this.trashing || this.hiding || !this.rejects?.photos) return false;
+    const digest = this.rejects.digest;
+    this.cancelPending();
+    this.trashing = true;
+    this.rejectsError = "";
+    try {
+      await movePhotoRejects({ query: photoQuery, hidden: this.hidden, digest }, { session: this.session, signal: AbortSignal.timeout(60_000) });
+      this.rejects = undefined;
+      this.clearSelection();
+      ontrashed?.();
+      await this.refresh(preserve);
+      return true;
+    } catch (cause) {
+      this.rejects = undefined;
+      this.rejectsFailure(cause);
+      ontrashed?.();
+      await this.refresh(preserve);
+      return false;
+    } finally { this.trashing = false; }
+  }
+
+  private rejectsFailure(cause: unknown) {
+    if (this.disposed) return;
+    this.rejectsError = cause instanceof Error ? cause.message : String(cause);
+    if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
   }
 
   private async replace(mode: "refresh" | "expiry", preserve?: () => (() => Promise<void>) | undefined) {

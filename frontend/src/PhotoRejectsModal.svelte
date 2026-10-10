@@ -1,0 +1,30 @@
+<script lang="ts">
+  import { Button, Modal, Spinner } from "@kenn-io/kit-ui";
+  import type { Photos } from "./photos.svelte.js";
+
+  let { photos, onclose, onmove }: { photos: Photos; onclose: () => void; onmove: () => Promise<void> } = $props();
+</script>
+
+<Modal title="Move rejects to trash?" tone="danger" ariaLabel="Move rejects to trash" onclose={() => { if (!photos.trashing) onclose(); }} closeOnOverlayClick={!photos.trashing}>
+  {#if photos.rejectsLoading}<p role="status"><Spinner size={14} /> Counting rejects…</p>{/if}
+  {#if photos.rejects}
+    <p>{photos.rejects.photos.toLocaleString()} photos · {photos.rejects.files.toLocaleString()} files including sidecars</p>
+    <p>{photos.rejects.unchanged.toLocaleString()} photos stay in Docbank · {photos.rejects.checkout_skipped} checked-out entries skipped</p>
+    {#if photos.rejects.mixed.length}
+      <h3>Mixed flags</h3>
+      <ul>{#each photos.rejects.mixed as pair}<li>{pair.members.map(member => `${member.name}: ${member.flag || "undecided"}`).join(" · ")}</li>{/each}</ul>
+    {/if}
+    <p>You can restore these photos from Trash.</p>
+  {/if}
+  {#if photos.rejectsError}<p role="alert">{photos.rejectsError}</p>{/if}
+  {#snippet footer()}
+    <Button disabled={photos.trashing} onclick={onclose}>Keep in Docbank</Button>
+    {#if !photos.rejects && !photos.rejectsLoading}<Button onclick={() => void photos.previewRejects()}>Preview again</Button>{/if}
+    <Button tone="danger" disabled={photos.trashing || photos.rejectsLoading || !photos.rejects?.photos} onclick={() => void onmove()}>{photos.trashing ? "Moving…" : `Move ${photos.rejects?.photos ?? 0} to trash`}</Button>
+  {/snippet}
+</Modal>
+
+<style>
+  ul { max-height: 220px; overflow: auto; padding-left: var(--space-5); }
+  li { margin-bottom: var(--space-2); overflow-wrap: anywhere; }
+</style>

@@ -413,6 +413,10 @@ matching population to choose representatives before returning a page.
 
 ## Move photos to trash
 
+Choose **Move rejects** in Photos to preview the complete current scope, including photos beyond the loaded page. The preview counts eligible photos and files, lists pairs with mixed flags, and counts photos that stay in Docbank. Every original member must have the stored `reject` flag; sidecars follow their photo. Confirming moves all eligible photos together. A changed query, member, revision, or decision requires a fresh preview. The scope is limited to 1,000 photos and 1,000 member files; an oversized scope fails before moving anything. Hidden scope requires an active unlock at preview and confirmation. Checked-out entries skipped is zero because Docbank has no checkout feature.
+
+Run `docbank photos rejects --query "{}"` for a CLI preview. Repeat the same query with `--confirm <digest>` from that preview to move the rejects. `--hidden` prompts for the passcode and selects Hidden photos. HTTP clients use `POST /api/v1/photos/rejects/preflight` and `POST /api/v1/photos/rejects/trash` with `query`, optional `coverage` and `hidden`, and the preflight `digest` for confirmation.
+
 Select photos in Library and choose **Move to trash**. Confirming moves every member of each selected photo, including RAW files, images, videos, and sidecars, to recoverable trash together. A changed photo revision refuses the action; failed photos remain selected for retry. Each photo is atomic; a selection runs sequentially and can make partial progress. Changing the selection changes the next action's targets. A failed photo outside the loaded grid keeps its captured revision; load and select it again before accepting a newer revision.
 
 Use `docbank photos assets trash <asset-id>` for the same operation from the CLI. `--revision` binds the action to an inspected asset revision. Ordinary Documents deletion and `docbank rm` still remove the selected file or folder.

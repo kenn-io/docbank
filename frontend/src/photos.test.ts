@@ -5,6 +5,43 @@ import { photo } from "./photo-test-fixtures.js";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
 
+it("confirms the complete rejects scope and refreshes after a lost reply", async () => {
+  const preview = { digest: "a".repeat(64), photos: 250, files: 500, unchanged: 20, checkout_skipped: 0, mixed: [] };
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview))
+    .mockRejectedValueOnce(new TypeError("Reply lost after commit"))
+    .mockResolvedValueOnce(response([photo(2)]));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
+  await photos.previewRejects();
+  expect(photos.rejects).toEqual(preview);
+  const changed = vi.fn();
+  expect(await photos.trashRejects(undefined, changed)).toBe(false);
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ query: expect.any(Object), hidden: false, digest: preview.digest });
+  expect(photos.rejects).toBeUndefined();
+  expect(photos.rejectsError).toBe("Reply lost after commit");
+  expect(photos.items).toEqual([photo(2)]);
+  expect(changed).toHaveBeenCalledOnce();
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  photos.dispose();
+});
+
+it("requires another rejects preview after a stale confirmation", async () => {
+  const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, checkout_skipped: 0, mixed: [] };
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview))
+    .mockResolvedValueOnce(Response.json({ detail: "Photo scope changed", code: "stale_revision" }, { status: 412 }))
+    .mockResolvedValueOnce(response([photo(1)]));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  await photos.previewRejects();
+  expect(await photos.trashRejects()).toBe(false);
+  expect(photos.rejectsError).toBe("Photo scope changed");
+  expect(photos.rejects).toBeUndefined();
+  expect(await photos.trashRejects()).toBe(false);
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  photos.dispose();
+});
+
 it.each(["hide", "unhide", "trash"])("reconciles other views after a lost %s reply and retains uncertain targets", async kind => {
   const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Reply lost after commit"))
     .mockRejectedValueOnce(new Error("Refresh unavailable"));

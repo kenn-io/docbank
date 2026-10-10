@@ -12,42 +12,45 @@ import (
 func (s *Store) TrashPhotoAsset(ctx context.Context, assetID string, revision int64) (PhotoAsset, error) {
 	var asset PhotoAsset
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var err error
-		asset, err = s.photoAssetForMutationTx(ctx, tx, assetID, revision)
+		current, err := s.photoAssetForMutationTx(ctx, tx, assetID, revision)
 		if err != nil {
 			return err
 		}
-		active, err := auditAuthorityActiveTx(ctx, tx)
-		if err != nil {
-			return err
-		}
-		changed := false
-		now := nowRFC3339()
-		for _, file := range asset.Files {
-			n, err := nodeByIDTx(tx, file.NodeID)
-			if err != nil {
-				return err
-			}
-			if n.TrashedAt != nil {
-				continue
-			}
-			if active {
-				_, _, err = s.trashAuditedTx(ctx, tx, n, n.Revision)
-			} else {
-				err = s.trashNodeTx(tx, n, now)
-			}
-			if err != nil {
-				return err
-			}
-			changed = true
-		}
-		if !changed {
-			return fmt.Errorf("%w: photo has no live files to trash", ErrInvalidPhotoAsset)
-		}
-		asset, err = commitPhotoAssetTx(ctx, tx, asset, asset, "trash")
+		asset, err = s.trashPhotoAssetTx(ctx, tx, current)
 		return err
 	})
 	return asset, err
+}
+
+func (s *Store) trashPhotoAssetTx(ctx context.Context, tx *sql.Tx, asset PhotoAsset) (PhotoAsset, error) {
+	active, err := auditAuthorityActiveTx(ctx, tx)
+	if err != nil {
+		return PhotoAsset{}, err
+	}
+	changed := false
+	now := nowRFC3339()
+	for _, file := range asset.Files {
+		n, err := nodeByIDTx(tx, file.NodeID)
+		if err != nil {
+			return PhotoAsset{}, err
+		}
+		if n.TrashedAt != nil {
+			continue
+		}
+		if active {
+			_, _, err = s.trashAuditedTx(ctx, tx, n, n.Revision)
+		} else {
+			err = s.trashNodeTx(tx, n, now)
+		}
+		if err != nil {
+			return PhotoAsset{}, err
+		}
+		changed = true
+	}
+	if !changed {
+		return PhotoAsset{}, fmt.Errorf("%w: photo has no live files to trash", ErrInvalidPhotoAsset)
+	}
+	return commitPhotoAssetTx(ctx, tx, asset, asset, "trash")
 }
 
 type photoTrashGroup struct {
