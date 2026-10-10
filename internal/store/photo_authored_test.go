@@ -356,6 +356,9 @@ func TestPhotoAuthoredAuditRoundTripAndRollback(t *testing.T) {
 	currentAsset, err := s.PhotoAssetByID(ctx, asset.ID)
 	require.NoError(t, err)
 	assert.False(t, currentAsset.Agreement["caption"])
+	for _, file := range currentAsset.Files {
+		assert.Empty(t, file.Caption)
+	}
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
 	restored, err := Open(filepath.Join(t.TempDir(), "restored.db"))
@@ -365,6 +368,7 @@ func TestPhotoAuthoredAuditRoundTripAndRollback(t *testing.T) {
 	current, err := photoFileByIDQuery(ctx, restored.db, targets[0].FileID)
 	require.NoError(t, err)
 	assert.Equal(t, cleared.After[0].Values, current.Authored())
+	assert.Equal(t, PhotoConfirmedRating|PhotoConfirmedCaption, current.Confirmed)
 	undo, err := restored.UndoPhotoAuthored(ctx, cleared.ReceiptID)
 	require.NoError(t, err)
 	assert.Equal(t, PhotoConfirmedRating, undo.After[0].Values.Confirmed)

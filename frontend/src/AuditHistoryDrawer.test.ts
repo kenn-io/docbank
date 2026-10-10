@@ -66,11 +66,11 @@ describe("audited history drawer", () => {
   it("shows every authored value in both state cards", async () => {
     const fileID = "44444444-4444-4444-8444-444444444444";
     const before = { file_id: fileID, node_id: 42, revision: 1, values: { rating: 0, flag: "", label: "", caption: "", creator: "", copyright: "", rotation: 0, confirmed_fields: 0 } };
-    const after = { ...before, revision: 2, values: { rating: 5, flag: "pick", label: "red", caption: "River", creator: "Example photographer", copyright: "Example copyright", rotation: 90, confirmed_fields: 8 } };
+    const after = { ...before, revision: 2, values: { rating: 5, flag: "pick", label: "red", caption: "River", creator: "Example photographer", copyright: "Example copyright", rotation: 90, confirmed_fields: 127 } };
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify(page([event({ kind: "photo_authored", attachment: { kind: "photo_authored", identity: { file_id: fileID }, before: { photo: before }, after: { photo: after } } })])), { status: 200, headers: { "Content-Type": "application/json" } }));
     render(AuditHistoryDrawer, { session: "short-lived", node, path: "/Photos/capture.jpg", onclose: vi.fn(), onauthfailure: vi.fn() });
     expect(await screen.findByText("River")).toBeTruthy();
-    expect(screen.getByText("caption")).toBeTruthy();
+    expect(screen.getByText("rating, flag, label, caption, creator, copyright, rotation")).toBeTruthy();
     expect(screen.getByText("(none)")).toBeTruthy();
     expect(screen.getAllByText("Confirmed fields")).toHaveLength(2);
     for (const label of ["File revision", "Rating", "Flag", "Label", "Caption", "Creator", "Copyright", "Rotation"]) expect(screen.getAllByText(label)).toHaveLength(2);
