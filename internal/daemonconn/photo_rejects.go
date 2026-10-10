@@ -41,7 +41,7 @@ func validatePhotoRejectsResponse(result *api.PhotoRejectsPreflight, digest stri
 	if result == nil {
 		return errors.New("missing rejects response")
 	}
-	if !validSHA256Hex(result.Digest) || digest != "" && result.Digest != digest || result.Photos < 0 || result.Photos > 1000 || result.Files < result.Photos || result.Files > 1000 || result.Unchanged < 0 || len(result.Mixed) > result.Unchanged {
+	if !validSHA256Hex(result.Digest) || digest != "" && result.Digest != digest || result.Photos < 0 || result.Files < result.Photos || result.Unchanged < 0 || result.MixedCount < len(result.Mixed) || result.MixedCount > result.Unchanged || len(result.Mixed) > 20 || digest != "" && (result.Photos > 1000 || result.Files > 1000) {
 		return errors.New("invalid rejects response")
 	}
 	for _, mixed := range result.Mixed {

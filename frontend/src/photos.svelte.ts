@@ -156,7 +156,7 @@ export class Photos {
   }
 
   async trashRejects(preserve?: () => (() => Promise<void>) | undefined, ontrashed?: () => void) {
-    if (this.disposed || this.trashing || this.hiding || !this.rejects?.photos) return false;
+    if (this.disposed || this.trashing || this.hiding || !this.rejects?.photos || this.rejects.photos > 1000 || this.rejects.files > 1000) return false;
     if (this.rejectsScopeChanged()) {
       this.rejects = undefined;
       this.rejectsError = "Selection changed. Preview rejects again.";

@@ -5118,6 +5118,7 @@ export interface PhotoRejectsPreflight {
   digest: string;
   files: number;
   mixed: PhotoRejectMixed[];
+  mixed_count: number;
   photos: number;
   unchanged: number;
 }

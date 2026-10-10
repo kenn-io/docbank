@@ -31,7 +31,7 @@ test("Move rejects previews mixed flags and refreshes Photos and Trash", async (
     await page.getByRole("button", { name: "Move rejects", exact: true }).click();
     const modal = page.getByRole("dialog", { name: "Move rejects to trash" });
     await expect(modal.getByText("2 photos · 2 files including sidecars")).toBeVisible();
-    await expect(modal.getByText("Mixed flags", { exact: true })).toBeVisible();
+    await expect(modal.getByText("Mixed flags (1)", { exact: true })).toBeVisible();
     await expect(modal.getByText(/Synthetic-photo-00003.jpg: reject/)).toBeVisible();
     await expect(modal.getByText(/Synthetic-photo-00004.jpg: undecided/)).toBeVisible();
     for (const theme of ["light", "dark"]) {

@@ -66,6 +66,7 @@ func TestPhotoRejectsCLIBoundary(t *testing.T) {
 				}
 				require.NoError(t, runPhotoRejects(cmd, daemonconn.New(server.URL, "synthetic-key"), request))
 				assert.Contains(t, out.String(), `"photos":1`)
+				assert.Contains(t, out.String(), `"moved":`+map[bool]string{false: "false", true: "true"}[confirm])
 			})
 		}
 	}

@@ -15,10 +15,13 @@ func TestPhotoRejectsResponse(t *testing.T) {
 	require.NoError(t, validatePhotoRejectsResponse(&valid, digest))
 	valid.Unchanged = 10001
 	require.NoError(t, validatePhotoRejectsResponse(&valid, digest))
+	valid.Photos, valid.Files = 1001, 1001
+	require.NoError(t, validatePhotoRejectsResponse(&valid, ""))
+	require.Error(t, validatePhotoRejectsResponse(&valid, digest))
 	require.Error(t, validatePhotoRejectsResponse(nil, ""))
 	require.Error(t, validatePhotoRejectsResponse(&valid, strings.Repeat("b", 64)))
 	for _, bad := range []api.PhotoRejectsPreflight{
-		{Digest: "bad"}, {Digest: digest, Photos: 2, Files: 1}, {Digest: digest, Files: 1001},
+		{Digest: "bad"}, {Digest: digest, Photos: 2, Files: 1}, {Digest: digest, MixedCount: 1},
 		{Digest: strings.Repeat("A", 64)}, {Digest: digest, Unchanged: -1},
 	} {
 		require.Error(t, validatePhotoRejectsResponse(&bad, ""))

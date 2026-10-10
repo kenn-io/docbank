@@ -30,11 +30,12 @@ type PhotoRejectMixed struct {
 }
 
 type PhotoRejectsPreflight struct {
-	Digest    string             `json:"digest"`
-	Photos    int                `json:"photos"`
-	Files     int                `json:"files"`
-	Unchanged int                `json:"unchanged"`
-	Mixed     []PhotoRejectMixed `json:"mixed"`
+	Digest     string             `json:"digest"`
+	Photos     int                `json:"photos"`
+	Files      int                `json:"files"`
+	Unchanged  int                `json:"unchanged"`
+	Mixed      []PhotoRejectMixed `json:"mixed"`
+	MixedCount int                `json:"mixed_count"`
 }
 
 // PreflightPhotoRejects evaluates the complete scope in one read snapshot.
@@ -52,20 +53,27 @@ func (s *Store) PreflightPhotoRejects(ctx context.Context, request PhotoRejectsR
 func (s *Store) MovePhotoRejects(ctx context.Context, request PhotoRejectsRequest, digest string) (PhotoRejectsPreflight, error) {
 	var out PhotoRejectsPreflight
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var assets []PhotoAsset
+		var ids []string
 		var err error
 		generation, err := readActiveLexicalGeneration(ctx, tx)
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		out, assets, err = s.photoRejects(ctx, tx, generation.ID, request)
+		out, ids, err = s.photoRejects(ctx, tx, generation.ID, request)
 		if err != nil {
 			return err
+		}
+		if out.Photos > maxBatchTagTargets || out.Files > maxBatchTagTargets {
+			return fmt.Errorf("%w: select fewer photos; moves allow at most %d photos or live files", ErrInvalidPhotoQuery, maxBatchTagTargets)
 		}
 		if digest == "" || digest != out.Digest {
 			return fmt.Errorf("%w: photo scope changed; preview rejects again", ErrStaleRevision)
 		}
-		for _, asset := range assets {
+		for _, id := range ids {
+			asset, err := s.photoAssetReadQuery(ctx, tx, id)
+			if err != nil {
+				return err
+			}
 			if _, err := s.trashPhotoAssetTx(ctx, tx, asset); err != nil {
 				return err
 			}
@@ -78,7 +86,7 @@ func (s *Store) MovePhotoRejects(ctx context.Context, request PhotoRejectsReques
 	return out, nil
 }
 
-func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation string, request PhotoRejectsRequest) (PhotoRejectsPreflight, []PhotoAsset, error) {
+func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation string, request PhotoRejectsRequest) (PhotoRejectsPreflight, []string, error) {
 	out := PhotoRejectsPreflight{Mixed: []PhotoRejectMixed{}}
 	if request.Hidden {
 		if _, err := s.hiddenSession(ctx, q); err != nil {
@@ -118,7 +126,7 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 	}
 	_, _ = hash.Write(identity)
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{
-		sql: `SELECT a.asset_id,a.revision,member.file_id,member.revision,member.role,member.flag,mn.id,mn.revision,COALESCE(mn.current_version_id,''),mn.trashed_at FROM ` + photoBrowseDisplayFrom + `
+		sql: `SELECT a.asset_id,a.revision,member.file_id,member.revision,member.role,member.flag,mn.id,mn.revision,COALESCE(mn.current_version_id,''),mn.trashed_at,mn.name FROM ` + photoBrowseDisplayFrom + `
  CROSS JOIN photo_files member ON member.asset_id=a.asset_id
  CROSS JOIN nodes mn ON mn.id=member.node_id WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(request.Hidden) + ` AND ` + match.sql + ` ORDER BY a.asset_id,member.file_id`,
 		args: match.args, relations: match.relations,
@@ -130,39 +138,87 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 	if err != nil {
 		return out, nil, err
 	}
-	var ids []string
-	previous, candidate := "", ""
-	for rows.Next() {
-		var fence struct {
-			AssetID       string
-			AssetRevision int64
-			FileID        string
-			FileRevision  int64
-			Role          string
-			Flag          string
-			NodeID        int64
-			NodeRevision  int64
-			VersionID     string
-			TrashedAt     *string
+	var eligible []string
+	type memberFence struct {
+		AssetID       string
+		AssetRevision int64
+		FileID        string
+		FileRevision  int64
+		Role          string
+		Flag          string
+		NodeID        int64
+		NodeRevision  int64
+		VersionID     string
+		TrashedAt     *string
+		Name          string
+	}
+	var members []memberFence
+	finish := func() error {
+		if len(members) == 0 {
+			return nil
 		}
-		if err := rows.Scan(&fence.AssetID, &fence.AssetRevision, &fence.FileID, &fence.FileRevision, &fence.Role, &fence.Flag, &fence.NodeID, &fence.NodeRevision, &fence.VersionID, &fence.TrashedAt); err != nil {
-			_ = rows.Close()
-			return out, nil, err
+		out.Unchanged++
+		// Scope membership matters; unrelated retained-file edits do not.
+		_, _ = fmt.Fprintln(hash, members[0].AssetID)
+		originals, rejected, live := 0, 0, 0
+		for _, member := range members {
+			if member.TrashedAt == nil {
+				live++
+			}
+			if member.Role == PhotoRoleSidecar {
+				continue
+			}
+			originals++
+			if member.Flag == "reject" {
+				rejected++
+			}
 		}
-		encoded, err := json.Marshal(fence)
+		if rejected == 0 {
+			return nil
+		}
+		encoded, err := json.Marshal(members)
 		if err != nil {
-			_ = rows.Close()
-			return out, nil, err
+			return err
 		}
 		_, _ = hash.Write(encoded)
-		if fence.AssetID != previous {
-			out.Unchanged++
-			previous = fence.AssetID
+		if rejected == originals {
+			out.Photos++
+			out.Files += live
+			if out.Photos <= maxBatchTagTargets && out.Files <= maxBatchTagTargets {
+				eligible = append(eligible, members[0].AssetID)
+			}
+		} else {
+			out.MixedCount++
+			if len(out.Mixed) < 20 {
+				mixed := PhotoRejectMixed{AssetID: members[0].AssetID, Members: []PhotoRejectMember{}}
+				for _, member := range members {
+					if member.Role != PhotoRoleSidecar {
+						mixed.Members = append(mixed.Members, PhotoRejectMember{member.FileID, member.Name, member.Flag})
+					}
+				}
+				out.Mixed = append(out.Mixed, mixed)
+			}
 		}
-		if fence.Role != PhotoRoleSidecar && fence.Flag == "reject" && candidate != fence.AssetID {
-			ids = append(ids, fence.AssetID)
-			candidate = fence.AssetID
+		return nil
+	}
+	for rows.Next() {
+		var member memberFence
+		if err := rows.Scan(&member.AssetID, &member.AssetRevision, &member.FileID, &member.FileRevision, &member.Role, &member.Flag, &member.NodeID, &member.NodeRevision, &member.VersionID, &member.TrashedAt, &member.Name); err != nil {
+			_ = rows.Close()
+			return out, nil, err
 		}
+		if len(members) > 0 && member.AssetID != members[0].AssetID {
+			if err := finish(); err != nil {
+				_ = rows.Close()
+				return out, nil, err
+			}
+			members = members[:0]
+		}
+		members = append(members, member)
+	}
+	if err := finish(); err != nil {
+		_ = rows.Close()
+		return out, nil, err
 	}
 	err = rows.Err()
 	closeErr := rows.Close()
@@ -171,50 +227,6 @@ func (s *Store) photoRejects(ctx context.Context, q metadataQuerier, generation 
 	}
 	if closeErr != nil {
 		return out, nil, closeErr
-	}
-	var eligible []PhotoAsset
-	for _, id := range ids {
-		asset, err := s.photoAssetReadQuery(ctx, q, id)
-		if err != nil {
-			return out, nil, err
-		}
-		mixed := PhotoRejectMixed{AssetID: id, Members: []PhotoRejectMember{}}
-		rejected, originals, live := 0, 0, 0
-		firstFlag, disagrees := "", false
-		for _, file := range asset.Files {
-			node, err := nodeByIDQuery(ctx, q, file.NodeID)
-			if err != nil {
-				return out, nil, err
-			}
-			if node.TrashedAt == nil {
-				live++
-			}
-			if file.Role == PhotoRoleSidecar {
-				continue
-			}
-			if originals == 0 {
-				firstFlag = file.Flag
-			} else {
-				disagrees = disagrees || firstFlag != file.Flag
-			}
-			originals++
-			if file.Flag == "reject" {
-				rejected++
-			}
-			mixed.Members = append(mixed.Members, PhotoRejectMember{file.ID, node.Name, file.Flag})
-		}
-		if originals > 0 && rejected == originals {
-			eligible = append(eligible, asset)
-			out.Photos++
-			out.Files += live
-			if out.Photos > maxBatchTagTargets || out.Files > maxBatchTagTargets {
-				return out, nil, fmt.Errorf("%w: eligible rejects exceed %d photos or live files", ErrInvalidPhotoQuery, maxBatchTagTargets)
-			}
-		} else {
-			if disagrees {
-				out.Mixed = append(out.Mixed, mixed)
-			}
-		}
 	}
 	out.Unchanged -= out.Photos
 	out.Digest = hex.EncodeToString(hash.Sum(nil))

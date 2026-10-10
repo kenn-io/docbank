@@ -6,7 +6,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clea
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
 
 it("freezes selected rejects scope and refuses a changed selection", async () => {
-  const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, mixed: [] };
+  const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview))
     .mockResolvedValueOnce(Response.json(preview)).mockResolvedValueOnce(response([]));
   vi.stubGlobal("fetch", fetcher);
@@ -38,7 +38,7 @@ it("bounds selected rejects queries before sending them", async () => {
 });
 
 it("confirms the complete rejects scope and refreshes after a lost reply", async () => {
-  const preview = { digest: "a".repeat(64), photos: 250, files: 500, unchanged: 20, mixed: [] };
+  const preview = { digest: "a".repeat(64), photos: 250, files: 500, unchanged: 20, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview))
     .mockRejectedValueOnce(new TypeError("Reply lost after commit"))
     .mockResolvedValueOnce(response([photo(2)]));
@@ -59,7 +59,7 @@ it("confirms the complete rejects scope and refreshes after a lost reply", async
 });
 
 it("requires another rejects preview after a stale confirmation", async () => {
-  const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, mixed: [] };
+  const preview = { digest: "a".repeat(64), photos: 1, files: 1, unchanged: 0, mixed: [], mixed_count: 0 };
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json(preview))
     .mockResolvedValueOnce(Response.json({ detail: "Photo scope changed", code: "stale_revision" }, { status: 412 }))
     .mockResolvedValueOnce(response([photo(1)]));
@@ -475,4 +475,16 @@ it("reports unresolved visibility selections before sending requests", async () 
   expect(report).toHaveBeenCalledWith(photos.actionError);
   expect(fetcher).not.toHaveBeenCalled();
   photos.dispose();
+});
+
+it("previews oversized rejects without authorizing a move", async () => {
+ const preview = { digest: "a".repeat(64), photos: 1001, files: 1001, unchanged: 0, mixed: [], mixed_count: 0 };
+ const fetcher = vi.fn().mockResolvedValue(Response.json(preview));
+ vi.stubGlobal("fetch", fetcher);
+ const photos = new Photos("scoped", vi.fn());
+ await photos.previewRejects(false);
+ expect(photos.rejects).toEqual(preview);
+ expect(await photos.trashRejects()).toBe(false);
+ expect(fetcher).toHaveBeenCalledTimes(1);
+ photos.dispose();
 });

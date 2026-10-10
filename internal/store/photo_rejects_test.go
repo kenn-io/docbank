@@ -198,6 +198,10 @@ func TestPhotoRejectsBeyondPageAndOverflow(t *testing.T) {
 	assert.Equal(t, 1001, preview.Unchanged)
 	_, err = s.EditPhotoAuthored(t.Context(), targets[1:1001])
 	require.NoError(t, err)
+	preview, err = s.PreflightPhotoRejects(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, 1001, preview.Photos)
+	assert.Equal(t, 1001, preview.Files)
 	_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
 	require.ErrorIs(t, err, ErrInvalidPhotoQuery)
 	roots, err := s.TrashedRoots(t.Context())
@@ -256,4 +260,34 @@ func TestPhotoRejectsRollbackAllAssets(t *testing.T) {
 	current, err := s.PreflightPhotoRejects(t.Context(), request)
 	require.NoError(t, err)
 	assert.Equal(t, preview.Digest, current.Digest)
+}
+
+func TestPhotoRejectsRetainedEditAndMixedBound(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	eligible := authoredPair(t, s)
+	rejectOriginals(t, s, eligible)
+	for i := range 21 {
+		first, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("mixed-%d-a.jpg", i), fakeHash("a1"), 4, "image/jpeg")
+		require.NoError(t, err)
+		second, err := s.CreateFile(t.Context(), s.RootID(), fmt.Sprintf("mixed-%d-b.raw", i), fakeHash("a1"), 4, "application/octet-stream")
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(t.Context(), first.ID)
+		require.NoError(t, err)
+		asset, err = s.AttachPhotoFile(t.Context(), asset.ID, asset.Revision, second.ID, PhotoRoleRAW, nil)
+		require.NoError(t, err)
+		_, err = s.EditPhotoAuthored(t.Context(), []PhotoAuthoredTarget{{FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision, Patch: PhotoAuthoredPatch{Flag: new("reject")}}})
+		require.NoError(t, err)
+	}
+	retained, err := s.CreateFile(t.Context(), s.RootID(), "retained.jpg", fakeHash("a1"), 4, "image/jpeg")
+	require.NoError(t, err)
+	request := PhotoRejectsRequest{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}
+	preview, err := s.PreflightPhotoRejects(t.Context(), request)
+	require.NoError(t, err)
+	assert.Equal(t, 21, preview.MixedCount)
+	require.Len(t, preview.Mixed, 20)
+	_, err = s.db.Exec(`UPDATE nodes SET revision=revision+1,name='renamed.jpg' WHERE id=?`, retained.ID)
+	require.NoError(t, err)
+	_, err = s.MovePhotoRejects(t.Context(), request, preview.Digest)
+	require.NoError(t, err)
 }

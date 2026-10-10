@@ -12,16 +12,18 @@
     <p>{photos.rejects.photos.toLocaleString()} {photos.rejects.photos === 1 ? "photo" : "photos"} · {photos.rejects.files.toLocaleString()} {photos.rejects.files === 1 ? "file" : "files"} including sidecars</p>
     <p>{photos.rejects.unchanged.toLocaleString()} photos stay in Docbank</p>
     {#if photos.rejects.mixed.length}
-      <h3>Mixed flags</h3>
+      <h3>Mixed flags ({photos.rejects.mixed_count.toLocaleString()})</h3>
       <ul>{#each photos.rejects.mixed as pair}<li>{pair.members.map(member => `${member.name}: ${member.flag || "undecided"}`).join(" · ")}</li>{/each}</ul>
+      {#if photos.rejects.mixed_count > photos.rejects.mixed.length}<p>And {(photos.rejects.mixed_count - photos.rejects.mixed.length).toLocaleString()} more mixed pairs.</p>{/if}
     {/if}
+    {#if photos.rejects.photos > 1000 || photos.rejects.files > 1000}<p role="alert">Select fewer photos. Each move allows up to 1,000 photos and 1,000 files.</p>{/if}
     <p>You can restore these photos from Trash.</p>
   {/if}
   {#if photos.rejectsError}<p role="alert">{photos.rejectsError}</p>{/if}
   {#snippet footer()}
     <Button disabled={photos.trashing} onclick={onclose}>Keep in Docbank</Button>
     {#if !photos.rejects && !photos.rejectsLoading}<Button onclick={() => void photos.previewRejects(photos.rejectsSelected)}>Preview again</Button>{/if}
-    <Button tone="danger" disabled={photos.trashing || photos.rejectsLoading || !photos.rejects?.photos} onclick={() => void onmove()}>{photos.trashing ? "Moving…" : `Move ${photos.rejects?.photos ?? 0} to trash`}</Button>
+    <Button tone="danger" disabled={photos.trashing || photos.rejectsLoading || !photos.rejects?.photos || photos.rejects.photos > 1000 || photos.rejects.files > 1000} onclick={() => void onmove()}>{photos.trashing ? "Moving…" : `Move ${photos.rejects?.photos ?? 0} to trash`}</Button>
   {/snippet}
 </Modal>
 

@@ -12015,6 +12015,9 @@ components:
           items:
             $ref: "#/components/schemas/PhotoRejectMixed"
           type: array
+        mixed_count:
+          format: int64
+          type: integer
         photos:
           format: int64
           type: integer
@@ -12027,6 +12030,7 @@ components:
         - files
         - unchanged
         - mixed
+        - mixed_count
       type: object
       x-go-type: store.PhotoRejectsPreflight
       x-go-type-import:
