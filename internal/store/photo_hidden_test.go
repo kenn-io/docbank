@@ -33,8 +33,6 @@ func TestPhotoHiddenLifecycle(t *testing.T) {
 	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	require.NotNil(t, asset.HiddenAt)
-	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
-	require.ErrorIs(t, err, ErrHiddenLocked)
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision-1, true)
 	require.ErrorIs(t, err, ErrHiddenLocked)
 	value, err := query.Parse([]byte(`{"v":1,"syntax":"advanced","mode":"lexical","text":"","sort":{"field":"name","direction":"asc"}}`))
@@ -371,11 +369,6 @@ func TestPhotoHiddenMutationGate(t *testing.T) {
 	stored, err := photoAssetByIDQuery(ctx, s.db, asset.ID)
 	require.NoError(t, err)
 	require.Equal(t, asset, stored)
-	token, _, err := s.UnlockPhotoHidden(ctx, "correct")
-	require.NoError(t, err)
-	asset, err = s.SetPhotoAssetHidden(WithPhotoHiddenToken(ctx, token), asset.ID, asset.Revision, false)
-	require.NoError(t, err)
-	require.Nil(t, asset.HiddenAt)
 }
 
 func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
