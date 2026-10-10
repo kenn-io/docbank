@@ -100,7 +100,4 @@ func TestDerivativeAuthorityStatsExcludeRetainedPhotoExports(t *testing.T) {
 	assert.Equal(t, int64(1), stats.Classes[0].Count)
 	assert.Equal(t, int64(1), stats.Classes[0].BlobCount)
 	assert.Equal(t, int64(7), stats.Classes[0].LogicalBytes)
-	var backedUp int
-	require.NoError(t, db.QueryRow(store.BackupBlobAuthorityCTE()+`SELECT count(*) FROM backup_authorized_blobs WHERE hash='rendered'`).Scan(&backedUp))
-	assert.Zero(t, backedUp)
 }

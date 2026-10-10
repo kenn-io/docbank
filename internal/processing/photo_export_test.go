@@ -269,38 +269,37 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 		assert.Equal(t, uint32(2), reader.order.Uint32(details[0xa002]))
 		assert.Equal(t, !strip, strings.Contains(string(out), "GPS-PAYLOAD"))
 	}
-	for _, format := range []string{"jpeg", "png"} {
-		data := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1, append([]byte("Exif\x00\x00"), exif...))
-		data = syntheticJPEGSegment(t, data, 0xe1, append([]byte(photoXMPJPEGPrefix), packet...))
+	pixels := mediatest.JPEG(3, 2, color.White)
+	render := func(exif, packet []byte, authored store.PhotoAuthored, keywords []string, format string, removeGPS bool) (photoPackets, bundle.PhotoRenderReceipt) {
+		t.Helper()
+		data := pixels
+		if len(exif) > 0 {
+			data = syntheticJPEGSegment(t, data, 0xe1, append([]byte("Exif\x00\x00"), exif...))
+		}
+		if len(packet) > 0 {
+			data = syntheticJPEGSegment(t, data, 0xe1, append([]byte(photoXMPJPEGPrefix), packet...))
+		}
 		in := photoRenderInput(data, "image/jpeg")
-		in.Authored = input.Authored
-		in.Keywords = input.Keywords
-		out, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(data), in, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true, RemoveGPS: true}, nil)
+		in.Authored, in.Keywords = authored, keywords
+		out, receipt, err := renderPhotoExport(t.Context(), bytes.NewReader(data), in, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true, RemoveGPS: removeGPS}, nil)
 		require.NoError(t, err)
-		assert.Equal(t, 2, receipt.Width)
 		packets, err := photoSourcePackets(t.Context(), out, true)
 		require.NoError(t, err)
+		return packets, receipt
+	}
+	for _, format := range []string{"jpeg", "png"} {
+		packets, receipt := render(exif, packet, input.Authored, input.Keywords, format, true)
+		assert.Equal(t, 2, receipt.Width)
 		assert.NotContains(t, string(packets.exif), "GPS-PAYLOAD")
 		actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
 		require.NoError(t, err)
-		expected := in.Authored
-		assert.Equal(t, expected, actual)
+		assert.Equal(t, input.Authored, actual)
 	}
-}
-
-func TestPhotoExportConfirmedFlagClearsLegacyReject(t *testing.T) {
-	t.Parallel()
 	for _, flag := range []string{"pick", ""} {
 		for _, property := range []string{` xmp:Rating="-1">`, `><xmp:Rating>-<!--split-->1</xmp:Rating>`, `><xmp:Rating><rdf:value>-1</rdf:value></xmp:Rating>`, ` xmp:Rating="4">`, `><xmp:Rating>4</xmp:Rating>`, `><xmp:Rating><rdf:value>4</rdf:value></xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/" exif:GPSLatitude="12,30N">4</xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/"><rdf:value>4</rdf:value><exif:GPSLatitude>12,30N</exif:GPSLatitude></xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/"><rdf:value>-1</rdf:value><exif:GPSLatitude>12,30N</exif:GPSLatitude></xmp:Rating>`} {
 			for _, format := range []string{"jpeg", "png"} {
 				packet := []byte(photoSidecarHeader + property + photoSidecarFooter)
-				data := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1, append([]byte(photoXMPJPEGPrefix), packet...))
-				input := photoRenderInput(data, "image/jpeg")
-				input.Authored = store.PhotoAuthored{Confirmed: store.PhotoConfirmedFlag, Flag: flag}
-				out, _, err := renderPhotoExport(t.Context(), bytes.NewReader(data), input, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true, RemoveGPS: true}, nil)
-				require.NoError(t, err)
-				packets, err := photoSourcePackets(t.Context(), out, true)
-				require.NoError(t, err)
+				packets, _ := render(nil, packet, store.PhotoAuthored{Confirmed: store.PhotoConfirmedFlag, Flag: flag}, nil, format, true)
 				require.NotContains(t, string(packets.xmp), "GPSLatitude")
 				actual, err := ReadPhotoSidecar(t.Context(), packets.xmp)
 				require.NoError(t, err)
@@ -313,6 +312,35 @@ func TestPhotoExportConfirmedFlagClearsLegacyReject(t *testing.T) {
 			}
 		}
 	}
+	var value []byte
+	for _, ch := range "Synthetic embedded credit" {
+		value = append(value, byte(ch), 0)
+	}
+	value = append(value, 0, 0)
+	var entries []syntheticTIFFEntry
+	for _, tag := range []uint16{0x9c9b, 0x9c9c, 0x9c9d, 0x9c9e, 0x9c9f, 0x9c90} {
+		entries = append(entries, syntheticTIFFEntry{tag: tag, kind: 1, value: value})
+	}
+	aliasEXIF := syntheticTIFF(42, entries, nil)
+	for _, confirmed := range []store.PhotoAuthoredFields{0, store.PhotoConfirmedCaption | store.PhotoConfirmedCreator} {
+		for _, format := range []string{"jpeg", "png"} {
+			packets, _ := render(aliasEXIF, nil, store.PhotoAuthored{Confirmed: confirmed}, nil, format, false)
+			r, ok := newExifReader(packets.exif)
+			require.True(t, ok)
+			root := r.entries(r.u32(4))
+			require.NotContains(t, root, uint16(0x9c9e))
+			require.Equal(t, value, root[0x9c90])
+			for _, tag := range []uint16{0x9c9b, 0x9c9c, 0x9c9d, 0x9c9f} {
+				if confirmed == 0 {
+					require.Equal(t, value, root[tag])
+				} else {
+					require.NotContains(t, root, tag)
+				}
+			}
+		}
+	}
+	_, err = rewritePhotoEXIF(syntheticTIFF(42, []syntheticTIFFEntry{{tag: 0x010e, kind: 2}}, nil), 65, 64, false, store.PhotoAuthored{})
+	require.NoError(t, err)
 }
 
 func TestPhotoExportFailedDecodePreservesPixelBudget(t *testing.T) {
@@ -462,9 +490,6 @@ func TestPhotoExportPNGPixelChunksDoNotConsumeMetadataBudget(t *testing.T) {
 		require.ErrorIs(t, err, category)
 		require.Contains(t, err.Error(), "photo 1")
 	}
-	exif := syntheticTIFF(42, []syntheticTIFFEntry{{tag: 0x010e, kind: 2}}, nil)
-	_, err = rewritePhotoEXIF(exif, 65, 64, false, store.PhotoAuthored{})
-	require.NoError(t, err)
 }
 
 type previewCountedFile struct {
@@ -475,41 +500,4 @@ type previewCountedFile struct {
 func (f *previewCountedFile) Read(p []byte) (int, error) {
 	f.reads++
 	return f.File.Read(p)
-}
-
-func TestPhotoExportClearsWindowsEXIFAliases(t *testing.T) {
-	t.Parallel()
-	var value []byte
-	for _, ch := range "Synthetic embedded credit" {
-		value = append(value, byte(ch), 0)
-	}
-	value = append(value, 0, 0)
-	var entries []syntheticTIFFEntry
-	for _, tag := range []uint16{0x9c9b, 0x9c9c, 0x9c9d, 0x9c9e, 0x9c9f, 0x9c90} {
-		entries = append(entries, syntheticTIFFEntry{tag: tag, kind: 1, value: value})
-	}
-	exif := syntheticTIFF(42, entries, nil)
-	data := syntheticJPEGSegment(t, mediatest.JPEG(3, 2, color.White), 0xe1, append([]byte("Exif\x00\x00"), exif...))
-	for _, confirmed := range []store.PhotoAuthoredFields{0, store.PhotoConfirmedCaption | store.PhotoConfirmedCreator} {
-		for _, format := range []string{"jpeg", "png"} {
-			input := photoRenderInput(data, "image/jpeg")
-			input.Authored.Confirmed = confirmed
-			out, _, err := renderPhotoExport(t.Context(), bytes.NewReader(data), input, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true}, nil)
-			require.NoError(t, err)
-			packets, err := photoSourcePackets(t.Context(), out, true)
-			require.NoError(t, err)
-			r, ok := newExifReader(packets.exif)
-			require.True(t, ok)
-			root := r.entries(r.u32(4))
-			require.NotContains(t, root, uint16(0x9c9e))
-			require.Equal(t, value, root[0x9c90])
-			for _, tag := range []uint16{0x9c9b, 0x9c9c, 0x9c9d, 0x9c9f} {
-				if confirmed == 0 {
-					require.Equal(t, value, root[tag])
-				} else {
-					require.NotContains(t, root, tag)
-				}
-			}
-		}
-	}
 }
