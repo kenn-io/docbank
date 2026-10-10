@@ -177,10 +177,10 @@ func TestWorkspaceQueryRoutesReportCanceledAndExpiredRequests(t *testing.T) {
 	ts, s := newTestServer(t, nil)
 	saved, _ := createSavedQuery(t, ts.URL, "Canceled synthetic query", `{}`)
 	for _, test := range []struct{ name, detail string }{
-		{"canceled", "canceled"},
-		{"deadline", "resource budget"},
+		{"canceled", "query snapshot build was canceled"},
+		{"deadline", "query snapshot did not finish within its resource budget"},
 	} {
-		for _, path := range []string{"/api/v1/workspace/queries", "/api/v1/saved-queries/" + saved.ID + "/runs"} {
+		for _, path := range []string{"/api/v1/workspace/queries", "/api/v1/saved-queries/" + saved.ID + "/runs", "/api/v1/photos/assets/query"} {
 			t.Run(test.name+"/"+path, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				if test.name == "deadline" {
@@ -192,6 +192,9 @@ func TestWorkspaceQueryRoutesReportCanceledAndExpiredRequests(t *testing.T) {
 				if strings.Contains(path, "saved-queries") {
 					payload = `{}`
 				}
+				if path == "/api/v1/photos/assets/query" {
+					payload = `{"query":{"text":"Canon","sort":{"field":"relevance","direction":"desc"}}}`
+				}
 				req := httptest.NewRequestWithContext(ctx, http.MethodPost, path, strings.NewReader(payload))
 				req.Header.Set("X-Api-Key", testAPIKey)
 				req.Header.Set("Content-Type", "application/json")
@@ -201,7 +204,7 @@ func TestWorkspaceQueryRoutesReportCanceledAndExpiredRequests(t *testing.T) {
 				require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
 				problem := decodeProblem(t, response.Body.String())
 				assert.Equal(t, "snapshot_unavailable", problem.Code)
-				assert.Contains(t, problem.Detail, test.detail)
+				assert.Equal(t, test.detail, problem.Detail)
 			})
 		}
 	}

@@ -73,3 +73,34 @@ it("maps only tags missing and duplicate documents to supported QueryV1 filters"
   expect(onchange.mock.calls.at(-1)?.[0].filters.has_duplicates).toBe(true);
   expect(screen.getByText("unique · 7 · informational")).toBeTruthy();
 });
+
+it("submits original expanding names and leaves invalid or over-cap operands informational", async () => {
+ const raw="ß".repeat(200), oversized="x".repeat(300), onchange=vi.fn();
+ const values=[{key:raw,label:raw,count:2,selected:false},{key:oversized,label:oversized,count:1,selected:false}];
+ const names = [
+  { dimension: "camera", field: "cameras", key: "Camera_One", label: "Camera_One" },
+  { dimension: "lens", field: "lenses", key: "NIKKOR_Z 35", label: "NIKKOR_Z 35" },
+  { dimension: "location", field: "locations", key: "Paris_Walk", label: "Paris_Walk" },
+  { dimension: "set", field: "set_ids", key: "44444444-4444-4444-8444-444444444444", label: "Trip_2024" },
+ ] as const;
+ const view=render(FacetSidebar,{facets:[facet("camera",{values}),facet("location",{values:[values[1]]})],query:originalQuery,disabled:false,onchange});
+ await fireEvent.click(screen.getByRole("button",{name:`${raw}, 2 documents`}));
+ expect(onchange.mock.calls.at(-1)?.[0].filters.cameras).toEqual([raw]);
+ expect(screen.getAllByText(`${oversized} · 1 · informational`)).toHaveLength(2);
+ const selected=Array.from({length:64},(_,i)=>`Camera ${i}`);
+ await view.rerender({query:{...originalQuery,filters:{locations:selected}},facets:[facet("location",{values:[{key:"Other",label:"Other",count:1,selected:false}]})]});
+ expect(screen.getByText("Other · 1 · informational")).toBeTruthy();
+ await view.rerender({ query: originalQuery, facets: names.map(value => facet(value.dimension, { values: [{ key: value.key, label: value.label, count: 1, selected: false }] })) });
+ for (const value of names) {
+  const button = screen.getByRole("button", { name: `${value.label}, 1 documents` });
+  expect(within(button).getByText(value.label, { exact: true })).toBeTruthy();
+  await fireEvent.click(button);
+  expect(onchange.mock.calls.at(-1)?.[0].filters[value.field]).toEqual([value.key]);
+ }
+ await view.rerender({ facets: [facet("camera", { values: [
+  { key: "sony", label: "SONY", count: 2, selected: true },
+  { key: "strasse", label: "Straße", count: 1, selected: true },
+ ] })], query: { ...originalQuery, filters: { cameras: ["SoNy", "STRASSE"] } } });
+ await fireEvent.click(screen.getByRole("button", { name: "SONY, 2 documents, selected" }));
+ expect(onchange.mock.calls.at(-1)?.[0].filters.cameras).toEqual(["strasse"]);
+});

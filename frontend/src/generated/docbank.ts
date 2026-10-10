@@ -2976,6 +2976,7 @@ export interface Filters {
   kinds?: string[];
   labels?: string[];
   lenses?: string[];
+  locations?: string[];
   media_families?: string[];
   mime_types?: string[];
   modified_after?: string;
@@ -4683,6 +4684,8 @@ export interface SavedQueryFiltersSchema {
   labels?: SavedQueryFiltersSchemaLabelsItem[];
   /** @maxItems 64 */
   lenses?: string[];
+  /** @maxItems 64 */
+  locations?: string[];
   /** @maxItems 13 */
   media_families?: SavedQueryFiltersSchemaMediaFamiliesItem[];
   /** @maxItems 64 */
@@ -4911,6 +4914,25 @@ export interface PhotoAsset {
   updated_at: string;
 }
 
+export interface WorkspaceFacetValue {
+  /** @minimum 0 */
+  count: number;
+  key: string;
+  label: string;
+  selected: boolean;
+}
+
+export type PhotoBrowsePageFacetsItem = {
+  available: boolean;
+  dimension: string;
+  missing?: number | null;
+  other?: number | null;
+  reason?: string;
+  total?: number | null;
+  /** @maxItems 114 */
+  values: WorkspaceFacetValue[];
+};
+
 export type PhotoBrowseRowKind = typeof PhotoBrowseRowKind[keyof typeof PhotoBrowseRowKind];
 
 
@@ -5046,11 +5068,23 @@ export interface PhotoBrowseRow {
 export interface PhotoBrowsePage {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  facets: PhotoBrowsePageFacetsItem[];
   items: PhotoBrowseRow[];
   next_cursor?: string;
   /** @minimum 0 */
   total: number;
 }
+
+export type PhotoBrowseRequestFacetsItem = typeof PhotoBrowseRequestFacetsItem[keyof typeof PhotoBrowseRequestFacetsItem];
+
+
+export const PhotoBrowseRequestFacetsItem = {
+  camera: 'camera',
+  lens: 'lens',
+  year: 'year',
+  location: 'location',
+  set: 'set',
+} as const;
 
 export interface PhotoBrowseRequest {
   /** A URL to the JSON Schema for this object. */
@@ -5058,6 +5092,8 @@ export interface PhotoBrowseRequest {
   coverage?: WorkspaceQueryCoverage;
   /** @maxLength 32768 */
   cursor?: string;
+  /** @maxItems 5 */
+  facets?: PhotoBrowseRequestFacetsItem[];
   hidden?: boolean;
   /**
      * @minimum 1
@@ -6061,14 +6097,6 @@ export interface WorkspaceQueryDependency {
   kind: string;
   /** @minimum 1 */
   revision: number;
-}
-
-export interface WorkspaceFacetValue {
-  /** @minimum 0 */
-  count: number;
-  key: string;
-  label: string;
-  selected: boolean;
 }
 
 export type WorkspaceQueryGenerationKind = typeof WorkspaceQueryGenerationKind[keyof typeof WorkspaceQueryGenerationKind];
@@ -14323,7 +14351,7 @@ export const getListPhotoAssetsUrl = () => {
 }
 
 /**
- * @summary Browse matching photo assets with live keyset pagination
+ * @summary Browse matching photo assets
  */
 export const listPhotoAssets = async (photoBrowseRequest: NonReadonly<PhotoBrowseRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoBrowsePage> => {
 

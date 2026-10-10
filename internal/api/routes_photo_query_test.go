@@ -112,6 +112,12 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 		response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(raw)})
 		require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	}
+	rankedRequest := api.PhotoBrowseRequest{Query: api.QueryPayload(`{"text":"jpg","sort":{"field":"relevance","direction":"desc"}}`), PageSize: 1, Facets: []string{"camera", "year"}}
+	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, rankedRequest)
+	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var ranked api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(body), &ranked))
+	require.Len(t, ranked.Facets, 2)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{"syntax":"advanced","text":"camera:A*"}`)})
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
 	require.NotNil(t, decodeProblem(t, body).Position)

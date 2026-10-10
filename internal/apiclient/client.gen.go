@@ -8695,7 +8695,7 @@ func (c *Client) CreatePhotoAsset(ctx context.Context, options *CreatePhotoAsset
 	return responseParser(ctx, resp)
 }
 
-// ListPhotoAssets Browse matching photo assets with live keyset pagination
+// ListPhotoAssets Browse matching photo assets
 func (c *Client) ListPhotoAssets(ctx context.Context, options *ListPhotoAssetsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListPhotoAssetsResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -25611,6 +25611,7 @@ type SavedQueryFiltersSchema struct {
 	Kinds                []SavedQueryFiltersSchemaKinds         `json:"kinds,omitempty"`
 	Labels               []SavedQueryFiltersSchemaLabels        `json:"labels,omitempty"`
 	Lenses               []string                               `json:"lenses,omitempty"`
+	Locations            []string                               `json:"locations,omitempty"`
 	MediaFamilies        []SavedQueryFiltersSchemaMediaFamilies `json:"media_families,omitempty"`
 	MimeTypes            []string                               `json:"mime_types,omitempty"`
 	ModifiedAfter        *time.Time                             `json:"modified_after,omitempty"`

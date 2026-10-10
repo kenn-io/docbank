@@ -37,33 +37,32 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 	}
 	huma.Register(api, huma.Operation{
 		OperationID: "listPhotoAssets", Method: http.MethodPost, Path: "/api/v1/photos/assets/query",
-		Summary:      "Browse matching photo assets with live keyset pagination",
+		Summary:      "Browse matching photo assets",
 		MaxBodyBytes: query.MaxInputBytes + (64 << 10),
 	}, func(ctx context.Context, in *struct{ Body PhotoBrowseRequest }) (*struct{ Body PhotoBrowsePage }, error) {
 		value, err := query.Parse(in.Body.Query)
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
 		}
+		request := store.PhotoBrowseRequest{
+			Query: value, Hidden: in.Body.Hidden,
+			Coverage: store.CoverageSelection{Configuration: in.Body.Coverage.Configuration, ProfileFingerprint: in.Body.Coverage.ProfileFingerprint},
+			PageSize: in.Body.PageSize, Recipes: recipes, Facets: in.Body.Facets,
+		}
 		var boundary *store.PhotoBrowsePosition
 		if in.Body.Cursor != "" {
-			position, err := service.decodePhotoCursor(in.Body.Cursor)
-			if err != nil {
-				return nil, FromStoreError(err)
+			position, cursorErr := service.decodePhotoCursor(in.Body.Cursor)
+			if cursorErr != nil {
+				return nil, FromStoreError(cursorErr)
 			}
 			boundary = &position
 		}
-		page, err := d.Store.ListPhotoAssets(ctx, store.PhotoBrowseRequest{
-			Query: value, Hidden: in.Body.Hidden,
-			Coverage: store.CoverageSelection{
-				Configuration:      in.Body.Coverage.Configuration,
-				ProfileFingerprint: in.Body.Coverage.ProfileFingerprint,
-			},
-			PageSize: in.Body.PageSize, Recipes: recipes,
-		}, boundary)
+		page, err := d.Store.ListPhotoAssets(ctx, request, boundary)
+
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}
-		wire := PhotoBrowsePage{Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total}
+		wire := PhotoBrowsePage{Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, Facets: fromStoreFacets(page.Facets)}
 		for i, row := range page.Items {
 			slots := map[string]PhotoPreviewSlot{}
 			for size, slot := range row.Previews {

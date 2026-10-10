@@ -11,9 +11,13 @@ import (
 )
 
 const (
-	maxCompiledQuerySQL  = 256 << 10
-	maxCompiledQueryArgs = 4096
-	compiledNameField    = "name"
+	maxCompiledQuerySQL   = 256 << 10
+	maxCompiledQueryArgs  = 4096
+	compiledNameField     = "name"
+	compiledCameraField   = "camera"
+	compiledLensField     = "lens"
+	compiledLocationField = "location"
+	compiledSetField      = "set"
 )
 
 type compiledGenerationArgument struct{}
@@ -26,7 +30,14 @@ const (
 	compiledRelationProcessingCoverage
 )
 
+type lexicalOperand struct {
+	match   string
+	content bool
+	negated bool
+}
+
 type compiledQueryFragment struct {
+	lexical   []lexicalOperand
 	sql       string
 	args      []any
 	relations compiledQueryRelations
@@ -38,6 +49,7 @@ type CompiledQuery struct {
 	Query        query.Query
 	Dependencies []query.Dependency
 
+	photoHidden       bool
 	predicate         compiledQueryFragment
 	positiveTextTerms []string
 }
@@ -69,6 +81,7 @@ func (c queryCompiler) compile(
 	}
 	compiled := CompiledQuery{
 		Query: resolved.Query, Dependencies: resolved.Dependencies,
+		photoHidden:       c.photoHidden,
 		predicate:         predicate,
 		positiveTextTerms: query.PositiveTextTerms(resolved),
 	}
@@ -85,7 +98,7 @@ func (compiled CompiledQuery) PositiveTextTerms() []string {
 }
 
 func (c queryCompiler) compileResolvedQuery(resolved query.ResolvedQuery) (compiledQueryFragment, error) {
-	if resolved.Query.Sort.Field == "relevance" {
+	if resolved.Query.Sort.Field == "relevance" && !c.photoDisplayMetadata {
 		return compiledQueryFragment{},
 			compileExpressionError(0, len(resolved.Query.Text), "relevance sort is not supported by bound queries")
 	}
@@ -96,7 +109,7 @@ func (c queryCompiler) compileResolvedQuery(resolved query.ResolvedQuery) (compi
 		if fts == "" {
 			expression = trueCompiledFragment()
 		} else {
-			expression = compileLexicalPredicate(fts, true)
+			expression = c.compileLexicalPredicate(fts, true)
 		}
 	} else {
 		expression, err = c.compileResolvedExpression(resolved.Expression, "")
@@ -183,9 +196,9 @@ func (c queryCompiler) compileResolvedExpression(expression *query.ResolvedExpre
 		if err != nil {
 			return compiledQueryFragment{}, err
 		}
-		return compiledQueryFragment{sql: `NOT (` + child.sql + `)`, args: child.args, relations: child.relations}, nil
+		return negateCompiledFragment(child), nil
 	case query.ExpressionNear:
-		return compileNearExpression(expression, field)
+		return c.compileNearExpression(expression, field)
 	case query.ExpressionTerm, query.ExpressionPhrase:
 		return c.compileExpressionLeaf(expression, field)
 	default:
@@ -227,9 +240,9 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 		}
 		return c.compileScalarPredicate(field, syntax.Value, syntax.Start, syntax.End)
 	case field == "":
-		return compileLexicalPredicate(quoteFTSOperand(syntax.Value, syntax.Prefix), true), nil
+		return c.compileLexicalPredicate(quoteFTSOperand(syntax.Value, syntax.Prefix), true), nil
 	case field == compiledNameField:
-		return compileLexicalPredicate(quoteFTSOperand(syntax.Value, syntax.Prefix), false), nil
+		return c.compileLexicalPredicate(quoteFTSOperand(syntax.Value, syntax.Prefix), false), nil
 	case field == "path":
 		if syntax.Prefix {
 			return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "path operands cannot use prefix matching")
@@ -258,7 +271,7 @@ func (c queryCompiler) compileExpressionLeaf(expression *query.ResolvedExpressio
 	}
 }
 
-func compileNearExpression(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
+func (c queryCompiler) compileNearExpression(expression *query.ResolvedExpression, field string) (compiledQueryFragment, error) {
 	syntax := expression.Syntax
 	if field != "" && field != compiledNameField {
 		return compiledQueryFragment{}, compileExpressionError(syntax.Start, syntax.End, "NEAR is supported only for text and name operands")
@@ -277,7 +290,7 @@ func compileNearExpression(expression *query.ResolvedExpression, field string) (
 		operands[index] = quoteFTSOperand(child.Syntax.Value, child.Syntax.Prefix)
 	}
 	fts := `NEAR(` + operands[0] + ` ` + operands[1] + `,` + strconv.Itoa(syntax.Distance) + `)`
-	return compileLexicalPredicate(fts, field == ""), nil
+	return c.compileLexicalPredicate(fts, field == ""), nil
 }
 
 func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpression) (compiledQueryFragment, error) {
@@ -303,7 +316,7 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 		sql: `EXISTS (SELECT 1 FROM (` + population.sql + `) saved_population
 			WHERE saved_population.node_id=n.id
 			  AND saved_population.content_version_id=cv.version_id)`,
-		args: population.args, relations: population.relations,
+		args: population.args, relations: population.relations, lexical: nested.lexical,
 	}, nil
 }
 
@@ -515,9 +528,12 @@ func compileMediaFamilyPredicate(value string) compiledQueryFragment {
 	}
 }
 
-func compileLexicalPredicate(fts string, includeContent bool) compiledQueryFragment {
+func (c queryCompiler) compileLexicalPredicate(fts string, includeContent bool) compiledQueryFragment {
 	name := compiledQueryFragment{
 		sql: `n.id IN (SELECT rowid FROM nodes_fts WHERE nodes_fts MATCH ?)`, args: []any{fts},
+	}
+	if c.photoDisplayMetadata {
+		name.lexical = []lexicalOperand{{match: fts, content: includeContent}}
 	}
 	if !includeContent {
 		return name
@@ -548,7 +564,12 @@ func compileLexicalPredicate(fts string, includeContent bool) compiledQueryFragm
 		)`,
 		args: []any{marker, fts, marker, compiledProfileArgument{}, compiledProfileArgument{}, fts, marker},
 	}
-	return joinCompiledFragments([]compiledQueryFragment{name, content}, ` OR `)
+	metadata := compiledQueryFragment{sql: `cv.blob_hash IN (SELECT h.source_sha256 FROM photo_metadata_fts JOIN source_metadata_heads h ON h.generation_id=photo_metadata_fts.generation_id WHERE photo_metadata_fts MATCH ?)`, args: []any{"text : (" + fts + ")"}}
+	parts := []compiledQueryFragment{name, content}
+	if c.photoDisplayMetadata {
+		parts = append(parts, metadata)
+	}
+	return joinCompiledFragments(parts, ` OR `)
 }
 
 func quoteFTSOperand(value string, prefix bool) string {
@@ -563,8 +584,12 @@ func negateCompiledFragment(fragment compiledQueryFragment) compiledQueryFragmen
 	if fragment.sql == "" {
 		return compiledQueryFragment{}
 	}
+	lexical := slices.Clone(fragment.lexical)
+	for i := range lexical {
+		lexical[i].negated = !lexical[i].negated
+	}
 	return compiledQueryFragment{
-		sql: `NOT (` + fragment.sql + `)`, args: fragment.args, relations: fragment.relations,
+		sql: `NOT (` + fragment.sql + `)`, args: fragment.args, relations: fragment.relations, lexical: lexical,
 	}
 }
 
@@ -582,6 +607,7 @@ func joinCompiledFragments(parts []compiledQueryFragment, operator string) compi
 	var sqlParts []string
 	var args []any
 	var relations compiledQueryRelations
+	var lexical []lexicalOperand
 	for _, part := range parts {
 		if part.sql == "" {
 			continue
@@ -589,8 +615,9 @@ func joinCompiledFragments(parts []compiledQueryFragment, operator string) compi
 		sqlParts = append(sqlParts, `(`+part.sql+`)`)
 		args = append(args, part.args...)
 		relations |= part.relations
+		lexical = append(lexical, part.lexical...)
 	}
-	return compiledQueryFragment{sql: strings.Join(sqlParts, operator), args: args, relations: relations}
+	return compiledQueryFragment{sql: strings.Join(sqlParts, operator), args: args, relations: relations, lexical: lexical}
 }
 
 func compileExpressionError(start, end int, message string) *query.ExpressionError {

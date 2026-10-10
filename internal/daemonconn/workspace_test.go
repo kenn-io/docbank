@@ -21,24 +21,33 @@ func TestWorkspaceClientRoundTripsExactPagesAndSavedRuns(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	facets := []string{"size", "tags"}
 	first, err := c.CreateWorkspaceQuery(t.Context(), api.WorkspaceQueryCreateRequest{
-		Query: api.QueryPayload(`{}`), PageSize: 50, Facets: []string{"size"},
+		Query: api.QueryPayload(`{}`), PageSize: 50, Facets: facets,
 	})
 	require.NoError(t, err)
 	require.True(t, first.Snapshot)
 	require.Len(t, first.Rows, 2)
 	assert.Empty(t, first.NextCursor)
 	assert.Len(t, first.MemberHash, 64)
+	require.Len(t, first.Facets, len(facets))
+	for i, dimension := range facets {
+		assert.Equal(t, dimension, first.Facets[i].Dimension)
+	}
 
 	saved, err := c.CreateSavedQuery(t.Context(), api.SavedQueryCreateRequest{
 		Name: "All files", Kind: store.SavedQueryKindQuery, Payload: api.SavedQueryPayload(`{}`),
 	})
 	require.NoError(t, err)
-	run, err := c.RunSavedQuery(t.Context(), saved.ID, saved.Revision, api.SavedQueryRunRequest{PageSize: 50})
+	run, err := c.RunSavedQuery(t.Context(), saved.ID, saved.Revision, api.SavedQueryRunRequest{PageSize: 50, Facets: facets})
 	require.NoError(t, err)
 	assert.Equal(t, saved.ID, run.Run.SavedQueryID)
 	assert.Equal(t, run.Run.SnapshotID, run.Snapshot.SnapshotID)
 	assert.Equal(t, first.MemberHash, run.Snapshot.MemberHash)
+	require.Len(t, run.Snapshot.Facets, len(facets))
+	for i, dimension := range facets {
+		assert.Equal(t, dimension, run.Snapshot.Facets[i].Dimension)
+	}
 
 	_, err = c.ReadWorkspaceQueryPage(t.Context(), strings.Repeat("0", 32), "opaque")
 	require.ErrorIs(t, err, store.ErrSnapshotGone)

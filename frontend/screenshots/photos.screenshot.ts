@@ -146,7 +146,7 @@ test("Hidden photos lock, unlock, unhide, expire, and discard previews", async (
 
 test("10,000 photos stay windowed, retain previews and selection, and remember density", async ({ page }) => {
   test.setTimeout(900_000);
-  const workspace = await mkdtemp(path.join(repository, ".superpowers", "photos-proof-"));
+  const workspace = process.env.DOCBANK_PHOTO_PROOF_WORKSPACE ?? await mkdtemp(path.join(repository, ".superpowers", "photos-proof-"));
   const vault = path.join(workspace, "vault");
   const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0" };
   const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
@@ -166,7 +166,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       URL.createObjectURL = blob => { const url = create(blob); active.add(url); return url; };
       URL.revokeObjectURL = url => { active.delete(url); revoke(url); };
     });
-    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault], { cwd: repository, env, timeout: 480_000 });
+    if (!process.env.DOCBANK_PHOTO_PROOF_WORKSPACE) await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault], { cwd: repository, env, timeout: 480_000 });
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
     let releaseTransition!: () => void;
@@ -175,6 +175,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     const transitionHold = new Promise<void>(resolve => releaseTransition = resolve);
     await page.route("**/api/v1/photos/assets/query", async route => {
       const body = route.request().postDataJSON();
+      if (body.facets?.length) { await route.continue(); return; }
       body.page_size = 100;
       const url = new URL(route.request().url());
       const host = url.host;
@@ -219,6 +220,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       await page.keyboard.press("Enter");
       await scroll.evaluate((element, gap) => element.scrollTop = element.scrollHeight - element.clientHeight - gap, anchor ? 400 : 0);
     };
+    await expect(page.getByRole("group", { name: "Camera facet" }).getByRole("button", { name: "Canon EOS R6, 5000 photos" })).toBeVisible();
     for (let count = 0; count < 50; count++) {
       if (await page.getByText("10,000 photos · 10,000 loaded").isVisible()) break;
       const loaded = await page.locator(".library-title span").innerText();
@@ -360,7 +362,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       const previewURL = new URL(await run("web", "--no-browser"));
       previewURL.pathname = "/photos";
       await writeFile(path.join(output!, "photos-preview.json"), JSON.stringify({ url: previewURL.href, workspace }, null, 2));
-    } else {
+    } else if (!process.env.DOCBANK_PHOTO_PROOF_WORKSPACE) {
       await run("daemon", "stop");
       await rm(workspace, { recursive: true, force: true });
     }

@@ -424,6 +424,7 @@ func TestPhotoTechnicalMetadataRecipeChangeReprojectsOnOpen(t *testing.T) {
 	assert.Equal(t, "2024-06-01T22:30:00.000000000", sortKey)
 	assert.Equal(t, "2024-06-02", date)
 	assert.Equal(t, "current", camera)
+	require.Equal(t, int64(1), browsePhotoPage(t, reopened, `{"text":"Current","sort":{"field":"relevance"}}`).Total)
 }
 
 func TestPhotoTechnicalMetadataBackupScope(t *testing.T) {
@@ -563,7 +564,7 @@ func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
 	node, err := s.CreateFile(ctx, s.RootID(), "cascade.jpg", fakeHash("ab"), 1, "image/jpeg")
 	require.NoError(t, err)
 	canonical := photoCanonical(t,
-		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("Cascade")),
+		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoString("DeletedCamera")),
 	)
 	generation, err := s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("fb"), canonical)
 	require.NoError(t, err)
@@ -575,6 +576,8 @@ func TestPhotoTechnicalMetadataGenerationCascade(t *testing.T) {
 	require.NoError(t, s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM photo_technical_metadata WHERE generation_id=?`, generation.GenerationID).Scan(&projections))
 	assert.Zero(t, projections)
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_metadata_fts WHERE generation_id=?`, generation.GenerationID).Scan(&projections))
+	require.Zero(t, projections)
 }
 
 func TestPhotoTechnicalMetadataCorruptSource(t *testing.T) {
@@ -685,4 +688,5 @@ func TestPhotoTechnicalMetadataRestoreRebuildsFromSourceMetadata(t *testing.T) {
 	var restored bytes.Buffer
 	require.NoError(t, target.ExportMetadata(ctx, &restored))
 	assert.Equal(t, exported.String(), restored.String())
+	require.Equal(t, int64(1), browsePhotoPage(t, target, `{"text":"France","sort":{"field":"relevance"}}`).Total)
 }

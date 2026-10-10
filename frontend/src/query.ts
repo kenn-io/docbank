@@ -18,7 +18,7 @@ const optionalFilterFields = new Set([
   "paths", "exclude_paths", "collection_ids", "exclude_collection_ids", "tag_ids",
   "exclude_tag_ids", "no_tags", "media_families", "mime_types", "extensions",
   "modified_after", "modified_before", "size_min", "size_max", "text_coverage",
-  "rating_min", "rating_max", "flags", "labels", "has_duplicates", "collapse_duplicates", "kinds", "cameras", "lenses", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds", "asset_ids", "set_ids",
+  "rating_min", "rating_max", "flags", "labels", "has_duplicates", "collapse_duplicates", "kinds", "cameras", "lenses", "locations", "iso_min", "iso_max", "capture_after", "capture_before", "gps_bounds", "asset_ids", "set_ids",
 ]);
 const uuidV4Pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const extensionPattern = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -61,6 +61,7 @@ export interface QueryFilters {
   kinds?: ("photo" | "video")[];
   cameras?: string[];
   lenses?: string[];
+  locations?: string[];
   iso_min?: number;
   iso_max?: number;
   capture_after?: string;
@@ -154,7 +155,7 @@ export function canonicalQuery(value: Query): string {
   if (normalized.filters.size_min) filters.size_min = normalized.filters.size_min;
   if (normalized.filters.tag_ids?.length) filters.tag_ids = normalized.filters.tag_ids;
   if (normalized.filters.text_coverage?.length) filters.text_coverage = normalized.filters.text_coverage;
-  for (const field of ["kinds", "cameras", "lenses", "asset_ids", "set_ids", "flags", "labels"] as const) {
+  for (const field of ["kinds", "cameras", "lenses", "locations", "asset_ids", "set_ids", "flags", "labels"] as const) {
     const values = normalized.filters[field];
     if (values?.length) filters[field] = values;
   }
@@ -215,6 +216,7 @@ function parseFilters(input: Record<string, unknown>): QueryFilters {
     kinds: optionalStringArray(input.kinds, "filters.kinds") as QueryFilters["kinds"],
     cameras: optionalStringArray(input.cameras, "filters.cameras"),
     lenses: optionalStringArray(input.lenses, "filters.lenses"),
+    locations: optionalStringArray(input.locations, "filters.locations"),
     set_ids: optionalStringArray(input.set_ids, "filters.set_ids"),
     asset_ids: optionalStringArray(input.asset_ids, "filters.asset_ids"),
     ...Object.fromEntries(qualityFields.map((field) => [field, optionalNullableString(input[field], `filters.${field}`)])),
@@ -272,6 +274,7 @@ function normalizeFilters(value: QueryFilters): QueryFilters {
     labels: normalizeSet(value.labels, 64, validPhotoColorLabel, "labels"),
     cameras: normalizeSet(value.cameras, 64, validPhotoLabel, "cameras"),
     lenses: normalizeSet(value.lenses, 64, validPhotoLabel, "lenses"),
+    locations: normalizeSet(value.locations, 64, validPhotoLabel, "locations"),
     set_ids: normalizeSet(value.set_ids, 64, (v) => uuidV4Pattern.test(v), "set_ids"),
     asset_ids: normalizeSet(value.asset_ids, 64, (v) => uuidV4Pattern.test(v), "asset_ids"),
     ...Object.fromEntries(qualityFields.map((field) => [field, normalizeQualityScore(value[field])])),

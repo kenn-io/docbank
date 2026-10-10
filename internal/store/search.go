@@ -2130,48 +2130,8 @@ func (s *Store) SearchPageWithOptions(
 	remaining := limit - len(nameHits)
 	var contentHits []SearchHit
 	queryContent := func(queryer metadataQuerier, generationID string) error {
-		contentArgs := []any{fq}
-		contentQuery := `
-			WITH matched_blobs AS (
-			  SELECT blob_hash, MIN(rank) AS best_rank
-			  FROM content_fts WHERE content_fts MATCH ?
-			  GROUP BY blob_hash
-			)
-			SELECT ` + nodeCols + `
-			FROM ` + nodeFrom + `
-			JOIN matched_blobs mb ON mb.blob_hash = cv.blob_hash
-			JOIN text_searchable_versions tsv ON tsv.version_id = cv.version_id
-			WHERE n.trashed_at IS NULL
-			  ` + filterSQL + `
-			ORDER BY mb.best_rank, n.name, n.id
-			LIMIT ?`
-		if generationID != "" {
-			// Selection, attachment resolution, and row consumption share
-			// this reader's one immutable publication snapshot. Once a
-			// lexical head exists, legacy content_fts is a non-serving cache.
-			contentQuery = `
-				WITH matched_versions(version_id,best_rank) AS (
-				  SELECT a.content_version_id, MIN(rendition_lexical_fts.rank)
-				  FROM rendition_lexical_fts
-				  JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
-				  JOIN rendition_heads rh
-				    ON rh.content_version_id=a.content_version_id
-				   AND rh.profile_fingerprint=a.profile_fingerprint
-				   AND rh.attachment_id=a.attachment_id
-				  WHERE rendition_lexical_fts MATCH ?
-				    AND EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb
-				                WHERE gb.generation_id=? AND gb.build_id=rendition_lexical_fts.build_id)
-				  GROUP BY a.content_version_id
-				)
-				SELECT ` + nodeCols + `
-				FROM ` + nodeFrom + `
-				JOIN matched_versions mv ON mv.version_id=cv.version_id
-				WHERE n.trashed_at IS NULL
-				  ` + filterSQL + `
-				ORDER BY mv.best_rank,n.name,n.id
-				LIMIT ?`
-			contentArgs = append(contentArgs, generationID)
-		}
+		cte, join, rank, contentArgs := contentSearchMatches(fq, generationID, nil)
+		contentQuery := `WITH ` + cte + ` SELECT ` + nodeCols + ` FROM ` + nodeFrom + ` ` + join + ` WHERE n.trashed_at IS NULL ` + filterSQL + ` ORDER BY ` + rank + `,n.name,n.id LIMIT ?`
 		contentArgs = append(contentArgs, filterArgs...)
 		contentArgs = append(contentArgs, remaining+len(nameHits)+1)
 		rows, err := queryer.QueryContext(ctx, contentQuery, contentArgs...)
@@ -2461,4 +2421,56 @@ func (s *Store) addSearchPaths(ctx context.Context, hits []SearchHit) error {
 		hits[i].Path = paths[i]
 	}
 	return nil
+}
+
+// contentSearchMatches shares retained-text ranking and publication bindings with Photos.
+func contentSearchMatches(match, generation string, profile *string) (cte, join, rank string, args []any) {
+	args = []any{match}
+	if generation == "" {
+		return `matched_blobs AS (SELECT blob_hash,MIN(rank) best_rank FROM content_fts WHERE content_fts MATCH ? GROUP BY blob_hash)`,
+			`JOIN matched_blobs mb ON mb.blob_hash=cv.blob_hash JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`, `mb.best_rank`, args
+	}
+	profileFilter := ""
+	args = append(args, generation)
+	if profile != nil {
+		profileFilter = ` AND a.profile_fingerprint=?`
+		args = append(args, *profile)
+	}
+	return `matched_versions AS (SELECT a.content_version_id version_id,MIN(rendition_lexical_fts.rank) best_rank FROM rendition_lexical_fts
+  JOIN rendition_attachments a ON a.build_id=rendition_lexical_fts.build_id
+  JOIN rendition_heads rh ON rh.content_version_id=a.content_version_id AND rh.profile_fingerprint=a.profile_fingerprint AND rh.attachment_id=a.attachment_id
+  WHERE rendition_lexical_fts MATCH ? AND EXISTS (SELECT 1 FROM rendition_lexical_generation_builds gb WHERE gb.generation_id=? AND gb.build_id=rendition_lexical_fts.build_id)` + profileFilter + ` GROUP BY a.content_version_id)`,
+		`JOIN matched_versions mv ON mv.version_id=cv.version_id`, `mv.best_rank`, args
+}
+
+// Filename and metadata evidence precede retained content-only evidence.
+func photoSearchCandidates(namesMatch, textMatch, generation string, profile *string) (sqlquery.Query, error) {
+	names, err := nameSearchCandidates(namesMatch)
+	if err != nil {
+		return sqlquery.Query{}, err
+	}
+	result := sqlquery.Query{SQL: `SELECT doc_key node_id,3 tier,score FROM (` + names.SQL + `)`, Args: names.Args}
+	if textMatch == "" {
+		return result, nil
+	}
+	helper, err := sqlitefts.New(sqlitefts.WithIndexTable("photo_metadata_fts"), sqlitefts.WithIndexKey("generation_id"), sqlitefts.WithSourceTable("photo_technical_metadata"), sqlitefts.WithSourceKey("generation_id"))
+	if err != nil {
+		return sqlquery.Query{}, fmt.Errorf("creating photo metadata search: %w", err)
+	}
+	metadata, err := helper.Build(sqlitefts.Request{Match: "text : (" + textMatch + ")", CandidateLimit: math.MaxInt})
+	if err != nil {
+		return sqlquery.Query{}, fmt.Errorf("building photo metadata search: %w", err)
+	}
+	result.SQL += ` UNION ALL SELECT n.id node_id,2 tier,matched.score FROM (` + metadata.SQL + `) matched
+  JOIN source_metadata_heads h ON h.generation_id=matched.doc_key
+  JOIN content_versions cv ON cv.blob_hash=h.source_sha256 JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`
+	result.Args = append(result.Args, metadata.Args...)
+	cte, _, rank, args := contentSearchMatches(textMatch, generation, profile)
+	from := `matched_blobs mb CROSS JOIN content_versions cv ON cv.blob_hash=mb.blob_hash CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id JOIN text_searchable_versions tsv ON tsv.version_id=cv.version_id`
+	if generation != "" {
+		from = `matched_versions mv CROSS JOIN content_versions cv ON cv.version_id=mv.version_id CROSS JOIN nodes n ON n.id=cv.node_id AND n.current_version_id=cv.version_id`
+	}
+	result.SQL += ` UNION ALL SELECT node_id,1 tier,score FROM (WITH ` + cte + ` SELECT n.id node_id,-` + rank + ` score FROM ` + from + `)`
+	result.Args = append(result.Args, args...)
+	return result, nil
 }

@@ -13,6 +13,7 @@ type PhotoBrowseRequest struct {
 	Query    QueryPayload           `json:"query"`
 	Coverage WorkspaceQueryCoverage `json:"coverage,omitzero"`
 	PageSize int                    `json:"page_size,omitempty,omitzero" minimum:"1" maximum:"250" default:"50"`
+	Facets   []string               `json:"facets,omitempty" maxItems:"5" uniqueItems:"true" enum:"camera,lens,year,location,set"`
 	Cursor   string                 `json:"cursor,omitempty" maxLength:"32768"`
 }
 
@@ -61,6 +62,7 @@ type PhotoBrowseRow struct {
 type PhotoBrowsePage struct {
 	Items      []PhotoBrowseRow `json:"items"`
 	Total      int64            `json:"total" minimum:"0"`
+	Facets     []WorkspaceFacet `json:"facets"`
 	NextCursor string           `json:"next_cursor,omitempty"`
 }
 

@@ -1,10 +1,13 @@
-import { hidePhotoAsset, unhidePhotoAsset, listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { hidePhotoAsset, unhidePhotoAsset, listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow } from "./generated/docbank.js";
+import { parseQuery, canonicalQuery, type Query } from "./query.js";
+import type { SnapshotPage } from "./snapshots.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
 import { clearSelection, reconcileIDSelection, toggleIDSelection, type SelectionState } from "./selection.js";
 
-export const photoQuery: SavedQueryV1Schema = { v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "capture_time", direction: "desc" } };
+export const photoQuery = parseQuery('{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}');
+const photoFacets = ["camera", "lens", "year", "location", "set"] as const;
 const densityKey = "docbank.photos.density";
 
 export function loadDensity(): Density {
@@ -16,6 +19,11 @@ export function loadDensity(): Density {
 }
 
 export class Photos {
+  query = $state<Query>(parseQuery(canonicalQuery(photoQuery)));
+  facets = $state<SnapshotPage["facets"]>([]);
+  facetsLoading = $state(false);
+  facetsError = $state("");
+  facetsRetryable = $state(true);
   items = $state<PhotoBrowseRow[]>([]);
   total = $state(0);
   cursor = $state<string | undefined>();
@@ -34,9 +42,22 @@ export class Photos {
   private expired = false;
   private replacement: "refresh" | "expiry" | undefined;
   private controller = new AbortController();
+  private facetsController = new AbortController();
+  private needsFacets = false;
   private disposed = false;
 
   constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false) {}
+
+  setQuery(query: Query) {
+    if (this.disposed || this.hiding || this.trashing) return;
+    this.cancelPending();
+    try { this.query = parseQuery(canonicalQuery(query)); } catch (cause) { this.error = cause instanceof Error ? cause.message : String(cause); return; }
+    this.items = []; this.facets = []; this.total = 0; this.cursor = undefined;
+    this.facetsError = ""; this.needsFacets = false;
+    this.started = false; this.error = ""; this.expired = false; this.replacement = undefined;
+    this.scrollTop = 0; this.clearSelection();
+    return this.loadMore();
+  }
 
   setDensity(density: Density) {
     this.density = density;
@@ -48,7 +69,8 @@ export class Photos {
     this.loading = true;
     const controller = this.controller;
     try {
-      const page = await listPhotoAssets({ query: photoQuery, hidden: this.hidden, page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
+      const first = !this.started;
+      const page = await listPhotoAssets({ query: this.query, hidden: this.hidden, facets: [], page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
       if (controller.signal.aborted) return;
       const seen = new Set(this.items.map(item => item.asset_id));
       const restore = preserve?.();
@@ -61,6 +83,7 @@ export class Photos {
       this.cursor = page.next_cursor;
       this.started = true;
       await restore?.();
+      if (first && !controller.signal.aborted) { this.needsFacets = true; void this.retryFacets(); }
     } catch (cause) {
       if (controller.signal.aborted) return;
       if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
@@ -107,10 +130,13 @@ export class Photos {
     if (this.disposed) return;
     this.controller.abort();
     this.controller = new AbortController();
+    this.facetsController.abort();
+    this.facetsLoading = false;
     this.loading = false;
   }
 
   resume(preserve?: () => (() => Promise<void>) | undefined) {
+    if (this.needsFacets && !this.facetsError) void this.retryFacets();
     if (this.error) return;
     if (this.replacement) return this.retry(preserve);
     if (!this.started) return this.loadMore(preserve);
@@ -129,8 +155,7 @@ export class Photos {
 
   private async replace(mode: "refresh" | "expiry", preserve?: () => (() => Promise<void>) | undefined) {
     if (this.disposed) return;
-    this.controller.abort();
-    this.controller = new AbortController();
+    this.cancelPending();
     const controller = this.controller;
     let signal = controller.signal;
     this.replacement = mode;
@@ -145,7 +170,7 @@ export class Photos {
     try {
       do {
         signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
-        const page = await listPhotoAssets({ query: photoQuery, hidden: this.hidden, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
+        const page = await listPhotoAssets({ query: this.query, hidden: this.hidden, facets: [], page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
         if (signal.aborted) throw signal.reason;
         const reachedPreviously = reachedPrefix;
         for (const item of page.items) candidate.set(item.asset_id, item);
@@ -158,12 +183,14 @@ export class Photos {
       const restore = preserve?.();
       this.items = [...candidate.values()];
       this.total = total;
+      this.facets = []; this.facetsError = "";
       this.cursor = cursor;
       this.started = true;
       this.selection = reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...this.trashTargets.map(item => item.asset_id)]));
       this.expired = false;
       this.replacement = undefined;
       await restore?.();
+      if (!controller.signal.aborted) { this.needsFacets = true; void this.retryFacets(); }
     } catch (cause) {
       if (controller.signal.aborted) return;
       if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
@@ -220,6 +247,34 @@ export class Photos {
     } finally { this[action] = false; }
   }
 
+  async retryFacets() {
+    if (this.disposed || !this.started || this.facetsLoading) return;
+    this.facetsController.abort();
+    const controller = this.facetsController = new AbortController();
+    this.needsFacets = true;
+    this.facetsLoading = true; this.facetsError = ""; this.facetsRetryable = true;
+    const query = parseQuery(canonicalQuery(this.query));
+    query.sort = { field: "capture_time", direction: "desc" };
+    try {
+      const page = await listPhotoAssets({ query, hidden: this.hidden, facets: [...photoFacets], page_size: 1 }, { session: this.session, signal: controller.signal });
+      if (controller.signal.aborted) return;
+      this.facets = (page.facets ?? []) as SnapshotPage["facets"];
+      this.needsFacets = false;
+      const unavailable = this.facets.filter(facet => !facet.available);
+      if (unavailable.length) {
+        this.facetsRetryable = unavailable.some(facet => facet.reason !== "member_budget_exceeded" && facet.reason !== "byte_budget_exceeded");
+        this.facetsError = this.facetsRetryable ? "Some photo counts couldn't be loaded." : "Photo counts exceed the query's limits. Narrow your search or filters.";
+      }
+    } catch (cause) {
+      if (controller.signal.aborted) return;
+      if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
+      this.needsFacets = false;
+      this.facetsError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (!controller.signal.aborted) this.facetsLoading = false;
+    }
+  }
+
   select(id: string, event: MouseEvent, orderedIDs: string[]) {
     if (event.button !== 0) return;
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
@@ -256,5 +311,5 @@ export class Photos {
 
   clearSelection() { this.selection = clearSelection<string>(); this.trashTargets = []; }
   selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
-  dispose() { this.disposed = true; this.controller.abort(); }
+  dispose() { this.disposed = true; this.controller.abort(); this.facetsController.abort(); }
 }

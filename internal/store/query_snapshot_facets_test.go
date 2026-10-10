@@ -284,7 +284,7 @@ func TestQuerySnapshotFacetValidationAndParentCancellation(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	value := snapshotTestQuery(t, `{}`)
-	for _, facets := range [][]string{{"future"}, {"tags", "tags"}} {
+	for _, facets := range [][]string{{"future"}, {"tags", "tags"}, {"camera"}} {
 		_, err := s.MaterializeQuerySnapshot(t.Context(), SnapshotRequest{Query: value, Facets: facets})
 		require.Error(t, err)
 	}
@@ -308,6 +308,18 @@ func TestQuerySnapshotFacetDeadlineKeepsCompletedRows(t *testing.T) {
 	for _, facet := range projection.Facets {
 		assert.False(t, facet.Available)
 		assert.Equal(t, "time_budget_exceeded", facet.Reason)
+	}
+	browsePhotoNode(t, s, "camera.jpg", browseHash("facet-timeout"), "image/jpeg")
+	compiled := mustPhotoCompiled(t, s, snapshotTestQuery(t, `{}`))
+	options := defaultSnapshotMaterializeOptions()
+	options.BuildTimeout = -time.Nanosecond
+	dimensions := []string{"camera", "lens", "year", "location", "set"}
+	facets, err := materializePhotoFacets(t.Context(), s.db, compiled, "", CoverageSelection{}, dimensions, options)
+	require.NoError(t, err)
+	require.Len(t, facets, len(dimensions))
+	for _, facet := range facets {
+		require.False(t, facet.Available)
+		require.Equal(t, "time_budget_exceeded", facet.Reason)
 	}
 }
 

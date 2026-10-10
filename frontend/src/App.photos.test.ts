@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { photo, storage } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
 
@@ -16,7 +16,9 @@ it.each(["unhide", "trash"])("refreshes a remounted Hidden grid after a delayed 
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z" });
     if (url.includes("/assets/query")) {
-      const hidden = JSON.parse(String(options?.body)).hidden;
+      const request = JSON.parse(String(options?.body));
+      if (request.facets?.length) return Response.json({ items: [], total: 0, facets: [] });
+      const hidden = request.hidden;
       const items = hidden && !changed ? [photo(1)] : [];
       return Response.json({ items, total: items.length });
     }
@@ -51,8 +53,11 @@ it("retains photo state and previews across sidebar switches until lock", async 
   vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL() {} });
   const stored = storage();
   let items = [photo(1)];
-  const fetcher = vi.fn(async (url: string) => {
-    if (url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: items.map(item => ({ ...item, previews: { ...item.previews, grid: { state: "ready", generation_id: "synthetic" } } })), total: 1 }));
+  const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/photos/assets/query")) {
+      if (JSON.parse(init!.body as string).facets.length) return new Response(JSON.stringify({ items: [], total: 1, facets: [] }));
+      return new Response(JSON.stringify({ items: items.map(item => ({ ...item, previews: { ...item.previews, grid: { state: "ready", generation_id: "synthetic" } } })), total: 1 }));
+    }
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
     if (url.includes("/nodes/1")) return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", revision: 1, path: "/" }));
     return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
@@ -63,9 +68,11 @@ it("retains photo state and previews across sidebar switches until lock", async 
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   const cacheName = stored.open.mock.calls[0][0];
   await waitFor(() => expect(stored.data.get(cacheName)?.size).toBe(1));
-  const listings = () => fetcher.mock.calls.filter(([url]) => url.includes("/photos/assets/query")).length;
+  const listings = () => fetcher.mock.calls.filter(([url, init]) => url.includes("/photos/assets/query") && !JSON.parse(init!.body as string).facets.length).length;
+  const counts = () => fetcher.mock.calls.filter(([url, init]) => url.includes("/photos/assets/query") && JSON.parse(init!.body as string).facets.length).length;
   const previews = () => fetcher.mock.calls.filter(([url]) => url.includes("/previews/")).length;
   expect(listings()).toBe(1);
+  await waitFor(() => expect(counts()).toBe(1));
   expect(previews()).toBe(1);
   const historyLength = history.length;
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
@@ -78,6 +85,7 @@ it("retains photo state and previews across sidebar switches until lock", async 
   await screen.findByText("1 selected photo");
   await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
   expect(listings()).toBe(1);
+  expect(counts()).toBe(1);
   expect(previews()).toBe(1);
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   items = [photo(2)];
@@ -109,7 +117,9 @@ it.each([false, true])("Hidden trash invalidates Documents and Trash restore ref
     if (url.endsWith("/photos/hidden/lock")) { unlocked = false; return Response.json({}); }
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z" } : {}) });
     if (url.includes("/assets/query")) {
-      const hidden = JSON.parse(String(options?.body)).hidden;
+      const request = JSON.parse(String(options?.body));
+      if (request.facets?.length) return Response.json({ items: [], total: 0, facets: [] });
+      const hidden = request.hidden;
       if (hidden) hiddenReads++;
       return Response.json({ items: hidden && !trashed ? [photo(1)] : [], total: hidden && !trashed ? 1 : 0 });
     }
@@ -152,4 +162,46 @@ it.each([false, true])("Hidden trash invalidates Documents and Trash restore ref
   await fireEvent.click(screen.getByRole("button", { name: "Close recoverable trash" }));
   await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   await screen.findByRole("cell", { name: "Photo 1.jpg" });
+});
+
+it("restores photo scroll before resumed counts finish and keeps subsequent scrolling", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  storage();
+  const counts: { signal: AbortSignal; finish: (response: Response) => void }[] = [];
+  let listings = 0;
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.includes("/photos/assets/query")) {
+      const request = JSON.parse(init!.body as string);
+      if (request.facets.length) return new Promise<Response>(finish => counts.push({ signal: init!.signal!, finish }));
+      listings++;
+      return Response.json({ items: Array.from({ length: 100 }, (_, index) => photo(index + 1)), total: 100 });
+    }
+    if (url.includes("/nodes/1")) return Response.json({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  });
+  render(App);
+  await waitFor(() => expect(counts).toHaveLength(1));
+  await act(async () => {});
+  const original = screen.getByTestId("photo-scroll");
+  original.scrollTop = 480;
+  await fireEvent.scroll(original);
+  await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+  expect(counts[0].signal.aborted).toBe(true);
+  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  await waitFor(() => expect(counts).toHaveLength(2));
+  const resumed = screen.getByTestId("photo-scroll");
+  await waitFor(() => expect(resumed.scrollTop).toBe(480));
+  expect(listings).toBe(1);
+  resumed.scrollTop = 960;
+  await fireEvent.scroll(resumed);
+  await act(async () => {
+    counts[0].finish(Response.json({ items: [], total: 100, facets: [] }));
+    counts[1].finish(Response.json({ items: [], total: 100, facets: [] }));
+  });
+  await waitFor(() => expect(screen.queryByText(/Loading counts/)).toBeNull());
+  await act(async () => {});
+  expect(resumed.scrollTop).toBe(960);
 });

@@ -90,7 +90,8 @@ function captureClock(value: string): number {
   return utcYear >= 1 && utcYear <= 9999 ? clock : NaN;
 }
 
-export function groupPhotos(items: PhotoBrowseRow[], grouping: "months" | "sessions"): PhotoGroup[] {
+export function groupPhotos(items: PhotoBrowseRow[], grouping: "months" | "sessions" | "relevance"): PhotoGroup[] {
+  if (grouping === "relevance") return items.length ? [{ key: grouping, label: "Search results", year: "", items }] : [];
   const clocks = new Map(items.map(item => [item, item.capture_time ? captureClock(item.capture_time) : NaN]));
   const undated = items.filter(item => !Number.isFinite(clocks.get(item)));
   const dated = items.filter(item => Number.isFinite(clocks.get(item)));

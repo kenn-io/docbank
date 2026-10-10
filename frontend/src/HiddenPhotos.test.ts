@@ -224,7 +224,7 @@ it.each(["lock", "revoke", "expire", "denial", "trash denial", "read"])("clears 
   await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/photos/hidden"))).toHaveLength(2));
   expect(screen.getByRole("main", { name: "Photo library" })).toBe(grid);
   expect(screen.getByText("1 selected photo")).toBeTruthy();
-  expect(fetcher.mock.calls.filter(([url]) => url.includes("/assets/query"))).toHaveLength(1);
+  expect(fetcher.mock.calls.filter(([url]) => url.includes("/assets/query"))).toHaveLength(2);
   if (kind === "lock") await fireEvent.click(screen.getByRole("button", { name: "Lock" }));
   else if (kind === "trash denial") { await fireEvent.click(screen.getByRole("button", { name: "Move to trash" })); await fireEvent.click(screen.getAllByRole("button", { name: "Move to trash" }).at(-1)!); }
   else if (kind === "denial") { denied = true; hidden = state(false); await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" })); }

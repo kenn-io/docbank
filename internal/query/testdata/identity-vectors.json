@@ -20,6 +20,12 @@
       "fingerprint": "sha256:509429903db1bb2054e34d1659073eb0795b091b16a48fbee3137a5909d42540"
     },
     {
+      "name": "query_unicode_locations",
+      "input_json": "{\"filters\":{\"locations\":[\"雪\",\"Paris\",\"Straße\",\"Paris\"]}}",
+      "canonical_utf8": "{\"filters\":{\"locations\":[\"Paris\",\"Straße\",\"雪\"]},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:d8fb9d7568a7cf963bb18e004ba8b288c409c7fe30c06aaa92c78919031c1725"
+    },
+    {
       "name": "query_set_ids_added_time",
       "input_json": "{\"filters\":{\"set_ids\":[\"00000000-0000-4000-8000-000000000002\",\"00000000-0000-4000-8000-000000000001\",\"00000000-0000-4000-8000-000000000002\"]},\"sort\":{\"field\":\"added_time\",\"direction\":\"desc\"}}",
       "canonical_utf8": "{\"filters\":{\"set_ids\":[\"00000000-0000-4000-8000-000000000001\",\"00000000-0000-4000-8000-000000000002\"]},\"mode\":\"lexical\",\"sort\":{\"direction\":\"desc\",\"field\":\"added_time\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
@@ -45,7 +51,7 @@
     },
     {
       "name": "query_optional_filter_nulls",
-      "input_json": "{\"filters\":{\"paths\":null,\"exclude_paths\":null,\"collection_ids\":null,\"exclude_collection_ids\":null,\"tag_ids\":null,\"exclude_tag_ids\":null,\"no_tags\":null,\"media_families\":null,\"mime_types\":null,\"extensions\":null,\"modified_after\":null,\"modified_before\":null,\"size_min\":null,\"size_max\":null,\"text_coverage\":null,\"has_duplicates\":null,\"collapse_duplicates\":null}}",
+      "input_json": "{\"filters\":{\"locations\":null,\"paths\":null,\"exclude_paths\":null,\"collection_ids\":null,\"exclude_collection_ids\":null,\"tag_ids\":null,\"exclude_tag_ids\":null,\"no_tags\":null,\"media_families\":null,\"mime_types\":null,\"extensions\":null,\"modified_after\":null,\"modified_before\":null,\"size_min\":null,\"size_max\":null,\"text_coverage\":null,\"has_duplicates\":null,\"collapse_duplicates\":null}}",
       "canonical_utf8": "{\"filters\":{},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
       "fingerprint": "sha256:5e60ffa8c5c733830f8dddba716f9bfce8a17121b5f8eb4de97cf23cf2fbe460"
     },
