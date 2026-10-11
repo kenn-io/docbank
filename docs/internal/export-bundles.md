@@ -188,9 +188,38 @@ download, and release with explicit parent/child selections. It compares exact
 identities and original bytes, including omitted parts inside EMLs. Related
 family tests cover [selected report counts and relationships](search-reports.md#membership-and-families).
 
+`frontend/screenshots/report-export.screenshot.ts` adds one real-browser case
+that drives the actual embedded web application instead of mocked state.
+`make report-export-browser-test` (`frontend/screenshots/report-export.run.mjs`)
+builds separate CGO and `CGO_ENABLED=0` branch binaries, launches each through
+`DOCBANK_SCREENSHOT_BINARY` with no fallback to an installed binary, and
+requires exactly one passing, unskipped Chromium run per mode. The case creates
+a synthetic vault and four single-document fixtures through the branch CLI,
+waits for search readiness, then uses real UI controls to: get a strict
+`incomplete_coverage` refusal for a missing-text-only selection with no history
+row added; export exactly three selected original versions and verify the
+downloaded ZIP's size and SHA-256 against the completed job receipt; create a
+`needs_review` report over all three documents, resolve the one ambiguous
+content date through **Review dates**, and read the completed child's
+unchanged parent live through a same-origin fetch carrying
+`X-Docbank-Web-Session`; and confirm the completed report's evidence ZIP and
+CSV survive a later source replacement by byte equality, while reusing that
+selection as a draft after replacement returns HTTP 409
+`report_selection_changed` with no new history row. Independent Python
+standard-library readers re-verify the ZIP/JSON/JSONL/CSV evidence and the
+native bundle's checksums, member hashes, and plan fingerprint both before and
+after stopping the daemon, and confirm the stopped database, opened read-only
+and immutable, has zero `rendition_jobs` and `embedding_jobs` rows.
+`DOCBANK_REPORT_EXPORT_SCREENSHOT_DIR` gates and captures the case so ordinary
+documentation screenshot generation skips it, and a dedicated
+`report-export-browser` Linux Chromium job in `.github/workflows/ci.yml` runs
+it. This Linux-only job does not establish native macOS/Windows browser
+coverage, family recovery through backup and maintenance, or a general
+browser-test framework; those remain separate qualification boundaries.
+
 Keep literal expected counts and independent byte comparisons alongside packet
 and archive verification. Internal consistency does not establish source
 authenticity. Fixtures use isolated synthetic vaults and close setup stores
-before daemon ownership. These tests do not qualify recursive attachment export,
-browser workflows, or family maintenance and restore. Local execution provides
-no evidence of an untested operating system.
+before daemon ownership. These tests do not qualify recursive attachment
+export or family maintenance and restore. Local execution provides no evidence
+of an untested operating system.
