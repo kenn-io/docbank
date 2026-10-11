@@ -200,6 +200,16 @@ waiters. They consider only waiters for the selected version, then choose the
 job with the latest update time, breaking ties by job ID. Store bootstrap adds
 the index to existing vaults on open; query results and job history are unchanged.
 
+### Content-hash references
+
+`GET /api/v1/content-references` and `docbank refs` return retained logical
+versions of the selected content, including history and trash. The lookup
+counts and orders matching version identities before loading full metadata,
+checksums, and live paths for the selected page. Both the total and page come
+from one SQL statement, so a concurrent content replacement or trash operation
+cannot split their view of the vault. Counting and ordering still depend on the
+number of matching versions; metadata and path projection are limited to the page.
+
 ### MCP response budgets
 
 MCP success results carry the payload as both JSON text and structured content.
