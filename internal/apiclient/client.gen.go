@@ -25374,6 +25374,8 @@ type PhotoBrowseRequest = api.PhotoBrowseRequest
 
 type PhotoBrowseRow = api.PhotoBrowseRow
 
+type PhotoExportSelection = bundle.PhotoExportSelection
+
 type PhotoFile = api.PhotoFile
 
 type PhotoHiddenPasscodeRequest = api.PhotoHiddenPasscodeRequest
@@ -25387,6 +25389,8 @@ type PhotoPreviewSlot = api.PhotoPreviewSlot
 type PhotoPreviewSlots = api.PhotoPreviewSlots
 
 type PhotoQualitySignals = document.PhotoQualitySignals
+
+type PhotoRenderProfile = bundle.PhotoRenderProfile
 
 type PhotoSettings = api.PhotoSettings
 

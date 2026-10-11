@@ -1863,6 +1863,10 @@ func (r exifReader) entries(offset uint32) map[uint16][]byte {
 }
 
 func (r exifReader) typedEntries(offset uint32) (map[uint16]exifEntry, bool) {
+	return r.readTypedEntries(offset, false)
+}
+
+func (r exifReader) readTypedEntries(offset uint32, export bool) (map[uint16]exifEntry, bool) {
 	result := map[uint16]exifEntry{}
 	count, ok := r.u16(int(offset))
 	if !ok || count > 1024 {
@@ -1880,8 +1884,14 @@ func (r exifReader) typedEntries(offset uint32) (map[uint16]exifEntry, bool) {
 			return result, false
 		}
 		width := map[uint16]uint64{1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8}[kind]
+		if export && width == 0 {
+			width = map[uint16]uint64{6: 1, 8: 2, 11: 4, 12: 8, 13: 4}[kind]
+		}
 		result[tag] = exifEntry{kind: kind}
 		size := uint64(items) * width
+		if export && size > 1<<20 {
+			return result, false
+		}
 		if width == 0 || size > 1<<20 {
 			continue
 		}

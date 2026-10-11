@@ -153,3 +153,55 @@ it.each([false, true])("Hidden trash invalidates Documents and Trash restore ref
   await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   await screen.findByRole("cell", { name: "Photo 1.jpg" });
 });
+
+
+it.each([false, true])("prepares the latest photo selection after releasing a finished job, hidden=%s", async hidden => {
+  history.replaceState(null, "", `${hidden ? "/photos/hidden" : "/photos"}#web_session=synthetic&web_upload_secret=proof`);
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  storage();
+  const hash = "a".repeat(64), future = "2099-01-01T00:00:00Z";
+  const selections: string[][] = [];
+  let source: any, plan: any;
+  let releases = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    const body = options?.body ? JSON.parse(String(options.body)) : undefined;
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: future });
+    if (url.includes("/assets/query")) return Response.json({ items: [photo(1), photo(2), photo(3)], total: 3 });
+    if (url.endsWith("/sources")) {
+      selections.push(body.photos.asset_ids);
+      source = { id: body.operation_id, request_sha256: hash, kind: "photos", state: "sealed", member_hash: hash, total: 1, source_bytes: 12, created_at: "2026-01-01T00:00:00Z", expires_at: future };
+      return Response.json(source);
+    }
+    if (url.endsWith("/plans")) {
+      plan = { format: "docbank-bundle-v1", id: body.operation_id, vault_id: "synthetic", toolchain: "go1.27", source, roles: body.roles, photo_render: body.photo_render, fingerprint: hash, total: 1, role_entries: 1, role_bytes: 12, metadata_bytes: 100, created_at: source.created_at, expires_at: future };
+      return Response.json(plan);
+    }
+    if (url.endsWith("/preview")) return Response.json({ plan_id: plan.id, fingerprint: hash, member_hash: hash, total: 1, roles: [{ role: "photo_rendered", available_members: 1, unavailable_members: 0, files: 1, bytes: 12 }] });
+    if (url.endsWith("/jobs")) return Response.json({ id: body.operation_id, plan_id: plan.id, fingerprint: hash, state: "failed", failure: "Synthetic export failure", sequence: 1, completed_roles: 0, completed_bytes: 0, attempt: 1, created_at: source.created_at, deadline: future, expires_at: future });
+    if (options?.method === "DELETE") {
+      if (++releases === 1) return Response.json({ code: "export_retained", detail: "Download retained" }, { status: 409 });
+      return new Response(null, { status: 204 });
+    }
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  }));
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Prepare" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Start reviewed export" }));
+  await screen.findByText("Synthetic export failure");
+  for (const id of [2, 3]) {
+    await fireEvent.click(screen.getByRole("button", { name: "Close export" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Clear selection" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: `Select photo Photo ${id}.jpg` }));
+    await fireEvent.click(screen.getByRole("button", { name: "Export selection" }));
+  }
+  await fireEvent.click(await screen.findByRole("button", { name: "Prepare another export" }));
+  await screen.findByText(/Your browser is still downloading/);
+  await fireEvent.click(screen.getByRole("button", { name: "Prepare another export" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Prepare" }));
+  await screen.findByRole("button", { name: "Start reviewed export" });
+  expect(selections).toEqual([["photo-1"], ["photo-3"]]);
+});

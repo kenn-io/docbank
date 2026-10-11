@@ -81,6 +81,7 @@ the [Interactive terminal browser](usage/tui.md).
 
 - Preview and download verified ZIP bundles of the document versions you
   selected.
+- Render up to 16 photos as JPEG or PNG with size, image metadata and GPS choices, with at most 100 million pixels per image.
 - Export checked rows in the web app as CSV, or apply a tag to the whole
   selection in one atomic step.
 - Reopen a stored export plan and see which outputs are unavailable, through

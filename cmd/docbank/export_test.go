@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/json/v2"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/query"
 )
 
 func TestExportPreflightDoesNotContactDaemon(t *testing.T) {
@@ -24,8 +26,15 @@ func TestExportPreflightDoesNotContactDaemon(t *testing.T) {
 	t.Setenv("DOCBANK_HOME", vault)
 	valid := `{"source_operation_id":"11111111-1111-4111-8111-111111111111","plan_operation_id":"22222222-2222-4222-8222-222222222222","members":[{"node_id":1,"version_id":"33333333-3333-4333-8333-333333333333","sha256":"` + strings.Repeat("a", 64) + `","size":0}]}`
 	member := valid[strings.Index(valid, `[{`)+1 : len(valid)-2]
+	photo := strings.TrimSuffix(valid, "}") + `,"photo_render":{"format":"png","long_edge":0,"include_metadata":true,"remove_gps":true}}`
 	for _, tc := range []struct{ name, body, field string }{
 		{"malformed", "{", "JSON"},
+		{"duplicate photo IDs", `{"source_operation_id":"11111111-1111-4111-8111-111111111111","plan_operation_id":"22222222-2222-4222-8222-222222222222","photo_render":{"format":"png","long_edge":0,"include_metadata":true,"remove_gps":true},"photos":{"query":{"v":1,"syntax":"advanced","mode":"lexical","sort":{"field":"name","direction":"asc"}},"asset_ids":["33333333-3333-4333-8333-333333333333","33333333-3333-4333-8333-333333333333"]}}`, "duplicate photo asset ID 33333333-3333-4333-8333-333333333333"},
+		{"null GPS", strings.Replace(photo, `"remove_gps":true`, `"remove_gps":null`, 1), "photo_render.remove_gps"},
+		{"omitted GPS", strings.TrimSuffix(valid, "}") + `,"photo_render":{"format":"jpeg","quality":80,"include_metadata":true}}`, "photo_render.remove_gps"},
+		{"omitted metadata", strings.Replace(photo, `"include_metadata":true,`, "", 1), "photo_render.include_metadata"},
+		{"omitted long edge", strings.Replace(photo, `"long_edge":0,`, "", 1), "photo_render.long_edge"},
+		{"omitted format", strings.Replace(photo, `"format":"png",`, "", 1), "photo_render.format"},
 		{"unknown", strings.Replace(valid, `"size":0`, `"unknown":0`, 1), "JSON"},
 		{"source ID", strings.Replace(valid, "11111111-1111-4111-8111-111111111111", "bad", 1), "source_operation_id"},
 		{"plan ID", strings.Replace(valid, "22222222-2222-4222-8222-222222222222", "bad", 1), "plan_operation_id"},
@@ -189,4 +198,27 @@ func releaseCLIExport(t *testing.T, id string) string {
 	}, 30*time.Second, 25*time.Millisecond)
 	require.NoError(t, err)
 	return output
+}
+
+func TestPhotoExportRequestValidation(t *testing.T) {
+	request := exportPreviewRequest{SourceOperationID: uuid.New().String(), PlanOperationID: uuid.New().String(), Photos: &bundle.PhotoExportSelection{Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: true, RemoveGPS: true}}
+	require.NoError(t, validateExportRequest(request))
+	request.PhotoRender = nil
+	require.Error(t, validateExportRequest(request))
+}
+func TestPhotoExportPreviewDescribesDeliveredCopies(t *testing.T) {
+	var output bytes.Buffer
+	plan := bundle.Plan{PhotoRender: &bundle.PhotoRenderProfile{Format: "png", LongEdge: 2048, RemoveGPS: true}, EmbeddedPreviews: 2}
+	require.NoError(t, writeExportPreview(&output, plan))
+	require.Contains(t, output.String(), "photo format png")
+	require.Contains(t, output.String(), "planned contents: 0 photos")
+	require.Contains(t, output.String(), "long edge 2048 pixels")
+	require.Contains(t, output.String(), "metadata false, remove GPS true")
+	require.Contains(t, output.String(), "embedded RAW previews 2")
+	require.NotContains(t, output.String(), "Original contents")
+	output.Reset()
+	plan.PhotoRender = nil
+	require.NoError(t, writeExportPreview(&output, plan))
+	require.Contains(t, output.String(), "original bytes")
+	require.Contains(t, output.String(), "Original contents")
 }

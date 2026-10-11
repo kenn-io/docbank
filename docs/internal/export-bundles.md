@@ -24,7 +24,7 @@ separate owners. Restarting an MCP process grants no independent allowance.
 
 ## Exact selection and preview
 
-CLI and MCP previews create an explicit source, then an originals-only plan.
+MCP previews create an explicit source, then an originals-only plan. CLI previews also accept a photo rendering profile and a Photos scope.
 They accept up to 1,000 node/version pairs without expanding folders,
 attachments, or families. Multiple retained versions of one node are valid;
 duplicate pairs are not. Historical versions need not be current, but the node
@@ -194,3 +194,13 @@ authenticity. Fixtures use isolated synthetic vaults and close setup stores
 before daemon ownership. These tests do not qualify recursive attachment export,
 browser workflows, or family maintenance and restore. Local execution provides
 no evidence of an untested operating system.
+
+## Rendered photos
+
+Photo source resolution extends `ListPhotoAssets`, including its complete query population and Hidden unlock. Preparation captures the exact display versions, asset/file/node revisions, authored decisions, and keyword values. The renderer reads verified originals sequentially, collects container inspection and metadata once and shares EXIF interpretation and RAW preview selection with visual previews, and writes temporary outputs before entering publication. Publication writes up to 1 GiB of staged output into blob storage under the mutation lease. Sealing then rechecks those inputs and records durable blob receipts and existing export role roots in a database transaction. A concurrent edit refuses the plan.
+
+`photo_rendered` recipes bind the source, output dimensions, embedded-preview origin, and profile. The ZIP worker and independent archive verifier consume those receipts through the existing export flow. JPEG and PNG outputs use a bounded TIFF directory writer and an XMP merge. Rebuilding reachable EXIF directories removes GPS payloads and stale thumbnails. Only confirmed authored fields overwrite source decisions, including empty strings and zero ratings. Catalog tags replace embedded keywords only when at least one tag exists. Extended XMP extensions are omitted; the main packet stays. Full preparation inputs stay internal; sealing compares their canonical JSON with current authority. ICC profiles travel with pixels, including metadata-off exports. Rendering runs outside the mutation gate; admission caps members, source bytes, pixels per image and output bytes before publication. Exported orientations normalize to 1 after pixel transforms.
+
+Rendered copies are temporary export artifacts. Their role roots protect them from garbage collection while retained, but authority backups exclude the photo plan and its generated output. Ordinary source versions retain their existing backup authority.
+
+Preparation admits one photo export per vault, up to 16 photos, 100 million pixels per image, 512 MiB of source bytes, and 1 GiB of encoded output. The output limit counts delivered bytes. At 100 million pixels, a 16-bit decoded image can occupy 800 MB, with up to 400 MB each for resize, orientation, and JPEG matte buffers, alongside source bytes, encoded output, and metadata rewrite buffers. Peak process memory can exceed several GiB; the 1 GiB output cap is not a heap limit.

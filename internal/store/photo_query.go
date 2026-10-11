@@ -22,6 +22,7 @@ type PhotoBrowseRequest struct {
 	Coverage CoverageSelection
 	PageSize int
 	Recipes  map[string]string
+	assetIDs []string
 }
 
 // PhotoBrowsePosition is the selected SQL key bound to the resolved query.
@@ -112,6 +113,13 @@ func (s *Store) ListPhotoAssets(
 		if !ok {
 			return fmt.Errorf("%w: unsupported sort", ErrInvalidPhotoQuery)
 		}
+		if len(request.assetIDs) > 0 {
+			// Selected exports seek asset IDs before sorting their small result.
+			from = photoBrowseDisplayFrom
+			if sortField == "added_time" {
+				from += ` CROSS JOIN photo_set_members sm ON sm.asset_id=a.asset_id`
+			}
+		}
 		if coverage.Configuration == photoBrowseConfiguredCoverage {
 			if err := validateSnapshotCoverageProfile(ctx, q, coverage); err != nil {
 				return err
@@ -127,7 +135,8 @@ func (s *Store) ListPhotoAssets(
 			Coverage     CoverageSelection
 			Hidden       bool
 			PageSize     int
-		}{canonical, compiled.Dependencies, coverage, request.Hidden, request.PageSize})
+			AssetIDs     []string `json:",omitzero"`
+		}{canonical, compiled.Dependencies, coverage, request.Hidden, request.PageSize, request.assetIDs})
 		if err != nil {
 			return err
 		}
@@ -142,6 +151,14 @@ func (s *Store) ListPhotoAssets(
 		match, err := photoBrowseMatch(compiled, generation.ID, coverage, request.Hidden)
 		if err != nil {
 			return err
+		}
+		if len(request.assetIDs) > 0 {
+			match.sql = `a.asset_id IN (` + placeholders(len(request.assetIDs)) + `) AND (` + match.sql + `)`
+			args := make([]any, 0, len(request.assetIDs)+len(match.args))
+			for _, id := range request.assetIDs {
+				args = append(args, id)
+			}
+			match.args = append(args, match.args...)
 		}
 		bind := func(sql string, args []any) (string, []any, error) {
 			return bindQueryPopulation(compiledQueryFragment{

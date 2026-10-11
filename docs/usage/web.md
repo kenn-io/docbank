@@ -263,6 +263,8 @@ Ordinary live selections offer the same return path to the selected document.
 
 ## Export a verified ZIP
 
+In Photos, choose **Export photos** for the current scope or **Export selection** for checked photos. Prepare JPEG or PNG copies with size, image metadata and GPS choices. Each preparation allows up to 16 photos, each at most 100 million pixels. The verified ZIP retains original filenames, vault paths and source hashes. See [Export photos](export-bundles.md#export-photos).
+
 Choose **Export selection** in the selection dock for the checked documents.
 The toolbar's **Export** opens the whole frozen query when one is active, or
 the documents on the current page otherwise. Folders are not export members.
@@ -288,6 +290,7 @@ verified archive receipt. It displays the final size and SHA-256 so you can
 check the downloaded file independently. The browser saves the archive
 directly. Docbank does not load the entire ZIP into browser memory. Check your
 browser's download list for local completion.
+**Prepare another export** releases the finished job for both photos and documents, and asks you to wait while a download is still running. Its source and plan [still count toward the shared export cap](export-bundles.md#export-photos) until the plan's admission deadline.
 
 Closing the drawer stops its progress reader, not the server job. Reopen
 **Export** in the same browser session to reconnect to that job, or choose

@@ -262,7 +262,8 @@
   let activePanel = $state<Panel | null>(null);
   let exportHasJob = $state(false);
   let exportInput = $state<ExportInput | null>(null);
-  $effect(() => { if (!webSession) { activePanel = null; exportInput = null; exportHasJob = false; } });
+  let pendingExportInput = $state<ExportInput | null>(null);
+  $effect(() => { if (!webSession) { activePanel = null; exportInput = null; pendingExportInput = null; exportHasJob = false; } });
 
   let queryBarOpen = $state(false);
   let savedQueryDraft = $state<Query | null>(null);
@@ -1525,18 +1526,30 @@
     activePanel = { kind: "termReports", documents };
   }
 
+  function requestExport(input: ExportInput): void {
+    if (exportHasJob) pendingExportInput = input;
+    else exportInput = input;
+    activePanel = { kind: "export" };
+  }
+
+  function exportActiveChanged(active: boolean): void {
+    exportHasJob = active;
+    if (!active && pendingExportInput) {
+      exportInput = pendingExportInput;
+      pendingExportInput = null;
+    }
+  }
+
   function openExport(selectionOnly = false): void {
-    if (exportHasJob) { activePanel = { kind: "export" }; return; }
     try {
       if (snapshotActive && snapshot.state.firstPage && !selectionOnly) {
-        exportInput = { label: "Whole frozen query", snapshot: snapshot.state.firstPage };
+        requestExport({ label: "Whole frozen query", snapshot: snapshot.state.firstPage });
       } else if (snapshotActive && snapshotPage) {
-        exportInput = { label: "Selected documents on frozen page", members: copyExportMembers(snapshotPage.rows.filter(row => snapshot.selection.has(row.node_id))) };
+        requestExport({ label: "Selected documents on frozen page", members: copyExportMembers(snapshotPage.rows.filter(row => snapshot.selection.has(row.node_id))) });
       } else {
         const rows = sortedRows.filter(row => row.node.kind === "file" && (!selectionOnly || bulkSelection.selectedIDs.has(row.node.id)));
-        exportInput = { label: selectionOnly ? "Selected documents on this page" : "Documents on this page", members: copyExportMembers(rows.map(({ node }) => ({ node_id: node.id, content_version_id: node.current_version_id ?? "", blob_hash: node.blob_hash ?? "", size: node.size }))) };
+        requestExport({ label: selectionOnly ? "Selected documents on this page" : "Documents on this page", members: copyExportMembers(rows.map(({ node }) => ({ node_id: node.id, content_version_id: node.current_version_id ?? "", blob_hash: node.blob_hash ?? "", size: node.size }))) });
       }
-      activePanel = { kind: "export" };
     } catch (cause) { handleFailure(cause); }
   }
 
@@ -2072,8 +2085,8 @@
     </TopBar>
 
     {#if photoMode && photoState}
-      {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} session={webSession} onauthfailure={handleFailure} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { refreshLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else}
-      {#key photoState}<PhotosWorkspace bind:this={libraryWorkspace} photos={photoState.photos} cache={photoState.cache} ontrashed={() => handleTrashed()} onhidden={() => void hiddenWorkspace?.refresh()} />{/key}
+      {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} onexport={requestExport} session={webSession} onauthfailure={handleFailure} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { refreshLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else}
+      {#key photoState}<PhotosWorkspace bind:this={libraryWorkspace} photos={photoState.photos} cache={photoState.cache} onexport={requestExport} ontrashed={() => handleTrashed()} onhidden={() => void hiddenWorkspace?.refresh()} />{/key}
       {/if}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
@@ -2982,11 +2995,7 @@
             if (activePanel === panel) await loadDirectory(panel.target.id, false);
           }}
           onauthfailure={handleFailure}
-          onexport={(collectionID, total) => {
-            if (exportHasJob) { activePanel = { kind: "export" }; return; }
-            exportInput = { label: "Completed mailbox import", collectionID, total };
-            activePanel = { kind: "export" };
-          }}
+          onexport={(collectionID, total) => requestExport({ label: "Completed mailbox import", collectionID, total })}
         />
       {/if}
       {#if panel.kind === "loadFile" && uploadChannel}
@@ -3013,7 +3022,7 @@
       {/if}
     {/each}
     {#key webSession}
-      <ExportDrawer session={webSession} open={activePanel?.kind === "export"} input={exportInput} onclose={closePanel(activePanel?.kind === "export" ? activePanel : null)} onauthfailure={handleFailure} onactivechange={active => exportHasJob = active} />
+      <ExportDrawer session={webSession} open={activePanel?.kind === "export"} input={exportInput} onclose={closePanel(activePanel?.kind === "export" ? activePanel : null)} onauthfailure={handleFailure} onactivechange={exportActiveChanged} />
     {/key}
     {#if manageTagsTarget}
       <ManageTagsModal

@@ -5,9 +5,10 @@ import { streamExportJobEvents } from "./export-events.js";
 import { snapshotMemberHash, type SnapshotMember } from "./snapshots.js";
 
 export type { ExportSource, ExportPlan, ExportPreview, RolePolicy, RoleSummary, ExportReceipt, ExportJob, ExportTicket, EmailPDFRecipeChoice, OutputProblems, AttachmentPublications };
-export type ExportOptions = Pick<generated.PlanRequest, "duplicate_policy" | "volume_limits" | "publications">;
+export type ExportOptions = Pick<generated.PlanRequest, "duplicate_policy" | "volume_limits" | "publications" | "photo_render">;
 export type ExportMember = Omit<Member, "revision">;
 
+export const maxPhotoExportMembers = 16;
 export const maxExportMembers = 100_000;
 const maxRoleBytes = 50 * 2 ** 30;
 const maxArchiveBytes = 52 * 2 ** 30;
@@ -15,7 +16,7 @@ const maxRoles = 300_000;
 const limit = 64 * 1024;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const digest = /^[0-9a-f]{64}$/;
-const roles = ["original", "text", "pages", "email_pdf", "attachment_original", "attachment_pdf"];
+const roles = ["photo_rendered", "original", "text", "pages", "email_pdf", "attachment_original", "attachment_pdf"];
 
 function fail(): never { throw new Error("The export response disagreed with its captured authority."); }
 function object(value: unknown): Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) fail(); return value as Record<string, unknown>; }
@@ -46,7 +47,7 @@ export function exportMemberHash(members: readonly ExportMember[]): Promise<stri
 function parseSource(value: unknown): ExportSource {
   const r = object(value);
   const out = { id: identity(r.id), request_sha256: hash(r.request_sha256), kind: string(r.kind), state: string(r.state), member_hash: hash(r.member_hash), total: integer(r.total, maxExportMembers, 1), source_bytes: integer(r.source_bytes, maxRoleBytes), created_at: date(r.created_at), expires_at: date(r.expires_at), ...(r.collection_id === undefined ? {} : { collection_id: identity(r.collection_id) }) };
-  if (!["explicit", "upload", "mailbox_collection"].includes(out.kind) || !["uploading", "sealed"].includes(out.state) || (out.kind === "mailbox_collection") !== !!out.collection_id) fail();
+  if (!["photos", "explicit", "upload", "mailbox_collection"].includes(out.kind) || !["uploading", "sealed"].includes(out.state) || (out.kind === "mailbox_collection") !== !!out.collection_id) fail();
   return out;
 }
 
@@ -66,7 +67,13 @@ export function validateRolePolicies(value: unknown): RolePolicy[] {
 
 export function validateExportOptions(value: ExportOptions): ExportOptions {
   const r = object(value), out: ExportOptions = {};
-  if (Object.keys(r).some(k => !["duplicate_policy", "volume_limits", "publications"].includes(k))) fail();
+  if (Object.keys(r).some(k => !["duplicate_policy", "volume_limits", "publications", "photo_render"].includes(k))) fail();
+  if (r.photo_render !== undefined) {
+    const p = object(r.photo_render);
+    if (Object.keys(p).some(k => !["format", "quality", "long_edge", "include_metadata", "remove_gps"].includes(k)) || !["jpeg", "png"].includes(string(p.format)) || typeof p.include_metadata !== "boolean" || typeof p.remove_gps !== "boolean") fail();
+    out.photo_render = { format: string(p.format), quality: integer(p.quality === undefined && p.format === "png" ? 0 : p.quality, 100, p.format === "png" ? 0 : 1), long_edge: integer(p.long_edge, 100000), include_metadata: p.include_metadata, remove_gps: p.remove_gps };
+    if (out.photo_render.format === "png") out.photo_render.quality = 0;
+  }
   if (r.duplicate_policy !== undefined) {
     if (r.duplicate_policy !== "preserve" && r.duplicate_policy !== "collapse_exact_content") fail();
     out.duplicate_policy = r.duplicate_policy;
@@ -99,12 +106,13 @@ export function parseExportPlan(value: unknown, expected: ExportSource, policies
   const r = object(value);
   const p: ExportPlan = { format: string(r.format), id: identity(r.id), vault_id: string(r.vault_id), toolchain: string(r.toolchain), source: parseSource(r.source), roles: validateRolePolicies(r.roles), fingerprint: hash(r.fingerprint), total: integer(r.total, maxExportMembers, 1), role_entries: integer(r.role_entries, maxRoles), role_bytes: integer(r.role_bytes, maxRoleBytes), metadata_bytes: integer(r.metadata_bytes, 512 * 2 ** 20), created_at: date(r.created_at), expires_at: date(r.expires_at) };
   if (p.format !== "docbank-bundle-v1" || !p.vault_id || !p.toolchain || p.id !== id || JSON.stringify(p.source) !== JSON.stringify(parseSource(expected)) || p.source.state !== "sealed" || p.total !== expected.total || JSON.stringify(p.roles) !== JSON.stringify(validateRolePolicies(policies))) fail();
-  const actualOptions = validateExportOptions({ ...(r.duplicate_policy === undefined ? {} : { duplicate_policy: r.duplicate_policy as ExportOptions["duplicate_policy"] }), ...(r.volume_limits === undefined ? {} : { volume_limits: r.volume_limits as ExportOptions["volume_limits"] }) });
+  const actualOptions = validateExportOptions({ ...(r.photo_render === undefined ? {} : { photo_render: r.photo_render as ExportOptions["photo_render"] }), ...(r.duplicate_policy === undefined ? {} : { duplicate_policy: r.duplicate_policy as ExportOptions["duplicate_policy"] }), ...(r.volume_limits === undefined ? {} : { volume_limits: r.volume_limits as ExportOptions["volume_limits"] }) });
   const expectedOptions = validateExportOptions(options);
   // Publication choices are pinned in document rows, not echoed in the header.
   delete expectedOptions.publications;
   if (JSON.stringify(actualOptions) !== JSON.stringify(expectedOptions)) fail();
   Object.assign(p, actualOptions);
+  if (r.embedded_previews !== undefined) p.embedded_previews = integer(r.embedded_previews, p.total);
   if (r.document_rows !== undefined) p.document_rows = integer(r.document_rows, maxExportMembers + maxRoles, p.total);
   if (r.volumes !== undefined) p.volumes = integer(r.volumes, p.role_entries);
   if ((p.volumes ?? 0) > 0 && !p.volume_limits || p.volume_limits && ((p.role_entries > 0) !== ((p.volumes ?? 0) > 0))) fail();
@@ -170,7 +178,7 @@ async function boundedJSON(response: Response): Promise<unknown> {
 export async function retryExportRequest<T>(fn: () => Promise<T>, signal: AbortSignal): Promise<T> {
   try { return await fn(); } catch (error) {
     signal.throwIfAborted();
-    if (!(error instanceof TypeError) && !(error instanceof APIError && error.status >= 500)) throw error;
+    if (!(error instanceof TypeError) && !(error instanceof APIError && error.status >= 500 && error.code !== "export_timeout")) throw error;
     return fn();
   }
 }
@@ -190,6 +198,12 @@ export async function sealExportSource(session: string, members: readonly Export
     source = parseSource(await retryExportRequest(async () => boundedJSON(await generated.sealExportSource(operationID, {}, { session, signal })), signal));
   }
   if (source.id !== operationID || source.kind !== kind || source.state !== "sealed" || source.total !== copied.length || source.member_hash !== memberHash || source.source_bytes !== copied.reduce((sum, m) => sum + m.size, 0)) fail();
+  return source;
+}
+
+export async function sealPhotoExportSource(session: string, photos: generated.PhotoExportSelection, operationID: string, signal: AbortSignal): Promise<ExportSource> {
+  const source = parseSource(await retryExportRequest(async () => boundedJSON(await generated.createExportSourceWithJson({ operation_id: operationID, kind: "photos", photos }, { session, signal })), signal));
+  if (source.id !== operationID || source.kind !== "photos" || source.state !== "sealed" || photos.asset_ids?.length && source.total !== photos.asset_ids.length) fail();
   return source;
 }
 

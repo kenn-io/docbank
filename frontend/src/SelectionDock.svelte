@@ -16,6 +16,8 @@
     wholeQueryCount?: number;
     onwholequerytags?: () => void;
     onexport?: () => void;
+    exportDisabled?: boolean;
+    exportHelp?: string;
     onreport?: () => void;
     onexportquery?: () => void;
   }
@@ -35,6 +37,8 @@
     wholeQueryCount = 0,
     onwholequerytags,
     onexport,
+    exportDisabled = false,
+    exportHelp = "",
     onreport,
     onexportquery,
   }: Props = $props();
@@ -76,7 +80,8 @@
     {#if ontrash}<Button size="sm" tone="danger" disabled={trashDisabled} onclick={ontrash}>Move to trash</Button>{/if}
     {#if oncsv}<Button size="sm" onclick={oncsv}>Export page CSV</Button>{/if}
     {#if onreport}<Button size="sm" onclick={onreport}>Report selected documents</Button>{/if}
-    {#if onexport}<Button size="sm" onclick={onexport}>Export selection</Button>{/if}
+    {#if onexport}<Button size="sm" disabled={exportDisabled} onclick={onexport}>Export selection</Button>{/if}
+    {#if exportHelp}<span>{exportHelp}</span>{/if}
     {#if context === "snapshot" && onexportquery}<Button size="sm" onclick={onexportquery}>Export frozen query</Button>{/if}
   </div>
 </BottomDock>

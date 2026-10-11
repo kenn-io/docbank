@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"net/http"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -12,6 +14,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document/bundle"
+	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -72,6 +76,20 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		}
 		var resolver func(context.Context) ([]bundle.Member, error)
 		var queryFingerprint string
+		if request.Kind == "photos" && request.Photos != nil {
+			seen := make(map[string]bool, len(request.Photos.AssetIDs))
+			for _, id := range request.Photos.AssetIDs {
+				if seen[id] {
+					return nil, NewError(400, "validation", "duplicate photo asset ID "+id)
+				}
+				seen[id] = true
+			}
+			resolver = func(ctx context.Context) ([]bundle.Member, error) {
+				members, identity, err := d.Store.ResolvePhotoExportMembers(ctx, *request.Photos)
+				queryFingerprint = identity
+				return members, err
+			}
+		}
 		if request.Kind == "mailbox_collection" {
 			// Mailbox imports are vault-scoped and already readable by this
 			// authenticated session. The resulting source/plan remains private
@@ -124,6 +142,9 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 			return err
 		})
 		if err != nil {
+			if _, ok := errors.AsType[*query.ExpressionError](err); ok {
+				return nil, workspaceQueryError(err)
+			}
 			return nil, exportProblem(err)
 		}
 		return &sourceOutput{Body: source}, nil
@@ -173,11 +194,25 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		if err != nil {
 			return nil, err
 		}
-		if err = json.Unmarshal(in.RawBody, &in.Body, json.RejectUnknownMembers(true)); err != nil {
+		if err = json.Unmarshal(in.RawBody, &in.Body, json.RejectUnknownMembers(true), json.WithUnmarshalers(json.UnmarshalFunc(func(raw []byte, profile *bundle.PhotoRenderProfile) error {
+			var fields map[string]jsontext.Value
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				return err
+			}
+			if quality, present := fields["quality"]; present && quality.Kind() == 'n' {
+				return bundle.ErrConflict
+			}
+			return json.Unmarshal(raw, profile, json.RejectUnknownMembers(true))
+		}))); err != nil {
 			return nil, NewError(400, "validation", "invalid export plan")
 		}
 		var p bundle.Plan
-		err = g.MutateContext(ctx, func() error { var err error; p, err = d.Store.CreateExportPlan(ctx, owner, in.Body); return err })
+		if in.Body.PhotoRender != nil {
+			p, err = processing.PreparePhotoExportPlan(ctx, d.Store, d.Blobs, filepath.Join(d.VaultRoot, "export-archives"), owner, in.Body, g.MutateContext)
+		} else {
+			err = g.MutateContext(ctx, func() error { var e error; p, e = d.Store.CreateExportPlan(ctx, owner, in.Body); return e })
+		}
+
 		if err != nil {
 			return nil, exportProblem(err)
 		}

@@ -39,6 +39,9 @@ func validateExportSource(r bundle.SourceRequest) error {
 		return bundle.ErrConflict
 	}
 	choices := 0
+	if r.Photos != nil {
+		choices++
+	}
 	if len(r.Members) > 0 {
 		choices++
 	}
@@ -64,6 +67,13 @@ func validateExportSource(r bundle.SourceRequest) error {
 		return bundle.ErrConflict
 	}
 	switch r.Kind {
+	case "photos":
+		if r.Photos == nil {
+			return bundle.ErrConflict
+		}
+		if len(r.Photos.AssetIDs) > bundle.MaxPhotoExportMembers {
+			return fmt.Errorf("%w: photo exports allow at most %d photos", bundle.ErrLimit, bundle.MaxPhotoExportMembers)
+		}
 	case "mailbox_collection":
 		if validateUUIDv4(r.CollectionID) != nil {
 			return bundle.ErrConflict
@@ -184,12 +194,8 @@ func (s *Store) createExportSource(ctx context.Context, owner string, r bundle.S
 		if exists {
 			return ErrNotFound
 		}
-		var count int
-		if e = tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM export_sources)+(SELECT count(*) FROM export_plans)`).Scan(&count); e != nil {
+		if e = checkExportPlanCapacity(ctx, tx); e != nil {
 			return e
-		}
-		if count >= 32 {
-			return bundle.ErrLimit
 		}
 		state := "resolving"
 		if r.Kind == "upload" {

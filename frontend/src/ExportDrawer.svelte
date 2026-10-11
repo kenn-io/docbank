@@ -1,21 +1,26 @@
 <script lang="ts">
   import { onDestroy, untrack, tick } from "svelte";
   import XIcon from "@lucide/svelte/icons/x";
-  import { Button, Card, Chip, CopyButton, DetailDrawer, IconButton, SelectDropdown, Spinner, TextInput } from "@kenn-io/kit-ui";
+  import { Button, Card, Checkbox, Chip, CopyButton, DetailDrawer, IconButton, SelectDropdown, Spinner, TextInput } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { ExportSession, type ExportInput, type ExportState } from "./exportState.js";
-  import { maxExportMembers, type RolePolicy, type ExportOptions } from "./exports.js";
+  import { maxExportMembers, maxPhotoExportMembers, type RolePolicy, type ExportOptions } from "./exports.js";
   import { formatBytes, formatDate } from "./format.js";
 
   interface Props { session: string; open: boolean; input: ExportInput | null; onclose: () => void; onauthfailure: (error: unknown) => void; onactivechange?: (active: boolean) => void }
   let { session, open, input, onclose, onauthfailure, onactivechange }: Props = $props();
   let view = $state<Readonly<ExportState>>({ status: "idle" });
+  let photoFormat = $state("jpeg"), quality = $state("90"), longEdge = $state("");
+  let includeMetadata = $state(true), removeGPS = $state(true);
+  const photo = $derived(input && "photos" in input);
+  const validPhotoSettings = $derived(/^\d+$/.test(quality) && +quality >= 1 && +quality <= 100 && (longEdge === "" || /^\d+$/.test(longEdge) && +longEdge >= 1 && +longEdge <= 100000));
   let basename = $state("docbank-bundle.zip");
   let original = $state("required"), text = $state("omit"), pages = $state("omit");
   let emailPDF = $state("omit"), attachments = $state("omit"), partial = $state("strict"), duplicates = $state("preserve"), packaging = $state("flat"), recipe = $state("");
   const controller = new ExportSession(untrack(() => session), next => view = next);
   let authFailureHandled = false;
   const options = [{ value: "omit", label: "Do not include" }, { value: "required", label: "Required — fail if unavailable" }, { value: "optional", label: "Optional — allow unavailable" }];
+  const memberLimit = $derived(photo ? maxPhotoExportMembers : maxExportMembers);
   const count = $derived(input ? ("members" in input ? input.members.length : "snapshot" in input ? input.snapshot.total : input.total) : 0);
   const recipeOptions = $derived([{ value: "", label: "Choose a retained recipe" }, ...(view.recipes ?? []).map(choice => ({ value: choice.recipe_sha256, label: `${choice.paper} · Chromium ${choice.renderer_version} · ${choice.messages}/${count} messages${choice.ambiguous ? ` · ${choice.ambiguous} ambiguous` : ""}` }))]);
   const busy = $derived(["preparing", "starting", "running"].includes(view.status));
@@ -37,9 +42,13 @@
       if (attachments === "pdf") policies.push({ role: "attachment_pdf", recipe_sha256: recipe, ...optional });
     }
     const planOptions: ExportOptions = {
-      ...(duplicates === "preserve" ? {} : { duplicate_policy: "collapse_exact_content" }),
-      ...(packaging === "flat" ? {} : { volume_limits: { roles: packaging === "one" ? 1 : 1000, role_bytes: 512 * 2 ** 20 } }),
+      ...(!photo && duplicates !== "preserve" ? { duplicate_policy: "collapse_exact_content" } : {}),
+      ...(!photo && packaging !== "flat" ? { volume_limits: { roles: packaging === "one" ? 1 : 1000, role_bytes: 512 * 2 ** 20 } } : {}),
     };
+    if (current && "photos" in current) {
+      policies.splice(0, policies.length, { role: "photo_rendered" });
+      planOptions.photo_render = { format: photoFormat, quality: Number(quality), long_edge: longEdge === "" ? 0 : Number(longEdge), include_metadata: includeMetadata, remove_gps: removeGPS };
+    }
     if (current) untrack(() => controller.choose(current, policies, planOptions));
   });
   $effect(() => {
@@ -63,32 +72,43 @@
   <DetailDrawer width="min(760px, 100vw)" ariaLabel="Verified export" onclose={close}>
     {#snippet header()}
       <div class="drawer-heading">
-        <div><span>Document export</span><strong>Preview and download</strong><small>Exact versions · verified ZIP archive</small></div>
+        <div><span>{photo ? "Photo export" : "Document export"}</span><strong>Preview and download</strong><small>Exact versions · verified ZIP archive</small></div>
         <IconButton size="sm" ariaLabel="Close export" onclick={close}><XIcon size="16" aria-hidden="true" /></IconButton>
       </div>
     {/snippet}
     <div class="exports">
       <section class="source" aria-label="Export source">
         <span>Source</span><strong>{admitted?.label ?? input?.label ?? "No source selected"}</strong>
-        <p>{(admitted?.plan.total ?? count).toLocaleString()} exact document{(admitted?.plan.total ?? count) === 1 ? "" : "s"}</p>
+        <p>{(plan?.total ?? count).toLocaleString()} {photo ? "photo" : "exact document"}{(plan?.total ?? count) === 1 ? "" : "s"}</p>
         {#if !admitted && input && "snapshot" in input}<p>All frozen pages are copied and checked before planning. Changes to the live query do not change this source.</p>{/if}
         {#if !admitted && input && "collectionID" in input}<p>Completed import receipts freeze the original imported versions. Later edits and changes to the live collection do not change this source.</p>{/if}
-        {#if count > maxExportMembers}<p class="error">Exports are limited to 100,000 documents. Refine the query and capture a new snapshot.</p>{/if}
+        {#if count > memberLimit}<p class="error">Choose at most {memberLimit.toLocaleString()} {photo ? "photos" : "documents"}.</p>{/if}
       </section>
 
       <section class="choices" aria-label="Download settings">
         <label for="export-basename">Downloaded ZIP filename</label>
         <TextInput id="export-basename" ariaLabel="Downloaded ZIP filename" bind:value={basename} block />
-        <p>Changing the filename does not change the reviewed files or require another preview.</p>
+        {#if !photo}<p>Changing the filename does not change the reviewed files or require another preview.</p>{/if}
       </section>
 
       {#if !admitted}
         <section class="choices" aria-label="Export choices">
+          {#if photo}
+            <div class="role-choice"><strong>Format</strong><SelectDropdown title="Photo format" value={photoFormat} options={[{ value: "jpeg", label: "JPEG" }, { value: "png", label: "PNG" }]} onchange={value => { photoFormat = value; if (value === "png") quality = "90"; }} /></div>
+            {#if photoFormat === "jpeg"}<label for="photo-export-quality">JPEG quality, 1–100</label><TextInput id="photo-export-quality" ariaLabel="JPEG quality" bind:value={quality} block />{/if}
+            <label for="photo-export-edge">Long edge, pixels</label><TextInput id="photo-export-edge" ariaLabel="Long edge, pixels" bind:value={longEdge} placeholder="Original size" block />
+            <p>Blank keeps the original size. Smaller originals keep their size. Up to 16 photos, each at most 100 million pixels.</p>
+            <p>JPEG, PNG, GIF and static WebP; embedded JPEG previews from ARW, DNG, CR2, NEF and RAF.</p>
+            <Checkbox label="Include image metadata" checked={includeMetadata} onchange={checked => includeMetadata = checked} />
+            <Checkbox label="Remove GPS" checked={removeGPS} disabled={!includeMetadata} onchange={checked => removeGPS = checked} />
+            <p>The ZIP retains original filenames, vault paths and source hashes. Color profiles stay attached to preserve appearance.</p>
+            <Button tone="info" disabled={busy || count === 0 || count > memberLimit || !validPhotoSettings} onclick={() => void controller.preview()}>{view.status === "preparing" ? "Preparing…" : "Prepare"}</Button>
+          {:else}
           <div class="role-choice"><strong>Email body PDFs</strong><SelectDropdown title="Email body PDF" value={emailPDF} options={[{ value: "omit", label: "Do not include" }, { value: "include", label: "Include retained body PDFs" }]} onchange={value => { emailPDF = value; if (value === "include") { original = "omit"; packaging = "bounded"; } }} /></div>
           {#if emailPDF !== "omit"}
             <div class="email-choices">
               <p>Each body stays a separate verified PDF. Choose a qualified retained recipe; this export does not render missing PDFs or concatenate attachments.</p>
-              <Button disabled={busy || count === 0 || count > maxExportMembers} onclick={() => void findRecipes()}>Find retained PDF recipes</Button>
+              <Button disabled={busy || count === 0 || count > memberLimit} onclick={() => void findRecipes()}>Find retained PDF recipes</Button>
               {#if view.recipes}
                 {#if view.recipes.length}<SelectDropdown title="Retained PDF recipe" value={recipe} options={recipeOptions} onchange={value => recipe = value} />
                 {:else}<p>No qualified retained body PDF recipe was found. Generate the message PDFs first, then find recipes again.</p>{/if}
@@ -127,26 +147,28 @@
           <p>Sharing is explicit and keeps every occurrence in the manifest. Equal subjects or Message-ID values never establish a duplicate.</p>
           <div class="role-choice"><strong>ZIP packaging</strong><SelectDropdown title="ZIP packaging" value={packaging} options={[{ value: "flat", label: "Single flat archive" }, { value: "bounded", label: "Up to 1,000 outputs / 512 MiB per volume" }, { value: "one", label: "One output / 512 MiB per volume" }]} onchange={value => packaging = value} /></div>
           {#if packaging !== "flat"}<p>One browser download contains numbered ZIP volumes and a complete parent manifest. No output is split; an output over 512 MiB stops planning.</p>{/if}
-          <Button tone="info" disabled={busy || count === 0 || count > maxExportMembers || [original, text, pages, emailPDF].every(value => value === "omit") || emailPDF !== "omit" && !recipe} onclick={() => void controller.preview()}>
+          <Button tone="info" disabled={busy || count === 0 || count > memberLimit || [original, text, pages, emailPDF].every(value => value === "omit") || emailPDF !== "omit" && !recipe} onclick={() => void controller.preview()}>
             {view.status === "preparing" ? "Copying source and freezing plan…" : "Preview export"}
           </Button>
+          {/if}
         </section>
       {/if}
 
-      <aside class="original-note">Originals are not redacted or sanitized by annotation overlays. Original file bytes remain unchanged.</aside>
+      {#if !photo}<aside class="original-note">Originals are not redacted or sanitized by annotation overlays. Original file bytes remain unchanged.</aside>{/if}
 
       {#if view.error}<p role="alert" class="error">{view.error.message}</p>
         {#if !admitted}<Button onclick={() => controller.resetPreparation()}>Start over</Button>{/if}
       {/if}
-      {#if view.status === "preparing"}<div role="status"><Spinner size={16} /> Checking exact membership and retained roles…</div>{/if}
+      {#if view.status === "preparing"}<div role="status"><Spinner size={16} /> {photo ? "Rendering photos…" : "Checking exact membership and retained roles…"}</div><Button onclick={() => controller.cancelPreparation()}>Cancel preparation</Button>{/if}
       {#if view.status === "expired"}<p role="status">Export authority expired. A fresh preview is required before starting another export.</p>{/if}
 
       {#if plan}
         <Card level="default" padding="sm" title={admitted ? "Admitted export plan" : "Review this frozen plan"}>
           <dl>
-            <div><dt>Documents</dt><dd data-testid="export-total">{plan.total.toLocaleString()}</dd></div>
+            <div><dt>{plan.photo_render ? "Photos" : "Documents"}</dt><dd data-testid="export-total">{plan.total.toLocaleString()}</dd></div>
+            {#if plan.photo_render}<div><dt>Photo format</dt><dd>{plan.photo_render.format.toUpperCase()} · {plan.photo_render.long_edge || "Original"} pixels</dd></div><div><dt>Embedded RAW previews</dt><dd>{plan.embedded_previews ?? 0}</dd></div>{/if}
             <div><dt>Role bytes</dt><dd>{formatBytes(plan.role_bytes)} · {plan.role_entries.toLocaleString()} files</dd></div>
-            {#if plan.counts}
+            {#if plan.counts && !plan.photo_render}
               <div><dt>Message occurrences</dt><dd data-testid="export-message-count">{plan.counts.messages.toLocaleString()}</dd></div>
               <div><dt>Attachment occurrences</dt><dd data-testid="export-attachment-count">{plan.counts.attachments.toLocaleString()}</dd></div>
               <div><dt>Separate PDFs</dt><dd>{plan.counts.email_pdfs} bodies · {plan.counts.attachment_pdfs} attachments</dd></div>
@@ -206,12 +228,12 @@
           {#if receipt}
             <dl><div><dt>Final ZIP size</dt><dd data-testid="export-archive-size" data-bytes={receipt.size} title={`${receipt.size.toLocaleString()} bytes`}>{formatBytes(receipt.size)}</dd></div><div><dt>Archive entries</dt><dd>{receipt.entries.toLocaleString()}</dd></div></dl>
             <div class="identity"><span>Archive SHA-256</span><code data-testid="export-archive-hash">{receipt.sha256}</code><CopyButton text={receipt.sha256} ariaLabel="Copy archive hash" /></div>
-            <Button tone="info" disabled={view.downloading || view.status === "expired"} onclick={() => void controller.download(basename)}>{view.downloading ? "Reverifying download…" : "Download verified ZIP"}</Button>
+            <Button tone="info" disabled={view.downloading || view.releasing || view.status === "expired"} onclick={() => void controller.download(basename)}>{view.downloading ? "Reverifying download…" : "Download verified ZIP"}</Button>
             <p>{view.downloadOffered ? "Download handed to your browser. Check its download list for completion." : "Docbank verified the server archive. Your browser handles the download; its completion is separate."}</p>
           {/if}
           <div class="actions">
             {#if !terminal}<Button disabled={view.status === "starting"} onclick={() => void controller.reconnect()}>Reconnect to same export</Button><Button onclick={() => void controller.cancel()}>Cancel export</Button>{/if}
-            {#if terminal}<Button onclick={() => controller.clearFinished()}>Prepare another export</Button>{/if}
+            {#if terminal}<Button disabled={view.releasing} onclick={() => void controller.clearFinished()}>Prepare another export</Button>{/if}
           </div>
           <p>Closing this drawer stops progress readers. It does not cancel the server job. Reopen in this browser session to reconnect.</p>
         </section>

@@ -73,13 +73,19 @@ func TestExportInspectionRetainedHeaderFields(t *testing.T) {
 		}, Counts: &bundle.OutputCounts{Messages: 1, Attachments: 1, Unavailable: 5,
 			UnavailableInventories: 1}, DuplicatePolicy: "collapse_exact_content",
 	}
-	for _, kind := range []string{"saved_query", "mailbox_collection", "query", "snapshot"} {
+	for _, kind := range []string{"saved_query", "mailbox_collection", "query", "snapshot", "photos"} {
 		t.Run(kind, func(t *testing.T) {
 			selected := plan
 			selected.Source.Kind = kind
 			if kind != "saved_query" {
 				selected.Source.SavedQueryID = ""
 				selected.Source.SavedQueryRevision = 0
+			}
+			if kind == "photos" {
+				selected.PhotoRender = &bundle.PhotoRenderProfile{Format: "png", LongEdge: 256, IncludeMetadata: true, RemoveGPS: true}
+				selected.EmbeddedPreviews = 1
+				selected.Roles = []bundle.RolePolicy{{Role: "photo_rendered"}}
+				selected.Counts = nil
 			}
 			if kind == "mailbox_collection" {
 				selected.Source.CollectionID = testVersionID

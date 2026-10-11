@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/document/bundle"
@@ -21,17 +22,25 @@ var (
 
 var exportCmd = &cobra.Command{
 	Use:   "export",
-	Short: "Export exact original versions as verified ZIP bundles",
+	Short: "Export originals or rendered photos as verified ZIP bundles",
 }
 
 var exportPreviewCmd = &cobra.Command{
 	Use:   "preview --request selection.json",
-	Short: "Freeze and review up to 1,000 exact original versions",
+	Short: "Review up to 1,000 original versions or 16 rendered photos",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		request, err := readExportRequest(exportRequestPath)
 		if err != nil {
 			return err
+		}
+		kind := "explicit"
+		if request.Photos != nil {
+			kind = "photos"
+		}
+		role := "original"
+		if request.PhotoRender != nil {
+			role = "photo_rendered"
 		}
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -39,7 +48,7 @@ var exportPreviewCmd = &cobra.Command{
 		}
 		source, err := connection.API().CreateExportSource(cmd.Context(),
 			&apiclient.CreateExportSourceRequestOptions{Body: &bundle.SourceRequest{
-				OperationID: request.SourceOperationID, Kind: "explicit", Members: request.Members,
+				OperationID: request.SourceOperationID, Kind: kind, Members: request.Members, Photos: request.Photos,
 			}})
 		if err != nil {
 			return err
@@ -47,7 +56,7 @@ var exportPreviewCmd = &cobra.Command{
 		plan, err := connection.API().CreateExportPlan(cmd.Context(),
 			&apiclient.CreateExportPlanRequestOptions{Body: &bundle.PlanRequest{
 				OperationID: request.PlanOperationID, SourceID: source.ID,
-				MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "original"}},
+				MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: role}}, PhotoRender: request.PhotoRender,
 			}})
 		if err != nil {
 			return err
@@ -55,18 +64,26 @@ var exportPreviewCmd = &cobra.Command{
 		if exportJSON {
 			return writeCLIJSON(cmd.OutOrStdout(), plan)
 		}
-		_, err = fmt.Fprintf(cmd.OutOrStdout(),
-			"plan %s\nsource %s\nmember hash %s\nfingerprint %s\n"+
-				"planned contents: %d document versions, %d original bytes, %d metadata bytes\n"+
-				"admission expires %s\n"+
-				"Original contents are included without redaction or sanitization.\n",
-			plan.ID, plan.Source.ID, plan.Source.MemberHash, plan.Fingerprint,
-			plan.Total, plan.RoleBytes, plan.MetadataBytes, plan.ExpiresAt)
-		if err != nil {
-			return fmt.Errorf("writing export preview: %w", err)
-		}
-		return nil
+		return writeExportPreview(cmd.OutOrStdout(), *plan)
 	},
+}
+
+func writeExportPreview(w io.Writer, plan bundle.Plan) error {
+	note := "Original contents are included without redaction or sanitization."
+	byteLabel, memberLabel := "original bytes", "document versions"
+	if p := plan.PhotoRender; p != nil {
+		byteLabel, memberLabel = "output bytes", "photos"
+		quality := ""
+		if p.Format == "jpeg" {
+			quality = fmt.Sprintf(", quality %d", p.Quality)
+		}
+		note = fmt.Sprintf("photo format %s%s, long edge %d pixels (0 keeps original size), metadata %t, remove GPS %t\nembedded RAW previews %d", p.Format, quality, p.LongEdge, p.IncludeMetadata, p.RemoveGPS, plan.EmbeddedPreviews)
+	}
+	_, err := fmt.Fprintf(w, "plan %s\nsource %s\nmember hash %s\nfingerprint %s\nplanned contents: %d %s, %d %s, %d metadata bytes\nadmission expires %s\n%s\n", plan.ID, plan.Source.ID, plan.Source.MemberHash, plan.Fingerprint, plan.Total, memberLabel, plan.RoleBytes, byteLabel, plan.MetadataBytes, plan.ExpiresAt, note)
+	if err != nil {
+		return fmt.Errorf("writing export preview: %w", err)
+	}
+	return nil
 }
 
 var exportStartCmd = &cobra.Command{
@@ -224,7 +241,7 @@ func init() {
 	exportCmd.PersistentFlags().BoolVar(&exportJSON, "json", false, "Write the result as JSON")
 	exportPreviewCmd.Flags().StringVar(
 		&exportRequestPath, "request", "",
-		"Explicit document-version request JSON file (at most 1 MiB)",
+		"Original-version or photo-scope request JSON file (at most 1 MiB)",
 	)
 	exportStartCmd.Flags().StringVar(
 		&exportFingerprint, "fingerprint", "", "Reviewed plan fingerprint",

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { copyExportMembers, sealExportSource, parseExportJob, parseExportPlan, parseExportPreview, readExportEvents, exportTicket, safeExportBasename } from "./exports.js";
+import { copyExportMembers, sealExportSource, parseExportJob, parseExportPlan, parseExportPreview, readExportEvents, exportTicket, safeExportBasename, validateExportOptions, sealPhotoExportSource } from "./exports.js";
 import { snapshotMemberHash } from "./snapshots.js";
 
 const id = "11111111-1111-4111-8111-111111111111";
@@ -139,4 +139,28 @@ it("sends an explicit attachment set without requiring the plan header to echo i
   });
   await expect(createExportPlan("s", source, plan.roles, planID, new AbortController().signal, { publications })).resolves.toHaveProperty("plan.id", planID);
   expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+
+it("binds rendered photo profiles and RAW counts to the reviewed plan", async () => {
+  const photoSource = { ...source, kind: "photos" };
+  const profile = { format: "jpeg", quality: 90, long_edge: 2048, include_metadata: true, remove_gps: true };
+  const photoPlan = { ...plan, source: photoSource, roles: [{ role: "photo_rendered" }], photo_render: profile };
+  expect(parseExportPlan(photoPlan, photoSource, photoPlan.roles, planID, { photo_render: profile }).photo_render).toEqual(profile);
+  expect(() => parseExportPlan({ ...photoPlan, photo_render: { ...profile, remove_gps: false } }, photoSource, photoPlan.roles, planID, { photo_render: profile })).toThrow();
+  expect(() => validateExportOptions({ photo_render: { ...profile, quality: 0 } })).toThrow();
+  expect(validateExportOptions({ photo_render: { ...profile, format: "png", quality: 90 } }).photo_render?.quality).toBe(0);
+  const { quality, ...pngProfile } = { ...profile, format: "png" };
+  expect(validateExportOptions({ photo_render: pngProfile }).photo_render?.quality).toBe(0);
+  // @ts-expect-error Runtime JSON can contain null.
+  expect(() => validateExportOptions({ photo_render: { ...pngProfile, quality: null } })).toThrow();
+  expect(() => validateExportOptions({ photo_render: { ...profile, long_edge: -1 } })).toThrow();
+  const selection = { query: { filters: {}, v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "name", direction: "asc" } }, hidden: false, asset_ids: [id] };
+  const fetcher = vi.spyOn(globalThis, "fetch").mockResolvedValue(response(photoSource));
+  expect((await sealPhotoExportSource("session", selection, id, new AbortController().signal)).kind).toBe("photos");
+  expect(JSON.parse(String(fetcher.mock.calls[0]![1]!.body))).toEqual({ operation_id: id, kind: "photos", photos: selection });
+  const { createExportPlan } = await import("./exports.js");
+  fetcher.mockClear().mockImplementation(async () => new Response(JSON.stringify({ code: "export_timeout", detail: "Photo preparation timed out" }), { status: 504 }));
+  await expect(createExportPlan("session", photoSource, photoPlan.roles, planID, new AbortController().signal, { photo_render: profile })).rejects.toMatchObject({ code: "export_timeout" });
+  expect(fetcher).toHaveBeenCalledTimes(1);
 });

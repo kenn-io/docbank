@@ -7,9 +7,12 @@
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
   import PhotoGrid from "./PhotoGrid.svelte";
+  import { photoQuery } from "./photos.svelte.js";
+  import type { ExportInput } from "./exportState.js";
+  import { maxPhotoExportMembers } from "./exports.js";
   import SelectionDock from "./SelectionDock.svelte";
 
-  let { photos, cache, title = "Library", ontrashed, onhidden, onactionerror }: { photos: Photos; cache: PhotoPreviewCache; title?: string; ontrashed?: () => void; onhidden?: () => void; onactionerror?: (error: string) => void } = $props();
+  let { photos, cache, title = "Library", ontrashed, onhidden, onactionerror, onexport }: { photos: Photos; cache: PhotoPreviewCache; title?: string; ontrashed?: () => void; onhidden?: () => void; onactionerror?: (error: string) => void; onexport?: (input: ExportInput) => void } = $props();
   let trashOpen = $state(false);
   let grid = $state<{ preservePosition: () => (() => Promise<void>); restoreScrollTop: (top: number) => Promise<void> }>();
   const preserve = () => grid?.preservePosition();
@@ -18,6 +21,10 @@
     if (photos.hiding || photos.trashing) return;
     onactionerror?.("");
     await photos.setHidden(id, preserve, onhidden, onactionerror);
+  }
+  function exportPhotos(selected = false): void {
+    const ids = selected ? [...photos.selection.selectedIDs] : [];
+    onexport?.({ label: selected ? "Selected photos" : title, photos: { query: photoQuery, asset_ids: ids, hidden: photos.hidden }, total: selected ? ids.length : photos.total });
   }
   const groups = $derived(groupPhotos(photos.items, photos.grouping));
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));
@@ -48,9 +55,11 @@
         <SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => relayout(() => photos.grouping = value as "months" | "sessions")} />
         <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => relayout(() => photos.setDensity(value as Density))} />
       </div>
+      <Button size="sm" disabled={photos.loading || photos.total === 0 || photos.total > maxPhotoExportMembers} onclick={() => exportPhotos()}>Export photos</Button>
       <Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing} onclick={() => void photos.refresh(preserve)}>Refresh previews</Button>
     </div>
   </div>
+  {#if photos.total > maxPhotoExportMembers}<p class="photo-export-limit">Select up to {maxPhotoExportMembers} photos to export.</p>{/if}
   {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
   {#if photos.error}
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
@@ -63,7 +72,7 @@
     </EmptyState>
   {/if}
   <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
-  <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.hiding || photos.loading} />
+  <SelectionDock exportDisabled={photos.selection.selectedIDs.size > maxPhotoExportMembers} exportHelp={photos.selection.selectedIDs.size > maxPhotoExportMembers ? `Select up to ${maxPhotoExportMembers} photos to export. Clear the selection to choose fewer photos.` : ""} onexport={() => exportPhotos(true)} context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.hiding || photos.loading} />
 </main>
 
 {#if trashOpen}
@@ -84,5 +93,6 @@
   .library-title span { font-size: var(--font-size-xs); color: var(--text-muted); }
   .photo-options { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .photo-error { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-5); color: var(--text-primary); background: var(--bg-inset); }
+  .photo-export-limit { margin: 0; padding: var(--space-2) var(--space-5); font-size: var(--font-size-sm); color: var(--text-muted); }
   .photo-loading { height: 38px; flex-shrink: 0; display: flex; gap: var(--space-2); align-items: center; justify-content: center; padding: var(--space-2); color: var(--text-muted); font-size: var(--font-size-sm); }
 </style>

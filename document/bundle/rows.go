@@ -27,6 +27,7 @@ type RowValidator struct {
 	paths                   map[string]bool
 	volumes                 VolumeCursor
 	duplicates              DuplicateCursor
+	embeddedPreviews        int
 }
 
 func (v *RowValidator) finishParent() error {
@@ -75,6 +76,11 @@ func (v *RowValidator) Add(d Document) error {
 		}
 		v.parent, v.children, v.paths = d, 0, map[string]bool{}
 		v.members++
+		embedded, err := validatePhotoRoles(v.Plan, d)
+		if err != nil {
+			return err
+		}
+		v.embeddedPreviews += embedded
 		if err := ValidateEmailPDFRoles(v.Plan, d); err != nil {
 			return err
 		}
@@ -174,7 +180,7 @@ func (v *RowValidator) Add(d Document) error {
 }
 
 func (v *RowValidator) Finish() error {
-	if v.rows != v.Plan.Rows() || v.members != v.Plan.Total || v.volumes.Index != v.Plan.Volumes || v.Plan.Counts != nil && v.Counts != *v.Plan.Counts {
+	if v.embeddedPreviews != v.Plan.EmbeddedPreviews || v.rows != v.Plan.Rows() || v.members != v.Plan.Total || v.volumes.Index != v.Plan.Volumes || v.Plan.Counts != nil && v.Counts != *v.Plan.Counts {
 		return ErrConflict
 	}
 	return v.finishParent()

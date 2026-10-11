@@ -79,6 +79,8 @@ not substitutes for the complete public image set.
 
 The 10,000-photo grid proof uses `DOCBANK_PHOTOS_SCREENSHOT_DIR`. It creates a synthetic vault and checks paging, selection, retained previews, recovery, and bounded image URLs. It runs separately from ordinary screenshot publication.
 
+`DOCBANK_PHOTO_EXPORT_SCREENSHOT_DIR` enables `photo-export.screenshot.ts`, which exports selected JPEGs and a complete-scope PNG archive through real verified downloads. Set `DOCBANK_SCREENSHOT_SCALE` to the host display scale; `DOCBANK_KEEP_PHOTO_EXPORT_PREVIEW=1` retains its synthetic server and writes the preview URL beside the captures.
+
 ## Report and original-export qualification
 
 Run the combined browser workflow from the repository root:

@@ -1,16 +1,16 @@
 import { APIError } from "./api-transport.js";
-import { cancelWebDownload } from "./generated/docbank.js";
+import { cancelWebDownload, releaseExportJob, type PhotoExportSelection } from "./generated/docbank.js";
 import { captureSnapshotTargets, type SnapshotPage } from "./snapshots.js";
 import {
   assertExportAdvance, cancelExportJob, copyExportMembers, createExportPlan,
   exportExpired, exportTicket, getExportJob, maxExportMembers, exportEmailPDFRecipes, exportOutputProblems, exportAttachmentPublications,
   offerExportDownload, readExportEvents, sealExportSource,
-  startExportJob, validateRolePolicies, validateExportOptions, sealMailboxExportSource,
+  sealPhotoExportSource, startExportJob, validateRolePolicies, validateExportOptions, sealMailboxExportSource,
   type ExportJob, type ExportMember, type ExportPlan, type ExportPreview,
   type ExportSource, type RolePolicy, type ExportOptions, type EmailPDFRecipeChoice, type OutputProblems, type AttachmentPublications,
 } from "./exports.js";
 
-export type ExportInput = { label: string; members: readonly ExportMember[] } | { label: string; snapshot: SnapshotPage } | { label: string; collectionID: string; total: number };
+export type ExportInput = { label: string; photos: PhotoExportSelection; total: number } | { label: string; members: readonly ExportMember[] } | { label: string; snapshot: SnapshotPage } | { label: string; collectionID: string; total: number };
 export interface ReviewedExport { plan: ExportPlan; preview: ExportPreview; label: string }
 export interface ActiveExport { plan: ExportPlan; label: string; id: string; job?: ExportJob }
 export interface ExportState {
@@ -21,6 +21,7 @@ export interface ExportState {
   gap?: boolean;
   downloadOffered?: boolean;
   downloading?: boolean;
+  releasing?: boolean;
   recipes?: EmailPDFRecipeChoice[];
   publications?: AttachmentPublications;
   publicationSelections?: Record<string, string>;
@@ -52,7 +53,7 @@ export class ExportSession {
     this.stop();
     // Snapshot DTOs contain JSON data. Copy through JSON so reactive browser
     // proxies cannot fail structuredClone or remain mutable through the caller.
-    const copied = "members" in input ? { ...input, members: input.members.map(m => ({ ...m })) } : "snapshot" in input ? { ...input, snapshot: JSON.parse(JSON.stringify(input.snapshot)) as SnapshotPage } : { ...input };
+    const copied = "members" in input ? { ...input, members: input.members.map(m => ({ ...m })) } : "snapshot" in input ? { ...input, snapshot: JSON.parse(JSON.stringify(input.snapshot)) as SnapshotPage } : JSON.parse(JSON.stringify(input)) as ExportInput;
     const changed = JSON.stringify(copied) !== JSON.stringify(this.input);
     this.input = copied;
     this.policies = policies.map(p => ({ ...p }));
@@ -99,6 +100,11 @@ export class ExportSession {
       this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
     }
     if (this.source) return this.source;
+    if ("photos" in input) {
+      const source = await sealPhotoExportSource(this.session, input.photos, this.sourceID, started.signal);
+      if (!this.current(started.generation)) return;
+      return this.source = source;
+    }
     if ("collectionID" in input) {
       const source = await sealMailboxExportSource(this.session, input.collectionID, input.total, this.sourceID, started.signal);
       if (!this.current(started.generation)) return;
@@ -240,20 +246,39 @@ export class ExportSession {
     }
   }
 
+  cancelPreparation(): void {
+    if (this.state.status !== "preparing" || this.state.active) return;
+    this.stop(); this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
+    this.emit({ status: "idle" });
+  }
+
   close(): void {
     this.stop();
     const active = this.state.active;
-    this.emit({ ...this.state, downloading: false, ...(active && (!active.job || ["queued", "running"].includes(active.job.state)) ? { status: "disconnected" } : {}) });
+    this.emit({ ...this.state, downloading: false, releasing: false, ...(!active && this.state.status === "preparing" ? { status: "idle" as const } : {}), ...(active && (!active.job || ["queued", "running"].includes(active.job.state)) ? { status: "disconnected" } : {}) });
   }
   resetPreparation(): void {
     if (this.disposed || this.state.active) return;
     this.stop(); this.members = undefined; this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
     this.emit({ status: "idle" });
   }
-  clearFinished(): void {
-    if (!this.state.active?.job || !["completed", "canceled", "failed"].includes(this.state.active.job.state)) return;
-    this.stop(); this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
-    this.emit({ status: "idle" });
+  async clearFinished(): Promise<void> {
+    const active = this.state.active;
+    if (!active?.job || !["completed", "canceled", "failed"].includes(active.job.state) || this.state.releasing) return;
+    const started = this.begin();
+    this.emit({ ...this.state, releasing: true, error: undefined });
+    try {
+      await releaseExportJob(active.id, { session: this.session, signal: started.signal }).catch(error => {
+        if (!(error instanceof APIError && error.status === 404)) throw error;
+      });
+      if (!this.current(started.generation)) return;
+      this.stop(); this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
+      this.emit({ status: "idle" });
+    } catch (error) {
+      if (error instanceof APIError && error.status === 409 && error.code === "export_retained") {
+        if (this.current(started.generation)) this.emit({ ...this.state, releasing: false, error: new Error("Your browser is still downloading this export. Choose Prepare another export again once the download finishes.") });
+      } else this.fail(started.generation, error);
+    }
   }
   dispose(): void { this.close(); this.disposed = true; }
 
@@ -295,13 +320,14 @@ export class ExportSession {
   private fail(generation: number, cause: unknown, disconnected = false): void {
     if (!this.current(generation)) return;
     const error = cause instanceof Error ? cause : new Error("Export request failed.");
-    this.emit({ ...this.state, downloading: false, status: error instanceof APIError && error.status === 410 ? "expired" : disconnected && this.state.active ? "disconnected" : "error", error });
+    this.emit({ ...this.state, downloading: false, releasing: false, status: error instanceof APIError && error.status === 410 ? "expired" : disconnected && this.state.active ? "disconnected" : "error", error });
   }
   private begin(): { generation: number; signal: AbortSignal } {
     this.stop(); this.controller = new AbortController();
     return { generation: this.generation, signal: this.controller.signal };
   }
   private stop(): void {
+    if (this.state.status === "preparing" && !this.source && !this.state.active) this.sourceID = crypto.randomUUID();
     this.generation++; this.controller?.abort(); this.controller = undefined;
     this.problemsController?.abort(); this.problemsController = undefined;
     if (this.state.problemsLoading) this.emit({ ...this.state, problemsLoading: false });

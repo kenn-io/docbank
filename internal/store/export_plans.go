@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/jsontext"
@@ -27,6 +28,7 @@ func validateExportPolicies(roles []bundle.RolePolicy) error {
 		}
 		seen[p.Role] = true
 		switch p.Role {
+		case "photo_rendered":
 		case "original", "attachment_original":
 			if p.ProfileFingerprint != "" || p.RecipeSHA256 != "" {
 				return bundle.ErrConflict
@@ -90,59 +92,42 @@ func (s *Store) ExportPlan(ctx context.Context, owner, id string) (bundle.Plan, 
 }
 
 func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.PlanRequest) (bundle.Plan, error) {
-	if owner == "" || validateUUIDv4(r.OperationID) != nil || validateUUIDv4(r.SourceID) != nil || !canonical.IsSHA256Hex(r.MemberHash) {
-		return bundle.Plan{}, bundle.ErrConflict
+	return s.createExportPlan(ctx, owner, r, nil)
+}
+
+func replayExportPlan(ctx context.Context, q metadataQuerier, owner, id, digest string) (bundle.Plan, bool, error) {
+	var oldOwner, oldDigest string
+	err := q.QueryRowContext(ctx, `SELECT owner,request_sha256 FROM export_plans WHERE id=?`, id).Scan(&oldOwner, &oldDigest)
+	if err == nil && oldOwner != owner {
+		return bundle.Plan{}, false, ErrNotFound
 	}
-	if err := validateExportPolicies(r.Roles); err != nil {
-		return bundle.Plan{}, err
+	_, found, err := replayReceipt(oldDigest, err, digest == oldDigest, bundle.ErrConflict)
+	if err != nil || !found {
+		return bundle.Plan{}, found, err
 	}
-	publications := map[string]string{}
-	for _, p := range r.Publications {
-		if validateUUIDv4(p.VersionID) != nil || document.ValidateEmailDocumentOperationID(p.OperationID) != nil || publications[p.VersionID] != "" {
-			return bundle.Plan{}, bundle.ErrConflict
-		}
-		publications[p.VersionID] = p.OperationID
+	plan, err := loadExportPlan(ctx, q, id)
+	if err == nil && exportExpired(plan.ExpiresAt) {
+		err = bundle.ErrExpired
 	}
-	if len(publications) > bundle.ChunkMembers {
-		return bundle.Plan{}, bundle.ErrLimit
+	if err == nil && plan.Fingerprint == "" {
+		err = bundle.ErrConflict
 	}
-	if err := bundle.ValidateVolumeLimits(r.VolumeLimits); err != nil {
-		return bundle.Plan{}, err
-	}
-	if err := bundle.ValidateDuplicatePolicy(r.DuplicatePolicy); err != nil {
-		return bundle.Plan{}, err
-	}
-	request, err := canonical.Marshal(r)
+	return plan, true, err
+}
+
+func (s *Store) createExportPlan(ctx context.Context, owner string, r bundle.PlanRequest, prepared map[string]PreparedPhotoExport) (bundle.Plan, error) {
+	request, publications, err := validateExportPlanRequest(owner, &r)
 	if err != nil {
 		return bundle.Plan{}, err
-	}
-	if len(request) > 1<<20 {
-		return bundle.Plan{}, bundle.ErrLimit
 	}
 	digest := pageChecksum(request)
 	var plan bundle.Plan
 	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
-		var oldDigest, oldOwner string
-		e := tx.QueryRowContext(ctx, `SELECT owner,request_sha256 FROM export_plans WHERE id=?`, r.OperationID).Scan(&oldOwner, &oldDigest)
-		if e == nil && oldOwner != owner {
-			return ErrNotFound
-		}
-		_, found, e := replayReceipt(oldDigest, e, digest == oldDigest, bundle.ErrConflict)
-		if e != nil {
+		var found bool
+		var e error
+		plan, found, e = replayExportPlan(ctx, tx, owner, r.OperationID, digest)
+		if e != nil || found {
 			return e
-		}
-		if found {
-			plan, e = loadExportPlan(ctx, tx, r.OperationID)
-			if e != nil {
-				return e
-			}
-			if exportExpired(plan.ExpiresAt) {
-				return bundle.ErrExpired
-			}
-			if plan.Fingerprint == "" {
-				return bundle.ErrConflict
-			}
-			return nil
 		}
 		source, e := loadExportSource(ctx, tx, owner, r.SourceID)
 		if e != nil {
@@ -154,14 +139,10 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 		if source.State != "sealed" || source.MemberHash != r.MemberHash {
 			return bundle.ErrConflict
 		}
-		var count int
-		if e = tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM export_sources)+(SELECT count(*) FROM export_plans)`).Scan(&count); e != nil {
+		if e = checkExportPlanCapacity(ctx, tx); e != nil {
 			return e
 		}
-		if count >= 32 {
-			return bundle.ErrLimit
-		}
-		plan = bundle.Plan{Format: bundle.Format, ID: r.OperationID, VaultID: s.vaultID, Toolchain: runtime.Version(), Source: source, Roles: slices.Clone(r.Roles), Total: source.Total, CreatedAt: nowRFC3339(), ExpiresAt: exportDeadline(10 * time.Minute)}
+		plan = bundle.Plan{PhotoRender: r.PhotoRender, Format: bundle.Format, ID: r.OperationID, VaultID: s.vaultID, Toolchain: runtime.Version(), Source: source, Roles: slices.Clone(r.Roles), Total: source.Total, CreatedAt: nowRFC3339(), ExpiresAt: exportDeadline(10 * time.Minute)}
 		if r.VolumeLimits != nil {
 			plan.VolumeLimits = new(*r.VolumeLimits)
 		}
@@ -240,6 +221,40 @@ func (s *Store) CreateExportPlan(ctx context.Context, owner string, r bundle.Pla
 		err := walkExportMembers(ctx, tx, r.SourceID, func(m bundle.Member) error {
 			publication := publications[m.VersionID]
 			delete(publications, m.VersionID)
+			if r.PhotoRender != nil {
+				artifact, ok := prepared[m.VersionID]
+				if !ok {
+					return fmt.Errorf("%w: photo %d has no prepared output", bundle.ErrUnavailable, m.NodeID)
+				}
+				input, err := s.exportPhotoInput(ctx, tx, m)
+				if err != nil {
+					return err
+				}
+				frozen, err := canonical.Marshal(artifact.Input)
+				if err != nil {
+					return err
+				}
+				current, err := canonical.Marshal(input)
+				if err != nil || !bytes.Equal(current, frozen) || artifact.Receipt.Source != m || artifact.Receipt.Profile != *r.PhotoRender {
+					return fmt.Errorf("%w: photo %d changed during preparation", bundle.ErrConflict, m.NodeID)
+				}
+				if err = s.EnsureBlobTx(tx, artifact.SHA256, artifact.Size, artifact.Physical); err != nil {
+					return err
+				}
+				d, err := resolveExportDocument(ctx, tx, m, nil, "")
+				if err != nil {
+					return err
+				}
+				role, err := artifact.role()
+				if err != nil {
+					return err
+				}
+				d.Roles = []bundle.Role{role}
+				if artifact.Receipt.EmbeddedPreview {
+					plan.EmbeddedPreviews++
+				}
+				return write(d)
+			}
 			return resolveExportDocumentRows(ctx, tx, m, r.Roles, publication, write)
 		})
 		if err != nil {
@@ -518,4 +533,51 @@ func resolveExportPages(ctx context.Context, q metadataQuerier, m bundle.Member,
 		roles = append(roles, bundle.Role{Role: "pages", Status: "available", Path: fmt.Sprintf("%spages/%06d.png", base, page), SHA256: view.Image.SHA256, Size: view.Image.Size, MediaType: "image/png", Recipe: raw, Page: &view.Image})
 	}
 	return roles, d.Frames, nil
+}
+
+func checkExportPlanCapacity(ctx context.Context, q metadataQuerier) error {
+	var count int
+	if err := q.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM export_sources)+(SELECT count(*) FROM export_plans)`).Scan(&count); err != nil {
+		return err
+	}
+	if count >= 32 {
+		return bundle.ErrLimit
+	}
+	return nil
+}
+
+func validateExportPlanRequest(owner string, r *bundle.PlanRequest) ([]byte, map[string]string, error) {
+	if err := validatePhotoPlanRequest(r); err != nil {
+		return nil, nil, err
+	}
+	if owner == "" || validateUUIDv4(r.OperationID) != nil || validateUUIDv4(r.SourceID) != nil || !canonical.IsSHA256Hex(r.MemberHash) {
+		return nil, nil, bundle.ErrConflict
+	}
+	if err := validateExportPolicies(r.Roles); err != nil {
+		return nil, nil, err
+	}
+	publications := map[string]string{}
+	for _, p := range r.Publications {
+		if validateUUIDv4(p.VersionID) != nil || document.ValidateEmailDocumentOperationID(p.OperationID) != nil || publications[p.VersionID] != "" {
+			return nil, nil, bundle.ErrConflict
+		}
+		publications[p.VersionID] = p.OperationID
+	}
+	if len(publications) > bundle.ChunkMembers {
+		return nil, nil, bundle.ErrLimit
+	}
+	if err := bundle.ValidateVolumeLimits(r.VolumeLimits); err != nil {
+		return nil, nil, err
+	}
+	if err := bundle.ValidateDuplicatePolicy(r.DuplicatePolicy); err != nil {
+		return nil, nil, err
+	}
+	request, err := canonical.Marshal(r)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(request) > 1<<20 {
+		return nil, nil, bundle.ErrLimit
+	}
+	return request, publications, nil
 }
