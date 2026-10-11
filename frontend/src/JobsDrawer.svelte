@@ -56,8 +56,8 @@
     if (!quiet) {
       loading = true;
       actionError = "";
+      loadError = "";
     }
-    loadError = "";
     try {
       const next = await generated.listJobs({ session });
       if (request !== generation) return;
