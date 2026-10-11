@@ -6,11 +6,56 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/store"
 )
+
+func TestPhotoHiddenClientErrors(t *testing.T) {
+	deadline := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		code, retryAfter string
+		status           int
+		sentinel         error
+	}{
+		{code: "hidden_configured", status: http.StatusConflict, sentinel: store.ErrHiddenConfigured},
+		{code: "invalid_hidden_passcode", status: http.StatusUnprocessableEntity, sentinel: store.ErrInvalidHiddenPasscode},
+		{code: "hidden_lockout", status: http.StatusTooManyRequests, retryAfter: "300"},
+		{code: "hidden_lockout", status: http.StatusTooManyRequests, retryAfter: deadline.Format(http.TimeFormat)},
+		{code: "hidden_lockout", status: http.StatusTooManyRequests, retryAfter: "invalid"},
+	} {
+		t.Run(test.code+test.retryAfter, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.Header().Set("Retry-After", test.retryAfter)
+				w.WriteHeader(test.status)
+				assert.NoError(t, json.MarshalWrite(w, api.Error{Status: test.status, Code: test.code, Detail: "Attempt rejected"}))
+			}))
+			t.Cleanup(server.Close)
+			before := time.Now()
+			_, _, err := New(server.URL, "synthetic-key").PhotoHidden(t.Context(), "unlock", "synthetic-passcode", "")
+			if test.sentinel != nil {
+				require.ErrorIs(t, err, test.sentinel)
+				return
+			}
+			var lockout *store.HiddenLockoutError
+			require.ErrorAs(t, err, &lockout)
+			require.ErrorContains(t, err, "too many attempts; hidden photos are")
+			require.NotContains(t, err.Error(), "daemon error")
+			switch test.retryAfter {
+			case "300":
+				require.WithinRange(t, lockout.Until, before.Add(300*time.Second), time.Now().Add(300*time.Second))
+			case "invalid":
+				require.True(t, lockout.Until.IsZero())
+			default:
+				require.Equal(t, deadline, lockout.Until)
+			}
+		})
+	}
+}
 
 func TestPhotoClientAcceptsCreateTimestampsAndNoOpMutations(t *testing.T) {
 	assetID := "00000000-0000-4000-8000-000000000001"

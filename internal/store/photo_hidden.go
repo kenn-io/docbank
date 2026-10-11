@@ -32,6 +32,9 @@ var (
 type HiddenLockoutError struct{ Until time.Time }
 
 func (e *HiddenLockoutError) Error() string {
+	if e.Until.IsZero() {
+		return "too many attempts; hidden photos are temporarily locked"
+	}
 	return "too many attempts; hidden photos are locked until " + e.Until.Format(time.RFC3339)
 }
 

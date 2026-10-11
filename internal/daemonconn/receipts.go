@@ -394,6 +394,8 @@ var codeToTypedErr = map[string]error{
 	"hidden_locked":                 fmt.Errorf("%w; retry the photo command and enter the Hidden passcode", store.ErrHiddenLocked),
 	"hidden_not_configured":         store.ErrHiddenNotConfigured,
 	"hidden_passcode":               fmt.Errorf("%w; retry with the correct passcode", store.ErrHiddenPasscode),
+	"hidden_configured":             store.ErrHiddenConfigured,
+	"invalid_hidden_passcode":       store.ErrInvalidHiddenPasscode,
 	"audit_already_enabled":         store.ErrAuditAlreadyEnabled,
 	"audit_scope_overlap":           store.ErrAuditScopeOverlap,
 	"audit_scope_limit":             store.ErrAuditScopeLimit,
@@ -436,7 +438,16 @@ func decodeError(resp *http.Response) error {
 		return &responseError{status: resp.StatusCode,
 			err: fmt.Errorf("daemon returned %s: %s", resp.Status, string(body))}
 	}
-	return &responseError{status: resp.StatusCode, err: apiProblemError(e)}
+	cause := apiProblemError(e)
+	if lockout, ok := errors.AsType[*store.HiddenLockoutError](cause); ok {
+		retryAfter := resp.Header.Get("Retry-After")
+		if seconds, err := strconv.ParseUint(retryAfter, 10, 31); err == nil {
+			lockout.Until = time.Now().Add(time.Duration(seconds) * time.Second)
+		} else {
+			lockout.Until, _ = http.ParseTime(retryAfter)
+		}
+	}
+	return &responseError{status: resp.StatusCode, err: cause}
 }
 
 func apiProblemError(e api.Error) error {
@@ -445,6 +456,8 @@ func apiProblemError(e api.Error) error {
 	if e.Code == "scope_too_large" && e.ObservedScopeCount > processing.MaxSourceFenceIDs {
 		cause = &SourceFenceScopeTooLargeError{ObservedScopeCount: e.ObservedScopeCount, detail: e.Detail}
 		observedScopeCount = e.ObservedScopeCount
+	} else if e.Code == "hidden_lockout" {
+		cause = &store.HiddenLockoutError{}
 	} else if target, ok := codeToTypedErr[e.Code]; ok {
 		if e.Detail == "" || target.Error() == e.Detail || strings.HasPrefix(target.Error(), e.Detail+"; ") {
 			cause = target
