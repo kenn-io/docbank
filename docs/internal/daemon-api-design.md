@@ -210,6 +210,17 @@ from one SQL statement, so a concurrent content replacement or trash operation
 cannot split their view of the vault. Counting and ordering still depend on the
 number of matching versions; metadata and path projection are limited to the page.
 
+### Duplicate-content pages
+
+`GET /api/v1/duplicates` groups live current documents once per page request.
+The exact group and reference totals and the selected page share that grouped
+relation. An empty or exhausted page still returns the population totals.
+Reference paths and collection previews use the same read transaction as group
+selection, so concurrent replacements or trash operations cannot split the
+response across snapshots. Grouping cost still grows with the live population.
+The [search guide](../usage/searching.md#find-documents-with-identical-content)
+owns eligibility, ordering, and preview limits.
+
 ### MCP response budgets
 
 MCP success results carry the payload as both JSON text and structured content.
