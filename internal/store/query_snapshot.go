@@ -27,16 +27,21 @@ const (
 	querySnapshotDefaultPage  = 100
 )
 
+// ErrInvalidSnapshotRequest reports an unsupported page size, facet list, or
+// facets_only combination.
+var ErrInvalidSnapshotRequest = errors.New("invalid snapshot request")
+
 // ErrQuerySnapshotTooLarge reports a row, population, or serialized projection
 // that cannot be retained within the snapshot materialization bounds.
 var ErrQuerySnapshotTooLarge = errors.New("query snapshot exceeds its materialization limit")
 
 // SnapshotRequest selects one frozen QueryV1 projection and its optional facets.
 type SnapshotRequest struct {
-	Query    query.Query       `json:"query"`
-	Coverage CoverageSelection `json:"coverage"`
-	PageSize int               `json:"page_size"`
-	Facets   []string          `json:"facets"`
+	FacetsOnly bool              `json:"facets_only,omitempty"`
+	Query      query.Query       `json:"query"`
+	Coverage   CoverageSelection `json:"coverage"`
+	PageSize   int               `json:"page_size"`
+	Facets     []string          `json:"facets"`
 }
 
 // SnapshotMember is the exact node/content authority frozen by a snapshot.
@@ -184,15 +189,18 @@ func (s *Store) MaterializeQuerySnapshot(
 func (s *Store) materializeQuerySnapshot(
 	ctx context.Context, request SnapshotRequest, options snapshotMaterializeOptions,
 ) (SnapshotProjection, error) {
+	normalized, err := normalizeQuerySnapshotRequest(request)
+	if err != nil {
+		return SnapshotProjection{}, err
+	}
+	return s.materializeNormalizedQuerySnapshot(ctx, normalized, options)
+}
+
+func (s *Store) materializeNormalizedQuerySnapshot(
+	ctx context.Context, request SnapshotRequest, options snapshotMaterializeOptions,
+) (SnapshotProjection, error) {
 	options = options.withDefaults()
-	pageSize, err := normalizeSnapshotPageSize(request.PageSize)
-	if err != nil {
-		return SnapshotProjection{}, err
-	}
-	facets, err := normalizeSnapshotFacets(request.Facets)
-	if err != nil {
-		return SnapshotProjection{}, err
-	}
+	pageSize, facets := request.PageSize, request.Facets
 	coverage, err := normalizeCoverageSelection(request.Coverage)
 	if err != nil {
 		return SnapshotProjection{}, err
@@ -220,11 +228,13 @@ func (s *Store) materializeQuerySnapshot(
 			}
 			value = *resolved.Query
 		}
-		compiled, err := compileQuery(ctx, value, queryResolver{q: q})
+		compiler := queryCompiler{photoDisplayMetadata: request.FacetsOnly}
+		compiled, err := compiler.compile(ctx, value, queryResolver{q: q})
 		if err != nil {
 			return err
 		}
-		if compiled.Query.Sort.Field == "capture_time" || compiled.Query.Sort.Field == "import_time" || compiled.Query.Sort.Field == "added_time" {
+		photoSort := slices.Contains([]string{"capture_time", "import_time", "added_time"}, compiled.Query.Sort.Field)
+		if !request.FacetsOnly && photoSort {
 			return compileExpressionError(0, len(compiled.Query.Text), fmt.Sprintf("sort %q is only supported in Photos", compiled.Query.Sort.Field))
 		}
 		if coverage.Configuration == "configured" {
@@ -232,30 +242,34 @@ func (s *Store) materializeQuerySnapshot(
 				return err
 			}
 		}
-		queryFingerprint, err := query.Fingerprint(compiled.Query)
-		if err != nil {
-			return err
-		}
 		projection = SnapshotProjection{
 			Query: compiled.Query, Dependencies: slices.Clone(compiled.Dependencies),
-			QueryFingerprint: queryFingerprint, Coverage: coverage, PageSize: pageSize,
+			Coverage: coverage, PageSize: pageSize,
 			ObservedAt: options.Now().UTC(), Rows: make([]SnapshotRow, 0), Facets: make([]SnapshotFacet, 0, len(facets)),
 			Generation: SnapshotGeneration{Kind: "native"},
 		}
 		if generation.ID != "" {
 			projection.Generation = SnapshotGeneration{Kind: "rendition", GenerationID: generation.ID}
 		}
-		if err := materializeSnapshotRows(ctx, q, compiled, generation.ID, coverage, options, &projection); err != nil {
-			return err
+		if !request.FacetsOnly {
+			projection.QueryFingerprint, err = query.Fingerprint(compiled.Query)
+			if err != nil {
+				return err
+			}
+			if err := materializeSnapshotRows(ctx, q, compiled, generation.ID, coverage, options, &projection); err != nil {
+				return err
+			}
+			projection.MemberHash = snapshotMemberHash(snapshotMembers(projection.Rows))
 		}
-		projection.MemberHash = snapshotMemberHash(snapshotMembers(projection.Rows))
 		projection.Facets, err = materializeSnapshotFacets(ctx, q, compiled, generation.ID, coverage, facets, projection.Rows, options, &projection.SerializedBytes)
 		if err != nil {
 			return err
 		}
-		projection.SnapshotFingerprint, err = snapshotProjectionFingerprint(projection)
-		if err != nil {
-			return err
+		if !request.FacetsOnly {
+			projection.SnapshotFingerprint, err = snapshotProjectionFingerprint(projection)
+			if err != nil {
+				return err
+			}
 		}
 		metadataBytes, err := snapshotProjectionMetadataBytes(projection)
 		if err != nil {
@@ -270,6 +284,30 @@ func (s *Store) materializeQuerySnapshot(
 		return SnapshotProjection{}, err
 	}
 	return projection, nil
+}
+
+// normalizeQuerySnapshotRequest applies the default page size and validates the
+// facet list. A facets_only request must ask for exactly capture_day, and
+// capture_day is only available to facets_only requests. Errors wrap
+// ErrInvalidSnapshotRequest.
+func normalizeQuerySnapshotRequest(request SnapshotRequest) (SnapshotRequest, error) {
+	pageSize, err := normalizeSnapshotPageSize(request.PageSize)
+	if err != nil {
+		return SnapshotRequest{}, fmt.Errorf("%w: %w", ErrInvalidSnapshotRequest, err)
+	}
+	facets, err := normalizeSnapshotFacets(request.Facets)
+	if err != nil {
+		return SnapshotRequest{}, fmt.Errorf("%w: %w", ErrInvalidSnapshotRequest, err)
+	}
+	if request.FacetsOnly {
+		if len(facets) != 1 || facets[0] != "capture_day" {
+			return SnapshotRequest{}, fmt.Errorf("%w: facets_only requires capture_day", ErrInvalidSnapshotRequest)
+		}
+	} else if slices.Contains(facets, "capture_day") {
+		return SnapshotRequest{}, fmt.Errorf("%w: capture_day requires facets_only", ErrInvalidSnapshotRequest)
+	}
+	request.PageSize, request.Facets = pageSize, facets
+	return request, nil
 }
 
 func normalizeSnapshotPageSize(value int) (int, error) {

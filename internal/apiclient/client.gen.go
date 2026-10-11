@@ -8835,6 +8835,53 @@ func (c *Client) ListPhotoAssets(ctx context.Context, options *ListPhotoAssetsRe
 	return responseParser(ctx, resp)
 }
 
+// GetPhotoTimeline Count matching photo assets by recorded capture day
+func (c *Client) GetPhotoTimeline(ctx context.Context, options *GetPhotoTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPhotoTimelineResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/photos/assets/timeline",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetPhotoTimelineResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetPhotoTimelineResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetPhotoTimelineResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetPhotoTimelineErrorResponse](resp, "GetPhotoTimelineErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/photos/assets/timeline")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // GetPhotoAsset Inspect one photo asset
 func (c *Client) GetPhotoAsset(ctx context.Context, options *GetPhotoAssetRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetPhotoAssetResponse, error) {
 	var err error
@@ -18867,6 +18914,34 @@ func (o *ListPhotoAssetsRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// GetPhotoTimelineRequestOptions is the options needed to make a request to GetPhotoTimeline.
+type GetPhotoTimelineRequestOptions struct {
+	Body *GetPhotoTimelineBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPhotoTimelineRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPhotoTimelineRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPhotoTimelineRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPhotoTimelineRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetPhotoAssetRequestOptions is the options needed to make a request to GetPhotoAsset.
 type GetPhotoAssetRequestOptions struct {
 	PathParams *GetPhotoAssetPath
@@ -22623,6 +22698,8 @@ type CreatePhotoAssetBody = CreatePhotoAssetRequest
 
 type ListPhotoAssetsBody = PhotoBrowseRequest
 
+type GetPhotoTimelineBody = PhotoTimelineRequest
+
 type SetPhotoDisplayBody = SetPhotoDisplayRequest
 
 type ExcludePhotoAssetBody = SetPhotoExcludedRequest
@@ -23842,6 +23919,10 @@ type ListPhotoAssetsResponse = api.PhotoBrowsePage
 
 type ListPhotoAssetsErrorResponse = Error
 
+type GetPhotoTimelineResponse = api.PhotoTimeline
+
+type GetPhotoTimelineErrorResponse = Error
+
 type GetPhotoAssetResponse = api.PhotoAsset
 
 type GetPhotoAssetErrorResponse = Error
@@ -24293,8 +24374,10 @@ type BackupRestoreRequest struct {
 	Overwrite   *bool   `json:"overwrite,omitempty"`
 	Repo        *string `json:"repo,omitempty"`
 	SnapshotID  *string `json:"snapshot_id,omitempty"`
-	StoreMap    *string `json:"store_map,omitempty"`
-	Target      string  `json:"target"`
+
+	// StoreMap Loopback-only server-local path to an owner-private TOML restore mapping file.
+	StoreMap *string `json:"store_map,omitempty"`
+	Target   string  `json:"target"`
 }
 
 type BackupSnapshot = api.BackupSnapshot
@@ -25016,6 +25099,10 @@ type PhotoPreviewSlots = api.PhotoPreviewSlots
 type PhotoQualitySignals = document.PhotoQualitySignals
 
 type PhotoSettings = api.PhotoSettings
+
+type PhotoTimeline = api.PhotoTimeline
+
+type PhotoTimelineRequest = api.PhotoTimelineRequest
 
 type Plan = bundle.Plan
 

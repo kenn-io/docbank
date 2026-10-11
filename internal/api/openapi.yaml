@@ -11939,6 +11939,102 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoTimeline:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoTimeline.json
+          format: uri
+          readOnly: true
+          type: string
+        coverage:
+          $ref: "#/components/schemas/WorkspaceQueryCoverage"
+        dependencies:
+          items:
+            $ref: "#/components/schemas/WorkspaceQueryDependency"
+          type: array
+        facets:
+          items:
+            additionalProperties: false
+            properties:
+              available:
+                type: boolean
+              dimension:
+                enum:
+                  - capture_day
+                type: string
+              missing:
+                anyOf:
+                  - minimum: 0
+                    type: integer
+                  - type: "null"
+              other:
+                anyOf:
+                  - minimum: 0
+                    type: integer
+                  - type: "null"
+              reason:
+                type: string
+              total:
+                anyOf:
+                  - minimum: 0
+                    type: integer
+                  - type: "null"
+              values:
+                items:
+                  $ref: "#/components/schemas/WorkspaceFacetValue"
+                maxItems: 250000
+                type: array
+            required:
+              - dimension
+              - available
+              - values
+            type: object
+          maxItems: 1
+          minItems: 1
+          type: array
+        generation:
+          $ref: "#/components/schemas/WorkspaceQueryGeneration"
+        observed_at:
+          format: date-time
+          type: string
+        query:
+          $ref: "#/components/schemas/SavedQueryV1Schema"
+      required:
+        - query
+        - dependencies
+        - generation
+        - coverage
+        - observed_at
+        - facets
+      type: object
+      x-go-type: api.PhotoTimeline
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoTimelineRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoTimelineRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        coverage:
+          $ref: "#/components/schemas/WorkspaceQueryCoverage"
+        query:
+          $ref: "#/components/schemas/SavedQueryV1Schema"
+      required:
+        - query
+      type: object
+      x-go-type: api.PhotoTimelineRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Plan:
       additionalProperties: false
       properties:
@@ -23162,6 +23258,29 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Browse matching photo assets with live keyset pagination
+  /api/v1/photos/assets/timeline:
+    post:
+      operationId: getPhotoTimeline
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoTimelineRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoTimeline"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Count matching photo assets by recorded capture day
   /api/v1/photos/assets/{asset_id}:
     get:
       operationId: getPhotoAsset

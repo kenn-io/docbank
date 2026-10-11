@@ -659,6 +659,7 @@ export interface BackupRestoreRequest {
   overwrite?: boolean;
   repo?: string;
   snapshot_id?: string;
+  /** Loopback-only server-local path to an owner-private TOML restore mapping file. */
   store_map?: string;
   target: string;
 }
@@ -5063,6 +5064,74 @@ export interface PhotoSettings {
   updated_at?: string;
 }
 
+export type PhotoTimelineFacetsItemDimension = typeof PhotoTimelineFacetsItemDimension[keyof typeof PhotoTimelineFacetsItemDimension];
+
+
+export const PhotoTimelineFacetsItemDimension = {
+  capture_day: 'capture_day',
+} as const;
+
+export interface WorkspaceFacetValue {
+  /** @minimum 0 */
+  count: number;
+  key: string;
+  label: string;
+  selected: boolean;
+}
+
+export type PhotoTimelineFacetsItem = {
+  available: boolean;
+  dimension: PhotoTimelineFacetsItemDimension;
+  missing?: number | null;
+  other?: number | null;
+  reason?: string;
+  total?: number | null;
+  /** @maxItems 250000 */
+  values: WorkspaceFacetValue[];
+};
+
+export interface WorkspaceQueryDependency {
+  id: string;
+  kind: string;
+  /** @minimum 1 */
+  revision: number;
+}
+
+export type WorkspaceQueryGenerationKind = typeof WorkspaceQueryGenerationKind[keyof typeof WorkspaceQueryGenerationKind];
+
+
+export const WorkspaceQueryGenerationKind = {
+  native: 'native',
+  rendition: 'rendition',
+} as const;
+
+export interface WorkspaceQueryGeneration {
+  generation_id?: string;
+  kind: WorkspaceQueryGenerationKind;
+}
+
+export interface PhotoTimeline {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  coverage: WorkspaceQueryCoverage;
+  dependencies: WorkspaceQueryDependency[];
+  /**
+     * @minItems 1
+     * @maxItems 1
+     */
+  facets: PhotoTimelineFacetsItem[];
+  generation: WorkspaceQueryGeneration;
+  observed_at: string;
+  query: SavedQueryV1Schema;
+}
+
+export interface PhotoTimelineRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  coverage?: WorkspaceQueryCoverage;
+  query: SavedQueryV1Schema;
+}
+
 export interface RolePolicy {
   allow_unavailable?: boolean;
   profile_fingerprint?: string;
@@ -6073,34 +6142,6 @@ export interface SavedQueryRunRequest {
   page_size?: SavedQueryRunRequestPageSize;
   /** @maxLength 128 */
   profile?: string;
-}
-
-export interface WorkspaceQueryDependency {
-  id: string;
-  kind: string;
-  /** @minimum 1 */
-  revision: number;
-}
-
-export interface WorkspaceFacetValue {
-  /** @minimum 0 */
-  count: number;
-  key: string;
-  label: string;
-  selected: boolean;
-}
-
-export type WorkspaceQueryGenerationKind = typeof WorkspaceQueryGenerationKind[keyof typeof WorkspaceQueryGenerationKind];
-
-
-export const WorkspaceQueryGenerationKind = {
-  native: 'native',
-  rendition: 'rendition',
-} as const;
-
-export interface WorkspaceQueryGeneration {
-  generation_id?: string;
-  kind: WorkspaceQueryGenerationKind;
 }
 
 export type WorkspaceQueryResponsePageSize = typeof WorkspaceQueryResponsePageSize[keyof typeof WorkspaceQueryResponsePageSize];
@@ -14437,6 +14478,44 @@ return sessionJSON<PhotoBrowsePage>(getListPhotoAssetsUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(photoBrowseRequest)
+  }
+);}
+
+
+
+export const getGetPhotoTimelineUrl = () => {
+
+
+
+
+  return `/api/v1/photos/assets/timeline`
+}
+
+/**
+ * @summary Count matching photo assets by recorded capture day
+ */
+export const getPhotoTimeline = (photoTimelineRequest: NonReadonly<PhotoTimelineRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionResponse<PhotoTimeline>(getGetPhotoTimelineUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(photoTimelineRequest)
   }
 );}
 
