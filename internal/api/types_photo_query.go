@@ -54,6 +54,16 @@ type PhotoBrowseRow struct {
 	CaptureTimeOffset    *string           `json:"capture_time_offset" nullable:"true"`
 	WidthPX              *int64            `json:"width_px" nullable:"true"`
 	HeightPX             *int64            `json:"height_px" nullable:"true"`
+	CameraMake           *string           `json:"camera_make" nullable:"true"`
+	CameraModel          *string           `json:"camera_model" nullable:"true"`
+	LensMake             *string           `json:"lens_make" nullable:"true"`
+	LensModel            *string           `json:"lens_model" nullable:"true"`
+	ISO                  *int64            `json:"iso" nullable:"true"`
+	ExposureTimeSeconds  *float64          `json:"exposure_time_seconds" nullable:"true"`
+	FNumber              *float64          `json:"f_number" nullable:"true"`
+	ExposureBiasEV       *float64          `json:"exposure_bias_ev" nullable:"true"`
+	FocalLengthMM        *float64          `json:"focal_length_mm" nullable:"true"`
+	Orientation          *int64            `json:"orientation" nullable:"true"`
 	Previews             PhotoPreviewSlots `json:"previews"`
 }
 
@@ -72,4 +82,9 @@ func (PhotoQuality) Schema(r huma.Registry) *huma.Schema {
 		{Type: "null"},
 	}}
 	return schema
+}
+
+type PreparePhotoPreviewRequest struct {
+	ContentVersionID string `json:"content_version_id" format:"uuid"`
+	Size             string `json:"size" enum:"fit,large"`
 }

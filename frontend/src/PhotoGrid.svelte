@@ -5,13 +5,14 @@
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoMonthChunk from "./PhotoMonthChunk.svelte";
 
-  let { groups, targetRowHeight, loading, cache, selectedIDs, onselect, oncheck, onloadmore, scrollTop = $bindable(0) }: {
+  let { groups, targetRowHeight, loading, cache, selectedIDs, onselect, oncheck, onopen, onloadmore, scrollTop = $bindable(0) }: {
     groups: PhotoGroup[];
     targetRowHeight: number;
     loading: boolean;
     cache: PhotoPreviewCache;
     selectedIDs: ReadonlySet<string>;
     onselect: (id: string, event: MouseEvent) => void;
+    onopen: (id: string, element: HTMLElement) => void;
     oncheck: (id: string, checked: boolean, range: boolean) => void;
     onloadmore: () => void;
     scrollTop?: number;
@@ -109,7 +110,7 @@
   <div class="grid" style:height={`${totalHeight}px`}>
     {#if initialized}
     {#each chunks as chunk (chunk.group.key)}
-      <PhotoMonthChunk group={chunk.group} layout={chunk.layout} offset={chunk.offset} top={Math.max(0, scrollTop - viewport)} bottom={scrollTop + 2 * viewport} {cache} {selectedIDs} {onselect} {oncheck} />
+      <PhotoMonthChunk group={chunk.group} layout={chunk.layout} offset={chunk.offset} top={Math.max(0, scrollTop - viewport)} bottom={scrollTop + 2 * viewport} {cache} {selectedIDs} {onselect} {oncheck} {onopen} />
     {/each}
     {/if}
   </div>

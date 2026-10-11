@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,7 +23,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryService) {
+func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryService, gate *OperationGate) {
 	recipes := make(map[string]string, 3)
 	for _, size := range []string{"grid", "fit", "large"} {
 		recipe, err := processing.VisualPreviewRecipeForSize(size)
@@ -67,19 +68,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		for i, row := range page.Items {
 			slots := map[string]PhotoPreviewSlot{}
 			for size, slot := range row.Previews {
-				out := PhotoPreviewSlot{State: slot.State}
-				if slot.Generation != nil {
-					out.GenerationID = slot.Generation.GenerationID
-					if slot.State == "ready" {
-						output := slot.Generation.Preview.Output
-						out.URL = fmt.Sprintf("/api/v1/photos/assets/%s/previews/%s", row.AssetID, out.GenerationID)
-						out.SHA256 = output.BlobSHA256
-						out.Size = &output.Size
-						out.MediaType = output.MediaType
-						out.Width = &output.Width
-						out.Height = &output.Height
-					}
-				}
+				out := photoPreviewSlot(row.AssetID, slot.State, slot.Generation)
 				slots[size] = out
 			}
 			wire.Items[i] = PhotoBrowseRow{
@@ -91,8 +80,18 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 				CaptureTimeTimezone:  row.Fields.CaptureTimeTimezone,
 				CaptureTimeOffset:    row.Fields.CaptureTimeOffset,
 				WidthPX:              row.Fields.WidthPX, HeightPX: row.Fields.HeightPX,
-				Previews: PhotoPreviewSlots{Grid: slots["grid"], Fit: slots["fit"], Large: slots["large"]},
-				Quality:  photoQualityWire(row),
+				CameraMake:          row.Fields.CameraMake,
+				CameraModel:         row.Fields.CameraModel,
+				LensMake:            row.Fields.LensMake,
+				LensModel:           row.Fields.LensModel,
+				ISO:                 row.Fields.ISO,
+				ExposureTimeSeconds: row.Fields.ExposureTimeSeconds,
+				FNumber:             row.Fields.FNumber,
+				ExposureBiasEV:      row.Fields.ExposureBiasEV,
+				FocalLengthMM:       row.Fields.FocalLengthMM,
+				Orientation:         row.Fields.Orientation,
+				Previews:            PhotoPreviewSlots{Grid: slots["grid"], Fit: slots["fit"], Large: slots["large"]},
+				Quality:             photoQualityWire(row),
 			}
 		}
 		if page.Next != nil {
@@ -102,6 +101,59 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			}
 		}
 		return &struct{ Body PhotoBrowsePage }{Body: wire}, nil
+	})
+	huma.Register(api, huma.Operation{
+		OperationID: "preparePhotoPreview", Method: http.MethodPost,
+		Path:    "/api/v1/photos/assets/{asset_id}/preview",
+		Summary: "Prepare a fit or large preview for the current photo display",
+	}, func(ctx context.Context, in *struct {
+		AssetID string `path:"asset_id" format:"uuid"`
+		Body    PreparePhotoPreviewRequest
+	}) (*struct{ Body PhotoPreviewSlot }, error) {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		recipe, err := processing.VisualPreviewRecipeForSize(in.Body.Size)
+		if err != nil {
+			return nil, err
+		}
+		var view store.VisualPreviewView
+		err = gate.MutateContext(ctx, func() error {
+			page, err := d.Store.ListPhotoAssets(ctx, store.PhotoBrowseRequest{
+				Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Filters: query.Filters{AssetIDs: []string{in.AssetID}}, Sort: query.Sort{Field: "capture_time", Direction: "desc"}}, PageSize: 1,
+			}, nil)
+			if err != nil {
+				return err
+			}
+			if len(page.Items) != 1 {
+				return store.ErrNotFound
+			}
+			if page.Items[0].ContentVersionID != in.Body.ContentVersionID {
+				return NewError(http.StatusConflict, "photo_display_changed", "The photo display changed. Refresh Library.")
+			}
+			view, err = processing.EnsureVisualPreview(ctx, d.Store, d.Blobs, in.Body.ContentVersionID, recipe)
+			if err != nil {
+				return err
+			}
+			view, err = d.Store.PhotoVisualPreviewByGeneration(ctx, in.AssetID, view.Generation.GenerationID)
+			return err
+		})
+		if err != nil {
+			if _, ok := errors.AsType[*Error](err); ok {
+				return nil, err
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				return nil, NewError(http.StatusServiceUnavailable, "photo_preview_unavailable", "Preview preparation timed out. Retry.")
+			}
+			if errors.Is(err, context.Canceled) {
+				return nil, NewError(http.StatusServiceUnavailable, "photo_preview_unavailable", "Preview preparation was canceled. Retry.")
+			}
+			if processing.IsSourceContentUnavailable(err) {
+				return nil, NewError(http.StatusServiceUnavailable, "photo_preview_unavailable", "The photo source bytes are unavailable.")
+			}
+			return nil, workspaceQueryError(err)
+		}
+		slot := photoPreviewSlot(in.AssetID, string(view.Generation.Preview.State), &view.Generation)
+		return &struct{ Body PhotoPreviewSlot }{Body: slot}, nil
 	})
 	huma.Register(api, huma.Operation{
 		OperationID: "readPhotoPreview", Method: http.MethodGet,
@@ -239,4 +291,20 @@ func photoQualityWire(row store.PhotoBrowseRow) *PhotoQuality {
 		state = "unavailable"
 	}
 	return &PhotoQuality{State: state, Signals: row.Quality}
+}
+
+func photoPreviewSlot(assetID, state string, generation *store.VisualPreviewGeneration) PhotoPreviewSlot {
+	slot := PhotoPreviewSlot{State: state}
+	if generation == nil {
+		return slot
+	}
+	slot.GenerationID = generation.GenerationID
+	if state == "ready" {
+		output := generation.Preview.Output
+		slot.URL = fmt.Sprintf("/api/v1/photos/assets/%s/previews/%s", assetID, generation.GenerationID)
+		slot.SHA256 = output.BlobSHA256
+		slot.Size, slot.Width, slot.Height = &output.Size, &output.Width, &output.Height
+		slot.MediaType = output.MediaType
+	}
+	return slot
 }
