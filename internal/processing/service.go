@@ -57,6 +57,7 @@ var (
 	ErrInvalidPurgeRequest       = errors.New("derivative purge request is invalid")
 	ErrInvalidConsentExpiry      = errors.New("processing consent expiry is invalid")
 	ErrRerankingUnavailable      = errors.New("reranking is not configured")
+	ErrSourceIneligible          = errors.New("source is not eligible for the rendition profile")
 )
 
 type ProfileConfig struct {
@@ -215,6 +216,12 @@ type Plan struct {
 	ConsentRequired    bool
 	ConsentState       string
 	BackupConsequence  string
+	// RenditionIneligibleReason is the local inspector's reason for refusing to
+	// send this source to the rendition provider. It is empty when the source is
+	// eligible or the profile has no rendition. Plan sets it after computing the
+	// fingerprint, and omitzero keeps the empty value out of that encoding, so
+	// plan fingerprints match those computed before this field existed.
+	RenditionIneligibleReason string `json:",omitzero"`
 }
 
 type StartRequest struct {
@@ -636,6 +643,15 @@ func (service *Service) Plan(ctx context.Context, selector Selector) (Plan, erro
 	plan, err := service.planForSource(selector, node, version, profile)
 	if err != nil {
 		return Plan{}, err
+	}
+	if profile.portable.Rendition != nil {
+		capability, err := inspectRenditionSource(ctx, service.blobs, node, version, profile)
+		if err != nil {
+			return Plan{}, err
+		}
+		if !capability.Eligible {
+			plan.RenditionIneligibleReason = string(capability.Reason)
+		}
 	}
 	// Current grants are advisory; execution checks them again. Grant changes
 	// do not change the reviewed source, disclosure, or plan fingerprint.
@@ -2003,20 +2019,14 @@ func prepareProviderExecution(ctx context.Context, blobs *blob.Store, spool stri
 	if profile.portable.Rendition == nil {
 		return providerExecution{}, errors.New("processing profile has no rendition binding")
 	}
-	filename := syntheticFilename(node.Name, version.MimeType, profile.portable.Rendition.DiscloseFilename)
-	policy := inspectionPolicy(filename, version, profile)
-	reader, err := blobs.OpenContext(ctx, version.BlobHash)
+	capability, err := inspectRenditionSource(ctx, blobs, node, version, profile)
 	if err != nil {
 		return providerExecution{}, err
 	}
-	capability, inspectErr := media.InspectCapability(reader, policy)
-	closeErr := reader.Close()
-	if inspectErr != nil || closeErr != nil {
-		return providerExecution{}, errors.Join(inspectErr, closeErr)
-	}
 	if !capability.Eligible {
-		return providerExecution{}, fmt.Errorf("source is not eligible for rendition: %s", capability.Reason)
+		return providerExecution{}, fmt.Errorf("%w: %s", ErrSourceIneligible, capability.Reason)
 	}
+	filename := syntheticFilename(node.Name, version.MimeType, profile.portable.Rendition.DiscloseFilename)
 	emptyDigest := sha256.Sum256(nil)
 	metadata := document.AuthorizedUploadMetadata{Filename: filename,
 		MediaFamily: capability.MediaFamily, MediaType: capability.MediaType,
@@ -2075,6 +2085,33 @@ func runtimeVersion(work store.RenditionJobWork) store.ContentVersion {
 	return store.ContentVersion{ID: work.Waiter.ContentVersionID, NodeID: 1,
 		BlobHash: work.Job.SourceSHA256, Size: work.ExecutionIdentity.Upload.ByteLength,
 		MimeType: work.ExecutionIdentity.Upload.MediaType}
+}
+
+// inspectRenditionSource runs the same local inspection that gates a provider
+// upload, so a plan can report a refusal before consent is requested.
+// InspectCapability treats an empty or oversized source as an invalid policy,
+// so the stored size classifies those sources before inspection.
+func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.Node,
+	version store.ContentVersion, profile configuredProfile,
+) (media.CapabilityRecord, error) {
+	filename := syntheticFilename(node.Name, version.MimeType, profile.portable.Rendition.DiscloseFilename)
+	policy := inspectionPolicy(filename, version, profile)
+	switch {
+	case version.Size == 0:
+		return media.CapabilityRecord{Reason: media.CapabilityReasonEmptySource}, nil
+	case version.Size > policy.MaxSourceBytes:
+		return media.CapabilityRecord{Reason: media.CapabilityReasonSourceBytes}, nil
+	}
+	reader, err := blobs.OpenContext(ctx, version.BlobHash)
+	if err != nil {
+		return media.CapabilityRecord{}, err
+	}
+	capability, inspectErr := media.InspectCapability(reader, policy)
+	closeErr := reader.Close()
+	if inspectErr != nil || closeErr != nil {
+		return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)
+	}
+	return capability, nil
 }
 
 func inspectionPolicy(filename string, version store.ContentVersion, profile configuredProfile) media.InspectionPolicy {

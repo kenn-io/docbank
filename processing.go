@@ -21,6 +21,7 @@ var (
 	ErrProcessingConsentRequired    = internalprocessing.ErrConsentRequired
 	ErrRenditionFailed              = internalprocessing.ErrRenditionFailed
 	ErrRenditionOperatorRequired    = internalprocessing.ErrRenditionOperatorRequired
+	ErrRenditionSourceIneligible    = internalprocessing.ErrSourceIneligible
 )
 
 func (v *Vault) PlanProcessing(ctx context.Context, request ProcessingPlanRequest) (ProcessingPlan, error) {
@@ -218,7 +219,8 @@ func fromProcessingPlan(plan internalprocessing.Plan) ProcessingPlan {
 			ContentVersionID: plan.Selector.ContentVersionID, Profile: plan.Selector.Profile},
 		ProfileFingerprint: plan.ProfileFingerprint, DisclosedClasses: plan.DisclosedClasses,
 		RetainedClasses: plan.RetainedClasses, ConsentRequired: plan.ConsentRequired,
-		BackupConsequence: plan.BackupConsequence,
+		BackupConsequence:         plan.BackupConsequence,
+		RenditionIneligibleReason: plan.RenditionIneligibleReason,
 		Estimate: ProcessingEstimate{SourceBytes: plan.Estimate.SourceBytes,
 			ProviderCalls: plan.Estimate.ProviderCalls, VectorSpaces: plan.Estimate.VectorSpaces},
 		Flow: make([]ProcessingFlowHop, len(plan.Flow))}

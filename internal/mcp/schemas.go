@@ -778,9 +778,10 @@ func getProcessingPlanSchemas() (schema, schema) {
 		"estimate": objectSchema(schema{
 			"source_bytes": integerSchema(0, 0), "provider_calls": integerSchema(0, 0), "vector_spaces": integerSchema(0, 0),
 		}, "source_bytes", "provider_calls", "vector_spaces"),
-		"consent_required":   booleanSchema(),
-		"consent_state":      enumSchema("active", "required", "expired", "revoked"),
-		"backup_consequence": stringSchema(4096),
+		"consent_required":            booleanSchema(),
+		"consent_state":               enumSchema("active", "required", "expired", "revoked"),
+		"backup_consequence":          stringSchema(4096),
+		"rendition_ineligible_reason": stringSchema(64),
 	}), cacheRequired("fingerprint", "vault_uid", "selector", "profile_fingerprint", "flow", "disclosed_classes",
 		"retained_classes", "estimate", "consent_required", "consent_state", "backup_consequence")...)
 	return input, output

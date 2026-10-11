@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-10
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -200,7 +200,11 @@ lowercase letter, and contain only lowercase letters, digits, `_`, or `-`.
 The response includes `fingerprint`, `vault_uid`, `selector`,
 `profile_fingerprint`, `flow`, `disclosed_classes`, `retained_classes`,
 `estimate`, `consent_required`, `consent_state`, and `backup_consequence`.
-Each flow identifies the provider, capability, trust boundary, input classes,
+When the profile has a rendition stage, the daemon inspects the source locally
+before it answers. If inspection refuses the source,
+`rendition_ineligible_reason` names the inspector's reason, such as
+`unbounded_media_family` or `semantic_units_exceeded`, and starting the plan
+fails with `rendition_source_ineligible`. Each flow identifies the provider, capability, trust boundary, input classes,
 any filename disclosure, and a `runtime_disclosure` object. Review it before
 granting consent or starting work. The runtime disclosure contains:
 
@@ -638,6 +642,7 @@ envelope. Common processing codes are:
 | 422 | `processing_profile_unavailable`, `foreign_vault`, `version_node_mismatch` | Profile or source identity does not match |
 | 422 | `invalid_processing_consent_expiry`, `search_query_required`, `validation` | Invalid expiry, blank query, or request schema violation |
 | 422 | `rendition_failed` | Required rendition work failed |
+| 422 | `rendition_source_ineligible` | Local inspection refuses to send this source to the rendition provider; the plan's `rendition_ineligible_reason` says why |
 | 404 | `not_found` | Requested node, version, job, or active rendition is absent |
 | 503 | `processing_unavailable` | The processing service is not configured |
 | 500 | `processing_failed` | An otherwise unclassified processing failure |
