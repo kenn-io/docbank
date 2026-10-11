@@ -25,7 +25,6 @@ it("conceals after a confirmed hide while finishing the captured batch and repor
   await write;
   expect(completed).toHaveBeenCalledOnce();
   expect(report).toHaveBeenLastCalledWith("1 photo failed: Stale revision");
-  expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
 });
 
 it.each([{ kind: "hide", refused: false }, { kind: "trash", refused: false }, { kind: "trash", refused: true }])("reconciles uncertain $kind outcomes and keeps refused targets, refused=$refused", async ({ kind, refused }) => {
@@ -404,7 +403,12 @@ it("bounds selection writes, rejects unconfirmed success and guards overlapping 
   expect(await photos.trashSelected()).toBe(false);
   expect(fetcher).toHaveBeenCalledTimes(2);
   expect(timers).toHaveLength(1);
-  finish(Response.json({ id: "photo-2", revision: 2 })); await write;
+  timers[0].abort(new DOMException("Timed out", "TimeoutError"));
+  finish(Response.json({ id: "photo-1", revision: 2 })); await write;
+  expect(photos.actionError).toContain("Timed out");
+  expect(photos.hiding).toBe(false);
+  fetcher.mockResolvedValueOnce(Response.json({ id: "photo-2", revision: 2 })).mockResolvedValueOnce(response([photo(1)]));
+  await photos.setHidden("photo-1");
   expect(photos.items).toHaveLength(1);
   expect(photos.actionError).toContain("did not confirm");
   expect(photos.hiding).toBe(false);

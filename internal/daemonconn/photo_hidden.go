@@ -68,9 +68,9 @@ func (c *Connection) SetPhotoAssetHidden(ctx context.Context, id string, revisio
 	var asset *api.PhotoAsset
 	var err error
 	if hidden {
-		asset, err = c.apiWithResponse(&response).HidePhotoAsset(ctx, &apiclient.HidePhotoAssetRequestOptions{PathParams: &apiclient.HidePhotoAssetPath{AssetID: id}, Header: &apiclient.HidePhotoAssetHeaders{IfMatch: revisionIfMatch(revision)}}, func(_ context.Context, request *http.Request) error { request.Header.Set("Cookie", cookie); return nil })
+		asset, err = c.apiWithResponse(&response).HidePhotoAsset(ctx, &apiclient.HidePhotoAssetRequestOptions{PathParams: &apiclient.HidePhotoAssetPath{AssetID: id}, Header: &apiclient.HidePhotoAssetHeaders{IfMatch: revisionIfMatch(revision)}}, photoCookie([]string{cookie}))
 	} else {
-		asset, err = c.apiWithResponse(&response).UnhidePhotoAsset(ctx, &apiclient.UnhidePhotoAssetRequestOptions{PathParams: &apiclient.UnhidePhotoAssetPath{AssetID: id}, Header: &apiclient.UnhidePhotoAssetHeaders{IfMatch: revisionIfMatch(revision)}}, func(_ context.Context, request *http.Request) error { request.Header.Set("Cookie", cookie); return nil })
+		asset, err = c.apiWithResponse(&response).UnhidePhotoAsset(ctx, &apiclient.UnhidePhotoAssetRequestOptions{PathParams: &apiclient.UnhidePhotoAssetPath{AssetID: id}, Header: &apiclient.UnhidePhotoAssetHeaders{IfMatch: revisionIfMatch(revision)}}, photoCookie([]string{cookie}))
 	}
 	return photoMutationResponse(response, asset, err, id)
 }

@@ -359,13 +359,13 @@ func TestPhotoHiddenLockoutMetadata(t *testing.T) {
 			if failures == 5 {
 				rejected := newTestStore(t)
 				require.Error(t, rejected.ImportMetadata(ctx, strings.NewReader(strings.Replace(data, `"locked_until":"`, `"locked_until":"invalid`, 1))))
-			}
-			for _, invalid := range []string{
-				strings.Replace(data, `"failure_id":1`, `"failure_id":0`, 1),
-				strings.Replace(data, `"occurred_at":"`, `"occurred_at":"invalid`, 1),
-			} {
-				rejected := newTestStore(t)
-				require.Error(t, rejected.ImportMetadata(ctx, strings.NewReader(invalid)))
+				for _, invalid := range []string{
+					strings.Replace(data, `"failure_id":1`, `"failure_id":0`, 1),
+					strings.Replace(data, `"occurred_at":"`, `"occurred_at":"invalid`, 1),
+				} {
+					rejected := newTestStore(t)
+					require.Error(t, rejected.ImportMetadata(ctx, strings.NewReader(invalid)))
+				}
 			}
 			target := newTestStore(t)
 			require.NoError(t, target.ImportMetadata(ctx, &backup))

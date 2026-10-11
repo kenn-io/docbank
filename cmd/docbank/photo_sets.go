@@ -103,11 +103,11 @@ Output: JSON.`,
 			}
 			return writeCLIJSON(cmd.OutOrStdout(), out)
 		}}
-	rename := photoAlbumWrite("rename <album-id> <name>", "Rename an album", "  docbank photos albums rename <album-id> 'Acme site visit'", cobra.ExactArgs(2), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, cookie string) (api.PhotoAlbum, error) {
+	rename := photoAlbumWrite("rename <album-id> <name>", "Rename an album", "  docbank photos albums rename <album-id> 'Acme site visit'", cobra.ExactArgs(2), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, _ string) (api.PhotoAlbum, error) {
 		return c.UpdatePhotoAlbum(cmd.Context(), args[0], revision, api.UpdatePhotoAlbumRequest{Name: &args[1]})
 	})
 	starred := true
-	star := photoAlbumWrite("star <album-id>", "Star or unstar an album", "  docbank photos albums star <album-id> --starred=false", cobra.ExactArgs(1), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, cookie string) (api.PhotoAlbum, error) {
+	star := photoAlbumWrite("star <album-id>", "Star or unstar an album", "  docbank photos albums star <album-id> --starred=false", cobra.ExactArgs(1), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, _ string) (api.PhotoAlbum, error) {
 		return c.UpdatePhotoAlbum(cmd.Context(), args[0], revision, api.UpdatePhotoAlbumRequest{Starred: &starred})
 	})
 	star.Flags().BoolVar(&starred, "starred", true, "star the album")
@@ -118,10 +118,10 @@ Output: JSON.`,
 		}
 		return c.SetPhotoAlbumCover(cmd.Context(), args[0], revision, id, cookie)
 	})
-	duplicate := photoAlbumWrite("duplicate <album-id> <name>", "Copy an album and its member order", "  docbank photos albums duplicate <album-id> 'Acme copy'", cobra.ExactArgs(2), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, cookie string) (api.PhotoAlbum, error) {
+	duplicate := photoAlbumWrite("duplicate <album-id> <name>", "Copy an album and its member order", "  docbank photos albums duplicate <album-id> 'Acme copy'", cobra.ExactArgs(2), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, _ string) (api.PhotoAlbum, error) {
 		return c.DuplicatePhotoAlbum(cmd.Context(), args[0], revision, args[1])
 	})
-	deleteAlbum := photoAlbumWrite("delete <album-id>", "Delete an album and keep its photos", "  docbank photos albums delete <album-id>", cobra.ExactArgs(1), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, cookie string) (api.PhotoAlbum, error) {
+	deleteAlbum := photoAlbumWrite("delete <album-id>", "Delete an album and keep its photos", "  docbank photos albums delete <album-id>", cobra.ExactArgs(1), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, _ string) (api.PhotoAlbum, error) {
 		return c.DeletePhotoAlbum(cmd.Context(), args[0], revision)
 	})
 	for _, add := range []bool{true, false} {

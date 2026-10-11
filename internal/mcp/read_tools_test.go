@@ -263,7 +263,7 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 			assert.NotContains(t, string(encoded), "/synthetic/path")
 			assert.NotContains(t, string(encoded), "raw-provider-response")
 			if strings.HasPrefix(test.code, "hidden_") {
-				assert.Contains(t, string(encoded), "docbank photos assets inspect")
+				assert.Contains(t, string(encoded), "docbank photos CLI command")
 				assert.Contains(t, string(encoded), "MCP photo tools remain locked")
 				assert.NotContains(t, string(encoded), "unhide")
 			}
