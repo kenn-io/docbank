@@ -1061,9 +1061,9 @@ the newest 1,000 durable storage records.
 `GET /jobs/{operation_id}` returns the full operation and its receipt.
 `POST /jobs/{operation_id}/cancel` requests cancellation at the next durable
 object boundary and returns `409` once the operation is terminal or finalizing.
-A browser session may list jobs, read and set supported lane controls without
-query parameters, and cancel an operation by its UUID. It cannot
-read `GET /jobs/{operation_id}`, its error text is replaced with a generic
+A browser session may list jobs with their lane settings, set supported lane
+controls without query parameters, and cancel an operation by its UUID. It
+cannot read `GET /jobs/lanes/{lane}` or `GET /jobs/{operation_id}`, its error text is replaced with a generic
 message, and the cancel response omits the receipt, so host source paths stay
 with API-key clients.
 
