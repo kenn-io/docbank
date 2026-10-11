@@ -1,4 +1,5 @@
 import { batchTagRequestDigest, validateBatchTagReceipt, type BatchTagReceipt, type BatchTagRequest } from "./batch-tags.js";
+import { randomUUID, sha256Digest } from "./crypto.js";
 import { snapshotMemberHash, type SnapshotMember, type VerifiedSnapshotTargets } from "./snapshots.js";
 
 export const ACTION_MAX_MEMBERS = 250_000;
@@ -48,7 +49,7 @@ function digestBytes(value: unknown): Uint8Array {
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", Uint8Array.from(bytes));
+  const digest = await sha256Digest(Uint8Array.from(bytes));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
@@ -141,7 +142,7 @@ export async function prepareAction(
   const batches: PreparedActionBatch[] = [];
   for (let offset = 0; offset < members.length; offset += ACTION_MAX_BATCH_MEMBERS) {
     const batchMembers = members.slice(offset, offset + ACTION_MAX_BATCH_MEMBERS);
-    const operationID = crypto.randomUUID();
+    const operationID = randomUUID();
     const request: BatchTagRequest = {
       operation_id: operationID,
       tag_id: tagID,
@@ -160,7 +161,7 @@ export async function prepareAction(
 
   const withoutDigest: Omit<PreparedAction, "plan_digest"> = {
     version: 1,
-    action_id: crypto.randomUUID(),
+    action_id: randomUUID(),
     vault_id: vaultID,
     source: {
       snapshot_id: snapshot.snapshot_id,

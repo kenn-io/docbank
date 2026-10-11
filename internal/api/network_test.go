@@ -16,7 +16,7 @@ func TestNetworkHostGuardPrecedesAuthentication(t *testing.T) {
 	cfg.BindAddr = "0.0.0.0"
 	cfg.APIKey = "synthetic-key"
 	cfg.AllowedHosts = []string{"docbank:8485"}
-	handler := hostMiddleware(authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), cfg.APIKey, nil, ""), cfg, "http://docbank-synthetic.localhost:1234/")
+	handler := hostMiddleware(authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }), cfg.APIKey, nil, ""), cfg, "http://docbank-synthetic.localhost:1234/", nil)
 	for _, test := range []struct {
 		host, key string
 		status    int

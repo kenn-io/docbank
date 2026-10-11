@@ -1,4 +1,5 @@
 import * as generated from "./generated/docbank.js";
+import { sha256Digest } from "./crypto.js";
 import type { SelectionTarget } from "./selection.js";
 
 export interface BatchTagRequest {
@@ -71,7 +72,7 @@ export async function batchTagRequestDigest(request: BatchTagRequest): Promise<s
   const normalized = canonicalRequest(request);
   const text = `docbank-tag-batch-v1\n${normalized.tag_id}\n${normalized.assign ? "1" : "0"}\n` +
     normalized.nodes.map((node) => `${node.node_id}:${node.revision}\n`).join("");
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  const hash = await sha256Digest(new TextEncoder().encode(text));
   return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 

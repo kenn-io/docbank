@@ -71,6 +71,8 @@ type Deps struct {
 	VerifyPage            VerifyPageFunc   // nil → shared bounded maintenance service
 	RepackPage            RepackPageFunc   // nil → shared bounded maintenance service
 	EnsureEmail           EnsureEmailFunc  // required only by POST /versions/{id}/email
+	WebLoginEnabled       bool             // true only for a configured API key
+	APIAddress            string           // concrete loopback backend authority
 	WebURL                string           // fresh per-daemon loopback origin; empty disables browser sessions
 	BlobRegistry          *blob.Registry   // nil keeps storage-registry routes read-only to the primary
 	Processing            *processing.Service
@@ -192,6 +194,8 @@ func NewServer(d Deps) *Server {
 		}
 	})
 
+	s.webSessions.login = newWebLoginPolicy(d)
+
 	registerReadRoutes(humaAPI, d) // Task 5 (stat-by-id lands in this task)
 	registerCollectionRoutes(humaAPI, d, g)
 	registerPeopleRebuildRoutes(humaAPI, d, g)
@@ -244,16 +248,23 @@ func NewServer(d Deps) *Server {
 	}))
 	s.registerChallenge(mux)
 	s.registerShutdown(mux)
-	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL)
+	webLoginOrigin := ""
+	if s.webSessions.login != nil {
+		webLoginOrigin = s.webSessions.login.origin
+	}
+	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL, webLoginOrigin)
 	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
+	registerWebSignIn(mux, s.webSessions)
+	registerWebSignInOpenAPI(humaAPI)
 	registerTelemetryEvents(mux, d.TelemetryCapture)
 	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 
 	h := http.Handler(mux)
 	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
+	h = webHostMiddleware(h, s.webSessions.login)
 	h = loopbackMiddleware(h)
-	h = hostMiddleware(h, d.Cfg.Server, d.WebURL)
+	h = hostMiddleware(h, d.Cfg.Server, d.WebURL, s.webSessions.login.signInHosts())
 	h = timeoutMiddleware(h)
 	h = recoverMiddleware(h, d.Logger)
 	h = logMiddleware(h, d.Logger)
@@ -282,6 +293,12 @@ func (s *Server) Close() {
 	defer cancel()
 	if err := s.Shutdown(ctx); err != nil {
 		s.deps.Logger.Error("API shutdown did not drain", "err", err)
+		// Owner revocation includes durable export and package-import
+		// cancellation. Keep the store open until an already-started callback
+		// has finished, even when the HTTP shutdown deadline has expired.
+		if s.webSessions != nil {
+			s.webSessions.waitRevocations()
+		}
 		if s.deps.Processing != nil {
 			// Storage must remain open until cancelled providers finish cleanup,
 			// even when the HTTP shutdown deadline has expired.

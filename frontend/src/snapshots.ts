@@ -1,4 +1,5 @@
 import { createWorkspaceQuery, readWorkspaceQueryPage, type WorkspaceQueryCreateRequestFacetsItem } from "./generated/docbank.js";
+import { sha256Digest } from "./crypto.js";
 import { canonicalQuery, parseQuery, queryFingerprint as fingerprintQuery, type Query } from "./query.js";
 import { snapshotTargetRevision, type SnapshotReceiptOverlay } from "./snapshotOverlays.js";
 
@@ -508,7 +509,7 @@ export async function snapshotMemberHash(
     content_version_id: string(member.content_version_id, "member.content_version_id"),
   })).sort((left, right) => left.node_id - right.node_id || left.content_version_id.localeCompare(right.content_version_id));
   const text = ordered.map((member) => `${member.node_id}:${member.content_version_id}\n`).join("");
-  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(text));
+  const digest = await sha256Digest(encoder.encode(text));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 

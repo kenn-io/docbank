@@ -16711,6 +16711,37 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    WebSignInRecord:
+      additionalProperties: false
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+      required:
+        - id
+        - created_at
+        - expires_at
+      type: object
+      x-go-type: api.WebSignInRecord
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    WebTabSession:
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+        upload_secret:
+          type: string
+      required:
+        - token
+        - upload_secret
+      type: object
     WorkspaceFacetValue:
       additionalProperties: false
       properties:
@@ -17179,6 +17210,88 @@ paths:
         "500":
           description: Telemetry capture failed
       summary: Report an anonymous interface usage event
+  /api/daemon/web-auth:
+    get:
+      operationId: getWebSignIn
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  enabled:
+                    type: boolean
+                  session:
+                    $ref: "#/components/schemas/WebTabSession"
+                required:
+                  - enabled
+                type: object
+          description: Browser sign-in status and optional process-local tab credentials
+      summary: Check whether browser key login is enabled
+  /api/daemon/web-auth/login:
+    post:
+      operationId: loginWebSignIn
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                api_key:
+                  type: string
+              required:
+                - api_key
+              type: object
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  enabled:
+                    type: boolean
+                  session:
+                    $ref: "#/components/schemas/WebTabSession"
+                required:
+                  - enabled
+                type: object
+          description: Browser sign-in status and optional process-local tab credentials
+      summary: Sign in using the configured API key
+  /api/daemon/web-auth/sessions:
+    get:
+      operationId: listWebSignIns
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  items:
+                    items:
+                      $ref: "#/components/schemas/WebSignInRecord"
+                    type: array
+                required:
+                  - items
+                type: object
+          description: Live browser logins
+      summary: List browser key logins (master API only)
+  /api/daemon/web-auth/sessions/{id}:
+    delete:
+      operationId: revokeWebSignIn
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Browser login revoked
+      summary: Revoke a browser key login (master API only)
   /api/daemon/web-download:
     delete:
       operationId: cancelWebDownload

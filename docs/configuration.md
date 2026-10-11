@@ -128,6 +128,10 @@ idle_timeout = "30m"  # background daemons only; "0" = never
 
 [web]
 enabled = true
+public_origin = ""             # empty = loopback web origin; set = 32+ char api_key
+allowed_hosts = []             # extra exact host[:port] authorities; needs public_origin
+trust_private_network = false  # explicit trust for non-loopback HTTP
+session_lifetime = "24h"       # key-login lifetime, 1m..2160h; 0 = 24h
 
 [mcp.http]
 credential_binding = "" # empty = HTTP MCP cannot start without an env binding

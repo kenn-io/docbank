@@ -64,6 +64,64 @@ own daemon with its session; the daemon stamps identity and version and sends
 them. The browser holds no analytics key and loads no provider script. Only
 `cmd/docbank` constructs the reporter, so embedded vaults send nothing.
 
+### Browser key login
+
+A configured `server.api_key` enables key login. The server exchanges it for
+existing scoped web-session and upload-proof credentials and a shared HttpOnly
+instance cookie. The key is never echoed, persisted
+in the browser or used for subsequent vault requests. Tab credentials stay in
+page memory. Login and logout leave other tabs and the shared cookie intact.
+Sessions expire after an absolute configured lifetime or daemon shutdown.
+
+`public_origin` owns browser authority. HTTPS is required remotely unless the
+operator explicitly trusts a private network; loopback HTTP remains available.
+Canonical origins normalize hostname case, IP literal spelling (including the
+browser's hexadecimal spelling for IPv4-mapped IPv6 literals), and numeric
+ports before removing the scheme's default port. With `public_origin` set,
+every shared-listener request passes an exact Host allowlist before API-key
+authentication, including health and static routes. The allowlist contains the
+public and concrete loopback backend authorities plus `allowed_hosts`; proxy
+headers never select authority. The public authorities are also added to the
+server Host allowlist, which applies with or without `public_origin`. Without
+`public_origin`, key login adds no Host restriction, and key-login tabs are
+still bound to the loopback web origin.
+Browser mutations require the exact public Origin. The tab token travels in a
+custom header that cross-site pages cannot send without CORS, which Docbank
+never grants, so a separate CSRF token would add no authority check. Reads
+reject a supplied foreign Origin. Protected responses use
+`Cache-Control: private, no-store` and vary on `Cookie` and
+`X-Docbank-Web-Session`.
+
+Login has no failed-attempt lockout. The master key is accepted on every API
+route, so a login-only limit would not slow guessing, and a shared counter
+would let any unauthenticated client lock the operator out. Instead,
+`public_origin` requires a `server.api_key` of at least 32 characters.
+
+The web UI uses `crypto.getRandomValues` for UUIDs in explicitly trusted
+private-network HTTP contexts, where `crypto.randomUUID` is unavailable. It
+prefers SubtleCrypto for SHA-256 and uses the bundled Noble implementation as
+the fallback.
+
+The shared cookie is host-only and `HttpOnly`; its name is derived from the
+canonical origin because browsers do not scope cookies by port. Tabs at one
+origin share it, while daemons on the same host at different ports keep
+independent cookies.
+The cookie alone has no authority. Each authenticated request also needs its
+scoped tab token and unexpired tab state. Upload WebSockets check the tab
+authority and exact origin as well as the existing independent upload proof.
+Existing `docbank web` fragment sessions retain their random per-daemon origin
+and daemon-lifetime authority.
+
+Raw login and session-management routes are described in OpenAPI. Login reveals
+no vault data before authentication. Management lists only IDs and dates and
+requires master authority. Expiry and revocation use the registry's cancellation
+and owner callbacks to end uploads, exports, package imports and prepared reads.
+Shutdown drains callbacks that already started before the server returns, so
+the daemon keeps storage open until owner cleanup finishes. The browser ties API
+errors to the tab session that issued each request and ignores a delayed 401
+from an earlier sign-in; destroyed dialogs ignore their pending responses.
+There is no authentication state file or storage-schema change.
+
 ## Node identity, paths, and revisions
 
 Node IDs are stable. Paths are mutable names that can be reused. Single-node

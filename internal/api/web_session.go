@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -35,11 +36,17 @@ type webSessionRegistry struct {
 	tokens      map[[sha256.Size]byte]webSessionState
 	uploads     map[*websocket.Conn]struct{}
 	uploadGroup sync.WaitGroup
+	revokeGroup sync.WaitGroup
 	closing     bool
 	onRevoke    func(string)
+	login       *webLoginPolicy
 }
 
 type webSessionState struct {
+	login        bool
+	createdAt    time.Time
+	expiresAt    time.Time
+	expires      *time.Timer
 	uploadSecret [sha256.Size]byte
 	upload       *websocket.Conn
 	ctx          context.Context
@@ -176,19 +183,31 @@ func (r *webSessionRegistry) releaseUpload(token string, conn *websocket.Conn) {
 }
 
 func (r *webSessionRegistry) revoke(token string) {
-	digest := sha256.Sum256([]byte(token))
+	r.revokeDigest(sha256.Sum256([]byte(token)))
+}
+
+func (r *webSessionRegistry) revokeDigest(digest [sha256.Size]byte) {
 	r.mu.Lock()
 	state, ok := r.tokens[digest]
 	delete(r.tokens, digest)
+	if ok && r.onRevoke != nil {
+		// Register while holding mu so closeAll cannot begin waiting before an
+		// expiry or logout callback has joined the drain group.
+		r.revokeGroup.Add(1)
+	}
 	r.mu.Unlock()
 	if !ok {
 		return
 	}
 	state.cancel()
+	if state.expires != nil {
+		state.expires.Stop()
+	}
 	if state.upload != nil {
 		_ = state.upload.CloseNow()
 	}
 	if r.onRevoke != nil {
+		defer r.revokeGroup.Done()
 		r.onRevoke(hex.EncodeToString(digest[:]))
 	}
 }
@@ -199,7 +218,13 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 	states := make(map[string]webSessionState, len(r.tokens))
 	for digest, state := range r.tokens {
 		state.cancel()
+		if state.expires != nil {
+			state.expires.Stop()
+		}
 		states[hex.EncodeToString(digest[:])] = state
+	}
+	if r.onRevoke != nil {
+		r.revokeGroup.Add(len(states))
 	}
 	clear(r.tokens)
 	conns := make([]*websocket.Conn, 0, len(r.uploads))
@@ -212,12 +237,16 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 	}
 	if r.onRevoke != nil {
 		for owner := range states {
-			r.onRevoke(owner)
+			func() {
+				defer r.revokeGroup.Done()
+				r.onRevoke(owner)
+			}()
 		}
 	}
 	drained := make(chan struct{})
 	go func() {
 		r.uploadGroup.Wait()
+		r.revokeGroup.Wait()
 		close(drained)
 	}()
 	select {
@@ -226,6 +255,12 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 	case <-ctx.Done():
 		return fmt.Errorf("waiting for browser upload handlers: %w", ctx.Err())
 	}
+}
+
+// waitRevocations blocks until expiry, logout, and administrator revocation
+// callbacks that already started have released their owner resources.
+func (r *webSessionRegistry) waitRevocations() {
+	r.revokeGroup.Wait()
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
