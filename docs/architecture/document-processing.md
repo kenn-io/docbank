@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-10
 title: Document processing
 description: How Docbank derives readable text and search data while keeping original versions and requiring consent for processing.
 ---
@@ -241,6 +241,43 @@ The [searcher](https://github.com/kenn-io/docbank/blob/main/internal/retrieval/s
 and [optional provider stages](https://github.com/kenn-io/docbank/blob/main/internal/retrieval/providers.go)
 own the detailed retrieval contract. These packages are internal integration
 primitives, not public Go imports or CLI recipes.
+
+## Reopen a saved quotation
+
+A retained text citation binds a vault, file node, immutable source version and
+hash, published rendition attachment and build, Markdown hash, and Unicode
+range. The [HTTP operation](http-api.md#retained-text-citations) and default
+[MCP tool](../usage/mcp.md#saved-text-citations) reopen that exact text. A profile
+need not remain configured or executable. The read never calls a provider or
+selects newer evidence.
+
+The store checks the complete reference in one metadata snapshot. The file must
+be live and untrashed, and still own the historical version. The attachment must
+remain published and unsuppressed, with a matching build, profile, source hash,
+and sanitized-Markdown artifact. A retained build without that attachment is
+insufficient. Purge suppression denies the read even when another dependency
+keeps the attachment or bytes alive.
+
+Replacing source content or the active rendition does not invalidate retained
+attachments. Ordinary derivative GC keeps their builds. Trash makes the citation
+unavailable until restore; pruning its version or purging its rendition can
+remove it permanently. A backup restore preserves the authority present in that
+snapshot. Saving a citation adds no retention root, job, lease beyond the read,
+or promise that its evidence will remain available.
+
+The service holds `CaptureContext` from metadata lookup through full blob
+verification and close. The database transaction ends before blob I/O. This
+shared capture gate excludes physical maintenance, including purge, while
+allowing backup's short metadata freeze. Logical mutations may finish after the
+snapshot: an already admitted read can finish, while later reads see the changed
+authority. Embedded vaults keep their existing serialized gate behavior.
+
+Each resolution streams the complete rendition, up to 64 MiB, and retains only
+the requested quote. It verifies the full digest, size, and UTF-8 stream before
+returning text. A short quote still costs a full read. Cancellation and I/O
+causes remain distinct from corrupt evidence. This verification concerns the
+stored sanitized Markdown; it does not prove provider correctness or quote
+verbatim bytes from the original PDF, email, or Office file.
 
 ## Retain, restore, or remove derived results
 

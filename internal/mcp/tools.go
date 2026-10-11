@@ -59,6 +59,7 @@ type toolDefinition struct {
 }
 
 var readToolDefinitions = []toolDefinition{
+	textCitationTool,
 	exportPlanTool, exportProblemsTool,
 	reportSummaryTool, reportDatesTool,
 	{name: "get_export_status", title: "Get export status", description: "Read one retained export job without downloading it.", schemas: getExportStatusSchemas},
@@ -460,6 +461,9 @@ func stableDomainError(err error) (string, int) {
 		return "", 0
 	}
 	switch facts.Code {
+	case "invalid_text_citation", "citation_unavailable", "citation_limit", "invalid_citation_range",
+		"citation_timeout", "citation_canceled", "citation_integrity", "citation_failed":
+		return facts.Code, 0
 	case "invalid_report_request", "invalid_query", "invalid_profile", "invalid_report_scope",
 		"report_selection_changed", "invalid_report_choice", "stale_evidence", "incomplete_coverage",
 		"incomplete_date_coverage", "date_review_required", "report_unavailable", "report_capacity",
@@ -500,6 +504,23 @@ func stableDomainError(err error) (string, int) {
 
 func domainErrorMessage(code string) string {
 	switch code {
+	case "invalid_text_citation":
+		return "Correct the saved citation's identities and Unicode range."
+	case "citation_unavailable":
+		return "Check the cited vault and evidence retention; retrying alone cannot restore missing evidence."
+	case "citation_limit":
+		return "The retained rendition exceeds the citation read limit."
+	case "invalid_citation_range":
+		return "Choose a range within this exact rendition."
+	case "citation_timeout":
+		return "The citation read timed out, possibly waiting for maintenance; retry the same reference later."
+	case "citation_canceled":
+		return "The citation read was canceled; no quote was returned."
+	case "citation_integrity":
+		return "The retained rendition failed verification; no quote was returned."
+	case "citation_failed":
+		return "The citation read failed; check the daemon log."
+
 	case "report_integrity":
 		return "The report summary, stream, or packet evidence disagreed; no file was published."
 	case "report_local_io":

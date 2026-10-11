@@ -22,3 +22,7 @@ func (gate *workerTestGate) MutateContext(ctx context.Context, fn func() error) 
 func (gate *workerTestGate) MaintainContext(ctx context.Context, fn func() error) error {
 	return gate.MutateContext(ctx, fn)
 }
+
+func (gate *workerTestGate) CaptureContext(ctx context.Context, fn func() error) error {
+	return gate.MutateContext(ctx, fn)
+}
