@@ -600,9 +600,9 @@ func TestIngestOptionsSendReplaceToJSONAndStream(t *testing.T) {
 	}
 }
 
-func TestNewRecordAdvertisesProtocol71(t *testing.T) {
+func TestNewRecordAdvertisesProtocol(t *testing.T) {
 	record := daemonconn.NewRecord("127.0.0.1:7486", "key", "token", "")
-	assert.Equal(t, "71", record.Metadata["protocol_version"])
+	assert.Equal(t, "73", record.Metadata["protocol_version"])
 }
 
 func TestProgressStreamPreservesProblemCode(t *testing.T) {
