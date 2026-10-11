@@ -11568,6 +11568,14 @@ components:
         asset_id:
           format: uuid
           type: string
+        camera_make:
+          type:
+            - string
+            - "null"
+        camera_model:
+          type:
+            - string
+            - "null"
         capture_time:
           type:
             - string
@@ -11590,6 +11598,26 @@ components:
         display_file_id:
           format: uuid
           type: string
+        exposure_bias_ev:
+          format: double
+          type:
+            - number
+            - "null"
+        exposure_time_seconds:
+          format: double
+          type:
+            - number
+            - "null"
+        f_number:
+          format: double
+          type:
+            - number
+            - "null"
+        focal_length_mm:
+          format: double
+          type:
+            - number
+            - "null"
         height_px:
           format: int64
           type:
@@ -11597,11 +11625,24 @@ components:
             - "null"
         import_time:
           type: string
+        iso:
+          format: int64
+          type:
+            - integer
+            - "null"
         kind:
           enum:
             - photo
             - video
           type: string
+        lens_make:
+          type:
+            - string
+            - "null"
+        lens_model:
+          type:
+            - string
+            - "null"
         media_type:
           type: string
         name:
@@ -11610,6 +11651,11 @@ components:
           format: int64
           minimum: 1
           type: integer
+        orientation:
+          format: int64
+          type:
+            - integer
+            - "null"
         previews:
           $ref: "#/components/schemas/PhotoPreviewSlots"
         quality:
@@ -11654,6 +11700,16 @@ components:
         - capture_time_offset
         - width_px
         - height_px
+        - camera_make
+        - camera_model
+        - lens_make
+        - lens_model
+        - iso
+        - exposure_time_seconds
+        - f_number
+        - exposure_bias_ev
+        - focal_length_mm
+        - orientation
         - previews
       type: object
       x-go-type: api.PhotoBrowseRow
@@ -11728,6 +11784,13 @@ components:
     PhotoPreviewSlot:
       additionalProperties: false
       properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoPreviewSlot.json
+          format: uri
+          readOnly: true
+          type: string
         generation_id:
           pattern: ^[0-9a-f]{64}$
           type: string
@@ -12017,6 +12080,32 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    PreparePhotoPreviewRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PreparePhotoPreviewRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        content_version_id:
+          format: uuid
+          type: string
+        size:
+          enum:
+            - fit
+            - large
+          type: string
+      required:
+        - content_version_id
+        - size
+      type: object
+      x-go-type: api.PreparePhotoPreviewRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     Preview:
       additionalProperties: false
       properties:
@@ -23149,6 +23238,36 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Detach one file from a photo asset
+  /api/v1/photos/assets/{asset_id}/preview:
+    post:
+      operationId: preparePhotoPreview
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreparePhotoPreviewRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoPreviewSlot"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Prepare a fit or large preview for the current photo display
   /api/v1/photos/assets/{asset_id}/previews/{generation_id}:
     get:
       description: Returns 304 Not Modified without a body when If-None-Match matches an eligible generation. Private HTTP caches must revalidate before reuse.

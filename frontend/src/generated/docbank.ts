@@ -4875,6 +4875,8 @@ export const PhotoPreviewSlotState = {
 } as const;
 
 export interface PhotoPreviewSlot {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
   /** @pattern ^[0-9a-f]{64}$ */
   generation_id?: string;
   /** @minimum 1 */
@@ -4956,6 +4958,10 @@ export type PhotoBrowseRowQuality = {
 export interface PhotoBrowseRow {
   asset_id: string;
   /** @nullable */
+  camera_make: string | null;
+  /** @nullable */
+  camera_model: string | null;
+  /** @nullable */
   capture_time: string | null;
   /** @nullable */
   capture_time_offset: string | null;
@@ -4966,13 +4972,29 @@ export interface PhotoBrowseRow {
   content_version_id: string;
   display_file_id: string;
   /** @nullable */
+  exposure_bias_ev: number | null;
+  /** @nullable */
+  exposure_time_seconds: number | null;
+  /** @nullable */
+  f_number: number | null;
+  /** @nullable */
+  focal_length_mm: number | null;
+  /** @nullable */
   height_px: number | null;
   import_time: string;
+  /** @nullable */
+  iso: number | null;
   kind: PhotoBrowseRowKind;
+  /** @nullable */
+  lens_make: string | null;
+  /** @nullable */
+  lens_model: string | null;
   media_type: string;
   name: string;
   /** @minimum 1 */
   node_id: number;
+  /** @nullable */
+  orientation: number | null;
   previews: PhotoPreviewSlots;
   quality?: PhotoBrowseRowQuality;
   /** @minimum 1 */
@@ -5128,6 +5150,21 @@ export interface PlanRequest {
   roles: RolePolicy[];
   source_id: string;
   volume_limits?: VolumeLimits;
+}
+
+export type PreparePhotoPreviewRequestSize = typeof PreparePhotoPreviewRequestSize[keyof typeof PreparePhotoPreviewRequestSize];
+
+
+export const PreparePhotoPreviewRequestSize = {
+  fit: 'fit',
+  large: 'large',
+} as const;
+
+export interface PreparePhotoPreviewRequest {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  content_version_id: string;
+  size: PreparePhotoPreviewRequestSize;
 }
 
 export interface Preview {
@@ -14530,6 +14567,45 @@ return sessionJSON<PhotoAsset>(getDetachPhotoFileUrl(assetId,fileId,params),
     method: 'DELETE',
     headers: { ...headers, ...getHeaders(options?.headers) }
 
+  }
+);}
+
+
+
+export const getPreparePhotoPreviewUrl = (assetId: string,) => {
+
+
+
+
+  return `/api/v1/photos/assets/${encodeURIComponent(String(assetId))}/preview`
+}
+
+/**
+ * @summary Prepare a fit or large preview for the current photo display
+ */
+export const preparePhotoPreview = async (assetId: string,
+    preparePhotoPreviewRequest: NonReadonly<PreparePhotoPreviewRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoPreviewSlot> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PhotoPreviewSlot>(getPreparePhotoPreviewUrl(assetId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(preparePhotoPreviewRequest)
   }
 );}
 

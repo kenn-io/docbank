@@ -121,7 +121,7 @@ export function groupPhotos(items: PhotoBrowseRow[], grouping: "months" | "sessi
       group.items.push(item);
       previous = clock;
     }
-    for (const group of groups) group.items.reverse();
+    for (const group of groups) group.items.sort((a, b) => clocks.get(b)! - clocks.get(a)!);
     groups.reverse();
   }
   if (undated.length) groups.push({ key: "undated", label: "Undated", year: "", items: undated });

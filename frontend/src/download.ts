@@ -333,7 +333,7 @@ export function previewEligibility(
     return { kind: "text", mediaType };
   }
   const image =
-    charset === "" && ["image/png", "image/jpeg"].includes(mediaType);
+    charset === "" && ["image/png", "image/jpeg", "image/webp"].includes(mediaType);
   if (image) {
     if (size > previewImageMaxBytes) {
       throw new Error(

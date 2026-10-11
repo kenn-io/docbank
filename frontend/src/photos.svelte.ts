@@ -1,4 +1,6 @@
-import { listPhotoAssets, trashPhotoAsset, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { getNode, preparePhotoPreview, listPhotoAssets, trashPhotoAsset, type PhotoPreviewSlot, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { readVerifiedPreview } from "./download.js";
+import { selectedSourceFromNode } from "./selectedSource.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
@@ -15,7 +17,11 @@ export function loadDensity(): Density {
   return "comfortable";
 }
 
+export interface PhotoReturn { contextID: string; assetID: string; control: "image" | "open" | "check"; scrollTop: number }
+
 export class Photos {
+  readonly contextID = crypto.randomUUID();
+  viewerReturn = $state.raw<PhotoReturn>();
   items = $state<PhotoBrowseRow[]>([]);
   total = $state(0);
   cursor = $state<string | undefined>();
@@ -35,6 +41,57 @@ export class Photos {
   private disposed = false;
 
   constructor(private session: string, private onauthfailure: (cause: unknown) => void) {}
+
+  async lookup(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {
+    try {
+      const page = await listPhotoAssets({ query: { ...photoQuery, filters: { asset_ids: [assetID] } }, page_size: 1 }, { session: this.session, signal });
+      if (!page.items[0]) throw new APIError("This photo is no longer in Library.", 404, "not_found");
+      signal.throwIfAborted();
+      return page.items[0];
+    } catch (cause) {
+      if (!signal.aborted && cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      throw cause;
+    }
+  }
+
+  async preview(photo: PhotoBrowseRow, size: "fit" | "large", signal: AbortSignal): Promise<PhotoPreviewSlot> {
+    if (photo.previews[size].state !== "missing") return photo.previews[size];
+    try {
+      const slot = await preparePhotoPreview(photo.asset_id, { content_version_id: photo.content_version_id, size }, { session: this.session, signal });
+      signal.throwIfAborted();
+      photo.previews[size] = slot;
+      return slot;
+    } catch (cause) {
+      if (!signal.aborted && cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      throw cause;
+    }
+  }
+
+  async original(photo: PhotoBrowseRow, signal: AbortSignal): Promise<string> {
+    const conflict = () => new APIError("The photo changed. Reload this photo before viewing its original.", 409, "photo_display_changed");
+    const check = async () => {
+      signal.throwIfAborted();
+      const current = await this.lookup(photo.asset_id, signal).catch(cause => { if (cause instanceof APIError && cause.status === 404) throw conflict(); throw cause; });
+      if (current.display_file_id !== photo.display_file_id || current.node_id !== photo.node_id || current.content_version_id !== photo.content_version_id) throw conflict();
+    };
+    await check();
+    let objectURL: string;
+    try {
+      const node = await getNode(photo.node_id, { session: this.session, signal });
+      if (node.current_version_id !== photo.content_version_id) throw conflict();
+      const result = await readVerifiedPreview(this.session, selectedSourceFromNode(node, photo.name), node.revision, signal, () => {});
+      if (result.kind !== "image") throw new Error("This original cannot be viewed as an image.");
+      objectURL = result.url;
+    } catch (cause) {
+      if (!signal.aborted && cause instanceof APIError && cause.status === 401) this.onauthfailure(cause);
+      throw cause;
+    }
+    try {
+      await check();
+      signal.throwIfAborted();
+      return objectURL;
+    } catch (cause) { URL.revokeObjectURL(objectURL); throw cause; }
+  }
 
   setDensity(density: Density) {
     this.density = density;
@@ -197,5 +254,5 @@ export class Photos {
 
   clearSelection() { this.selection = clearSelection<string>(); this.trashTargets = []; }
   selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
-  dispose() { this.disposed = true; this.controller.abort(); }
+  dispose() { this.viewerReturn = undefined; this.disposed = true; this.controller.abort(); }
 }

@@ -7,12 +7,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"math"
-	"os"
+	"strconv"
 
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/blob"
@@ -28,11 +29,23 @@ func check(err error) {
 }
 
 func main() {
-	if len(os.Args) != 2 {
-		panic("usage: photos-fixture <vault>")
+	unavailable := flag.Bool("unavailable", false, "Include an undecodable photo")
+	flag.Parse()
+	args := flag.Args()
+	if len(args) < 1 || len(args) > 2 {
+		panic("usage: photos-fixture [-unavailable] <vault> [count]")
+	}
+	count := 10_000
+	if len(args) == 2 {
+		var err error
+		count, err = strconv.Atoi(args[1])
+		check(err)
+		if count < 1 {
+			panic("count must be positive")
+		}
 	}
 	ctx := context.Background()
-	layout := home.Layout{Root: os.Args[1]}
+	layout := home.Layout{Root: args[0]}
 	check(layout.Ensure())
 	s, err := store.Open(layout.DBPath())
 	check(err)
@@ -52,9 +65,9 @@ func main() {
 	}
 	samples := make([]sample, 48)
 	for index := range samples {
-		width, height := 480, 320
+		width, height := 1440, 960
 		if index%3 == 0 {
-			width, height = 320, 480
+			width, height = 960, 1440
 		}
 		frame := image.NewRGBA(image.Rect(0, 0, width, height))
 		for y := 0; y < height; y++ {
@@ -86,11 +99,28 @@ func main() {
 		if index >= 10 {
 			date = fmt.Sprintf("%04d-%02d-15T12:00:00", 2026-(index-10)/4, 12-(index-10)%4)
 		}
-		metadata, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{{Key: "created", Namespace: "image.exif", SourceField: "DateTimeOriginal", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{Raw: date, Normalized: date, Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneOmitted}}}}})
+		fields := []document.SourceMetadataFieldV1{
+			{Key: "created", Namespace: "image.exif", SourceField: "DateTimeOriginal", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{Raw: date, Normalized: date, Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneOmitted}}},
+			{Key: "image.exif.camera_make", Namespace: "image.exif", SourceField: "Make", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Synthetic Camera")}},
+			{Key: "image.exif.camera_model", Namespace: "image.exif", SourceField: "Model", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Model 1")}},
+			{Key: "image.exif.lens_model", Namespace: "image.exif", SourceField: "LensModel", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Synthetic 50mm")}},
+			{Key: "image.exif.iso", Namespace: "image.exif", SourceField: "PhotographicSensitivity", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(400))}},
+			{Key: "image.exif.f_number", Namespace: "image.exif", SourceField: "FNumber", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataNumber, Number: new(2.8)}},
+			{Key: "image.exif.exposure_time_seconds", Namespace: "image.exif", SourceField: "ExposureTime", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataNumber, Number: new(0.004)}},
+			{Key: "image.exif.focal_length_mm", Namespace: "image.exif", SourceField: "FocalLength", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataNumber, Number: new(50.0)}},
+		}
+		metadata, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: fields})
 		check(err)
 		samples[index].metadata = metadata
 	}
-	for index := range 10_000 {
+	for index := range count {
+		if *unavailable && index == count-1 {
+			hash, size, err := blobs.Write(bytes.NewReader([]byte("synthetic undecodable JPEG")))
+			check(err)
+			_, err = s.CreateFile(ctx, s.RootID(), "Synthetic-unavailable.jpg", hash, size, "image/jpeg")
+			check(err)
+			continue
+		}
 		sampleIndex := index % 10
 		if index >= 9000 {
 			sampleIndex = 10 + index%38
@@ -110,5 +140,5 @@ func main() {
 		check(err)
 	}
 	check(s.Checkpoint(ctx))
-	fmt.Println("seeded 10000 synthetic photos")
+	fmt.Printf("seeded %d synthetic photos\n", count)
 }

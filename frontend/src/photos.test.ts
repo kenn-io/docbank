@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { APIError } from "./api-transport.js";
+import * as download from "./download.js";
 import { Photos, loadDensity } from "./photos.svelte.js";
 import { photo } from "./photo-test-fixtures.js";
 
@@ -284,4 +286,67 @@ it("times each replacement page separately", async () => {
   expect(photos.error).toBe("");
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-2"]);
   photos.dispose();
+});
+
+it("looks up direct photos without replacing loaded results", async () => {
+ const item = photo(1); const fetcher = vi.fn().mockResolvedValueOnce(response([photo(2)])); vi.stubGlobal("fetch",fetcher);
+ const photos = new Photos("scoped",vi.fn()); photos.items=[item];
+ expect((await photos.lookup("photo-2",new AbortController().signal)).asset_id).toBe("photo-2");
+ expect(photos.items).toEqual([item]);
+ const fresh = {...item,content_version_id:"new-version"}; fetcher.mockResolvedValueOnce(response([fresh]));
+ expect((await photos.lookup(item.asset_id,new AbortController().signal)).content_version_id).toBe("new-version"); expect(photos.items[0]).toEqual(item);
+ expect(JSON.parse(fetcher.mock.calls[0][1].body).query.filters.asset_ids).toEqual(["photo-2"]);
+ expect(fetcher).toHaveBeenCalledTimes(2); photos.dispose();
+});
+
+it("retains prepared preview slots and applies session cleanup for lookup, preparation and original reads", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ state: "ready", generation_id: "fit-generation" })));
+  vi.stubGlobal("fetch", fetcher); const onauth = vi.fn(); const photos = new Photos("scoped", onauth); const item = photo(1); const signal = new AbortController().signal;
+  const slot = await photos.preview(item,"fit",signal); expect(item.previews.fit).toEqual(slot);
+  expect(await photos.preview(item,"fit",signal)).toEqual(slot); expect(fetcher).toHaveBeenCalledOnce();
+  for (const operation of [() => photos.lookup(item.asset_id,signal), () => photos.preview(item,"large",signal), () => photos.original(item,signal)]) {
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({detail:"Session expired"}),{status:401}));
+    await expect(operation()).rejects.toMatchObject({status:401});
+  }
+  expect(onauth).toHaveBeenCalledTimes(3); photos.dispose();
+});
+
+it.each(["display", "excluded", "version", "download-display", "download-node", "download-version", "download-excluded", "download-error", "download-auth", "download-abort", "download-success"])("checks original photo binding for %s without adopting stale results", async scenario => {
+  const old = photo(1), current = {...old, display_file_id:"other-file", node_id:2, content_version_id:"other-version"};
+  const onauth = vi.fn(), photos = new Photos("scoped", onauth); photos.items = [old];
+  const lookup = vi.spyOn(photos, "lookup"); if (scenario === "display") lookup.mockResolvedValue(current); else if (scenario === "version") lookup.mockResolvedValue(old); else lookup.mockRejectedValue(new APIError("This photo is no longer in Library.", 404, "not_found"));
+  const fetcher = vi.fn(async () => new Response(JSON.stringify({id:1, kind:"file", current_version_id:old.content_version_id, blob_hash:"a".repeat(64), size:10, mime_type:"image/jpeg", revision:1, name:old.name})));
+  vi.stubGlobal("fetch", fetcher); const read = vi.spyOn(download, "readVerifiedPreview").mockResolvedValue({kind:"image", url:"blob:original", mediaType:"image/jpeg"});
+  if (scenario.startsWith("download-")) {
+    Object.defineProperty(URL, "revokeObjectURL", {configurable:true, value:vi.fn()});
+    lookup.mockResolvedValue(old);
+    let finish!: (result: {kind:"image"; url:string; mediaType:string}) => void;
+    read.mockImplementationOnce(() => new Promise(resolve => finish = resolve));
+    const controller = new AbortController(), original = photos.original(old, controller.signal);
+    await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+    if (scenario === "download-display") lookup.mockResolvedValue({...old, display_file_id:"other-file"});
+    else if (scenario === "download-node") lookup.mockResolvedValue({...old, node_id:2});
+    else if (scenario === "download-version") lookup.mockResolvedValue({...old, content_version_id:"other-version"});
+    else if (scenario === "download-excluded") lookup.mockRejectedValue(new APIError("Excluded", 404, "not_found"));
+    else if (scenario === "download-error") lookup.mockRejectedValue(new Error("Lookup failed"));
+    else if (scenario === "download-auth") { lookup.mockRestore(); fetcher.mockResolvedValue(new Response(JSON.stringify({detail:"Session expired"}), {status:401})); }
+    else if (scenario === "download-abort") controller.abort();
+    const settled = scenario === "download-success" ? expect(original).resolves.toBe("blob:original")
+      : scenario === "download-error" ? expect(original).rejects.toThrow("Lookup failed")
+      : scenario === "download-auth" ? expect(original).rejects.toMatchObject({status:401})
+      : scenario === "download-abort" ? expect(original).rejects.toMatchObject({name:"AbortError"})
+      : expect(original).rejects.toMatchObject({status:409, code:"photo_display_changed"});
+    finish({kind:"image", url:"blob:original", mediaType:"image/jpeg"}); await settled;
+    if (scenario === "download-success") expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    else expect(URL.revokeObjectURL).toHaveBeenCalledExactlyOnceWith("blob:original");
+    expect(onauth).toHaveBeenCalledTimes(scenario === "download-auth" ? 1 : 0);
+    expect(photos.items).toEqual([old]); return;
+  }
+  if (scenario === "version") fetcher.mockResolvedValue(new Response(JSON.stringify({current_version_id:"changed"})));
+  await expect(photos.original(old, new AbortController().signal)).rejects.toMatchObject({status:409, code:"photo_display_changed"});
+  expect(photos.items).toEqual([old]); expect(fetcher).toHaveBeenCalledTimes(scenario === "version" ? 1 : 0); expect(read).not.toHaveBeenCalled();
+  if (scenario === "display") {
+    fetcher.mockResolvedValue(new Response(JSON.stringify({id:2, kind:"file", current_version_id:current.content_version_id, blob_hash:"b".repeat(64), size:10, mime_type:"image/jpeg", revision:1, name:current.name})));
+    expect(await photos.original(current, new AbortController().signal)).toBe("blob:original"); expect(read.mock.calls[0]![1].nodeID).toBe(2);
+  }
 });
