@@ -178,6 +178,10 @@ func newProvenClientForDial(
 	return c, nil
 }
 
+// errInvalidProofResponse marks a proof response that broke the exchange's
+// framing rules, as opposed to an I/O failure that a fresh socket may avoid.
+var errInvalidProofResponse = errors.New("daemon ownership response")
+
 // proofTransport finishes the credential-free exchange before handing its socket away.
 type proofTransport struct{ conn net.Conn }
 
@@ -191,14 +195,14 @@ func (t proofTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("reading daemon ownership response: %w", err)
 	}
 	if resp.Close {
-		return nil, errors.New("daemon ownership response closes its connection")
+		return nil, fmt.Errorf("%w closes its connection", errInvalidProofResponse)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, proofBodyLimit+1))
 	if err != nil {
 		return nil, fmt.Errorf("reading daemon ownership body: %w", err)
 	}
 	if len(body) > proofBodyLimit || reader.Buffered() != 0 {
-		return nil, errors.New("daemon ownership response exceeds its framing bounds")
+		return nil, fmt.Errorf("%w exceeds its framing bounds", errInvalidProofResponse)
 	}
 	if err := resp.Body.Close(); err != nil {
 		return nil, fmt.Errorf("closing daemon ownership body: %w", err)
@@ -674,7 +678,7 @@ func stopRecord(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
 		// so preserve the drain budget. A completed HTTP rejection proves this
 		// request did not initiate shutdown and uses the process-signal fallback.
 		shutdownErr := c.Shutdown(ctx, token)
-		if _, rejected := responseStatus(shutdownErr); rejected {
+		if _, rejected := ResponseStatus(shutdownErr); rejected {
 			return signalStopRecord(ctx, rec)
 		}
 		dead, err := waitDead(ctx, rec, daemon.GracefulExitTimeout)

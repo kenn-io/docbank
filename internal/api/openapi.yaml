@@ -12997,6 +12997,71 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    PushSourceState:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PushSourceState.json
+          format: uri
+          readOnly: true
+          type: string
+        hash:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        known:
+          type: boolean
+        node:
+          $ref: "#/components/schemas/Node"
+        size:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+        - known
+        - size
+      type: object
+      x-go-type: api.PushSourceState
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PushUploadReceipt:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PushUploadReceipt.json
+          format: uri
+          readOnly: true
+          type: string
+        computed_hash:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        computed_size:
+          format: int64
+          type: integer
+        node:
+          $ref: "#/components/schemas/Node"
+        status:
+          enum:
+            - added
+            - updated
+            - linked
+            - skipped
+            - duplicate_skipped
+          type: string
+      required:
+        - status
+        - node
+        - computed_hash
+        - computed_size
+      type: object
+      x-go-type: api.PushUploadReceipt
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     PutExportChunkRequest:
       additionalProperties: false
       properties:
@@ -17117,6 +17182,28 @@ paths:
                   - proof
                 type: object
           description: Daemon ownership proof
+  /api/daemon/key-challenge:
+    get:
+      operationId: challengeAPIKey
+      parameters:
+        - in: query
+          name: nonce
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  proof:
+                    type: string
+                required:
+                  - proof
+                type: object
+          description: API key possession proof
   /api/daemon/shutdown:
     post:
       operationId: shutdownDaemon
@@ -23559,6 +23646,136 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Resolve exact current live document search authority
+  /api/v1/push/source:
+    get:
+      description: Uses push name plus relative source path. Unknown identities return known=false; mapped trash is an error. The last accepted source hash is independent of the node's current version. A push name that matches a configured daemon watch is refused with push_name_in_use.
+      operationId: getPushSource
+      parameters:
+        - explode: false
+          in: query
+          name: push_name
+          required: true
+          schema:
+            maxLength: 64
+            type: string
+        - explode: false
+          in: query
+          name: source_ref
+          required: true
+          schema:
+            maxLength: 4096
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushSourceState"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read the last accepted bytes for one push source
+  /api/v1/push/uploads:
+    post:
+      description: Streams exactly one multipart field named `file`. X-Docbank-Blob-Hash and X-Docbank-Blob-Size are required declarations for the file payload, not the multipart envelope. Success grants node/blob authority only after both match. Records push provenance atomically. Existing source identities keep their node and version changed source bytes; parent_path and name place only new nodes. Duplicate policy applies only to new identities and only links to nodes this push name already owns.
+      operationId: uploadPushFile
+      parameters:
+        - description: Virtual filename; must equal the multipart filename
+          in: query
+          name: name
+          required: true
+          schema:
+            minLength: 1
+            type: string
+        - description: Expected lowercase hexadecimal SHA-256 of the file payload
+          in: header
+          name: X-Docbank-Blob-Hash
+          required: true
+          schema:
+            pattern: ^[0-9a-f]{64}$
+            type: string
+        - description: Expected raw file byte length
+          in: header
+          name: X-Docbank-Blob-Size
+          required: true
+          schema:
+            format: int64
+            minimum: 0
+            type: integer
+        - description: Absolute virtual directory for a new source; missing directories are created with its node
+          in: query
+          name: parent_path
+          required: true
+          schema:
+            maxLength: 4096
+            type: string
+        - description: Portable push identity; lowercase letters, digits, -, _, .
+          in: query
+          name: push_name
+          required: true
+          schema:
+            maxLength: 64
+            type: string
+        - description: Canonical relative slash path
+          in: query
+          name: source_ref
+          required: true
+          schema:
+            maxLength: 4096
+            type: string
+        - description: "New-identity duplicate policy: link, skip, or create"
+          in: query
+          name: duplicates
+          required: true
+          schema:
+            maxLength: 6
+            type: string
+        - description: Original source modification time in canonical UTC RFC3339Nano
+          in: query
+          name: modified_at
+          schema:
+            maxLength: 64
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            encoding:
+              file:
+                contentType: "*/*"
+            schema:
+              properties:
+                file:
+                  contentMediaType: application/octet-stream
+                  format: binary
+                  type: string
+              required:
+                - file
+              type: object
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushUploadReceipt"
+          description: Existing source updated, linked, skipped, or duplicate-skipped
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushUploadReceipt"
+          description: New file node created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Upload one digest-checked push source
   /api/v1/queries/highlights:
     post:
       description: Returns only bounded positive text operands from the resolved compiler AST; structured, name-only, and negated operands are excluded.

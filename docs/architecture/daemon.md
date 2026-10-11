@@ -96,7 +96,7 @@ stale state:
   that PID and treats a mismatch as a stale record. It never signals or
   trusts a process it didn't start.
 - **Exact version match.** Pre-1.0, there is no compatibility matrix:
-  the CLI requires the daemon's version to match its own exactly. `docbank
+  local daemon discovery requires an exact version match with the CLI. `docbank
   daemon status` and `docbank daemon stop` report any live daemon
   regardless of version (they only discover, never start). Everything
   that starts a daemon goes through one path, `daemonconn.EnsureDaemon`:
@@ -145,7 +145,7 @@ new listener that reused the port.
 
 ## Auto-start and idle shutdown
 
-Every data command calls `daemonconn.Ensure`, which discovers a version- and
+Data commands for the local vault call `daemonconn.Ensure`, which discovers a version- and
 protocol-matched daemon or starts one. The CLI never fails with "no daemon
 running" for `add`, `ls`, `cat`, and the rest. The protocol revision in the
 runtime record distinguishes incompatible development builds that share the
@@ -153,6 +153,13 @@ same version string. A missing or mismatched revision forces replacement
 before a CLI data request is sent. `daemon status` and `daemon stop` are
 discovery-only and never start a daemon, so checking on or stopping the daemon
 can't accidentally spawn one.
+
+[`docbank push`](../usage/pushing.md) instead connects to its explicit `--to`
+origin with an operator-supplied API key. It does not discover, start, or replace
+a local daemon. Every new connection must first answer a key challenge, proving
+it holds the API key without either side sending it; only then does the key or
+any document byte cross that connection. Its target must support the push
+routes; an older daemon returns an error before any upload.
 
 A background-spawned daemon (started via auto-start, `daemon start`, or
 `daemon restart`) exits after `[server] idle_timeout` (default 30

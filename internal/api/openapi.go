@@ -48,6 +48,11 @@ func OpenAPIYAML() ([]byte, error) {
 		Responses: map[string]*huma.Response{"200": {Description: "Daemon ownership proof", Content: map[string]*huma.MediaType{jsonMediaType: {Schema: huma.SchemaFromType(doc.Components.Schemas, reflect.TypeFor[struct {
 			Proof string `json:"proof"`
 		}]())}}}}})
+	doc.AddOperation(&huma.Operation{OperationID: "challengeAPIKey", Method: http.MethodGet, Path: daemonauth.KeyChallengePath,
+		Parameters: []*huma.Param{{Name: "nonce", In: openAPIQueryLocation, Required: true, Schema: &huma.Schema{Type: openAPIStringType}}},
+		Responses: map[string]*huma.Response{"200": {Description: "API key possession proof", Content: map[string]*huma.MediaType{jsonMediaType: {Schema: huma.SchemaFromType(doc.Components.Schemas, reflect.TypeFor[struct {
+			Proof string `json:"proof"`
+		}]())}}}}})
 	// The in-module Go client shares the API's wire types. Do not generate a
 	// second copy with different UUID, time, or optional-field representations.
 	registry := doc.Components.Schemas

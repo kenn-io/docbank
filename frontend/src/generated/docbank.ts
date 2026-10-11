@@ -659,6 +659,7 @@ export interface BackupRestoreRequest {
   overwrite?: boolean;
   repo?: string;
   snapshot_id?: string;
+  /** Loopback-only server-local path to an owner-private TOML restore mapping file. */
   store_map?: string;
   target: string;
 }
@@ -5518,6 +5519,38 @@ export interface ProvenancePage {
   total: number;
 }
 
+export interface PushSourceState {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  hash?: string;
+  known: boolean;
+  node?: Node;
+  /** @minimum 0 */
+  size: number;
+}
+
+export type PushUploadReceiptStatus = typeof PushUploadReceiptStatus[keyof typeof PushUploadReceiptStatus];
+
+
+export const PushUploadReceiptStatus = {
+  added: 'added',
+  updated: 'updated',
+  linked: 'linked',
+  skipped: 'skipped',
+  duplicate_skipped: 'duplicate_skipped',
+} as const;
+
+export interface PushUploadReceipt {
+  /** A URL to the JSON Schema for this object. */
+  readonly $schema?: string;
+  /** @pattern ^[0-9a-f]{64}$ */
+  computed_hash: string;
+  computed_size: number;
+  node: Node;
+  status: PushUploadReceiptStatus;
+}
+
 export interface PutExportChunkRequest {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
@@ -6775,6 +6808,14 @@ export type ChallengeDaemon200 = {
   proof: string;
 };
 
+export type ChallengeAPIKeyParams = {
+nonce: string;
+};
+
+export type ChallengeAPIKey200 = {
+  proof: string;
+};
+
 export type ShutdownDaemonHeaders = {
 'X-Docbank-Daemon-Token': string;
 };
@@ -7529,6 +7570,67 @@ export type SetPhotoSettingsHeaders = {
 'If-Match': string;
 };
 
+export type GetPushSourceParams = {
+/**
+ * @maxLength 64
+ */
+push_name: string;
+/**
+ * @maxLength 4096
+ */
+source_ref: string;
+};
+
+export type UploadPushFileParams = {
+/**
+ * Virtual filename; must equal the multipart filename
+ * @minLength 1
+ */
+name: string;
+/**
+ * Absolute virtual directory for a new source; missing directories are created with its node
+ * @maxLength 4096
+ */
+parent_path: string;
+/**
+ * Portable push identity; lowercase letters, digits, -, _, .
+ * @maxLength 64
+ */
+push_name: string;
+/**
+ * Canonical relative slash path
+ * @maxLength 4096
+ */
+source_ref: string;
+/**
+ * New-identity duplicate policy: link, skip, or create
+ * @maxLength 6
+ */
+duplicates: string;
+/**
+ * Original source modification time in canonical UTC RFC3339Nano
+ * @maxLength 64
+ */
+modified_at?: string;
+};
+
+export type UploadPushFileHeaders = {
+/**
+ * Expected lowercase hexadecimal SHA-256 of the file payload
+ * @pattern ^[0-9a-f]{64}$
+ */
+'X-Docbank-Blob-Hash': string;
+/**
+ * Expected raw file byte length
+ * @minimum 0
+ */
+'X-Docbank-Blob-Size': string;
+};
+
+export type UploadPushFileBody = {
+  file: Blob | File;
+};
+
 export type ReadRenditionTextParams = {
 /**
  * @minimum 1
@@ -7768,6 +7870,34 @@ export const getChallengeDaemonUrl = (params: ChallengeDaemonParams,) => {
 export const challengeDaemon = async (params: ChallengeDaemonParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ChallengeDaemon200> => {
 
   return sessionJSON<ChallengeDaemon200>(getChallengeDaemonUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getChallengeAPIKeyUrl = (params: ChallengeAPIKeyParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/daemon/key-challenge?${stringifiedParams}` : `/api/daemon/key-challenge`
+}
+
+export const challengeAPIKey = async (params: ChallengeAPIKeyParams, options?: Parameters<typeof sessionJSON>[1]): Promise<ChallengeAPIKey200> => {
+
+  return sessionJSON<ChallengeAPIKey200>(getChallengeAPIKeyUrl(params),
   {
     ...options,
     method: 'GET'
@@ -15077,6 +15207,88 @@ return sessionJSON<DocumentSourceFenceResolution>(getResolveDocumentSourceFenceU
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(documentSourceFenceResolveRequest)
+  }
+);}
+
+
+
+export const getGetPushSourceUrl = (params: GetPushSourceParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/push/source?${stringifiedParams}` : `/api/v1/push/source`
+}
+
+/**
+ * Uses push name plus relative source path. Unknown identities return known=false; mapped trash is an error. The last accepted source hash is independent of the node's current version. A push name that matches a configured daemon watch is refused with push_name_in_use.
+ * @summary Read the last accepted bytes for one push source
+ */
+export const getPushSource = async (params: GetPushSourceParams, options?: Parameters<typeof sessionJSON>[1]): Promise<PushSourceState> => {
+
+  return sessionJSON<PushSourceState>(getGetPushSourceUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getUploadPushFileUrl = (params: UploadPushFileParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/v1/push/uploads?${stringifiedParams}` : `/api/v1/push/uploads`
+}
+
+/**
+ * Streams exactly one multipart field named `file`. X-Docbank-Blob-Hash and X-Docbank-Blob-Size are required declarations for the file payload, not the multipart envelope. Success grants node/blob authority only after both match. Records push provenance atomically. Existing source identities keep their node and version changed source bytes; parent_path and name place only new nodes. Duplicate policy applies only to new identities and only links to nodes this push name already owns.
+ * @summary Upload one digest-checked push source
+ */
+export const uploadPushFile = async (uploadPushFileBody: UploadPushFileBody,
+    params: UploadPushFileParams,
+    headers: UploadPushFileHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PushUploadReceipt> => {
+    const formData = new FormData();
+formData.append(`file`, uploadPushFileBody.file);
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<PushUploadReceipt>(getUploadPushFileUrl(params),
+  {
+    ...options,
+    method: 'POST',
+    headers: { ...headers, ...getHeaders(options?.headers) },
+    body: formData
   }
 );}
 

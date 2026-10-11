@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-09
+last_edited: 2026-10-10
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -23,7 +23,8 @@ nodes, missing tags, a locked backup repository, and busy vault maintenance
 include a next-step hint. Hints stay on stderr.
 
 Data commands send HTTP requests to the daemon and start it in the background
-if needed. They never open the vault directly. `docbank daemon status` and
+if needed. `docbank push` selects an explicit keyed daemon with `--to` and
+does not start a local daemon. Commands never open the vault directly. `docbank daemon status` and
 `docbank daemon stop` never start a daemon. See [Daemon](architecture/daemon.md)
 and [Ownership and concurrency](architecture/locking.md).
 
@@ -389,6 +390,36 @@ source is reported as a failure and the command continues with remaining
 source arguments, just as it does for failures inside a directory tree.
 `--json` suppresses progress and returns the same terminal report shape as the
 HTTP JSON endpoint, so stdout remains safe for automation.
+
+## docbank push
+
+```text
+docbank push <local-dir> --to <daemon-url> --name <push-name> --dest <virtual-dir> [--api-key-file FILE] [--duplicates link|skip|create] [--watch] [--exclude VALUE]... [--settle-time 30s] [--minimum-age 0s] [--scan-interval 5s]
+```
+
+Archives a local folder through the selected daemon. Reads the API key from
+`DOCBANK_API_KEY`, or from `--api-key-file` when supplied. Prints acknowledged
+outcomes, each file the daemon rejected, and a final count. Rejected files do
+not stop the run, but make the exit code nonzero. Ctrl+C stops the run and
+still prints the count; stopping `--watch` this way is not an error. Repeat the
+command to resume from the daemon's accepted hashes.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--to` | required | HTTP or HTTPS daemon origin; redirects are refused |
+| `--name` | required | Stable source name: 1–64 lowercase letters, digits, `-`, `_`, or `.` |
+| `--dest` | required | Absolute virtual directory for new source identities |
+| `--api-key-file` | none | Read the key from this file instead of the environment |
+| `--duplicates` | `link` | Link a new identity to a matching document this push name already owns, skip it, or create another node |
+| `--watch` | false | Keep scanning until interrupted |
+| `--exclude` | none | Literal basename or source-relative path; repeatable |
+| `--settle-time` | `30s` | Unchanged window before uploading in watch mode |
+| `--minimum-age` | `0s` | Minimum time since the file's modification |
+| `--scan-interval` | `5s` | Watch polling interval |
+
+See [Push a folder to another daemon](usage/pushing.md) for connection setup,
+source identity, version retention, duplicate policy, traversal limits, and
+switching from a daemon-owned watch without re-uploading unchanged files.
 
 ## docbank provenance
 

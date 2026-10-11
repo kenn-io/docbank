@@ -95,6 +95,8 @@ ingests        (id, started_at, source_kind, source_desc)
 provenance     (identity SHA-256 PRIMARY KEY, node_id, ingest_id,
                 original_path, original_mtime, supersedes)
 watch_sources  (watch_name, source_ref, node_id, last blob_hash and size)
+push_sources   (push_name, source_ref, node_id, provenance identity,
+                last blob_hash and size, accepted_at)
 tags           (id UUID PRIMARY KEY, name UNIQUE, revision)
 node_tags      (node_id, tag_id)
 audit_records  (digest PRIMARY KEY, kind, operation/event/node indexes, record_json)
@@ -205,6 +207,13 @@ dangling, cross-node, branching, or cyclic graph during import.
 Its primary key is `(watch_name, source_ref)`, and it records both the stable
 node and the last source bytes accepted. Watch decisions live in Go: unchanged
 source bytes never replace an independently edited or reverted node head.
+
+`push_sources` keeps the same source digest authority for client-owned folders.
+Its `(push_name, source_ref)` key survives pruning the content version that was
+current when the source was accepted. The cursor stores a digest and size, not
+physical-byte authority, so it does not prevent pruning or add old bytes to a
+backup. Identities of one push name may link to a node that name already owns;
+the watch cursor's unique node ownership rule remains unchanged.
 
 The schema and metadata-v1 codec can persist one complete first audit
 enrollment: topology and attached-metadata genesis, a shared baseline, sticky

@@ -138,7 +138,7 @@ var currentSchemaTables = [...]string{
 	"photo_technical_metadata", "photo_technical_metadata_state",
 	"email_generations", "email_part_artifacts", "email_attachments", "email_heads", "email_body_results",
 	"blob_stores", "blob_locations", "blob_pack_entries",
-	"saved_queries", "saved_query_runs", "collection_labels", "provenance_version_bindings", "batch_tag_receipts", "package_preflights",
+	"saved_queries", "saved_query_runs", "collection_labels", "provenance_version_bindings", "push_sources", "batch_tag_receipts", "package_preflights",
 	"term_report_history",
 	"export_sources", "export_chunks", "export_members", "export_plans", "export_documents", "export_role_roots", "export_jobs",
 	"collection_snapshots", "collection_snapshot_members", "collection_snapshot_representations", "packages", "package_volumes",

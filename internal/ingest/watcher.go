@@ -266,6 +266,8 @@ func watchMountForRoot(root *os.Root) (watchMount, error) {
 // in memory: after every daemon restart a file must prove stability for a full
 // settle window again before Docbank opens it.
 type Watcher struct {
+	process       func(context.Context, string, watchFingerprint, localFileOpener) error
+	immediate     bool
 	ing           *Ingester
 	vaultRoot     string
 	vaultDirs     []fs.FileInfo
@@ -275,6 +277,7 @@ type Watcher struct {
 	logger        *slog.Logger
 	now           func() time.Time
 	beforeDescend func(string)
+	beforeObserve func(string)
 	sourceMount   watchMount
 	observations  map[string]watchObservation
 }
@@ -742,6 +745,9 @@ func pathContains(parent, child string) bool {
 }
 
 func (w *Watcher) scan(ctx context.Context, root *watchRoot) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	seen := make(map[string]struct{}, len(w.observations))
 	if err := w.scanDirectory(ctx, root, root.root, "", seen); err != nil {
 		return fmt.Errorf("scanning watch %q: %w", w.config.Name, err)
@@ -824,7 +830,7 @@ func (w *Watcher) scanDirectory(
 			scanErr := w.scanDirectory(ctx, root, child, rel, seen)
 			_ = child.Close()
 			if scanErr != nil {
-				if errors.Is(scanErr, ErrSourceChanged) {
+				if errors.Is(scanErr, ErrSourceChanged) && !w.immediate {
 					continue
 				}
 				return scanErr
@@ -838,9 +844,19 @@ func (w *Watcher) scanDirectory(
 			return err
 		}
 		source := watchSource{root: root, ref: rel}
+		if w.beforeObserve != nil {
+			w.beforeObserve(rel)
+		}
 		fingerprint, sourceMount, err := source.observe()
 		if err != nil {
-			if errors.Is(err, ErrSourceChanged) || transientWatchObservationError(err) {
+			if errors.Is(err, ErrSourceChanged) {
+				delete(w.observations, rel)
+				if w.immediate {
+					return err
+				}
+				continue
+			}
+			if transientWatchObservationError(err) {
 				delete(w.observations, rel)
 				continue
 			}
@@ -856,25 +872,36 @@ func (w *Watcher) scanDirectory(
 			w.observations[rel] = watchObservation{
 				fingerprint: fingerprint, stableSince: observedAt,
 			}
-			continue
+			if !w.immediate {
+				continue
+			}
+			observation = w.observations[rel]
 		}
 		minimumAge := w.config.MinimumAge.Std()
 		if observation.processed ||
-			observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std() ||
+			(!w.immediate && observedAt.Sub(observation.stableSince) < w.config.SettleTime.Std()) ||
 			(minimumAge > 0 && observedAt.Sub(time.Unix(0, fingerprint.modTime)) < minimumAge) {
 			continue
 		}
 		var result WatchResult
-		err = w.mutate(func() error {
-			return w.ing.Blobs.WithMutation(ctx, func() error {
-				var writeErr error
-				result, writeErr = w.ing.ingestWatchedFile(
-					ctx, w.config.Name, w.config.Destination, rel, fingerprint, source.open,
-				)
-				return writeErr
+		if w.process != nil {
+			err = w.process(ctx, rel, fingerprint, source.open)
+		} else {
+			err = w.mutate(func() error {
+				return w.ing.Blobs.WithMutation(ctx, func() error {
+					var writeErr error
+					result, writeErr = w.ing.ingestWatchedFile(
+						ctx, w.config.Name, w.config.Destination, rel, fingerprint, source.open,
+					)
+					return writeErr
+				})
 			})
-		})
-		if errors.Is(err, ErrSourceChanged) || transientWatchObservationError(err) {
+		}
+		if errors.Is(err, ErrSourceChanged) || errors.Is(err, ErrRetryLater) ||
+			transientWatchObservationError(err) {
+			if w.immediate {
+				return err
+			}
 			delete(w.observations, rel)
 			continue
 		}
@@ -883,8 +910,10 @@ func (w *Watcher) scanDirectory(
 		}
 		observation.processed = true
 		w.observations[rel] = observation
-		w.logger.Info("watched inbox file processed", "watch", w.config.Name,
-			"source", rel, "node_id", result.Node.ID, "outcome", result.Outcome)
+		if w.process == nil {
+			w.logger.Info("watched inbox file processed", "watch", w.config.Name,
+				"source", rel, "node_id", result.Node.ID, "outcome", result.Outcome)
+		}
 	}
 	return nil
 }

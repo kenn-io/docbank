@@ -21,6 +21,7 @@ nav = [
   ]},
   {"Work with documents" = [
     {"Importing documents" = "usage/importing.md"},
+    {"Push a folder" = "usage/pushing.md"},
     {"Photo assets" = "usage/photos.md"},
     {"People" = "usage/people.md"},
     {"Email PDFs" = "usage/email-pdf.md"},

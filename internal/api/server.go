@@ -243,6 +243,7 @@ func NewServer(d Deps) *Server {
 		Service: "docbank", Version: version.Version, PID: os.Getpid(),
 	}))
 	s.registerChallenge(mux)
+	s.registerKeyChallenge(mux)
 	s.registerShutdown(mux)
 	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL)
 	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
@@ -428,6 +429,23 @@ func (s *Server) registerChallenge(mux *http.ServeMux) {
 		writeJSON(w, http.StatusOK, struct {
 			Proof string `json:"proof"`
 		}{Proof: daemonauth.Proof(s.deps.ShutdownToken, nonce)})
+	})
+}
+
+// registerKeyChallenge lets a remote push client check that this endpoint
+// holds the API key before the client sends that key or any document bytes.
+// The proof is domain-separated from the key itself and from ownership proofs.
+func (s *Server) registerKeyChallenge(mux *http.ServeMux) {
+	mux.HandleFunc("GET "+daemonauth.KeyChallengePath, func(w http.ResponseWriter, r *http.Request) {
+		nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+		if err != nil || len(nonce) != daemonauth.NonceBytes {
+			writeError(w, NewError(http.StatusBadRequest, "invalid_challenge",
+				"nonce must be 32 bytes encoded as hexadecimal"))
+			return
+		}
+		writeJSON(w, http.StatusOK, struct {
+			Proof string `json:"proof"`
+		}{Proof: daemonauth.KeyProof(s.deps.Cfg.Server.APIKey, nonce)})
 	})
 }
 
