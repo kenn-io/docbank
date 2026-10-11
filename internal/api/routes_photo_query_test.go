@@ -66,7 +66,7 @@ func TestPreparePhotoPreviewInterrupted(t *testing.T) {
 					ctx = t.Context()
 				}
 				request := httptest.NewRequestWithContext(ctx, http.MethodPost,
-					"/api/v1/photos/assets/"+asset.ID+"/preview",
+					"http://localhost/api/v1/photos/assets/"+asset.ID+"/preview",
 					strings.NewReader(`{"content_version_id":"`+node.CurrentVersionID+`","size":"fit"}`))
 				request.Header.Set("X-Api-Key", testAPIKey)
 				request.Header.Set("Content-Type", "application/json")
