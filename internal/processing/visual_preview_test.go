@@ -1,7 +1,6 @@
 package processing
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
@@ -183,28 +182,31 @@ func TestProduceVisualPreviewAcceptsPNGAndFlattensTransparency(t *testing.T) {
 func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 	t.Parallel()
 	original := mediatest.PNG(3, 2, color.White)
+	untilIEND := func(source []byte) []byte { return bytes.Clone(source[:len(source)-12]) }
 	exif := syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil)
 	leading := syntheticPNGChunk(t, original, "eXIf", exif)
-	trailing := appendSyntheticPNGChunk(bytes.Clone(original[:len(original)-12]), "eXIf", exif)
+	trailing := appendSyntheticPNGChunk(untilIEND(original), "eXIf", exif)
 	trailing = appendSyntheticPNGChunk(trailing, "IEND", nil)
-	unusableTrailing := appendSyntheticPNGChunk(bytes.Clone(original[:len(original)-12]), "eXIf", nil)
-	unusableTrailing = appendSyntheticPNGChunk(unusableTrailing, "eXIf", []byte{0x49, 0x49, 0x2a, 0x00, 0xff, 0xff, 0xff, 0xff})
+	unusableTrailing := appendSyntheticPNGChunk(untilIEND(original), "eXIf", nil)
 	unusableTrailing = appendSyntheticPNGChunk(unusableTrailing, "eXIf", exif)
 	unusableTrailing = appendSyntheticPNGChunk(unusableTrailing, "IEND", nil)
+	malformedTrailing := appendSyntheticPNGChunk(untilIEND(original), "eXIf",
+		[]byte{0x49, 0x49, 0x2a, 0x00, 0xff, 0xff, 0xff, 0xff})
+	malformedTrailing = appendSyntheticPNGChunk(malformedTrailing, "eXIf", exif)
+	malformedTrailing = appendSyntheticPNGChunk(malformedTrailing, "IEND", nil)
 	unusableLeading := syntheticPNGChunk(t, original, "eXIf", nil)
-	unusableLeading = appendSyntheticPNGChunk(bytes.Clone(unusableLeading[:len(unusableLeading)-12]), "eXIf", exif)
+	unusableLeading = appendSyntheticPNGChunk(untilIEND(unusableLeading), "eXIf", exif)
 	unusableLeading = appendSyntheticPNGChunk(unusableLeading, "IEND", nil)
-	duplicate := appendSyntheticPNGChunk(bytes.Clone(leading[:len(leading)-12]), "eXIf",
+	duplicate := appendSyntheticPNGChunk(untilIEND(leading), "eXIf",
 		syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 3)}, nil))
 	duplicate = appendSyntheticPNGChunk(duplicate, "IEND", nil)
-	uncalibrated := appendSyntheticPNGChunk(bytes.Clone(original[:len(original)-12]), "eXIf",
-		syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, []syntheticTIFFEntry{tiffShort(0xa001, 0xffff)}))
+	uncalibrated := appendSyntheticPNGChunk(untilIEND(original), "eXIf", syntheticTIFF(42,
+		[]syntheticTIFFEntry{tiffShort(0x0112, 6)}, []syntheticTIFFEntry{tiffShort(0xa001, 0xffff)}))
 	uncalibrated = appendSyntheticPNGChunk(uncalibrated, "IEND", nil)
-	oversized := appendSyntheticPNGChunk(bytes.Clone(original[:len(original)-12]), "eXIf", make([]byte, visualPreviewMaxEXIFBytes+1))
+	oversized := appendSyntheticPNGChunk(untilIEND(original), "eXIf", make([]byte, visualPreviewMaxEXIFBytes+1))
+	oversized = appendSyntheticPNGChunk(oversized, "eXIf", exif)
 	oversized = appendSyntheticPNGChunk(oversized, "IEND", nil)
-	oversizedThenValid := appendSyntheticPNGChunk(bytes.Clone(oversized[:len(oversized)-12]), "eXIf", exif)
-	oversizedThenValid = appendSyntheticPNGChunk(oversizedThenValid, "IEND", nil)
-	manyText := bytes.Clone(original[:len(original)-12])
+	manyText := untilIEND(original)
 	for range visualPreviewMaxPNGChunks + 1 {
 		manyText = appendSyntheticPNGChunk(manyText, "tEXt", []byte("comment\x00text"))
 	}
@@ -214,12 +216,15 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 		source        []byte
 		width, height int
 	}{
-		"before IDAT": {leading, 2, 3}, "after IDAT": {trailing, 2, 3}, "leading EXIF wins over trailing": {duplicate, 2, 3},
-		"unusable trailing EXIF then orientation":  {unusableTrailing, 2, 3},
-		"unusable leading EXIF wins over trailing": {unusableLeading, 3, 2},
-		"oversized trailing EXIF then orientation": {oversizedThenValid, 2, 3},
-		"many trailing text chunks":                {manyText, 2, 3},
-		"trailing uncalibrated color":              {uncalibrated, 2, 3},
+		"before IDAT":                     {leading, 2, 3},
+		"after IDAT":                      {trailing, 2, 3},
+		"leading EXIF wins over trailing": {duplicate, 2, 3},
+		"unusable leading EXIF wins":      {unusableLeading, 3, 2},
+		"empty first trailing EXIF wins":  {unusableTrailing, 3, 2},
+		"malformed first trailing wins":   {malformedTrailing, 3, 2},
+		"oversized first trailing wins":   {oversized, 3, 2},
+		"many trailing text chunks":       {manyText, 2, 3},
+		"trailing uncalibrated color":     {uncalibrated, 2, 3},
 	} {
 		t.Run(name, func(t *testing.T) {
 			digest := sha256.Sum256(test.source)
@@ -235,35 +240,30 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 	}
 }
 
-func TestInspectVisualPreviewPNGSkipsLargeIDAT(t *testing.T) {
+func TestVisualPreviewPNGScansSkipIDATPayload(t *testing.T) {
 	t.Parallel()
 	original := mediatest.PNG(3, 2, color.White)
-	source := appendSyntheticPNGChunk(bytes.Clone(original[:len(original)-12]), "IDAT", make([]byte, 64*1024))
-	nextChunk := int64(len(source))
+	idatStart := int64(len(original) - 12)
+	source := appendSyntheticPNGChunk(bytes.Clone(original[:idatStart]), "IDAT", make([]byte, 64*1024))
+	idatEnd := int64(len(source))
 	source = appendSyntheticPNGChunk(source, "eXIf", syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
 	source = appendSyntheticPNGChunk(source, "IEND", nil)
 	reader := &recordingVisualPreviewReadSeeker{
-		Reader: bytes.NewReader(source), payloadStart: int64(len(original) - 12 + 8), payloadEnd: nextChunk - 4,
+		Reader: bytes.NewReader(source), payloadStart: idatStart + 8, payloadEnd: idatEnd - 4,
 	}
 
-	_, unsupportedColor, unsupportedMetadata, malformed, resumeOffset, err := inspectVisualPreviewPNG(t.Context(), reader, int64(len(source)))
+	_, unsupportedColor, unsupportedMetadata, malformed, trailingOffset, err :=
+		inspectVisualPreviewPNG(t.Context(), reader, int64(len(source)))
 	require.NoError(t, err)
 	assert.False(t, unsupportedColor)
 	assert.False(t, unsupportedMetadata)
 	assert.False(t, malformed)
-	require.NotZero(t, resumeOffset)
-	assert.LessOrEqual(t, reader.payloadBytes, int64(4096), "inspection may buffer at most one buffer of IDAT payload")
-	reader.payloadBytes = 0
-	_, err = reader.Seek(resumeOffset, io.SeekStart)
-	require.NoError(t, err)
-	orientation, unsupportedColor, unsupportedMetadata, malformed, _, err := walkVisualPreviewPNGChunks(t.Context(), reader, bufio.NewReaderSize(reader, 4096), int64(len(source)), resumeOffset, true)
+	require.NotZero(t, trailingOffset)
+
+	orientation, err := trailingVisualPreviewPNGOrientation(t.Context(), reader, int64(len(source)), trailingOffset)
 	require.NoError(t, err)
 	assert.Equal(t, 6, orientation)
-	assert.False(t, unsupportedColor)
-	assert.False(t, unsupportedMetadata)
-	assert.False(t, malformed)
-	assert.Equal(t, []int64{0, resumeOffset, nextChunk}, reader.seeks)
-	assert.LessOrEqual(t, reader.payloadBytes, int64(4096), "large IDAT may read ahead by one buffer before seeking past its payload")
+	assert.Zero(t, reader.payloadBytes, "PNG scans must seek past IDAT payload")
 }
 
 func TestProduceVisualPreviewUsesGIFPrimaryFrame(t *testing.T) {
@@ -552,7 +552,7 @@ func TestProduceVisualPreviewRejectsOversizedPNGDimensionsBeforeDecode(t *testin
 	require.NotNil(t, product.Preview.Failure)
 	assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
 
-	t.Run("trailing reads stay within inspection buffer", func(t *testing.T) {
+	t.Run("rejected PNG skips trailing scan", func(t *testing.T) {
 		tailStart := int64(len(source) - 12)
 		trailing := appendSyntheticPNGChunk(bytes.Clone(source[:tailStart]), "tEXt", make([]byte, 64*1024))
 		trailing = appendSyntheticPNGChunk(trailing, "eXIf", syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 6)}, nil))
@@ -567,7 +567,7 @@ func TestProduceVisualPreviewRejectsOversizedPNGDimensionsBeforeDecode(t *testin
 		assert.Equal(t, document.VisualPreviewFailed, product.Preview.State)
 		require.NotNil(t, product.Preview.Failure)
 		assert.Equal(t, "source_dimensions_exceed_limit", product.Preview.Failure.Code)
-		assert.Equal(t, bufferedEnd, reader.maxReadEnd, "rejected PNG must read nothing beyond inspection's buffered bytes")
+		assert.Equal(t, bufferedEnd, reader.maxReadEnd, "rejected PNG must read nothing past pre-IDAT inspection")
 	})
 }
 
@@ -923,7 +923,6 @@ func syntheticExtendedWebP(
 type recordingVisualPreviewReadSeeker struct {
 	*bytes.Reader
 
-	seeks        []int64
 	payloadStart int64
 	payloadEnd   int64
 	payloadBytes int64
@@ -937,12 +936,6 @@ func (r *recordingVisualPreviewReadSeeker) Read(target []byte) (int, error) {
 	r.payloadBytes += max(int64(0), min(end, r.payloadEnd)-max(position, r.payloadStart))
 	r.maxReadEnd = max(r.maxReadEnd, end)
 	return n, err //nolint:wrapcheck // The test double preserves Reader error identity.
-}
-
-func (r *recordingVisualPreviewReadSeeker) Seek(offset int64, whence int) (int64, error) {
-	position, err := r.Reader.Seek(offset, whence)
-	r.seeks = append(r.seeks, position)
-	return position, err //nolint:wrapcheck // The test double preserves Seeker error identity.
 }
 
 type failingVisualPreviewReadSeeker struct {

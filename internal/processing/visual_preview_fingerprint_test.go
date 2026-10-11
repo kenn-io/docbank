@@ -34,7 +34,7 @@ func TestVisualPreviewRecipeFingerprintIsPinned(t *testing.T) {
 	assert.Equal(t, pinnedVisualPreviewRecipeFingerprint, fingerprint)
 }
 
-func TestProducedVisualPreviewCarriesPinnedRecipe(t *testing.T) {
+func TestProducedVisualPreviewCarriesCurrentRecipe(t *testing.T) {
 	t.Parallel()
 	source := mediatest.JPEG(3, 2, color.White)
 	digest := sha256.Sum256(source)
