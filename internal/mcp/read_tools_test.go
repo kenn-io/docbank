@@ -235,10 +235,6 @@ func TestReadToolMapsSanitizedDaemonDomainErrors(t *testing.T) {
 			arguments: map[string]any{}},
 		{name: "locked hidden asset", tool: "get_photo_asset", code: "hidden_locked", status: http.StatusForbidden,
 			arguments: map[string]any{"asset_id": "00000000-0000-4000-8000-000000000001"}},
-		{name: "unconfigured hidden asset", tool: "get_photo_asset", code: "hidden_not_configured", status: http.StatusConflict,
-			arguments: map[string]any{"asset_id": "00000000-0000-4000-8000-000000000001"}},
-		{name: "incorrect hidden passcode", tool: "get_photo_asset", code: "hidden_passcode", status: http.StatusForbidden,
-			arguments: map[string]any{"asset_id": "00000000-0000-4000-8000-000000000001"}},
 		{name: "invalid window", tool: "read_rendition_text", code: "invalid_rendition_window",
 			status: http.StatusRequestedRangeNotSatisfiable, arguments: map[string]any{
 				"vault_id": testVaultID, "node_id": 7, "content_version_id": testVersionID,

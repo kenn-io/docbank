@@ -46,6 +46,9 @@ func hiddenCookie(host, token string, expires time.Time) string {
 }
 
 func hiddenError(err error) error {
+	if _, ok := errors.AsType[*Error](err); ok {
+		return err
+	}
 	if lockout, ok := errors.AsType[*store.HiddenLockoutError](err); ok {
 		return fmt.Errorf("hidden photos access: %w", huma.ErrorWithHeaders(NewError(http.StatusTooManyRequests, "hidden_lockout", lockout.Error()), http.Header{"Retry-After": {strconv.Itoa(max(1, int(time.Until(lockout.Until).Seconds())))}}))
 	}

@@ -121,6 +121,7 @@ func TestPhotoHiddenCLIUnhideBySelector(t *testing.T) {
 		unhide.SetIn(strings.NewReader("synthetic-passcode\n"))
 		out, err = runCLI(t, "photos", "unhide", selector)
 		require.NoError(t, err)
+		asset = api.PhotoAsset{}
 		require.NoError(t, json.Unmarshal([]byte(out), &asset))
 		require.Nil(t, asset.HiddenAt)
 		_, err = runCLI(t, "photos", "assets", "inspect", "/inbox/synthetic-hidden.jpeg")

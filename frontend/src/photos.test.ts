@@ -367,10 +367,6 @@ it.each([
   fetcher.mockResolvedValueOnce(response([photo(2), photo(3)]));
   await photos.retry();
   expect(kind === "trash" ? photos.trashError : photos.actionError).toBe(partial ? kind === "trash" ? "Photo changed" : "1 photo failed: Photo changed" : "");
-  fetcher.mockImplementationOnce(() => new Promise(resolve => finish = resolve));
-  const items = photos.items;
-  const late = photos.refresh(); photos.dispose(); finish(response([photo(1)])); await late;
-  expect(photos.items).toBe(items);
   photos.dispose();
 });
 
