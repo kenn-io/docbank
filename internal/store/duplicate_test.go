@@ -227,28 +227,40 @@ func TestDuplicatesPagesGroupsByHashWithExactTotals(t *testing.T) {
 	ctx := t.Context()
 	hashes := []string{fakeHash("c3"), fakeHash("a1"), fakeHash("b2")}
 	for index, hash := range hashes {
-		for copy := range 2 {
+		for copy := range index + 2 {
 			_, err := s.CreateFile(ctx, s.RootID(),
 				fmt.Sprintf("group-%d-copy-%d.txt", index, copy), hash, int64(index+1), "text/plain")
 			require.NoError(t, err)
 		}
 	}
 	sort.Strings(hashes)
+	counts := []int{3, 4, 2} // The a1, b2, and c3 groups have different sizes.
+
+	all, err := s.Duplicates(ctx, 3, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 3, all.Total)
+	assert.Equal(t, 9, all.TotalReferences)
+	require.Len(t, all.Items, 3)
+	for index, group := range all.Items {
+		assert.Equal(t, hashes[index], group.Hash)
+		assert.Equal(t, counts[index], group.ReferenceCount)
+	}
 
 	for offset, wantHash := range hashes {
 		page, err := s.Duplicates(ctx, 1, offset)
 		require.NoError(t, err)
 		assert.Equal(t, 3, page.Total)
-		assert.Equal(t, 6, page.TotalReferences)
+		assert.Equal(t, 9, page.TotalReferences)
 		assert.Equal(t, 1, page.Limit)
 		assert.Equal(t, offset, page.Offset)
 		require.Len(t, page.Items, 1)
 		assert.Equal(t, wantHash, page.Items[0].Hash)
+		assert.Equal(t, counts[offset], page.Items[0].ReferenceCount)
 	}
 	exhausted, err := s.Duplicates(ctx, 1, 3)
 	require.NoError(t, err)
 	assert.Equal(t, 3, exhausted.Total)
-	assert.Equal(t, 6, exhausted.TotalReferences)
+	assert.Equal(t, 9, exhausted.TotalReferences)
 	assert.Equal(t, 1, exhausted.Limit)
 	assert.Equal(t, 3, exhausted.Offset)
 	assert.NotNil(t, exhausted.Items)

@@ -132,27 +132,27 @@ func (s *Store) Duplicates(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	groupsSQL := `WITH ` + CurrentContentMembershipCTE + `,
+	// Group the live population once for both exact totals and page selection.
+	// A totals row remains even when the requested page is empty.
+	rows, err := tx.QueryContext(ctx, `WITH `+CurrentContentMembershipCTE+`,
 		duplicate_groups AS (
 			SELECT blob_hash, size, COUNT(DISTINCT node_id) AS reference_count
 			FROM current_content_members
 			GROUP BY blob_hash, size
 			HAVING COUNT(DISTINCT node_id) >= 2
-		)`
-	if err := tx.QueryRowContext(ctx, groupsSQL+`
-		SELECT COUNT(*), COALESCE(SUM(reference_count), 0)
-		FROM duplicate_groups`).Scan(&page.Total, &page.TotalReferences); err != nil {
-		return DuplicatePage{}, fmt.Errorf("counting duplicate content: %w", err)
-	}
-
-	rows, err := tx.QueryContext(ctx, groupsSQL+`
-		SELECT g.blob_hash, g.size, g.reference_count,
-		       (SELECT node_id FROM current_content_members
+		), totals AS (
+			SELECT COUNT(*) AS groups, COALESCE(SUM(reference_count), 0) AS refs
+			FROM duplicate_groups
+		), selected AS (
+			SELECT * FROM duplicate_groups ORDER BY blob_hash ASC LIMIT ? OFFSET ?
+		)
+		SELECT totals.groups, totals.refs,
+		       COALESCE(g.blob_hash, ''), COALESCE(g.size, 0), COALESCE(g.reference_count, 0),
+		       COALESCE((SELECT node_id FROM current_content_members
 		        WHERE blob_hash = g.blob_hash AND size = g.size
-		        ORDER BY `+DuplicateRepresentativeOrder+` LIMIT 1)
-		FROM duplicate_groups g
-		ORDER BY g.blob_hash ASC
-		LIMIT ? OFFSET ?`, limit, offset)
+		        ORDER BY `+DuplicateRepresentativeOrder+` LIMIT 1), 0)
+		FROM totals LEFT JOIN selected g ON true
+		ORDER BY g.blob_hash ASC`, limit, offset)
 	if err != nil {
 		return DuplicatePage{}, fmt.Errorf("listing duplicate content: %w", err)
 	}
@@ -161,11 +161,14 @@ func (s *Store) Duplicates(
 		var group DuplicateGroup
 		group.References = make([]DuplicateReference, 0)
 		if err := rows.Scan(
+			&page.Total, &page.TotalReferences,
 			&group.Hash, &group.Size, &group.ReferenceCount, &group.RepresentativeNodeID,
 		); err != nil {
 			return DuplicatePage{}, fmt.Errorf("scanning duplicate group: %w", err)
 		}
-		page.Items = append(page.Items, group)
+		if group.Hash != "" {
+			page.Items = append(page.Items, group)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return DuplicatePage{}, fmt.Errorf("listing duplicate content: %w", err)
