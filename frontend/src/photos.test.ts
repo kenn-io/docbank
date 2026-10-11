@@ -445,10 +445,17 @@ it.each([{ hidden: false, status: 401 }, { hidden: true, status: 403 }])("retain
   const slot = await photos.preview(item,"fit",signal); expect(item.previews.fit).toEqual(slot);
   expect(JSON.parse(fetcher.mock.calls[0][1].body).hidden).toBe(hidden);
   expect(await photos.preview(item,"fit",signal)).toEqual(slot); expect(fetcher).toHaveBeenCalledOnce();
-  for (const operation of [() => photos.lookup(item.asset_id,signal), () => photos.preview(item,"large",signal), () => photos.original(item,signal)]) {
+  for (const operation of [() => photos.lookup(item.asset_id,signal), () => photos.preview(item,"large",signal)]) {
     fetcher.mockResolvedValueOnce(new Response(JSON.stringify({detail:"Session expired"}),{status}));
     await expect(operation()).rejects.toMatchObject({status});
   }
+  fetcher.mockClear().mockImplementation(async (url: string) => url === "/api/v1/photos/assets/query"
+    ? Response.json({code:"hidden_locked",detail:"Session expired"},{status})
+    : Response.json({id:item.node_id,kind:"file",current_version_id:item.content_version_id,blob_hash:"a".repeat(64),size:10,mime_type:"image/jpeg",revision:1,name:item.name}));
+  const read = vi.spyOn(download,"readVerifiedPreview").mockResolvedValue({kind:"image",url:"blob:original",mediaType:"image/jpeg"});
+  await expect(photos.original(item,signal)).rejects.toMatchObject({status,code:"hidden_locked"});
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual(["/api/v1/photos/assets/query"]);
+  expect(read).not.toHaveBeenCalled();
   expect(onauth).toHaveBeenCalledTimes(3); photos.dispose();
 });
 
