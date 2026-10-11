@@ -170,9 +170,8 @@ it("retains photo state and previews across sidebar switches until lock", async 
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL() {} });
   const stored = storage();
-  let items = [photo(1)];
   const fetcher = vi.fn(async (url: string) => {
-    if (url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: items.map(item => ({ ...item, previews: { ...item.previews, grid: { state: "ready", generation_id: "synthetic" } } })), total: 1 }));
+    if (url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: [photo(1)].map(item => ({ ...item, previews: { ...item.previews, grid: { state: "ready", generation_id: "synthetic" } } })), total: 1 }));
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
     if (url.includes("/nodes/1")) return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", revision: 1, path: "/" }));
     return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));

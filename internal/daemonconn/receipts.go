@@ -459,7 +459,8 @@ func apiProblemError(e api.Error) error {
 	} else if e.Code == "hidden_lockout" {
 		cause = &store.HiddenLockoutError{}
 	} else if target, ok := codeToTypedErr[e.Code]; ok {
-		if e.Detail == "" || target.Error() == e.Detail || strings.HasPrefix(target.Error(), e.Detail+"; ") {
+		if (strings.HasPrefix(e.Code, "hidden_") || e.Code == "invalid_hidden_passcode") &&
+			(e.Detail == "" || target.Error() == e.Detail || strings.HasPrefix(target.Error(), e.Detail+"; ")) {
 			cause = target
 		} else {
 			cause = fmt.Errorf("%s: %w", e.Detail, target)

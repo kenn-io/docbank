@@ -189,7 +189,7 @@ Key assumptions reviewers MUST account for:
    flag a change to a layout that a tagged release contains.
 
 21. HIDDEN GATES PHOTOS VIEWS ONLY: hidden photos stay out of Photos
-   views, photo queries, and previews until unlock. Documents, original
+   views, photo queries, and previews until unlock. Documents, Trash, original
    bytes, and exports sit outside that gate. Photos discard cached previews
    when a committed change is observed; background views stay concealed
    until status validation succeeds.

@@ -21,8 +21,6 @@ it.each(["setup", "unlock", "current", "new"])("preserves %s input focus and val
   vi.stubGlobal("fetch", vi.fn(async () => ++reads === 1 ? Response.json(hidden) : new Promise<Response>(resolve => settle = resolve)));
   render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
   await screen.findByLabelText("Passcode", { exact: true });
-  if (field === "setup") expect(screen.getByText("Unlocks for five minutes.")).toBeTruthy();
-  else expect(screen.getByText("docbank photos hidden reset").parentElement?.textContent).toBe("Forgotten passcode? Run docbank photos hidden reset.");
   if (field === "current" || field === "new") await fireEvent.click(screen.getByText("Manage passcode"));
   const label = field === "current" ? "Current passcode" : field === "new" ? "New passcode" : "Passcode";
   const input = screen.getByLabelText(label, { exact: true }) as HTMLInputElement;

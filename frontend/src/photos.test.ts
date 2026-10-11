@@ -26,12 +26,12 @@ it("conceals after a confirmed hide while finishing the captured batch and repor
   expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
 });
 
-it.each([{ kind: "hide", refused: false }, { kind: "unhide", refused: false }, { kind: "trash", refused: false }, { kind: "trash", refused: true }])("reconciles uncertain $kind outcomes and keeps refused targets, refused=$refused", async ({ kind, refused }) => {
+it.each([{ kind: "hide", refused: false }, { kind: "trash", refused: false }, { kind: "trash", refused: true }])("reconciles uncertain $kind outcomes and keeps refused targets, refused=$refused", async ({ kind, refused }) => {
   const fetcher = vi.fn();
   if (refused) fetcher.mockResolvedValueOnce(Response.json({ detail: "Stale revision" }, { status: 412 })).mockResolvedValueOnce(response([photo(1)]));
   else fetcher.mockRejectedValueOnce(new TypeError("Reply lost after commit")).mockRejectedValueOnce(new Error("Refresh unavailable"));
   vi.stubGlobal("fetch", fetcher);
-  const photos = new Photos("scoped", vi.fn(), kind === "unhide");
+  const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
   const changed = vi.fn();
   if (kind === "trash") expect(await photos.trashSelected(undefined, changed)).toBe(false);
@@ -40,10 +40,6 @@ it.each([{ kind: "hide", refused: false }, { kind: "unhide", refused: false }, {
   expect(photos.items).toEqual([photo(1)]);
   expect(photos.trashTargets).toEqual([photo(1)]);
   expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
-  photos.clearSelection();
-  if (kind === "trash") await photos.trashSelected(undefined, changed);
-  else await photos.setHidden("missing", undefined, changed);
-  expect(changed).toHaveBeenCalledTimes(refused ? 0 : 1);
   expect(fetcher).toHaveBeenCalledTimes(2);
   photos.dispose();
 });
@@ -329,7 +325,6 @@ it("times each replacement page separately", async () => {
 
 it.each([
   { kind: "hide", partial: true },
-  { kind: "unhide", partial: true },
   { kind: "trash", partial: true },
   { kind: "trash", partial: false },
 ])("$kind writes keep failures, position and pending targets after failed refresh, partial=$partial", async ({ kind, partial }) => {

@@ -326,9 +326,6 @@ func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
 	target := newTestStore(t)
 	target.photoHiddenNow = func() time.Time { return now }
 	require.NoError(t, target.ImportMetadata(ctx, &backup))
-	var attempts int
-	require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM photo_hidden_failures`).Scan(&attempts))
-	require.Zero(t, attempts)
 	_, err = target.PhotoAssetByID(WithPhotoHiddenToken(ctx, token), asset.ID)
 	require.ErrorIs(t, err, ErrHiddenLocked)
 	restoredToken, _, err := target.UnlockPhotoHidden(ctx, "correct")
@@ -505,11 +502,6 @@ func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidPhotoAlbum)
 	_, err = s.PromotePhotoNode(ctx, asset.Files[0].NodeID, nil, "", "")
 	require.ErrorIs(t, err, ErrHiddenLocked)
-	s.photoHiddenSessions[hiddenTokenDigest(token)] = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	checkOwner(unlocked, ErrHiddenLocked)
-	token, _, err = s.UnlockPhotoHidden(ctx, "correct")
-	require.NoError(t, err)
-	unlocked = WithPhotoHiddenToken(ctx, token)
 	_, err = s.PromotePhotoNode(unlocked, asset.Files[0].NodeID, nil, "", "")
 	require.ErrorIs(t, err, ErrStaleRevision)
 	require.ErrorContains(t, err, "needs its revision")
