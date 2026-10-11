@@ -5,6 +5,39 @@ import { photo } from "./photo-test-fixtures.js";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
 
+it("keeps other views intact when every trash request is refused", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(Response.json({ detail: "Stale revision" }, { status: 412 }))
+    .mockResolvedValueOnce(response([photo(1)])));
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.started = true; photos.selectLoaded();
+  const changed = vi.fn();
+  expect(await photos.trashSelected(undefined, changed)).toBe(false);
+  expect(changed).not.toHaveBeenCalled();
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  photos.dispose();
+});
+
+it("conceals after a confirmed hide while finishing the captured batch and reporting failures", async () => {
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ id: "photo-1", revision: 2 }))
+    .mockImplementationOnce(() => new Promise<Response>(resolve => finish = resolve));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();
+  const report = vi.fn();
+  const completed = vi.fn();
+  const conceal = vi.fn(async () => photos.dispose());
+  const write = photos.setHidden("photo-1", undefined, completed, report, conceal);
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  expect(conceal).toHaveBeenCalledOnce();
+  expect(completed).not.toHaveBeenCalled();
+  finish(Response.json({ detail: "Stale revision" }, { status: 412 }));
+  await write;
+  expect(completed).toHaveBeenCalledOnce();
+  expect(report).toHaveBeenLastCalledWith("1 photo failed: Stale revision");
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]);
+});
+
 it.each(["hide", "unhide", "trash"])("reconciles other views after a lost %s reply and retains uncertain targets", async kind => {
   const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Reply lost after commit"))
     .mockRejectedValueOnce(new Error("Refresh unavailable"));

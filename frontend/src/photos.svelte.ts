@@ -71,7 +71,7 @@ export class Photos {
     }
   }
 
-  async setHidden(id: string, preserve?: () => (() => Promise<void>) | undefined, onhidden?: () => void, onactionerror?: (error: string) => void) {
+  async setHidden(id: string, preserve?: () => (() => Promise<void>) | undefined, onhidden?: () => void | Promise<void>, onactionerror?: (error: string) => void, oninvalidate?: () => void | Promise<void>) {
     if (this.hiding || this.trashing || this.disposed) return;
     const members = this.resolveTargets(this.selection.selectedIDs.has(id) ? this.selection.selectedIDs : [id]);
     if (!members) {
@@ -96,11 +96,11 @@ export class Photos {
         : cause instanceof Error ? cause.message : String(cause);
       if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); return true; }
       return false;
-    }, () => {
+    }, async changed => {
       this.actionError = failures ? `${failures} photo${failures === 1 ? "" : "s"} failed: ${failure}` : "";
       onactionerror?.(this.actionError);
-      onhidden?.();
-    }, "hiding", preserve);
+      if (changed) await onhidden?.();
+    }, "hiding", preserve, oninvalidate);
   }
 
   cancelPending() {
@@ -190,19 +190,18 @@ export class Photos {
       if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) { this.onauthfailure(cause); return true; }
       this.trashError = cause instanceof Error ? cause.message : String(cause);
       return false;
-    }, () => {
-      ontrashed?.();
+    }, changed => {
+      if (changed) ontrashed?.();
     }, "trashing", preserve);
     return successes === selected.length;
   }
 
-  private async mutateBatch(targets: PhotoBrowseRow[], request: (item: PhotoBrowseRow) => Promise<{ id: string; revision: number }>, onerror: (cause: unknown) => boolean, oncomplete: () => void, action: "hiding" | "trashing", preserve?: () => (() => Promise<void>) | undefined) {
+  private async mutateBatch(targets: PhotoBrowseRow[], request: (item: PhotoBrowseRow) => Promise<{ id: string; revision: number }>, onerror: (cause: unknown) => boolean, oncomplete: (changed: boolean) => void | Promise<void>, action: "hiding" | "trashing", preserve?: () => (() => Promise<void>) | undefined, onconfirmed?: () => void | Promise<void>) {
     let successes = 0;
-    let dispatched = false;
+    let uncertain = false;
     try {
       for (const item of targets) {
         try {
-          dispatched = true;
           const receipt = await request(item);
           if (receipt.id !== item.asset_id || receipt.revision <= item.revision) throw new Error(`Photo${action === "trashing" ? " trash" : ""} response did not confirm the selected photo. Refresh and retry.`);
           this.cancelPending();
@@ -210,11 +209,13 @@ export class Photos {
           const restore = preserve?.();
           this.removeTarget(item.asset_id);
           await restore?.();
+          await onconfirmed?.();
         } catch (cause) {
+          if (!(cause instanceof APIError) || cause.status >= 500) uncertain = true;
           if (onerror(cause)) break;
         }
       }
-      if (dispatched) oncomplete();
+      await oncomplete(successes > 0 || uncertain);
       await this.refresh(preserve);
       return successes;
     } finally { this[action] = false; }

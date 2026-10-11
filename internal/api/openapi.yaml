@@ -11742,6 +11742,8 @@ components:
           format: uri
           readOnly: true
           type: string
+        change_id:
+          type: string
         configured:
           type: boolean
         expires_at:

@@ -42,6 +42,7 @@ func WithPhotoHiddenToken(ctx context.Context, token string) context.Context {
 }
 
 type PhotoHiddenState struct {
+	ChangeID    string  `json:"change_id,omitzero"`
 	Configured  bool    `json:"configured"`
 	ExpiresAt   *string `json:"expires_at,omitzero"`
 	LockedUntil *string `json:"locked_until,omitzero"`
@@ -125,6 +126,9 @@ func (s *Store) hiddenSession(ctx context.Context, q metadataQuerier) (string, e
 func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) {
 	var state PhotoHiddenState
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `SELECT receipt_id FROM photo_change_receipts ORDER BY rowid DESC LIMIT 1`).Scan(&state.ChangeID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_hidden_credentials)`).Scan(&state.Configured); err != nil {
 			return err
 		}

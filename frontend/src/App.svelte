@@ -188,12 +188,53 @@
   let hiddenWorkspace = $state<{ refresh: () => Promise<void> }>();
   let libraryWorkspace = $state<{ refresh: () => Promise<void> }>();
   let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
+  let photoValidated = $state(false);
+  let photoAccessError = $state("");
+  let photoChangeID: string | undefined;
+  function discardLibrary() {
+    photoState?.photos.dispose();
+    const deleting = photoState?.cache.dispose();
+    photoState = undefined;
+    return deleting;
+  }
+  function acceptPhotoAccess(result: generated.PhotoHiddenState) {
+    if (result.change_id !== photoChangeID) discardLibrary();
+    photoChangeID = result.change_id;
+    photoState ??= { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
+    photoValidated = true;
+    photoAccessError = "";
+  }
+  function invalidateLibrary() { photoValidated = false; return discardLibrary(); }
 
   $effect(() => {
     if (!webSession) return;
-    const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
-    photoState = state;
-    return () => { hiddenPhotoActionError = ""; state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
+    return () => { hiddenPhotoActionError = ""; discardLibrary(); photoValidated = false; photoChangeID = undefined; };
+  });
+  $effect(() => {
+    if (!webSession || !photoMode) return;
+    const session = webSession;
+    const hidden = hiddenMode;
+    let current = true;
+    let pending = false;
+    let controller = new AbortController();
+    photoValidated = false;
+    const conceal = () => { photoValidated = false; discardLibrary(); };
+    const check = async () => {
+      if (pending || hidden || document.visibilityState !== "visible") return;
+      pending = true;
+      controller = new AbortController();
+      try {
+        const result = await generated.getPhotoHiddenState({ session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
+        if (current && !controller.signal.aborted) acceptPhotoAccess(result);
+      } catch (cause) {
+        if (current && !controller.signal.aborted) { conceal(); photoAccessError = cause instanceof Error ? cause.message : String(cause); if (cause instanceof APIError && cause.status === 401) handleFailure(cause); }
+      } finally { pending = false; }
+    };
+    const visibility = () => { if (document.visibilityState !== "visible") { controller.abort(); conceal(); } else void check(); };
+    document.addEventListener("visibilitychange", visibility);
+    if (document.visibilityState === "visible") void check(); else conceal();
+    const poll = setInterval(() => void check(), 2000);
+    return () => { current = false; controller.abort(); clearInterval(poll); document.removeEventListener("visibilitychange", visibility); };
   });
   function refreshLibrary() {
     if (libraryWorkspace) void libraryWorkspace.refresh();
@@ -2071,9 +2112,11 @@
       {/snippet}
     </TopBar>
 
-    {#if photoMode && photoState}
-      {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} session={webSession} onauthfailure={handleFailure} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { refreshLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else}
-      {#key photoState}<PhotosWorkspace bind:this={libraryWorkspace} photos={photoState.photos} cache={photoState.cache} ontrashed={() => handleTrashed()} onhidden={() => void hiddenWorkspace?.refresh()} />{/key}
+    {#if photoMode}
+      {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} session={webSession} onauthfailure={handleFailure} onstate={acceptPhotoAccess} onaccessfailure={discardLibrary} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { discardLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else if photoValidated && photoState}
+      {#if hiddenPhotoActionError}<p role="alert">{hiddenPhotoActionError}</p>{/if}
+      {#each [photoState] as current (current)}<PhotosWorkspace bind:this={libraryWorkspace} photos={current.photos} cache={current.cache} ontrashed={() => handleTrashed()} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/each}
+      {:else if photoAccessError}<p role="alert">{photoAccessError}</p>{:else}<Spinner />
       {/if}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}

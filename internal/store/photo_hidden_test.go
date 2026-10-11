@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -30,8 +31,14 @@ func TestPhotoHiddenLifecycle(t *testing.T) {
 	unchanged, err := s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, false)
 	require.NoError(t, err)
 	require.Equal(t, asset, unchanged)
+	before, err := s.PhotoHiddenState(ctx)
+	require.NoError(t, err)
 	asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
+	after, err := s.PhotoHiddenState(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, after.ChangeID)
+	require.NotEqual(t, before.ChangeID, after.ChangeID)
 	require.NotNil(t, asset.HiddenAt)
 	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision-1, true)
 	require.ErrorIs(t, err, ErrHiddenLocked)
@@ -323,8 +330,6 @@ func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
 	require.NoError(t, err)
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
-	require.NotContains(t, backup.String(), "photo_hidden_lockout")
-	require.NotContains(t, backup.String(), "photo_hidden_failure")
 	require.Contains(t, backup.String(), "photo_hidden_credential")
 	require.Contains(t, backup.String(), `"hidden_at"`)
 	require.Contains(t, backup.String(), `"operation":"hide"`)
@@ -346,6 +351,64 @@ func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
 	restored, err := target.PhotoAssetByID(WithPhotoHiddenToken(ctx, restoredToken), asset.ID)
 	require.NoError(t, err)
 	require.NotNil(t, restored.HiddenAt)
+}
+
+func TestPhotoHiddenLockoutMetadata(t *testing.T) {
+	t.Parallel()
+	for _, failures := range []int{4, 5} {
+		t.Run(fmt.Sprint(failures), func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
+			for range failures {
+				_, _, err := s.UnlockPhotoHidden(ctx, "wrong")
+				require.Error(t, err)
+			}
+			var backup bytes.Buffer
+			require.NoError(t, s.ExportMetadata(ctx, &backup))
+			require.Contains(t, backup.String(), "photo_hidden_failure")
+			data := backup.String()
+			if failures == 5 {
+				rejected := newTestStore(t)
+				require.Error(t, rejected.ImportMetadata(ctx, strings.NewReader(strings.Replace(data, `"locked_until":"`, `"locked_until":"invalid`, 1))))
+			}
+			for _, invalid := range []string{
+				strings.Replace(data, `"failure_id":1`, `"failure_id":0`, 1),
+				strings.Replace(data, `"occurred_at":"`, `"occurred_at":"invalid`, 1),
+			} {
+				rejected := newTestStore(t)
+				require.Error(t, rejected.ImportMetadata(ctx, strings.NewReader(invalid)))
+			}
+			target := newTestStore(t)
+			require.NoError(t, target.ImportMetadata(ctx, &backup))
+			var count int
+			require.NoError(t, target.db.QueryRow(`SELECT COUNT(*) FROM photo_hidden_failures`).Scan(&count))
+			require.Equal(t, failures, count)
+			var lockout *HiddenLockoutError
+			_, _, err := target.UnlockPhotoHidden(ctx, "wrong")
+			require.ErrorAs(t, err, &lockout)
+			_, _, err = target.UnlockPhotoHidden(ctx, "correct")
+			require.ErrorAs(t, err, &lockout)
+		})
+	}
+}
+
+func TestPhotoHiddenDisableLargeSet(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
+	for i := range 1000 {
+		albumAsset(t, s, fmt.Sprintf("synthetic-%d.jpg", i))
+	}
+	_, err := s.db.Exec(`UPDATE photo_assets SET hidden_at=?`, time.Now().UTC().Format(timestampLayout))
+	require.NoError(t, err)
+	require.NoError(t, s.DisablePhotoHidden(ctx, "correct"))
+	var hidden, receipts int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_assets WHERE hidden_at IS NOT NULL`).Scan(&hidden))
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_change_receipts WHERE operation='unhide'`).Scan(&receipts))
+	require.Zero(t, hidden)
+	require.Equal(t, 1000, receipts)
 }
 
 func TestPhotoHiddenMutationGate(t *testing.T) {

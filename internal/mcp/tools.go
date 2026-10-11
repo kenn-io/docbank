@@ -612,11 +612,11 @@ func domainErrorMessage(code string) string {
 	case "photo_node_owned":
 		return "The selected node already belongs to a photo asset."
 	case "hidden_locked":
-		return "Unlock Hidden or unhide the photo before retrying."
+		return "Run docbank photos unhide <asset-id|path-or-id> with the passcode before retrying."
 	case "hidden_not_configured":
-		return "Set up a Hidden passcode, then unlock or unhide the photo before retrying."
+		return "Run docbank photos hidden setup to set a passcode, then docbank photos unhide <asset-id|path-or-id> before retrying."
 	case "hidden_passcode":
-		return "Use the correct Hidden passcode to unlock or unhide the photo before retrying."
+		return "Run docbank photos unhide <asset-id|path-or-id> with the correct passcode before retrying."
 	case "stale_revision":
 		return "The revision is stale; read the current state and retry with its revision."
 	case "audit_mutation_unsupported":

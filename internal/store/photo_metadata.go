@@ -305,8 +305,29 @@ type metadataHiddenCredential struct {
 	Hash      string `json:"passcode_hash" db:"passcode_hash"`
 }
 
+type metadataHiddenFailure struct {
+	Type       string `json:"type"`
+	ID         int64  `json:"failure_id" db:"failure_id"`
+	OccurredAt string `json:"occurred_at" db:"occurred_at"`
+}
+
+type metadataHiddenLockout struct {
+	Type        string `json:"type"`
+	Singleton   int    `json:"-" db:"singleton"`
+	LockedUntil string `json:"locked_until" db:"locked_until"`
+}
+
 var photoHiddenMetadataTables = []metadataRecordCodec{
 	newMetadataTable(metadataTable[metadataHiddenCredential]{record: metadataHiddenCredential{Type: "photo_hidden_credential", Singleton: 1}, table: "photo_hidden_credentials", suffix: "WHERE singleton=1", validate: func(v metadataHiddenCredential) error { _, _, err := hiddenHashParts(v.Hash); return err }, checkExport: true}),
+	newMetadataTable(metadataTable[metadataHiddenFailure]{record: metadataHiddenFailure{Type: "photo_hidden_failure"}, table: "photo_hidden_failures", suffix: "ORDER BY failure_id", validate: func(v metadataHiddenFailure) error {
+		if v.ID < 1 {
+			return errors.New("invalid hidden failure ID")
+		}
+		return validateMetadataTime("hidden failure occurred_at", v.OccurredAt)
+	}, checkExport: true}),
+	newMetadataTable(metadataTable[metadataHiddenLockout]{record: metadataHiddenLockout{Type: "photo_hidden_lockout", Singleton: 1}, table: "photo_hidden_lockout", suffix: "WHERE singleton=1", validate: func(v metadataHiddenLockout) error {
+		return validateMetadataTime("hidden lockout locked_until", v.LockedUntil)
+	}, checkExport: true}),
 }
 
 var photoAssetMetadataBeforeHidden = newMetadataTable(metadataTable[metadataPhotoAssetBeforeHidden]{record: metadataPhotoAssetBeforeHidden{Type: metadataPhotoAssetType}, table: "photo_assets", suffix: "ORDER BY asset_id", validate: func(v metadataPhotoAssetBeforeHidden) error {

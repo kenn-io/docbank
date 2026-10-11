@@ -391,7 +391,7 @@ var codeToTypedErr = map[string]error{
 	"invalid_photo_album":           store.ErrInvalidPhotoAlbum,
 	"photo_node_not_eligible":       store.ErrPhotoNodeNotEligible,
 	"photo_node_owned":              store.ErrPhotoNodeOwned,
-	"hidden_locked":                 fmt.Errorf("%w; unlock Hidden before retrying", store.ErrHiddenLocked),
+	"hidden_locked":                 fmt.Errorf("%w; run docbank photos unhide <asset-id|path-or-id> before retrying", store.ErrHiddenLocked),
 	"hidden_not_configured":         store.ErrHiddenNotConfigured,
 	"hidden_passcode":               fmt.Errorf("%w; retry with the correct passcode", store.ErrHiddenPasscode),
 	"audit_already_enabled":         store.ErrAuditAlreadyEnabled,

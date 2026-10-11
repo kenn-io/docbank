@@ -56,16 +56,16 @@ failed page again. Refresh and expired-cursor recovery keep the current grid vis
 
 Choose Hidden in the Photos sidebar and set a passcode. Open a photo's actions menu or right-click it and choose Hide. If the photo belongs to the selection, the action applies to each selected photo. A stale photo reports an error while successful changes remain saved.
 
-Hidden photos disappear from Library, photo queries, and album contents. Albums retain their membership and report hidden members separately. Background imports keep updating hidden files, including late sidecars. Import receipts retain ordinary photo IDs and file details. Documents, document tools, original bytes, and exports still expose the underlying files. Hidden is a Photos privacy control. Previews this browser cached before a hide stay in its preview cache until the session ends.
+Hidden photos disappear from Library, photo queries, and album contents. Albums retain their membership and report hidden members separately. Background imports keep updating hidden files, including late sidecars. Import receipts retain ordinary photo IDs and file details. Documents, document tools, original bytes, and exports still expose the underlying files. Hidden is a Photos privacy control.
 
-Enter the passcode in Hidden to unlock for five minutes. Lock closes every active Hidden session. Locking and expiry clear the Hidden grid, selection, and browser preview cache. Changes made in this browser update affected views immediately and preserve unrelated selection and position. Changes from another client appear on explicit refresh or a fresh view load; an open grid can retain an older row until then. Expired browser sessions use the shared session-expired screen. Library reloads retain scroll position and the selection of unaffected photos. Hidden previews carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
+Enter the passcode in Hidden to unlock for five minutes. Lock closes every active Hidden session. Locking and expiry clear the Hidden grid, selection, and browser preview cache. Photos check for committed changes every two seconds, with a two-second request timeout. A change clears loaded photos, selection and cached previews before reloading. Background views stay concealed until status validation succeeds; a failed check clears the view until a later check succeeds. Expired browser sessions use the shared session-expired screen. Library reloads retain scroll position and the selection of unaffected photos. Hidden previews carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
 
-Five incorrect passcodes within sixty seconds lock access for five minutes. Failed attempts and lockout survive restart. Backups preserve hidden flags, credentials and decision receipts. Restored vaults start without attempts or unlock sessions and require the backed-up passcode. Unlock sessions expire on restart. Changing the passcode revokes sessions. Disable Hidden verifies the passcode and returns every hidden photo to Library in one transaction. Operator reset removes credentials and sessions while preserving hidden flags, so a new setup can recover access.
+Five incorrect passcodes within sixty seconds lock access for five minutes. Failed attempts and lockout survive restart. Backups preserve hidden flags, credentials, failed attempts, active lockouts and decision receipts. Restored vaults require the backed-up passcode and start without unlock sessions. Unlock sessions expire on restart. Changing the passcode revokes sessions. Disable Hidden verifies the passcode and returns every hidden photo to Library in one transaction. Operator reset removes credentials and sessions while preserving hidden flags, so a new setup can recover access.
 
 ```text
 docbank photos hidden setup
 docbank photos hide <asset-id> [--revision REV]
-docbank photos unhide <asset-id|node-selector> [--revision REV]
+docbank photos unhide <asset-id|path-or-id> [--revision REV]
 docbank photos hidden change
 docbank photos hidden disable
 docbank photos hidden lock

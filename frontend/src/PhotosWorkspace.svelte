@@ -9,7 +9,7 @@
   import PhotoGrid from "./PhotoGrid.svelte";
   import SelectionDock from "./SelectionDock.svelte";
 
-  let { photos, cache, title = "Library", ontrashed, onhidden, onactionerror }: { photos: Photos; cache: PhotoPreviewCache; title?: string; ontrashed?: () => void; onhidden?: () => void; onactionerror?: (error: string) => void } = $props();
+  let { photos, cache, title = "Library", ontrashed, onhidden, onactionerror, oninvalidate }: { photos: Photos; cache: PhotoPreviewCache; title?: string; ontrashed?: () => void; onhidden?: () => void | Promise<void>; onactionerror?: (error: string) => void; oninvalidate?: () => void | Promise<void> } = $props();
   let trashOpen = $state(false);
   let grid = $state<{ preservePosition: () => (() => Promise<void>) }>();
   const preserve = () => grid?.preservePosition();
@@ -17,7 +17,7 @@
   async function setHidden(id: string) {
     if (photos.hiding || photos.trashing) return;
     onactionerror?.("");
-    await photos.setHidden(id, preserve, onhidden, onactionerror);
+    await photos.setHidden(id, preserve, onhidden, onactionerror, oninvalidate);
   }
   const groups = $derived(groupPhotos(photos.items, photos.grouping));
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));

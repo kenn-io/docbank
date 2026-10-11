@@ -52,7 +52,7 @@ func TestPhotoHiddenCLIUnhideBySelector(t *testing.T) {
 	require.NoError(t, err)
 	_, err = runCLI(t, "photos", "assets", "inspect", "/inbox/synthetic-hidden.jpeg")
 	require.ErrorIs(t, err, store.ErrHiddenLocked)
-	require.EqualError(t, err, "error executing request: hidden photos are locked; unlock Hidden before retrying")
+	require.EqualError(t, err, "error executing request: hidden photos are locked; run docbank photos unhide <asset-id|path-or-id> before retrying")
 	unhide.SetIn(strings.NewReader("incorrect-passcode\n"))
 	_, err = runCLI(t, "photos", "unhide", asset.ID)
 	require.ErrorIs(t, err, store.ErrHiddenPasscode)

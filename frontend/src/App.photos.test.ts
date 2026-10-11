@@ -5,6 +5,55 @@ import App from "./App.svelte";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it.each(["change", "failure", "background", "delayed page"])("discards rows, selection and cached previews after %s", async kind => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const revoke = vi.fn();
+  vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL = revoke; });
+  const stored = storage();
+  let changed = false;
+  let delay = false;
+  let finish!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden")) {
+      if (changed && kind === "failure") throw new Error("Status unavailable");
+      return Response.json({ configured: false, change_id: changed ? "second" : "first" });
+    }
+    if (url.endsWith("/assets/query")) {
+      if (delay) { delay = false; return new Promise<Response>(resolve => finish = resolve); }
+      return Response.json({ items: changed ? [] : [{ ...photo(1), previews: { grid: { state: "ready", generation_id: "synthetic" } } }], total: changed ? 0 : 1 });
+    }
+    if (url.includes("/previews/")) return new Response("synthetic-jpeg");
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  }));
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await screen.findByRole("img", { name: "Photo 1.jpg" });
+  const cacheName = stored.open.mock.calls[0][0];
+  await waitFor(() => expect(stored.data.get(cacheName)?.size).toBe(1));
+  if (kind === "delayed page") {
+    delay = true;
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
+    await waitFor(() => expect(finish).toBeDefined());
+  }
+  changed = true;
+  if (kind === "background") {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await fireEvent(document, new Event("visibilitychange"));
+  }
+  await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull(), { timeout: 5000 });
+  expect(screen.queryByText("1 selected photo")).toBeNull();
+  await waitFor(() => expect(stored.data.has(cacheName)).toBe(false));
+  expect(revoke).toHaveBeenCalledWith("blob:synthetic");
+  if (kind === "delayed page") {
+    finish(Response.json({ items: [photo(1)], total: 1 }));
+    await screen.findByText("Your photo library is empty");
+    expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
+  }
+});
+
 it.each(["unhide", "trash"])("refreshes a remounted Hidden grid after a delayed %s", async kind => {
   history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
@@ -83,7 +132,7 @@ it("retains photo state and previews across sidebar switches until lock", async 
   items = [photo(2)];
   await fireEvent(document, new Event("visibilitychange"));
   expect(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeTruthy();
-  expect(fetcher.mock.calls.some(([url]) => url.endsWith("/photos/hidden"))).toBe(false);
+  expect(fetcher.mock.calls.some(([url]) => url.endsWith("/photos/hidden"))).toBe(true);
   await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
   await screen.findByRole("checkbox", { name: "Select photo Photo 2.jpg" });
   expect(listings()).toBe(2);

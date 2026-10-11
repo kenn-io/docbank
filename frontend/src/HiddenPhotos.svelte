@@ -7,7 +7,7 @@
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import { APIError } from "./api-transport.js";
 
-  let { session, onauthfailure, photoActionError = "", ontrashed, onunhidden, onactionerror }: { session: string; onauthfailure: (cause: unknown) => void; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void } = $props();
+  let { session, onauthfailure, photoActionError = "", ontrashed, onunhidden, onactionerror, onstate, onaccessfailure }: { session: string; onauthfailure: (cause: unknown) => void; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void; onstate?: (state: PhotoHiddenState) => void; onaccessfailure?: () => void } = $props();
   let hiddenState = $state<PhotoHiddenState>({ configured: false });
   let workspace = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
   let photoWorkspace = $state<{ refresh: () => Promise<void> }>();
@@ -45,7 +45,8 @@
     else void checkAccess();
   }
   function applyState(result: PhotoHiddenState) {
-    if (workspace && (result.configured !== hiddenState.configured || result.expires_at !== hiddenState.expires_at)) clear();
+    onstate?.(result);
+    if (workspace && (result.change_id !== hiddenState.change_id || result.configured !== hiddenState.configured || result.expires_at !== hiddenState.expires_at)) clear();
     readError = "";
     lockoutError = "";
     hiddenState = result;
@@ -56,6 +57,7 @@
     else if (!workspace) workspace = { photos: new Photos(session, authorizationLost, true), cache: new PhotoPreviewCache(session, authorizationLost, true) };
   }
   async function checkAccess() {
+    if (document.visibilityState !== "visible") return;
     refreshController.abort();
     refreshController = new AbortController();
     const controller = refreshController;
@@ -64,7 +66,7 @@
       const result = await getPhotoHiddenState({ session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
       if (controller.signal.aborted || disposed) return;
       applyState(result);
-    } catch (cause) { if (!controller.signal.aborted && !disposed) { if (cause instanceof APIError && cause.status === 401) onauthfailure(cause); else readError = cause instanceof Error ? cause.message : String(cause); clear(); hiddenState.expires_at = undefined; } }
+    } catch (cause) { if (!controller.signal.aborted && !disposed) { if (cause instanceof APIError && cause.status === 401) onauthfailure(cause); else readError = cause instanceof Error ? cause.message : String(cause); onaccessfailure?.(); clear(); hiddenState.expires_at = undefined; } }
     finally { if (!controller.signal.aborted) reading = false; }
   }
   function passcodeValidation(value: string, empty: string) {
@@ -123,7 +125,7 @@
   onMount(() => {
     void checkAccess();
     const poll = setInterval(() => { if (!reading) void checkAccess(); }, 2000);
-    const foreground = () => { if (document.visibilityState === "visible") void checkAccess(); };
+    const foreground = () => { if (document.visibilityState === "visible") void checkAccess(); else { refreshController.abort(); clear(); } };
     document.addEventListener("visibilitychange", foreground);
     const timer = setInterval(() => {
       if (hiddenState.locked_until && Date.parse(hiddenState.locked_until) <= Date.now()) hiddenState.locked_until = undefined;
