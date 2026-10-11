@@ -75,6 +75,28 @@ func photoImportTestGroup(members ...PhotoImportMember) PhotoImportGroup {
 	return PhotoImportGroup{Members: members, DestinationID: 1}
 }
 
+func TestPhotoImportLateSidecarUpdatesLockedHiddenAsset(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	root := filepath.Join(t.TempDir(), "camera")
+	run, err := s.BeginIngest(ctx, "photo-import", root)
+	require.NoError(t, err)
+	raw := photoImportTestMember(filepath.Join(root, "IMG.ARW"), PhotoRoleRAW, fakeHash("hidden-raw"), "image/x-sony-arw")
+	first, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw))
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	hidden, err := s.SetPhotoAssetHidden(ctx, first.Asset.ID, first.Asset.Revision, true)
+	require.NoError(t, err)
+	xmp := photoImportTestMember(filepath.Join(root, "IMG.XMP"), PhotoRoleSidecar, fakeHash("hidden-xmp"), "application/rdf+xml")
+	updated, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, xmp))
+	require.NoError(t, err)
+	require.Equal(t, hidden.ID, updated.Asset.ID)
+	require.Equal(t, hidden.HiddenAt, updated.Asset.HiddenAt)
+	require.Len(t, updated.Asset.Files, 2)
+	require.Equal(t, PhotoRoleSidecar, fileByRole(updated.Asset.Files, PhotoRoleSidecar).Role)
+}
+
 func TestPhotoImportAtomicGroup(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)

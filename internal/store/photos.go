@@ -18,10 +18,10 @@ func photoAssetByIDQuery(ctx context.Context, q metadataQuerier, id string) (Pho
 	var asset PhotoAsset
 	var display, override sql.NullString
 	if err := q.QueryRowContext(ctx, `
-		SELECT asset_id, kind, revision, excluded_at, display_file_id,
+		SELECT asset_id, kind, revision, hidden_at, excluded_at, display_file_id,
 		       display_override_file_id, created_at, updated_at
 		FROM photo_assets WHERE asset_id=?`, id).Scan(
-		&asset.ID, &asset.Kind, &asset.Revision, &asset.ExcludedAt, &display,
+		&asset.ID, &asset.Kind, &asset.Revision, &asset.HiddenAt, &asset.ExcludedAt, &display,
 		&override, &asset.CreatedAt, &asset.UpdatedAt,
 	); errors.Is(err, sql.ErrNoRows) {
 		return PhotoAsset{}, ErrNotFound
@@ -97,7 +97,7 @@ func (s *Store) PhotoAssetByID(ctx context.Context, id string) (PhotoAsset, erro
 	var asset PhotoAsset
 	if err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		asset, err = photoAssetByIDQuery(ctx, tx, id)
+		asset, err = s.photoAssetReadQuery(ctx, tx, id)
 		return err
 	}); err != nil {
 		return PhotoAsset{}, err
@@ -119,7 +119,7 @@ func (s *Store) PhotoAssetForNode(ctx context.Context, nodeID int64) (PhotoAsset
 			return fmt.Errorf("finding photo asset for node %d: %w", nodeID, err)
 		}
 		var err error
-		asset, err = photoAssetByIDQuery(ctx, tx, id)
+		asset, err = s.photoAssetReadQuery(ctx, tx, id)
 		return err
 	}); err != nil {
 		return PhotoAsset{}, err
@@ -159,6 +159,7 @@ type photoReceiptAssetState struct {
 	ID                    string                     `json:"id"`
 	Kind                  string                     `json:"kind"`
 	Revision              int64                      `json:"revision"`
+	HiddenAt              *string                    `json:"hidden_at"`
 	ExcludedAt            *string                    `json:"excluded_at"`
 	DisplayFileID         *string                    `json:"display_file_id"`
 	DisplayOverrideFileID *string                    `json:"display_override_file_id"`
@@ -211,7 +212,7 @@ func photoAssetMemberChanges(before, after PhotoAsset) []photoReceiptMemberChang
 func photoAssetState(asset PhotoAsset, changes []photoReceiptMemberChange) any {
 	state := photoReceiptAssetState{
 		ID: asset.ID, Kind: asset.Kind, Revision: asset.Revision,
-		ExcludedAt: asset.ExcludedAt, DisplayFileID: asset.DisplayFileID,
+		HiddenAt: asset.HiddenAt, ExcludedAt: asset.ExcludedAt, DisplayFileID: asset.DisplayFileID,
 		DisplayOverrideFileID: asset.DisplayOverrideFileID, FileCount: len(asset.Files),
 		ChangedMemberCount: len(changes),
 	}
@@ -372,12 +373,25 @@ func (s *Store) classifyPhotoFileInsertError(err error) error {
 	return fmt.Errorf("creating photo file: %w", err)
 }
 
-func photoAssetForMutationTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64) (PhotoAsset, error) {
-	asset, err := photoAssetByIDQuery(ctx, tx, assetID)
+func (s *Store) photoAssetReadQuery(ctx context.Context, q metadataQuerier, assetID string) (PhotoAsset, error) {
+	asset, err := photoAssetByIDQuery(ctx, q, assetID)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
-	if asset.Revision != revision {
+	if asset.HiddenAt != nil {
+		if _, err := s.hiddenSession(ctx, q); err != nil {
+			return PhotoAsset{}, err
+		}
+	}
+	return asset, nil
+}
+
+func (s *Store) photoAssetForMutationTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64) (PhotoAsset, error) {
+	asset, err := s.photoAssetReadQuery(ctx, tx, assetID)
+	if err != nil {
+		return PhotoAsset{}, err
+	}
+	if revision < 1 || asset.Revision != revision {
 		return PhotoAsset{}, fmt.Errorf("asset %s at revision %d, expected %d: %w", assetID, asset.Revision, revision, ErrStaleRevision)
 	}
 	return asset, nil
@@ -404,7 +418,7 @@ func (s *Store) photoAssetCreateTx(ctx context.Context, tx *sql.Tx, nodeID int64
 	if owner, owned, err := photoAssetOwningNodeTx(ctx, tx, nodeID); err != nil {
 		return PhotoAsset{}, err
 	} else if owned {
-		return PhotoAsset{}, fmt.Errorf("node %d belongs to asset %s: %w", nodeID, owner, ErrPhotoNodeOwned)
+		return PhotoAsset{}, s.photoOwnershipError(ctx, tx, owner, fmt.Errorf("node %d belongs to asset %s: %w", nodeID, owner, ErrPhotoNodeOwned))
 	}
 	role := explicitRole
 	if role == "" {
@@ -515,10 +529,7 @@ type photoMutation func(tx *sql.Tx, asset *PhotoAsset) (bool, error)
 // check the revision, run the edit, recompute display, advance the revision
 // once, write the receipt, and validate the asset's graph.
 func (s *Store) mutatePhotoAssetTx(ctx context.Context, tx *sql.Tx, assetID string, revision int64, operation string, edit photoMutation) (PhotoAsset, error) {
-	if revision < 1 {
-		return PhotoAsset{}, fmt.Errorf("%w: revision must be positive", ErrStaleRevision)
-	}
-	asset, err := photoAssetForMutationTx(ctx, tx, assetID, revision)
+	asset, err := s.photoAssetForMutationTx(ctx, tx, assetID, revision)
 	if err != nil {
 		return PhotoAsset{}, err
 	}
@@ -572,9 +583,9 @@ func commitPhotoAssetTx(ctx context.Context, tx *sql.Tx, before, asset PhotoAsse
 	asset.DisplayFileID, asset.DisplaySource = choice.FileID, choice.Source
 	asset.Revision++
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE photo_assets SET excluded_at=?, display_file_id=?, display_override_file_id=?,
+		UPDATE photo_assets SET hidden_at=?, excluded_at=?, display_file_id=?, display_override_file_id=?,
 			revision=?, updated_at=? WHERE asset_id=?`,
-		nullablePhotoString(asset.ExcludedAt), nullablePhotoString(asset.DisplayFileID),
+		nullablePhotoString(asset.HiddenAt), nullablePhotoString(asset.ExcludedAt), nullablePhotoString(asset.DisplayFileID),
 		nullablePhotoString(asset.DisplayOverrideFileID), asset.Revision, nowRFC3339(), asset.ID); err != nil {
 		return PhotoAsset{}, fmt.Errorf("updating photo asset %s: %w", asset.ID, err)
 	}
@@ -591,6 +602,13 @@ func commitPhotoAssetTx(ctx context.Context, tx *sql.Tx, before, asset PhotoAsse
 		return PhotoAsset{}, err
 	}
 	return result, nil
+}
+
+func (s *Store) photoOwnershipError(ctx context.Context, tx *sql.Tx, owner string, conflict error) error {
+	if _, err := s.photoAssetReadQuery(ctx, tx, owner); err != nil {
+		return err
+	}
+	return conflict
 }
 
 func photoAssetOwningNodeTx(ctx context.Context, tx *sql.Tx, nodeID int64) (string, bool, error) {
@@ -632,7 +650,7 @@ func (s *Store) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevi
 			return err
 		}
 		if expectedRevision == nil {
-			return fmt.Errorf("node %d already belongs to asset %s and needs its revision: %w", nodeID, ownedID, ErrStaleRevision)
+			return s.photoOwnershipError(ctx, tx, ownedID, fmt.Errorf("node %d already belongs to asset %s and needs its revision: %w", nodeID, ownedID, ErrStaleRevision))
 		}
 		result, err = s.mutatePhotoAssetTx(ctx, tx, ownedID, *expectedRevision, "promote", func(tx *sql.Tx, asset *PhotoAsset) (bool, error) {
 			for _, file := range asset.Files {
@@ -676,7 +694,7 @@ func (s *Store) AttachPhotoFile(ctx context.Context, assetID string, revision, n
 		if ownedID, owned, err := photoAssetOwningNodeTx(ctx, tx, nodeID); err != nil {
 			return false, err
 		} else if owned {
-			return false, fmt.Errorf("node %d belongs to asset %s: %w", nodeID, ownedID, ErrPhotoNodeOwned)
+			return false, s.photoOwnershipError(ctx, tx, ownedID, fmt.Errorf("node %d belongs to asset %s: %w", nodeID, ownedID, ErrPhotoNodeOwned))
 		}
 		if role == "" {
 			if !facts.Qualifies {

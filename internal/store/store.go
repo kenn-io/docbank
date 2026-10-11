@@ -20,22 +20,26 @@ var schemaSQL string
 
 // Store is the single access path to the docbank database.
 type Store struct {
-	db               *sql.DB
-	writeDB          *sql.DB
-	path             string
-	rootID           int64
-	vaultID          string
-	primaryStoreID   string
-	driver           docsqlite.Driver
-	providerEgressMu sync.RWMutex
-	laneControlsMu   sync.Mutex
+	db                    *sql.DB
+	writeDB               *sql.DB
+	path                  string
+	rootID                int64
+	vaultID               string
+	primaryStoreID        string
+	driver                docsqlite.Driver
+	providerEgressMu      sync.RWMutex
+	laneControlsMu        sync.Mutex
+	photoHiddenNow        func() time.Time
+	photoHiddenAuthMu     sync.Mutex // Serialize session creation and revocation across database commits.
+	photoHiddenSessionsMu sync.Mutex
+	photoHiddenSessions   map[string]time.Time
 }
 
 // currentStorageSchemaVersion identifies the canonical SQLite layout created
 // by this binary. It is intentionally independent of metadata JSONL's logical
 // format version: physical schema changes can rebuild through the same logical
 // format without changing that portable contract.
-const currentStorageSchemaVersion = 30
+const currentStorageSchemaVersion = 31
 
 const peopleStorageSchemaVersion = 15
 
@@ -105,7 +109,7 @@ func openCurrentStore(
 	// Queue writers in database/sql instead of racing SQLite's busy timeout.
 	// Read snapshots use the separate deferred pool and do not reserve the writer.
 	writeDB.SetMaxOpenConns(1)
-	s := &Store{db: db, writeDB: writeDB, path: path, driver: driver}
+	s := &Store{db: db, writeDB: writeDB, path: path, driver: driver, photoHiddenSessions: make(map[string]time.Time)}
 	if err := s.bootstrap(incarnation); err != nil {
 		_ = s.Close()
 		return nil, err

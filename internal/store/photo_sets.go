@@ -30,6 +30,7 @@ type PhotoSetSummary struct {
 	PhotoSet
 
 	MemberCount           int64   `json:"member_count"`
+	HiddenCount           int64   `json:"hidden_count"`
 	IncludedCount         int64   `json:"included_count"`
 	EffectiveCoverAssetID *string `json:"effective_cover_asset_id,omitzero"`
 	CoverGenerationID     *string `json:"cover_generation_id,omitzero"`
@@ -65,12 +66,16 @@ func photoSetByID(ctx context.Context, q metadataQuerier, id string) (PhotoSet, 
 	return set, err
 }
 
-func photoSetSummary(ctx context.Context, q metadataQuerier, set PhotoSet, recipe string) (PhotoSetSummary, error) {
-	out := PhotoSetSummary{PhotoSet: set}
+func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set PhotoSet, recipe string) (PhotoSetSummary, error) {
+	visible, err := s.photoSetResponse(ctx, q, set)
+	if err != nil {
+		return PhotoSetSummary{}, err
+	}
+	out := PhotoSetSummary{PhotoSet: visible}
 	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m WHERE m.set_id=? AND EXISTS (SELECT 1 FROM photo_files f WHERE f.asset_id=m.asset_id)`, set.ID).Scan(&out.MemberCount); err != nil {
 		return out, err
 	}
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE m.set_id=? AND `+photoBrowseLiveDisplay, set.ID).Scan(&out.IncludedCount); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN a.hidden_at IS NULL THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN a.hidden_at IS NOT NULL THEN 1 ELSE 0 END),0) FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE m.set_id=? AND `+photoBrowseLiveDisplay, set.ID).Scan(&out.IncludedCount, &out.HiddenCount); err != nil {
 		return out, err
 	}
 	var id, generation string
@@ -80,7 +85,7 @@ func photoSetSummary(ctx context.Context, q metadataQuerier, set PhotoSet, recip
  CROSS JOIN nodes n ON n.id=f.node_id
  CROSS JOIN content_versions v ON v.version_id=n.current_version_id
  CROSS JOIN visual_preview_generations g ON g.content_version_id=v.version_id AND g.source_sha256=v.blob_hash
- WHERE m.set_id=? AND ` + photoBrowseLiveDisplay + ` AND g.recipe_fingerprint=? AND g.state='ready' AND g.output_blob_hash IS NOT NULL`
+ WHERE m.set_id=? AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND g.recipe_fingerprint=? AND g.state='ready' AND g.output_blob_hash IS NOT NULL`
 	if set.CoverAssetID != nil {
 		err := q.QueryRowContext(ctx, coverSQL+` AND m.asset_id=?`, set.ID, recipe, *set.CoverAssetID).Scan(&id, &generation)
 		if err == nil {
@@ -91,7 +96,7 @@ func photoSetSummary(ctx context.Context, q metadataQuerier, set PhotoSet, recip
 			return out, err
 		}
 	}
-	err := q.QueryRowContext(ctx, coverSQL+` ORDER BY m.added_at DESC,m.asset_id ASC LIMIT 1`, set.ID, recipe).Scan(&id, &generation)
+	err = q.QueryRowContext(ctx, coverSQL+` ORDER BY m.added_at DESC,m.asset_id ASC LIMIT 1`, set.ID, recipe).Scan(&id, &generation)
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, nil
 	}
@@ -110,7 +115,7 @@ func (s *Store) PhotoSet(ctx context.Context, id, recipe string) (PhotoSetSummar
 		if err != nil {
 			return err
 		}
-		out, err = photoSetSummary(ctx, tx, set, recipe)
+		out, err = s.photoSetSummary(ctx, tx, set, recipe)
 		return err
 	})
 	return out, err
@@ -142,7 +147,7 @@ func (s *Store) ListPhotoSets(ctx context.Context, recipe string) ([]PhotoSetSum
 			return closeErr
 		}
 		for _, set := range sets {
-			summary, err := photoSetSummary(ctx, tx, set, recipe)
+			summary, err := s.photoSetSummary(ctx, tx, set, recipe)
 			if err != nil {
 				return err
 			}
@@ -239,20 +244,31 @@ func (s *Store) UpdatePhotoSet(ctx context.Context, id string, revision int64, n
 		}
 		if cover != nil {
 			if *cover != nil {
-				var count int
-				if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members WHERE set_id=? AND asset_id=?`, id, **cover).Scan(&count); err != nil {
+				var hidden, member bool
+				if err := tx.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL, EXISTS(SELECT 1 FROM photo_set_members WHERE set_id=? AND asset_id=?) FROM photo_assets WHERE asset_id=?`, id, **cover, **cover).Scan(&hidden, &member); err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						return ErrInvalidPhotoAlbum
+					}
 					return err
 				}
-				if count != 1 {
+				if hidden {
+					if _, err := s.hiddenSession(ctx, tx); err != nil {
+						return err
+					}
+				}
+				if !member {
 					return ErrInvalidPhotoAlbum
 				}
 			}
 			out.CoverAssetID = *cover
 		}
-		if out.Name == before.Name && out.Starred == before.Starred && equalPhotoString(out.CoverAssetID, before.CoverAssetID) {
-			return nil
+		if out.Name != before.Name || out.Starred != before.Starred || !equalPhotoString(out.CoverAssetID, before.CoverAssetID) {
+			out, err = commitPhotoSet(ctx, tx, before, out, "set_update", nil)
+			if err != nil {
+				return err
+			}
 		}
-		out, err = commitPhotoSet(ctx, tx, before, out, "set_update", nil)
+		out, err = s.photoSetResponse(ctx, tx, out)
 		return err
 	})
 	return out, err
@@ -323,12 +339,16 @@ func (s *Store) DuplicatePhotoSet(ctx context.Context, id string, revision int64
 		if err != nil {
 			return err
 		}
-		return writePhotoSetReceipts(ctx, tx, "set_duplicate", PhotoSet{}, out, ids)
+		if err := writePhotoSetReceipts(ctx, tx, "set_duplicate", PhotoSet{}, out, ids); err != nil {
+			return err
+		}
+		out, err = s.photoSetResponse(ctx, tx, out)
+		return err
 	})
 	return out, err
 }
 
-func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSelection) ([]string, error) {
+func (s *Store) photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSelection) ([]string, error) {
 	if (selection.Query == nil) == (len(selection.AssetIDs) == 0) || len(selection.AssetIDs) > maxBatchTagTargets {
 		return nil, ErrInvalidPhotoAlbum
 	}
@@ -342,12 +362,14 @@ func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSel
 			if validateUUIDv4(id) != nil {
 				return nil, ErrInvalidPhotoAlbum
 			}
-			var count int
-			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_assets WHERE asset_id=?`, id).Scan(&count); err != nil {
+			hidden, err := photoAssetHiddenQuery(ctx, tx, id)
+			if err != nil {
 				return nil, err
 			}
-			if count != 1 {
-				return nil, ErrNotFound
+			if hidden {
+				if _, err := s.hiddenSession(ctx, tx); err != nil {
+					return nil, err
+				}
 			}
 			if !seen[id] {
 				ids = append(ids, id)
@@ -373,11 +395,11 @@ func photoSetSelectionIDs(ctx context.Context, tx *sql.Tx, selection PhotoSetSel
 	if err != nil {
 		return nil, err
 	}
-	match, err := photoBrowseMatch(compiled, generation, coverage)
+	match, err := photoBrowseMatch(compiled, generation, coverage, false)
 	if err != nil {
 		return nil, err
 	}
-	sql, args, err := bindQueryPopulation(compiledQueryFragment{sql: `SELECT a.asset_id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + match.sql + ` ORDER BY a.asset_id`, args: match.args, relations: match.relations}, coverage, generation)
+	sql, args, err := bindQueryPopulation(compiledQueryFragment{sql: `SELECT a.asset_id FROM ` + photoBrowseDisplayFrom + ` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND ` + match.sql + ` ORDER BY a.asset_id`, args: match.args, relations: match.relations}, coverage, generation)
 	if err != nil {
 		return nil, err
 	}
@@ -408,11 +430,15 @@ func (s *Store) ChangePhotoSetMembers(ctx context.Context, id string, revision i
 			return err
 		}
 		out = before
-		ids, err := photoSetSelectionIDs(ctx, tx, selection)
+		ids, err := s.photoSetSelectionIDs(ctx, tx, selection)
 		if err != nil {
 			return err
 		}
 		out, err = changePhotoSetMembersTx(ctx, tx, before, add, ids)
+		if err != nil {
+			return err
+		}
+		out, err = s.photoSetResponse(ctx, tx, out)
 		return err
 	})
 	return out, err
@@ -452,4 +478,31 @@ func changePhotoSetMembersTx(ctx context.Context, tx *sql.Tx, before PhotoSet, a
 		operation = "set_add"
 	}
 	return commitPhotoSet(ctx, tx, before, out, operation, changed)
+}
+
+func (s *Store) photoSetResponse(ctx context.Context, q metadataQuerier, set PhotoSet) (PhotoSet, error) {
+	if set.CoverAssetID == nil {
+		return set, nil
+	}
+	hidden, err := photoAssetHiddenQuery(ctx, q, *set.CoverAssetID)
+	if err != nil {
+		return PhotoSet{}, err
+	}
+	if hidden {
+		if _, err := s.hiddenSession(ctx, q); errors.Is(err, ErrHiddenLocked) {
+			set.CoverAssetID = nil
+		} else if err != nil {
+			return PhotoSet{}, err
+		}
+	}
+	return set, nil
+}
+
+func photoAssetHiddenQuery(ctx context.Context, q metadataQuerier, id string) (bool, error) {
+	var hidden bool
+	err := q.QueryRowContext(ctx, `SELECT hidden_at IS NOT NULL FROM photo_assets WHERE asset_id=?`, id).Scan(&hidden)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return hidden, err
 }

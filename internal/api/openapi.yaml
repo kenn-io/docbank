@@ -11399,6 +11399,10 @@ components:
           type:
             - string
             - "null"
+        hidden_count:
+          format: int64
+          minimum: 0
+          type: integer
         id:
           format: uuid
           type: string
@@ -11424,6 +11428,7 @@ components:
           type: string
       required:
         - member_count
+        - hidden_count
         - included_count
         - id
         - name
@@ -11476,6 +11481,11 @@ components:
             $ref: "#/components/schemas/PhotoFile"
           maxItems: 256
           type: array
+        hidden_at:
+          format: date-time
+          type:
+            - string
+            - "null"
         id:
           format: uuid
           type: string
@@ -11547,6 +11557,8 @@ components:
         cursor:
           maxLength: 32768
           type: string
+        hidden:
+          type: boolean
         page_size:
           default: 50
           format: int64
@@ -11699,6 +11711,54 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoHiddenPasscodeRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoHiddenPasscodeRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        new_passcode:
+          maxLength: 1024
+          type: string
+        passcode:
+          maxLength: 1024
+          type: string
+      type: object
+      x-go-type: api.PhotoHiddenPasscodeRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoHiddenState:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoHiddenState.json
+          format: uri
+          readOnly: true
+          type: string
+        configured:
+          type: boolean
+        expires_at:
+          type:
+            - string
+            - "null"
+        locked_until:
+          type:
+            - string
+            - "null"
+      required:
+        - configured
+      type: object
+      x-go-type: store.PhotoHiddenState
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoImportStartRequest:
       additionalProperties: false
       properties:
@@ -23149,6 +23209,37 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Detach one file from a photo asset
+  /api/v1/photos/assets/{asset_id}/hide:
+    post:
+      operationId: hidePhotoAsset
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: hide a revisioned photo asset
   /api/v1/photos/assets/{asset_id}/previews/{generation_id}:
     get:
       description: Returns 304 Not Modified without a body when If-None-Match matches an eligible generation. Private HTTP caches must revalidate before reuse.
@@ -23218,6 +23309,220 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Move every photo asset member to recoverable trash
+  /api/v1/photos/assets/{asset_id}/unhide:
+    post:
+      operationId: unhidePhotoAsset
+      parameters:
+        - in: path
+          name: asset_id
+          required: true
+          schema:
+            type: string
+        - in: header
+          name: If-Match
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoAsset"
+          description: OK
+          headers:
+            ETag:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: unhide a revisioned photo asset
+  /api/v1/photos/hidden:
+    get:
+      operationId: getPhotoHiddenState
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read hidden photos configuration and current unlock expiry
+  /api/v1/photos/hidden/change:
+    post:
+      operationId: changePhotoHidden
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoHiddenPasscodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: change hidden photos access
+  /api/v1/photos/hidden/disable:
+    post:
+      operationId: disablePhotoHidden
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoHiddenPasscodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: disable hidden photos access
+  /api/v1/photos/hidden/lock:
+    post:
+      operationId: lockPhotoHidden
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoHiddenPasscodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: lock hidden photos access
+  /api/v1/photos/hidden/reset:
+    post:
+      operationId: resetPhotoHidden
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoHiddenPasscodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: reset hidden photos access
+  /api/v1/photos/hidden/setup:
+    post:
+      operationId: setupPhotoHidden
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoHiddenPasscodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: setup hidden photos access
+  /api/v1/photos/hidden/unlock:
+    post:
+      operationId: unlockPhotoHidden
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PhotoHiddenPasscodeRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoHiddenState"
+          description: OK
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: unlock hidden photos access
   /api/v1/photos/imports:
     post:
       operationId: startPhotoImport
