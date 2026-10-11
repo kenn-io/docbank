@@ -234,8 +234,8 @@
     photoState = undefined;
     return deleting;
   }
-  function invalidateLibrary() {
-    if (!hiddenMode) clearPhoto();
+  function invalidateLibrary(clearViewer = true) {
+    if (clearViewer && !hiddenMode) clearPhoto();
     photoValidated = false;
     photoConcealed = true;
     photoAccessVersion++;
@@ -286,7 +286,7 @@
     document.addEventListener("visibilitychange", visibility);
     if (document.visibilityState === "visible") void check(); else conceal();
     const poll = setInterval(() => void check(), 2000);
-    return () => { current = false; checkPhotoAccess = undefined; controller.abort(); clearInterval(poll); document.removeEventListener("visibilitychange", visibility); };
+    return () => { current = false; checkPhotoAccess = undefined; controller.abort(); clearInterval(poll); document.removeEventListener("visibilitychange", visibility); if (!hidden) void invalidateLibrary(false); };
   });
   function refreshLibrary() {
     if (libraryWorkspace) void libraryWorkspace.refresh();

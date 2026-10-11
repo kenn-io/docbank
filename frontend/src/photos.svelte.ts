@@ -180,11 +180,11 @@ export class Photos {
     return this.loadMore(preserve);
   }
 
-  refresh(preserve?: () => (() => Promise<void>) | undefined, visibleOnly = false) {
-    return this.replace("refresh", preserve, visibleOnly);
+  refresh(preserve?: () => (() => Promise<void>) | undefined) {
+    return this.replace("refresh", preserve);
   }
 
-  private async replace(mode: "refresh" | "expiry", preserve?: () => (() => Promise<void>) | undefined, visibleOnly = false) {
+  private async replace(mode: "refresh" | "expiry", preserve?: () => (() => Promise<void>) | undefined) {
     if (this.disposed) return false;
     this.controller.abort();
     this.controller = new AbortController();
@@ -211,13 +211,25 @@ export class Photos {
         cursor = page.next_cursor;
         if (reachedPrefix && (mode === "refresh" || reachedPreviously)) break;
       } while (cursor);
+      const eligible = new Set(candidate.keys());
+      const absent = this.trashTargets.filter(item => this.selection.selectedIDs.has(item.asset_id) && !candidate.has(item.asset_id));
+      if (absent.length) {
+        signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
+        for (let offset = 0; offset < absent.length; offset += 64) {
+          const asset_ids = absent.slice(offset, offset + 64).map(item => item.asset_id);
+          const page = await listPhotoAssets({ query: { ...photoQuery, filters: { asset_ids } }, hidden: this.hidden, page_size: 250 }, { session: this.session, signal });
+          if (signal.aborted) throw signal.reason;
+          for (const item of page.items) eligible.add(item.asset_id);
+        }
+      }
       if (signal.aborted) throw signal.reason;
       const restore = preserve?.();
       this.items = [...candidate.values()];
       this.total = total;
       this.cursor = cursor;
       this.started = true;
-      this.selection = reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...(visibleOnly ? [] : this.trashTargets.map(item => item.asset_id))]));
+      this.selection = reconcileIDSelection(this.selection, eligible);
+      this.trashTargets = this.trashTargets.filter(item => eligible.has(item.asset_id) && this.selection.selectedIDs.has(item.asset_id));
       this.expired = false;
       this.replacement = undefined;
       await restore?.();

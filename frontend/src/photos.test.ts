@@ -65,6 +65,7 @@ it("binds retries to captured or displayed revisions", async () => {
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
     .mockResolvedValueOnce(response([photo(3)]))
+    .mockResolvedValueOnce(response([photo(2)]))
     .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-2", revision: 2 })))
     .mockResolvedValueOnce(response([photo(3)]));
   vi.stubGlobal("fetch", fetcher);
@@ -82,8 +83,8 @@ it("binds retries to captured or displayed revisions", async () => {
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-3"]);
   expect(photos.trashTargets.map(item => item.asset_id)).toEqual(["photo-2"]);
   expect(await photos.trashSelected(undefined, invalidateDocuments)).toBe(true);
-  expect(fetcher.mock.calls[3][0]).toBe("/api/v1/photos/assets/photo-2/trash");
-  expect(new Headers(fetcher.mock.calls[3][1].headers).get("If-Match")).toBe("1");
+  expect(fetcher.mock.calls[4][0]).toBe("/api/v1/photos/assets/photo-2/trash");
+  expect(new Headers(fetcher.mock.calls[4][1].headers).get("If-Match")).toBe("1");
   expect(photos.trashTargets).toEqual([]);
   expect(invalidateDocuments).toHaveBeenCalledTimes(2);
   photos.selection.selectedIDs.add("unloaded");
@@ -108,6 +109,7 @@ it("binds retries to captured or displayed revisions", async () => {
 it.each(["replace", "checkbox", "loaded", "add"])("uses current selection after a failure: %s", async mode => {
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
     .mockResolvedValueOnce(response(mode === "checkbox" ? [photo(1), photo(2)] : [photo(2)]));
+  if (mode !== "checkbox") fetcher.mockResolvedValueOnce(response([photo(1)]));
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)]; photos.started = true;
@@ -121,7 +123,7 @@ it.each(["replace", "checkbox", "loaded", "add"])("uses current selection after 
   for (const id of expected) fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ id, revision: 2 })));
   fetcher.mockResolvedValueOnce(response([]));
   expect(await photos.trashSelected()).toBe(true);
-  expect(fetcher.mock.calls.slice(2, -1).map(call => call[0])).toEqual(expected.map(id => `/api/v1/photos/assets/${id}/trash`));
+  expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/trash")).slice(1).map(call => call[0])).toEqual(expected.map(id => `/api/v1/photos/assets/${id}/trash`));
   expect(photos.trashTargets).toEqual([]);
   photos.dispose();
 });
@@ -321,6 +323,46 @@ it("times each replacement page separately", async () => {
   expect(timers).toHaveLength(2);
   expect(photos.error).toBe("");
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-2"]);
+  photos.dispose();
+});
+
+it.each([false, true].flatMap(hidden => ["success", "failure", "cancel"].map(outcome => ({ hidden, outcome }))))("revalidates off-prefix captured selections in bounded queries, hidden=$hidden outcome=$outcome", async ({ hidden, outcome }) => {
+  const prefix = Array.from({ length: 250 }, (_, index) => photo(index + 1));
+  const previous = prefix.map(item => ({ ...item, name: `Earlier ${item.name}` }));
+  const captured = Array.from({ length: 65 }, (_, index) => photo(index + 1001));
+  const photos = new Photos("scoped", vi.fn(), hidden);
+  photos.items = previous; photos.started = true; photos.trashTargets = captured;
+  photos.selection = { selectedIDs: new Set(captured.map(item => item.asset_id)), anchorID: captured[0].asset_id };
+  let groups = 0;
+  const fetcher = vi.fn(async (url: string, options: RequestInit) => {
+    if (!url.endsWith("/query")) return Response.json({ detail:"Stale revision" },{ status:412 });
+    const body = JSON.parse(String(options.body));
+    expect(body.hidden).toBe(hidden);
+    const ids: string[] | undefined = body.query.filters?.asset_ids;
+    if (!ids) return response(prefix,"more");
+    expect(ids.length).toBeLessThanOrEqual(64);
+    groups++;
+    if (groups === 2 && outcome === "failure") return Response.json({ detail:"Eligibility unavailable" },{status:503});
+    if (groups === 2 && outcome === "cancel") photos.cancelPending();
+    return response(captured.filter(item => ids.includes(item.asset_id) && item !== captured[64]).map(item => ({ ...item, revision:7 })));
+  });
+  vi.stubGlobal("fetch",fetcher);
+  expect(await photos.refresh()).toBe(outcome === "success");
+  expect(groups).toBe(2);
+  expect(photos.items).toEqual(outcome === "success" ? prefix : previous);
+  if (outcome === "success") {
+    expect([...photos.selection.selectedIDs]).toEqual(captured.slice(0,64).map(item => item.asset_id));
+    expect(photos.trashTargets).toEqual(captured.slice(0,64));
+    await photos.setHidden(captured[0].asset_id);
+    const writes = fetcher.mock.calls.filter(([url]) => !url.endsWith("/query"));
+    expect(writes).toHaveLength(64);
+    expect(writes[0][0]).toBe(`/api/v1/photos/assets/${captured[0].asset_id}/${hidden ? "unhide" : "hide"}`);
+    expect(writes.every(([,options]) => new Headers(options.headers).get("If-Match") === "1")).toBe(true);
+  } else {
+    expect(photos.trashTargets).toEqual(captured);
+    expect(photos.selection.selectedIDs.size).toBe(65);
+    expect(photos.error).toBe(outcome === "failure" ? "Eligibility unavailable" : "");
+  }
   photos.dispose();
 });
 

@@ -102,12 +102,10 @@ it.each([false, true])("keeps concealed rows hidden when Trash restore interrupt
   expect(concealSignal.aborted).toBe(true);
   finishConceal(Response.json({ items: [], total: 0 }));
   await refresh.mock.results[0].value;
-  await fireEvent(document, new Event("settled"));
   expect(screen.queryByTestId("photo-scroll")).toBeNull();
   expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
   finishRestore(failed ? Response.json({ detail: "Replacement failed" }, { status: 503 }) : Response.json({ items: [], total: 0 }));
   await refresh.mock.results[1].value;
-  await fireEvent(document, new Event("settled"));
   expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
   if (failed) expect(screen.queryByTestId("photo-scroll")).toBeNull();
   poll();
@@ -218,15 +216,17 @@ it("refreshes a remounted Hidden grid after a delayed unhide", async () => {
   expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
 });
 
-it("retains photo state and previews across sidebar switches until lock", async () => {
+it("clears previews on sidebar and history departure while retaining eligible selection", async () => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
   vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL() {} });
   const stored = storage();
+  let changed = false;
   const fetcher = vi.fn(async (url: string) => {
-    if (url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: [photo(1)].map(item => ({ ...item, previews: { ...item.previews, grid: { state: "ready", generation_id: "synthetic" } } })), total: 1 }));
+    if (url.endsWith("/photos/hidden")) return Response.json({configured:true,change_id:changed ? "second" : "first"});
+    if (url.includes("/photos/assets/query")) return new Response(JSON.stringify({ items: (changed ? [] : [photo(1)]).map(item => ({ ...item, previews: { ...item.previews, grid: { state: "ready", generation_id: "synthetic" } } })), total: changed ? 0 : 1 }));
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
     if (url.includes("/nodes/1")) return new Response(JSON.stringify({ id: 1, kind: "dir", name: "", revision: 1, path: "/" }));
     return new Response(JSON.stringify({ items: [], nodes: [], tags: [], profiles: [] }));
@@ -247,17 +247,22 @@ it("retains photo state and previews across sidebar switches until lock", async 
   await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   expect(location.pathname).toBe("/");
   expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull();
+  await waitFor(() => expect(stored.data.has(cacheName)).toBe(false));
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
   expect(location.pathname).toBe("/photos");
   await screen.findByText("1 selected photo");
   await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
-  expect(listings()).toBe(1);
-  expect(previews()).toBe(1);
+  expect(listings()).toBe(2);
+  await waitFor(() => expect(previews()).toBe(2));
+  const returnedCache = stored.open.mock.calls.at(-1)![0];
   history.replaceState(null, "", "/");
   await fireEvent(window, new PopStateEvent("popstate"));
   await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());
-  await fireEvent.click(screen.getByRole("button", { name: /Lock/ }));
-  await waitFor(() => expect(stored.data.has(cacheName)).toBe(false));
+  await waitFor(() => expect(stored.data.has(returnedCache)).toBe(false));
+  changed = true;
+  await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
+  await screen.findByText("Your photo library is empty");
+  expect(screen.queryByRole("checkbox", {name:"Select photo Photo 1.jpg"})).toBeNull();
 });
 
 it.each([false, true])("Hidden trash invalidates Documents and Trash restore refreshes only an unlocked grid, locked=%s", async locked => {
