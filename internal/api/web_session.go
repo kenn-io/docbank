@@ -230,7 +230,7 @@ func (r *webSessionRegistry) closeAll(ctx context.Context) error {
 }
 
 func webSessionRequestAllowed(r *http.Request) bool {
-	if r.URL.Path == "/api/v1/photos/assets/query" {
+	if r.URL.Path == "/api/v1/photos/assets/query" || r.URL.Path == "/api/v1/photos/assets/timeline" {
 		return r.Method == http.MethodPost && r.URL.RawQuery == ""
 	}
 	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/assets/"); ok {

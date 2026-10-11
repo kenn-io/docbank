@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-09
+last_edited: 2026-10-11
 title: Photo assets
 description: Group camera files, browse photos in the web app, and organize albums through the CLI or HTTP API.
 ---
@@ -70,6 +70,24 @@ Open `docbank web` and choose **Photos** in the sidebar. Library opens at
 Undated. The year buttons jump to the years loaded so far; scrolling loads
 more photos and reveals older years. Choose **Load more** to continue from
 the same position when further results remain.
+
+Choose **Timeline** to see counts for every recorded capture day in the current
+scope, including days beyond the loaded grid. The year ribbon shows each year's
+total and relative density. Choose a year, month, or day to open its photos.
+The grid pages within that range. Once its first page arrives, the grid clears
+selection and starts at the top. A failed date change keeps the previous photos,
+date, selection, and scroll position. **Retry** requests the chosen range again.
+**Clear date** restores the full scope. Counts stay tied to the full
+scope until you refresh.
+
+Dates use the selected display file's recorded calendar day, so a capture near
+midnight keeps its date regardless of the browser's timezone. A RAW/JPEG pair
+counts once. The Undated total includes photos without a readable capture date.
+Timeline counts every included photo asset, even in a vault with many ordinary
+documents. It shows a limit message when the scope spans more than 250,000
+distinct capture days or the count runs past its time budget, and offers Retry.
+A busy message asks you to retry after other timeline requests finish. Loading
+the timeline does not block Documents queries.
 
 Choose Months or Capture sessions to group the grid. A session joins captures
 with gaps of four hours or less. Compact, Comfortable, and Large change the
@@ -384,6 +402,27 @@ slot shape as browsing, reuses retained terminal outcomes, and refuses an
 excluded, trashed, or changed display. Each request has a 30-second bound.
 Camera, lens, exposure, dimensions, and orientation come from the current
 display's technical metadata. Browser photo rows omit GPS coordinates.
+
+## Count photos by capture day
+
+`docbank photos timeline` prints JSON counts for every recorded capture day in
+a photo scope, newest day first. The web app's Timeline uses the same counts.
+
+```bash
+docbank photos timeline
+docbank photos timeline --query '{"filters":{"capture_after":"2024-01-01"}}'
+```
+
+`--query` takes strict QueryV1 JSON and defaults to `{}`, every included
+photo. `--coverage` and `--profile-fingerprint` work as in photo browsing. The
+output's single `capture_day` facet lists one value per day. `total` counts
+every matching asset, and `missing` counts those without a readable capture
+date. Days follow the same recorded calendar day as `capture_after` and
+`capture_before`, so a day's count matches browsing that day.
+
+Over HTTP, send the same `query` and optional `coverage` to
+`POST /api/v1/photos/assets/timeline`. The
+[HTTP reference](../architecture/http-api.md) lists its limits and errors.
 
 ## Move photos to trash
 

@@ -1,12 +1,15 @@
-import { getNode, preparePhotoPreview, listPhotoAssets, trashPhotoAsset, type PhotoPreviewSlot, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { getNode, preparePhotoPreview, listPhotoAssets, trashPhotoAsset, type PhotoPreviewSlot, type PhotoBrowseRow } from "./generated/docbank.js";
 import { readVerifiedPreview } from "./download.js";
 import { selectedSourceFromNode } from "./selectedSource.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
 import { clearSelection, reconcileIDSelection, toggleIDSelection, type SelectionState } from "./selection.js";
+import { fetchPhotoTimeline } from "./snapshots.js";
+import type { Query } from "./query.js";
+import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 
-export const photoQuery: SavedQueryV1Schema = { v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "capture_time", direction: "desc" } };
+export const photoQuery: Query = { v: 1, syntax: "advanced", mode: "lexical", text: "", filters: {}, sort: { field: "capture_time", direction: "desc" } };
 const densityKey = "docbank.photos.density";
 
 export function loadDensity(): Density {
@@ -22,6 +25,13 @@ export interface PhotoReturn { contextID: string; assetID: string; control: "ima
 export class Photos {
   readonly contextID = crypto.randomUUID();
   viewerReturn = $state.raw<PhotoReturn>();
+  view = $state<"grid" | "timeline">("grid");
+  date = $state<string | undefined>();
+  query = $state<Query>(photoQuery);
+  timeline = $state<CaptureDayFacet | undefined>();
+  timelineLoading = $state(false);
+  timelineError = $state("");
+  private timelineController = new AbortController();
   items = $state<PhotoBrowseRow[]>([]);
   total = $state(0);
   cursor = $state<string | undefined>();
@@ -34,9 +44,10 @@ export class Photos {
   grouping = $state<"months" | "sessions">("months");
   density = $state<Density>(loadDensity());
   selection = $state<SelectionState<string>>(clearSelection<string>());
-  started = false;
+  started = $state(false);
   private expired = false;
-  private replacement: "refresh" | "expiry" | undefined;
+  private replacement: "refresh" | "expiry" | "date" | undefined;
+  private replacementDate: string | undefined;
   private controller = new AbortController();
   private disposed = false;
 
@@ -103,7 +114,7 @@ export class Photos {
     this.loading = true;
     const controller = this.controller;
     try {
-      const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
+      const page = await listPhotoAssets({ query: this.query, page_size: 250, ...(this.cursor ? { cursor: this.cursor } : {}) }, { session: this.session, signal: controller.signal });
       if (controller.signal.aborted) return;
       const seen = new Set(this.items.map(item => item.asset_id));
       const restore = preserve?.();
@@ -131,32 +142,72 @@ export class Photos {
     this.controller.abort();
     this.controller = new AbortController();
     this.loading = false;
+    this.timelineController.abort();
+    this.timelineLoading = false;
   }
 
   resume(preserve?: () => (() => Promise<void>) | undefined) {
+    if (this.view === "timeline" && !this.timeline && !this.timelineLoading && !this.timelineError) void this.loadTimeline();
     if (this.error) return;
     if (this.replacement) return this.retry(preserve);
     if (!this.started) return this.loadMore(preserve);
   }
 
   retry(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.replacement || this.expired) return this.replace(this.replacement ?? "expiry", preserve);
+    if (this.replacement || this.expired) return this.replace(this.replacement ?? "expiry", preserve, this.replacementDate);
     this.error = "";
     this.expired = false;
     return this.loadMore(preserve);
   }
 
   refresh(preserve?: () => (() => Promise<void>) | undefined) {
+    this.timelineController.abort();
+    this.timeline = undefined;
+    this.timelineError = "";
+    this.timelineLoading = false;
+    if (this.view === "timeline") void this.loadTimeline();
+    if (this.replacement === "date") return this.replace("date", undefined, this.replacementDate);
     return this.replace("refresh", preserve);
   }
 
-  private async replace(mode: "refresh" | "expiry", preserve?: () => (() => Promise<void>) | undefined) {
+  setView(view: "grid" | "timeline") {
+    this.view = view;
+    if (view === "timeline" && !this.timeline && !this.timelineLoading) void this.loadTimeline();
+  }
+
+  async loadTimeline() {
+    if (this.disposed) return;
+    this.timelineController.abort();
+    const controller = this.timelineController = new AbortController();
+    this.timelineLoading = true;
+    this.timelineError = "";
+    try {
+      const page = await fetchPhotoTimeline(this.session, photoQuery, controller.signal);
+      if (!controller.signal.aborted) this.timeline = page.facets[0];
+    } catch (cause) {
+      if (controller.signal.aborted) return;
+      if (cause instanceof APIError && cause.status === 401) { this.onauthfailure(cause); return; }
+      if (cause instanceof APIError && ["snapshot_too_large", "snapshot_capacity", "snapshot_busy", "snapshot_unavailable"].includes(cause.code)) {
+        this.timeline = { dimension: "capture_day", available: false, reason: cause.code, values: [] };
+      } else this.timelineError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (!controller.signal.aborted) this.timelineLoading = false;
+    }
+  }
+
+  selectDate(date?: string) {
+    return this.replace("date", undefined, date);
+  }
+
+  private async replace(mode: "refresh" | "expiry" | "date", preserve?: () => (() => Promise<void>) | undefined, date?: string) {
     if (this.disposed) return;
     this.controller.abort();
     this.controller = new AbortController();
     const controller = this.controller;
     let signal = controller.signal;
     this.replacement = mode;
+    this.replacementDate = date;
+    const query = mode === "date" ? captureDateQuery(photoQuery, date) : this.query;
     this.loading = true;
     this.error = "";
     const count = this.items.length;
@@ -168,22 +219,27 @@ export class Photos {
     try {
       do {
         signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
-        const page = await listPhotoAssets({ query: photoQuery, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
+        const page = await listPhotoAssets({ query, page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
         if (signal.aborted) throw signal.reason;
         const reachedPreviously = reachedPrefix;
         for (const item of page.items) candidate.set(item.asset_id, item);
         reachedPrefix ||= (!!tail && candidate.has(tail)) || candidate.size >= count;
         total = page.total;
         cursor = page.next_cursor;
-        if (reachedPrefix && (mode === "refresh" || reachedPreviously)) break;
+        if (mode === "date" || reachedPrefix && (mode === "refresh" || reachedPreviously)) break;
       } while (cursor);
       if (signal.aborted) throw signal.reason;
-      const restore = preserve?.();
+      const restore = mode === "date" ? undefined : preserve?.();
       this.items = [...candidate.values()];
       this.total = total;
       this.cursor = cursor;
       this.started = true;
-      this.selection = reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...this.trashTargets.map(item => item.asset_id)]));
+      if (mode === "date") {
+        this.query = query;
+        this.date = date;
+        this.scrollTop = 0;
+        this.clearSelection();
+      } else this.selection = reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...this.trashTargets.map(item => item.asset_id)]));
       this.expired = false;
       this.replacement = undefined;
       await restore?.();
@@ -254,5 +310,5 @@ export class Photos {
 
   clearSelection() { this.selection = clearSelection<string>(); this.trashTargets = []; }
   selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
-  dispose() { this.viewerReturn = undefined; this.disposed = true; this.controller.abort(); }
+  dispose() { this.viewerReturn = undefined; this.disposed = true; this.controller.abort(); this.timelineController.abort(); }
 }

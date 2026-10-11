@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-10
+last_edited: 2026-10-11
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -753,7 +753,7 @@ without a value, and `other` sums value counts omitted from the response. A
 document with several tags or collections contributes once to each value, so
 those value counts need not sum to `total`.
 
-Each available facet keeps its leading 50 values plus selected QueryV1 values
+Each ordinary available facet keeps its leading 50 values plus selected QueryV1 values
 outside that set, including a selected value whose count is zero. Size uses the
 fixed `<1 MiB`, 1–10 MiB, 10–100 MiB, 100 MiB–1 GiB, and `>=1 GiB` buckets.
 Modification time uses UTC calendar-month buckets. Fixed categorical facets
@@ -764,7 +764,7 @@ within its coverage, member, or time budget returns `available: false` with a
 Materialization admits at most 250,000 rows and 64 KiB of serialized data per
 row. Across the daemon, the cache admits at most 1,000,000 rows and 512 MiB of
 serialized snapshot data, with at most eight handles per authenticated owner
-and two builders at once. A build has 30 seconds. All requested facets share a
+and two snapshot builders at once. A build has 30 seconds. All requested facets share a
 five-second facet budget. Handles expire after 15 minutes idle or 30 minutes
 absolute lifetime. These are cache-admission bounds, not a claim that the
 process uses at most 512 MiB of RSS.
@@ -1236,7 +1236,34 @@ Browse rows include current-display camera make/model, lens make/model, ISO, ape
 
 `POST /photos/assets/{asset_id}/preview` accepts `content_version_id` and `size` (`fit` or `large`) and returns a preview slot. It verifies the current eligible display version before and after on-demand production under the mutation gate, with a 30-second request limit. A version mismatch at admission returns 409 `photo_display_changed`; a display replaced or excluded during production returns 404. Missing or mismatched source bytes return 503 `photo_preview_unavailable`; retry after restoring the source. Preparation timeouts and cancellation return 503 `photo_preview_unavailable` with distinct messages and a retry instruction. Retained failed and unsupported slots are returned unchanged.
 
-`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag, `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-cache`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses vary by API-key, authorization and browser-session headers. Browser sessions permit the exact list POST, prepare POST, preview GET, and `POST /photos/assets/{asset_id}/trash` with empty query strings. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
+`POST /photos/assets/timeline` counts the photo assets that browsing would
+return, grouped by recorded capture day. It accepts strict `query` and
+optional `coverage`, the same scope inputs as `POST /photos/assets/query`.
+Browser sessions may call it. The response contains `query`, `dependencies`,
+`generation`, `coverage`, `observed_at`, and `facets` with exactly one
+`capture_day` facet. It creates no snapshot handle, rows, hashes, or cursors.
+
+The facet counts each included asset once, using the selected live display
+file's active metadata and recorded calendar date. It preserves every scope
+filter, including capture-date filters, nested saved queries, member
+predicates, and duplicate collapse. Values list every observed day in
+descending order, with `other: 0`. `missing` counts assets without a readable
+date, and `total` equals the sum of the values plus `missing`. Photo sorts are
+accepted and do not change the counts.
+
+The values array allows 250,000 days. The facet returns `available: false`
+with `member_budget_exceeded` when the scope spans more days, and with
+`time_budget_exceeded` when counting exceeds the five-second facet budget.
+It never returns incomplete days. Counting runs on the snapshot service: it
+reserves serialized bytes but no cached rows, and it has its own two builder
+slots. A third concurrent count returns `429 snapshot_busy`; a full byte budget
+evicts the least recently used cached snapshot, as a snapshot build does, and
+returns `429 snapshot_capacity` only when nothing can be evicted. Invalid
+queries return `422 invalid_query`, and invalid coverage returns
+`422 invalid_profile`. Workspace snapshots and saved-query runs reject the
+`capture_day` facet.
+
+`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag, `X-Content-Type-Options: nosniff` and `Cache-Control: private, no-cache`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses vary by API-key, authorization and browser-session headers. Browser sessions permit the exact list POST, timeline POST, prepare POST, preview GET, and `POST /photos/assets/{asset_id}/trash` with empty query strings. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
 
 Person reads return the canonical row and, for `GET /people/by-id/{person_id}`,
 the identities and external UIDs used by split. Rename, retire, merge, and

@@ -92,6 +92,8 @@ func workspaceQueryError(err error) error {
 		return problem
 	}
 	switch {
+	case errors.Is(err, store.ErrInvalidSnapshotRequest):
+		return NewError(http.StatusUnprocessableEntity, "validation", err.Error())
 	case errors.Is(err, store.ErrSnapshotGone):
 		return NewError(http.StatusGone, "snapshot_gone", "query snapshot is missing, expired, or revoked")
 	case errors.Is(err, store.ErrSnapshotCursor):

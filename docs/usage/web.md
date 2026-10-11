@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-06
+last_edited: 2026-10-11
 title: Web application
 description: Find, read, organize, and export documents in the local, authenticated web app.
 ---
@@ -186,6 +186,12 @@ modified-time, size, text-coverage, and duplicate facets. Choosing a supported
 facet or changing the query creates a new snapshot. It never splices live
 results into the accepted one. An unavailable facet says why instead of
 presenting a zero count.
+
+Photos' Timeline counts each included photo asset once by capture day. It
+creates no snapshot and does not block Documents queries. The year ribbon,
+month scrubber, and day rows open photos for the chosen period. See
+[Browse photos](photos.md#browse-in-the-web-app) and
+[Count photos by capture day](photos.md#count-photos-by-capture-day).
 
 Snapshot handles last for one daemon lifetime, up to 15 minutes idle and 30
 minutes total. Locking the browser session or stopping the daemon revokes them.
