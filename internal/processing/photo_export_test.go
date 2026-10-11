@@ -352,7 +352,11 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 	}
 	for _, flag := range []string{"pick", "", "reject"} {
 		for _, property := range []string{` xmp:Rating="-1">`, `><xmp:Rating>-<!--split-->1</xmp:Rating>`, `><xmp:Rating><rdf:value>-1</rdf:value></xmp:Rating>`, ` xmp:Rating="4">`, `><xmp:Rating>4</xmp:Rating>`, `><xmp:Rating><rdf:value>4</rdf:value></xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/" exif:GPSLatitude="12,30N">4</xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/"><rdf:value>4</rdf:value><exif:GPSLatitude>12,30N</exif:GPSLatitude></xmp:Rating>`, `><xmp:Rating xmlns:exif="http://ns.adobe.com/exif/1.0/"><rdf:value>-1</rdf:value><exif:GPSLatitude>12,30N</exif:GPSLatitude></xmp:Rating>`} {
-			for _, spelling := range []string{"-1", "-01"} {
+			spellings := []string{"-1"}
+			if strings.Contains(property, "-1") || strings.Contains(property, "-<!--split-->1") {
+				spellings = append(spellings, "-01")
+			}
+			for _, spelling := range spellings {
 				property := strings.ReplaceAll(property, "-1", spelling)
 				property = strings.ReplaceAll(property, "-<!--split-->1", "-<!--split-->"+spelling[1:])
 				for _, confirmed := range []store.PhotoAuthoredFields{0, store.PhotoConfirmedFlag, store.PhotoConfirmedRating, store.PhotoConfirmedFlag | store.PhotoConfirmedRating} {
@@ -535,6 +539,40 @@ func TestPhotoExportRAWAndMalformedMetadata(t *testing.T) {
 		_, _, err := renderPhotoExport(t.Context(), ambiguousRAW, photoRenderInput(ambiguousRAW, "image/x-adobe-dng"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90, IncludeMetadata: metadata})
 		require.ErrorIs(t, err, bundle.ErrUnavailable)
 		require.ErrorContains(t, err, "not associated")
+	}
+	for _, subIFD := range []bool{false, true} {
+		for _, strip := range []bool{false, true} {
+			previewProfileRAW := rawData(syntheticTIFFEntry{tag: 34675, kind: 7, value: rootICC})
+			if strip {
+				for index := range int(binary.LittleEndian.Uint16(previewProfileRAW[8:])) {
+					entry := 10 + index*12
+					switch binary.LittleEndian.Uint16(previewProfileRAW[entry:]) {
+					case visualPreviewRAWOffsetTag:
+						binary.LittleEndian.PutUint16(previewProfileRAW[entry:], visualPreviewRAWStripOffsetsTag)
+					case visualPreviewRAWLengthTag:
+						binary.LittleEndian.PutUint16(previewProfileRAW[entry:], visualPreviewRAWStripByteCountsTag)
+					}
+				}
+			}
+			root := syntheticTIFFRoot(nil)[8:]
+			if subIFD {
+				root = syntheticTIFFRoot([]syntheticTIFFEntry{tiffLong(visualPreviewRAWSubIFDsTag, 8)})[8:]
+			} else {
+				binary.LittleEndian.PutUint32(root[2:], 8)
+			}
+			binary.LittleEndian.PutUint32(previewProfileRAW[4:], uint32(len(previewProfileRAW)))
+			previewProfileRAW = append(previewProfileRAW, root...)
+			input := photoRenderInput(previewProfileRAW, "image/x-adobe-dng")
+			input.Name = "synthetic-preview.dng"
+			for _, format := range []string{"jpeg", "png"} {
+				for _, metadata := range []bool{false, true} {
+					_, _, err := renderPhotoExport(t.Context(), previewProfileRAW, input, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: metadata})
+					require.ErrorIs(t, err, bundle.ErrUnavailable)
+					require.ErrorContains(t, err, "preview IFD color profile")
+					require.ErrorContains(t, photoExportError(input, err), "photo 1 (synthetic-preview.dng)")
+				}
+			}
+		}
 	}
 	missing := syntheticRAWPreviewTIFF(1)
 	_, _, err = renderPhotoExport(t.Context(), missing, photoRenderInput(missing, "image/x-adobe-dng"), bundle.PhotoRenderProfile{Format: "jpeg", Quality: 90})

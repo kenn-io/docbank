@@ -22,12 +22,14 @@ const (
 	visualPreviewRAWOffsetTag          = 0x0201
 	visualPreviewRAWLengthTag          = 0x0202
 	visualPreviewRAWOrientationTag     = 0x0112
+	visualPreviewRAWICCTag             = 34675
 )
 
 type visualPreviewRAWLocation struct {
 	offset      int64
 	length      int64
 	orientation int
+	previewICC  bool
 }
 
 func produceVisualPreviewCameraRAW(
@@ -137,6 +139,7 @@ func inspectVisualPreviewTIFFRAW(
 			rootOrientation = int(value)
 		}
 		candidateOrientation := rootOrientation
+		_, hasICC := entries[visualPreviewRAWICCTag]
 		if value, found := entries[visualPreviewRAWOrientationTag]; found && value >= 1 && value <= 8 {
 			candidateOrientation = int(value)
 		}
@@ -146,7 +149,7 @@ func inspectVisualPreviewTIFFRAW(
 			malformed = true
 		} else if hasOffset {
 			candidate := visualPreviewRAWLocation{
-				offset: int64(previewOffset), length: int64(previewLength), orientation: candidateOrientation,
+				offset: int64(previewOffset), length: int64(previewLength), orientation: candidateOrientation, previewICC: offset != rootOffset && hasICC,
 			}
 			if !sourceMetadataRangeWithin(candidate.offset, candidate.length, sourceSize) {
 				malformed = true
@@ -160,7 +163,7 @@ func inspectVisualPreviewTIFFRAW(
 			malformed = true
 		} else if hasStripOffset && entries[visualPreviewRAWCompressionTag] == visualPreviewRAWJPEGCompression {
 			candidate := visualPreviewRAWLocation{
-				offset: int64(stripOffset), length: int64(stripLength), orientation: candidateOrientation,
+				offset: int64(stripOffset), length: int64(stripLength), orientation: candidateOrientation, previewICC: offset != rootOffset && hasICC,
 			}
 			if !sourceMetadataRangeWithin(candidate.offset, candidate.length, sourceSize) {
 				malformed = true
@@ -212,6 +215,10 @@ func readVisualPreviewRAWIFD(
 		tag := order.Uint16(entry)
 		kind := order.Uint16(entry[2:])
 		items := order.Uint32(entry[4:])
+		if tag == visualPreviewRAWICCTag {
+			values[tag] = items
+			continue
+		}
 		if tag == visualPreviewRAWSubIFDsTag {
 			offsets, valid, readErr := readVisualPreviewRAWSubIFDs(
 				reader, sourceSize, order, kind, items, entry[8:12])

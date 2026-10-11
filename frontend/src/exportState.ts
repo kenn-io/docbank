@@ -327,6 +327,7 @@ export class ExportSession {
     return { generation: this.generation, signal: this.controller.signal };
   }
   private stop(): void {
+    if (this.state.status === "preparing" && !this.source && !this.state.active) this.sourceID = crypto.randomUUID();
     this.generation++; this.controller?.abort(); this.controller = undefined;
     this.problemsController?.abort(); this.problemsController = undefined;
     if (this.state.problemsLoading) this.emit({ ...this.state, problemsLoading: false });

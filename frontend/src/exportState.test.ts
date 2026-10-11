@@ -17,9 +17,9 @@ async function harness() {
   const startIDs: string[] = [];
   const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
     const path = String(url), body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    if (path.endsWith("/sources")) { source = { id: body.operation_id, request_sha256: hash, kind: "explicit", state: "sealed", member_hash: memberHash, total: 1, source_bytes: 12, created_at: "2026-01-01T00:00:00Z", expires_at: future }; return response(source); }
-    if (path.endsWith("/plans")) { plan = { format: "docbank-bundle-v1", id: body.operation_id, vault_id: id, toolchain: "go1.27", source, roles: body.roles, fingerprint: hash, total: 1, role_entries: 1, role_bytes: 12, metadata_bytes: 100, created_at: source.created_at, expires_at: future }; return response(plan); }
-    if (path.endsWith("/preview")) return response({ plan_id: plan.id, fingerprint: hash, member_hash: memberHash, total: 1, roles: [{ role: "original", available_members: 1, unavailable_members: 0, files: 1, bytes: 12 }] });
+    if (path.endsWith("/sources")) { source = { id: body.operation_id, request_sha256: hash, kind: body.kind, state: "sealed", member_hash: memberHash, total: 1, source_bytes: 12, created_at: "2026-01-01T00:00:00Z", expires_at: future }; return response(source); }
+    if (path.endsWith("/plans")) { plan = { format: "docbank-bundle-v1", id: body.operation_id, vault_id: id, toolchain: "go1.27", source, roles: body.roles, photo_render: body.photo_render, fingerprint: hash, total: 1, role_entries: 1, role_bytes: 12, metadata_bytes: 100, created_at: source.created_at, expires_at: future }; return response(plan); }
+    if (path.endsWith("/preview")) return response({ plan_id: plan.id, fingerprint: hash, member_hash: memberHash, total: 1, roles: [{ role: plan.roles[0].role, available_members: 1, unavailable_members: 0, files: 1, bytes: 12 }] });
     if (path.endsWith("/jobs")) { starts++; startIDs.push(body.operation_id); job = { id: body.operation_id, plan_id: plan.id, fingerprint: hash, state: "queued", sequence: 1, completed_roles: 0, completed_bytes: 0, attempt: 0, created_at: source.created_at, deadline: future, expires_at: future }; throw new TypeError("start response lost"); }
     if (path.includes("/events")) return new Response("", { headers: { "Content-Type": "application/x-ndjson" } });
     if (path.endsWith("/cancel")) { job = { ...job, state: "canceled", sequence: 2 }; return new Response(null, { status: 204 }); }
@@ -238,7 +238,7 @@ it("copies reactive snapshot inputs before caller changes and never promotes obs
   h.session.dispose();
 });
 
-it("starts over after a failed source without changing ordinary retry identity or an admitted job", async () => {
+it.each(["close", "settings"])("starts over after a failed or aborted source via %s and retains an admitted job", async (abort) => {
   const h = await harness();
   const original = h.fetcher.getMockImplementation()!;
   const sourceIDs: string[] = [];
@@ -258,9 +258,30 @@ it("starts over after a failed source without changing ordinary retry identity o
   expect(h.state().status).toBe("error");
   expect(sourceIDs).toEqual([failedID, failedID]);
   h.session.resetPreparation();
+  const input = { label: "Selected photos", photos: { query: { filters: {}, v: 1, syntax: "advanced", mode: "lexical", text: "", sort: { field: "name", direction: "asc" } }, hidden: false, asset_ids: [id] }, total: 1 };
+  const profile = { format: "jpeg", quality: 90, long_edge: 2048, include_metadata: true, remove_gps: true };
+  h.session.choose(input, [{ role: "photo_rendered" }], { photo_render: profile });
+  let respond!: (value: Response) => void, markRequested!: () => void;
+  const responsePending = new Promise<Response>(resolve => respond = resolve);
+  const requested = new Promise<void>(resolve => markRequested = resolve);
+  let abortedID = "", signal: AbortSignal | undefined;
+  h.fetcher.mockImplementationOnce((_url, init) => {
+    abortedID = JSON.parse(String(init?.body)).operation_id;
+    signal = init?.signal ?? undefined;
+    markRequested();
+    return responsePending;
+  });
+  const pending = h.session.preview();
+  await requested;
+  if (abort === "close") h.session.close();
+  else h.session.choose(input, [{ role: "photo_rendered" }], { photo_render: { ...profile, quality: 80 } });
+  expect(signal?.aborted).toBe(true);
+  respond(new Response(JSON.stringify({ detail: "Source preparation failed", code: "export_conflict" }), { status: 409 }));
+  await pending;
   await h.session.preview();
   expect(h.state().status).toBe("ready");
   expect(sourceIDs[2]).not.toBe(failedID);
+  expect(sourceIDs[2]).not.toBe(abortedID);
   await h.session.start();
   const admitted = h.state();
   h.session.resetPreparation();

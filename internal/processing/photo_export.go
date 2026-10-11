@@ -161,6 +161,9 @@ func renderPhotoExport(ctx context.Context, data []byte, input store.PhotoExport
 		var decoded image.Image
 		var orientation int
 		for _, location := range locations {
+			if location.previewICC {
+				return nil, receipt, fmt.Errorf("%w: RAW preview IFD color profile cannot be carried into the export", bundle.ErrUnavailable)
+			}
 			preview := io.NewSectionReader(bytes.NewReader(data), location.offset, location.length)
 
 			p := packets

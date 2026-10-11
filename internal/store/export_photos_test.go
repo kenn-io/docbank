@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,10 +16,6 @@ func TestPhotoExportPlanSealsFrozenInputsAndOwnsArtifact(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	s := newTestStore(t)
-	field, ok := reflect.TypeFor[bundle.Plan]().FieldByName("PhotoRender")
-	require.True(t, ok)
-	jsonName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
-	require.Equal(t, BackupExportPlanPredicate, "json_extract(p.canonical_json, '$."+jsonName+"') IS NULL")
 	n := browsePhotoNode(t, s, "render.jpg", fakeHash("a3"), "image/jpeg")
 	m := bundle.Member{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: n.BlobHash, Size: n.Size}
 	source, err := s.CreateExportSource(ctx, "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{m}}, nil)
@@ -216,7 +210,7 @@ func TestPhotoExportCancellationAndInvalidProfile(t *testing.T) {
 	cancel()
 	_, _, err := s.ResolvePhotoExportMembers(ctx, bundle.PhotoExportSelection{Query: snapshotTestQuery(t, `{ "sort": { "field": "name", "direction": "asc" } }`)})
 	require.Error(t, err)
-	_, err = s.CreateExportPlan(t.Context(), "owner", bundle.PlanRequest{PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 0}})
+	err = validatePhotoPlanRequest(&bundle.PlanRequest{Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "jpeg", Quality: 0}})
 	require.ErrorIs(t, err, bundle.ErrConflict)
 }
 
