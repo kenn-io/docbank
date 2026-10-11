@@ -50,7 +50,10 @@ func TestTextCitationClient(t *testing.T) {
 		{"valid", string(valid), true},
 		{"schema annotation", strings.TrimSuffix(string(valid), "}") + `,"$schema":"synthetic"}`, true},
 		{"identity", changed(func(r *document.ResolvedTextCitation) { r.Citation.NodeID++ }), false},
-		{"quote", changed(func(r *document.ResolvedTextCitation) { r.Text = "abcdefghi" }), false},
+		{"quote", changed(func(r *document.ResolvedTextCitation) {
+			r.Text = "abcdefghi"
+			r.TextSHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte(r.Text)))
+		}), false},
 		{"bytes", changed(func(r *document.ResolvedTextCitation) { r.TextBytes++ }), false},
 		{"digest", changed(func(r *document.ResolvedTextCitation) {
 			r.TextSHA256 = strings.Repeat("0", 64)
