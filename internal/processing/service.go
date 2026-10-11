@@ -2089,15 +2089,24 @@ func runtimeVersion(work store.RenditionJobWork) store.ContentVersion {
 
 // inspectRenditionSource runs the same local inspection that gates a provider
 // upload, so a plan can report a refusal before consent is requested.
+// InspectCapability treats an empty or oversized source as an invalid policy,
+// so the stored size classifies those sources before inspection.
 func inspectRenditionSource(ctx context.Context, blobs *blob.Store, node store.Node,
 	version store.ContentVersion, profile configuredProfile,
 ) (media.CapabilityRecord, error) {
 	filename := syntheticFilename(node.Name, version.MimeType, profile.portable.Rendition.DiscloseFilename)
+	policy := inspectionPolicy(filename, version, profile)
+	switch {
+	case version.Size == 0:
+		return media.CapabilityRecord{Reason: media.CapabilityReasonEmptySource}, nil
+	case version.Size > policy.MaxSourceBytes:
+		return media.CapabilityRecord{Reason: media.CapabilityReasonSourceBytes}, nil
+	}
 	reader, err := blobs.OpenContext(ctx, version.BlobHash)
 	if err != nil {
 		return media.CapabilityRecord{}, err
 	}
-	capability, inspectErr := media.InspectCapability(reader, inspectionPolicy(filename, version, profile))
+	capability, inspectErr := media.InspectCapability(reader, policy)
 	closeErr := reader.Close()
 	if inspectErr != nil || closeErr != nil {
 		return media.CapabilityRecord{}, errors.Join(inspectErr, closeErr)

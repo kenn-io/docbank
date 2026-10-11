@@ -200,19 +200,30 @@ func TestEmbeddedProcessingReportsIneligibleSource(t *testing.T) {
 		}}})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, vault.Close()) })
-	receipt, err := vault.Put(t.Context(), "/report.docx", strings.NewReader("synthetic document"),
-		docbank.PutOptions{MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"})
-	require.NoError(t, err)
-	selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID,
-		ContentVersionID: receipt.Version.ID, Profile: "private"}
-	plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
-	require.NoError(t, err)
-	require.Equal(t, "unbounded_media_family", plan.RenditionIneligibleReason)
-	_, err = vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{
-		PlanRequest:     docbank.ProcessingPlanRequest{Selector: selector},
-		PlanFingerprint: plan.Fingerprint, Consent: true,
-	})
-	require.ErrorIs(t, err, docbank.ErrRenditionSourceIneligible)
+	for _, test := range []struct {
+		path, mediaType, body, reason string
+	}{
+		{"/report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			"synthetic document", "unbounded_media_family"},
+		{"/oversized.txt", "text/plain", strings.Repeat("a", 1<<20+1), "source_bytes_exceeded"},
+		{"/empty.txt", "text/plain", "", "empty_source"},
+	} {
+		t.Run(test.reason, func(t *testing.T) {
+			receipt, err := vault.Put(t.Context(), test.path, strings.NewReader(test.body),
+				docbank.PutOptions{MediaType: test.mediaType})
+			require.NoError(t, err)
+			selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID,
+				ContentVersionID: receipt.Version.ID, Profile: "private"}
+			plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+			require.NoError(t, err)
+			require.Equal(t, test.reason, plan.RenditionIneligibleReason)
+			_, err = vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{
+				PlanRequest:     docbank.ProcessingPlanRequest{Selector: selector},
+				PlanFingerprint: plan.Fingerprint, Consent: true,
+			})
+			require.ErrorIs(t, err, docbank.ErrRenditionSourceIneligible)
+		})
+	}
 }
 
 func TestEmbeddedProcessingPlanRunReadAndSearch(t *testing.T) {
