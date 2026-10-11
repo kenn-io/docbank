@@ -66,3 +66,46 @@ func BenchmarkAddPaths(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkAddLabeledDirectoryTree includes traversal and the final metadata
+// transaction for a flat empty tree. Source creation and vault startup and
+// shutdown are excluded. Empty trees exercise finalization without blob I/O.
+func BenchmarkAddLabeledDirectoryTree(b *testing.B) {
+	for _, directories := range []int{1000, 10000, 30000} {
+		b.Run(fmt.Sprintf("directories=%d", directories), func(b *testing.B) {
+			source := b.TempDir()
+			for i := range directories {
+				require.NoError(b, os.Mkdir(filepath.Join(source,
+					fmt.Sprintf("dir-%05d", i)), 0o700))
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				b.StopTimer()
+				vault := b.TempDir()
+				s, err := store.Open(filepath.Join(vault, "docbank.db"))
+				require.NoError(b, err)
+				blobs, err := blob.NewWithOptions(store.NewPackCatalog(s),
+					filepath.Join(vault, "blobs"), blob.ManagedOptions())
+				require.NoError(b, err)
+				ing := &Ingester{Store: s, Blobs: blobs}
+				b.StartTimer()
+				report, err := ing.AddPathsWithOptions(b.Context(), []string{source}, "/inbox", Options{
+					CollectionLabel: new("Synthetic tree"),
+				})
+				b.StopTimer()
+				_, lookupErr := s.NodeByPath(b.Context(),
+					"/inbox/"+filepath.Base(source)+fmt.Sprintf("/dir-%05d", directories-1))
+				closeErr := blobs.Close()
+				storeErr := s.Close()
+				require.NoError(b, err)
+				require.Empty(b, report.Failed)
+				require.Empty(b, report.IngestID)
+				require.Zero(b, report.Added)
+				require.NoError(b, lookupErr)
+				require.NoError(b, closeErr)
+				require.NoError(b, storeErr)
+				b.StartTimer()
+			}
+		})
+	}
+}

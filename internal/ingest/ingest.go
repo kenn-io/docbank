@@ -870,7 +870,7 @@ func (files *filesystemIngest) finalize(
 	for i, directory := range files.directories {
 		plans[i] = *directory.plan
 	}
-	resolutions, err := files.ing.Store.FinalizeIngestDirectories(ctx, files.run, plans)
+	err := files.ing.Store.FinalizeIngestDirectories(ctx, files.run, plans)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -882,9 +882,6 @@ func (files *filesystemIngest) finalize(
 		rep.Failed = append(rep.Failed, FileError{Path: reportPath(path), Err: err})
 		progress.report(*rep, false)
 		return nil
-	}
-	for _, resolution := range resolutions {
-		files.applyResolution(resolution)
 	}
 	return nil
 }

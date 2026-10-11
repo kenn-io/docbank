@@ -236,27 +236,25 @@ func (e *IngestDirectoryError) Unwrap() error { return e.Err }
 // removed again before commit, so no collection receipt is published.
 func (s *Store) FinalizeIngestDirectories(
 	ctx context.Context, run IngestRun, plans []IngestDirectoryPlan,
-) ([]IngestDirectoryResolution, error) {
+) error {
 	if run.initialLabel == nil {
-		return nil, errors.New("finalizing ingest directories requires an initial label")
+		return errors.New("finalizing ingest directories requires an initial label")
 	}
 	for index, plan := range plans {
 		if err := validateIngestDirectoryPlan(plan); err != nil {
-			return nil, &IngestDirectoryError{Index: index, Err: err}
+			return &IngestDirectoryError{Index: index, Err: err}
 		}
 	}
-	resolutions := make([]IngestDirectoryResolution, 0, len(plans))
-	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		inserted, err := s.ensureIngestRunForMutationTx(ctx, tx, run)
 		if err != nil {
 			return err
 		}
 		for index, plan := range plans {
-			_, resolution, err := s.ensureIngestDirectoryTx(ctx, tx, plan)
+			_, _, err := s.ensureIngestDirectoryTx(ctx, tx, plan)
 			if err != nil {
 				return &IngestDirectoryError{Index: index, Err: err}
 			}
-			resolutions = append(resolutions, resolution)
 		}
 		if !inserted {
 			return nil
@@ -287,8 +285,4 @@ func (s *Store) FinalizeIngestDirectories(
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return resolutions, nil
 }
