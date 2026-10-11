@@ -113,6 +113,28 @@ issues a one-shot authorized reader. Provider adapters receive that reader,
 not arbitrary access to the vault. The outbound transport checks the declared
 origin and allowed network ranges when establishing the actual connection.
 
+PDF format detection requires a versioned `%PDF-` header at byte zero and a
+`startxref` within the final 64 KiB. Its offset must point backward to a
+recognized cross-reference table or stream. Each cross-reference read is capped
+at 4 KiB. Linearized (Fast Web View) streams may need a second read to validate
+the forward link to the final cross-reference section. A final `%%EOF` marker
+may be followed by whitespace, NULs, or short text or binary residue within
+the tail window. Appended ZIP signatures, `<` or `>` bytes, repeated end
+markers, and PDF revision syntax are rejected. The last `startxref` remains
+authoritative, so an incomplete appended revision cannot fall back to an older
+valid revision. Missing-final-marker recovery still requires only PDF
+whitespace after the offset. These checks recognize the format; subsequent
+inspection validates the page tree, encryption, external references, and
+policy limits before authorizing provider work.
+
+The final cross-reference stream must close with `endstream` and `endobj`
+before the last `startxref`. Complete objects without streams, such as an
+indirect `/Length`, may sit between them. When the stream starts inside the
+tail window, detection finds `endstream` by keyword. A stream that starts
+earlier needs a direct `/Length` that ends inside the window. Detection
+rejects an earlier-starting stream with an indirect `/Length` because it
+cannot find that stream's end within its bounded reads.
+
 Before granting consent, the caller reviews each flow's runtime disclosure:
 immediate and ultimate processor, endpoint, deployment, model and revision,
 vector space, provider-visible metadata, and retained artifact roles. The plan
