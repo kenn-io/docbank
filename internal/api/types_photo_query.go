@@ -1,10 +1,13 @@
 package api
 
 import (
+	"errors"
 	"reflect"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/docbank/document"
+	"go.kenn.io/docbank/internal/store"
 )
 
 // PhotoBrowseRequest carries strict QueryV1 JSON and live-page options.
@@ -89,4 +92,50 @@ type PreparePhotoPreviewRequest struct {
 	Hidden           bool   `json:"hidden,omitempty" default:"false"`
 	ContentVersionID string `json:"content_version_id" format:"uuid"`
 	Size             string `json:"size" enum:"fit,large"`
+}
+
+// PhotoTimelineRequest selects the photos to count by capture day. It takes the
+// same query and coverage as photo browsing, so counts match the browsed photos.
+type PhotoTimelineRequest struct {
+	Query    QueryPayload           `json:"query"`
+	Coverage WorkspaceQueryCoverage `json:"coverage,omitzero"`
+}
+
+// PhotoCaptureDayFacet counts photo assets by recorded calendar day. It allows
+// one value per day, up to the snapshot member limit.
+type PhotoCaptureDayFacet WorkspaceFacet
+
+// Schema reuses the nullable facet counts and widens the value bound to one
+// value per possible day.
+func (PhotoCaptureDayFacet) Schema(r huma.Registry) *huma.Schema {
+	schema := (WorkspaceFacet{}).Schema(r)
+	schema.Properties["dimension"].Enum = []any{"capture_day"}
+	schema.Properties["values"].MaxItems = new(250000)
+	return schema
+}
+
+// PhotoTimeline returns capture-day counts with the query evidence that
+// produced them. It creates no snapshot, rows, or cursors.
+type PhotoTimeline struct {
+	Query        QueryPayload               `json:"query"`
+	Dependencies []WorkspaceQueryDependency `json:"dependencies"`
+	Generation   WorkspaceQueryGeneration   `json:"generation"`
+	Coverage     WorkspaceQueryCoverage     `json:"coverage"`
+	ObservedAt   time.Time                  `json:"observed_at" format:"date-time"`
+	Facets       []PhotoCaptureDayFacet     `json:"facets" minItems:"1" maxItems:"1"`
+}
+
+func fromStorePhotoTimeline(projection store.SnapshotProjection) (PhotoTimeline, error) {
+	wire, err := fromStoreWorkspacePage(store.SnapshotPage{SnapshotProjection: projection})
+	if err != nil {
+		return PhotoTimeline{}, err
+	}
+	if len(wire.Facets) != 1 {
+		return PhotoTimeline{}, errors.New("photo timeline must contain exactly one facet")
+	}
+	return PhotoTimeline{
+		Query: wire.Query, Dependencies: wire.Dependencies, Generation: wire.Generation,
+		Coverage: wire.Coverage, ObservedAt: wire.ObservedAt,
+		Facets: []PhotoCaptureDayFacet{PhotoCaptureDayFacet(wire.Facets[0])},
+	}, nil
 }

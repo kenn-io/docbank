@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-09
+last_edited: 2026-10-11
 title: CLI reference
 description: Every docbank command, with its flags, output formats, and error behavior.
 ---
@@ -192,6 +192,7 @@ docbank photos hidden setup|change|disable|lock|state|reset
 docbank photos assets hide <asset-id> [--revision REV]
 docbank photos assets unhide <asset-id|node-selector> [--revision REV]
 docbank photos import <source-root> [destination] [--json]
+docbank photos timeline [--query QUERY_JSON] [--coverage configured|unconfigured] [--profile-fingerprint FP]
 ```
 
 Photo commands emit JSON through the daemon. Image and concrete video files are
@@ -200,7 +201,9 @@ Existing-asset and settings mutations read the current revision and retry once
 if another write changes it first. Pass `--revision` to fail with exit code 4
 instead. `inspect` also accepts an `id:N` or path selector for a member file.
 `id:N` also finds a trashed member. Sidecars must point at a same-asset RAW or
-image member and never become the display member.
+image member and never become the display member. `timeline` counts the photos
+a QueryV1 scope selects by recorded capture day; see
+[Count photos by capture day](usage/photos.md#count-photos-by-capture-day).
 
 Photo assets, albums, memberships, settings, and bounded decision receipts are
 included in JSONL backup and restore.

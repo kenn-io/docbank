@@ -107,6 +107,7 @@ type cachedQuerySnapshot struct {
 }
 
 type querySnapshotBuild struct {
+	facetsOnly    bool
 	id            uint64
 	snapshotID    string
 	owner         string
@@ -202,6 +203,9 @@ func newQuerySnapshotService(store *Store, options querySnapshotServiceOptions) 
 func (s *QuerySnapshotService) Create(
 	ctx context.Context, owner string, request SnapshotRequest,
 ) (SnapshotPage, error) {
+	if request.FacetsOnly {
+		return SnapshotPage{}, errors.New("counts requests do not create snapshots")
+	}
 	prepared, err := s.prepareSnapshot(ctx, owner, request, nil)
 	if err != nil {
 		return SnapshotPage{}, err
@@ -218,6 +222,26 @@ func (s *QuerySnapshotService) Create(
 	return prepared.page, nil
 }
 
+// CreateFacets materializes a counts-only projection for a facets_only
+// request. It never creates a snapshot handle or caches rows; its memory is
+// reserved only while the build runs.
+func (s *QuerySnapshotService) CreateFacets(
+	ctx context.Context, owner string, request SnapshotRequest,
+) (SnapshotProjection, error) {
+	if !request.FacetsOnly {
+		return SnapshotProjection{}, errors.New("counts requests require facets_only")
+	}
+	prepared, err := s.prepareSnapshot(ctx, owner, request, nil)
+	if err != nil {
+		return SnapshotProjection{}, err
+	}
+	defer func() {
+		prepared.cancel()
+		s.finishBuild(prepared.build, false)
+	}()
+	return prepared.projection, nil
+}
+
 // RunSaved materializes the inspected saved definition and durably records its
 // comparison receipt before making the already-reserved snapshot visible.
 // mutate, when supplied, coordinates only the receipt write with maintenance.
@@ -225,6 +249,9 @@ func (s *QuerySnapshotService) RunSaved(
 	ctx context.Context, owner, id string, expectedRevision int64, request SnapshotRequest,
 	mutate func(func() error) error,
 ) (SavedQueryRun, SnapshotPage, error) {
+	if request.FacetsOnly {
+		return SavedQueryRun{}, SnapshotPage{}, ErrInvalidSavedQueryRun
+	}
 	if err := validateUUIDv4(id); err != nil || expectedRevision < 1 {
 		return SavedQueryRun{}, SnapshotPage{}, fmt.Errorf("%w: saved query identity or revision", ErrInvalidSavedQueryRun)
 	}
@@ -275,6 +302,10 @@ func (s *QuerySnapshotService) RunSaved(
 func (s *QuerySnapshotService) prepareSnapshot(
 	ctx context.Context, owner string, request SnapshotRequest, saved *savedQuerySnapshotInput,
 ) (preparedQuerySnapshot, error) {
+	normalized, err := normalizeQuerySnapshotRequest(request)
+	if err != nil {
+		return preparedQuerySnapshot{}, err
+	}
 	if err := ctx.Err(); err != nil {
 		return preparedQuerySnapshot{}, err
 	}
@@ -285,7 +316,7 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		return preparedQuerySnapshot{}, errors.New("query snapshot owner is required")
 	}
 	buildCtx, cancel := context.WithCancel(ctx)
-	build, err := s.admitNewBuild(owner, cancel)
+	build, err := s.admitNewBuild(owner, cancel, request.FacetsOnly)
 	if err != nil {
 		cancel()
 		return preparedQuerySnapshot{}, err
@@ -319,12 +350,16 @@ func (s *QuerySnapshotService) prepareSnapshot(
 		}
 		return nil
 	}
-	projection, err := s.store.materializeQuerySnapshot(buildCtx, request, options)
+	projection, err := s.store.materializeNormalizedQuerySnapshot(buildCtx, normalized, options)
 	if err != nil {
 		return preparedQuerySnapshot{}, err
 	}
 	if err := buildCtx.Err(); err != nil {
 		return preparedQuerySnapshot{}, err
+	}
+	if request.FacetsOnly {
+		handedOff = true
+		return preparedQuerySnapshot{ctx: buildCtx, cancel: cancel, build: build, projection: projection}, nil
 	}
 
 	encodedRows := make([][]byte, len(projection.Rows))
@@ -539,13 +574,17 @@ func (s *QuerySnapshotService) newSnapshotID() (string, error) {
 	return hex.EncodeToString(raw), nil
 }
 
-func (s *QuerySnapshotService) admitNewBuild(owner string, cancel context.CancelFunc) (*querySnapshotBuild, error) {
+func (s *QuerySnapshotService) admitNewBuild(owner string, cancel context.CancelFunc, facetsOnly bool) (*querySnapshotBuild, error) {
+	if facetsOnly {
+		build, _, err := s.admitBuild("", owner, cancel, true)
+		return build, err
+	}
 	for range 8 {
 		snapshotID, err := s.newSnapshotID()
 		if err != nil {
 			return nil, err
 		}
-		build, collision, err := s.admitBuild(snapshotID, owner, cancel)
+		build, collision, err := s.admitBuild(snapshotID, owner, cancel, false)
 		if err != nil {
 			return nil, err
 		}
@@ -557,7 +596,7 @@ func (s *QuerySnapshotService) admitNewBuild(owner string, cancel context.Cancel
 }
 
 func (s *QuerySnapshotService) admitBuild(
-	snapshotID, owner string, cancel context.CancelFunc,
+	snapshotID, owner string, cancel context.CancelFunc, facetsOnly bool,
 ) (*querySnapshotBuild, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -565,28 +604,33 @@ func (s *QuerySnapshotService) admitBuild(
 		return nil, false, ErrSnapshotGone
 	}
 	s.purgeExpiredLocked(s.now().UTC())
-	if len(s.builds) >= s.limits.MaxBuilders {
+	// Counts and snapshots take separate builder slots so neither blocks the other.
+	if s.activeBuildsLocked(facetsOnly) >= s.limits.MaxBuilders {
 		return nil, false, ErrSnapshotBusy
 	}
 	if _, exists := s.snapshots[snapshotID]; exists {
 		return nil, true, nil
 	}
 	for _, build := range s.builds {
-		if build.snapshotID == snapshotID {
+		if !facetsOnly && build.snapshotID == snapshotID {
 			return nil, true, nil
 		}
 	}
-	for len(s.snapshots)+len(s.builds) >= s.limits.MaxHandles ||
-		s.ownerHandles[owner] >= s.limits.MaxOwnerHandles {
+	for !facetsOnly && (len(s.snapshots)+s.activeBuildsLocked(false) >= s.limits.MaxHandles ||
+		s.ownerHandles[owner] >= s.limits.MaxOwnerHandles) {
 		ownerOnly := s.ownerHandles[owner] >= s.limits.MaxOwnerHandles
 		if !s.evictLRULocked(owner, ownerOnly) {
 			return nil, false, ErrSnapshotAdmission
 		}
 	}
 	s.nextBuildID++
-	build := &querySnapshotBuild{id: s.nextBuildID, snapshotID: snapshotID, owner: owner, cancel: cancel}
+	build := &querySnapshotBuild{
+		id: s.nextBuildID, snapshotID: snapshotID, owner: owner, cancel: cancel, facetsOnly: facetsOnly,
+	}
 	s.builds[build.id] = build
-	s.ownerHandles[owner]++
+	if !facetsOnly {
+		s.ownerHandles[owner]++
+	}
 	s.wg.Add(1)
 	return build, false, nil
 }
@@ -665,7 +709,9 @@ func (s *QuerySnapshotService) finishBuild(build *querySnapshotBuild, published 
 			delete(s.builds, build.id)
 			s.reservedRows -= build.reservedRows
 			s.reservedBytes -= build.reservedBytes
-			s.releaseOwnerHandleLocked(build.owner)
+			if !build.facetsOnly {
+				s.releaseOwnerHandleLocked(build.owner)
+			}
 		}
 	}
 	s.mu.Unlock()
@@ -799,11 +845,23 @@ func (s *QuerySnapshotService) gc(ctx context.Context) {
 	}
 }
 
+// activeBuildsLocked counts in-flight builds of one kind: counts-only builds or
+// snapshot builds, which also reserve a handle.
+func (s *QuerySnapshotService) activeBuildsLocked(facetsOnly bool) int {
+	count := 0
+	for _, build := range s.builds {
+		if build.facetsOnly == facetsOnly {
+			count++
+		}
+	}
+	return count
+}
+
 func (s *QuerySnapshotService) stats() snapshotCacheStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return snapshotCacheStats{
-		CachedHandles: int64(len(s.snapshots)), ReservedHandles: int64(len(s.builds)),
+		CachedHandles: int64(len(s.snapshots)), ReservedHandles: int64(s.activeBuildsLocked(false)),
 		CachedRows: s.cachedRows, ReservedRows: s.reservedRows,
 		CachedBytes: s.cachedBytes, ReservedBytes: s.reservedBytes,
 		ActiveBuilders: int64(len(s.builds)),

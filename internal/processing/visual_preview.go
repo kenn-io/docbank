@@ -303,7 +303,7 @@ func produceVisualPreviewJPEGWithOrientation(
 func produceVisualPreviewPNG(
 	ctx context.Context, source io.ReadSeeker, sourceSize int64, base document.VisualPreviewV1,
 ) (VisualPreviewProduct, error) {
-	orientation, unsupportedColor, unsupportedMetadata, malformed, err :=
+	orientation, unsupportedColor, unsupportedMetadata, malformed, trailingOffset, err :=
 		inspectVisualPreviewPNG(ctx, source, sourceSize)
 	if err != nil {
 		return VisualPreviewProduct{}, sourceContentUnavailable(
@@ -337,6 +337,13 @@ func produceVisualPreviewPNG(
 	if !visualPreviewDimensionsAllowed(config.Width, config.Height) {
 		return failedVisualPreview(base, "source_dimensions_exceed_limit",
 			"the PNG dimensions exceed the built-in preview limit"), nil
+	}
+	if trailingOffset != 0 {
+		orientation, err = trailingVisualPreviewPNGOrientation(ctx, source, sourceSize, trailingOffset)
+		if err != nil {
+			return VisualPreviewProduct{}, sourceContentUnavailable(
+				fmt.Errorf("inspecting visual preview PNG: %w", err))
+		}
 	}
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
 		return VisualPreviewProduct{}, sourceContentUnavailable(
@@ -395,50 +402,58 @@ func visualPreviewSourceMediaType(value string) string {
 	return mediaType
 }
 
+// inspectVisualPreviewPNG reads the chunks before IDAT. trailingOffset is the
+// first IDAT offset when no eXIf precedes it, and zero otherwise.
 func inspectVisualPreviewPNG(
 	ctx context.Context, source io.ReadSeeker, sourceSize int64,
-) (orientation int, unsupportedColor, unsupportedMetadata, malformed bool, err error) {
+) (orientation int, unsupportedColor, unsupportedMetadata, malformed bool, trailingOffset int64, err error) {
 	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return 0, false, false, false, err
+		return 0, false, false, false, 0, err
 	}
 	var signature [8]byte
 	if _, err := io.ReadFull(source, signature[:]); err != nil {
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			return 0, false, false, true, nil
+			return 0, false, false, true, 0, nil
 		}
-		return 0, false, false, false, err
+		return 0, false, false, false, 0, err
 	}
 	if signature != [8]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'} {
-		return 0, false, false, true, nil
+		return 0, false, false, true, 0, nil
 	}
 	orientation = 1
+	sawEXIF := false
 	offset := int64(len(signature))
 	for range visualPreviewMaxPNGChunks {
 		if err := ctx.Err(); err != nil {
-			return 0, false, false, false, err
+			return 0, false, false, false, 0, err
 		}
 		if offset > sourceSize-12 {
-			return 0, false, false, true, nil
+			return 0, false, false, true, 0, nil
 		}
 		var header [8]byte
 		if _, err := io.ReadFull(source, header[:]); err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				return 0, false, false, true, nil
+				return 0, false, false, true, 0, nil
 			}
-			return 0, false, false, false, err
+			return 0, false, false, false, 0, err
 		}
 		length := int64(binary.BigEndian.Uint32(header[:4]))
 		chunkType := string(header[4:])
 		if length > sourceSize-offset-12 {
-			return 0, false, false, true, nil
+			return 0, false, false, true, 0, nil
 		}
 		if chunkType == "IDAT" {
-			return orientation, unsupportedColor, unsupportedMetadata, false, nil
+			if !sawEXIF {
+				trailingOffset = offset
+			}
+			return orientation, unsupportedColor, unsupportedMetadata, false, trailingOffset, nil
 		}
 		switch chunkType {
 		case "iCCP":
 			unsupportedColor = true
 		case "eXIf":
+			firstEXIF := !sawEXIF
+			sawEXIF = true
 			if length > visualPreviewMaxEXIFBytes {
 				unsupportedMetadata = true
 				break
@@ -446,24 +461,78 @@ func inspectVisualPreviewPNG(
 			payload := make([]byte, length)
 			if _, err := io.ReadFull(source, payload); err != nil {
 				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-					return 0, false, false, true, nil
+					return 0, false, false, true, 0, nil
 				}
-				return 0, false, false, false, err
+				return 0, false, false, false, 0, err
 			}
 			if value, colorSpace, found := visualPreviewEXIF(payload); found {
-				orientation = value
+				if firstEXIF {
+					orientation = value
+				}
 				unsupportedColor = unsupportedColor || colorSpace != 0 && colorSpace != 1
 			}
 			length = 0
 		case "IEND":
-			return 0, false, false, true, nil
+			return 0, false, false, true, 0, nil
 		}
 		if _, err := source.Seek(length+4, io.SeekCurrent); err != nil {
-			return 0, false, false, false, err
+			return 0, false, false, false, 0, err
 		}
 		offset += 12 + int64(binary.BigEndian.Uint32(header[:4]))
 	}
-	return 0, false, false, true, nil
+	return 0, false, false, true, 0, nil
+}
+
+// trailingVisualPreviewPNGOrientation reads orientation from the first eXIf
+// chunk at or after offset. Trailing eXIf supplies orientation only, so color
+// support stays unchanged. A damaged tail leaves the decoder to report it.
+// The scan has no chunk cap because the source has already been hashed whole.
+func trailingVisualPreviewPNGOrientation(
+	ctx context.Context, source io.ReadSeeker, sourceSize, offset int64,
+) (int, error) {
+	if _, err := source.Seek(offset, io.SeekStart); err != nil {
+		return 0, err
+	}
+	for offset <= sourceSize-12 {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		var header [8]byte
+		if _, err := io.ReadFull(source, header[:]); err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				return 1, nil
+			}
+			return 0, err
+		}
+		length := int64(binary.BigEndian.Uint32(header[:4]))
+		chunkType := string(header[4:])
+		if length > sourceSize-offset-12 || chunkType == "IEND" {
+			return 1, nil
+		}
+		if chunkType == "eXIf" {
+			return visualPreviewPNGEXIFOrientation(source, length)
+		}
+		if _, err := source.Seek(length+4, io.SeekCurrent); err != nil {
+			return 0, err
+		}
+		offset += 12 + length
+	}
+	return 1, nil
+}
+
+func visualPreviewPNGEXIFOrientation(source io.Reader, length int64) (int, error) {
+	if length > visualPreviewMaxEXIFBytes {
+		return 1, nil
+	}
+	payload := make([]byte, length)
+	if _, err := io.ReadFull(source, payload); err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return 1, nil
+		}
+		return 0, err
+	}
+	orientation, _, _ := visualPreviewEXIF(payload)
+	return orientation, nil
 }
 
 func inspectVisualPreviewWebP(

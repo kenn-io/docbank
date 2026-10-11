@@ -62,6 +62,9 @@
     return () => { current = false; resize.disconnect(); };
   });
   $effect(() => {
+    if (initialized && container && container.scrollTop !== scrollTop) container.scrollTop = scrollTop;
+  });
+  $effect(() => {
     if (initialized && !loading && totalHeight < scrollTop + viewport + 800) untrack(onloadmore);
   });
 

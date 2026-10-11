@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-11
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -118,6 +118,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /processing/consent/grants` · `POST /processing/consent/revocations` | grant reviewed profile consent / revoke this operator's processing consent | Implemented |
 | `GET /renditions/{attachment_id}` · `POST /renditions/select` | stream retained sanitized Markdown by attachment or source selector | Implemented |
 | `POST /evidence/windows` | read bounded text from an exact current/live file and active rendition | Implemented |
+| `POST /text-citations/resolve` | reopen an exact quote from retained rendition text | Implemented |
 | `GET /coverage?profile=&vault_uid=&content_version_id=` · `POST /search` | inspect separate rendition/embedding coverage / search an authorized source-version set | Implemented |
 | `POST /search/similar` | stored-vector neighbors | Implemented |
 | `POST /derivatives/purge-plans` · `POST /derivatives/purge-jobs` | preview / run a live derivative purge without changing immutable backups | Implemented |
@@ -506,6 +507,58 @@ blob hash and check active rendition authority in the same catalog snapshot.
 The stricter evidence route adds mandatory identity preconditions to the same
 bounded reader.
 
+#### Retained text citations
+
+`POST /api/v1/text-citations/resolve` (`resolveTextCitation`) returns an exact
+quotation from retained sanitized Markdown, including historical versions and
+replaced rendition heads. It requires an API key; browser sessions cannot call
+it. It creates no retention root and runs no processing.
+
+The body is a flat `document.TextCitation` object. Every field is required;
+unknown fields and explicit nulls are rejected.
+
+| Fields | Contract |
+| --- | --- |
+| `version` | Exactly `1` |
+| `vault_uid`, `content_version_id` | Canonical lowercase UUIDv4, including hyphens |
+| `node_id` | Positive signed 64-bit node ID |
+| `content_sha256` | Original version's lowercase SHA-256 hex digest |
+| `rendition_attachment_id`, `build_id`, `rendition_sha256` | Exact published attachment, build, and sanitized-Markdown digest; each lowercase hex64 |
+| `start`, `end` | Inclusive start and exclusive end in Unicode code points; `0 <= start < end <= 2147483647`, spanning at most 16,000 code points |
+
+The response has `citation` (the unchanged request), `text`, `text_sha256`, and
+`text_bytes`. The latter two describe the returned UTF-8 bytes. For example,
+`aé界🙂z` at `[1,4)` yields `é界🙂`, nine bytes. Escapes, line endings, and combining
+marks remain unchanged. Offsets describe stored Markdown, not rendered text or
+search segments. See [MCP citation discovery](../usage/mcp.md#saved-text-citations)
+for assembling the reference.
+
+Before returning any quote, the daemon verifies the whole rendition's size,
+digest, and UTF-8 encoding. A corrupt suffix therefore fails even a prefix
+quote. The body limit is 16 KiB, the artifact limit is 64 MiB, and the daemon's
+normal 60-second request deadline includes waiting for maintenance. The client
+bounds the JSON response to 1 MiB and checks the echoed identities, quote length,
+byte count, and digest. Success uses `Cache-Control: no-store`.
+
+| Status / code | Meaning |
+| --- | --- |
+| 400 / `invalid_text_citation` | Strict JSON decoding failed |
+| 422 / `validation` | HTTP schema rejected a field or missing value |
+| 422 / `invalid_text_citation` | Cross-field identity or range validation failed |
+| 413 / body rejection or `citation_limit` | Request or retained artifact exceeds its bound |
+| 404 / `citation_unavailable` | Exact retained authority or its bytes are unavailable |
+| 416 / `invalid_citation_range` | The verified rendition is shorter than the requested range |
+| 504 / `citation_timeout` | Deadline expired, including a maintenance wait |
+| 408 / `citation_canceled` | Caller canceled; no quote is returned |
+| 500 / `citation_integrity` | Rendition size, checksum, or UTF-8 verification failed |
+| 500 / `citation_failed` | Another read failure; the daemon log retains its cause |
+| 503 / `processing_unavailable` | The processing service is not configured |
+
+Retention and concurrency rules belong to
+[document-processing architecture](document-processing.md#reopen-a-saved-quotation).
+This quote is verified retained text, not an offline proof or a claim about the
+original document's bytes.
+
 #### Similar documents
 
 `POST /api/v1/search/similar` accepts `selector`, optional `binding_id`,
@@ -702,7 +755,7 @@ without a value, and `other` sums value counts omitted from the response. A
 document with several tags or collections contributes once to each value, so
 those value counts need not sum to `total`.
 
-Each available facet keeps its leading 50 values plus selected QueryV1 values
+Each ordinary available facet keeps its leading 50 values plus selected QueryV1 values
 outside that set, including a selected value whose count is zero. Size uses the
 fixed `<1 MiB`, 1–10 MiB, 10–100 MiB, 100 MiB–1 GiB, and `>=1 GiB` buckets.
 Modification time uses UTC calendar-month buckets. Fixed categorical facets
@@ -713,7 +766,7 @@ within its coverage, member, or time budget returns `available: false` with a
 Materialization admits at most 250,000 rows and 64 KiB of serialized data per
 row. Across the daemon, the cache admits at most 1,000,000 rows and 512 MiB of
 serialized snapshot data, with at most eight handles per authenticated owner
-and two builders at once. A build has 30 seconds. All requested facets share a
+and two snapshot builders at once. A build has 30 seconds. All requested facets share a
 five-second facet budget. Handles expire after 15 minutes idle or 30 minutes
 absolute lifetime. These are cache-admission bounds, not a claim that the
 process uses at most 512 MiB of RSS.
@@ -1185,11 +1238,38 @@ group. Starting an import requires the API key on a loopback connection.
 
 `GET /photos/hidden` returns `configured`, opaque equality token `change_id`, and optional `expires_at` and `locked_until`. POST `setup`, `unlock` and `disable` accept `passcode`; `change` also accepts `new_passcode`. Lock and reset require the JSON body `{}`. Unlock sets the HttpOnly, SameSite=Strict `docbank-hidden-<SHA-256 of request host and port>` cookie for five minutes; loopback HTTP omits Secure. Lock revokes every session. Disable verifies the passcode and atomically unhides assets; reset preserves hidden flags while clearing auth. Unlock and lock remain available under audit. Five failures in sixty seconds persist a five-minute lockout with `Retry-After`. The active Library or Hidden view checks access every two seconds, conceals its view and deletes cached previews on read failure, and refreshes before redisplay; HTTP 401 uses the browser session-expired flow. Documents snapshots remain valid.
 
-`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag and `X-Content-Type-Options: nosniff`. Visible previews use `Cache-Control: private, no-cache`; hidden previews require an unlock and use `no-store`, including `304`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses also vary by Cookie. Browser sessions permit the exact list POST, prepare POST, preview GET, hidden-state GET, interactive hidden POSTs and asset hide/unhide POSTs and `POST /photos/assets/{asset_id}/trash` with empty query strings. Reset requires the API key. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
+`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag and `X-Content-Type-Options: nosniff`. Visible previews use `Cache-Control: private, no-cache`; hidden previews require an unlock and use `no-store`, including `304`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses also vary by Cookie. Browser sessions permit the exact list POST, timeline POST, prepare POST, preview GET, hidden-state GET, interactive hidden POSTs and asset hide/unhide POSTs and `POST /photos/assets/{asset_id}/trash` with empty query strings. Reset requires the API key. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
 
 Browse rows include current-display camera make/model, lens make/model, ISO, aperture, exposure time/bias, focal length and orientation; absent metadata fields serialize as JSON null. GPS remains outside browse rows.
 
 `POST /photos/assets/{asset_id}/preview` accepts `content_version_id`, `size` (`fit` or `large`) and optional `hidden` (default false); hidden preparation requires an unlock and returns a preview slot. It verifies the current eligible display version before and after on-demand production under the mutation gate, with a 30-second request limit. A version mismatch at admission returns 409 `photo_display_changed`; a display replaced or excluded during production returns 404. Missing or mismatched source bytes return 503 `photo_preview_unavailable`; retry after restoring the source. Preparation timeouts and cancellation return 503 `photo_preview_unavailable` with distinct messages and a retry instruction. Retained failed and unsupported slots are returned unchanged.
+
+`POST /photos/assets/timeline` counts the photo assets that browsing would
+return, grouped by recorded capture day. It accepts strict `query` and
+optional `coverage`, the same scope inputs as `POST /photos/assets/query`.
+Browser sessions may call it. The response contains `query`, `dependencies`,
+`generation`, `coverage`, `observed_at`, and `facets` with exactly one
+`capture_day` facet. It creates no snapshot handle, rows, hashes, or cursors.
+
+The facet counts each included asset once, using the selected live display
+file's active metadata and recorded calendar date. It preserves every scope
+filter, including capture-date filters, nested saved queries, member
+predicates, and duplicate collapse. Values list every observed day in
+descending order, with `other: 0`. `missing` counts assets without a readable
+date, and `total` equals the sum of the values plus `missing`. Photo sorts are
+accepted and do not change the counts.
+
+The values array allows 250,000 days. The facet returns `available: false`
+with `member_budget_exceeded` when the scope spans more days, and with
+`time_budget_exceeded` when counting exceeds the five-second facet budget.
+It never returns incomplete days. Counting runs on the snapshot service: it
+reserves serialized bytes but no cached rows, and it has its own two builder
+slots. A third concurrent count returns `429 snapshot_busy`; a full byte budget
+evicts the least recently used cached snapshot, as a snapshot build does, and
+returns `429 snapshot_capacity` only when nothing can be evicted. Invalid
+queries return `422 invalid_query`, and invalid coverage returns
+`422 invalid_profile`. Workspace snapshots and saved-query runs reject the
+`capture_day` facet.
 
 
 Person reads return the canonical row and, for `GET /people/by-id/{person_id}`,

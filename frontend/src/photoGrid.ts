@@ -75,7 +75,7 @@ export function photoAspect(photo: PhotoBrowseRow): number {
   return width && height && width > 0 && height > 0 ? width / height : 1;
 }
 
-function monthLabel(key: string): string {
+export function monthLabel(key: string): string {
   return new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${key}-01T00:00:00Z`));
 }
 
