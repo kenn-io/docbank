@@ -5,7 +5,7 @@
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoMonthChunk from "./PhotoMonthChunk.svelte";
 
-  let { groups, targetRowHeight, loading, cache, selectedIDs, onselect, oncheck, onloadmore, scrollTop = $bindable(0) }: {
+  let { groups, targetRowHeight, loading, cache, selectedIDs, onselect, oncheck, onhidden, hidden = false, onloadmore, scrollTop = $bindable(0) }: {
     groups: PhotoGroup[];
     targetRowHeight: number;
     loading: boolean;
@@ -13,6 +13,8 @@
     selectedIDs: ReadonlySet<string>;
     onselect: (id: string, event: MouseEvent) => void;
     oncheck: (id: string, checked: boolean, range: boolean) => void;
+    onhidden?: (id: string) => void;
+    hidden?: boolean;
     onloadmore: () => void;
     scrollTop?: number;
   } = $props();
@@ -70,6 +72,11 @@
     }
   }
 
+  export async function restoreScrollTop(top: number) {
+    await tick();
+    if (container) { container.scrollTop = top; scrollTop = container.scrollTop; }
+  }
+
   export function preservePosition() {
     const element = container;
     if (!element) return async () => {};
@@ -109,7 +116,7 @@
   <div class="grid" style:height={`${totalHeight}px`}>
     {#if initialized}
     {#each chunks as chunk (chunk.group.key)}
-      <PhotoMonthChunk group={chunk.group} layout={chunk.layout} offset={chunk.offset} top={Math.max(0, scrollTop - viewport)} bottom={scrollTop + 2 * viewport} {cache} {selectedIDs} {onselect} {oncheck} />
+      <PhotoMonthChunk group={chunk.group} layout={chunk.layout} offset={chunk.offset} top={Math.max(0, scrollTop - viewport)} bottom={scrollTop + 2 * viewport} {cache} {selectedIDs} {onselect} {oncheck} {onhidden} {hidden} />
     {/each}
     {/if}
   </div>

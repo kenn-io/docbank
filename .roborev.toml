@@ -188,6 +188,12 @@ Key assumptions reviewers MUST account for:
    upgrade adapter, because only unreleased builds ever created it. DO
    flag a change to a layout that a tagged release contains.
 
+21. HIDDEN GATES PHOTOS VIEWS ONLY: hidden photos stay out of Photos
+   views, photo queries, and previews until unlock. Documents, original
+   bytes, exports, and this browser's session storage (including Library
+   previews cached before a hide) sit outside that gate, because the same
+   session reads the full files through Documents.
+
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption
 risks, and code quality issues.

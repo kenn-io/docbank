@@ -1,3 +1,4 @@
+import { revokeWebSession } from "../src/generated/docbank.js";
 import { expect, test } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -10,6 +11,138 @@ const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const output = process.env.DOCBANK_PHOTOS_SCREENSHOT_DIR;
 test.skip(!output, "DOCBANK_PHOTOS_SCREENSHOT_DIR enables synthetic photo proof");
+
+test("Hidden photos lock, unlock, unhide, expire, and discard previews", async ({ page }) => {
+  test.setTimeout(480_000);
+  page.setDefaultTimeout(15_000);
+  await page.setViewportSize({ width: 1440, height: 720 });
+  const workspace = await mkdtemp(path.join(repository, ".superpowers", "hidden-proof-"));
+  const vault = path.join(workspace, "vault");
+  const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0" };
+  const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
+  try {
+    await mkdir(output!, { recursive: true });
+    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault, "12"], { cwd: repository, env, timeout: 240_000 });
+    const webURL = new URL(await run("web", "--no-browser"));
+    webURL.pathname = "/photos/hidden";
+    await page.goto(webURL.href);
+    await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
+    await page.getByRole("button", { name: "Set passcode", exact: true }).click();
+    await expect(page.getByText(/Locks in/)).toBeVisible();
+    await page.getByRole("button", { name: "Library", exact: true }).click();
+    await expect(page.locator("[data-asset]")).toHaveCount(12);
+    await expect(page.locator("[data-asset] img").first()).toBeVisible();
+    const id = (await page.locator("[data-asset]").first().getAttribute("data-asset"))!;
+    let releaseHide!: () => void;
+    let enteredHide!: () => void;
+    const hidePending = new Promise<void>(resolve => enteredHide = resolve);
+    const hideHold = new Promise<void>(resolve => releaseHide = resolve);
+    await page.route(`**/api/v1/photos/assets/${id}/hide`, async route => {
+      enteredHide();
+      await hideHold;
+      await route.continue();
+    }, { times: 1 });
+    await page.locator(`[data-asset="${id}"]`).getByRole("button", { name: /^Select / }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
+    await hidePending;
+    await page.getByRole("button", { name: "Hidden", exact: true }).click();
+    await expect(page.getByText(/Locks in/)).toBeVisible();
+    await expect(page.getByText("No hidden photos", { exact: true })).toBeVisible();
+    releaseHide();
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await page.getByRole("button", { name: "Library", exact: true }).click();
+    await expect(page.locator(`[data-asset="${id}"]`)).toHaveCount(0);
+    await expect(page.locator("[data-asset]")).toHaveCount(11);
+    await expect(page.locator("[data-asset] img").first()).toBeVisible();
+    await page.getByRole("button", { name: "Hidden", exact: true }).click();
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await page.route("**/api/v1/photos/hidden", route => route.abort("failed"), { times: 1 });
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toBeVisible({ timeout: 6000 });
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible({ timeout: 6000 });
+    await expect(page.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Lock", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
+    await expect(page.getByLabel("Passcode", { exact: true })).toBeEnabled();
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
+      await page.screenshot({ path: path.join(output!, `web-hidden-locked-${theme}.png`), animations: "disabled" });
+    }
+    await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
+    await page.getByRole("button", { name: "Unlock", exact: true }).click();
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate(value => { localStorage.setItem("docbank-theme", value); document.documentElement.classList.toggle("dark", value === "dark"); }, theme);
+      await page.screenshot({ path: path.join(output!, `web-hidden-unlocked-${theme}.png`), animations: "disabled" });
+    }
+    await page.route(`**/api/v1/photos/assets/${id}/unhide`, route => route.fulfill({ status: 412, contentType: "application/problem+json", body: JSON.stringify({ detail: "Synthetic stale photo revision", code: "stale_revision" }) }), { times: 1 });
+    await page.locator(`[data-asset="${id}"]`).getByRole("button", { name: /^Actions for / }).click();
+    await page.getByRole("menuitem", { name: "Unhide", exact: true }).click();
+    await expect(page.getByRole("alert")).toHaveText("1 photo failed: Synthetic stale photo revision");
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await page.waitForResponse(response => response.url().endsWith("/api/v1/photos/hidden") && response.request().method() === "GET");
+    await expect(page.getByRole("alert")).toHaveText("1 photo failed: Synthetic stale photo revision");
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Refresh previews", exact: true })).toBeEnabled();
+    await page.screenshot({ path: path.join(output!, "web-hidden-unhide-failure-dark.png"), animations: "disabled" });
+    await page.locator(`[data-asset="${id}"]`).getByRole("button", { name: /^Actions for / }).click();
+    await page.getByRole("menuitem", { name: "Unhide", exact: true }).click();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.locator(`[data-asset="${id}"]`)).toHaveCount(0);
+    await page.getByRole("button", { name: "Library", exact: true }).click();
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await page.locator(`[data-asset="${id}"]`).getByRole("button", { name: /^Actions for / }).click();
+    await page.getByRole("menuitem", { name: "Hide", exact: true }).click();
+    await page.getByRole("button", { name: "Hidden", exact: true }).click();
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await run("photos", "hidden", "lock");
+    await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
+    await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
+    await page.getByRole("button", { name: "Unlock", exact: true }).click();
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await page.clock.install();
+    await page.clock.fastForward(301_000);
+    await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
+    await page.clock.setSystemTime(Date.now());
+    await page.getByLabel("Passcode", { exact: true }).fill("synthetic-passcode");
+    await page.getByRole("button", { name: "Unlock", exact: true }).click();
+    await expect(page.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    const tab = await page.context().newPage();
+    await tab.goto(webURL.href);
+    await expect(tab.locator(`[data-asset="${id}"] img`)).toBeVisible();
+    await tab.getByRole("button", { name: "Lock", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Unlock", exact: true })).toBeVisible();
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
+    await tab.close();
+    const token = new URLSearchParams(webURL.hash.slice(1)).get("web_session")!;
+    const fetcher = globalThis.fetch;
+    try {
+      globalThis.fetch = async (input, init) => {
+        const address = new URL(String(input), webURL.origin);
+        const host = address.host;
+        address.hostname = "127.0.0.1";
+        const headers = new Headers(init?.headers);
+        headers.set("Host", host);
+        return fetcher(address, { ...init, headers });
+      };
+      await revokeWebSession({ session: token });
+    } finally { globalThis.fetch = fetcher; }
+    await expect(page.getByText("The browser session expired or was rejected. Run `docbank web` again.")).toBeVisible({ timeout: 6000 });
+    await expect(page.locator("[data-asset]")).toHaveCount(0);
+  } finally {
+    if (process.env.DOCBANK_KEEP_PHOTO_PREVIEW) {
+      const previewURL = new URL(await run("web", "--no-browser"));
+      previewURL.pathname = "/photos/hidden";
+      await writeFile(path.join(output!, "hidden-preview.json"), JSON.stringify({ url: previewURL.href, workspace }, null, 2));
+    } else {
+      await run("daemon", "stop");
+      await rm(workspace, { recursive: true, force: true });
+    }
+  }
+});
 
 test("10,000 photos stay windowed, retain previews and selection, and remember density", async ({ page }) => {
   test.setTimeout(900_000);

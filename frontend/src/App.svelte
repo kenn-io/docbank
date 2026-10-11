@@ -71,6 +71,7 @@
   import ProvenanceDrawer from "./ProvenanceDrawer.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
+  import HiddenPhotos from "./HiddenPhotos.svelte";
   import { localPreferenceStorage } from "./browser-storage.js";
   import { Photos } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -181,21 +182,30 @@
 
   let webSession = $state("");
   let stopSessionReporting: (() => Promise<void>) | undefined;
-  let photoMode = $state(location.pathname === "/photos");
+  let photoMode = $state(location.pathname.startsWith("/photos"));
+  let hiddenMode = $state(location.pathname === "/photos/hidden");
+  let hiddenPhotoActionError = $state("");
+  let hiddenWorkspace = $state<{ refresh: () => Promise<void> }>();
+  let libraryWorkspace = $state<{ refresh: () => Promise<void> }>();
   let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
 
   $effect(() => {
     if (!webSession) return;
     const state = { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
     photoState = state;
-    return () => { state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
+    return () => { hiddenPhotoActionError = ""; state.photos.dispose(); void state.cache.dispose(); photoState = undefined; };
   });
+  function refreshLibrary() {
+    if (libraryWorkspace) void libraryWorkspace.refresh();
+    else if (photoState?.photos.started) void photoState.photos.refresh();
+  }
 
-  function switchWorkspace(photos: boolean) {
+  function switchWorkspace(photos: boolean, hidden = false) {
     navOpen = false;
-    if (photoMode === photos) return;
+    if (photoMode === photos && hiddenMode === hidden) return;
     photoMode = photos;
-    history.pushState(null, "", `${photos ? "/photos" : "/"}${location.search}${location.hash}`);
+    hiddenMode = hidden;
+    history.pushState(null, "", `${photos ? hidden ? "/photos/hidden" : "/photos" : "/"}${location.search}${location.hash}`);
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
@@ -1609,7 +1619,8 @@
   }
 
   function handleRestored(_receipt: Node): void {
-    void photoState?.photos.refresh();
+    refreshLibrary();
+    void hiddenWorkspace?.refresh();
     selectNode(undefined);
 
     // Restore can advance an arbitrary destination parent and make every
@@ -1909,7 +1920,7 @@
   }
 </script>
 
-<svelte:window onpopstate={() => { photoMode = location.pathname === "/photos"; }} />
+<svelte:window onpopstate={() => { photoMode = location.pathname.startsWith("/photos"); hiddenMode = location.pathname === "/photos/hidden"; }} />
 {#if !webSession}
   <main class="unlock-shell">
     <Card level="raised" title="Open your Docbank">
@@ -1935,7 +1946,7 @@
         <button type="button" class="nav-item" aria-current={photoMode ? "page" : undefined} onclick={() => switchWorkspace(true)}><ImageIcon size="16" aria-hidden="true" />Photos</button>
       </div>
       {#if photoMode}
-        <div class="nav-group"><button type="button" class="nav-item" aria-current="page" onclick={() => navOpen = false}><LibraryIcon size="16" aria-hidden="true" />Library</button><button type="button" class="nav-item" aria-label="Recoverable trash" onclick={() => openPanel({ kind: "trash" })}><Trash2Icon size="16" aria-hidden="true" />Trash</button></div>
+        <div class="nav-group"><button type="button" class="nav-item" aria-current={!hiddenMode ? "page" : undefined} onclick={() => switchWorkspace(true)}><LibraryIcon size="16" aria-hidden="true" />Library</button><button type="button" class="nav-item" aria-current={hiddenMode ? "page" : undefined} onclick={() => switchWorkspace(true, true)}>Hidden</button><button type="button" class="nav-item" aria-label="Recoverable trash" onclick={() => openPanel({ kind: "trash" })}><Trash2Icon size="16" aria-hidden="true" />Trash</button></div>
       {:else}
       <div class="nav-group">
         <button type="button" class="nav-item"
@@ -2061,7 +2072,9 @@
     </TopBar>
 
     {#if photoMode && photoState}
-      {#key photoState}<PhotosWorkspace photos={photoState.photos} cache={photoState.cache} ontrashed={() => handleTrashed()} />{/key}
+      {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} session={webSession} onauthfailure={handleFailure} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { refreshLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else}
+      {#key photoState}<PhotosWorkspace bind:this={libraryWorkspace} photos={photoState.photos} cache={photoState.cache} ontrashed={() => handleTrashed()} onhidden={() => void hiddenWorkspace?.refresh()} />{/key}
+      {/if}
     {:else}
     {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
     {#if savedQueryDraft}

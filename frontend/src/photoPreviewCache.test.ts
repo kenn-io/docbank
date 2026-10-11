@@ -6,6 +6,18 @@ const instances: PhotoPreviewCache[] = [];
 function workspace() { const cache = new PhotoPreviewCache("scoped", vi.fn()); instances.push(cache); return cache; }
 afterEach(async () => { await Promise.all(instances.splice(0).map(cache => cache.dispose())); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it("keeps no-store previews out of browser storage", async () => {
+  const stored = storage();
+  const fetcher = vi.fn(async () => new Response("hidden-preview", { headers: { "Cache-Control": "private, no-store" } }));
+  vi.stubGlobal("fetch", fetcher);
+  const cache = workspace();
+  expect(await (await cache.get("asset", "generation")).text()).toBe("hidden-preview");
+  expect(await (await cache.get("asset", "generation")).text()).toBe("hidden-preview");
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  const opened = await stored.open.mock.results[0].value;
+  expect(opened.put).not.toHaveBeenCalled();
+});
+
 it("retains bytes without fetch and cancels abandoned reads", async () => {
   const stored = storage();
   const fetcher = vi.fn(async (_url: string | URL | Request, _init: RequestInit) => new Response("synthetic-jpeg"));
@@ -188,4 +200,12 @@ it("removes caches left by closed pages and releases its lock after disposal", a
   } finally {
     Reflect.deleteProperty(navigator, "locks");
   }
+});
+it.each([false, true])("treats preview 403 as authorization loss only in Hidden, hidden=%s", async hidden => {
+  storage();
+  const auth = vi.fn();
+  const cache = new PhotoPreviewCache("scoped", auth, hidden); instances.push(cache);
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 403 })));
+  await expect(cache.get("asset", "generation")).rejects.toThrow("HTTP 403");
+  expect(auth).toHaveBeenCalledTimes(hidden ? 1 : 0);
 });

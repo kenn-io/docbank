@@ -17,6 +17,7 @@ const photoBrowseConfiguredCoverage = "configured"
 
 // PhotoBrowseRequest supplies query meaning and exact preview recipe identities.
 type PhotoBrowseRequest struct {
+	Hidden   bool
 	Query    query.Query
 	Coverage CoverageSelection
 	PageSize int
@@ -89,7 +90,12 @@ func (s *Store) ListPhotoAssets(
 	}
 	var page PhotoBrowsePage
 	err = s.withLexicalGenerationRead(ctx, func(q metadataQuerier, generation LexicalGeneration) error {
-		compiled, err := (queryCompiler{photoDisplayMetadata: true}).compile(
+		if request.Hidden {
+			if _, err := s.hiddenSession(ctx, q); err != nil {
+				return err
+			}
+		}
+		compiled, err := (queryCompiler{photoDisplayMetadata: true, photoHidden: request.Hidden}).compile(
 			ctx, request.Query, queryResolver{q: q})
 		if err != nil {
 			return err
@@ -119,8 +125,9 @@ func (s *Store) ListPhotoAssets(
 			Query        []byte
 			Dependencies []query.Dependency
 			Coverage     CoverageSelection
+			Hidden       bool
 			PageSize     int
-		}{canonical, compiled.Dependencies, coverage, request.PageSize})
+		}{canonical, compiled.Dependencies, coverage, request.Hidden, request.PageSize})
 		if err != nil {
 			return err
 		}
@@ -132,7 +139,7 @@ func (s *Store) ListPhotoAssets(
 				return ErrInvalidPhotoCursor
 			}
 		}
-		match, err := photoBrowseMatch(compiled, generation.ID, coverage)
+		match, err := photoBrowseMatch(compiled, generation.ID, coverage, request.Hidden)
 		if err != nil {
 			return err
 		}
@@ -143,7 +150,7 @@ func (s *Store) ListPhotoAssets(
 		}
 		if boundary == nil {
 			countSQL, countArgs, err := bind(`SELECT COUNT(*) FROM `+photoBrowseDisplayFrom+
-				` WHERE `+photoBrowseLiveDisplay+` AND `+match.sql, match.args)
+				` WHERE `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(request.Hidden)+` AND `+match.sql, match.args)
 			if err != nil {
 				return err
 			}
@@ -195,7 +202,7 @@ func (s *Store) ListPhotoAssets(
 			pageSQL, pageArgs, err := bind(`SELECT a.asset_id,a.kind,a.revision,f.file_id,
  n.id,v.version_id,n.name,COALESCE(v.mime_type,''),n.created_at,v.blob_hash,`+
 				photoTechnicalSelect+`,`+key+` FROM `+pageFrom+` WHERE `+
-				photoBrowseLiveDisplay+` AND `+match.sql+` AND `+where+
+				photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(request.Hidden)+` AND `+match.sql+` AND `+where+
 				` ORDER BY `+order+` LIMIT ?`, args)
 			if err != nil {
 				return err
@@ -291,10 +298,12 @@ const photoBrowseDisplayFrom = `photo_assets a
 
 const photoBrowseLiveDisplay = liveIncludedDisplayPredicate + ` AND n.kind='file'`
 
-const photoBrowseEligibleMemberPredicate = `EXISTS (
+func photoBrowseEligibleMemberPredicate(hidden bool) string {
+	return `EXISTS (
  SELECT 1 FROM photo_files member JOIN photo_assets a ON a.asset_id=member.asset_id
  JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id
- WHERE member.node_id=cv.node_id AND ` + photoBrowseLiveDisplay + `)`
+ WHERE member.node_id=cv.node_id AND ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(hidden) + `)`
+}
 
 const photoBrowseNodeJoins = `
  CROSS JOIN photo_files f ON f.node_id=n.id
@@ -346,7 +355,7 @@ func photoBrowseMissingKey(field string) string {
 }
 
 func photoBrowseMatch(
-	compiled CompiledQuery, generation string, coverage CoverageSelection,
+	compiled CompiledQuery, generation string, coverage CoverageSelection, hidden bool,
 ) (compiledQueryFragment, error) {
 	var profile *string
 	if coverage.Configuration == photoBrowseConfiguredCoverage {
@@ -366,7 +375,7 @@ func photoBrowseMatch(
 	// Duplicate representatives are selected from the complete matching photo
 	// population, as for document queries, before projecting assets.
 	compiled.predicate = joinCompiledFragments([]compiledQueryFragment{
-		compiled.predicate, {sql: photoBrowseEligibleMemberPredicate},
+		compiled.predicate, {sql: photoBrowseEligibleMemberPredicate(hidden)},
 	}, ` AND `)
 	population, err := matchedPopulation(compiled, generation, profile)
 	if err != nil {

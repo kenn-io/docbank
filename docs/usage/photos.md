@@ -8,7 +8,7 @@ description: Group camera files, browse photos in the web app, and organize albu
 
 Docbank groups ordinary file nodes into photo assets. Each file node and its
 content versions still hold the bytes. An asset stores only membership, roles,
-display selection, exclusion, and bounded decision receipts.
+display selection, visibility, exclusion, and bounded decision receipts.
 
 Image files and files with a concrete `video/*` MIME type are enrolled when
 they are created. Audio, generic video, and generic RAW files stay ordinary
@@ -51,6 +51,31 @@ Pending, unsupported, and failed previews have separate placeholders. Choose
 Refresh previews to reload the listing after background preview work finishes.
 If a page fails to load, the earlier photos remain visible. Retry requests the
 failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Selection retains photos in that range; imports or deletions may move the visible photo outside it. Failed attempts keep the earlier view available for Retry. Recovery stops after one minute and offers Retry if it needs more time.
+
+## Hidden photos
+
+Choose Hidden in the Photos sidebar and set a passcode. Open a photo's actions menu or right-click it and choose Hide. If the photo belongs to the selection, the action applies to each selected photo. A stale photo reports an error while successful changes remain saved.
+
+Hidden photos disappear from Library, photo queries, and album contents. Albums retain their membership and report hidden members separately. Background imports keep updating hidden files, including late sidecars. Import receipts retain ordinary photo IDs and file details. Documents, document tools, original bytes, and exports still expose the underlying files. Hidden is a Photos privacy control. Previews this browser cached before a hide stay in its preview cache until the session ends.
+
+Enter the passcode in Hidden to unlock for five minutes. Lock closes every active Hidden session. Locking and expiry clear the Hidden grid, selection, and browser preview cache. Changes made in this browser update affected views immediately and preserve unrelated selection and position. Changes from another client appear on explicit refresh or a fresh view load; an open grid can retain an older row until then. Expired browser sessions use the shared session-expired screen. Library reloads retain scroll position and the selection of unaffected photos. Hidden previews carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
+
+Five incorrect passcodes within sixty seconds lock access for five minutes. Failed attempts and lockout survive restart. Backups preserve hidden flags, credentials and decision receipts. Restored vaults start without attempts or unlock sessions and require the backed-up passcode. Unlock sessions expire on restart. Changing the passcode revokes sessions. Disable Hidden verifies the passcode and returns every hidden photo to Library in one transaction. Operator reset removes credentials and sessions while preserving hidden flags, so a new setup can recover access.
+
+```text
+docbank photos hidden setup
+docbank photos hide <asset-id> [--revision REV]
+docbank photos unhide <asset-id|node-selector> [--revision REV]
+docbank photos hidden change
+docbank photos hidden disable
+docbank photos hidden lock
+docbank photos hidden state
+docbank photos hidden reset
+```
+
+Passcodes must be 1 to 1,024 bytes. Canonically equivalent Unicode spellings use the same passcode. CLI input uses protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Unhide unlocks and forwards the cookie within that invocation. Unhide saves no client credential file. Run `docbank photos unhide /path/to/photo.jpg` and enter the passcode before using other CLI or MCP photo commands on a hidden asset. Unhide also accepts an asset ID or `id:<node-id>`; ordinary Documents and MCP document tools retain file access. HTTP operations live under `/api/v1/photos/hidden`; hide and unhide use `/api/v1/photos/assets/{asset_id}/hide` and `/unhide` with `If-Match`. Browser sessions can use the interactive operations. Reset requires the daemon API key.
+
+A hide retry that returns `hidden_locked` already took effect.
 
 ## Previews
 
@@ -274,12 +299,15 @@ an empty asset identity.
 Automatic enrollment and explicit graph writes are skipped or refused when
 audit authority is active, according to the existing audit boundary. The
 preexisting graph is preserved. Photo trash and restore remain available under audit and record audited node changes plus photo revision receipts.
+Hidden unlock and lock remain available. Setup, change, disable, reset, hide, and unhide require a writable vault.
 
 ## Browse photo assets over HTTP
 
 `POST /api/v1/photos/assets/query` accepts a `query` object using
 [QueryV1](../architecture/http-api.md#saved-query-and-highlight-definitions),
-optional `coverage`, `page_size` from 1 through 250, and `cursor`. It returns
+optional `coverage`, `page_size` from 1 through 250, `cursor`, and `hidden`.
+Omit `hidden` or set it to `false` for visible photos. `hidden: true` selects
+only hidden photos and requires an active unlock on every page. It returns
 `items`, the matching asset `total` counted on the first page, and an optional
 `next_cursor`. Later pages keep that total. Start a new browse to refresh it.
 The default page size is 50. Send the same query and page options with each
@@ -331,10 +359,11 @@ keep their generation identity. Only ready slots include a generation URL and
 JPEG output metadata. Read that URL with the browser session header.
 Credentials stay out of URLs.
 
-Preview responses use `Cache-Control: private, no-cache`: the browser may keep
-bytes but must check with the server before reusing them. A matching
+Visible preview responses use `Cache-Control: private, no-cache`: the browser may keep
+bytes but must check with the server before reusing them. Hidden previews require
+an active unlock and use `Cache-Control: no-store`, including `304` responses. A matching
 `If-None-Match` returns `304` after the server checks the session, current
-display, and exclusion state. This avoids reading the preview blob again.
+display, exclusion state, and any required Hidden unlock. This avoids reading the preview blob again.
 An excluded asset or replaced display returns `404`, even with a matching
 validator. A response with new bytes verifies the complete image. Listing
 never creates previews.
@@ -349,7 +378,7 @@ Select photos in Library and choose **Move to trash**. Confirming moves every me
 
 Use `docbank photos assets trash <asset-id>` for the same operation from the CLI. `--revision` binds the action to an inspected asset revision. Ordinary Documents deletion and `docbank rm` still remove the selected file or folder.
 
-Open **Trash** in either workspace to restore a photo group. One row represents its independently trashed members and shows how many trashed files restore will recover, including companions inside folders. Restoring any member recovers the complete group. The selected member's revision guards the request; Docbank reads all affected roots in the same transaction. A member inside a trashed folder restores that folder's subtree and the photo's companions elsewhere. Selected destination folders return before their files. Separately trashed unrelated items stay in trash.
+Open **Trash** in either workspace to restore a photo group. Trash lists files, including hidden photos' files, just like Documents. One row represents its independently trashed members and shows how many trashed files restore will recover, including companions inside folders. Restoring any member recovers the complete group. The selected member's revision guards the request; Docbank reads all affected roots in the same transaction. A member inside a trashed folder restores that folder's subtree and the photo's companions elsewhere. Selected destination folders return before their files. Separately trashed unrelated items stay in trash.
 
 Trash keeps file bytes, content versions, photo relationships, and album membership intact. Trash and restore each advance the affected asset revision once and record a change receipt. Permanent deletion waits until every member is trashed, old enough, and free of retention references. For a partially trashed photo, trash the remaining companions with the asset action or detach its live companions before emptying trash. See [Trash and garbage collection](trash-and-gc.md).
 

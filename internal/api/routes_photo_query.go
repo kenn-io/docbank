@@ -53,7 +53,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			boundary = &position
 		}
 		page, err := d.Store.ListPhotoAssets(ctx, store.PhotoBrowseRequest{
-			Query: value,
+			Query: value, Hidden: in.Body.Hidden,
 			Coverage: store.CoverageSelection{
 				Configuration:      in.Body.Coverage.Configuration,
 				ProfileFingerprint: in.Body.Coverage.ProfileFingerprint,
@@ -141,7 +141,10 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		setCacheHeaders := func(hctx huma.Context) {
 			hctx.SetHeader("ETag", strconv.Quote(in.GenerationID))
 			hctx.SetHeader("Cache-Control", "private, no-cache")
-			hctx.SetHeader("Vary", "X-Api-Key, Authorization, "+WebSessionHeader)
+			if view.Hidden {
+				hctx.SetHeader("Cache-Control", "no-store")
+			}
+			hctx.SetHeader("Vary", "X-Api-Key, Authorization, Cookie, "+WebSessionHeader)
 		}
 		condition := conditional.Params{IfNoneMatch: strings.Split(in.IfNoneMatch, ",")}
 		for i, value := range condition.IfNoneMatch {
