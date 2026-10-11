@@ -100,3 +100,53 @@ func TestContentReferencesByHashRequiresLogicalAuthorityAndBoundedInput(t *testi
 	_, _, err = s.ContentReferencesByHash(ctx, orphan, 1, -1)
 	require.ErrorContains(t, err, "must not be negative")
 }
+
+func TestContentReferencesByHashPagesRepeatedVersions(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	parent, err := s.MkdirAll(ctx, "/nested/folder")
+	require.NoError(t, err)
+	wanted := fakeHash("a1")
+	file, err := s.CreateFile(ctx, parent.ID, "repeated.txt", wanted, 10, "text/plain")
+	require.NoError(t, err)
+	versions := []string{file.CurrentVersionID}
+	for _, hash := range []string{fakeHash("b2"), wanted, fakeHash("b2"), wanted} {
+		file, _, err = s.ReplaceContent(ctx, file.ID, file.Revision, hash, 10, "text/plain")
+		require.NoError(t, err)
+		if hash == wanted {
+			versions = append(versions, file.CurrentVersionID)
+		}
+	}
+	other, err := s.CreateFile(ctx, s.RootID(), "other.txt", wanted, 10, "text/plain")
+	require.NoError(t, err)
+
+	first, total, err := s.ContentReferencesByHash(ctx, wanted, 2, 0)
+	require.NoError(t, err)
+	require.Equal(t, 4, total)
+	require.Len(t, first, 2)
+	assert.Equal(t, versions[2], first[0].Version.ID)
+	assert.Equal(t, "/nested/folder/repeated.txt", first[0].Path)
+	assert.True(t, first[0].IsCurrent)
+	assert.Equal(t, other.CurrentVersionID, first[1].Version.ID)
+	assert.Equal(t, "/other.txt", first[1].Path)
+	assert.True(t, first[1].IsCurrent)
+
+	history, total, err := s.ContentReferencesByHash(ctx, wanted, 2, 2)
+	require.NoError(t, err)
+	require.Equal(t, 4, total)
+	require.Len(t, history, 2)
+	assert.Equal(t, versions[1], history[0].Version.ID)
+	assert.Equal(t, versions[0], history[1].Version.ID)
+	for _, ref := range history {
+		assert.Equal(t, file.ID, ref.Node.ID)
+		assert.Equal(t, versions[2], ref.Node.CurrentVersionID)
+		assert.Equal(t, "/nested/folder/repeated.txt", ref.Path)
+		assert.False(t, ref.IsCurrent)
+	}
+
+	empty, total, err := s.ContentReferencesByHash(ctx, wanted, 2, 4)
+	require.NoError(t, err)
+	assert.Equal(t, 4, total)
+	assert.Empty(t, empty)
+}
