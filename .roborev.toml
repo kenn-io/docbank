@@ -190,9 +190,8 @@ Key assumptions reviewers MUST account for:
 
 21. HIDDEN GATES PHOTOS VIEWS ONLY: hidden photos stay out of Photos
    views, photo queries, and previews until unlock. Documents, Trash, original
-   bytes, and exports sit outside that gate. Photos discard cached previews
-   when a committed change is observed; background views stay concealed
-   until status validation succeeds.
+   bytes, and exports sit outside that gate. Photos visibility and cached
+   previews require validated access.
 
 Do NOT flag issues that only apply to public-facing, multi-tenant, or
 internet-exposed services. Focus on bugs, logic errors, data corruption

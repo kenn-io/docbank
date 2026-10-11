@@ -170,7 +170,7 @@ func TestPhotoHiddenValidatesBoundedHashesAndPasscodes(t *testing.T) {
 	}
 	assert.Empty(t, hiddenTokenDigest("AAAA"))
 	assert.Empty(t, hiddenTokenDigest(strings.Repeat("x", 1000)))
-	_, _, err := newTestStore(t).UnlockPhotoHidden(context.Background(), "")
+	_, _, err := newTestStore(t).UnlockPhotoHidden(t.Context(), "")
 	require.ErrorIs(t, err, ErrInvalidHiddenPasscode)
 }
 

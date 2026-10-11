@@ -264,8 +264,9 @@ it.each([false, true])("Hidden trash invalidates Documents and Trash restore ref
   await screen.findByRole("cell", { name: "Photo 1.jpg" });
 });
 
-it("keeps Hidden direct links and browser history scoped and clears its mounted viewer on lock", async () => {
-  history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof&photo=photo-1");
+it.each([false, true])("keeps direct links and history scoped and clears a mounted viewer when access changes, hidden=%s", async hidden => {
+  const path = hidden ? "/photos/hidden" : "/photos";
+  history.replaceState(null, "", `${path}#web_session=synthetic&web_upload_secret=proof&photo=photo-1`);
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
@@ -274,12 +275,13 @@ it("keeps Hidden direct links and browser history scoped and clears its mounted 
   Object.defineProperty(HTMLImageElement.prototype, "decode", { configurable: true, value: vi.fn(async () => {}) });
   storage();
   let unlocked = true;
+  let changeID = "first";
   const item = photo(1); item.previews.grid = { state: "ready", generation_id: "grid" }; item.previews.fit = { state: "ready", generation_id: "fit" };
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z" } : {}) });
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, change_id: changeID, ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z" } : {}) });
     if (url.endsWith("/hidden/lock")) { unlocked = false; return Response.json({ configured: true }); }
     if (url.endsWith("/assets/query")) {
-      expect(JSON.parse(String(options?.body)).hidden).toBe(true);
+      expect(JSON.parse(String(options?.body)).hidden).toBe(hidden);
       return Response.json({ items: [item], total: 1 });
     }
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
@@ -288,11 +290,11 @@ it("keeps Hidden direct links and browser history scoped and clears its mounted 
   render(App);
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
   await screen.findByText("Fit preview");
-  history.pushState(null, "", "/photos/hidden");
+  history.pushState(null, "", path);
   await fireEvent(window, new PopStateEvent("popstate"));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull());
   await fireEvent.click(screen.getByRole("button", { name: "Open Photo 1.jpg" }));
-  expect(location.pathname).toBe("/photos/hidden");
+  expect(location.pathname).toBe(path);
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
   history.back();
   await waitFor(() => expect(location.hash).toBe(""));
@@ -300,8 +302,14 @@ it("keeps Hidden direct links and browser history scoped and clears its mounted 
   history.forward();
   await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
   const before = revoke.mock.calls.length;
-  await fireEvent.click(screen.getByRole("button", { name: "Lock" }));
-  await screen.findByRole("button", { name: "Unlock" });
+  if (hidden) {
+    await fireEvent.click(screen.getByRole("button", { name: "Lock" }));
+    await screen.findByRole("button", { name: "Unlock" });
+  } else {
+    changeID = "second";
+    await fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull());
+  }
   expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
   expect(location.hash).toBe("");
   expect(revoke.mock.calls.length).toBeGreaterThan(before);

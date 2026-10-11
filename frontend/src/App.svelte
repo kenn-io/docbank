@@ -241,7 +241,7 @@
     return photoState?.cache.dispose();
   }
   async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
-    if (result.change_id !== photoChangeID) void invalidateLibrary();
+    if (photoState && result.change_id !== photoChangeID) void invalidateLibrary();
     photoChangeID = result.change_id;
     const state = photoState;
     if (state?.photos.hiding || state?.photos.trashing || photoConcealed && state?.photos.loading) return;

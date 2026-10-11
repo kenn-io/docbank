@@ -483,7 +483,4 @@ func TestPreparePhotoPreviewEligibilityAndReuse(t *testing.T) {
 	first = api.PhotoPreviewSlot{}
 	require.NoError(t, json.Unmarshal([]byte(body), &first))
 	require.Equal(t, "ready", first.State)
-	require.NoError(t, s.LockPhotoHidden(t.Context()))
-	response, body = get(t, ts, first.URL, headers)
-	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 }

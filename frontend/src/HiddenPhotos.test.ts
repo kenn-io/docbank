@@ -121,7 +121,7 @@ it.each([false, true])("notifies Library when Disable finishes after unmount, lo
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
-it.each(["setup", "unlock", "current", "new"])("bounds $0 passcodes before sending them", async field => {
+it.each(["setup", "unlock", "current", "new"])("bounds %s passcodes before sending them", async field => {
   const mutations: unknown[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
     if (options?.method === "POST") { mutations.push(JSON.parse(String(options.body))); return problem(503, "Unavailable"); }
