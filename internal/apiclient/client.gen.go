@@ -12124,6 +12124,53 @@ func (c *Client) ListTagNodes(ctx context.Context, options *ListTagNodesRequestO
 	return responseParser(ctx, resp)
 }
 
+// ResolveTextCitation Resolve an exact quotation from retained rendition text
+func (c *Client) ResolveTextCitation(ctx context.Context, options *ResolveTextCitationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveTextCitationResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/text-citations/resolve",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ResolveTextCitationResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ResolveTextCitationResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ResolveTextCitationResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ResolveTextCitationErrorResponse](resp, "ResolveTextCitationErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/text-citations/resolve")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ReadTimelineCoverage Read current-file timeline coverage
 func (c *Client) ReadTimelineCoverage(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ReadTimelineCoverageResponse, error) {
 	var err error
@@ -20916,6 +20963,34 @@ func (o *ListTagNodesRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ResolveTextCitationRequestOptions is the options needed to make a request to ResolveTextCitation.
+type ResolveTextCitationRequestOptions struct {
+	Body *ResolveTextCitationBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResolveTextCitationRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResolveTextCitationRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResolveTextCitationRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResolveTextCitationRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CreateTimelineRebuildRequestOptions is the options needed to make a request to CreateTimelineRebuild.
 type CreateTimelineRebuildRequestOptions struct {
 	Body *CreateTimelineRebuildBody
@@ -22544,6 +22619,8 @@ type CreateTagBody = CreateTagRequest
 
 type RenameTagBody = RenameTagRequest
 
+type ResolveTextCitationBody = TextCitation
+
 type CreateTimelineRebuildBody = TimelineRebuildRequest
 
 type EmptyTrashBody = EmptyTrashRequest
@@ -23949,6 +24026,28 @@ type ListTagNodesResponse = api.TaggedNodePage
 
 type ListTagNodesErrorResponse = Error
 
+type ResolveTextCitationResponse = document.ResolvedTextCitation
+
+type ResolveTextCitationErrorResponse api.Error
+
+type ResolveTextCitationErrorResponseApplicationProblemPlusJSON api.Error
+
+type ResolveTextCitationErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type ResolveTextCitationErrorResponseApplicationProblemPlusJSON408 api.Error
+
+type ResolveTextCitationErrorResponseApplicationProblemPlusJSON413 api.Error
+
+type ResolveTextCitationErrorResponseApplicationProblemPlusJSON416 api.Error
+
+type ResolveTextCitationErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type ResolveTextCitationErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ResolveTextCitationErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type ResolveTextCitationErrorResponseApplicationProblemPlusJSON504 api.Error
+
 type ReadTimelineCoverageResponse = api.DocumentEventCoverage
 
 type ReadTimelineCoverageErrorResponse = Error
@@ -25065,6 +25164,8 @@ type Request = report.Request
 
 type ResolvedDocumentSourceFence = api.ResolvedDocumentSourceFence
 
+type ResolvedTextCitation = document.ResolvedTextCitation
+
 type RetentionDisclosurePolicyV1 = document.RetentionDisclosurePolicyV1
 
 type RetrievalPolicyV1 = document.RetrievalPolicyV1
@@ -25289,6 +25390,8 @@ type Term = report.Term
 type TermReportHistory = store.TermReportHistory
 
 type TermReportHistoryPage = store.TermReportHistoryPage
+
+type TextCitation = document.TextCitation
 
 type TicketOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.

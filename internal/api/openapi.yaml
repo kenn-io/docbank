@@ -13920,6 +13920,40 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    ResolvedTextCitation:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ResolvedTextCitation.json
+          format: uri
+          readOnly: true
+          type: string
+        citation:
+          $ref: "#/components/schemas/TextCitation"
+        text:
+          maxLength: 16000
+          minLength: 1
+          type: string
+        text_bytes:
+          format: int64
+          maximum: 64000
+          minimum: 1
+          type: integer
+        text_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+      required:
+        - citation
+        - text
+        - text_sha256
+        - text_bytes
+      type: object
+      x-go-type: document.ResolvedTextCitation
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     RetentionDisclosurePolicyV1:
       additionalProperties: false
       properties:
@@ -16115,6 +16149,75 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/store
         name: store
+    TextCitation:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TextCitation.json
+          format: uri
+          readOnly: true
+          type: string
+        build_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        content_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        content_version_id:
+          format: uuid
+          maxLength: 36
+          minLength: 36
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+          type: string
+        end:
+          format: int64
+          maximum: 2147483647
+          minimum: 1
+          type: integer
+        node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        rendition_attachment_id:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        rendition_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+        start:
+          format: int64
+          maximum: 2147483647
+          minimum: 0
+          type: integer
+        vault_uid:
+          format: uuid
+          maxLength: 36
+          minLength: 36
+          pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+          type: string
+        version:
+          enum:
+            - 1
+          format: int64
+          type: integer
+      required:
+        - version
+        - vault_uid
+        - node_id
+        - content_version_id
+        - content_sha256
+        - rendition_attachment_id
+        - build_id
+        - rendition_sha256
+        - start
+        - end
+      type: object
+      x-go-type: document.TextCitation
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     TicketOutputBody:
       additionalProperties: false
       properties:
@@ -25077,6 +25180,92 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: List live and trashed nodes carrying a tag
+  /api/v1/text-citations/resolve:
+    post:
+      operationId: resolveTextCitation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TextCitation"
+          application/octet-stream:
+            schema:
+              contentMediaType: application/octet-stream
+              format: binary
+              type: string
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResolvedTextCitation"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "408":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Timeout
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "416":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Requested Range Not Satisfiable
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+        "504":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Gateway Timeout
+      summary: Resolve an exact quotation from retained rendition text
   /api/v1/timeline/coverage:
     get:
       operationId: readTimelineCoverage

@@ -153,6 +153,7 @@ func (service *Service) mediaMutation(ctx context.Context, fn func() error) erro
 type processingOperationGate interface {
 	RenditionMutationGate
 	MaintainContext(ctx context.Context, fn func() error) error
+	CaptureContext(ctx context.Context, fn func() error) error
 }
 
 type Selector struct {

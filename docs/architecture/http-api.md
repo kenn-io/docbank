@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-10
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -115,6 +115,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /processing/consent/grants` · `POST /processing/consent/revocations` | grant reviewed profile consent / revoke this operator's processing consent | Implemented |
 | `GET /renditions/{attachment_id}` · `POST /renditions/select` | stream retained sanitized Markdown by attachment or source selector | Implemented |
 | `POST /evidence/windows` | read bounded text from an exact current/live file and active rendition | Implemented |
+| `POST /text-citations/resolve` | reopen an exact quote from retained rendition text | Implemented |
 | `GET /coverage?profile=&vault_uid=&content_version_id=` · `POST /search` | inspect separate rendition/embedding coverage / search an authorized source-version set | Implemented |
 | `POST /search/similar` | stored-vector neighbors | Implemented |
 | `POST /derivatives/purge-plans` · `POST /derivatives/purge-jobs` | preview / run a live derivative purge without changing immutable backups | Implemented |
@@ -502,6 +503,58 @@ and current/live visibility checks. Both routes also require a nonempty source
 blob hash and check active rendition authority in the same catalog snapshot.
 The stricter evidence route adds mandatory identity preconditions to the same
 bounded reader.
+
+#### Retained text citations
+
+`POST /api/v1/text-citations/resolve` (`resolveTextCitation`) returns an exact
+quotation from retained sanitized Markdown, including historical versions and
+replaced rendition heads. It requires an API key; browser sessions cannot call
+it. It creates no retention root and runs no processing.
+
+The body is a flat `document.TextCitation` object. Every field is required;
+unknown fields and explicit nulls are rejected.
+
+| Fields | Contract |
+| --- | --- |
+| `version` | Exactly `1` |
+| `vault_uid`, `content_version_id` | Canonical lowercase UUIDv4, including hyphens |
+| `node_id` | Positive signed 64-bit node ID |
+| `content_sha256` | Original version's lowercase SHA-256 hex digest |
+| `rendition_attachment_id`, `build_id`, `rendition_sha256` | Exact published attachment, build, and sanitized-Markdown digest; each lowercase hex64 |
+| `start`, `end` | Inclusive start and exclusive end in Unicode code points; `0 <= start < end <= 2147483647`, spanning at most 16,000 code points |
+
+The response has `citation` (the unchanged request), `text`, `text_sha256`, and
+`text_bytes`. The latter two describe the returned UTF-8 bytes. For example,
+`aé界🙂z` at `[1,4)` yields `é界🙂`, nine bytes. Escapes, line endings, and combining
+marks remain unchanged. Offsets describe stored Markdown, not rendered text or
+search segments. See [MCP citation discovery](../usage/mcp.md#saved-text-citations)
+for assembling the reference.
+
+Before returning any quote, the daemon verifies the whole rendition's size,
+digest, and UTF-8 encoding. A corrupt suffix therefore fails even a prefix
+quote. The body limit is 16 KiB, the artifact limit is 64 MiB, and the daemon's
+normal 60-second request deadline includes waiting for maintenance. The client
+bounds the JSON response to 1 MiB and checks the echoed identities, quote length,
+byte count, and digest. Success uses `Cache-Control: no-store`.
+
+| Status / code | Meaning |
+| --- | --- |
+| 400 / `invalid_text_citation` | Strict JSON decoding failed |
+| 422 / `validation` | HTTP schema rejected a field or missing value |
+| 422 / `invalid_text_citation` | Cross-field identity or range validation failed |
+| 413 / body rejection or `citation_limit` | Request or retained artifact exceeds its bound |
+| 404 / `citation_unavailable` | Exact retained authority or its bytes are unavailable |
+| 416 / `invalid_citation_range` | The verified rendition is shorter than the requested range |
+| 504 / `citation_timeout` | Deadline expired, including a maintenance wait |
+| 408 / `citation_canceled` | Caller canceled; no quote is returned |
+| 500 / `citation_integrity` | Rendition size, checksum, or UTF-8 verification failed |
+| 500 / `citation_failed` | Another read failure; the daemon log retains its cause |
+| 503 / `processing_unavailable` | The processing service is not configured |
+
+Retention and concurrency rules belong to
+[document-processing architecture](document-processing.md#reopen-a-saved-quotation).
+This quote is verified retained text, not an offline proof or a claim about the
+original document's bytes.
 
 #### Similar documents
 

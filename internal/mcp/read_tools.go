@@ -10,6 +10,7 @@ import (
 	"uuid"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
@@ -39,6 +40,10 @@ func readToolHandler(
 			if domain, ok := domainToolError(err); ok {
 				return domain, nil
 			}
+			if invalid, ok := errors.AsType[*jsonrpc.Error](err); ok &&
+				invalid.Code == jsonrpc.CodeInvalidParams {
+				return nil, invalid
+			}
 			return nil, sanitizedRPCError(err)
 		}
 		return result, nil
@@ -52,6 +57,8 @@ func executeReadTool(
 	var links []*sdkmcp.ResourceLink
 	var err error
 	switch name {
+	case textCitationTool.name:
+		output, err = resolveTextCitation(ctx, lease, raw)
 	case "get_vault_info":
 		output, err = getVaultInfo(ctx, lease, raw)
 	case "list_documents":
