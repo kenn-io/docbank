@@ -366,12 +366,16 @@ it.each([false, true])("keeps direct links and history scoped and clears a mount
   storage();
   let unlocked = true;
   let changeID = "first";
+  let unavailable = false;
+  let holdRefresh = false;
+  let finishRefresh!: (response: Response) => void;
   const item = photo(1); item.previews.grid = { state: "ready", generation_id: "grid" }; item.previews.fit = { state: "ready", generation_id: "fit" };
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, change_id: changeID, ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z" } : {}) });
+    if (url.endsWith("/photos/hidden")) { if (unavailable) throw new Error("Status unavailable"); return Response.json({ configured: true, change_id: changeID, ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z" } : {}) }); }
     if (url.endsWith("/hidden/lock")) { unlocked = false; return Response.json({ configured: true }); }
     if (url.endsWith("/assets/query")) {
       expect(JSON.parse(String(options?.body)).hidden).toBe(hidden);
+      if (holdRefresh) { holdRefresh = false; return new Promise<Response>(resolve => finishRefresh = resolve); }
       return Response.json({ items: [item], total: 1 });
     }
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
@@ -396,6 +400,25 @@ it.each([false, true])("keeps direct links and history scoped and clears a mount
     await fireEvent.click(screen.getByRole("button", { name: "Lock" }));
     await screen.findByRole("button", { name: "Unlock" });
   } else {
+    unavailable = true;
+    await fireEvent(document, new Event("visibilitychange"));
+    await screen.findByText("Status unavailable");
+    expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
+    expect(location.hash).toBe("#photo=photo-1");
+    unavailable = false;
+    holdRefresh = true;
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(finishRefresh).toBeDefined());
+    expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
+    finishRefresh(Response.json({ items: [item], total: 1 }));
+    await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    await fireEvent(document, new Event("visibilitychange"));
+    expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
+    expect(location.hash).toBe("#photo=photo-1");
+    visibility.mockReturnValue("visible");
+    await fireEvent(document, new Event("visibilitychange"));
+    await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
     changeID = "second";
     await fireEvent(document, new Event("visibilitychange"));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull());

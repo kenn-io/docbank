@@ -336,7 +336,7 @@ an empty asset identity.
 Automatic enrollment and explicit graph writes are skipped or refused when
 audit authority is active, according to the existing audit boundary. The
 preexisting graph is preserved. Photo trash and restore remain available under audit and record audited node changes plus photo revision receipts.
-Hidden unlock and lock remain available. Setup, change, disable, reset, hide, and unhide require a writable vault.
+Hidden unlock and lock remain available. Setup, change, disable, reset, hide, and unhide are unavailable while audit authority is active.
 
 ## Browse photo assets over HTTP
 

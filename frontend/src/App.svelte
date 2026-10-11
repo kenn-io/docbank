@@ -270,7 +270,7 @@
     let pending = false;
     let controller = new AbortController();
     photoValidated = false;
-    const conceal = () => { void invalidateLibrary(); };
+    const conceal = () => { void invalidateLibrary(false); };
     const check = async () => {
       if (pending || hidden || document.visibilityState !== "visible") return;
       pending = true;
@@ -279,7 +279,7 @@
         const result = await generated.getPhotoHiddenState({ session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
         if (current && !controller.signal.aborted) await acceptPhotoAccess(result);
       } catch (cause) {
-        if (current && !controller.signal.aborted) { conceal(); photoAccessError = cause instanceof Error ? cause.message : String(cause); if (cause instanceof APIError && cause.status === 401) handleFailure(cause); }
+        if (current && !controller.signal.aborted) { void invalidateLibrary(cause instanceof APIError && (cause.status === 401 || cause.status === 403)); photoAccessError = cause instanceof Error ? cause.message : String(cause); if (cause instanceof APIError && cause.status === 401) handleFailure(cause); }
       } finally { pending = false; }
     };
     checkPhotoAccess = check;
