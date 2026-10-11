@@ -213,6 +213,17 @@ type metadataWatchSource struct {
 	Size      int64  `json:"size" db:"size"`
 }
 
+type metadataPushSource struct {
+	Type               string `json:"type"`
+	PushName           string `json:"push_name" db:"push_name"`
+	SourceRef          string `json:"source_ref" db:"source_ref"`
+	NodeID             int64  `json:"node_id" db:"node_id"`
+	ProvenanceIdentity string `json:"provenance_identity" db:"provenance_identity"`
+	BlobHash           string `json:"blob_hash" db:"blob_hash"`
+	Size               int64  `json:"size" db:"size"`
+	AcceptedAt         string `json:"accepted_at" db:"accepted_at"`
+}
+
 type metadataTag struct {
 	Type     string `json:"type"`
 	ID       string `json:"tag_id" db:"id"`
@@ -282,6 +293,8 @@ var (
 		table: "provenance", suffix: "ORDER BY identity", validate: validateProvenanceRecord, checkExport: true})
 	watchSourceMetadata = newMetadataTable(metadataTable[metadataWatchSource]{record: metadataWatchSource{Type: metadataWatchSourceType},
 		table: "watch_sources", suffix: "ORDER BY watch_name, source_ref", validate: validateWatchSourceRecord, checkExport: true})
+	pushSourceMetadata = newMetadataTable(metadataTable[metadataPushSource]{record: metadataPushSource{Type: metadataPushSourceType},
+		table: "push_sources", suffix: "ORDER BY push_name, source_ref", validate: validatePushSourceRecord, checkExport: true})
 	tagMetadata = newMetadataTable(metadataTable[metadataTag]{record: metadataTag{Type: "tag"},
 		table: "tags", suffix: "ORDER BY id", validate: validateTagRecord, checkExport: true})
 	nodeTagMetadata = newMetadataTable(metadataTable[metadataNodeTag]{record: metadataNodeTag{Type: "node_tag"},
@@ -295,7 +308,7 @@ var (
 // files. Blobs, checksums, source metadata, visual preview generations and
 // extracted text keep their backup-scoped exporters.
 var coreMetadataTables = []metadataRecordCodec{
-	nodeMetadata, contentVersionMetadata, ingestMetadata, provenanceMetadata, watchSourceMetadata,
+	nodeMetadata, contentVersionMetadata, ingestMetadata, provenanceMetadata, watchSourceMetadata, pushSourceMetadata,
 	tagMetadata, nodeTagMetadata, visualPreviewHeadMetadata, collectionLabelMetadata,
 	provenanceVersionBindingMetadata, savedQueryMetadata, savedQueryRunImportMetadata,
 	termReportHistoryImportMetadata, batchTagReceiptMetadata,
@@ -440,6 +453,10 @@ func (layout metadataSourceLayout) hasPersons() bool {
 	return layout.schemaVersion >= peopleStorageSchemaVersion
 }
 
+func (layout metadataSourceLayout) hasPushSources() bool {
+	return layout.schemaVersion >= pushSourcesStorageSchemaVersion
+}
+
 func exportMetadataSnapshot(ctx context.Context, tx metadataQuerier, w io.Writer) error {
 	return exportMetadataSnapshotWithVaultIdentity(ctx, tx, w, currentMetadataLayout())
 }
@@ -557,6 +574,11 @@ func exportMetadataSnapshotWithVaultIdentity(
 	}
 	if err := exportWatchSources(ctx, tx, write); err != nil {
 		return err
+	}
+	if layout.hasPushSources() {
+		if err := exportPushSources(ctx, tx, write); err != nil {
+			return err
+		}
 	}
 	if err := tagMetadata.export(ctx, tx, write); err != nil {
 		return err
@@ -873,6 +895,10 @@ func exportWatchSources(ctx context.Context, tx metadataQuerier, write metadataW
 	return watchSourceMetadata.export(ctx, tx, write)
 }
 
+func exportPushSources(ctx context.Context, tx metadataQuerier, write metadataWrite) error {
+	return pushSourceMetadata.export(ctx, tx, write)
+}
+
 func exportExtractedText(
 	ctx context.Context, tx metadataQuerier, write metadataWrite, backupScoped bool,
 ) error {
@@ -1140,6 +1166,7 @@ const (
 	metadataProvenanceType                = "provenance"
 	metadataProvenanceVersionBindingType  = "provenance_version_binding"
 	metadataWatchSourceType               = "watch_source"
+	metadataPushSourceType                = "push_source"
 	metadataTagRecordType                 = "tag"
 	metadataSavedQueryType                = "saved_query"
 	metadataSavedQueryRunType             = "saved_query_run"
@@ -1504,6 +1531,11 @@ func validateMetadataStateWithVaultIdentity(
 	}
 	if layout.hasPostV3Metadata() {
 		if err := validateProvenanceVersionBindingRelations(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if layout.hasPushSources() {
+		if err := validatePushSourceRelations(ctx, tx); err != nil {
 			return err
 		}
 	}

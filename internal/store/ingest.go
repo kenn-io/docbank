@@ -550,6 +550,15 @@ func (s *Store) ingestFileTx(
 			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
 		}
 	}
+	if run.record.SourceKind == "push" {
+		source := PushSource{
+			Name: run.record.SourceDesc, Ref: provenance.OriginalPath, Duplicates: "link",
+		}
+		if err := insertPushSourceTx(ctx, tx, source, receipt.Node.ID,
+			provenance.Identity, blobHash, size, run.record.StartedAt); err != nil {
+			return ContentWriteReceipt{}, false, IngestDirectoryResolution{}, err
+		}
+	}
 	if active {
 		resultingParent, err := nodeByIDTx(tx, parentID)
 		if err != nil {

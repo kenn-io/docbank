@@ -19,6 +19,7 @@ If you are new, start with [setup](setup.md) and then the
 | --- | --- |
 | Install Docbank or build it from source | [Setup](setup.md) |
 | Import a folder of documents | [Importing documents](usage/importing.md) |
+| Archive a folder from another machine | [Push a folder](usage/pushing.md) |
 | Move, rename, or tag documents | [Organizing and tagging](usage/organizing.md) |
 | Find documents by name, text, or filters | [Searching](usage/searching.md) |
 | Search by meaning | [Processing search](usage/search.md) |

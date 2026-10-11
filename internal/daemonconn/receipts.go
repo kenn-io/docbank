@@ -129,7 +129,9 @@ type responseError struct {
 func (e *responseError) Error() string { return e.err.Error() }
 func (e *responseError) Unwrap() error { return e.err }
 
-func responseStatus(err error) (int, bool) {
+// ResponseStatus returns the HTTP status of a request the daemon answered
+// with an error response. It reports false for transport failures.
+func ResponseStatus(err error) (int, bool) {
 	var response *responseError
 	if !errors.As(err, &response) {
 		return 0, false
@@ -2495,28 +2497,58 @@ func (c *Connection) Upload(
 	if parentID <= 0 {
 		return receipt, errors.New("upload parent ID must be positive")
 	}
+	mimeType, err := validateUploadRequest(name, mimeType, expectedHash, expectedSize, content)
+	if err != nil {
+		return receipt, err
+	}
+	resp, err := streamUpload(ctx, name, mimeType, content, func(
+		ctx context.Context, response **http.Response, editor runtime.RequestEditorFn,
+	) error {
+		_, callErr := c.apiWithResponse(response).UploadFile(ctx, &apiclient.UploadFileRequestOptions{Query: &apiclient.UploadFileQuery{ParentID: parentID, Name: name}, Header: &apiclient.UploadFileHeaders{XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}}, editor)
+		return callErr
+	})
+	if err != nil {
+		return receipt, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if err := json.UnmarshalRead(resp.Body, &receipt); err != nil {
+		return receipt, fmt.Errorf("decoding upload response: %w", err)
+	}
+	return receipt, nil
+}
+
+func validateUploadRequest(
+	name, mimeType, expectedHash string, expectedSize int64, content io.Reader,
+) (string, error) {
 	if _, err := store.NormalizeName(name); err != nil {
-		return receipt, fmt.Errorf("upload name: %w", err)
+		return "", fmt.Errorf("upload name: %w", err)
 	}
 	if !validSHA256Hex(expectedHash) {
-		return receipt, errors.New("upload hash must be canonical lowercase SHA-256")
+		return "", errors.New("upload hash must be canonical lowercase SHA-256")
 	}
 	if expectedSize < 0 {
-		return receipt, errors.New("upload size must not be negative")
+		return "", errors.New("upload size must not be negative")
 	}
 	if content == nil {
-		return receipt, errors.New("upload content reader is nil")
+		return "", errors.New("upload content reader is nil")
 	}
 	if mimeType == "" {
-		mimeType = "application/octet-stream"
-	} else {
-		mediaType, params, err := mime.ParseMediaType(mimeType)
-		if err != nil {
-			return receipt, fmt.Errorf("upload media type %q: %w", mimeType, err)
-		}
-		mimeType = mime.FormatMediaType(mediaType, params)
+		return "application/octet-stream", nil
 	}
+	mediaType, params, err := mime.ParseMediaType(mimeType)
+	if err != nil {
+		return "", fmt.Errorf("upload media type %q: %w", mimeType, err)
+	}
+	return mime.FormatMediaType(mediaType, params), nil
+}
 
+// streamUpload sends content as the single multipart file of one generated
+// upload operation and returns its successful response. send attaches editor,
+// which supplies the streaming body, to that operation.
+func streamUpload(
+	ctx context.Context, name, mimeType string, content io.Reader,
+	send func(context.Context, **http.Response, runtime.RequestEditorFn) error,
+) (*http.Response, error) {
 	pipeReader, pipeWriter := io.Pipe()
 	multipartWriter := multipart.NewWriter(pipeWriter)
 	writeDone := make(chan error, 1)
@@ -2539,8 +2571,8 @@ func (c *Connection) Upload(
 		writeDone <- err
 	}()
 
-	var responseHTTP *http.Response
-	_, callErr := c.apiWithResponse(&responseHTTP).UploadFile(runtime.WithStreamingResponse(ctx), &apiclient.UploadFileRequestOptions{Query: &apiclient.UploadFileQuery{ParentID: parentID, Name: name}, Header: &apiclient.UploadFileHeaders{XDocbankBlobHash: expectedHash, XDocbankBlobSize: expectedSize}}, func(_ context.Context, req *http.Request) error {
+	var resp *http.Response
+	callErr := send(runtime.WithStreamingResponse(ctx), &resp, func(_ context.Context, req *http.Request) error {
 		req.Body = pipeReader
 		req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 		return nil
@@ -2548,23 +2580,20 @@ func (c *Connection) Upload(
 	if callErr != nil {
 		_ = pipeReader.CloseWithError(callErr)
 		<-writeDone
-		return receipt, fmt.Errorf("uploading %q: %w", name, callErr)
+		return nil, fmt.Errorf("uploading %q: %w", name, callErr)
 	}
-	resp := responseHTTP
-	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		_ = pipeReader.Close()
 		<-writeDone
-		return receipt, decodeError(resp)
+		defer func() { _ = resp.Body.Close() }()
+		return nil, decodeError(resp)
 	}
-	writerErr := <-writeDone
-	if writerErr != nil {
-		return receipt, fmt.Errorf("streaming upload %q: %w", name, writerErr)
+	_ = pipeReader.Close()
+	if writerErr := <-writeDone; writerErr != nil {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("streaming upload %q: %w", name, writerErr)
 	}
-	if err := json.UnmarshalRead(resp.Body, &receipt); err != nil {
-		return receipt, fmt.Errorf("decoding upload response: %w", err)
-	}
-	return receipt, nil
+	return resp, nil
 }
 
 // ReplaceContent streams raw bytes into a new immutable head under an

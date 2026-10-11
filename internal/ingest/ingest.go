@@ -251,11 +251,12 @@ func mutationCleanupResult(mutationErr, cleanupErr error) error {
 // validate the remainder of its transport envelope before Commit grants blob
 // and node authority.
 type PreparedUpload struct {
-	ing      *Ingester
-	parentID int64
-	name     string
-	mimeType string
-	result   UploadResult
+	ing        *Ingester
+	parentID   int64
+	parentPath string
+	name       string
+	mimeType   string
+	result     UploadResult
 }
 
 // PrepareUpload streams one remote file through Kit's durable writer and
@@ -266,14 +267,6 @@ func (ing *Ingester) PrepareUpload(
 	ctx context.Context, parentID int64, name, mimeType string, r io.Reader,
 	expectedHash string, expectedSize int64,
 ) (*PreparedUpload, error) {
-	var result UploadResult
-	name, err := store.NormalizeName(name)
-	if err != nil {
-		return nil, err
-	}
-	if !utf8.ValidString(mimeType) {
-		return nil, errors.New("MIME type is not valid UTF-8")
-	}
 	parent, err := ing.Store.NodeByID(ctx, parentID)
 	if err != nil {
 		return nil, err
@@ -284,7 +277,42 @@ func (ing *Ingester) PrepareUpload(
 	if !parent.IsDir() {
 		return nil, store.ErrNotDir
 	}
+	prepared, err := ing.prepareContent(ctx, name, mimeType, r, expectedHash, expectedSize)
+	if err != nil {
+		return nil, err
+	}
+	prepared.parentID = parentID
+	return prepared, nil
+}
 
+// PreparePushUpload verifies one push payload without resolving its
+// destination. AcceptPush places a new node under content.ParentPath in its
+// commit transaction; an existing source keeps its node wherever it now is.
+func (ing *Ingester) PreparePushUpload(
+	ctx context.Context, content store.PushContent, r io.Reader,
+) (*PreparedUpload, error) {
+	if err := store.ValidatePushDestination(content.ParentPath); err != nil {
+		return nil, err
+	}
+	prepared, err := ing.prepareContent(ctx, content.Name, content.MIMEType, r, content.Hash, content.Size)
+	if err != nil {
+		return nil, err
+	}
+	prepared.parentPath = content.ParentPath
+	return prepared, nil
+}
+
+func (ing *Ingester) prepareContent(
+	ctx context.Context, name, mimeType string, r io.Reader, expectedHash string, expectedSize int64,
+) (*PreparedUpload, error) {
+	var result UploadResult
+	name, err := store.NormalizeName(name)
+	if err != nil {
+		return nil, err
+	}
+	if !utf8.ValidString(mimeType) {
+		return nil, errors.New("MIME type is not valid UTF-8")
+	}
 	written, err := ing.Blobs.WriteDetailedContext(ctx, r)
 	if err != nil {
 		return nil, err
@@ -304,9 +332,7 @@ func (ing *Ingester) PrepareUpload(
 			expectedHash, result.ComputedHash, ErrUploadDigestMismatch),
 			ing.cleanupLoose(written.Hash))
 	}
-	return &PreparedUpload{
-		ing: ing, parentID: parentID, name: name, mimeType: mimeType, result: result,
-	}, nil
+	return &PreparedUpload{ing: ing, name: name, mimeType: mimeType, result: result}, nil
 }
 
 // Commit grants application authority to a prepared upload and returns the
@@ -326,6 +352,21 @@ func (p *PreparedUpload) Commit(ctx context.Context) (result UploadResult, retEr
 		return result, err
 	}
 	return result, nil
+}
+
+// CommitPush grants source and version authority only after transport verification.
+func (p *PreparedUpload) CommitPush(ctx context.Context, source store.PushSource) (result UploadResult, outcome string, retErr error) {
+	result = p.result
+	defer func() { retErr = mutationCleanupResult(retErr, p.ing.cleanupLoose(result.ComputedHash)) }()
+	if p.parentPath == "" {
+		return result, "", errors.New("push commit requires a payload prepared for push")
+	}
+	result.Node, outcome, retErr = p.ing.Store.AcceptPush(ctx, source, store.PushContent{
+		ParentPath: p.parentPath, Name: p.name, Hash: result.ComputedHash,
+		Size: result.ComputedSize, MIMEType: p.mimeType,
+	}, result.physical)
+	result.Added = outcome == "added"
+	return result, outcome, retErr
 }
 
 // Discard removes a loose duplicate of already-packed authority when a

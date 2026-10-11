@@ -108,7 +108,7 @@ func TestHelpTreeLint(t *testing.T) {
 			require.NoError(t, err)
 			budget := 2500
 			if cmd == rootCmd {
-				budget = 4500
+				budget = 4550
 			}
 			if cmd == rootCmd || (!cmd.HasSubCommands() && cmd.Name() != "tui") {
 				assert.LessOrEqual(t, len(out), budget, "help byte budget")

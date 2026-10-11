@@ -22,6 +22,7 @@ Every public page is also published as raw Markdown at the route listed below.
 
 ## Work with documents
 - [Importing documents](https://docbank.ai/docs/usage/importing.md): Import folders, preview large sources, retry partial imports, and keep changing files up to date.
+- [Push a folder to another daemon](https://docbank.ai/docs/usage/pushing.md): Archive a local folder through a keyed daemon, resume by content hash, and continue an existing watch.
 - [Photo assets](https://docbank.ai/docs/usage/photos.md): Group camera files, browse photos in the web app, and organize albums through the CLI or HTTP API.
 - [People](https://docbank.ai/docs/usage/people.md): List and edit canonical people through the daemon API and CLI, and read them through MCP.
 - [Email PDFs](https://docbank.ai/docs/usage/email-pdf.md): Render one email version as a verified PDF kept alongside its original EML.

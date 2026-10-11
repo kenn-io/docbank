@@ -420,6 +420,9 @@ the collection records.
 
 ## Continuously ingest a local inbox
 
+For a folder on another machine, use [folder push](pushing.md). It reads the
+folder on the client and uploads verified bytes to the daemon.
+
 For directories that receive files over time, configure a daemon-owned
 `[[watch]]` entry instead of repeatedly running `docbank add`:
 

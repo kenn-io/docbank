@@ -783,3 +783,26 @@ func TestOpenAPIPhotoBrowseContract(t *testing.T) {
 	require.True(t, schemas["SavedQueryFiltersSchema"].Properties["gps_bounds"].Nullable)
 	require.ElementsMatch(t, []any{"name", "path", "modified_at", "size", "media_type", "relevance", "capture_time", "import_time", "added_time"}, schemas["SavedQuerySortSchema"].Properties["field"].Enum)
 }
+
+func TestOpenAPIPushRequiresPortableIdentityAndVerifiedBytes(t *testing.T) {
+	t.Parallel()
+	doc := api.NewOfflineServer().API().OpenAPI()
+	operation := doc.Paths["/api/v1/push/uploads"].Post
+	require.NotNil(t, operation)
+	assert.Equal(t, "uploadPushFile", operation.OperationID)
+	required := map[string]bool{}
+	for _, parameter := range operation.Parameters {
+		required[parameter.Name] = parameter.Required
+	}
+	for _, name := range []string{"push_name", "source_ref", "duplicates", "parent_path", "name", api.BlobHashHeader, api.BlobSizeHeader} {
+		assert.True(t, required[name], name)
+	}
+	_, hasParentID := required["parent_id"]
+	assert.False(t, hasParentID, "push places new nodes by path, never by a possibly stale parent ID")
+	receipt := operation.Responses["200"].Content["application/json"].Schema
+	assert.Equal(t, "#/components/schemas/PushUploadReceipt", receipt.Ref)
+	upload := doc.Components.Schemas.Map()["UploadReceipt"]
+	assert.ElementsMatch(t, []any{"added", "skipped"}, upload.Properties["status"].Enum,
+		"ordinary uploads keep their own outcomes")
+	assert.NotNil(t, doc.Paths["/api/v1/push/source"].Get)
+}

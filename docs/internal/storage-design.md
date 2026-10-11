@@ -721,3 +721,53 @@ Keep durable rationale and constraints when revising these notes.
     maintenance protection, and verification/status APIs will extend this same
     metadata-v1 authority before the first public release. Earlier development
     shapes are disposable and receive no compatibility decoder.
+
+## Client-owned folder push
+
+Push source authority uses operational `push` ingest records, with the push
+name in `source_desc`, the canonical relative path in provenance
+`original_path`. The `push_sources` table stores the last accepted digest,
+size, node, provenance identity, and observation time under the durable
+`(push_name, source_ref)` key. It does not reference a blob or content version,
+so pruning a version can release its bytes without losing the source cursor.
+Each new push provenance fact is initially bound to the node version that was
+current at acceptance; pruning may later remove that binding.
+
+The cursor is included in metadata JSONL v1 as a `push_source` record from
+storage schema 31, the first layout with push. The hot resume lookup uses the
+cursor's composite primary key.
+When no push observation exists, lookup falls back to `watch_sources` for the
+same name and relative path. Its last accepted hash and size become the starting
+cursor, independently of the current node head. This supports a stopped watch
+handing its identities to a push client with zero uploads for unchanged files.
+The first changed push observation records an independent cursor and takes
+precedence over the old watch cursor.
+
+Duplicate linking only selects nodes the same push name already owns through
+`push_sources`, or through `watch_sources` of the watch it took over. A push
+therefore never versions a node that another source created. Push does not add
+or rewrite `watch_sources` rows. Their one-source-per-node constraint is
+incompatible with intentional duplicate linking. New push
+identities and subsequent observations use operational push provenance instead.
+
+Acceptance allocates a strictly increasing per-source ingest timestamp inside
+the metadata transaction, advancing by one nanosecond when the wall clock has
+moved backward. Restore validates that each cursor identifies the latest push
+fact, agrees with its version binding when one remains, and maps to the same
+node for the source's lifetime. Observation times remain distinct. Several
+identities may share a node. A node's current head can differ from any source
+cursor after an independent edit or another source's change.
+
+The source lookup and verified acceptance own their respective read and write
+snapshots. Acceptance rechecks the cursor inside the write transaction, so
+concurrent retries cannot create separate nodes. New nodes use exact-name ingest;
+links and changed-source observations reuse the audited operational observation
+path. Content replacement and its observation commit together. Shared nodes keep
+the existing revision, version-retention, photo-enrollment, audit replay, backup,
+and garbage-collection contracts.
+
+The client-side scanner reuses watched-inbox confined traversal, filesystem
+boundaries, literal exclusions, and stability fingerprints. Its processor has
+only an opened read-only source descriptor and an HTTP connection, not a vault.
+The dedicated digest-checked push route shares ordinary upload envelope checking
+and keeps server-side filesystem ingest out of this workflow.

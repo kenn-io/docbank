@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -23,6 +24,7 @@ var errInvalidUploadEnvelope = errors.New("invalid upload multipart envelope")
 
 func registerUploadRoute(mux *http.ServeMux, api huma.API, d Deps, g *gate) {
 	registerUploadOpenAPI(api)
+	registerPushRoutes(mux, api, d, g)
 	mux.HandleFunc("POST /api/v1/uploads", func(w http.ResponseWriter, r *http.Request) {
 		handleUpload(w, r, d, g)
 	})
@@ -79,84 +81,109 @@ func handleUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate) {
 		writeError(w, identityErr)
 		return
 	}
-	maxBody := expectedSize + uploadMultipartOverhead
-	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
-	multipartReader, readErr := r.MultipartReader()
-	if readErr != nil {
-		writeError(w, NewError(http.StatusUnsupportedMediaType, "validation",
-			"upload requires multipart/form-data: "+readErr.Error()))
-		return
-	}
-	part, readErr := multipartReader.NextPart()
-	if readErr != nil {
-		writeError(w, uploadMultipartReadError(readErr, "upload requires exactly one file part"))
-		return
-	}
-	defer func() { _ = part.Close() }()
-	if part.FormName() != "file" || part.FileName() == "" {
-		writeError(w, NewError(http.StatusUnprocessableEntity, "validation",
-			"first multipart part must be a file field named \"file\""))
-		return
-	}
-	partName, normalizeErr := store.NormalizeName(part.FileName())
-	if normalizeErr != nil || partName != name {
-		writeError(w, NewError(http.StatusUnprocessableEntity, "validation",
-			fmt.Sprintf("multipart filename %q must equal requested name %q", part.FileName(), name)))
-		return
-	}
-	mimeType, mimeErr := uploadMediaType(part.Header.Get("Content-Type"))
-	if mimeErr != nil {
-		writeError(w, NewError(http.StatusUnprocessableEntity, "validation", mimeErr.Error()))
-		return
-	}
-
 	var result ingest.UploadResult
-	opErr := g.mutate(func() error {
-		return d.Blobs.WithMutation(r.Context(), func() error {
-			limited := &io.LimitedReader{R: part, N: expectedSize + 1}
-			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
-			prepared, prepareErr := ing.PrepareUpload(r.Context(), parentID, name, mimeType,
-				limited, expectedHash, expectedSize)
-			if prepareErr != nil {
-				return prepareErr
-			}
-			next, nextErr := multipartReader.NextPart()
-			if next != nil {
-				_ = next.Close()
-			}
-			if !errors.Is(nextErr, io.EOF) {
-				if nextErr == nil {
-					return errors.Join(fmt.Errorf(
-						"%w: upload contains more than one multipart part", errInvalidUploadEnvelope,
-					), prepared.Discard())
-				}
-				if _, ok := errors.AsType[*http.MaxBytesError](nextErr); ok {
-					return errors.Join(
-						fmt.Errorf("upload multipart body exceeded limit: %w", nextErr),
-						prepared.Discard(),
-					)
-				}
-				return errors.Join(fmt.Errorf("%w: reading end of multipart body: %w",
-					errInvalidUploadEnvelope, nextErr), prepared.Discard())
-			}
-			result, prepareErr = prepared.Commit(r.Context())
-			return prepareErr
-		})
+	received := receiveUpload(w, r, d, g, uploadPayload{
+		name: name, expectedSize: expectedSize,
+		prepare: func(ing *ingest.Ingester, mimeType string, content io.Reader) (*ingest.PreparedUpload, error) {
+			return ing.PrepareUpload(r.Context(), parentID, name, mimeType, content, expectedHash, expectedSize)
+		},
+		commit: func(prepared *ingest.PreparedUpload) error {
+			var err error
+			result, err = prepared.Commit(r.Context())
+			return err
+		},
 	})
-	if opErr != nil {
-		writeError(w, uploadError(opErr))
+	if !received {
 		return
 	}
-	status := "skipped"
-	httpStatus := http.StatusOK
+	status, httpStatus := "skipped", http.StatusOK
 	if result.Added {
-		status = "added"
-		httpStatus = http.StatusCreated
+		status, httpStatus = "added", http.StatusCreated
 	}
 	writeJSON(w, httpStatus, UploadReceipt{
 		Status: status, Node: fromStoreNode(result.Node),
 		ComputedHash: result.ComputedHash, ComputedSize: result.ComputedSize,
 	})
+}
+
+// uploadPayload describes one multipart file. prepare verifies and stores its
+// bytes without authority; commit grants authority once the envelope is known
+// to contain exactly that file.
+type uploadPayload struct {
+	name         string
+	expectedSize int64
+	prepare      func(ing *ingest.Ingester, mimeType string, content io.Reader) (*ingest.PreparedUpload, error)
+	commit       func(*ingest.PreparedUpload) error
+}
+
+// receiveUpload reads one multipart file and runs payload's steps under the
+// mutation gate. It writes any error response and reports whether commit ran.
+func receiveUpload(w http.ResponseWriter, r *http.Request, d Deps, g *gate, payload uploadPayload) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, payload.expectedSize+uploadMultipartOverhead)
+	multipartReader, readErr := r.MultipartReader()
+	if readErr != nil {
+		writeError(w, NewError(http.StatusUnsupportedMediaType, "validation",
+			"upload requires multipart/form-data: "+readErr.Error()))
+		return false
+	}
+	part, readErr := multipartReader.NextPart()
+	if readErr != nil {
+		writeError(w, uploadMultipartReadError(readErr, "upload requires exactly one file part"))
+		return false
+	}
+	defer func() { _ = part.Close() }()
+	if part.FormName() != "file" || part.FileName() == "" {
+		writeError(w, NewError(http.StatusUnprocessableEntity, "validation",
+			"first multipart part must be a file field named \"file\""))
+		return false
+	}
+	partName, normalizeErr := store.NormalizeName(part.FileName())
+	if normalizeErr != nil || partName != payload.name {
+		writeError(w, NewError(http.StatusUnprocessableEntity, "validation",
+			fmt.Sprintf("multipart filename %q must equal requested name %q", part.FileName(), payload.name)))
+		return false
+	}
+	mimeType, mimeErr := uploadMediaType(part.Header.Get("Content-Type"))
+	if mimeErr != nil {
+		writeError(w, NewError(http.StatusUnprocessableEntity, "validation", mimeErr.Error()))
+		return false
+	}
+	opErr := g.mutate(func() error {
+		return d.Blobs.WithMutation(r.Context(), func() error {
+			limited := &io.LimitedReader{R: part, N: payload.expectedSize + 1}
+			ing := &ingest.Ingester{Store: d.Store, Blobs: d.Blobs}
+			prepared, prepareErr := payload.prepare(ing, mimeType, limited)
+			if prepareErr != nil {
+				return prepareErr
+			}
+			if err := requireUploadEnvelopeEnd(multipartReader); err != nil {
+				return errors.Join(err, prepared.Discard())
+			}
+			return payload.commit(prepared)
+		})
+	})
+	if opErr != nil {
+		writeError(w, uploadError(opErr))
+		return false
+	}
+	return true
+}
+
+func requireUploadEnvelopeEnd(multipartReader *multipart.Reader) error {
+	next, nextErr := multipartReader.NextPart()
+	if next != nil {
+		_ = next.Close()
+	}
+	switch {
+	case errors.Is(nextErr, io.EOF):
+		return nil
+	case nextErr == nil:
+		return fmt.Errorf("%w: upload contains more than one multipart part", errInvalidUploadEnvelope)
+	}
+	if _, ok := errors.AsType[*http.MaxBytesError](nextErr); ok {
+		return fmt.Errorf("upload multipart body exceeded limit: %w", nextErr)
+	}
+	return fmt.Errorf("%w: reading end of multipart body: %w", errInvalidUploadEnvelope, nextErr)
 }
 
 func uploadMultipartReadError(err error, detail string) *Error {

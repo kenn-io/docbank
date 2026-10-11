@@ -253,6 +253,25 @@ func TestDaemonOwnershipChallengeDoesNotRequireOrRevealCredentials(t *testing.T)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
+func TestAPIKeyChallengeProvesTheKeyWithoutRevealingIt(t *testing.T) {
+	t.Parallel()
+	ts, _ := newTestServer(t, nil)
+	nonce := bytes.Repeat([]byte{0x24}, daemonauth.NonceBytes)
+	resp, body := get(t, ts, daemonauth.KeyChallengePath+"?nonce="+hex.EncodeToString(nonce),
+		map[string]string{"X-Api-Key": ""})
+	require.Equal(t, http.StatusOK, resp.StatusCode, body)
+	var result struct {
+		Proof string `json:"proof"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(body), &result))
+	assert.True(t, daemonauth.VerifyKey(testAPIKey, nonce, result.Proof))
+	assert.False(t, daemonauth.VerifyKey("other-key", nonce, result.Proof))
+	assert.NotContains(t, body, testAPIKey)
+
+	resp, _ = get(t, ts, daemonauth.KeyChallengePath+"?nonce=short", map[string]string{"X-Api-Key": ""})
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
 func TestAuthRequiredWhenKeySet(t *testing.T) {
 	t.Parallel()
 	mutate := func(d *api.Deps) { d.Cfg.Server.APIKey = "sekrit" }

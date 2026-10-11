@@ -1138,6 +1138,20 @@ CREATE TABLE IF NOT EXISTS watch_sources (
     PRIMARY KEY (watch_name, source_ref)
 ) WITHOUT ROWID;
 
+-- A pushed source remembers its last accepted digest independently of its
+-- prunable content-version history. The digest is identity evidence, not a
+-- physical-byte reference; pruning can release the old source bytes.
+CREATE TABLE IF NOT EXISTS push_sources (
+    push_name          TEXT NOT NULL,
+    source_ref         TEXT NOT NULL,
+    node_id            INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    provenance_identity TEXT NOT NULL UNIQUE REFERENCES provenance(identity) ON DELETE CASCADE,
+    blob_hash          TEXT NOT NULL,
+    size               INTEGER NOT NULL CHECK (size >= 0),
+    accepted_at        TEXT NOT NULL,
+    PRIMARY KEY (push_name, source_ref)
+) WITHOUT ROWID;
+
 -- Ingest and provenance facts are append-only authority. Corrections add a
 -- new provenance fact linked through supersedes; they never rewrite history.
 CREATE TRIGGER IF NOT EXISTS ingests_immutable_update

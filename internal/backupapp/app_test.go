@@ -2070,6 +2070,103 @@ func TestWatchCursorSurvivesBackupWithoutRetainingPrunedSourceBytes(t *testing.T
 		"an unchanged watched source must not overwrite the retained manual edit")
 }
 
+func TestPushCursorSurvivesBackupWithoutRetainingPrunedSourceBytes(t *testing.T) {
+	fixture := newArchiveFixture(t)
+	const (
+		firstData    = "synthetic push source first version"
+		acceptedData = "synthetic push source accepted version"
+		manualData   = "synthetic manual content retained after pruning"
+	)
+	source := store.PushSource{Name: "synthetic-laptop", Ref: "inbox/pushed.txt", Duplicates: "create"}
+	var pushed, replaced store.Node
+	var acceptedVersion, acceptedHash string
+	var acceptedSize int64
+	write := func(data string) (blob.WriteReceipt, store.BlobPhysical, error) {
+		receipt, err := fixture.blobs.WriteDetailedContext(t.Context(), strings.NewReader(data))
+		if err != nil {
+			return blob.WriteReceipt{}, store.BlobPhysical{}, err
+		}
+		encoding, err := receipt.EncodingName()
+		if err != nil {
+			return blob.WriteReceipt{}, store.BlobPhysical{}, err
+		}
+		physical := store.BlobPhysical{Encoding: encoding, StoredBytes: receipt.StoredSize,
+			PackEligible: receipt.PackEligible, MD5: receipt.MD5, Created: receipt.Created}
+		return receipt, physical, nil
+	}
+	require.NoError(t, fixture.blobs.WithMutation(t.Context(), func() error {
+		first, firstPhysical, err := write(firstData)
+		if err != nil {
+			return err
+		}
+		pushed, _, err = fixture.metadata.AcceptPush(t.Context(), source, store.PushContent{ParentPath: "/", Name: "pushed.txt", Hash: first.Hash, Size: first.Size, MIMEType: "text/plain"}, firstPhysical)
+		if err != nil {
+			return err
+		}
+		accepted, acceptedPhysical, err := write(acceptedData)
+		if err != nil {
+			return err
+		}
+		pushed, _, err = fixture.metadata.AcceptPush(t.Context(), source, store.PushContent{ParentPath: "/", Name: "pushed.txt", Hash: accepted.Hash, Size: accepted.Size, MIMEType: "text/plain"}, acceptedPhysical)
+		if err != nil {
+			return err
+		}
+		acceptedVersion, acceptedHash, acceptedSize = pushed.CurrentVersionID, accepted.Hash, accepted.Size
+		manual, manualPhysical, err := write(manualData)
+		if err != nil {
+			return err
+		}
+		replaced, _, err = fixture.metadata.ReplaceContent(t.Context(), pushed.ID, pushed.Revision,
+			manual.Hash, manual.Size, "text/plain", manualPhysical)
+		return err
+	}))
+
+	pruned, err := fixture.metadata.PruneContentVersions(t.Context(), pushed.ID, replaced.Revision,
+		store.VersionPruneSelector{VersionIDs: []string{acceptedVersion}}, true)
+	require.NoError(t, err)
+	require.Equal(t, 1, pruned.DeletedVersions)
+	unreachable, err := fixture.metadata.UnreachableBlobs(t.Context())
+	require.NoError(t, err)
+	assert.Contains(t, unreachable, store.BlobInfo{Hash: acceptedHash, Size: acceptedSize},
+		"the digest cursor must not retain pruned source bytes")
+
+	ordinaryMetadata := string(exportMetadata(t, fixture.metadata))
+	assert.Contains(t, ordinaryMetadata, `"type":"blob","hash":"`+acceptedHash+`"`)
+	backupMetadata := string(exportBackupMetadata(t, fixture.metadata))
+	assert.NotContains(t, backupMetadata, `"type":"blob","hash":"`+acceptedHash+`"`)
+	assert.Contains(t, backupMetadata,
+		`{"type":"push_source","push_name":"`+source.Name+`","source_ref":"`+source.Ref+`"`)
+	assert.Contains(t, backupMetadata, `"blob_hash":"`+acceptedHash+`"`)
+
+	repo, err := backup.Init(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	manifest, err := backupapp.Create(t.Context(), repo, "test-version", fixture.metadata, fixture.blobs,
+		backup.CreateOptions{Jobs: 2})
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), manifest.Attachments.Blobs,
+		"backup carries fixture heads, the retained first push version, and the manual head")
+
+	target := filepath.Join(t.TempDir(), "restored")
+	_, err = backupapp.Restore(t.Context(), repo, "test-version", backup.RestoreOptions{
+		TargetDir: target, Jobs: 2,
+	})
+	require.NoError(t, err)
+	restored, err := store.OpenForRestore(filepath.Join(target, "docbank.db"), store.DefaultSQLiteDriver())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, restored.Close()) }()
+	_, err = restored.ContentVersionByID(t.Context(), acceptedVersion)
+	require.ErrorIs(t, err, store.ErrNotFound)
+	state, err := restored.PushSourceState(t.Context(), source)
+	require.NoError(t, err)
+	assert.Equal(t, acceptedHash, state.Hash)
+	assert.Equal(t, replaced.BlobHash, state.Node.BlobHash)
+	unchanged, outcome, err := restored.AcceptPush(t.Context(), source, store.PushContent{ParentPath: "/", Name: "pushed.txt", Hash: acceptedHash, Size: acceptedSize, MIMEType: "text/plain"})
+	require.NoError(t, err)
+	assert.Equal(t, "skipped", outcome)
+	assert.Equal(t, replaced.BlobHash, unchanged.BlobHash,
+		"the restored digest cursor must preserve the later manual head")
+}
+
 func TestDerivativeAuthoritySnapshotRestoresCatalogBlobsAndRebuildsLexicalProjection(t *testing.T) {
 	fixture := newArchiveFixture(t)
 	source, err := fixture.metadata.NodeByPath(t.Context(), "/alpha.txt")
