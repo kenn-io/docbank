@@ -452,6 +452,7 @@ func inspectVisualPreviewPNG(
 		case "iCCP":
 			unsupportedColor = true
 		case "eXIf":
+			firstEXIF := !sawEXIF
 			sawEXIF = true
 			if length > visualPreviewMaxEXIFBytes {
 				unsupportedMetadata = true
@@ -465,7 +466,9 @@ func inspectVisualPreviewPNG(
 				return 0, false, false, false, 0, err
 			}
 			if value, colorSpace, found := visualPreviewEXIF(payload); found {
-				orientation = value
+				if firstEXIF {
+					orientation = value
+				}
 				unsupportedColor = unsupportedColor || colorSpace != 0 && colorSpace != 1
 			}
 			length = 0

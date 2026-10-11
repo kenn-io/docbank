@@ -197,8 +197,10 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 	unusableLeading := syntheticPNGChunk(t, original, "eXIf", nil)
 	unusableLeading = appendSyntheticPNGChunk(untilIEND(unusableLeading), "eXIf", exif)
 	unusableLeading = appendSyntheticPNGChunk(unusableLeading, "IEND", nil)
-	duplicate := appendSyntheticPNGChunk(untilIEND(leading), "eXIf",
-		syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 3)}, nil))
+	rotate180 := syntheticTIFF(42, []syntheticTIFFEntry{tiffShort(0x0112, 3)}, nil)
+	twoLeading := syntheticPNGChunk(t, syntheticPNGChunk(t, original, "eXIf", rotate180), "eXIf", exif)
+	unusableThenLeading := syntheticPNGChunk(t, syntheticPNGChunk(t, original, "eXIf", exif), "eXIf", nil)
+	duplicate := appendSyntheticPNGChunk(untilIEND(leading), "eXIf", rotate180)
 	duplicate = appendSyntheticPNGChunk(duplicate, "IEND", nil)
 	uncalibrated := appendSyntheticPNGChunk(untilIEND(original), "eXIf", syntheticTIFF(42,
 		[]syntheticTIFFEntry{tiffShort(0x0112, 6)}, []syntheticTIFFEntry{tiffShort(0xa001, 0xffff)}))
@@ -216,15 +218,17 @@ func TestProduceVisualPreviewAppliesPNGEXIFOrientation(t *testing.T) {
 		source        []byte
 		width, height int
 	}{
-		"before IDAT":                     {leading, 2, 3},
-		"after IDAT":                      {trailing, 2, 3},
-		"leading EXIF wins over trailing": {duplicate, 2, 3},
-		"unusable leading EXIF wins":      {unusableLeading, 3, 2},
-		"empty first trailing EXIF wins":  {unusableTrailing, 3, 2},
-		"malformed first trailing wins":   {malformedTrailing, 3, 2},
-		"oversized first trailing wins":   {oversized, 3, 2},
-		"many trailing text chunks":       {manyText, 2, 3},
-		"trailing uncalibrated color":     {uncalibrated, 2, 3},
+		"before IDAT":                      {leading, 2, 3},
+		"after IDAT":                       {trailing, 2, 3},
+		"leading EXIF wins over trailing":  {duplicate, 2, 3},
+		"first of two leading EXIF wins":   {twoLeading, 2, 3},
+		"unusable first leading EXIF wins": {unusableThenLeading, 3, 2},
+		"unusable leading EXIF wins":       {unusableLeading, 3, 2},
+		"empty first trailing EXIF wins":   {unusableTrailing, 3, 2},
+		"malformed first trailing wins":    {malformedTrailing, 3, 2},
+		"oversized first trailing wins":    {oversized, 3, 2},
+		"many trailing text chunks":        {manyText, 2, 3},
+		"trailing uncalibrated color":      {uncalibrated, 2, 3},
 	} {
 		t.Run(name, func(t *testing.T) {
 			digest := sha256.Sum256(test.source)
