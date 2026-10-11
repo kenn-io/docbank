@@ -13,6 +13,26 @@ import (
 
 const legacyMigrationTimestamp = "2026-08-22T12:00:00.000000000Z"
 
+func TestLegacyPlainTextProfileOwnsCanonicalJSON(t *testing.T) {
+	t.Parallel()
+	profile, err := legacyPlainTextProfile()
+	require.NoError(t, err)
+	wantJSON := string(profile.CanonicalProfile)
+	wantFingerprint := profile.Fingerprint
+	require.NotEmpty(t, wantJSON)
+
+	// A caller modifying its copy must not change the policy used by later
+	// imports, migrations, or purge checks, including those in other vaults.
+	clear(profile.CanonicalProfile)
+	profile.Fingerprint = "caller-modified"
+	again, err := legacyPlainTextProfile()
+	require.NoError(t, err)
+	require.JSONEq(t, wantJSON, string(again.CanonicalProfile))
+	require.Equal(t, wantFingerprint, again.Fingerprint)
+	_, err = normalizeProcessingProfileRecord(again)
+	require.NoError(t, err)
+}
+
 func TestLegacyLexicalGenerationIdentityIncludesZeroSegmentBuildMembership(t *testing.T) {
 	t.Parallel()
 	s, _ := newRenditionCatalogFixture(t)

@@ -96,6 +96,12 @@ and retention and disclosure. This permits reuse at the layer whose inputs
 still match. Changing embedding chunking does not redefine the original or
 make a different extractor result equivalent.
 
+The built-in plain-text policy has no vault-specific inputs. Docbank computes
+its canonical JSON and fingerprints once per process so text imports and
+restore queue rebuilds can reuse them. Each caller receives its own JSON bytes.
+Extraction eligibility and purge suppressions still read the vault's current
+transaction state.
+
 A vector space defines which vectors can be compared: provider descriptor,
 model, dimensions, metric, normalization, scalar encoding, and input
 formatters all matter. Destination-sensitive disclosure identities are checked

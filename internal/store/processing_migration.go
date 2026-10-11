@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strconv"
+	"sync"
 	"unicode/utf8"
 
 	"go.kenn.io/docbank/document"
@@ -476,7 +478,16 @@ func readLegacySelectedVersions(
 	return result, nil
 }
 
+var cachedLegacyPlainTextProfile = sync.OnceValues(buildLegacyPlainTextProfile)
+
 func legacyPlainTextProfile() (ProcessingProfileRecord, error) {
+	profile, err := cachedLegacyPlainTextProfile()
+	// The fixed policy is shared across vaults; callers still own their JSON.
+	profile.CanonicalProfile = slices.Clone(profile.CanonicalProfile)
+	return profile, err
+}
+
+func buildLegacyPlainTextProfile() (ProcessingProfileRecord, error) {
 	fingerprint := func(field string) string {
 		digest := sha256.Sum256([]byte("docbank-legacy-plain-text-profile/v1\x00" + field))
 		return hex.EncodeToString(digest[:])
