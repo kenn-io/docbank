@@ -13,6 +13,15 @@ import (
 
 const maxPhotoResponseFiles = 256
 
+func photoCookie(cookies []string) func(context.Context, *http.Request) error {
+	return func(_ context.Context, request *http.Request) error {
+		if len(cookies) > 0 {
+			request.Header.Set("Cookie", cookies[0])
+		}
+		return nil
+	}
+}
+
 func revisionIfMatch(revision int64) string {
 	return strconv.Quote(strconv.FormatInt(revision, 10))
 }
@@ -110,12 +119,7 @@ func (c *Connection) PhotoAsset(ctx context.Context, id string, cookies ...strin
 		return api.PhotoAsset{}, errors.New("photo asset ID must be a canonical UUIDv4")
 	}
 	var response *http.Response
-	asset, err := c.apiWithResponse(&response).GetPhotoAsset(ctx, &apiclient.GetPhotoAssetRequestOptions{PathParams: &apiclient.GetPhotoAssetPath{AssetID: id}}, func(_ context.Context, request *http.Request) error {
-		if len(cookies) > 0 {
-			request.Header.Set("Cookie", cookies[0])
-		}
-		return nil
-	})
+	asset, err := c.apiWithResponse(&response).GetPhotoAsset(ctx, &apiclient.GetPhotoAssetRequestOptions{PathParams: &apiclient.GetPhotoAssetPath{AssetID: id}}, photoCookie(cookies))
 	if err != nil {
 		return api.PhotoAsset{}, err
 	}
@@ -130,12 +134,7 @@ func (c *Connection) PhotoAssetForNode(ctx context.Context, nodeID int64, cookie
 		return api.PhotoAsset{}, errors.New("photo node ID must be positive")
 	}
 	var response *http.Response
-	asset, err := c.apiWithResponse(&response).GetPhotoAssetByNode(ctx, &apiclient.GetPhotoAssetByNodeRequestOptions{PathParams: &apiclient.GetPhotoAssetByNodePath{NodeID: nodeID}}, func(_ context.Context, request *http.Request) error {
-		if len(cookies) > 0 {
-			request.Header.Set("Cookie", cookies[0])
-		}
-		return nil
-	})
+	asset, err := c.apiWithResponse(&response).GetPhotoAssetByNode(ctx, &apiclient.GetPhotoAssetByNodeRequestOptions{PathParams: &apiclient.GetPhotoAssetByNodePath{NodeID: nodeID}}, photoCookie(cookies))
 	if err != nil {
 		return api.PhotoAsset{}, err
 	}
@@ -148,17 +147,17 @@ func (c *Connection) PhotoAssetForNode(ctx context.Context, nodeID int64, cookie
 	return *asset, nil
 }
 
-func (c *Connection) CreatePhotoAsset(ctx context.Context, nodeID int64, role, kind string) (api.PhotoAsset, error) {
+func (c *Connection) CreatePhotoAsset(ctx context.Context, nodeID int64, role, kind string, cookies ...string) (api.PhotoAsset, error) {
 	if nodeID < 1 {
 		return api.PhotoAsset{}, errors.New("photo node ID must be positive")
 	}
 	var response *http.Response
-	asset, err := c.apiWithResponse(&response).CreatePhotoAsset(ctx, &apiclient.CreatePhotoAssetRequestOptions{Body: &apiclient.CreatePhotoAssetBody{NodeID: nodeID, Role: role, Kind: kind}})
+	asset, err := c.apiWithResponse(&response).CreatePhotoAsset(ctx, &apiclient.CreatePhotoAssetRequestOptions{Body: &apiclient.CreatePhotoAssetBody{NodeID: nodeID, Role: role, Kind: kind}}, photoCookie(cookies))
 	result, err := photoMutationResponse(response, asset, err, "")
 	return photoMutationAddressed(result, err, func(a api.PhotoAsset) error { return photoResponseHasNode(a, nodeID) })
 }
 
-func (c *Connection) AttachPhotoFile(ctx context.Context, assetID string, revision int64, nodeID int64, role string, sidecarOfID *string) (api.PhotoAsset, error) {
+func (c *Connection) AttachPhotoFile(ctx context.Context, assetID string, revision int64, nodeID int64, role string, sidecarOfID *string, cookies ...string) (api.PhotoAsset, error) {
 	if !validUUIDv4(assetID) || revision < 1 || nodeID < 1 {
 		return api.PhotoAsset{}, errors.New("invalid photo attach identity or revision")
 	}
@@ -167,12 +166,12 @@ func (c *Connection) AttachPhotoFile(ctx context.Context, assetID string, revisi
 		PathParams: &apiclient.AttachPhotoFilePath{AssetID: assetID},
 		Header:     &apiclient.AttachPhotoFileHeaders{IfMatch: revisionIfMatch(revision)},
 		Body:       &apiclient.AttachPhotoFileBody{NodeID: nodeID, Role: role, SidecarOfID: sidecarOfID},
-	})
+	}, photoCookie(cookies))
 	result, err := photoMutationResponse(response, asset, err, assetID)
 	return photoMutationAddressed(result, err, func(a api.PhotoAsset) error { return photoResponseHasNode(a, nodeID) })
 }
 
-func (c *Connection) DetachPhotoFile(ctx context.Context, assetID string, revision int64, fileID string, clearDependentSidecars bool) (api.PhotoAsset, error) {
+func (c *Connection) DetachPhotoFile(ctx context.Context, assetID string, revision int64, fileID string, clearDependentSidecars bool, cookies ...string) (api.PhotoAsset, error) {
 	if !validUUIDv4(assetID) || !validUUIDv4(fileID) || revision < 1 {
 		return api.PhotoAsset{}, errors.New("invalid photo detach identity or revision")
 	}
@@ -181,12 +180,12 @@ func (c *Connection) DetachPhotoFile(ctx context.Context, assetID string, revisi
 		PathParams: &apiclient.DetachPhotoFilePath{AssetID: assetID, FileID: fileID},
 		Header:     &apiclient.DetachPhotoFileHeaders{IfMatch: revisionIfMatch(revision)},
 		Query:      &apiclient.DetachPhotoFileQuery{ClearDependentSidecars: &clearDependentSidecars},
-	})
+	}, photoCookie(cookies))
 	result, err := photoMutationResponse(response, asset, err, assetID)
 	return photoMutationAddressed(result, err, func(a api.PhotoAsset) error { return photoResponseLacksFile(a, fileID) })
 }
 
-func (c *Connection) TrashPhotoAsset(ctx context.Context, assetID string, revision int64) (api.PhotoAsset, error) {
+func (c *Connection) TrashPhotoAsset(ctx context.Context, assetID string, revision int64, cookies ...string) (api.PhotoAsset, error) {
 	if !validUUIDv4(assetID) || revision < 1 {
 		return api.PhotoAsset{}, errors.New("invalid photo trash identity or revision")
 	}
@@ -194,11 +193,11 @@ func (c *Connection) TrashPhotoAsset(ctx context.Context, assetID string, revisi
 	asset, err := c.apiWithResponse(&response).TrashPhotoAsset(ctx, &apiclient.TrashPhotoAssetRequestOptions{
 		PathParams: &apiclient.TrashPhotoAssetPath{AssetID: assetID},
 		Header:     &apiclient.TrashPhotoAssetHeaders{IfMatch: revisionIfMatch(revision)},
-	})
+	}, photoCookie(cookies))
 	return photoMutationResponse(response, asset, err, assetID)
 }
 
-func (c *Connection) ExcludePhotoAsset(ctx context.Context, assetID string, revision int64, excluded bool) (api.PhotoAsset, error) {
+func (c *Connection) ExcludePhotoAsset(ctx context.Context, assetID string, revision int64, excluded bool, cookies ...string) (api.PhotoAsset, error) {
 	if !validUUIDv4(assetID) || revision < 1 {
 		return api.PhotoAsset{}, errors.New("invalid photo exclusion identity or revision")
 	}
@@ -207,11 +206,11 @@ func (c *Connection) ExcludePhotoAsset(ctx context.Context, assetID string, revi
 		PathParams: &apiclient.ExcludePhotoAssetPath{AssetID: assetID},
 		Header:     &apiclient.ExcludePhotoAssetHeaders{IfMatch: revisionIfMatch(revision)},
 		Body:       &apiclient.ExcludePhotoAssetBody{Excluded: excluded},
-	})
+	}, photoCookie(cookies))
 	return photoMutationResponse(response, asset, err, assetID)
 }
 
-func (c *Connection) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevision *int64, role, kind string) (api.PhotoAsset, error) {
+func (c *Connection) PromotePhotoNode(ctx context.Context, nodeID int64, expectedRevision *int64, role, kind string, cookies ...string) (api.PhotoAsset, error) {
 	if nodeID < 1 {
 		return api.PhotoAsset{}, errors.New("photo node ID must be positive")
 	}
@@ -230,12 +229,12 @@ func (c *Connection) PromotePhotoNode(ctx context.Context, nodeID int64, expecte
 		options.Header = &apiclient.PromotePhotoNodeHeaders{IfMatch: &ifMatch}
 	}
 	var response *http.Response
-	asset, err := c.apiWithResponse(&response).PromotePhotoNode(ctx, options)
+	asset, err := c.apiWithResponse(&response).PromotePhotoNode(ctx, options, photoCookie(cookies))
 	result, err := photoMutationResponse(response, asset, err, "")
 	return photoMutationAddressed(result, err, func(a api.PhotoAsset) error { return photoResponseHasNode(a, nodeID) })
 }
 
-func (c *Connection) SetPhotoDisplay(ctx context.Context, assetID string, revision int64, fileID *string) (api.PhotoAsset, error) {
+func (c *Connection) SetPhotoDisplay(ctx context.Context, assetID string, revision int64, fileID *string, cookies ...string) (api.PhotoAsset, error) {
 	if !validUUIDv4(assetID) || revision < 1 || fileID != nil && !validUUIDv4(*fileID) {
 		return api.PhotoAsset{}, errors.New("invalid photo display identity or revision")
 	}
@@ -244,7 +243,7 @@ func (c *Connection) SetPhotoDisplay(ctx context.Context, assetID string, revisi
 		PathParams: &apiclient.SetPhotoDisplayPath{AssetID: assetID},
 		Header:     &apiclient.SetPhotoDisplayHeaders{IfMatch: revisionIfMatch(revision)},
 		Body:       &apiclient.SetPhotoDisplayBody{FileID: fileID},
-	})
+	}, photoCookie(cookies))
 	return photoMutationResponse(response, asset, err, assetID)
 }
 

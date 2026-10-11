@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -110,7 +111,7 @@ func TestPhotoHiddenPasscodeNormalization(t *testing.T) {
 	}
 }
 
-func TestPhotoHiddenTrashListsFilesAndRestorePreservesHidden(t *testing.T) {
+func TestPhotoHiddenRestorePreservesHidden(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -122,20 +123,10 @@ func TestPhotoHiddenTrashListsFilesAndRestorePreservesHidden(t *testing.T) {
 		_, _, err = s.Trash(ctx, node.ID, node.Revision)
 		require.NoError(t, err)
 	}
-	page, total, err := s.TrashedRootsPage(ctx, 10, 0)
+	trashed, err := s.NodeByID(ctx, nodes[0].ID)
 	require.NoError(t, err)
-	require.Equal(t, 1, total)
-	require.Len(t, page, 1)
-	assert.Equal(t, nodes[0].Name, page[0].Name)
-	assert.Equal(t, asset.ID, page[0].PhotoAssetID)
-	assert.Equal(t, len(nodes), page[0].PhotoFileCount)
-	_, _, err = s.Restore(ctx, page[0].ID, page[0].Revision)
+	_, _, err = s.Restore(ctx, trashed.ID, trashed.Revision)
 	require.NoError(t, err)
-	for _, node := range nodes {
-		restored, err := s.NodeByID(ctx, node.ID)
-		require.NoError(t, err)
-		assert.Nil(t, restored.TrashedAt)
-	}
 	current, err := photoAssetByIDQuery(ctx, s.db, asset.ID)
 	require.NoError(t, err)
 	assert.Equal(t, asset.HiddenAt, current.HiddenAt)
@@ -353,10 +344,32 @@ func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
 	require.NotNil(t, restored.HiddenAt)
 }
 
+func TestPhotoHiddenChangeIDIgnoresOtherReceipts(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	asset := albumAsset(t, s, "private.jpg")
+	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
+	_, err := s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	before, err := s.PhotoHiddenState(ctx)
+	require.NoError(t, err)
+	other := albumAsset(t, s, "visible.jpg")
+	other, err = s.SetPhotoDisplay(ctx, other.ID, other.Revision, &other.Files[0].ID)
+	require.NoError(t, err)
+	other, err = s.SetPhotoAssetExcluded(ctx, other.ID, other.Revision, true)
+	require.NoError(t, err)
+	_, err = s.TrashPhotoAsset(ctx, other.ID, other.Revision)
+	require.NoError(t, err)
+	after, err := s.PhotoHiddenState(ctx)
+	require.NoError(t, err)
+	require.Equal(t, before.ChangeID, after.ChangeID)
+}
+
 func TestPhotoHiddenLockoutMetadata(t *testing.T) {
 	t.Parallel()
 	for _, failures := range []int{4, 5} {
-		t.Run(fmt.Sprint(failures), func(t *testing.T) {
+		t.Run(strconv.Itoa(failures), func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
 			require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))

@@ -51,7 +51,9 @@ var photoCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		asset, err := c.CreatePhotoAsset(cmd.Context(), node.ID, photoRole, photoKind)
+		asset, err := withPhotoHidden(cmd, c, func(cookie string) (api.PhotoAsset, error) {
+			return c.CreatePhotoAsset(cmd.Context(), node.ID, photoRole, photoKind, cookie)
+		})
 		if err != nil {
 			return err
 		}
@@ -81,10 +83,12 @@ var photoInspectCmd = &cobra.Command{
 			// Read-only: a stable ID may still name a trashed member file.
 			var node api.Node
 			if node, err = selector.resolveIncludingTrash(cmd.Context(), c); err == nil {
-				asset, err = c.PhotoAssetForNode(cmd.Context(), node.ID)
+				asset, err = withPhotoHidden(cmd, c, func(cookie string) (api.PhotoAsset, error) {
+					return c.PhotoAssetForNode(cmd.Context(), node.ID, cookie)
+				})
 			}
 		} else if c, err = daemonconn.Ensure(cmd.Context()); err == nil {
-			asset, err = c.PhotoAsset(cmd.Context(), args[0])
+			asset, err = withPhotoHidden(cmd, c, func(cookie string) (api.PhotoAsset, error) { return c.PhotoAsset(cmd.Context(), args[0], cookie) })
 		}
 		if err != nil {
 			return err
@@ -110,8 +114,10 @@ var photoAttachCmd = &cobra.Command{
 		if photoSidecarOf != "" {
 			sidecarOf = &photoSidecarOf
 		}
-		asset, err := withPhotoRevision(cmd, photoAssetRevision(cmd, c, args[0]), func(revision *int64) (api.PhotoAsset, error) {
-			return c.AttachPhotoFile(cmd.Context(), args[0], *revision, node.ID, photoRole, sidecarOf)
+		asset, err := withPhotoHidden(cmd, c, func(cookie string) (api.PhotoAsset, error) {
+			return withPhotoRevision(cmd, photoAssetRevision(cmd, c, args[0], cookie), func(revision *int64) (api.PhotoAsset, error) {
+				return c.AttachPhotoFile(cmd.Context(), args[0], *revision, node.ID, photoRole, sidecarOf, cookie)
+			})
 		})
 		if err != nil {
 			return err
@@ -133,8 +139,10 @@ var photoDetachCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		asset, err := withPhotoRevision(cmd, photoAssetRevision(cmd, c, args[0]), func(revision *int64) (api.PhotoAsset, error) {
-			return c.DetachPhotoFile(cmd.Context(), args[0], *revision, args[1], photoClearDependentSidecars)
+		asset, err := withPhotoHidden(cmd, c, func(cookie string) (api.PhotoAsset, error) {
+			return withPhotoRevision(cmd, photoAssetRevision(cmd, c, args[0], cookie), func(revision *int64) (api.PhotoAsset, error) {
+				return c.DetachPhotoFile(cmd.Context(), args[0], *revision, args[1], photoClearDependentSidecars, cookie)
+			})
 		})
 		if err != nil {
 			return err
@@ -157,8 +165,10 @@ var photoTrashCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		asset, err := withPhotoRevision(cmd, photoAssetRevision(cmd, c, args[0]), func(revision *int64) (api.PhotoAsset, error) {
-			return c.TrashPhotoAsset(cmd.Context(), args[0], *revision)
+		asset, err := withPhotoHidden(cmd, c, func(cookie string) (api.PhotoAsset, error) {
+			return withPhotoRevision(cmd, photoAssetRevision(cmd, c, args[0], cookie), func(revision *int64) (api.PhotoAsset, error) {
+				return c.TrashPhotoAsset(cmd.Context(), args[0], *revision, cookie)
+			})
 		})
 		if err != nil {
 			return err
@@ -180,8 +190,10 @@ var photoExcludeCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		asset, err := withPhotoRevision(cmd, photoAssetRevision(cmd, c, args[0]), func(revision *int64) (api.PhotoAsset, error) {
-			return c.ExcludePhotoAsset(cmd.Context(), args[0], *revision, photoExcluded)
+		asset, err := withPhotoHidden(cmd, c, func(cookie string) (api.PhotoAsset, error) {
+			return withPhotoRevision(cmd, photoAssetRevision(cmd, c, args[0], cookie), func(revision *int64) (api.PhotoAsset, error) {
+				return c.ExcludePhotoAsset(cmd.Context(), args[0], *revision, photoExcluded, cookie)
+			})
 		})
 		if err != nil {
 			return err
@@ -203,18 +215,20 @@ var photoPromoteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		current := func() (*int64, error) {
-			asset, err := c.PhotoAssetForNode(cmd.Context(), node.ID)
-			if errors.Is(err, store.ErrNotFound) {
-				return nil, nil //nolint:nilnil // an unowned node has no asset yet, so promotion sends no revision
+		asset, err := withPhotoHidden(cmd, c, func(cookie string) (api.PhotoAsset, error) {
+			current := func() (*int64, error) {
+				asset, err := c.PhotoAssetForNode(cmd.Context(), node.ID, cookie)
+				if errors.Is(err, store.ErrNotFound) {
+					return nil, nil //nolint:nilnil // an unowned node has no asset yet, so promotion sends no revision
+				}
+				if err != nil {
+					return nil, err
+				}
+				return &asset.Revision, nil
 			}
-			if err != nil {
-				return nil, err
-			}
-			return &asset.Revision, nil
-		}
-		asset, err := withPhotoRevision(cmd, current, func(revision *int64) (api.PhotoAsset, error) {
-			return c.PromotePhotoNode(cmd.Context(), node.ID, revision, photoRole, photoKind)
+			return withPhotoRevision(cmd, current, func(revision *int64) (api.PhotoAsset, error) {
+				return c.PromotePhotoNode(cmd.Context(), node.ID, revision, photoRole, photoKind, cookie)
+			})
 		})
 		if err != nil {
 			return err
@@ -240,8 +254,10 @@ var photoDisplayCmd = &cobra.Command{
 		if len(args) == 2 {
 			fileID = &args[1]
 		}
-		asset, err := withPhotoRevision(cmd, photoAssetRevision(cmd, c, args[0]), func(revision *int64) (api.PhotoAsset, error) {
-			return c.SetPhotoDisplay(cmd.Context(), args[0], *revision, fileID)
+		asset, err := withPhotoHidden(cmd, c, func(cookie string) (api.PhotoAsset, error) {
+			return withPhotoRevision(cmd, photoAssetRevision(cmd, c, args[0], cookie), func(revision *int64) (api.PhotoAsset, error) {
+				return c.SetPhotoDisplay(cmd.Context(), args[0], *revision, fileID, cookie)
+			})
 		})
 		if err != nil {
 			return err
@@ -350,9 +366,9 @@ func checkPhotoRevisionFlag(cmd *cobra.Command) error {
 	return nil
 }
 
-func photoAssetRevision(cmd *cobra.Command, c *daemonconn.Connection, assetID string) func() (*int64, error) {
+func photoAssetRevision(cmd *cobra.Command, c *daemonconn.Connection, assetID, cookie string) func() (*int64, error) {
 	return func() (*int64, error) {
-		asset, err := c.PhotoAsset(cmd.Context(), assetID)
+		asset, err := c.PhotoAsset(cmd.Context(), assetID, cookie)
 		if err != nil {
 			return nil, err
 		}

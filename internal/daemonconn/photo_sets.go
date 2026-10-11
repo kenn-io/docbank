@@ -82,12 +82,12 @@ func (c *Connection) UpdatePhotoAlbum(ctx context.Context, id string, revision i
 	return photoAlbumMutationResponse(response, album, err, id)
 }
 
-func (c *Connection) SetPhotoAlbumCover(ctx context.Context, id string, revision int64, assetID *string) (api.PhotoAlbum, error) {
+func (c *Connection) SetPhotoAlbumCover(ctx context.Context, id string, revision int64, assetID *string, cookies ...string) (api.PhotoAlbum, error) {
 	if !validUUIDv4(id) || revision < 1 {
 		return api.PhotoAlbum{}, errors.New("invalid album identity or revision")
 	}
 	var response *http.Response
-	album, err := c.apiWithResponse(&response).SetPhotoAlbumCover(ctx, &apiclient.SetPhotoAlbumCoverRequestOptions{PathParams: &apiclient.SetPhotoAlbumCoverPath{SetID: id}, Header: &apiclient.SetPhotoAlbumCoverHeaders{IfMatch: revisionIfMatch(revision)}, Body: &api.PhotoAlbumCoverRequest{AssetID: assetID}})
+	album, err := c.apiWithResponse(&response).SetPhotoAlbumCover(ctx, &apiclient.SetPhotoAlbumCoverRequestOptions{PathParams: &apiclient.SetPhotoAlbumCoverPath{SetID: id}, Header: &apiclient.SetPhotoAlbumCoverHeaders{IfMatch: revisionIfMatch(revision)}, Body: &api.PhotoAlbumCoverRequest{AssetID: assetID}}, photoCookie(cookies))
 	return photoAlbumMutationResponse(response, album, err, id)
 }
 
@@ -109,21 +109,21 @@ func (c *Connection) DeletePhotoAlbum(ctx context.Context, id string, revision i
 	return photoAlbumMutationResponse(response, album, err, id)
 }
 
-func (c *Connection) AddPhotoAlbumMembers(ctx context.Context, id string, revision int64, body api.PhotoAlbumMembersRequest) (api.PhotoAlbum, error) {
+func (c *Connection) AddPhotoAlbumMembers(ctx context.Context, id string, revision int64, body api.PhotoAlbumMembersRequest, cookies ...string) (api.PhotoAlbum, error) {
 	if !validUUIDv4(id) || revision < 1 {
 		return api.PhotoAlbum{}, errors.New("invalid album identity or revision")
 	}
 	var response *http.Response
-	album, err := c.apiWithResponse(&response).AddPhotoAlbumMembers(ctx, &apiclient.AddPhotoAlbumMembersRequestOptions{PathParams: &apiclient.AddPhotoAlbumMembersPath{SetID: id}, Header: &apiclient.AddPhotoAlbumMembersHeaders{IfMatch: revisionIfMatch(revision)}, Body: &body})
+	album, err := c.apiWithResponse(&response).AddPhotoAlbumMembers(ctx, &apiclient.AddPhotoAlbumMembersRequestOptions{PathParams: &apiclient.AddPhotoAlbumMembersPath{SetID: id}, Header: &apiclient.AddPhotoAlbumMembersHeaders{IfMatch: revisionIfMatch(revision)}, Body: &body}, photoCookie(cookies))
 	return photoAlbumMutationResponse(response, album, err, id)
 }
 
-func (c *Connection) RemovePhotoAlbumMembers(ctx context.Context, id string, revision int64, body api.PhotoAlbumMembersRequest) (api.PhotoAlbum, error) {
+func (c *Connection) RemovePhotoAlbumMembers(ctx context.Context, id string, revision int64, body api.PhotoAlbumMembersRequest, cookies ...string) (api.PhotoAlbum, error) {
 	if !validUUIDv4(id) || revision < 1 {
 		return api.PhotoAlbum{}, errors.New("invalid album identity or revision")
 	}
 	var response *http.Response
-	album, err := c.apiWithResponse(&response).RemovePhotoAlbumMembers(ctx, &apiclient.RemovePhotoAlbumMembersRequestOptions{PathParams: &apiclient.RemovePhotoAlbumMembersPath{SetID: id}, Header: &apiclient.RemovePhotoAlbumMembersHeaders{IfMatch: revisionIfMatch(revision)}, Body: &body})
+	album, err := c.apiWithResponse(&response).RemovePhotoAlbumMembers(ctx, &apiclient.RemovePhotoAlbumMembersRequestOptions{PathParams: &apiclient.RemovePhotoAlbumMembersPath{SetID: id}, Header: &apiclient.RemovePhotoAlbumMembersHeaders{IfMatch: revisionIfMatch(revision)}, Body: &body}, photoCookie(cookies))
 	return photoAlbumMutationResponse(response, album, err, id)
 }
 

@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"encoding/json/v2"
 	"image/color"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/config"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
 )
@@ -27,6 +31,59 @@ func TestPhotoHiddenPasscodeInput(t *testing.T) {
 	next, err := readPhotoPasscode(cmd, input, "New")
 	require.NoError(t, err)
 	require.Equal(t, "new passcode", next)
+}
+
+func TestPhotoHiddenInvocationUnlock(t *testing.T) {
+	for _, passcode := range []string{"synthetic-passcode", "wrong-passcode"} {
+		t.Run(passcode, func(t *testing.T) {
+			dir := t.TempDir()
+			s, err := store.Open(filepath.Join(dir, "docbank.db"))
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, s.Close()) })
+			ctx := t.Context()
+			node, err := s.CreateFile(ctx, s.RootID(), "synthetic.jpg", strings.Repeat("a", 64), 20, "image/jpeg")
+			require.NoError(t, err)
+			asset, err := s.PhotoAssetForNode(ctx, node.ID)
+			require.NoError(t, err)
+			require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+			asset, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+			require.NoError(t, err)
+			cfg := config.Default()
+			cfg.Server.APIKey = "synthetic-key"
+			server := api.NewServer(api.Deps{Store: s, VaultRoot: dir, Cfg: cfg})
+			t.Cleanup(server.Close)
+			unlocks, writes := 0, 0
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/unlock") {
+					unlocks++
+				}
+				if strings.HasSuffix(r.URL.Path, "/exclude") {
+					writes++
+				}
+				server.Handler().ServeHTTP(w, r)
+			}))
+			t.Cleanup(ts.Close)
+			connection := daemonconn.New(ts.URL, cfg.Server.APIKey)
+			cmd := &cobra.Command{}
+			cmd.SetContext(ctx)
+			cmd.SetIn(strings.NewReader(passcode + "\n"))
+			result, err := withPhotoHidden(cmd, connection, func(cookie string) (api.PhotoAsset, error) {
+				return connection.ExcludePhotoAsset(ctx, asset.ID, asset.Revision, true, cookie)
+			})
+			require.Equal(t, 1, unlocks, "operation error: %v", err)
+			if passcode == "wrong-passcode" {
+				require.ErrorIs(t, err, store.ErrHiddenPasscode)
+				require.Equal(t, 1, writes)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, 2, writes)
+			require.NotNil(t, result.HiddenAt)
+			require.NotNil(t, result.ExcludedAt)
+			_, err = connection.PhotoAsset(ctx, asset.ID)
+			require.ErrorIs(t, err, store.ErrHiddenLocked)
+		})
+	}
 }
 
 func TestPhotoHiddenCLIUnhideBySelector(t *testing.T) {
@@ -47,12 +104,14 @@ func TestPhotoHiddenCLIUnhideBySelector(t *testing.T) {
 	require.NoError(t, err)
 	unhide, _, err := rootCmd.Find([]string{"photos", "unhide"})
 	require.NoError(t, err)
-	t.Cleanup(func() { unhide.SetIn(nil) })
+	t.Cleanup(func() { unhide.SetIn(nil); photoInspectCmd.SetIn(nil) })
 	_, err = runCLI(t, "photos", "hide", asset.ID)
 	require.NoError(t, err)
-	_, err = runCLI(t, "photos", "assets", "inspect", "/inbox/synthetic-hidden.jpeg")
-	require.ErrorIs(t, err, store.ErrHiddenLocked)
-	require.EqualError(t, err, "error executing request: hidden photos are locked; run docbank photos unhide <asset-id|path-or-id> before retrying")
+	photoInspectCmd.SetIn(strings.NewReader("synthetic-passcode\n"))
+	out, err = runCLI(t, "photos", "assets", "inspect", "/inbox/synthetic-hidden.jpeg")
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(out), &asset))
+	require.NotNil(t, asset.HiddenAt)
 	unhide.SetIn(strings.NewReader("incorrect-passcode\n"))
 	_, err = runCLI(t, "photos", "unhide", asset.ID)
 	require.ErrorIs(t, err, store.ErrHiddenPasscode)

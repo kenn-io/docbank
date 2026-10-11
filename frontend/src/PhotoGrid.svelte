@@ -72,11 +72,6 @@
     }
   }
 
-  export async function restoreScrollTop(top: number) {
-    await tick();
-    if (container) { container.scrollTop = top; scrollTop = container.scrollTop; }
-  }
-
   export function preservePosition() {
     const element = container;
     if (!element) return async () => {};

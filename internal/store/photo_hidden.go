@@ -126,7 +126,7 @@ func (s *Store) hiddenSession(ctx context.Context, q metadataQuerier) (string, e
 func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) {
 	var state PhotoHiddenState
 	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(ctx, `SELECT receipt_id FROM photo_change_receipts ORDER BY rowid DESC LIMIT 1`).Scan(&state.ChangeID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err := tx.QueryRowContext(ctx, `SELECT receipt_id FROM photo_change_receipts WHERE rowid IN (SELECT MAX(rowid) FROM photo_change_receipts WHERE operation='hide' UNION ALL SELECT MAX(rowid) FROM photo_change_receipts WHERE operation='unhide') ORDER BY rowid DESC LIMIT 1`).Scan(&state.ChangeID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_hidden_credentials)`).Scan(&state.Configured); err != nil {

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/store"
 	"golang.org/x/term"
 )
 
@@ -30,6 +31,22 @@ func readPhotoPasscode(cmd *cobra.Command, input *bufio.Reader, prompt string) (
 	}
 	value := strings.TrimSuffix(strings.TrimSuffix(string(bytes), "\n"), "\r")
 	return value, nil
+}
+
+func withPhotoHidden[T any](cmd *cobra.Command, connection *daemonconn.Connection, run func(string) (T, error)) (T, error) {
+	result, err := run("")
+	if !errors.Is(err, store.ErrHiddenLocked) {
+		return result, err
+	}
+	passcode, err := readPhotoPasscode(cmd, bufio.NewReaderSize(cmd.InOrStdin(), 2048), "Passcode")
+	if err != nil {
+		return result, err
+	}
+	_, cookie, err := connection.PhotoHidden(cmd.Context(), "unlock", passcode, "")
+	if err != nil {
+		return result, err
+	}
+	return run(cookie)
 }
 
 func init() {
@@ -83,41 +100,32 @@ func init() {
 			if err != nil {
 				return err
 			}
-			var cookie string
-			if !hide {
-				passcode, err := readPhotoPasscode(cmd, bufio.NewReaderSize(cmd.InOrStdin(), 2048), "Passcode")
-				if err != nil {
-					return err
+			asset, err := withPhotoHidden(cmd, connection, func(cookie string) (api.PhotoAsset, error) {
+				assetID := args[0]
+				if !hide && (strings.HasPrefix(assetID, nodeIDSelectorPrefix) || strings.HasPrefix(assetID, "/")) {
+					selector, err := parseNodeSelector(assetID)
+					if err != nil {
+						return api.PhotoAsset{}, err
+					}
+					node, err := selector.resolveIncludingTrash(cmd.Context(), connection)
+					if err != nil {
+						return api.PhotoAsset{}, err
+					}
+					asset, err := connection.PhotoAssetForNode(cmd.Context(), node.ID, cookie)
+					if err != nil {
+						return api.PhotoAsset{}, err
+					}
+					assetID = asset.ID
 				}
-				_, cookie, err = connection.PhotoHidden(cmd.Context(), "unlock", passcode, "")
-				if err != nil {
-					return err
-				}
-			}
-			assetID := args[0]
-			if !hide && (strings.HasPrefix(assetID, nodeIDSelectorPrefix) || strings.HasPrefix(assetID, "/")) {
-				selector, err := parseNodeSelector(assetID)
-				if err != nil {
-					return err
-				}
-				node, err := selector.resolveIncludingTrash(cmd.Context(), connection)
-				if err != nil {
-					return err
-				}
-				asset, err := connection.PhotoAssetForNode(cmd.Context(), node.ID, cookie)
-				if err != nil {
-					return err
-				}
-				assetID = asset.ID
-			}
-			asset, err := withPhotoRevision(cmd, func() (*int64, error) {
-				asset, err := connection.PhotoAsset(cmd.Context(), assetID, cookie)
-				if err != nil {
-					return nil, err
-				}
-				return &asset.Revision, nil
-			}, func(revision *int64) (api.PhotoAsset, error) {
-				return connection.SetPhotoAssetHidden(cmd.Context(), assetID, *revision, hide, cookie)
+				return withPhotoRevision(cmd, func() (*int64, error) {
+					asset, err := connection.PhotoAsset(cmd.Context(), assetID, cookie)
+					if err != nil {
+						return nil, err
+					}
+					return &asset.Revision, nil
+				}, func(revision *int64) (api.PhotoAsset, error) {
+					return connection.SetPhotoAssetHidden(cmd.Context(), assetID, *revision, hide, cookie)
+				})
 			})
 			if err != nil {
 				return err

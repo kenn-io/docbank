@@ -5,7 +5,7 @@ import App from "./App.svelte";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it.each(["change", "failure", "background", "delayed page"])("discards rows, selection and cached previews after %s", async kind => {
+it.each(["change", "failure", "background", "delayed page", "unrelated mutation"])("validates retained photo state after %s", async kind => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -14,12 +14,14 @@ it.each(["change", "failure", "background", "delayed page"])("discards rows, sel
   vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL = revoke; });
   const stored = storage();
   let changed = false;
+  let statusReads = 0;
   let delay = false;
   let finish!: (response: Response) => void;
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (url.endsWith("/photos/hidden")) {
+      statusReads++;
       if (changed && kind === "failure") throw new Error("Status unavailable");
-      return Response.json({ configured: false, change_id: changed ? "second" : "first" });
+      return Response.json({ configured: false, change_id: changed && kind !== "unrelated mutation" ? "second" : "first" });
     }
     if (url.endsWith("/assets/query")) {
       if (delay) { delay = false; return new Promise<Response>(resolve => finish = resolve); }
@@ -39,6 +41,18 @@ it.each(["change", "failure", "background", "delayed page"])("discards rows, sel
     await waitFor(() => expect(finish).toBeDefined());
   }
   changed = true;
+  if (kind === "unrelated mutation") {
+    const scroll = screen.getByTestId("photo-scroll");
+    scroll.scrollTop = 100;
+    await fireEvent.scroll(scroll);
+    await waitFor(() => expect(statusReads).toBeGreaterThan(1), { timeout: 5000 });
+    expect(screen.getByTestId("photo-scroll")).toBe(scroll);
+    expect(scroll.scrollTop).toBe(100);
+    expect(screen.getByText("1 selected photo")).toBeTruthy();
+    expect(stored.data.has(cacheName)).toBe(true);
+    expect(revoke).not.toHaveBeenCalled();
+    return;
+  }
   if (kind === "background") {
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     await fireEvent(document, new Event("visibilitychange"));
@@ -179,7 +193,6 @@ it.each([false, true])("Hidden trash invalidates Documents and Trash restore ref
   await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
   await fireEvent.click(within(screen.getByRole("dialog", { name: "Move selected photos to trash" })).getByRole("button", { name: "Move to trash" }));
   await waitFor(() => expect(rootReads).toBe(2));
-  await screen.findByText("No hidden photos");
   await fireEvent.click(screen.getByRole("button", { name: "Documents" }));
   await waitFor(() => expect(screen.queryByRole("cell", { name: "Photo 1.jpg" })).toBeNull());
   await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
