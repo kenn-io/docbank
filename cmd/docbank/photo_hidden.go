@@ -42,6 +42,9 @@ func withPhotoHidden[T any](cmd *cobra.Command, connection *daemonconn.Connectio
 	if err != nil {
 		return result, err
 	}
+	if passcode == "" {
+		return result, fmt.Errorf("%w: no passcode supplied", store.ErrHiddenLocked)
+	}
 	_, cookie, err := connection.PhotoHidden(cmd.Context(), "unlock", passcode, "")
 	if err != nil {
 		return result, err
@@ -92,7 +95,7 @@ func init() {
 		if !hide {
 			action = "unhide"
 		}
-		command := &cobra.Command{Use: action + " <asset-id>", Short: action + " a photo in Photos", Example: "  docbank photos " + action + " <asset-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		command := &cobra.Command{Use: action + " <asset-id>", Short: action + " a photo in Photos", Example: "  docbank photos assets " + action + " <asset-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkPhotoRevisionFlag(cmd); err != nil {
 				return err
 			}
@@ -136,6 +139,6 @@ func init() {
 			command.Use = action + " <asset-id|path-or-id>"
 		}
 		command.Flags().Int64Var(&photoRevision, "revision", 0, "expected asset revision (default: current, retried once)")
-		photosCmd.AddCommand(command)
+		photoAssetsCmd.AddCommand(command)
 	}
 }

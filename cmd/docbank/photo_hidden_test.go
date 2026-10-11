@@ -34,7 +34,7 @@ func TestPhotoHiddenPasscodeInput(t *testing.T) {
 }
 
 func TestPhotoHiddenInvocationUnlock(t *testing.T) {
-	for _, passcode := range []string{"synthetic-passcode", "wrong-passcode"} {
+	for _, passcode := range []string{"synthetic-passcode", "wrong-passcode", "", "\n"} {
 		t.Run(passcode, func(t *testing.T) {
 			dir := t.TempDir()
 			s, err := store.Open(filepath.Join(dir, "docbank.db"))
@@ -66,10 +66,21 @@ func TestPhotoHiddenInvocationUnlock(t *testing.T) {
 			connection := daemonconn.New(ts.URL, cfg.Server.APIKey)
 			cmd := &cobra.Command{}
 			cmd.SetContext(ctx)
-			cmd.SetIn(strings.NewReader(passcode + "\n"))
+			input := passcode
+			if passcode != "" && passcode != "\n" {
+				input += "\n"
+			}
+			cmd.SetIn(strings.NewReader(input))
 			result, err := withPhotoHidden(cmd, connection, func(cookie string) (api.PhotoAsset, error) {
 				return connection.ExcludePhotoAsset(ctx, asset.ID, asset.Revision, true, cookie)
 			})
+			if passcode == "" || passcode == "\n" {
+				require.ErrorIs(t, err, store.ErrHiddenLocked)
+				require.EqualError(t, err, "hidden photos are locked: no passcode supplied")
+				require.Zero(t, unlocks)
+				require.Equal(t, 1, writes)
+				return
+			}
 			require.Equal(t, 1, unlocks, "operation error: %v", err)
 			if passcode == "wrong-passcode" {
 				require.ErrorIs(t, err, store.ErrHiddenPasscode)
@@ -96,17 +107,17 @@ func TestPhotoHiddenCLIUnhideBySelector(t *testing.T) {
 	require.NoError(t, err)
 	var asset api.PhotoAsset
 	require.NoError(t, json.Unmarshal([]byte(out), &asset))
-	_, err = runCLI(t, "photos", "hide", asset.ID)
+	_, err = runCLI(t, "photos", "assets", "hide", asset.ID)
 	require.ErrorIs(t, err, store.ErrHiddenNotConfigured)
 	require.EqualError(t, err, "error executing request: configure a hidden photos passcode first")
 	connection, err := daemonconn.Ensure(t.Context())
 	require.NoError(t, err)
 	_, _, err = connection.PhotoHidden(t.Context(), "setup", "synthetic-passcode", "")
 	require.NoError(t, err)
-	unhide, _, err := rootCmd.Find([]string{"photos", "unhide"})
+	unhide, _, err := rootCmd.Find([]string{"photos", "assets", "unhide"})
 	require.NoError(t, err)
 	t.Cleanup(func() { unhide.SetIn(nil); photoInspectCmd.SetIn(nil) })
-	_, err = runCLI(t, "photos", "hide", asset.ID)
+	_, err = runCLI(t, "photos", "assets", "hide", asset.ID)
 	require.NoError(t, err)
 	photoInspectCmd.SetIn(strings.NewReader("synthetic-passcode\n"))
 	out, err = runCLI(t, "photos", "assets", "inspect", "/inbox/synthetic-hidden.jpeg")
@@ -119,7 +130,7 @@ func TestPhotoHiddenCLIUnhideBySelector(t *testing.T) {
 			require.NoError(t, err)
 		}
 		unhide.SetIn(strings.NewReader("synthetic-passcode\n"))
-		out, err = runCLI(t, "photos", "unhide", selector)
+		out, err = runCLI(t, "photos", "assets", "unhide", selector)
 		require.NoError(t, err)
 		asset = api.PhotoAsset{}
 		require.NoError(t, json.Unmarshal([]byte(out), &asset))

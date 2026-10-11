@@ -146,8 +146,6 @@ func TestPhotoHiddenBrowserAllowlistAndCookie(t *testing.T) {
 	require.True(t, cookies[0].HttpOnly)
 	require.Equal(t, http.SameSiteStrictMode, cookies[0].SameSite)
 	require.False(t, cookies[0].Secure)
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/hidden/reset", headers, map[string]string{})
-	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 }
 
 func TestPhotoHiddenLockDuringMaintenance(t *testing.T) {

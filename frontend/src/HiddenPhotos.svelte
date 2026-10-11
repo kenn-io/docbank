@@ -4,12 +4,13 @@
   import { getPhotoHiddenState, setupPhotoHidden, unlockPhotoHidden, lockPhotoHidden, changePhotoHidden, disablePhotoHidden, type PhotoHiddenState } from "./generated/docbank.js";
   import { Photos } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
+  import { concealPhotoWorkspace, revalidatePhotoWorkspace, type PhotoWorkspace } from "./photoWorkspace.js";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import { APIError } from "./api-transport.js";
 
   let { photoID = "", onphotochange = () => {}, onconceal, session, onauthfailure, photoActionError = "", ontrashed, onunhidden, onactionerror, onstate, onaccessfailure }: { photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void; onconceal?: () => void; session: string; onauthfailure: (cause: unknown) => void; photoActionError?: string; ontrashed?: () => void; onunhidden?: () => void; onactionerror?: (error: string) => void; onstate?: (state: PhotoHiddenState) => void; onaccessfailure?: () => void } = $props();
   let hiddenState = $state<PhotoHiddenState>({ configured: false });
-  let workspace = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
+  let workspace = $state<PhotoWorkspace>();
   let photoWorkspace = $state<PhotosWorkspace>();
   export function activePhotos() { return workspace?.photos; }
   export function captureReturn() { photoWorkspace?.captureReturn(); }
@@ -40,8 +41,7 @@
     if (workspaceVisible && !disposed) onconceal?.();
     workspaceVisible = false;
     concealment++;
-    workspace?.photos.cancelPending();
-    return workspace?.cache.dispose();
+    return concealPhotoWorkspace(workspace);
   }
   function clear() {
     void conceal();
@@ -69,13 +69,7 @@
     else if (!workspaceVisible && !workspace.photos.hiding && !workspace.photos.trashing && !workspace.photos.loading) {
       const current = workspace;
       const version = concealment;
-      await current.cache.dispose();
-      await tick();
-      if (version !== concealment || signal.aborted || disposed) return;
-      await current.photos.refresh(undefined, true);
-      if (version !== concealment || signal.aborted || disposed || current.photos.hiding || current.photos.trashing) return;
-      if (current.photos.error) throw new Error(current.photos.error);
-      current.cache = new PhotoPreviewCache(session, authorizationLost, true);
+      if (!await revalidatePhotoWorkspace(current, session, authorizationLost, () => version === concealment && !signal.aborted && !disposed)) return;
       workspaceVisible = true;
     }
   }

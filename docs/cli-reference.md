@@ -189,8 +189,8 @@ docbank photos settings show
 docbank photos settings set raw|image [--revision REV]
 docbank photos settings reset [--revision REV]
 docbank photos hidden setup|change|disable|lock|state|reset
-docbank photos hide <asset-id> [--revision REV]
-docbank photos unhide <asset-id|node-selector> [--revision REV]
+docbank photos assets hide <asset-id> [--revision REV]
+docbank photos assets unhide <asset-id|node-selector> [--revision REV]
 docbank photos import <source-root> [destination] [--json]
 ```
 

@@ -13,6 +13,7 @@
   import HouseIcon from "@lucide/svelte/icons/house";
   import LayersIcon from "@lucide/svelte/icons/layers";
   import LibraryIcon from "@lucide/svelte/icons/library";
+  import EyeOffIcon from "@lucide/svelte/icons/eye-off";
   import MenuIcon from "@lucide/svelte/icons/menu";
   import SlidersHorizontalIcon from "@lucide/svelte/icons/sliders-horizontal";
   import StampIcon from "@lucide/svelte/icons/stamp";
@@ -75,6 +76,7 @@
   import { localPreferenceStorage } from "./browser-storage.js";
   import { Photos, type PhotoReturn } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
+  import { concealPhotoWorkspace, revalidatePhotoWorkspace, type PhotoWorkspace } from "./photoWorkspace.js";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { SelectionTarget } from "./selection.js";
   import ShortcutHelpModal from "./ShortcutHelpModal.svelte";
@@ -218,7 +220,7 @@
     }
     photoID = id;
   }
-  let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
+  let photoState = $state<PhotoWorkspace>();
   let photoValidated = $state(false);
   let photoAccessError = $state("");
   let photoChangeID: string | undefined;
@@ -237,8 +239,7 @@
     photoValidated = false;
     photoConcealed = true;
     photoAccessVersion++;
-    photoState?.photos.cancelPending();
-    return photoState?.cache.dispose();
+    return concealPhotoWorkspace(photoState);
   }
   async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
     if (photoState && result.change_id !== photoChangeID) void invalidateLibrary();
@@ -247,13 +248,7 @@
     if (state?.photos.hiding || state?.photos.trashing || photoConcealed && state?.photos.loading) return;
     const version = photoAccessVersion;
     if (state && photoConcealed) {
-      await state.cache.dispose();
-      await tick();
-      if (version !== photoAccessVersion) return;
-      await state.photos.refresh(undefined, true);
-      if (version !== photoAccessVersion || state.photos.hiding || state.photos.trashing) return;
-      if (state.photos.error) throw new Error(state.photos.error);
-      state.cache = new PhotoPreviewCache(webSession, handleFailure);
+      if (!await revalidatePhotoWorkspace(state, webSession, handleFailure, () => version === photoAccessVersion)) return;
     }
     if (version !== photoAccessVersion || document.visibilityState !== "visible") return;
     photoState ??= { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
@@ -2050,7 +2045,7 @@
         <button type="button" class="nav-item" aria-current={photoMode ? "page" : undefined} onclick={() => switchWorkspace(true)}><ImageIcon size="16" aria-hidden="true" />Photos</button>
       </div>
       {#if photoMode}
-        <div class="nav-group"><button type="button" class="nav-item" aria-current={!hiddenMode ? "page" : undefined} onclick={() => switchWorkspace(true)}><LibraryIcon size="16" aria-hidden="true" />Library</button><button type="button" class="nav-item" aria-current={hiddenMode ? "page" : undefined} onclick={() => switchWorkspace(true, true)}>Hidden</button><button type="button" class="nav-item" aria-label="Recoverable trash" onclick={() => openPanel({ kind: "trash" })}><Trash2Icon size="16" aria-hidden="true" />Trash</button></div>
+        <div class="nav-group"><button type="button" class="nav-item" aria-current={!hiddenMode ? "page" : undefined} onclick={() => switchWorkspace(true)}><LibraryIcon size="16" aria-hidden="true" />Library</button><button type="button" class="nav-item" aria-current={hiddenMode ? "page" : undefined} onclick={() => switchWorkspace(true, true)}><EyeOffIcon size="16" aria-hidden="true" />Hidden</button><button type="button" class="nav-item" aria-label="Recoverable trash" onclick={() => openPanel({ kind: "trash" })}><Trash2Icon size="16" aria-hidden="true" />Trash</button></div>
       {:else}
       <div class="nav-group">
         <button type="button" class="nav-item"
