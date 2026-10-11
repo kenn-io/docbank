@@ -244,6 +244,7 @@
   async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
     if (photoState && result.change_id !== photoChangeID) void invalidateLibrary();
     photoChangeID = result.change_id;
+    if (!photoMode || hiddenMode) return;
     const state = photoState;
     if (state?.photos.hiding || state?.photos.trashing || photoConcealed && state?.photos.loading) return;
     const version = photoAccessVersion;

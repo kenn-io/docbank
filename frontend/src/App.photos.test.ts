@@ -7,7 +7,7 @@ import { Photos } from "./photos.svelte.js";
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 
 it.each([false, true])("retains failed selection and browsing position through partial visibility changes, hidden=%s", async hidden => {
-  history.replaceState(null, "", `/photos${hidden ? "/hidden" : ""}#web_session=synthetic&web_upload_secret=proof`);
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
@@ -15,19 +15,40 @@ it.each([false, true])("retains failed selection and browsing position through p
   const revoke = vi.fn();
   vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL = revoke; });
   const stored = storage();
+  const writes = vi.spyOn(Photos.prototype, "setHidden");
+  const polls = new Map<number, () => void>();
+  let nextPoll = 0;
+  const interval = globalThis.setInterval, clear = globalThis.clearInterval;
+  vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+    if (delay !== 2000) return interval(callback, delay, ...args);
+    const id = --nextPoll;
+    polls.set(id, callback as () => void);
+    return id as unknown as ReturnType<typeof setInterval>;
+  });
+  vi.spyOn(globalThis, "clearInterval").mockImplementation(id => { if (!polls.delete(Number(id))) clear(id); });
+  const poll = async () => { for (const callback of polls.values()) callback(); await new Promise(resolve => setTimeout(resolve, 0)); };
   let changed = false;
-  let reads = 0;
+  const reads = [0, 0];
   let finish!: (response: Response) => void;
   const items = Array.from({ length: 60 }, (_, index) => ({ ...photo(index + 1, new Date(Date.UTC(2025, 5, 1, 12, 60 - index)).toISOString()), previews: { grid: { state: "ready", generation_id: "synthetic" } } }));
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
     if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", change_id: changed ? "second" : "first" });
-    if (url.endsWith("/assets/query")) { reads++; return Response.json({ items: changed ? items.slice(1) : items, total: changed ? 59 : 60 }); }
+    if (url.endsWith("/assets/query")) {
+      const scope = !!JSON.parse(String(options?.body)).hidden;
+      reads[Number(scope)]++;
+      const rows = hidden && !scope ? changed ? [items[0]] : [] : changed ? items.slice(1) : items;
+      return Response.json({ items: rows, total: rows.length });
+    }
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
     if (url.endsWith(`/assets/photo-1/${hidden ? "unhide" : "hide"}`)) { changed = true; return Response.json({ id: "photo-1", revision: 2 }); }
     if (url.endsWith(`/assets/photo-2/${hidden ? "unhide" : "hide"}`)) return new Promise<Response>(resolve => finish = resolve);
     return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
   }));
   render(App);
+  if (hidden) {
+    await screen.findByText("Your photo library is empty");
+    await fireEvent.click(screen.getByRole("button", { name: "Hidden" }));
+  }
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" }));
   await screen.findByRole("img", { name: "Photo 1.jpg" });
@@ -45,11 +66,13 @@ it.each([false, true])("retains failed selection and browsing position through p
   expect(screen.queryByTestId("photo-scroll")).toBeNull();
   await waitFor(() => expect(stored.data.has(cacheName)).toBe(false));
   expect(revoke).toHaveBeenCalled();
-  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  await fireEvent(document, new Event("visibilitychange"));
-  expect(reads).toBe(1);
+  await poll();
+  expect(reads[Number(hidden)]).toBe(1);
+  expect(reads[Number(!hidden)]).toBe(hidden ? 1 : 0);
   expect(screen.queryByTestId("photo-scroll")).toBeNull();
   finish(Response.json({ detail: "Stale revision" }, { status: 412 }));
+  await writes.mock.results[0].value;
+  await poll();
   await screen.findByText("1 photo failed: Stale revision", {}, { timeout: 5000 });
   await waitFor(() => expect(screen.getByTestId("photo-scroll").scrollTop).toBe(100), { timeout: 5000 });
   expect(screen.getByRole("combobox", { name: "Group photos: Capture sessions" })).toBeTruthy();
@@ -58,6 +81,13 @@ it.each([false, true])("retains failed selection and browsing position through p
   expect((screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" }) as HTMLInputElement).checked).toBe(true);
   expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
   expect(screen.getByText("1 selected photo")).toBeTruthy();
+  if (hidden) {
+    expect(reads[0]).toBe(1);
+    await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+    await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+    expect(screen.queryByRole("checkbox", { name: "Select photo Photo 2.jpg" })).toBeNull();
+    expect(reads[0]).toBe(2);
+  }
 });
 
 it.each([false, true])("keeps concealed rows hidden when Trash restore interrupts revalidation, failed=%s", async failed => {
