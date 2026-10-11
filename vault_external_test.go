@@ -191,6 +191,30 @@ func TestRootPackageReleasesProcessingSpoolAfterOpenFailure(t *testing.T) {
 	require.NoError(t, vault.Close())
 }
 
+func TestEmbeddedProcessingReportsIneligibleSource(t *testing.T) {
+	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
+	require.NoError(t, err)
+	vault, err := docbank.New(t.Context(), docbank.Config{Root: t.TempDir(),
+		Processing: docbank.ProcessingOptions{Profiles: map[string]docbank.ProcessingProfileConfig{
+			"private": {Profile: embeddedProcessingProfile(t, provider.Descriptor()), RenditionProvider: provider},
+		}}})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, vault.Close()) })
+	receipt, err := vault.Put(t.Context(), "/report.docx", strings.NewReader("synthetic document"),
+		docbank.PutOptions{MediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"})
+	require.NoError(t, err)
+	selector := docbank.ProcessingSelector{NodeID: receipt.Node.ID,
+		ContentVersionID: receipt.Version.ID, Profile: "private"}
+	plan, err := vault.PlanProcessing(t.Context(), docbank.ProcessingPlanRequest{Selector: selector})
+	require.NoError(t, err)
+	require.Equal(t, "unbounded_media_family", plan.RenditionIneligibleReason)
+	_, err = vault.StartProcessing(t.Context(), docbank.StartProcessingRequest{
+		PlanRequest:     docbank.ProcessingPlanRequest{Selector: selector},
+		PlanFingerprint: plan.Fingerprint, Consent: true,
+	})
+	require.ErrorIs(t, err, docbank.ErrRenditionSourceIneligible)
+}
+
 func TestEmbeddedProcessingPlanRunReadAndSearch(t *testing.T) {
 	provider, err := plaintext.New(plaintext.Profile{MaxDocumentBytes: 1 << 20})
 	require.NoError(t, err)

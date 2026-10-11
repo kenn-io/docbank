@@ -314,3 +314,19 @@ func TestProcessingCLIBuildRejectsChangedPlanBeforeStarting(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteProcessingPlanReportsIneligibleSource(t *testing.T) {
+	for _, reason := range []string{"", "unbounded_media_family"} {
+		t.Run("reason="+reason, func(t *testing.T) {
+			var out bytes.Buffer
+			cmd := &cobra.Command{}
+			cmd.SetOut(&out)
+			require.NoError(t, writeProcessingPlan(cmd, api.ProcessingPlan{RenditionIneligibleReason: reason}))
+			if reason == "" {
+				require.NotContains(t, out.String(), "ineligible:")
+				return
+			}
+			require.Regexp(t, `(?m)^ineligible:\s+unbounded_media_family$`, out.String())
+		})
+	}
+}

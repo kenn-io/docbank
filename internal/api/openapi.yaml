@@ -12581,6 +12581,8 @@ components:
         profile_fingerprint:
           pattern: ^[0-9a-f]{64}$
           type: string
+        rendition_ineligible_reason:
+          type: string
         retained_classes:
           items:
             type: string

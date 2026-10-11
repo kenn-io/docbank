@@ -182,6 +182,9 @@ func writeProcessingPlan(cmd *cobra.Command, plan api.ProcessingPlan) error {
 		plan.Estimate.ProviderCalls, plan.Estimate.VectorSpaces, plan.Estimate.SourceBytes)
 	_, _ = fmt.Fprintf(w, "consent required:\t%t\n", plan.ConsentRequired)
 	_, _ = fmt.Fprintf(w, "backup:\t%s\n", plan.BackupConsequence)
+	if plan.RenditionIneligibleReason != "" {
+		_, _ = fmt.Fprintf(w, "ineligible:\t%s\n", plan.RenditionIneligibleReason)
+	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("writing processing plan: %w", err)
 	}

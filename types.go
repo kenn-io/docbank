@@ -304,6 +304,10 @@ type ProcessingPlan struct {
 	Estimate           ProcessingEstimate  `json:"estimate"`
 	ConsentRequired    bool                `json:"consent_required"`
 	BackupConsequence  string              `json:"backup_consequence"`
+	// RenditionIneligibleReason is set when local inspection refuses to send
+	// this source to the rendition provider; starting the plan then fails with
+	// ErrRenditionSourceIneligible.
+	RenditionIneligibleReason string `json:"rendition_ineligible_reason,omitzero"`
 }
 
 type StartProcessingRequest struct {

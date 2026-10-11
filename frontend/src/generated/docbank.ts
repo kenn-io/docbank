@@ -659,6 +659,7 @@ export interface BackupRestoreRequest {
   overwrite?: boolean;
   repo?: string;
   snapshot_id?: string;
+  /** Loopback-only server-local path to an owner-private TOML restore mapping file. */
   store_map?: string;
   target: string;
 }
@@ -5415,6 +5416,7 @@ export interface ProcessingPlan {
   flow: ProcessingFlowHop[];
   /** @pattern ^[0-9a-f]{64}$ */
   profile_fingerprint: string;
+  rendition_ineligible_reason?: string;
   retained_classes: string[];
   selector: ProcessingSelector;
   vault_uid: string;
