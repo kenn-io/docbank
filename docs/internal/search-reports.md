@@ -64,6 +64,10 @@ been assembled. Counts, revisions, date pages, and artifacts use this captured
 frame without consulting current source state. Later replacement, trash, or
 pruning does not revoke captured evidence. Reports add no retention references
 that prevent source deletion; fresh reports still require live current sources.
+`Service.Finalize` checks every member's date selection before evaluating
+strict text coverage: an unresolved ambiguous date returns `needs_review` even
+when a different member's missing text would also fail strict coverage, so
+date review always precedes a strict refusal.
 
 Date interpretation normalizes escaped punctuation in rendition text while
 preserving raw tokens, quotes, byte offsets, and the retained text hash. Those
@@ -114,7 +118,10 @@ Restore preserves receipts but cannot restore their in-memory artifacts.
 History retains 100 receipts. Its 16 MiB page threshold measures stored request
 and summary JSON, not the complete HTTP envelope. Continue by returned item
 count. Ordering is observation descending, then ID descending; concurrent
-additions mean offset pages are not a stable snapshot.
+additions mean offset pages are not a stable snapshot. The real-browser case
+described in [Export bundle design's qualification boundaries](export-bundles.md#qualification-boundaries)
+exercises a full create-revise cycle, history's draft reuse, and a live parent
+summary read together with original export downloads.
 
 ## Bound transport output without losing evidence
 
