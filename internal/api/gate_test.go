@@ -125,10 +125,10 @@ func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
 		g.admission.RUnlock()
 		assert.True(t, maintenanceQueued)
 
-		err := hiddenError(g.mutate(func() error {
+		err := g.mutate(func() error {
 			t.Fatal("route mutation ran while maintenance was queued")
 			return nil
-		}))
+		})
 		var apiErr *Error
 		require.ErrorAs(t, err, &apiErr)
 		assert.Equal(t, "maintenance_busy", apiErr.Code)

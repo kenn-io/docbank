@@ -64,15 +64,6 @@ it("retains bytes without fetch and cancels abandoned reads", async () => {
   expect(fetcher).toHaveBeenCalledTimes(5);
 });
 
-it("routes expired network authentication to the workspace handler", async () => {
-  storage();
-  const auth = vi.fn();
-  const cache = new PhotoPreviewCache("scoped", auth); instances.push(cache);
-  vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 401 })));
-  await expect(cache.get("asset", "generation")).rejects.toThrow("HTTP 401");
-  expect(auth).toHaveBeenCalledTimes(1);
-});
-
 it("displays network bytes when storage fails and retains only healthy writes", async () => {
   const stored = storage();
   stored.open.mockRejectedValueOnce(new Error("Storage disabled"));
@@ -201,11 +192,11 @@ it("removes caches left by closed pages and releases its lock after disposal", a
     Reflect.deleteProperty(navigator, "locks");
   }
 });
-it.each([false, true])("treats preview 403 as authorization loss only in Hidden, hidden=%s", async hidden => {
+it.each([{ status: 401, hidden: false }, { status: 403, hidden: false }, { status: 403, hidden: true }])("routes preview authorization loss to the workspace handler, status=$status hidden=$hidden", async ({ status, hidden }) => {
   storage();
   const auth = vi.fn();
   const cache = new PhotoPreviewCache("scoped", auth, hidden); instances.push(cache);
-  vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 403 })));
-  await expect(cache.get("asset", "generation")).rejects.toThrow("HTTP 403");
-  expect(auth).toHaveBeenCalledTimes(hidden ? 1 : 0);
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status })));
+  await expect(cache.get("asset", "generation")).rejects.toThrow(`HTTP ${status}`);
+  expect(auth).toHaveBeenCalledTimes(status === 401 || hidden ? 1 : 0);
 });

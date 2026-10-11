@@ -337,7 +337,7 @@ it.each([
   if (partial) fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }));
   fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Listing unavailable" }), { status: 503 }));
   vi.stubGlobal("fetch", fetcher);
-  const photos = new Photos("scoped", vi.fn(), kind === "unhide");
+  const photos = new Photos("scoped", vi.fn());
   await photos.loadMore();
   photos.total = 7;
   photos.selection = { selectedIDs: new Set(partial ? ["photo-1", "photo-2"] : ["photo-1"]), anchorID: "photo-1" };
