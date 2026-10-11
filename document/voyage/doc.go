@@ -1,5 +1,7 @@
 // Package voyage provides bounded, stateless multimodal embedding of images
-// and video through the Voyage AI API.
+// and video, plus retained rendition text, through the Voyage AI API.
+// Text retrieval requires an operator-managed deployment epoch matching the
+// descriptor revision. Unpinned hosted aliases remain export-only.
 //
 // Uploads fail closed unless an operator has run the authenticated capability
 // probe and supplied its validated manifest. Each media format, animated

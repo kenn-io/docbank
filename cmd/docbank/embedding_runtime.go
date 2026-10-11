@@ -260,7 +260,8 @@ type embeddingRuntimeBlobStore interface {
 func configuredEmbeddingDescriptor(profile config.EmbeddingProfileConfig, modelInput document.ModelInputContract) document.EmbeddingDescriptor {
 	runtime := profile.Runtime
 	modes := []document.ModelInputMode{modelInput.Document.Mode}
-	supportsQuery := runtime.AdapterContract == openAIEmbeddingAdapter
+	supportsQuery := runtime.AdapterContract == openAIEmbeddingAdapter ||
+		(runtime.AdapterContract == voyageEmbeddingAdapter && profile.InputKind == string(document.EmbeddingInputRenditionChunk))
 	if supportsQuery && modelInput.Query.Mode != modelInput.Document.Mode {
 		modes = append(modes, modelInput.Query.Mode)
 	}
@@ -293,47 +294,63 @@ func finalizeOpenAIEmbeddingDescriptor(profile openaicompat.Profile) (document.E
 func configuredVoyageProvider(profile config.EmbeddingProfileConfig, modelInput document.ModelInputContract,
 	secrets environmentCredentialSecrets,
 ) (document.EmbeddingProvider, document.EmbeddingDescriptor, error) {
+	configured := voyageRuntimeProfile(profile, modelInput)
+	if profile.InputKind != string(document.EmbeddingInputRenditionChunk) {
+		policy, manifest, err := voyageDirectFilePolicy(profile)
+		if err != nil {
+			return nil, document.EmbeddingDescriptor{}, err
+		}
+		configured.Mode, configured.Policy, configured.CapabilityManifest = voyage.EmbeddingModeDirectFile, policy, manifest
+	}
+	configured, err := finalizeVoyageEmbeddingDescriptor(configured)
+	if err != nil {
+		return nil, document.EmbeddingDescriptor{}, err
+	}
+	provider, err := voyage.NewEmbeddingProvider(configured, secrets, nil)
+	return provider, configured.Descriptor, err
+}
+
+// voyageRuntimeProfile builds the retained-text profile. Original-file
+// profiles replace the mode and add their capability policy.
+func voyageRuntimeProfile(profile config.EmbeddingProfileConfig, modelInput document.ModelInputContract) voyage.EmbeddingProfile {
+	return voyage.EmbeddingProfile{Mode: voyage.EmbeddingModeText, DeploymentEpoch: profile.Runtime.DeploymentEpoch,
+		Endpoint: profile.Runtime.Endpoint, EgressPolicy: providerEgressPolicy(profile.Runtime.ProviderEgressConfig),
+		Descriptor: configuredEmbeddingDescriptor(profile, modelInput), ModelInput: modelInput, SecretBinding: profile.CredentialBinding,
+		RequestTimeout: profile.Runtime.RequestTimeout.Std(), MaxRetries: 1,
+		MaxBatchItems: profile.MaxBatchItems, MaxInputBytes: profile.MaxInputBytes,
+		MaxRequestBytes: profile.Runtime.MaxRequestBytes, MaxResponseBytes: profile.MaxResponseBytes}
+}
+
+func voyageDirectFilePolicy(profile config.EmbeddingProfileConfig) (voyage.Policy, voyage.CapabilityManifest, error) {
 	file, err := os.Open(profile.Runtime.CapabilityManifest)
 	if err != nil {
-		return nil, document.EmbeddingDescriptor{}, errors.New("voyage capability manifest is unavailable")
+		return voyage.Policy{}, voyage.CapabilityManifest{}, errors.New("voyage capability manifest is unavailable")
 	}
 	manifest, decodeErr := voyage.DecodeCapabilityManifest(file)
 	closeErr := file.Close()
 	if decodeErr != nil || closeErr != nil {
-		return nil, document.EmbeddingDescriptor{}, errors.Join(decodeErr, closeErr)
+		return voyage.Policy{}, voyage.CapabilityManifest{}, errors.Join(decodeErr, closeErr)
 	}
 	policy, err := voyage.NewPolicy(voyage.PolicyConfig{Model: profile.Model, Dimension: profile.Dimensions,
 		Media:         media.Policy{MaxBytes: profile.MaxInputBytes, AllowStill: true, AllowVideo: true},
 		MaxBatchItems: profile.MaxBatchItems, MaxRequestBytes: profile.Runtime.MaxRequestBytes,
 		MaxResponseBytes: profile.MaxResponseBytes})
+	return policy, manifest, err
+}
+
+func finalizeVoyageEmbeddingDescriptor(profile voyage.EmbeddingProfile) (voyage.EmbeddingProfile, error) {
+	descriptor, err := document.NewEmbeddingDescriptor(profile.Descriptor)
 	if err != nil {
-		return nil, document.EmbeddingDescriptor{}, err
+		return profile, err
 	}
-	descriptor := configuredEmbeddingDescriptor(profile, modelInput)
-	configured := voyage.EmbeddingProfile{Mode: voyage.EmbeddingModeDirectFile,
-		Endpoint: profile.Runtime.Endpoint, EgressPolicy: providerEgressPolicy(profile.Runtime.ProviderEgressConfig),
-		Descriptor: descriptor, ModelInput: modelInput, SecretBinding: profile.CredentialBinding,
-		RequestTimeout: profile.Runtime.RequestTimeout.Std(), MaxRetries: 1,
-		MaxBatchItems: profile.MaxBatchItems, MaxInputBytes: profile.MaxInputBytes,
-		MaxRequestBytes: profile.Runtime.MaxRequestBytes, MaxResponseBytes: profile.MaxResponseBytes,
-		Policy: policy, CapabilityManifest: manifest}
-	temporary, err := document.NewEmbeddingDescriptor(descriptor)
+	profile.Descriptor = descriptor
+	fingerprint, err := voyage.EmbeddingPolicyFingerprint(profile)
 	if err != nil {
-		return nil, document.EmbeddingDescriptor{}, err
+		return profile, err
 	}
-	configured.Descriptor = temporary
-	fingerprint, err := voyage.EmbeddingPolicyFingerprint(configured)
-	if err != nil {
-		return nil, document.EmbeddingDescriptor{}, err
-	}
-	temporary.PolicyFingerprint, temporary.Fingerprint = fingerprint, ""
-	final, err := document.NewEmbeddingDescriptor(temporary)
-	if err != nil {
-		return nil, document.EmbeddingDescriptor{}, err
-	}
-	configured.Descriptor = final
-	provider, err := voyage.NewEmbeddingProvider(configured, secrets, nil)
-	return provider, final, err
+	descriptor.PolicyFingerprint, descriptor.Fingerprint = fingerprint, ""
+	profile.Descriptor, err = document.NewEmbeddingDescriptor(descriptor)
+	return profile, err
 }
 
 // providerEgressPolicy converts config after Config.Validate has checked it.
