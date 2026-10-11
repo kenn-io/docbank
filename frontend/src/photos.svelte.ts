@@ -185,7 +185,7 @@ export class Photos {
   }
 
   private async replace(mode: "refresh" | "expiry", preserve?: () => (() => Promise<void>) | undefined, visibleOnly = false) {
-    if (this.disposed) return;
+    if (this.disposed) return false;
     this.controller.abort();
     this.controller = new AbortController();
     const controller = this.controller;
@@ -221,10 +221,12 @@ export class Photos {
       this.expired = false;
       this.replacement = undefined;
       await restore?.();
+      return !controller.signal.aborted;
     } catch (cause) {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted) return false;
       if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
       this.error = signal.aborted ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
+      return false;
     } finally {
       if (!controller.signal.aborted) this.loading = false;
     }

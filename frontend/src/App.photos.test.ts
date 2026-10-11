@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { photo, storage } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
+import { Photos } from "./photos.svelte.js";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 
@@ -57,6 +58,60 @@ it.each([false, true])("retains failed selection and browsing position through p
   expect((screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" }) as HTMLInputElement).checked).toBe(true);
   expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
   expect(screen.getByText("1 selected photo")).toBeTruthy();
+});
+
+it.each([false, true])("keeps concealed rows hidden when Trash restore interrupts revalidation, failed=%s", async failed => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  let poll!: () => void;
+  const interval = globalThis.setInterval;
+  vi.spyOn(globalThis, "setInterval").mockImplementation((callback, delay, ...args) => {
+    if (delay === 2000) { poll = callback as () => void; return 0 as unknown as ReturnType<typeof setInterval>; }
+    return interval(callback, delay, ...args);
+  });
+  const refresh = vi.spyOn(Photos.prototype, "refresh");
+  let changed = false;
+  let reads = 0;
+  let finishConceal!: (response: Response) => void;
+  let finishRestore!: (response: Response) => void;
+  let concealSignal!: AbortSignal;
+  const node = { id: 2, parent_id: 1, name: "Restored.jpg", kind: "file", revision: 1, size: 10, path: "/Restored.jpg", trashed_at: "2026-07-28T12:01:00Z" };
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, change_id: changed ? "second" : "first" });
+    if (url.endsWith("/assets/query")) {
+      reads++;
+      if (reads === 2) { concealSignal = options!.signal!; return new Promise<Response>(resolve => finishConceal = resolve); }
+      if (reads === 3) return new Promise<Response>(resolve => finishRestore = resolve);
+      return Response.json({ items: changed ? [] : [photo(1)], total: changed ? 0 : 1 });
+    }
+    if (url.startsWith("/api/v1/trash?")) return Response.json({ items: [node], total: 1, limit: 1000, offset: 0 });
+    if (url.endsWith("/nodes/2/restore")) return Response.json({ ...node, revision: 2, trashed_at: null });
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  }));
+  render(App);
+  await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+  changed = true;
+  poll();
+  await waitFor(() => expect(finishConceal).toBeDefined());
+  await fireEvent.click(screen.getByRole("button", { name: "Recoverable trash" }));
+  await fireEvent.click(await screen.findByRole("button", { name: "Restore" }));
+  await fireEvent.click(within(screen.getByRole("dialog", { name: "Restore Restored.jpg from trash" })).getByRole("button", { name: "Restore" }));
+  await waitFor(() => expect(finishRestore).toBeDefined());
+  expect(concealSignal.aborted).toBe(true);
+  finishConceal(Response.json({ items: [], total: 0 }));
+  await refresh.mock.results[0].value;
+  await fireEvent(document, new Event("settled"));
+  expect(screen.queryByTestId("photo-scroll")).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
+  finishRestore(failed ? Response.json({ detail: "Replacement failed" }, { status: 503 }) : Response.json({ items: [], total: 0 }));
+  await refresh.mock.results[1].value;
+  await fireEvent(document, new Event("settled"));
+  expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
+  if (failed) expect(screen.queryByTestId("photo-scroll")).toBeNull();
+  poll();
+  await screen.findByText("Your photo library is empty");
 });
 
 it.each(["change", "failure", "background", "delayed page", "unrelated mutation"])("validates retained photo state after %s", async kind => {
