@@ -93,10 +93,15 @@ func validateExportRequest(request exportPreviewRequest) error {
 		if len(request.Photos.AssetIDs) > bundle.MaxPhotoExportMembers {
 			return usageError(bundle.ErrLimit)
 		}
+		seen := make(map[string]bool, len(request.Photos.AssetIDs))
 		for _, id := range request.Photos.AssetIDs {
 			if err := validateExportID("photo asset ID", id); err != nil {
 				return err
 			}
+			if seen[id] {
+				return usageError(fmt.Errorf("duplicate photo asset ID %s", id))
+			}
+			seen[id] = true
 		}
 		return nil
 	}

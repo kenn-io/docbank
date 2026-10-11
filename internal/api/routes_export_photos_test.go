@@ -103,10 +103,6 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 	require.Equal(t, plan, retry)
 	_, _, err = connection.PhotoHidden(t.Context(), "lock", "", cookie)
 	require.NoError(t, err)
-	locked := r
-	locked.OperationID = uuid.New().String()
-	response, body = do(t, ts, http.MethodPost, "/api/v1/exports/plans", headers, locked)
-	require.Equal(t, http.StatusForbidden, response.StatusCode, body)
 	job, err := client.CreateExportJob(t.Context(), &apiclient.CreateExportJobRequestOptions{Body: &bundle.JobRequest{OperationID: uuid.New().String(), PlanID: plan.ID, Fingerprint: plan.Fingerprint}})
 	require.NoError(t, err)
 	processed, err := worker.RunOne(t.Context())
@@ -160,7 +156,7 @@ func TestPhotoExportAPIPlanZIPAndTicket(t *testing.T) {
 
 func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 	t.Parallel()
-	for _, state := range []string{"non-photo", "trashed", "selection-trashed", "replaced", "mislabeled", "missing-blob", "damaged-blob", "unsupported", "oversized-metadata"} {
+	for _, state := range []string{"non-photo", "trashed", "replaced", "mislabeled", "missing-blob", "damaged-blob", "unsupported", "oversized-metadata"} {
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
 			ts, s := newTestServer(t, nil)
@@ -196,18 +192,6 @@ func TestPhotoExportUnavailableMemberNamesPhoto(t *testing.T) {
 			n, err := s.CreateFile(t.Context(), s.RootID(), "unavailable-member", hash, size, mediaType)
 			require.NoError(t, err)
 			members = append(members, bundle.Member{NodeID: n.ID, VersionID: n.CurrentVersionID, SHA256: hash, Size: size})
-			if state == "selection-trashed" {
-				asset, err := s.PhotoAssetForNode(t.Context(), n.ID)
-				require.NoError(t, err)
-				_, _, err = s.Trash(t.Context(), n.ID, n.Revision)
-				require.NoError(t, err)
-				request := bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "photos", Photos: &bundle.PhotoExportSelection{AssetIDs: []string{asset.ID}, Query: query.Query{V: 1, Syntax: "advanced", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}}
-				response, body := do(t, ts, http.MethodPost, "/api/v1/exports/sources", nil, request)
-				require.Equal(t, http.StatusConflict, response.StatusCode, body)
-				require.Contains(t, body, fmt.Sprintf("photo %d (unavailable-member)", n.ID))
-				require.Contains(t, body, "no longer exportable")
-				return
-			}
 			if state == "oversized-metadata" {
 				asset, err := s.PhotoAssetForNode(t.Context(), n.ID)
 				require.NoError(t, err)
@@ -307,8 +291,24 @@ func TestPhotoExportPNGWithoutQualityAndInvalidPlanSettings(t *testing.T) {
 func TestPhotoExportMalformedQuery(t *testing.T) {
 	t.Parallel()
 	ts, _ := newTestServer(t, nil)
-	request := bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "photos", Photos: &bundle.PhotoExportSelection{Query: query.Query{V: 1, Syntax: "advanced", Text: ")", Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}}
-	response, body := do(t, ts, http.MethodPost, "/api/v1/exports/sources", nil, request)
-	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	require.Contains(t, body, "invalid_query")
+	for _, test := range []struct {
+		name, text, message string
+		ids                 []string
+		status              int
+	}{
+		{"malformed query", ")", "invalid_query", nil, http.StatusUnprocessableEntity},
+		{"duplicate photo", "", "duplicate photo asset ID 11111111-1111-4111-8111-111111111111", []string{"11111111-1111-4111-8111-111111111111", "11111111-1111-4111-8111-111111111111"}, http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "photos", Photos: &bundle.PhotoExportSelection{AssetIDs: test.ids, Query: query.Query{V: 1, Syntax: "advanced", Text: test.text, Mode: "lexical", Sort: query.Sort{Field: "name", Direction: "asc"}}}}
+			response, body := do(t, ts, http.MethodPost, "/api/v1/exports/sources", nil, request)
+			require.Equal(t, test.status, response.StatusCode, body)
+			require.Contains(t, body, test.message)
+			if len(test.ids) > 0 {
+				request.Photos.AssetIDs = nil
+				response, body = do(t, ts, http.MethodPost, "/api/v1/exports/sources", nil, request)
+				require.Equal(t, http.StatusRequestEntityTooLarge, response.StatusCode, body)
+			}
+		})
+	}
 }

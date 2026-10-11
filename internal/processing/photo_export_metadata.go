@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"go.kenn.io/docbank/document/bundle"
 	"go.kenn.io/docbank/internal/store"
@@ -518,13 +519,32 @@ type photoXMPEncoder struct {
 }
 
 func (w *photoXMPEncoder) EncodeToken(token xml.Token) error {
+	validateText := func(value string) error {
+		if !utf8.ValidString(value) {
+			return errors.New("XMP text contains invalid UTF-8")
+		}
+		for _, r := range value {
+			if r == '\t' || r == '\n' || r == '\r' || r >= 0x20 && r <= 0xd7ff || r >= 0xe000 && r <= 0xfffd || r >= 0x10000 && r <= 0x10ffff {
+				continue
+			}
+			return fmt.Errorf("XMP text contains character U+%04X that XML cannot represent", r)
+		}
+		return nil
+	}
 	switch t := token.(type) {
+	case xml.CharData:
+		if err := validateText(string(t)); err != nil {
+			return err
+		}
 	case xml.StartElement:
 		namespaces := map[string]string{"xml": xmlNamespace}
 		if len(w.frames) > 0 {
 			namespaces = maps.Clone(w.frames[len(w.frames)-1].namespaces)
 		}
 		for _, attr := range t.Attr {
+			if err := validateText(attr.Value); err != nil {
+				return err
+			}
 			if attr.Name.Space == "xmlns" {
 				namespaces[attr.Name.Local] = attr.Value
 			} else if attr.Name.Space == "" && attr.Name.Local == "xmlns" {

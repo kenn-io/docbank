@@ -29,6 +29,7 @@ func TestExportPreflightDoesNotContactDaemon(t *testing.T) {
 	photo := strings.TrimSuffix(valid, "}") + `,"photo_render":{"format":"png","long_edge":0,"include_metadata":true,"remove_gps":true}}`
 	for _, tc := range []struct{ name, body, field string }{
 		{"malformed", "{", "JSON"},
+		{"duplicate photo IDs", `{"source_operation_id":"11111111-1111-4111-8111-111111111111","plan_operation_id":"22222222-2222-4222-8222-222222222222","photo_render":{"format":"png","long_edge":0,"include_metadata":true,"remove_gps":true},"photos":{"query":{"v":1,"syntax":"advanced","mode":"lexical","sort":{"field":"name","direction":"asc"}},"asset_ids":["33333333-3333-4333-8333-333333333333","33333333-3333-4333-8333-333333333333"]}}`, "duplicate photo asset ID 33333333-3333-4333-8333-333333333333"},
 		{"null GPS", strings.Replace(photo, `"remove_gps":true`, `"remove_gps":null`, 1), "photo_render.remove_gps"},
 		{"omitted GPS", strings.TrimSuffix(valid, "}") + `,"photo_render":{"format":"jpeg","quality":80,"include_metadata":true}}`, "photo_render.remove_gps"},
 		{"omitted metadata", strings.Replace(photo, `"include_metadata":true,`, "", 1), "photo_render.include_metadata"},

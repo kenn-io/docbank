@@ -294,12 +294,24 @@ func TestPhotoExportMetadataPreservesClearsAndRemovesGPSPayloads(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		keywords []string
+		refused  bool
 	}{
-		{"preserve embedded keywords without catalog tags", nil},
-		{"replace embedded keywords with catalog tags", []string{"catalog tag"}},
+		{"preserve embedded keywords without catalog tags", nil, false},
+		{"replace embedded keywords with catalog tags", []string{"catalog tag"}, false},
+		{"refuse keywords XML cannot represent", []string{"alpha\uffffbeta"}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			for _, format := range []string{"jpeg", "png"} {
+				if test.refused {
+					in := photoRenderInput(pixels, "image/jpeg")
+					in.Name, in.Keywords = "synthetic-keyword.jpg", test.keywords
+					out, _, err := renderPhotoExport(t.Context(), pixels, in, bundle.PhotoRenderProfile{Format: format, Quality: 90, IncludeMetadata: true})
+					require.ErrorIs(t, err, bundle.ErrUnavailable)
+					require.Contains(t, photoExportError(in, err).Error(), "photo 1 (synthetic-keyword.jpg)")
+					require.Contains(t, err.Error(), "U+FFFF")
+					require.Empty(t, out)
+					continue
+				}
 				packets, _ := render(keywordEXIF, keywordPacket, creditInput.Authored, test.keywords, format, false)
 				for _, value := range []string{"Embedded subject attribute", "Embedded subject element", "Embedded hierarchy attribute", "Embedded hierarchy element", "Embedded PDF attribute", "Embedded PDF element"} {
 					assert.Equal(t, len(test.keywords) == 0, strings.Contains(string(packets.xmp), value), value)
@@ -680,50 +692,53 @@ func TestPhotoExportGIFCanvas(t *testing.T) {
 
 func TestPhotoExportPNGPixelChunksDoNotConsumeMetadataBudget(t *testing.T) {
 	t.Parallel()
-	frame := image.NewNRGBA(image.Rect(0, 0, 65, 64))
-	seed := uint32(1)
-	for i := range frame.Pix {
-		seed = seed*1664525 + 1013904223
-		frame.Pix[i] = byte(seed >> 24)
-	}
-	var encoded, source bytes.Buffer
-	require.NoError(t, png.Encode(&encoded, frame))
-	source.Write(encoded.Bytes()[:8])
-	chunks := 0
-	for data := encoded.Bytes()[8:]; len(data) > 0; {
-		n := int(binary.BigEndian.Uint32(data))
-		kind := string(data[4:8])
-		payload := data[8 : 8+n]
-		if kind == "IDAT" {
-			for len(payload) > 0 {
-				size := min(8, len(payload))
-				writePhotoPNGChunk(&source, kind, payload[:size])
-				payload = payload[size:]
-				chunks++
+	for _, kind := range []string{"IDAT", "tEXt"} {
+		t.Run(kind, func(t *testing.T) {
+			if kind == "tEXt" {
+				var source bytes.Buffer
+				source.WriteString("\x89PNG\r\n\x1a\n")
+				for range visualPreviewMaxPNGChunks + 1 {
+					writePhotoPNGChunk(&source, "tEXt", []byte("synthetic\x00metadata"))
+				}
+				writePhotoPNGChunk(&source, "IEND", nil)
+				_, err := photoSourcePackets(t.Context(), source.Bytes(), false)
+				require.ErrorIs(t, err, errVisualMetadataLimit)
+				return
 			}
-		} else {
-			source.Write(data[:n+12])
-		}
-		data = data[n+12:]
+			frame := image.NewNRGBA(image.Rect(0, 0, 65, 64))
+			seed := uint32(1)
+			for i := range frame.Pix {
+				seed = seed*1664525 + 1013904223
+				frame.Pix[i] = byte(seed >> 24)
+			}
+			var encoded, source bytes.Buffer
+			require.NoError(t, png.Encode(&encoded, frame))
+			source.Write(encoded.Bytes()[:8])
+			chunks := 0
+			for data := encoded.Bytes()[8:]; len(data) > 0; {
+				n := int(binary.BigEndian.Uint32(data))
+				kind := string(data[4:8])
+				payload := data[8 : 8+n]
+				if kind == "IDAT" {
+					for len(payload) > 0 {
+						size := min(8, len(payload))
+						writePhotoPNGChunk(&source, kind, payload[:size])
+						payload = payload[size:]
+						chunks++
+					}
+				} else {
+					source.Write(data[:n+12])
+				}
+				data = data[n+12:]
+			}
+			require.Greater(t, chunks, 1024)
+			_, err := photoSourcePackets(t.Context(), source.Bytes(), false)
+			require.NoError(t, err)
+			input := photoRenderInput(source.Bytes(), "image/png")
+			output, receipt, err := renderPhotoExport(t.Context(), source.Bytes(), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90})
+			require.NoError(t, err)
+			require.Equal(t, 65, receipt.Width)
+			require.NotEmpty(t, output)
+		})
 	}
-	require.Greater(t, chunks, 1024)
-	_, err := photoSourcePackets(t.Context(), source.Bytes(), false)
-	require.NoError(t, err)
-	input := photoRenderInput(source.Bytes(), "image/png")
-	output, receipt, err := renderPhotoExport(t.Context(), source.Bytes(), input, bundle.PhotoRenderProfile{Format: "png", Quality: 90})
-	require.NoError(t, err)
-	require.Equal(t, 65, receipt.Width)
-	require.NotEmpty(t, output)
-}
-
-func TestPhotoExportPNGRejectsTooManyNonPixelChunks(t *testing.T) {
-	t.Parallel()
-	var source bytes.Buffer
-	source.WriteString("\x89PNG\r\n\x1a\n")
-	for range visualPreviewMaxPNGChunks + 1 {
-		writePhotoPNGChunk(&source, "tEXt", []byte("synthetic\x00metadata"))
-	}
-	writePhotoPNGChunk(&source, "IEND", nil)
-	_, err := photoSourcePackets(t.Context(), source.Bytes(), false)
-	require.ErrorIs(t, err, errVisualMetadataLimit)
 }

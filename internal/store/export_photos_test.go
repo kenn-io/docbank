@@ -136,12 +136,6 @@ func TestPhotoExportPlanSealsFrozenInputsAndOwnsArtifact(t *testing.T) {
 	var restoredSourceID string
 	require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT id FROM export_sources`).Scan(&restoredSourceID))
 	require.Equal(t, pinnedSource.ID, restoredSourceID)
-	for range 31 {
-		_, err = restored.CreateExportSource(ctx, "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{m}}, nil)
-		require.NoError(t, err)
-	}
-	_, err = restored.CreateExportSource(ctx, "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{m}}, nil)
-	require.ErrorIs(t, err, bundle.ErrLimit)
 }
 
 func TestPhotoExportResolvesCompleteScopeAndSelectedDisplayMembers(t *testing.T) {
@@ -246,6 +240,8 @@ func TestPhotoExportPreparationAdmissionAndCapacity(t *testing.T) {
 		source, err = s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{m}}, nil)
 		require.NoError(t, err)
 	}
+	_, err = s.CreateExportSource(t.Context(), "owner", bundle.SourceRequest{OperationID: uuid.New().String(), Kind: "explicit", Members: []bundle.Member{m}}, nil)
+	require.ErrorIs(t, err, bundle.ErrLimit)
 	r := bundle.PlanRequest{OperationID: uuid.New().String(), SourceID: source.ID, MemberHash: source.MemberHash, Roles: []bundle.RolePolicy{{Role: "photo_rendered"}}, PhotoRender: &bundle.PhotoRenderProfile{Format: "png", Quality: 90}}
 	_, found, err := s.ExportPlanReplay(t.Context(), "owner", r)
 	require.False(t, found)

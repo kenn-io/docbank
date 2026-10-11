@@ -384,7 +384,7 @@ it.each([503, 410])("keeps a reviewed plan independent of its initial details re
   h.session.dispose();
 });
 
-it("releases each finished job before preparing three successive batches", async () => {
+it.each(["canceled", "completed", "failed"])("releases each %s job before preparing three successive batches", async (terminal) => {
   const h = await harness();
   const original = h.fetcher.getMockImplementation()!;
   const owned = new Set<string>();
@@ -399,13 +399,18 @@ it("releases each finished job before preparing three successive batches", async
       if (!owned.has(body.operation_id) && owned.size >= 2) return new Response(null, { status: 429 });
       owned.add(body.operation_id);
     }
-    return original(url, init);
+    const result = await original(url, init);
+    if (terminal !== "canceled" && path.includes("/jobs/") && !path.includes("/events")) {
+      const job = await result.json();
+      return response({ ...job, state: terminal, sequence: 2, ...(terminal === "completed" ? { completed_roles: 1, completed_bytes: 12, receipt: { format: "docbank-bundle-v1", plan_fingerprint: hash, sha256: hash, size: 512, entries: 4 } } : { failure: "Synthetic export failure" }) });
+    }
+    return result;
   });
   for (let batch = 0; batch < 3; batch++) {
     await h.session.preview();
     await h.session.start();
-    await h.session.cancel();
-    expect(h.state().status).toBe("canceled");
+    if (terminal === "canceled") await h.session.cancel();
+    expect(h.state().status).toBe(terminal);
     await h.session.clearFinished();
     expect(h.state().status).toBe("idle");
     expect(owned.size).toBe(0);
@@ -414,11 +419,25 @@ it("releases each finished job before preparing three successive batches", async
   h.session.dispose();
 });
 
-it("keeps the finished job until release succeeds and allows retry after failure", async () => {
+it.each([
+  { status: 503, detail: "Release failed", message: "Release failed", terminal: "canceled" },
+  { status: 409, detail: "Archive is retained", code: "export_retained", message: "Your browser is still downloading this export. Choose Prepare another export again once the download finishes.", terminal: "completed" },
+])("keeps the finished job until release succeeds after $status", async (failure) => {
   const h = await harness();
+  if (failure.terminal === "completed") {
+    const original = h.fetcher.getMockImplementation()!;
+    h.fetcher.mockImplementation(async (url, init) => {
+      const result = await original(url, init);
+      if (String(url).includes("/jobs/") && !String(url).includes("/events")) {
+        const job = await result.json();
+        return response({ ...job, state: "completed", sequence: 2, completed_roles: 1, completed_bytes: 12, receipt: { format: "docbank-bundle-v1", plan_fingerprint: hash, sha256: hash, size: 512, entries: 4 } });
+      }
+      return result;
+    });
+  }
   await h.session.preview();
   await h.session.start();
-  await h.session.cancel();
+  if (failure.terminal === "canceled") await h.session.cancel();
   const active = h.state().active;
   let respond!: (value: Response) => void;
   h.fetcher.mockImplementationOnce(() => new Promise<Response>(resolve => respond = resolve));
@@ -426,61 +445,12 @@ it("keeps the finished job until release succeeds and allows retry after failure
   expect(h.state().active).toEqual(active);
   expect(h.state().releasing).toBe(true);
   await h.session.clearFinished();
-  respond(new Response(JSON.stringify({ detail: "Release failed" }), { status: 503 }));
+  respond(new Response(JSON.stringify({ detail: failure.detail, code: failure.code }), { status: failure.status }));
   await pending;
   expect(h.state().active).toEqual(active);
-  expect(h.state().error?.message).toContain("Release failed");
-  h.fetcher.mockResolvedValueOnce(new Response(null, { status: 204 }));
-  await h.session.clearFinished();
-  expect(h.state().active).toBeUndefined();
-  expect(h.state().status).toBe("idle");
-  h.session.dispose();
-});
-
-it.each(["completed", "failed"])("releases a %s job through the generated route", async (terminal) => {
-  const h = await harness();
-  const original = h.fetcher.getMockImplementation()!;
-  h.fetcher.mockImplementation(async (url, init) => {
-    const path = String(url);
-    if (init?.method === "DELETE") return new Response(null, { status: 204 });
-    const result = await original(url, init);
-    if (path.includes("/jobs/") && !path.includes("/events")) {
-      const job = await result.json();
-      return response({ ...job, state: terminal, sequence: 2, ...(terminal === "completed" ? { completed_roles: 1, completed_bytes: 12, receipt: { format: "docbank-bundle-v1", plan_fingerprint: hash, sha256: hash, size: 512, entries: 4 } } : { failure: "Synthetic export failure" }) });
-    }
-    return result;
-  });
-  await h.session.preview();
-  await h.session.start();
-  expect(h.state().status).toBe(terminal);
-  const jobID = h.state().active!.id;
-  await h.session.clearFinished();
-  expect(h.fetcher.mock.calls.some(([url, init]) => String(url).endsWith(`/jobs/${jobID}`) && init?.method === "DELETE")).toBe(true);
-  expect(h.state().active).toBeUndefined();
-  h.session.dispose();
-});
-
-it("keeps a finished download until the user retries its release", async () => {
-  const h = await harness();
-  const original = h.fetcher.getMockImplementation()!;
-  h.fetcher.mockImplementation(async (url, init) => {
-    const result = await original(url, init);
-    if (String(url).includes("/jobs/") && !String(url).includes("/events")) {
-      const job = await result.json();
-      return response({ ...job, state: "completed", sequence: 2, completed_roles: 1, completed_bytes: 12, receipt: { format: "docbank-bundle-v1", plan_fingerprint: hash, sha256: hash, size: 512, entries: 4 } });
-    }
-    return result;
-  });
-  await h.session.preview();
-  await h.session.start();
-  expect(h.state().status).toBe("completed");
-  const active = h.state().active;
-  h.fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ code: "export_retained", detail: "Archive is retained" }), { status: 409 }));
-  await h.session.clearFinished();
-  expect(h.state().active).toEqual(active);
-  expect(h.state().status).toBe("completed");
+  expect(h.state().error?.message).toBe(failure.message);
+  expect(h.state().status).toBe(failure.status === 409 ? failure.terminal : "error");
   expect(h.state().releasing).toBe(false);
-  expect(h.state().error?.message).toBe("Your browser is still downloading this export. Choose Prepare another export again once the download finishes.");
   expect(h.fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
   h.fetcher.mockResolvedValueOnce(new Response(null, { status: 204 }));
   await h.session.clearFinished();

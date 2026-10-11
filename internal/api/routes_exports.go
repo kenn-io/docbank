@@ -77,6 +77,13 @@ func registerExportRoutes(mux *http.ServeMux, api huma.API, d Deps, g *Operation
 		var resolver func(context.Context) ([]bundle.Member, error)
 		var queryFingerprint string
 		if request.Kind == "photos" && request.Photos != nil {
+			seen := make(map[string]bool, len(request.Photos.AssetIDs))
+			for _, id := range request.Photos.AssetIDs {
+				if seen[id] {
+					return nil, NewError(400, "validation", "duplicate photo asset ID "+id)
+				}
+				seen[id] = true
+			}
 			resolver = func(ctx context.Context) ([]bundle.Member, error) {
 				members, identity, err := d.Store.ResolvePhotoExportMembers(ctx, *request.Photos)
 				queryFingerprint = identity
