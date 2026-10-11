@@ -26,7 +26,7 @@ var (
 	ErrHiddenNotConfigured   = errors.New("configure a hidden photos passcode first")
 	ErrHiddenConfigured      = errors.New("hidden photos already have a passcode")
 	ErrHiddenPasscode        = errors.New("incorrect hidden photos passcode")
-	ErrInvalidHiddenPasscode = errors.New("passcode must be 1 to 1024 bytes")
+	ErrInvalidHiddenPasscode = errors.New("passcode must be 1 to 1024 bytes without line breaks")
 )
 
 type HiddenLockoutError struct{ Until time.Time }
@@ -52,7 +52,7 @@ type PhotoHiddenState struct {
 }
 
 func validHiddenPasscode(passcode string) error {
-	if len(passcode) < 1 || len(passcode) > 1024 {
+	if len(passcode) < 1 || len(passcode) > 1024 || strings.ContainsAny(passcode, "\r\n") {
 		return ErrInvalidHiddenPasscode
 	}
 	return nil

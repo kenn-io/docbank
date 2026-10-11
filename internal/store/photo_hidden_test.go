@@ -158,7 +158,7 @@ func TestPhotoHiddenChangeRevokesAndFailedDisableIsAtomic(t *testing.T) {
 
 func TestPhotoHiddenValidatesBoundedHashesAndPasscodes(t *testing.T) {
 	t.Parallel()
-	for _, passcode := range []string{"", strings.Repeat("x", 1025)} {
+	for _, passcode := range []string{"", strings.Repeat("x", 1025), "\n", "\r", "secret\nword", "secret\rword", "secret\r\nword"} {
 		require.ErrorIs(t, validHiddenPasscode(passcode), ErrInvalidHiddenPasscode)
 	}
 	for _, hash := range []string{
