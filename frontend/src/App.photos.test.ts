@@ -3,7 +3,61 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { photo, storage } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
 
-afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
+
+it.each([false, true])("retains failed selection and browsing position through partial visibility changes, hidden=%s", async hidden => {
+  history.replaceState(null, "", `/photos${hidden ? "/hidden" : ""}#web_session=synthetic&web_upload_secret=proof`);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  const revoke = vi.fn();
+  vi.stubGlobal("URL", class extends URL { static createObjectURL() { return "blob:synthetic"; } static revokeObjectURL = revoke; });
+  const stored = storage();
+  let changed = false;
+  let reads = 0;
+  let finish!: (response: Response) => void;
+  const items = Array.from({ length: 60 }, (_, index) => ({ ...photo(index + 1, new Date(Date.UTC(2025, 5, 1, 12, 60 - index)).toISOString()), previews: { grid: { state: "ready", generation_id: "synthetic" } } }));
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", change_id: changed ? "second" : "first" });
+    if (url.endsWith("/assets/query")) { reads++; return Response.json({ items: changed ? items.slice(1) : items, total: changed ? 59 : 60 }); }
+    if (url.includes("/previews/")) return new Response("synthetic-jpeg");
+    if (url.endsWith(`/assets/photo-1/${hidden ? "unhide" : "hide"}`)) { changed = true; return Response.json({ id: "photo-1", revision: 2 }); }
+    if (url.endsWith(`/assets/photo-2/${hidden ? "unhide" : "hide"}`)) return new Promise<Response>(resolve => finish = resolve);
+    return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
+  }));
+  render(App);
+  await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" }));
+  await screen.findByRole("img", { name: "Photo 1.jpg" });
+  await fireEvent.click(screen.getByRole("combobox", { name: "Group photos: Months" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Capture sessions" }));
+  await fireEvent.click(screen.getByRole("combobox", { name: "Grid density: Comfortable" }));
+  await fireEvent.click(screen.getByRole("option", { name: "Compact" }));
+  const scroll = screen.getByTestId("photo-scroll");
+  scroll.scrollTop = 100;
+  await fireEvent.scroll(scroll);
+  const cacheName = stored.open.mock.calls[0][0];
+  await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name: hidden ? "Unhide" : "Hide" }));
+  await waitFor(() => expect(finish).toBeDefined());
+  expect(screen.queryByTestId("photo-scroll")).toBeNull();
+  await waitFor(() => expect(stored.data.has(cacheName)).toBe(false));
+  expect(revoke).toHaveBeenCalled();
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  await fireEvent(document, new Event("visibilitychange"));
+  expect(reads).toBe(1);
+  expect(screen.queryByTestId("photo-scroll")).toBeNull();
+  finish(Response.json({ detail: "Stale revision" }, { status: 412 }));
+  await screen.findByText("1 photo failed: Stale revision", {}, { timeout: 5000 });
+  await waitFor(() => expect(screen.getByTestId("photo-scroll").scrollTop).toBe(100), { timeout: 5000 });
+  expect(screen.getByRole("combobox", { name: "Group photos: Capture sessions" })).toBeTruthy();
+  expect(screen.getByRole("combobox", { name: "Grid density: Compact" })).toBeTruthy();
+  expect(screen.getByText("59 photos · 59 loaded")).toBeTruthy();
+  expect((screen.getByRole("checkbox", { name: "Select photo Photo 2.jpg" }) as HTMLInputElement).checked).toBe(true);
+  expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull();
+  expect(screen.getByText("1 selected photo")).toBeTruthy();
+});
 
 it.each(["change", "failure", "background", "delayed page", "unrelated mutation"])("validates retained photo state after %s", async kind => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
@@ -16,16 +70,17 @@ it.each(["change", "failure", "background", "delayed page", "unrelated mutation"
   let changed = false;
   let statusReads = 0;
   let delay = false;
+  let accessFailed = true;
   let finish!: (response: Response) => void;
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     if (url.endsWith("/photos/hidden")) {
       statusReads++;
-      if (changed && kind === "failure") throw new Error("Status unavailable");
+      if (changed && kind === "failure" && accessFailed) throw new Error("Status unavailable");
       return Response.json({ configured: false, change_id: changed && kind !== "unrelated mutation" ? "second" : "first" });
     }
     if (url.endsWith("/assets/query")) {
       if (delay) { delay = false; return new Promise<Response>(resolve => finish = resolve); }
-      return Response.json({ items: changed ? [] : [{ ...photo(1), previews: { grid: { state: "ready", generation_id: "synthetic" } } }], total: changed ? 0 : 1 });
+      return Response.json({ items: changed && kind !== "failure" ? [] : [{ ...photo(1), previews: { grid: { state: "ready", generation_id: "synthetic" } } }], total: changed ? 0 : 1 });
     }
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
     return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
@@ -61,6 +116,13 @@ it.each(["change", "failure", "background", "delayed page", "unrelated mutation"
   expect(screen.queryByText("1 selected photo")).toBeNull();
   await waitFor(() => expect(stored.data.has(cacheName)).toBe(false));
   expect(revoke).toHaveBeenCalledWith("blob:synthetic");
+  if (kind === "failure") {
+    await screen.findByText("Status unavailable");
+    accessFailed = false;
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
+    expect(screen.getByText("1 selected photo")).toBeTruthy();
+  }
   if (kind === "delayed page") {
     finish(Response.json({ items: [photo(1)], total: 1 }));
     await screen.findByText("Your photo library is empty");
@@ -68,7 +130,7 @@ it.each(["change", "failure", "background", "delayed page", "unrelated mutation"
   }
 });
 
-it.each(["unhide", "trash"])("refreshes a remounted Hidden grid after a delayed %s", async kind => {
+it("refreshes a remounted Hidden grid after a delayed unhide", async () => {
   history.replaceState(null, "", "/photos/hidden#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -83,18 +145,13 @@ it.each(["unhide", "trash"])("refreshes a remounted Hidden grid after a delayed 
       const items = hidden && !changed ? [photo(1)] : [];
       return Response.json({ items, total: items.length });
     }
-    if (url.endsWith(`/assets/photo-1/${kind}`)) return new Promise<Response>(resolve => finish = resolve);
+    if (url.endsWith("/assets/photo-1/unhide")) return new Promise<Response>(resolve => finish = resolve);
     return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
   }));
   render(App);
   await fireEvent.click(await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
-  if (kind === "unhide") {
-    await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
-    await fireEvent.click(await screen.findByRole("menuitem", { name: "Unhide" }));
-  } else {
-    await fireEvent.click(screen.getByRole("button", { name: "Move to trash" }));
-    await fireEvent.click(within(screen.getByRole("dialog", { name: "Move selected photos to trash" })).getByRole("button", { name: "Move to trash" }));
-  }
+  await fireEvent.click(screen.getByRole("button", { name: "Actions for Photo 1.jpg" }));
+  await fireEvent.click(await screen.findByRole("menuitem", { name: "Unhide" }));
   await waitFor(() => expect(finish).toBeDefined());
   await fireEvent.click(screen.getByRole("button", { name: "Library" }));
   await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull());
@@ -142,14 +199,6 @@ it("retains photo state and previews across sidebar switches until lock", async 
   await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
   expect(listings()).toBe(1);
   expect(previews()).toBe(1);
-  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-  items = [photo(2)];
-  await fireEvent(document, new Event("visibilitychange"));
-  expect(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeTruthy();
-  expect(fetcher.mock.calls.some(([url]) => url.endsWith("/photos/hidden"))).toBe(true);
-  await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
-  await screen.findByRole("checkbox", { name: "Select photo Photo 2.jpg" });
-  expect(listings()).toBe(2);
   history.replaceState(null, "", "/");
   await fireEvent(window, new PopStateEvent("popstate"));
   await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());

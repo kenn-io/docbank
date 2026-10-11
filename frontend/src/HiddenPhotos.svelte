@@ -11,7 +11,9 @@
   let hiddenState = $state<PhotoHiddenState>({ configured: false });
   let workspace = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
   let photoWorkspace = $state<{ refresh: () => Promise<void> }>();
-  export async function refresh() { await photoWorkspace?.refresh(); }
+  export async function refresh() { if (workspaceVisible) await photoWorkspace?.refresh(); else await checkAccess(); }
+  let workspaceVisible = $state(false);
+  let concealment = 0;
   let passcode = $state("");
   let currentPasscode = $state("");
   let nextPasscode = $state("");
@@ -32,9 +34,15 @@
   let disposed = false;
   const options = () => ({ session, signal: AbortSignal.timeout(30_000) });
 
+  function conceal() {
+    workspaceVisible = false;
+    concealment++;
+    workspace?.photos.cancelPending();
+    return workspace?.cache.dispose();
+  }
   function clear() {
+    void conceal();
     workspace?.photos.dispose();
-    void workspace?.cache.dispose();
     workspace = undefined;
     remaining = 0;
   }
@@ -44,17 +52,29 @@
     if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
     else void checkAccess();
   }
-  function applyState(result: PhotoHiddenState) {
+  async function applyState(result: PhotoHiddenState, signal: AbortSignal) {
     onstate?.(result);
-    if (workspace && (result.change_id !== hiddenState.change_id || result.configured !== hiddenState.configured || result.expires_at !== hiddenState.expires_at)) clear();
+    if (workspace && (result.configured !== hiddenState.configured || result.expires_at !== hiddenState.expires_at)) clear();
+    else if (workspace && result.change_id !== hiddenState.change_id) void conceal();
     readError = "";
     lockoutError = "";
     hiddenState = result;
     resolved = true;
-    reading = false;
     remaining = result.expires_at ? Math.max(0, Math.ceil((Date.parse(result.expires_at) - Date.now()) / 1000)) : 0;
     if (!remaining || concealingAction) clear();
-    else if (!workspace) workspace = { photos: new Photos(session, authorizationLost, true), cache: new PhotoPreviewCache(session, authorizationLost, true) };
+    else if (!workspace) { workspace = { photos: new Photos(session, authorizationLost, true), cache: new PhotoPreviewCache(session, authorizationLost, true) }; workspaceVisible = true; }
+    else if (!workspaceVisible && !workspace.photos.hiding && !workspace.photos.trashing && !workspace.photos.loading) {
+      const current = workspace;
+      const version = concealment;
+      await current.cache.dispose();
+      await tick();
+      if (version !== concealment || signal.aborted || disposed) return;
+      await current.photos.refresh(undefined, true);
+      if (version !== concealment || signal.aborted || disposed || current.photos.hiding || current.photos.trashing) return;
+      if (current.photos.error) throw new Error(current.photos.error);
+      current.cache = new PhotoPreviewCache(session, authorizationLost, true);
+      workspaceVisible = true;
+    }
   }
   async function checkAccess() {
     if (document.visibilityState !== "visible") return;
@@ -65,8 +85,15 @@
     try {
       const result = await getPhotoHiddenState({ session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
       if (controller.signal.aborted || disposed) return;
-      applyState(result);
-    } catch (cause) { if (!controller.signal.aborted && !disposed) { if (cause instanceof APIError && cause.status === 401) onauthfailure(cause); else readError = cause instanceof Error ? cause.message : String(cause); onaccessfailure?.(); clear(); hiddenState.expires_at = undefined; } }
+      await applyState(result, controller.signal);
+    } catch (cause) {
+      if (!controller.signal.aborted && !disposed) {
+        readError = cause instanceof Error ? cause.message : String(cause);
+        onaccessfailure?.();
+        if (cause instanceof APIError && (cause.status === 401 || cause.status === 403)) { clear(); hiddenState.expires_at = undefined; if (cause.status === 401) onauthfailure(cause); }
+        else void conceal();
+      }
+    }
     finally { if (!controller.signal.aborted) reading = false; }
   }
   function passcodeValidation(value: string, empty: string) {
@@ -125,7 +152,7 @@
   onMount(() => {
     void checkAccess();
     const poll = setInterval(() => { if (!reading) void checkAccess(); }, 2000);
-    const foreground = () => { if (document.visibilityState === "visible") void checkAccess(); else { refreshController.abort(); clear(); } };
+    const foreground = () => { if (document.visibilityState === "visible") void checkAccess(); else { refreshController.abort(); void conceal(); } };
     document.addEventListener("visibilitychange", foreground);
     const timer = setInterval(() => {
       if (hiddenState.locked_until && Date.parse(hiddenState.locked_until) <= Date.now()) hiddenState.locked_until = undefined;
@@ -145,9 +172,11 @@
   {#if readError}<p role="alert">{readError}</p><Button size="sm" onclick={() => void checkAccess()}>Retry</Button>{/if}
   {#if !resolved}
     <div class="hidden-gate"><h1>Hidden</h1>{#if reading}<Spinner />{/if}</div>
-  {:else if workspace && remaining}
+  {:else if workspace && remaining && workspaceVisible}
     <div class="hidden-controls"><span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span><Button size="sm" disabled={actionPending} onclick={() => void action("lock")}>Lock</Button></div>
-    {#each [workspace] as current (current)}<PhotosWorkspace bind:this={photoWorkspace} photos={current.photos} cache={current.cache} title="Hidden" {ontrashed} onhidden={onunhidden} {onactionerror} />{/each}
+    {#each [workspace] as current (current)}<PhotosWorkspace bind:this={photoWorkspace} photos={current.photos} cache={current.cache} title="Hidden" {ontrashed} onhidden={onunhidden} oninvalidate={conceal} {onactionerror} />{/each}
+  {:else if workspace && remaining}
+    <Spinner />
   {:else}
     <div class="hidden-gate">
       <h1>Hidden</h1>

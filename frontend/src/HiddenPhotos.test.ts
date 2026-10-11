@@ -243,7 +243,7 @@ it.each(["lock", "revoke", "expire", "denial", "trash denial", "read"])("clears 
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await screen.findByRole("checkbox", { name: "Select photo Photo 1.jpg" });
     expect(screen.queryByText("Access unavailable")).toBeNull();
-    expect(screen.queryByText("1 selected photo")).toBeNull();
+    expect(screen.getByText("1 selected photo")).toBeTruthy();
   }
 });
 

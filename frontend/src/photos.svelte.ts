@@ -123,11 +123,11 @@ export class Photos {
     return this.loadMore(preserve);
   }
 
-  refresh(preserve?: () => (() => Promise<void>) | undefined) {
-    return this.replace("refresh", preserve);
+  refresh(preserve?: () => (() => Promise<void>) | undefined, visibleOnly = false) {
+    return this.replace("refresh", preserve, visibleOnly);
   }
 
-  private async replace(mode: "refresh" | "expiry", preserve?: () => (() => Promise<void>) | undefined) {
+  private async replace(mode: "refresh" | "expiry", preserve?: () => (() => Promise<void>) | undefined, visibleOnly = false) {
     if (this.disposed) return;
     this.controller.abort();
     this.controller = new AbortController();
@@ -160,7 +160,7 @@ export class Photos {
       this.total = total;
       this.cursor = cursor;
       this.started = true;
-      this.selection = reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...this.trashTargets.map(item => item.asset_id)]));
+      this.selection = reconcileIDSelection(this.selection, new Set([...candidate.keys(), ...(visibleOnly ? [] : this.trashTargets.map(item => item.asset_id))]));
       this.expired = false;
       this.replacement = undefined;
       await restore?.();

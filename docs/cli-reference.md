@@ -235,7 +235,7 @@ filters.
 
 ### Hidden photos
 
-Hidden passcodes use protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Commands that read or edit a hidden asset prompt for the passcode and unlock only for that invocation. Disable returns all hidden photos to Library; reset preserves hidden flags while removing credentials. Passcode and hidden-flag changes require a writable vault. MCP photo commands require unhiding first; authorized CLI commands keep the asset hidden. Documents and MCP document tools still expose their ordinary file nodes.
+Hidden passcodes use protected terminal input or one line from stdin. Change reads the current and new passcode on separate lines. Commands that read or edit a hidden asset prompt for the passcode and unlock only for that invocation. Disable returns all hidden photos to Library; reset preserves hidden flags while removing credentials. Passcode and hidden-flag changes require a writable vault. For hidden photo details, use passcode-authorized CLI inspection; MCP photo tools remain locked. Documents and MCP document tools still expose their ordinary file nodes.
 
 ### Photo imports
 

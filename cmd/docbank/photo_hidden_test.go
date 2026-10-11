@@ -73,6 +73,7 @@ func TestPhotoHiddenInvocationUnlock(t *testing.T) {
 			require.Equal(t, 1, unlocks, "operation error: %v", err)
 			if passcode == "wrong-passcode" {
 				require.ErrorIs(t, err, store.ErrHiddenPasscode)
+				require.EqualError(t, err, "error executing request: incorrect hidden photos passcode; retry with the correct passcode")
 				require.Equal(t, 1, writes)
 				return
 			}
@@ -112,10 +113,6 @@ func TestPhotoHiddenCLIUnhideBySelector(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal([]byte(out), &asset))
 	require.NotNil(t, asset.HiddenAt)
-	unhide.SetIn(strings.NewReader("incorrect-passcode\n"))
-	_, err = runCLI(t, "photos", "unhide", asset.ID)
-	require.ErrorIs(t, err, store.ErrHiddenPasscode)
-	require.EqualError(t, err, "error executing request: incorrect hidden photos passcode; retry with the correct passcode")
 	for i, selector := range []string{"/inbox/synthetic-hidden.jpeg", "id:" + strconv.FormatInt(asset.Files[0].NodeID, 10), asset.ID} {
 		if i > 0 {
 			_, err = connection.SetPhotoAssetHidden(t.Context(), asset.ID, asset.Revision, true, "")

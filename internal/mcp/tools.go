@@ -612,11 +612,11 @@ func domainErrorMessage(code string) string {
 	case "photo_node_owned":
 		return "The selected node already belongs to a photo asset."
 	case "hidden_locked":
-		return "Run docbank photos unhide <asset-id|path-or-id> with the passcode before retrying."
+		return "For photo details, run docbank photos assets inspect <asset-id|path-or-id> and enter the Hidden passcode. MCP photo tools remain locked."
 	case "hidden_not_configured":
-		return "Run docbank photos hidden setup to set a passcode, then docbank photos unhide <asset-id|path-or-id> before retrying."
+		return "Run docbank photos hidden setup to set a passcode. For photo details, run docbank photos assets inspect <asset-id|path-or-id> and enter that passcode. MCP photo tools remain locked."
 	case "hidden_passcode":
-		return "Run docbank photos unhide <asset-id|path-or-id> with the correct passcode before retrying."
+		return "For photo details, run docbank photos assets inspect <asset-id|path-or-id> and enter the correct Hidden passcode. MCP photo tools remain locked."
 	case "stale_revision":
 		return "The revision is stale; read the current state and retry with its revision."
 	case "audit_mutation_unsupported":
