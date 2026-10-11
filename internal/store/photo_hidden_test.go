@@ -489,4 +489,5 @@ func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
 	require.NoError(t, err)
 	asset, err = s.SetPhotoAssetHidden(unlocked, asset.ID, asset.Revision, false)
 	require.NoError(t, err)
+	require.Nil(t, asset.HiddenAt)
 }

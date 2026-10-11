@@ -46,11 +46,17 @@ it("keeps failed confirmation visible and closes after cancellation or success",
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3)], total: 3 })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-3", revision: 2 })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(2)], total: 1 })));
+  let listings = 0;
+  const fetcher = vi.fn(async (url: string, options: RequestInit) => {
+    if (url.endsWith("/query")) {
+      const ids = JSON.parse(String(options.body)).query.filters?.asset_ids;
+      if (ids) return Response.json({ items: [photo(2)].filter(item => ids.includes(item.asset_id)), total: 1 });
+      const first = ++listings === 1;
+      return Response.json({ items: [photo(first ? 3 : 2)], total: first ? 3 : 1 });
+    }
+    if (url.endsWith("/photo-2/trash")) return Response.json({ detail: "Photo changed" }, { status: 412 });
+    return Response.json({ id: url.split("/").at(-2), revision: 2 });
+  });
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();

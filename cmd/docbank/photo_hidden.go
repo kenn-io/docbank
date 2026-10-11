@@ -137,6 +137,8 @@ func init() {
 		}}
 		if !hide {
 			command.Use = action + " <asset-id|path-or-id>"
+		} else {
+			command.Short = "Hide a photo by asset ID"
 		}
 		command.Flags().Int64Var(&photoRevision, "revision", 0, "expected asset revision (default: current, retried once)")
 		photoAssetsCmd.AddCommand(command)
