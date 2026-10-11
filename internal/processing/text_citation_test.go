@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/kit/pack"
 	"go.kenn.io/kit/packstore"
 )
 
@@ -70,6 +71,16 @@ func TestResolveTextCitationExactText(t *testing.T) {
 
 func TestResolveTextCitationVerification(t *testing.T) {
 	t.Parallel()
+	t.Run("incomplete verification", func(t *testing.T) {
+		f := newPublicationFixture(t)
+		citation, size := writeCitationBlob(t, f, "quote")
+		got, err := readTextCitation(t.Context(), citationReadBoundary{
+			source: f.blobs, unverified: true,
+		}, citation, size)
+		require.ErrorIs(t, err, document.ErrCitationIntegrity)
+		require.ErrorIs(t, err, pack.ErrVerificationIncomplete)
+		require.Empty(t, got.Text)
+	})
 	t.Run("corrupt suffix", func(t *testing.T) {
 		f := newPublicationFixture(t)
 		citation, size := writeCitationBlob(t, f, "quote unchanged; original suffix")
@@ -151,9 +162,10 @@ func TestResolveTextCitationReadFailures(t *testing.T) {
 
 // This wraps only external I/O; the catalog, hashing stream and resolver remain real.
 type citationReadBoundary struct {
-	source   verifiedBlobReader
-	wrap     func(io.Reader) io.Reader
-	closeErr error
+	source     verifiedBlobReader
+	wrap       func(io.Reader) io.Reader
+	closeErr   error
+	unverified bool
 }
 
 func (b citationReadBoundary) OpenStreamContext(
@@ -167,18 +179,23 @@ func (b citationReadBoundary) OpenStreamContext(
 	if b.wrap != nil {
 		reader = b.wrap(r)
 	}
-	wrapped := &citationBoundaryStream{VerifiedReadCloser: r, reader: reader, closeErr: b.closeErr}
+	wrapped := &citationBoundaryStream{VerifiedReadCloser: r, reader: reader,
+		closeErr: b.closeErr, unverified: b.unverified}
 	return wrapped, size, nil
 }
 
 type citationBoundaryStream struct {
 	packstore.VerifiedReadCloser
 
-	reader   io.Reader
-	closeErr error
+	reader     io.Reader
+	closeErr   error
+	unverified bool
 }
 
 func (r *citationBoundaryStream) Read(p []byte) (int, error) { return r.reader.Read(p) }
+func (r *citationBoundaryStream) Verified() bool {
+	return !r.unverified && r.VerifiedReadCloser.Verified()
+}
 func (r *citationBoundaryStream) Close() error {
 	return errors.Join(r.VerifiedReadCloser.Close(), r.closeErr)
 }

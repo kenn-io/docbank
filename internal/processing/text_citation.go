@@ -58,7 +58,7 @@ func readTextCitation(
 		err = nil
 	}
 	if err == nil && !stream.Verified() {
-		err = pack.ErrVerificationIncomplete
+		err = fmt.Errorf("%w: %w", document.ErrCitationIntegrity, pack.ErrVerificationIncomplete)
 	}
 	err = errors.Join(err, stream.Close(), ctx.Err())
 	if err != nil {
@@ -75,14 +75,11 @@ func readTextCitation(
 func readCitationRange(
 	ctx context.Context, source io.Reader, citation document.TextCitation, size int64,
 ) (string, error) {
-	reader := bufio.NewReaderSize(source, 4096)
+	reader := bufio.NewReaderSize(&contextReader{ctx: ctx, reader: source}, 4096)
 	var text strings.Builder
 	var bytesRead int64
 	codepoints := 0
 	for {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
 		char, width, err := reader.ReadRune()
 		if errors.Is(err, io.EOF) {
 			break
