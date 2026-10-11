@@ -1,5 +1,6 @@
-import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { sha256Digest } from "./crypto.js";
 import * as generated from "./generated/docbank.js";
 import { readExactBody, digestHeaderMatches } from "./download.js";
 import type { SelectedSource } from "./selectedSource.js";
@@ -598,9 +599,7 @@ export async function readPageImage(
     throw cause;
   }
   const bytes = await readExactBody(response, image.size, signal, "Invalid page image size");
-  const actual = crypto.subtle
-    ? bytesToHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
-    : bytesToHex(sha256(bytes));
+  const actual = bytesToHex(await sha256Digest(bytes));
   signal.throwIfAborted();
   requireValue(actual === image.sha256 && digestHeaderMatches(headers, actual), "Invalid page image digest");
   const view = new DataView(bytes.buffer);

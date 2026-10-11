@@ -6723,6 +6723,17 @@ export interface WatchedInboxList {
   items: WatchedInbox[];
 }
 
+export interface WebSignInRecord {
+  created_at: string;
+  expires_at: string;
+  id: string;
+}
+
+export interface WebTabSession {
+  token: string;
+  upload_secret: string;
+}
+
 export type WorkspaceQueryCreateRequestFacetsItem = typeof WorkspaceQueryCreateRequestFacetsItem[keyof typeof WorkspaceQueryCreateRequestFacetsItem];
 
 
@@ -6803,6 +6814,24 @@ export const ReportTelemetryEvent202Status = {
 export type ReportTelemetryEvent202 = {
   /** queued when the event is queued or its screen was already sent today; disabled when telemetry is off and nothing is sent. */
   status: ReportTelemetryEvent202Status;
+};
+
+export type GetWebSignIn200 = {
+  enabled: boolean;
+  session?: WebTabSession;
+};
+
+export type LoginWebSignInBody = {
+  api_key: string;
+};
+
+export type LoginWebSignIn200 = {
+  enabled: boolean;
+  session?: WebTabSession;
+};
+
+export type ListWebSignIns200 = {
+  items: WebSignInRecord[];
 };
 
 export type CancelWebDownloadParams = {
@@ -7846,6 +7875,116 @@ return sessionJSON<ReportTelemetryEvent202>(getReportTelemetryEventUrl(),
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(reportTelemetryEventBody)
+  }
+);}
+
+
+
+export const getGetWebSignInUrl = () => {
+
+
+
+
+  return `/api/daemon/web-auth`
+}
+
+/**
+ * @summary Check whether browser key login is enabled
+ */
+export const getWebSignIn = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<GetWebSignIn200> => {
+
+  return sessionJSON<GetWebSignIn200>(getGetWebSignInUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getLoginWebSignInUrl = () => {
+
+
+
+
+  return `/api/daemon/web-auth/login`
+}
+
+/**
+ * @summary Sign in using the configured API key
+ */
+export const loginWebSignIn = async (loginWebSignInBody: LoginWebSignInBody, options?: Parameters<typeof sessionJSON>[1]): Promise<LoginWebSignIn200> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<LoginWebSignIn200>(getLoginWebSignInUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(loginWebSignInBody)
+  }
+);}
+
+
+
+export const getListWebSignInsUrl = () => {
+
+
+
+
+  return `/api/daemon/web-auth/sessions`
+}
+
+/**
+ * @summary List browser key logins (master API only)
+ */
+export const listWebSignIns = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<ListWebSignIns200> => {
+
+  return sessionJSON<ListWebSignIns200>(getListWebSignInsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getRevokeWebSignInUrl = (id: string,) => {
+
+
+
+
+  return `/api/daemon/web-auth/sessions/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Revoke a browser key login (master API only)
+ */
+export const revokeWebSignIn = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getRevokeWebSignInUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
   }
 );}
 

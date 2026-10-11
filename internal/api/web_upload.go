@@ -85,12 +85,17 @@ func registerWebUpload(
 		panic("api: invalid browser origin for verified upload")
 	}
 	mux.HandleFunc("GET "+webUploadSocketPath, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Origin") != origin {
+		loginOrigin := sessions.login != nil && webSameOrigin(r, sessions.login, true)
+		if r.Header.Get("Origin") != origin && !loginOrigin {
 			http.Error(w, "browser upload origin rejected", http.StatusForbidden)
 			return
 		}
+		allowedHost := parsed.Host
+		if loginOrigin {
+			allowedHost = r.Host
+		}
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-			OriginPatterns: []string{parsed.Host},
+			OriginPatterns: []string{allowedHost},
 		})
 		if err != nil {
 			return // Accept writes its own handshake error.
@@ -101,7 +106,7 @@ func registerWebUpload(
 			return
 		}
 		defer sessions.releaseTrackedUpload(conn)
-		handleWebUploadConnection(r.Context(), conn, d, g, sessions)
+		handleWebUploadConnection(r.Context(), conn, d, g, sessions, r)
 	})
 }
 
@@ -111,6 +116,7 @@ func handleWebUploadConnection(
 	d Deps,
 	g *gate,
 	sessions *webSessionRegistry,
+	request *http.Request,
 ) {
 	defer func() { _ = conn.CloseNow() }()
 
@@ -124,6 +130,10 @@ func handleWebUploadConnection(
 	nonce, err := base64.RawURLEncoding.DecodeString(auth.Nonce)
 	if auth.Type != "authenticate" || len(nonce) != sha256.Size || err != nil {
 		_ = conn.Close(websocket.StatusPolicyViolation, "invalid upload authentication")
+		return
+	}
+	if !sessions.authorizeBrowser(request, auth.Token) {
+		_ = conn.Close(websocket.StatusPolicyViolation, "browser cookie rejected")
 		return
 	}
 	secret, ok := sessions.uploadSecret(auth.Token)

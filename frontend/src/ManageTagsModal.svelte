@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import XIcon from "@lucide/svelte/icons/x";
   import {
@@ -48,6 +48,8 @@
   let pendingTagID = $state("");
   let failure = $state("");
   let notice = $state("");
+  let destroyed = false;
+  onDestroy(() => { destroyed = true; });
 
   const available = $derived(
     catalog.filter((tag) => !assigned.some((item) => item.id === tag.id)),
@@ -60,17 +62,19 @@
 
   async function change(tag: Tag, assign: boolean): Promise<void> {
     if (disabled || pendingTagID) return;
+    const requestSession = session;
     pendingTagID = tag.id;
     failure = "";
     notice = "";
     try {
       const receipt = await changeNodeTag(
-        session,
+        requestSession,
         currentNode.id,
         currentNode.revision,
         tag.id,
         assign,
       );
+      if (destroyed || session !== requestSession) return;
       currentNode = receipt.node;
       if (assign) {
         assigned = sortTags([
@@ -93,13 +97,14 @@
       selectedTagID = "";
       onchanged(receipt, assign);
     } catch (cause) {
+      if (destroyed || session !== requestSession) return;
       if (cause instanceof APIError && cause.status === 401) {
         onauthfailure(cause);
         return;
       }
       failure = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      pendingTagID = "";
+      if (!destroyed) pendingTagID = "";
     }
   }
 

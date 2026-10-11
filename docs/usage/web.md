@@ -957,6 +957,78 @@ not document defects.
 
 ![An import collection showing file types and processing coverage](https://docbank.ai/assets/generated/web-collection-quality.png)
 
+## Sign in on a server or container
+
+When an operator configures `server.api_key`, the **Open your Docbank** page
+accepts that key and exchanges it for the same limited browser credentials
+issued by `docbank web`. The input clears after submission. Docbank never
+stores the key in browser storage, returns it in a response, or uses it for
+subsequent browser requests. Each tab keeps its scoped credentials in memory.
+Sign in again after a reload or daemon restart. If a later request finds the
+session expired or revoked, Docbank clears that tab's selection and open
+dialogs and returns it to sign-in.
+
+1. Set a fixed API port and a strong API key in `$DOCBANK_HOME/config.toml`.
+   With `public_origin`, the key must be at least 32 characters; generate one
+   with `openssl rand -hex 32`. Protect this file as a credential. Configure
+   the exact public origin:
+
+   ```toml
+   [server]
+   api_port = 7777
+   api_key = "output-of-openssl-rand-hex-32"
+   idle_timeout = "0"
+
+   [web]
+   public_origin = "https://archive.example.test"
+   allowed_hosts = []
+   session_lifetime = "24h"
+   ```
+
+2. Keep the daemon on loopback. Terminate HTTPS at a protected reverse proxy
+   that preserves the public `Host` and forwards WebSocket upgrades to the
+   API port. Docbank takes authority from configuration, never `Forwarded`
+   or `X-Forwarded-*` headers. Every request, including API-key requests,
+   health checks, and static pages, must use the public authority, a concrete
+   loopback backend authority, or an exact entry in `[web] allowed_hosts`.
+   Docbank also admits these authorities through the server Host allowlist.
+   Entries are `host[:port]` values; schemes and wildcards are rejected.
+3. Open the public origin and enter the API key. Use HTTPS for remote access.
+   An HTTP origin is accepted on loopback; non-loopback HTTP requires
+   `trust_private_network = true`, which explicitly trusts the private
+   network and its proxy with the key and browser credentials.
+
+Without `public_origin`, configured-key login is available at the daemon's
+fresh loopback web origin, and key login adds no Host restriction beyond the
+server's [`allowed_hosts`](../configuration.md). The usual `docbank web` fragment handoff also works
+with ephemeral API keys and keeps its existing upload proof and permissions.
+
+Key login sets a host-only, HttpOnly, SameSite=Strict instance cookie; HTTPS
+also sets Secure. Each tab receives its own token and upload proof.
+The cookie alone cannot read the vault. Requests need the tab token and cookie;
+mutations also need the exact public Origin. Cross-site requests
+are rejected. Credential requests reject redirects.
+
+`session_lifetime` accepts 1 minute through 90 days. Omitting it or setting
+`"0"` uses 24 hours. Expiry is absolute. Failed sign-ins are not locked out;
+the key length requirement keeps guessing impractical. A daemon allows up to 512 active key-login sessions.
+Sessions are held only in memory and are excluded from vault backups.
+
+Choose **Sign out** to revoke the current tab. Login and logout do not rotate
+or delete the shared cookie or invalidate other tabs. An operator can list
+and revoke individual key-login sessions without seeing their credentials:
+
+```bash
+docbank web sessions
+docbank web sessions --json
+docbank web sessions revoke SESSION_ID
+```
+
+Session IDs are non-secret digests. These CLI commands use the daemon's
+ownership-proven master connection; browser credentials cannot manage other
+sessions. Expiry, revocation and daemon shutdown cancel the session's uploads,
+exports and prepared reads through the existing browser resource lifecycle.
+
 ## Browser authentication
 
 When Docbank opens the browser, it writes a small launch page beside the
@@ -1016,13 +1088,14 @@ endpoints. A browser session never receives the master API key. See the
 [HTTP API](../architecture/http-api.md) for the route and credential contracts.
 
 The lock button revokes the session in daemon memory and clears the page.
-Every remaining browser session and its dedicated browser origin disappear
+Every remaining fragment browser session and its dedicated browser origin disappear
 when that daemon stops. Run `docbank web` again to create a fresh origin and
 session against the ownership-proven daemon.
 
 Closing the browser tab does not stop the daemon or revoke other sessions.
 Use the lock button when the current tab should lose access immediately, and
-use `docbank daemon stop` when every session and the daemon itself should end.
+use `docbank daemon stop` to stop the daemon. All browser sessions end when
+the daemon stops.
 
 The launch file remains beneath `$DOCBANK_HOME/web-launch/` with the same
 owner-only Unix permissions or Windows DACL as the runtime record. It is

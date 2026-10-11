@@ -10,6 +10,7 @@ import {
 } from "./bates.js";
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -24,6 +25,19 @@ it("hashes a recipe to the same digest as the Go stamp engine", async () => {
 
   // Golden digest from internal/pdfstamp/stamp_test.go validRecipe.
   expect(await batesRecipeSHA256(recipe)).toBe("f3c4cebd1ea16ad54b0784b96ee73f3f2bd8c644288a9ba1a1d67d8dbd720787");
+});
+
+it("hashes a recipe when SubtleCrypto is unavailable", async () => {
+  vi.stubGlobal("crypto", { getRandomValues: vi.fn() });
+  const recipe = batesRecipe({
+    namespace_id: "ns-synthetic",
+    prefix: "OUR",
+    suffix: "",
+    padding: 6,
+    created_at: "2026-09-21T00:00:00Z",
+  }, 41, "bottom-right", 24);
+
+  await expect(batesRecipeSHA256(recipe)).resolves.toBe("f3c4cebd1ea16ad54b0784b96ee73f3f2bd8c644288a9ba1a1d67d8dbd720787");
 });
 
 it("keeps only sealed package snapshots with pages", async () => {

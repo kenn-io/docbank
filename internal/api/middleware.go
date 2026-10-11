@@ -185,7 +185,7 @@ func clearLongRunningBodyReadDeadlines(api huma.API) {
 // the daemon always has one; see NewServer.
 func authExempt(path string) bool {
 	switch path {
-	case "/", "/photos", "/health", kitPingPath, daemonauth.ChallengePath,
+	case webAuthPath, webLoginPath, "/", "/photos", "/health", kitPingPath, daemonauth.ChallengePath,
 		webDownloadFilePath, webUploadSocketPath:
 		return true
 	}
@@ -225,6 +225,10 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 		}
 		webToken := r.Header.Get(WebSessionHeader)
 		if owner, sessionCtx, ok := sessions.authenticate(webToken); sessions != nil && ok {
+			if !sessions.authorizeBrowser(r, webToken) {
+				writeError(w, NewError(http.StatusForbidden, "web_browser", "browser cookie, Host or Origin rejected"))
+				return
+			}
 			if !webSessionRequestAllowed(r) {
 				writeError(w, NewError(http.StatusForbidden, "web_session_read_only",
 					"browser sessions cannot use this endpoint"))
@@ -323,9 +327,10 @@ func recoverMiddleware(next http.Handler, logger *slog.Logger) http.Handler {
 }
 
 // hostMiddleware rejects unconfigured authorities before authentication. The
-// daemon's dedicated browser origin remains available to local web sessions.
-func hostMiddleware(next http.Handler, cfg config.ServerConfig, webURL string) http.Handler {
-	hosts := append([]string(nil), cfg.AllowedHosts...)
+// daemon's dedicated browser origin remains available to local web sessions,
+// and signInHosts admits the configured browser sign-in authorities.
+func hostMiddleware(next http.Handler, cfg config.ServerConfig, webURL string, signInHosts []string) http.Handler {
+	hosts := append(append([]string(nil), cfg.AllowedHosts...), signInHosts...)
 	if web, err := url.Parse(webURL); err == nil && web.Host != "" {
 		hosts = append(hosts, web.Host)
 	}

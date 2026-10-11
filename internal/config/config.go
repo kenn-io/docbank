@@ -60,7 +60,11 @@ type ServerConfig struct {
 
 // WebConfig controls the built-in web UI.
 type WebConfig struct {
-	Enabled bool `toml:"enabled"` // default true
+	Enabled             bool     `toml:"enabled"` // default true
+	PublicOrigin        string   `toml:"public_origin"`
+	AllowedHosts        []string `toml:"allowed_hosts"`
+	TrustPrivateNetwork bool     `toml:"trust_private_network"`
+	SessionLifetime     Duration `toml:"session_lifetime"`
 }
 
 // MCPConfig controls the optional local MCP transports. The HTTP transport
@@ -521,6 +525,9 @@ func resolveBackupRepo(root string, backup *BackupConfig) error {
 // exposes credentials and contents to the selected network; operators must
 // provide a trusted transport or network. Loopback can use an ephemeral key.
 func (c Config) Validate() error {
+	if err := validateWebConfig(c); err != nil {
+		return err
+	}
 	if c.PageRuntime != nil {
 		if err := c.PageRuntime.Validate(); err != nil {
 			return fmt.Errorf("[page_runtime]: %w", err)

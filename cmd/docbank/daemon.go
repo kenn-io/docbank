@@ -402,6 +402,10 @@ func runServe(ctx context.Context) (retErr error) {
 	if webListener != nil {
 		defer func() { _ = webListener.Close() }()
 	}
+	if cfg.Web.PublicOrigin != "" && webURL == "" {
+		logger.Warn("[web] public_origin ignored: this build has no web application assets; "+
+			"browser sign-in and the Host allowlist are disabled", "public_origin", cfg.Web.PublicOrigin)
+	}
 
 	shutdownToken, err := randomHex32()
 	if err != nil {
@@ -412,6 +416,7 @@ func runServe(ctx context.Context) (retErr error) {
 	// otherwise a fresh per-run key is generated and published only to
 	// same-user clients via the runtime record inside owner-private DOCBANK_HOME
 	// — never over the network, never logged.
+	webLoginEnabled := cfg.Server.APIKey != ""
 	apiKey := cfg.Server.APIKey
 	if apiKey == "" {
 		apiKey, err = randomHex32()
@@ -517,6 +522,7 @@ func runServe(ctx context.Context) (retErr error) {
 		EmailPDFUnavailableReason: emailPDFUnavailableReason,
 		StartedAt:                 time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
+		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
 		Processing: processingService, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,

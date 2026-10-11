@@ -6,6 +6,16 @@ const instances: PhotoPreviewCache[] = [];
 function workspace() { const cache = new PhotoPreviewCache("scoped", vi.fn()); instances.push(cache); return cache; }
 afterEach(async () => { await Promise.all(instances.splice(0).map(cache => cache.dispose())); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it("creates its cache namespace without secure-context randomUUID", () => {
+  vi.stubGlobal("crypto", {
+    getRandomValues: (bytes: Uint8Array) => {
+      bytes.fill(7);
+      return bytes;
+    },
+  });
+  expect(workspace()).toBeInstanceOf(PhotoPreviewCache);
+});
+
 it("retains bytes without fetch and cancels abandoned reads", async () => {
   const stored = storage();
   const fetcher = vi.fn(async (_url: string | URL | Request, _init: RequestInit) => new Response("synthetic-jpeg"));

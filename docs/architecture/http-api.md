@@ -907,7 +907,33 @@ its own shutdown token. The hidden `POST /api/daemon/web-session` exchanges
 that master authority for a random daemon-lifetime browser token, an
 independent upload-proof secret, and the fresh loopback origin dedicated to
 that daemon lifetime. `DELETE /api/daemon/web-session` revokes the calling
-browser session.
+browser session. A configured API key also enables browser key login:
+
+| Route | Authentication and behavior |
+| --- | --- |
+| `GET /api/daemon/web-auth` | Unauthenticated; reports `enabled: true` only when key login is configured and the request uses the sign-in Host and, if supplied, Origin. Other hosts get `enabled: false`. Returns no vault data or credentials. |
+| `POST /api/daemon/web-auth/login` | Exact Host and Origin, JSON `{"api_key":"..."}`; exchanges the configured key for scoped tab credentials and a shared HttpOnly instance cookie. Never echoes the key. |
+| `GET /api/daemon/web-auth/sessions` | Master API key only; lists live key-login session IDs and creation/expiry dates. |
+| `DELETE /api/daemon/web-auth/sessions/{id}` | Master API key only; revokes the named tab and cancels its resources. |
+
+Key-login requests require `X-Docbank-Web-Session` and the instance cookie.
+Mutations also require the exact configured Origin. A missing tab token
+returns 401; cookie, Host or Origin rejection returns 403. The cookie alone
+grants no authority. `DELETE /api/daemon/web-session`
+signs out only the calling tab, leaving the shared cookie and other tabs intact.
+Login accepts at most 32 KiB of JSON, enough for a 4096-byte key with every
+character escaped, and rejects unknown members. It has no
+failed-attempt lockout, because the same key is accepted on every API route;
+instead, configuration requires a key of at least 32 characters when
+`public_origin` is set. Tab credentials are process-local; reloads and daemon
+restarts require a new key login. Every request passes the server Host
+allowlist. `public_origin` adds its host and `[web] allowed_hosts` to that
+list. It also adds a stricter check: every shared-listener request, including
+API-key and unauthenticated health/static requests, must use one of those
+authorities or a concrete loopback backend authority. Protected responses use `Cache-Control: private, no-store`
+and vary on `Cookie` and `X-Docbank-Web-Session`.
+See [server sign-in](../usage/web.md#sign-in-on-a-server-or-container) for
+lifetime, deployment trust and session-management commands.
 
 `POST /api/daemon/telemetry/events` takes one anonymous interface event with optional allowlisted `properties`,
 such as `app_opened` or `session_ended`, from a browser session or the API key. The daemon answers

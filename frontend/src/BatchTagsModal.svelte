@@ -3,6 +3,7 @@
   import { Button, Checkbox, Modal, SelectDropdown, Spinner, type SelectDropdownOption } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
   import { type Tag } from "./generated/docbank.js";
+  import { randomUUID } from "./crypto.js";
   import type { SelectionTarget } from "./selection.js";
   import { changeBatchTags, previewBatchTags, type BatchTagRequest, type BatchTagReceipt, type BatchTagPreview } from "./batch-tags.js";
 
@@ -104,7 +105,7 @@
   function change(assign: boolean) {
     if (!canChange) return;
     try {
-      const request = { operation_id: crypto.randomUUID(), tag_id: tagID, assign,
+      const request = { operation_id: randomUUID(), tag_id: tagID, assign,
         nodes: currentTargets.map((target) => ({ ...target })) };
       void submit(request);
     } catch (cause) {
