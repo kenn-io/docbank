@@ -63,6 +63,9 @@ func TestLaneControlRoutesAndReadonlyJobs(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode, body)
 	resp, body = do(t, ts, http.MethodPut, path, headers, api.SetLaneControlRequest{Paused: true, Concurrency: 1})
 	assert.Equal(t, http.StatusOK, resp.StatusCode, body)
+	resp, body = do(t, ts, http.MethodPut, path, headers, api.SetLaneControlRequest{Paused: false, Concurrency: 1})
+	assert.Equal(t, http.StatusPreconditionFailed, resp.StatusCode, body)
+	assert.Contains(t, body, "stale_revision")
 	for _, request := range []struct {
 		method string
 		path   string
@@ -154,7 +157,8 @@ func TestJobListSurvivesBrokenLaneControls(t *testing.T) {
 	resp, body = do(t, ts, http.MethodPut, lane, browser, api.SetLaneControlRequest{Concurrency: 1})
 	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode, body)
 	assert.Contains(t, body, "inspect with the Docbank CLI")
-	assert.NotContains(t, body, "database")
+	assert.NotContains(t, body, "lane-controls.json")
+	assert.NotContains(t, body, filepath.Dir(s.DBPath))
 
 	resp, body = do(t, ts, http.MethodPost, "/api/v1/jobs/"+operation.ID+"/cancel", nil, nil)
 	require.Equal(t, http.StatusOK, resp.StatusCode, body)
