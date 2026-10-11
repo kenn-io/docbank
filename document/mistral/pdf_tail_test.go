@@ -250,47 +250,25 @@ func TestDetectFormatAcceptsPlusPrefixedLinearizedPrev(t *testing.T) {
 	}
 }
 
-func TestDetectFormatRejectsUnsafePDFTrailingData(t *testing.T) {
-	linearizedStream, err := os.ReadFile("testdata/linearized-xref-stream.pdf")
-	require.NoError(t, err)
-	for _, pdf := range []struct {
-		name    string
-		content []byte
-	}{
-		{"table", testPDF("negative-tail")},
-		{"stream", testPDFXRefStreamWithPageBox()},
-		{"indirect stream", pdfTailXRefStream(6, true)},
-		{"linearized stream", linearizedStream},
-		{"linearized stream with table main xref", pdfTailLinearizedStreamWithTableMain()},
+// Epilogue and offset checks run before the cross-reference type matters.
+func TestDetectFormatRejectsUnsafePDFEpilogue(t *testing.T) {
+	const notFinal = "PDF trailer is not final"
+	for _, test := range []struct{ suffix, want string }{
+		{"padding\x00PK\x05\x06synthetic", notFinal},
+		{"PK\x07\x08synthetic", notFinal},
+		{"<html><body>synthetic</body></html>", notFinal},
+		{"<!DOCTYPE html>synthetic", notFinal},
+		{"<HTML>synthetic</HTML>", notFinal},
+		{"4 0 obj\n42\nendobj\n", notFinal},
+		{"%%EOF\n", notFinal},
+		{"%PDF-1.4\n", notFinal},
+		{"startxref\ninvalid\n%%EOF\n", "PDF startxref offset is invalid"},
+		{"startxref\n0\n%%EOF\n", "PDF startxref offset is outside the document"},
 	} {
-		t.Run(pdf.name, func(t *testing.T) {
-			xref := bytes.LastIndex(pdf.content, []byte("startxref\n"))
-			offset := string(bytes.Fields(pdf.content[xref+len("startxref\n"):])[0])
-			const notFinal = "PDF trailer is not final"
-			const invalidXRef = "PDF cross-reference data is invalid"
-			for _, test := range []struct{ suffix, want string }{
-				{"PK\x03\x04synthetic", notFinal},
-				{"padding\x00PK\x05\x06synthetic", notFinal},
-				{"PK\x07\x08synthetic", notFinal},
-				{"<html><body>synthetic</body></html>", notFinal},
-				{"<!DOCTYPE html>synthetic", notFinal},
-				{"<HTML>synthetic</HTML>", notFinal},
-				{"4 0 obj\n<< >>\nendobj\n", notFinal},
-				{"%%EOF\n", notFinal},
-				{"%PDF-1.4\n", notFinal},
-				{"startxref\ninvalid\n%%EOF\n", "PDF startxref offset is invalid"},
-				{"startxref\n0\n%%EOF\n", "PDF startxref offset is outside the document"},
-				{"PK\x03\x04synthetic\nstartxref\n" + offset + "\n%%EOF\n", invalidXRef},
-				{"<html>synthetic</html>\nstartxref\n" + offset + "\n", invalidXRef},
-				{"PK\x03\x04synthetic\nendstream\nendobj\nstartxref\n" + offset + "\n%%EOF\n", invalidXRef},
-				{"scanner residue\nstartxref\n" + offset + "\n%%EOF\n", invalidXRef},
-			} {
-				t.Run(fmt.Sprintf("%q", test.suffix), func(t *testing.T) {
-					content := append(bytes.Clone(pdf.content), test.suffix...)
-					_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
-					require.ErrorContains(t, err, test.want)
-				})
-			}
+		t.Run(fmt.Sprintf("%q", test.suffix), func(t *testing.T) {
+			content := append(testPDF("negative-tail"), test.suffix...)
+			_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+			require.ErrorContains(t, err, test.want)
 		})
 	}
 	for _, test := range []struct {
@@ -307,8 +285,59 @@ func TestDetectFormatRejectsUnsafePDFTrailingData(t *testing.T) {
 		require.ErrorContains(t, err, test.want)
 	}
 	content := append(testPDF("mime-mismatch"), []byte("scanner padding\n")...)
-	_, err = DetectFormat(bytes.NewReader(content), int64(len(content)), "text/plain")
+	_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "text/plain")
 	require.ErrorContains(t, err, "not declared")
+}
+
+// Each cross-reference form must reject a forged startxref that follows an
+// earlier trailer or appended payload.
+func TestDetectFormatRejectsForgedPDFStartXRef(t *testing.T) {
+	linearizedStream, err := os.ReadFile("testdata/linearized-xref-stream.pdf")
+	require.NoError(t, err)
+	for _, pdf := range []struct {
+		name    string
+		content []byte
+	}{
+		{"table", testPDF("negative-tail")},
+		{"stream", testPDFXRefStreamWithPageBox()},
+		{"indirect stream", pdfTailXRefStream(6, true)},
+		{"linearized stream", linearizedStream},
+		{"linearized stream with table main xref", pdfTailLinearizedStreamWithTableMain()},
+	} {
+		t.Run(pdf.name, func(t *testing.T) {
+			xref := bytes.LastIndex(pdf.content, []byte("startxref\n"))
+			offset := string(bytes.Fields(pdf.content[xref+len("startxref\n"):])[0])
+			for _, suffix := range []string{
+				"PK\x03\x04synthetic\nstartxref\n" + offset + "\n%%EOF\n",
+				"<html>synthetic</html>\nstartxref\n" + offset + "\n",
+				"PK\x03\x04synthetic\nendstream\nendobj\nstartxref\n" + offset + "\n%%EOF\n",
+				"scanner residue\nstartxref\n" + offset + "\n%%EOF\n",
+			} {
+				t.Run(fmt.Sprintf("%q", suffix), func(t *testing.T) {
+					content := append(bytes.Clone(pdf.content), suffix...)
+					_, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+					require.ErrorContains(t, err, "PDF cross-reference data is invalid")
+				})
+			}
+		})
+	}
+}
+
+// Readers accept spaces or tabs before the stream line ending. A stream that
+// starts before the tail is located by its direct length, so the padding must
+// be skipped before applying that length.
+func TestDetectFormatAcceptsPaddedStreamLineEndBeforeTail(t *testing.T) {
+	for _, lineEnd := range []string{"\r", "\r\n", " \n", " \r\n", "\t\n"} {
+		t.Run(fmt.Sprintf("%q", lineEnd), func(t *testing.T) {
+			content := pdfTailXRefStream(12000, false)
+			require.Equal(t, 1, bytes.Count(content, []byte(">>\nstream\n")))
+			content = bytes.Replace(content, []byte(">>\nstream\n"), []byte(">>\nstream"+lineEnd), 1)
+
+			format, err := DetectFormat(bytes.NewReader(content), int64(len(content)), "application/pdf")
+			require.NoError(t, err)
+			require.Equal(t, "pdf", format.ID)
+		})
+	}
 }
 
 // Build a complete synthetic page tree with unused free xref entries to

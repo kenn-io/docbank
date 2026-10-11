@@ -281,18 +281,30 @@ func pdfStreamClosing(xref []byte, xrefOffset int64, beforeStartXRef []byte, tai
 	if !ok || length > uint64(MaxDocumentBytes) {
 		return nil, false
 	}
-	dataStart := streamEnd
-	eol := xref[streamIndex+len("stream"):]
-	if bytes.HasPrefix(eol, []byte("\r\n")) {
-		dataStart += 2
-	} else if len(eol) > 0 && (eol[0] == '\n' || eol[0] == '\r') {
-		dataStart++
-	}
-	end := dataStart + int64(length)
+	end := streamEnd + int64(pdfStreamLineEndLength(xref[streamIndex+len("stream"):])) + int64(length)
 	if end < tailOffset || end >= tailEnd {
 		return nil, false
 	}
 	return beforeStartXRef[end-tailOffset:], true
+}
+
+// The stream keyword ends with CRLF or LF. Readers also accept a lone CR and
+// spaces or tabs before the line ending, so skip those when a line ending
+// follows; otherwise the data starts immediately.
+func pdfStreamLineEndLength(data []byte) int {
+	padding := 0
+	for padding < len(data) && (data[padding] == ' ' || data[padding] == '\t') {
+		padding++
+	}
+	rest := data[padding:]
+	switch {
+	case bytes.HasPrefix(rest, []byte("\r\n")):
+		return padding + 2
+	case len(rest) > 0 && (rest[0] == '\n' || rest[0] == '\r'):
+		return padding + 1
+	default:
+		return 0
+	}
 }
 
 // Producers may write objects, such as an indirect stream length, between an
