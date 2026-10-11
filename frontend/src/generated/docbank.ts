@@ -659,6 +659,7 @@ export interface BackupRestoreRequest {
   overwrite?: boolean;
   repo?: string;
   snapshot_id?: string;
+  /** Loopback-only server-local path to an owner-private TOML restore mapping file. */
   store_map?: string;
   target: string;
 }
@@ -7538,7 +7539,7 @@ export type DetachPhotoFileHeaders = {
 };
 
 export type HidePhotoAssetHeaders = {
-'If-Match'?: string;
+'If-Match': string;
 };
 
 export type ReadPhotoPreviewHeaders = {
@@ -7550,7 +7551,7 @@ export type TrashPhotoAssetHeaders = {
 };
 
 export type UnhidePhotoAssetHeaders = {
-'If-Match'?: string;
+'If-Match': string;
 };
 
 export type PromotePhotoNodeHeaders = {
@@ -14579,7 +14580,7 @@ export const getHidePhotoAssetUrl = (assetId: string,) => {
  * @summary hide a revisioned photo asset
  */
 export const hidePhotoAsset = async (assetId: string,
-    headers?: HidePhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+    headers: HidePhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -14699,7 +14700,7 @@ export const getUnhidePhotoAssetUrl = (assetId: string,) => {
  * @summary unhide a revisioned photo asset
  */
 export const unhidePhotoAsset = async (assetId: string,
-    headers?: UnhidePhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
+    headers: UnhidePhotoAssetHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAsset> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};

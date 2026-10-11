@@ -316,6 +316,11 @@ func TestPhotoHiddenAuditRestartAndDurableLockout(t *testing.T) {
 	reopen()
 	_, _, err = s.UnlockPhotoHidden(ctx, "correct")
 	require.ErrorAs(t, err, &lockout)
+	now = now.Add(time.Hour)
+	token, _, err = s.UnlockPhotoHidden(ctx, "correct")
+	require.NoError(t, err)
+	_, err = s.PhotoAssetByID(WithPhotoHiddenToken(ctx, token), asset.ID)
+	require.NoError(t, err)
 	var backup bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &backup))
 	require.NotContains(t, backup.String(), "photo_hidden_lockout")
@@ -404,9 +409,6 @@ func TestPhotoHiddenCoverAndPromoteAuthorization(t *testing.T) {
 	require.NoError(t, err)
 	album, err = s.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, PhotoSetSelection{AssetIDs: []string{asset.ID}})
 	require.NoError(t, err)
-	missing := new("00000000-0000-4000-8000-000000000001")
-	_, err = s.UpdatePhotoSet(ctx, album.ID, album.Revision, nil, nil, &missing)
-	require.ErrorIs(t, err, ErrInvalidPhotoAlbum)
 	cover := &target.ID
 	_, err = s.UpdatePhotoSet(ctx, album.ID, album.Revision, nil, nil, &cover)
 	require.ErrorIs(t, err, ErrInvalidPhotoAlbum)

@@ -354,6 +354,8 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/photos/assets/{asset_id}/files", http.MethodPost},
 		{"/api/v1/photos/assets/{asset_id}/files/{file_id}", http.MethodDelete},
 		{"/api/v1/photos/assets/{asset_id}/exclude", http.MethodPost},
+		{"/api/v1/photos/assets/{asset_id}/hide", http.MethodPost},
+		{"/api/v1/photos/assets/{asset_id}/unhide", http.MethodPost},
 		{"/api/v1/photos/assets/{asset_id}/trash", http.MethodPost},
 		{"/api/v1/photos/assets/{asset_id}/display", http.MethodPut},
 		{"/api/v1/photos/albums/{set_id}", http.MethodPut},

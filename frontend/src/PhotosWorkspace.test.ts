@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { tick } from "svelte";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { Photos } from "./photos.svelte.js";
@@ -6,6 +7,39 @@ import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photo } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
+
+it("preserves subsequent scrolling when an interrupted refresh resumes after remount", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const cell = this.closest<HTMLElement>(".cell");
+    const scroll = this.closest<HTMLElement>(".photo-scroll");
+    return cell && scroll ? new DOMRect(0, Number.parseFloat(cell.style.top) + 56 - scroll.scrollTop, Number.parseFloat(cell.style.width), Number.parseFloat(cell.style.height)) : new DOMRect(0, 0, 1000, 400);
+  });
+  const items = Array.from({ length: 60 }, (_, index) => photo(index + 1));
+  let finishRefresh!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn().mockImplementationOnce(() => new Promise(() => {}))
+    .mockImplementationOnce(() => new Promise<Response>(resolve => finishRefresh = resolve)));
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = items; photos.total = items.length; photos.started = true; photos.scrollTop = 500;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const view = render(PhotosWorkspace, { photos, cache });
+  await waitFor(() => expect(screen.getByTestId("photo-scroll").scrollTop).toBe(500));
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
+  view.unmount();
+  render(PhotosWorkspace, { photos, cache });
+  const scroll = screen.getByTestId("photo-scroll");
+  await waitFor(() => expect(scroll.scrollTop).toBe(500));
+  scroll.scrollTop = 1000;
+  await fireEvent.scroll(scroll);
+  finishRefresh(new Response(JSON.stringify({ items, total: items.length })));
+  await waitFor(() => expect(photos.loading).toBe(false));
+  await tick();
+  expect(scroll.scrollTop).toBe(1000);
+  expect(photos.scrollTop).toBe(1000);
+  photos.dispose(); await cache.dispose();
+});
 
 it("keeps failed confirmation visible and closes after cancellation or success", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });

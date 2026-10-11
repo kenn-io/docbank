@@ -33,10 +33,10 @@ func readPhotoPasscode(cmd *cobra.Command, input *bufio.Reader, prompt string) (
 }
 
 func init() {
-	hidden := &cobra.Command{Use: "hidden", Short: "Configure Hidden photos access", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	hidden := &cobra.Command{Use: "hidden", Short: "Configure Hidden photos access", Long: "setup sets a passcode; change and disable require the current passcode.\nlock revokes unlock sessions; reset removes the passcode and unhides all photos.\nstate reports whether Hidden is configured.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	photosCmd.AddCommand(hidden)
 	for _, action := range []string{"setup", "change", "disable", "lock", "reset", "state"} {
-		command := &cobra.Command{Use: action, Short: action + " Hidden photos access", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		command := &cobra.Command{Use: action, Short: action + " Hidden photos access", Example: "  docbank photos hidden " + action, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 			connection, err := daemonconn.Ensure(cmd.Context())
 			if err != nil {
 				return err
@@ -75,7 +75,7 @@ func init() {
 		if !hide {
 			action = "unhide"
 		}
-		command := &cobra.Command{Use: action + " <asset-id>", Short: action + " a photo in Photos", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		command := &cobra.Command{Use: action + " <asset-id>", Short: action + " a photo in Photos", Example: "  docbank photos " + action + " <asset-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkPhotoRevisionFlag(cmd); err != nil {
 				return err
 			}
@@ -125,9 +125,9 @@ func init() {
 			return writeCLIJSON(cmd.OutOrStdout(), asset)
 		}}
 		if !hide {
-			command.Use = action + " <asset-id|node-selector>"
+			command.Use = action + " <asset-id|path-or-id>"
 		}
-		command.Flags().Int64Var(&photoRevision, "revision", 0, "Expected asset revision")
+		command.Flags().Int64Var(&photoRevision, "revision", 0, "expected asset revision (default: current, retried once)")
 		photosCmd.AddCommand(command)
 	}
 }

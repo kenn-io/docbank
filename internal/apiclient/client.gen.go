@@ -22330,7 +22330,7 @@ type DetachPhotoFileHeaders struct {
 }
 
 type HidePhotoAssetHeaders struct {
-	IfMatch *string `json:"If-Match,omitempty"`
+	IfMatch string `json:"If-Match"`
 }
 
 type ReadPhotoPreviewHeaders struct {
@@ -22342,7 +22342,7 @@ type TrashPhotoAssetHeaders struct {
 }
 
 type UnhidePhotoAssetHeaders struct {
-	IfMatch *string `json:"If-Match,omitempty"`
+	IfMatch string `json:"If-Match"`
 }
 
 type PromotePhotoNodeHeaders struct {
@@ -24829,8 +24829,10 @@ type BackupRestoreRequest struct {
 	Overwrite   *bool   `json:"overwrite,omitempty"`
 	Repo        *string `json:"repo,omitempty"`
 	SnapshotID  *string `json:"snapshot_id,omitempty"`
-	StoreMap    *string `json:"store_map,omitempty"`
-	Target      string  `json:"target"`
+
+	// StoreMap Loopback-only server-local path to an owner-private TOML restore mapping file.
+	StoreMap *string `json:"store_map,omitempty"`
+	Target   string  `json:"target"`
 }
 
 type BackupSnapshot = api.BackupSnapshot

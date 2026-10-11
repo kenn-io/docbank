@@ -11,7 +11,7 @@
 
   let { photos, cache, title = "Library", ontrashed, onhidden, onactionerror }: { photos: Photos; cache: PhotoPreviewCache; title?: string; ontrashed?: () => void; onhidden?: () => void; onactionerror?: (error: string) => void } = $props();
   let trashOpen = $state(false);
-  let grid = $state<{ preservePosition: () => (() => Promise<void>); restoreScrollTop: (top: number) => Promise<void> }>();
+  let grid = $state<{ preservePosition: () => (() => Promise<void>) }>();
   const preserve = () => grid?.preservePosition();
   export function refresh() { return photos.refresh(preserve); }
   async function setHidden(id: string) {
@@ -25,8 +25,7 @@
   const groupingOptions = [{ value: "months", label: "Months" }, { value: "sessions", label: "Capture sessions" }];
 
   onMount(() => {
-    const top = photos.scrollTop;
-    void Promise.resolve(photos.resume(preserve)).then(() => grid?.restoreScrollTop(top));
+    void photos.resume(preserve);
     return () => photos.cancelPending();
   });
   function relayout(change: () => void) {
