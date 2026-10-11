@@ -36,10 +36,22 @@ func (s *Store) ContentReferencesByHash(
 	}
 
 	// Totals and page are one statement so concurrent replacement, trash, or
-	// trash-empty is observed entirely before or after the mutation. The
-	// recursive path projection runs only for live nodes in the selected page.
+	// trash-empty is observed entirely before or after the mutation. Select the
+	// page before loading full metadata, checksums, and live paths.
 	rows, err := s.db.QueryContext(ctx, `
 		WITH RECURSIVE matching AS (
+			SELECT v.version_id, v.node_id, v.node_revision,
+			       n.trashed_at IS NOT NULL AS trashed_sort,
+			       v.version_id != n.current_version_id AS historical_sort
+			FROM content_versions v
+			JOIN blobs b ON b.hash = v.blob_hash AND b.size = v.size
+			JOIN nodes n ON n.id = v.node_id
+			WHERE v.blob_hash = ?
+		), selected AS (
+			SELECT * FROM matching
+			ORDER BY trashed_sort, historical_sort, node_id, node_revision DESC, version_id
+			LIMIT ? OFFSET ?
+		), page AS (
 			SELECT v.version_id, v.node_id, v.blob_hash,
 			       COALESCE((SELECT md5 FROM blob_checksums WHERE blob_sha256=v.blob_hash), '') AS md5,
 			       v.size, v.mime_type,
@@ -52,16 +64,11 @@ func (s *Store) ContentReferencesByHash(
 			       n.revision, n.created_at, n.modified_at, n.trashed_at,
 			       n.trashed_at IS NOT NULL AS trashed_sort,
 			       v.version_id != n.current_version_id AS historical_sort
-			FROM content_versions v
-			JOIN blobs b ON b.hash = v.blob_hash AND b.size = v.size
+			FROM selected
+			JOIN content_versions v ON v.version_id = selected.version_id
 			JOIN nodes n ON n.id = v.node_id
 			LEFT JOIN content_versions current
 			  ON current.node_id = n.id AND current.version_id = n.current_version_id
-			WHERE v.blob_hash = ?
-		), page AS (
-			SELECT * FROM matching
-			ORDER BY trashed_sort, historical_sort, node_id, node_revision DESC, version_id
-			LIMIT ? OFFSET ?
 		), totals AS (
 			SELECT COUNT(*) AS total FROM matching
 		), ancestry(version_id, id, parent_id, path) AS (

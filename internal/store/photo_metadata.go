@@ -137,7 +137,7 @@ var photoMetadataTablesV28 = []metadataRecordCodec{
 // photoSetsStorageSchemaVersion is the first schema with photo sets (v0.15.1).
 const photoSetsStorageSchemaVersion = 29
 
-const photoHiddenStorageSchemaVersion = 31
+const photoHiddenStorageSchemaVersion = 30
 
 func validatePhotoAssetMetadataRecord(v metadataPhotoAsset) error {
 	if v.Type != metadataPhotoAssetType || validateUUIDv4(v.AssetID) != nil || !photoKindValid(v.Kind) || v.Revision < 1 {

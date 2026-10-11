@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"go.kenn.io/docbank/internal/query"
+	"go.kenn.io/docbank/internal/store"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -234,6 +235,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	}
 	if after, ok := strings.CutPrefix(r.URL.Path, "/api/v1/photos/assets/"); ok {
 		parts := strings.Split(after, "/")
+		if len(parts) == 2 && parts[1] == "preview" {
+			return r.Method == http.MethodPost && r.URL.RawQuery == "" && query.ValidateTextOperand("asset", parts[0]) == nil
+		}
 		if len(parts) == 3 && parts[1] == "previews" {
 			return r.Method == http.MethodGet && r.URL.RawQuery == "" && validPhotoPreviewPath(parts[0], parts[2])
 		}
@@ -331,6 +335,9 @@ func webSessionRequestAllowed(r *http.Request) bool {
 	}
 	if batesBrowserRequestAllowed(r) {
 		return true
+	}
+	if lane, ok := strings.CutPrefix(path, "/api/v1/jobs/lanes/"); ok {
+		return r.URL.RawQuery == "" && store.ControllableLane(lane) && method == http.MethodPut
 	}
 	if after, ok := strings.CutPrefix(path, "/api/v1/jobs/"); ok {
 		parts := strings.Split(after, "/")

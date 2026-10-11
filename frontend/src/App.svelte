@@ -73,7 +73,7 @@
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import HiddenPhotos from "./HiddenPhotos.svelte";
   import { localPreferenceStorage } from "./browser-storage.js";
-  import { Photos } from "./photos.svelte.js";
+  import { Photos, type PhotoReturn } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { SelectionTarget } from "./selection.js";
@@ -185,8 +185,39 @@
   let photoMode = $state(location.pathname.startsWith("/photos"));
   let hiddenMode = $state(location.pathname === "/photos/hidden");
   let hiddenPhotoActionError = $state("");
-  let hiddenWorkspace = $state<{ refresh: () => Promise<void> }>();
-  let libraryWorkspace = $state<{ refresh: () => Promise<void> }>();
+  let hiddenWorkspace = $state<{ refresh: () => Promise<void>; activePhotos: () => Photos | undefined; captureReturn: () => void }>();
+  let libraryWorkspace = $state<PhotosWorkspace>();
+  let photoID = $state(new URLSearchParams(location.hash.slice(1)).get("photo") ?? "");
+  const activePhotos = () => hiddenMode ? hiddenWorkspace?.activePhotos() : photoState?.photos;
+  function clearPhoto() {
+    if (!photoID) return;
+    const photos = activePhotos();
+    if (photos) photos.viewerReturn = undefined;
+    changePhoto("", "step");
+  }
+  function syncPhotoLocation() {
+    const id = new URLSearchParams(location.hash.slice(1)).get("photo") ?? "", photos = location.pathname === "/photos/hidden" ? hiddenWorkspace?.activePhotos() : photoState?.photos;
+    const record = history.state?.photoReturn as PhotoReturn | undefined;
+    if (id && photos) {
+      if (!photoID && photoMode && record?.contextID === photos.contextID && (hiddenMode ? hiddenWorkspace : libraryWorkspace)) {
+        (hiddenMode ? hiddenWorkspace : libraryWorkspace)?.captureReturn();
+        history.replaceState({...history.state, photoReturn:photos.viewerReturn}, "", location.href);
+      } else {
+        photos.viewerReturn = record?.contextID === photos.contextID ? record : undefined;
+        if (photos.viewerReturn) photos.scrollTop = photos.viewerReturn.scrollTop;
+      }
+    } else if (location.pathname.startsWith("/photos") && photos?.viewerReturn) photos.scrollTop = photos.viewerReturn.scrollTop;
+    photoMode = location.pathname.startsWith("/photos"); hiddenMode = location.pathname === "/photos/hidden"; photoID = id;
+  }
+  function changePhoto(id: string, mode: "open" | "step" | "close") {
+    if (mode === "close" && history.state?.photoReturn?.contextID === activePhotos()?.contextID) history.back();
+    else {
+      const url = new URL(location.href); url.hash = id ? `photo=${encodeURIComponent(id)}` : "";
+      if (mode === "open") history.pushState({photoReturn:activePhotos()?.viewerReturn}, "", url.href);
+      else history.replaceState(history.state, "", url.href);
+    }
+    photoID = id;
+  }
   let photoState = $state<{ photos: Photos; cache: PhotoPreviewCache }>();
   let photoValidated = $state(false);
   let photoAccessError = $state("");
@@ -202,6 +233,7 @@
     return deleting;
   }
   function invalidateLibrary() {
+    if (!hiddenMode) clearPhoto();
     photoValidated = false;
     photoConcealed = true;
     photoAccessVersion++;
@@ -269,9 +301,12 @@
   function switchWorkspace(photos: boolean, hidden = false) {
     navOpen = false;
     if (photoMode === photos && hiddenMode === hidden) return;
+    const previous = activePhotos();
+    if (previous) previous.viewerReturn = undefined;
+    photoID = "";
     photoMode = photos;
     hiddenMode = hidden;
-    history.pushState(null, "", `${photos ? hidden ? "/photos/hidden" : "/photos" : "/"}${location.search}${location.hash}`);
+    history.pushState(null, "", `${photos ? hidden ? "/photos/hidden" : "/photos" : "/"}${location.search}${new URLSearchParams(location.hash.slice(1)).has("photo") ? "" : location.hash}`);
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
@@ -548,7 +583,10 @@
     };
 
     const session = takeFragmentSession();
-    if (savedQueryDraft) replaceQueryURL(savedQueryDraft);
+    if (photoMode && photoID) {
+      const url = new URL(location.href); url.hash = `photo=${encodeURIComponent(photoID)}`;
+      history.replaceState(null, "", url.href);
+    } else if (savedQueryDraft) replaceQueryURL(savedQueryDraft);
     if (session) {
       webSession = session.token;
       if (savedQueryDraft) queryBarOpen = true;
@@ -1928,7 +1966,7 @@
   }
 
   function closePanel(panel: Panel | null): () => void {
-    return () => { if (activePanel === panel) activePanel = null; };
+    return () => { if (activePanel === panel) { activePanel = null; if (photoID) void tick().then(() => document.querySelector<HTMLElement>(".photo-loupe")?.focus()); } };
   }
 
   let navOpen = $state(false);
@@ -1986,7 +2024,7 @@
   }
 </script>
 
-<svelte:window onpopstate={() => { photoMode = location.pathname.startsWith("/photos"); hiddenMode = location.pathname === "/photos/hidden"; }} />
+<svelte:window onpopstate={syncPhotoLocation} onhashchange={syncPhotoLocation} />
 {#if !webSession}
   <main class="unlock-shell">
     <Card level="raised" title="Open your Docbank">
@@ -2138,9 +2176,9 @@
     </TopBar>
 
     {#if photoMode}
-      {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} session={webSession} onauthfailure={handleFailure} onstate={result => { void acceptPhotoAccess(result).catch(cause => { void invalidateLibrary(); photoAccessError = cause instanceof Error ? cause.message : String(cause); }); }} onaccessfailure={invalidateLibrary} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { void invalidateLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else if photoValidated && photoState}
+      {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} {photoID} onphotochange={changePhoto} onconceal={clearPhoto} session={webSession} onauthfailure={handleFailure} onstate={result => { void acceptPhotoAccess(result).catch(cause => { void invalidateLibrary(); photoAccessError = cause instanceof Error ? cause.message : String(cause); }); }} onaccessfailure={invalidateLibrary} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { void invalidateLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else if photoValidated && photoState}
       {#if hiddenPhotoActionError}<p role="alert">{hiddenPhotoActionError}</p>{/if}
-      {#each [photoState] as current (current)}<PhotosWorkspace bind:this={libraryWorkspace} photos={current.photos} cache={current.cache} ontrashed={() => handleTrashed()} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/each}
+      {#each [photoState] as current (current)}<PhotosWorkspace bind:this={libraryWorkspace} photos={current.photos} cache={current.cache} {photoID} onphotochange={changePhoto} ontrashed={() => handleTrashed()} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/each}
       {:else if photoAccessError}<p role="alert">{photoAccessError}</p><Button size="sm" onclick={() => void checkPhotoAccess?.()}>Retry</Button>{:else}<Spinner />
       {/if}
     {:else}

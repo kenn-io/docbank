@@ -13,7 +13,7 @@ it("revokes mounted URLs and ignores previews that complete after unmount", asyn
   item.previews.grid = { state: "ready", generation_id: "generation" };
   let finish!: (blob: Blob) => void;
   const get = vi.fn().mockResolvedValueOnce(new Blob(["synthetic-jpeg"])).mockImplementationOnce(() => new Promise(resolve => finish = resolve));
-  const props = { photo: item, cache: { get } as unknown as PhotoPreviewCache, selected: false, onclick: vi.fn(), oncheck: vi.fn() };
+  const props = { photo: item, cache: { get } as unknown as PhotoPreviewCache, selected: false, onclick: vi.fn(), oncheck: vi.fn(), onopen: vi.fn() };
   const first = render(PhotoCell, props);
   await screen.findByRole("img");
   first.unmount();
@@ -34,7 +34,7 @@ it("reloads a preview from the network after the image fails to decode", async (
   const item = photo(1);
   item.previews.grid = { state: "ready", generation_id: "generation" };
   const get = vi.fn(async (_id: string, _generation: string, _signal: AbortSignal, _reload: boolean) => new Blob(["synthetic-jpeg"]));
-  render(PhotoCell, { photo: item, cache: { get } as unknown as PhotoPreviewCache, selected: false, onclick: vi.fn(), oncheck: vi.fn() });
+  render(PhotoCell, { photo: item, cache: { get } as unknown as PhotoPreviewCache, selected: false, onclick: vi.fn(), oncheck: vi.fn(), onopen: vi.fn() });
   await fireEvent.error(await screen.findByRole("img"));
   await fireEvent.click(screen.getByRole("button", { name: "Retry preview" }));
   await screen.findByRole("img");

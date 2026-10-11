@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
-func TestPackagePreflightMaintenanceExpiresReceiptsHourly(t *testing.T) {
+func TestRetentionMaintenanceExpiresRecordsHourly(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		catalog, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 		require.NoError(t, err)
@@ -35,6 +35,11 @@ func TestPackagePreflightMaintenanceExpiresReceiptsHourly(t *testing.T) {
 		fresh.ExpiresAt = time.Now().UTC().Add(24 * time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00")
 		_, err = catalog.PutPackagePreflight(t.Context(), fresh)
 		require.NoError(t, err)
+		operation, err := catalog.CreateLocalOperation(t.Context(), "place", "{}")
+		require.NoError(t, err)
+		_, err = catalog.ClaimStorageOperation(t.Context(), operation.ID)
+		require.NoError(t, err)
+		require.NoError(t, catalog.FinishStorageOperation(t.Context(), operation.ID, store.StorageOperationCompleted, "{}", "", time.Now().Add(30*time.Minute)))
 		logger := slog.New(slog.DiscardHandler)
 		supervisor := jobs.New(t.Context(), logger)
 		defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
@@ -42,9 +47,13 @@ func TestPackagePreflightMaintenanceExpiresReceiptsHourly(t *testing.T) {
 		synctest.Wait()
 		_, err = catalog.PackagePreflight(t.Context(), record.Owner, record.PreflightID)
 		require.NoError(t, err)
+		_, err = catalog.StorageOperation(t.Context(), operation.ID)
+		require.NoError(t, err)
 		time.Sleep(time.Hour + time.Second)
 		synctest.Wait()
 		_, err = catalog.PackagePreflight(t.Context(), record.Owner, record.PreflightID)
+		require.ErrorIs(t, err, store.ErrNotFound)
+		_, err = catalog.StorageOperation(t.Context(), operation.ID)
 		require.ErrorIs(t, err, store.ErrNotFound)
 		// Reusing the primary key proves maintenance deleted the expired row.
 		_, err = catalog.PutPackagePreflight(t.Context(), record)

@@ -164,7 +164,7 @@ func TestBrowserPackageSocketRejectsOversizedFrame(t *testing.T) {
 	require.NoError(t, wsjson.Read(t.Context(), conn, &reply))
 	require.Equal(t, "ready", reply.Type)
 	require.NoError(t, conn.Write(t.Context(), websocket.MessageBinary, raw))
-	require.NoError(t, wsjson.Write(t.Context(), conn, map[string]string{"type": "end", "request_id": "frame"}))
+	// Read the rejection before another write can race the server closing the socket.
 	require.NoError(t, wsjson.Read(t.Context(), conn, &reply))
 	require.Equal(t, "error", reply.Type)
 	require.Equal(t, "validation", reply.Code)

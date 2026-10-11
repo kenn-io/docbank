@@ -9,10 +9,13 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"hash/crc32"
+	"image"
 	"io"
 	"mime"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -20,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
 )
 
@@ -317,35 +321,82 @@ func TestWebPreviewTicketCancellationIsOwnerScopedAndSessionRevoked(t *testing.T
 
 func TestWebPreviewRejectsRasterDimensionsBeforePublishingTicket(t *testing.T) {
 	t.Parallel()
-	ts, s := newTestServer(t, nil)
-	content := oversizedPNGHeader(100_000, 100_000)
-	hash, size, err := s.Blobs.Write(bytes.NewReader(content))
+	valid, err := os.ReadFile(filepath.Join("..", "processing", "testdata", "visual-preview-sized.webp"))
 	require.NoError(t, err)
-	document, err := s.CreateFile(t.Context(), s.RootID(), "oversized.png", hash, size, "image/png")
+	config, _, err := image.DecodeConfig(bytes.NewReader(valid))
 	require.NoError(t, err)
-
-	response := prepareWebDownload(t, ts, "", map[string]any{
-		"node_id": document.ID, "revision": document.Revision,
-		"version_id": document.CurrentVersionID, "blob_hash": document.BlobHash,
-		"size": document.Size, "purpose": "preview",
-	})
-	require.Equal(t, http.StatusOK, response.StatusCode)
-	decoder := jsontext.NewDecoder(response.Body)
-	var phases []string
-	for {
-		var event struct {
-			Phase string `json:"phase"`
-		}
-		err := json.UnmarshalDecode(decoder, &event)
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		require.NoError(t, err)
-		phases = append(phases, event.Phase)
+	for _, test := range []struct {
+		name, mime string
+		data       []byte
+		ready      bool
+	}{
+		{"oversized.png", "image/png", oversizedPNGHeader(100_000, 100_000), false},
+		{"valid.webp", "image/webp", valid, true},
+		{"animated.webp", "image/webp", webPreviewAnimatedWebP(valid, config.Width, config.Height), true},
+		{"oversized-dimension.webp", "image/webp", mediatest.WebP(16_385, 1), false},
+		{"oversized-pixels.webp", "image/webp", mediatest.WebP(8_000, 8_000), false},
+		{"malformed.webp", "image/webp", []byte("bad WebP"), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ts, s := newTestServer(t, nil)
+			hash, size, err := s.Blobs.Write(bytes.NewReader(test.data))
+			require.NoError(t, err)
+			node, err := s.CreateFile(t.Context(), s.RootID(), test.name, hash, size, test.mime)
+			require.NoError(t, err)
+			response := prepareWebDownload(t, ts, "", map[string]any{"node_id": node.ID, "revision": node.Revision, "version_id": node.CurrentVersionID, "blob_hash": node.BlobHash, "size": node.Size, "purpose": "preview"})
+			if test.ready {
+				previewURL := readyWebDownloadURL(t, response)
+				preview, err := ts.Client().Get(ts.URL + previewURL)
+				require.NoError(t, err)
+				require.Equal(t, http.StatusOK, preview.StatusCode)
+				content, err := io.ReadAll(preview.Body)
+				require.NoError(t, err)
+				require.NoError(t, preview.Body.Close())
+				require.Equal(t, test.data, content)
+				return
+			}
+			data, err := io.ReadAll(response.Body)
+			require.NoError(t, err)
+			require.NoError(t, response.Body.Close())
+			require.Equal(t, http.StatusOK, response.StatusCode)
+			require.Contains(t, string(data), `"phase":"error"`)
+			require.NotContains(t, string(data), `"phase":"ready"`)
+			if strings.HasPrefix(test.name, "oversized") {
+				require.Contains(t, string(data), "dimensions exceed the safe preview limit")
+			}
+		})
 	}
-	require.NoError(t, response.Body.Close())
-	assert.Contains(t, phases, "error")
-	assert.NotContains(t, phases, "ready")
+}
+
+func webPreviewAnimatedWebP(source []byte, width, height int) []byte {
+	chunk := func(kind string, payload []byte) []byte {
+		out := append([]byte(kind), binary.LittleEndian.AppendUint32(nil, uint32(len(payload)))...)
+		out = append(out, payload...)
+		if len(payload)%2 != 0 {
+			out = append(out, 0)
+		}
+		return out
+	}
+	put24 := func(target []byte, value int) {
+		target[0], target[1], target[2] = byte(value), byte(value>>8), byte(value>>16)
+	}
+	header := make([]byte, 10)
+	put24(header[4:7], width-1)
+	put24(header[7:10], height-1)
+	header[0] = 2
+	body := chunk("VP8X", header)
+	body = append(body, chunk("ANIM", make([]byte, 6))...)
+	frame := make([]byte, 16+len(source)-12)
+	put24(frame[6:9], width-1)
+	put24(frame[9:12], height-1)
+	put24(frame[12:15], 100)
+	copy(frame[16:], source[12:])
+	for range 2 {
+		body = append(body, chunk("ANMF", frame)...)
+	}
+	result := append([]byte("RIFF"), binary.LittleEndian.AppendUint32(nil, uint32(len(body)+4))...)
+	result = append(result, []byte("WEBP")...)
+	return append(result, body...)
 }
 
 func oversizedPNGHeader(width, height uint32) []byte {

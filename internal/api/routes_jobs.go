@@ -41,6 +41,17 @@ func registerJobRoutes(api huma.API, d Deps) {
 		job.Paused, job.Concurrency = control.Paused, control.Concurrency
 		job.ControlRevision = control.Revision
 	}
+	type controlOutput struct {
+		ETag string `header:"ETag"`
+		Body LaneControl
+	}
+	controlResult := func(control store.LaneControl) *controlOutput {
+		return &controlOutput{ETag: revisionETag(control.Revision), Body: LaneControl{
+			Lane: control.Lane, Paused: control.Paused, Concurrency: control.Concurrency,
+			Revision:          control.Revision,
+			CanSetConcurrency: store.LaneConcurrencyAdjustable(control.Lane),
+		}}
+	}
 	type output struct {
 		Body JobList
 	}
@@ -48,7 +59,7 @@ func registerJobRoutes(api huma.API, d Deps) {
 		OperationID: "listJobs", Method: http.MethodGet, Path: "/api/v1/jobs",
 		Summary: "List daemon background jobs and their current status",
 	}, func(ctx context.Context, _ *struct{}) (*output, error) {
-		out := &output{Body: JobList{Items: []Job{}}}
+		out := &output{Body: JobList{Items: []Job{}, Lanes: []LaneControl{}}}
 		redactErrors := browserSessionRequest(ctx)
 		operationNames := make(map[string]struct{})
 		var controls map[string]store.LaneControl
@@ -61,6 +72,10 @@ func registerJobRoutes(api huma.API, d Deps) {
 					out.Body.LaneControlsError = "lane controls are unavailable; inspect with the Docbank CLI for details"
 				}
 			}
+			for _, control := range controls {
+				out.Body.Lanes = append(out.Body.Lanes, controlResult(control).Body)
+			}
+			slices.SortFunc(out.Body.Lanes, func(a, b LaneControl) int { return strings.Compare(a.Lane, b.Lane) })
 			operations, err := d.Store.StorageOperations(ctx, 1000)
 			if err != nil {
 				return nil, FromStoreError(err)
@@ -92,6 +107,9 @@ func registerJobRoutes(api huma.API, d Deps) {
 				if _, durable := operationNames[snapshot.Name]; durable {
 					continue
 				}
+				if id, storage := strings.CutPrefix(snapshot.Name, "storage:"); storage && validPageJobPathID(id) && snapshot.Status != jobs.StatusRunning {
+					continue
+				}
 				job := observableJob(snapshot)
 				applyControl(&job, controls, snapshot.Name, snapshot.Status == jobs.StatusRunning)
 				if redactErrors && job.Error != "" {
@@ -106,26 +124,18 @@ func registerJobRoutes(api huma.API, d Deps) {
 		return out, nil
 	})
 
-	type controlOutput struct {
-		ETag string `header:"ETag"`
-		Body LaneControl
-	}
-	controlResult := func(control store.LaneControl) *controlOutput {
-		return &controlOutput{ETag: revisionETag(control.Revision), Body: LaneControl{
-			Lane: control.Lane, Paused: control.Paused, Concurrency: control.Concurrency,
-			Revision:          control.Revision,
-			CanSetConcurrency: store.LaneConcurrencyAdjustable(control.Lane),
-		}}
-	}
-	controlError := func(err error) error {
-		if errors.Is(err, store.ErrLaneControlsFile) {
-			// Lane routes are daemon-only, so the file path is safe to show.
-			return NewError(http.StatusInternalServerError, "lane_controls_unreadable",
-				err.Error()+"; repair or remove lane-controls.json")
-		}
+	controlError := func(ctx context.Context, err error) error {
 		if errors.Is(err, store.ErrLaneControl) {
 			return NewError(http.StatusBadRequest, "validation",
 				"lane is read-only or concurrency is unsupported")
+		}
+		if browserSessionRequest(ctx) && !errors.Is(err, store.ErrStaleRevision) {
+			return NewError(http.StatusInternalServerError, "internal", "lane control failed; inspect with the Docbank CLI for details")
+		}
+		if errors.Is(err, store.ErrLaneControlsFile) {
+			// Browser sessions return above, so only daemon callers see the file path.
+			return NewError(http.StatusInternalServerError, "lane_controls_unreadable",
+				err.Error()+"; repair or remove lane-controls.json")
 		}
 		return FromStoreError(err)
 	}
@@ -137,7 +147,7 @@ func registerJobRoutes(api huma.API, d Deps) {
 	}) (*controlOutput, error) {
 		control, err := d.Store.LaneControl(ctx, in.Lane)
 		if err != nil {
-			return nil, controlError(err)
+			return nil, controlError(ctx, err)
 		}
 		return controlResult(control), nil
 	})
@@ -158,7 +168,7 @@ func registerJobRoutes(api huma.API, d Deps) {
 			Lane: in.Lane, Paused: in.Body.Paused, Concurrency: in.Body.Concurrency,
 		}, revision)
 		if err != nil {
-			return nil, controlError(err)
+			return nil, controlError(ctx, err)
 		}
 		return controlResult(control), nil
 	})

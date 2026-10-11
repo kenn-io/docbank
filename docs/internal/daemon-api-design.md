@@ -200,6 +200,16 @@ waiters. They consider only waiters for the selected version, then choose the
 job with the latest update time, breaking ties by job ID. Store bootstrap adds
 the index to existing vaults on open; query results and job history are unchanged.
 
+### Content-hash references
+
+`GET /api/v1/content-references` and `docbank refs` return retained logical
+versions of the selected content, including history and trash. The lookup
+counts and orders matching version identities before loading full metadata,
+checksums, and live paths for the selected page. Both the total and page come
+from one SQL statement, so a concurrent content replacement or trash operation
+cannot split their view of the vault. Counting and ordering still depend on the
+number of matching versions; metadata and path projection are limited to the page.
+
 ### MCP response budgets
 
 MCP success results carry the payload as both JSON text and structured content.
@@ -224,6 +234,9 @@ Browser sessions additionally allow hidden-state GET, setup/change/disable/unloc
 Hidden state uses the vault-wide passcode and five-minute HttpOnly, SameSite=Strict loopback cookie. Unlock records passcode failures in a storage transaction so directory audit preserves read access. Store keeps session digests and expiry times in memory; lock clears them. Authentication changes serialize session creation and revocation. Five failures within sixty seconds persist a five-minute lockout; sessions clear at restart and stay outside backups. Hide/unhide use asset revisions and receipts. Disable atomically unhides assets; reset retains flags. Locked Photos readers and mutation responses conceal hidden graphs. Album summaries retain hidden membership, expose separate `hidden_count`, count visible members in `included_count`, and omit hidden explicit covers while locked. Cover selection requires the same authorization. Documents remain accessible and their snapshots stay valid.
 
 The active Library or Hidden view polls hidden state. A failed state read conceals that view and disposes its preview cache while retaining its photo model. Successful status validation refreshes concealed photos before redisplay; unchanged successful state clears only the read error. HTTP 401 follows the shared browser session-expired path.
+
+`POST /api/v1/photos/assets/{asset_id}/preview` uses the global mutation gate with a 30-second request timeout. Stale display admission returns `409`; a display change during production returns `404`. Timeout or cancellation returns `503 photo_preview_unavailable` with the corresponding interruption message.
+
 
 ### Photo graph routes
 
@@ -297,9 +310,11 @@ authoritative.
 Job listing includes control capability, paused flag, and applicable concurrency
 and control revision. An unreadable control file leaves the listing available,
 without control fields, and sets `lane_controls_error` so operations stay
-discoverable and cancellable. Kind or supervisor name identifies the lane. Rendition,
-embedding, export, and maintenance jobs remain read-only. Lane controls require
-the daemon API key. Existing operation routes own cancellation and receipts.
+discoverable and cancellable. Kind or supervisor name identifies the lane.
+Rendition, embedding, export, and maintenance jobs remain read-only. Lane-control
+reads require the daemon API key. Browser sessions read settings through
+`GET /api/v1/jobs` and may `PUT` supported lanes without query parameters.
+Existing operation routes own cancellation and receipts.
 
 Similar-document reads use the processing service and store authority through
 `POST /api/v1/search/similar`. Keep query encoding and provider authorization

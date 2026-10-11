@@ -630,7 +630,7 @@ review and consent. See [Find similar documents](document-processing.md#find-sim
 ## Download verified content
 
 The selected document card previews PDF and PNG pages, eligible UTF-8 text,
-and bounded static PNG and JPEG images. Text is rendered as inert text, never as
+and bounded PNG, JPEG, and WebP images. Animated WebP images may animate in the browser. Text is rendered as inert text, never as
 document HTML. Docbank verifies the selected version UUID, size, media type, and
 SHA-256 after receiving the complete body and before publishing text or an
 image URL. Unsupported files
@@ -849,17 +849,27 @@ contention or interruption remains visible, and you can retry.
 
 ## Inspect background work
 
-Choose **Background jobs** in the sidebar to inspect the jobs owned by the
-current daemon. Each entry identifies the job name, whether it is
-running, completed, failed, or cancelled, and its start and finish time.
-Terminal failures include the daemon's error text so an operator can
-distinguish an idle system from a watcher, extractor, or automatic packer that
-stopped.
+Choose **Background jobs** in the sidebar to see one card per storage operation
+kind or daemon worker. Active operations in a lane share progress when every
+operation has a known total. Workers without counts show numeric progress as
+unavailable. Each operation keeps its status, times, error and cancel button.
 
-Use refresh to request a new snapshot. The drawer does not start, stop, retry,
-or reconfigure work. Use the relevant configuration, CLI, or authenticated API
-workflow after understanding the failure. Job records belong to one daemon
-lifetime and disappear when that daemon restarts.
+Pause or resume photo imports, visual previews, and the storage lanes `place`,
+`evacuate`, `repair`, and `salvage`. Pause takes effect at the next safe item
+boundary. Visual preview concurrency accepts 1 through 4. Document workers
+remain read-only. Pausing a finished lane keeps its last listed outcome visible.
+A paused lane keeps its Resume control after its last operation disappears.
+Idle lanes show their controls, so you can pause one before it has work. Each
+operation shows its operation ID, which matches `docbank jobs`.
+
+The drawer reads lane settings with the job list and uses `PUT` to change them.
+The drawer refreshes every two seconds while open. If another client changes
+controls first, review the refreshed settings and try again. Controls survive
+daemon restarts. The list includes the newest 1,000 storage operations.
+Finished storage operations clear within an hour after their retention ends
+unless they still own pending cleanup. Worker records disappear
+when the daemon restarts. Browser errors omit backend paths; use the CLI to
+inspect details.
 
 ## Inspect physical storage
 
@@ -983,7 +993,7 @@ accepts that credential for the following operations:
 | Read the tree, nodes, search results, tags, versions, and provenance | Uses the same result limits and document IDs as the ordinary API. |
 | Read audit status and history | Does not enroll or change a permanent scope. |
 | Verify permanent audit history | Does not run general metadata/content verification or backup verification. |
-| Read background jobs and physical storage status | Cannot start or change maintenance. |
+| Read background jobs and physical storage status | Can pause or resume supported lanes, set visual preview concurrency, and cancel individual storage operations. |
 | List backup snapshots | Uses only the repository already configured for this daemon. |
 | List trash | Returns a bounded list of restorable roots. |
 | Prepare, preview, or cancel an exact-version download | Writes only a private temporary file, enforces preview MIME and size limits, and issues one expiring ticket for that file. |
@@ -1055,8 +1065,8 @@ general metadata/content verification, or restore operations. Frozen-query tag
 actions are capped at 250,000 documents. Use an authenticated API client
 for larger or different bulk workflows.
 
-Original-file previews support UTF-8 or ASCII text up to 16 MiB and static PNG
-and JPEG images up to 32 MiB. PDF and PNG page rendering accepts sources up to
+Original-file previews support UTF-8 or ASCII text up to 16 MiB and PNG, JPEG,
+and WebP images up to 32 MiB. Animated WebP images may animate in the browser. PDF and PNG page rendering accepts sources up to
 64 MiB within the [page runtime limits](../architecture/page-images.md). Empty
 or larger sources offer verified download without a page preview. Other
 document, image, audio, video, and archive formats use verified download.

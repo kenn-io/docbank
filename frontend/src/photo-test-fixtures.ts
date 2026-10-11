@@ -24,6 +24,7 @@ export function photo(id: number, capture: string | null = "2025-06-01T12:00:00"
     capture_time: capture, capture_time_offset: null, capture_time_precision: "second", capture_time_timezone: "omitted",
     content_version_id: `version-${id}`, display_file_id: `file-${id}`, import_time: "2025-06-01T12:00:00Z",
     media_type: "image/jpeg", width_px: 600, height_px: 400,
+    camera_make: null, camera_model: null, lens_make: null, lens_model: null, iso: null, exposure_time_seconds: null, f_number: null, exposure_bias_ev: null, focal_length_mm: null, orientation: null,
     previews: { grid: { state: "missing" }, fit: { state: "missing" }, large: { state: "missing" } },
   };
 }

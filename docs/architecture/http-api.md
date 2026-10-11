@@ -81,6 +81,7 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `POST /nodes/{id}/provenance` | append an immutable origin fact under the node revision | Implemented |
 | `GET /photos/assets/{asset_id}` · `GET /photos/nodes/{node_id}/asset` | inspect one bounded photo graph by asset or member node | Implemented |
 | `POST /photos/assets/query` | list matching assets once each with a first-page total and keyset cursor | Implemented |
+| `POST /photos/assets/{asset_id}/preview` | prepare a fit or large preview for the current content version | Implemented |
 | `GET /photos/assets/{asset_id}/previews/{generation_id}` | read verified bytes for an eligible display preview | Implemented |
 | `POST /photos/assets` · `POST /photos/assets/{asset_id}/files` · `DELETE /photos/assets/{asset_id}/files/{file_id}` | create, attach, or detach photo membership | Implemented |
 | `POST /photos/assets/{asset_id}/exclude` · `POST /photos/nodes/{node_id}/promote` | change exclusion or promote a live file | Implemented |
@@ -1024,8 +1025,10 @@ Malformed expected evidence is a `422 validation` request error.
 
 ### Background-job status
 
-`GET /jobs` returns `{items: [...]}` in stable job-name order. Each item carries
-`name`, `status` (`running`, `completed`, `failed`, or `cancelled`), and a UTC
+`GET /jobs` returns `{items: [...]}` with items in stable job-name order and
+optional `lanes`. `lanes` lists every controllable lane sorted by lane and is
+empty when controls cannot be read. Each item carries `name`, `status`
+(`queued`, `running`, `completed`, `failed`, or `cancelled`), and a UTC
 `started_at`. Terminal jobs add `finished_at`, and failures add a bounded
 `error`. Supervised task records describe this daemon run only and disappear
 when it restarts. Stopping one requires stopping or reconfiguring the daemon
@@ -1039,7 +1042,7 @@ revision; `PUT /jobs/lanes/{lane}` accepts `paused` and `concurrency` with the
 current revision in `If-Match`. Missing preconditions return `428`; stale ones
 return `412`. Unsupported lanes and storage concurrency changes return `400`.
 An unreadable `lane-controls.json` returns `500` with code
-`lane_controls_unreadable`.
+`lane_controls_unreadable`; browser sessions get a generic `internal` error.
 Preview concurrency outside 1 through 4 returns `422`.
 
 Supported lanes are `derive:visual-previews`, `photo_import`, `place`, `evacuate`,
@@ -1050,17 +1053,20 @@ Controls survive restart in the vault's `lane-controls.json` and stay out of
 backups; restored vaults use unpaused lanes with concurrency 1 and revision 1.
 When that file cannot be read, the job list still returns every job without
 control fields and adds `lane_controls_error`; browser sessions get a generic
-message. Lane-control reads and writes
-require the daemon API key.
+message. Lane-control reads require the daemon API key. Browser sessions read
+settings through `GET /jobs` and may `PUT` supported lanes without query
+parameters.
 
 Durable storage operations, such as placement and photo imports, also appear as
 `storage:<operation_id>` items with `operation_id`, `kind`, object progress,
-`cancel_requested`, and `can_cancel` while queued or running.
+`cancel_requested`, and `can_cancel` while queued or running. The list includes
+the newest 1,000 durable storage records.
 `GET /jobs/{operation_id}` returns the full operation and its receipt.
 `POST /jobs/{operation_id}/cancel` requests cancellation at the next durable
 object boundary and returns `409` once the operation is terminal or finalizing.
-A browser session may list jobs and cancel an operation by its UUID. It cannot
-read `GET /jobs/{operation_id}`, its error text is replaced with a generic
+A browser session may list jobs with their lane settings, set supported lane
+controls without query parameters, and cancel an operation by its UUID. It
+cannot read `GET /jobs/lanes/{lane}` or `GET /jobs/{operation_id}`, its error text is replaced with a generic
 message, and the cancel response omits the receipt, so host source paths stay
 with API-key clients.
 
@@ -1177,9 +1183,14 @@ group. Starting an import requires the API key on a loopback connection.
 
 `POST /photos/assets/{asset_id}/hide` and `/unhide` require `If-Match` and return the asset and ETag. Interactive Photos reads and mutations of already-hidden assets require an unlock. Background imports continue updating hidden files and return ordinary import receipts. Hide requires configured credentials. Unhide of an already-hidden asset requires an unlock; a visible no-op still requires the current revision. Ordinary Documents reads retain file access.
 
-`GET /photos/hidden` returns `configured` and optional `expires_at` and `locked_until`. POST `setup`, `unlock` and `disable` accept `passcode`; `change` also accepts `new_passcode`. Lock and reset require the JSON body `{}`. Unlock sets the HttpOnly, SameSite=Strict `docbank-hidden-<SHA-256 of request host and port>` cookie for five minutes; loopback HTTP omits Secure. Lock revokes every session. Disable verifies the passcode and atomically unhides assets; reset preserves hidden flags while clearing auth. Unlock and lock remain available under audit. Five failures in sixty seconds persist a five-minute lockout with `Retry-After`. The mounted Hidden view checks access every two seconds, conceals Hidden on read failure, and restores it after recovery; HTTP 401 uses the browser session-expired flow. Documents snapshots remain valid.
+`GET /photos/hidden` returns `configured`, opaque equality token `change_id`, and optional `expires_at` and `locked_until`. POST `setup`, `unlock` and `disable` accept `passcode`; `change` also accepts `new_passcode`. Lock and reset require the JSON body `{}`. Unlock sets the HttpOnly, SameSite=Strict `docbank-hidden-<SHA-256 of request host and port>` cookie for five minutes; loopback HTTP omits Secure. Lock revokes every session. Disable verifies the passcode and atomically unhides assets; reset preserves hidden flags while clearing auth. Unlock and lock remain available under audit. Five failures in sixty seconds persist a five-minute lockout with `Retry-After`. The active Library or Hidden view checks access every two seconds, conceals its view and deletes cached previews on read failure, and refreshes before redisplay; HTTP 401 uses the browser session-expired flow. Documents snapshots remain valid.
 
-`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag and `X-Content-Type-Options: nosniff`. Visible previews use `Cache-Control: private, no-cache`; hidden previews require an unlock and use `no-store`, including `304`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses also vary by Cookie. Browser sessions permit the exact list POST, preview GET, hidden-state GET, interactive hidden POSTs and asset hide/unhide POSTs and `POST /photos/assets/{asset_id}/trash` with empty query strings. Reset requires the API key. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
+`GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag and `X-Content-Type-Options: nosniff`. Visible previews use `Cache-Control: private, no-cache`; hidden previews require an unlock and use `no-store`, including `304`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses also vary by Cookie. Browser sessions permit the exact list POST, prepare POST, preview GET, hidden-state GET, interactive hidden POSTs and asset hide/unhide POSTs and `POST /photos/assets/{asset_id}/trash` with empty query strings. Reset requires the API key. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
+
+Browse rows include current-display camera make/model, lens make/model, ISO, aperture, exposure time/bias, focal length and orientation; absent metadata fields serialize as JSON null. GPS remains outside browse rows.
+
+`POST /photos/assets/{asset_id}/preview` accepts `content_version_id`, `size` (`fit` or `large`) and optional `hidden` (default false); hidden preparation requires an unlock and returns a preview slot. It verifies the current eligible display version before and after on-demand production under the mutation gate, with a 30-second request limit. A version mismatch at admission returns 409 `photo_display_changed`; a display replaced or excluded during production returns 404. Missing or mismatched source bytes return 503 `photo_preview_unavailable`; retry after restoring the source. Preparation timeouts and cancellation return 503 `photo_preview_unavailable` with distinct messages and a retry instruction. Retained failed and unsupported slots are returned unchanged.
+
 
 Person reads return the canonical row and, for `GET /people/by-id/{person_id}`,
 the identities and external UIDs used by split. Rename, retire, merge, and

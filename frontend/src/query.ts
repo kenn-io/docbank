@@ -1,6 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import formatMetadata from "../../document/format_metadata.json";
+import { timestampComparable } from "./format.js";
 
 const maxInputBytes = 128 * 1024;
 const maxCanonicalBytes = 64 * 1024;
@@ -396,10 +397,6 @@ function normalizeTimestamp(value: string | undefined, field: string): string | 
   const clock = `${String(utc.getUTCHours()).padStart(2, "0")}:${String(utc.getUTCMinutes()).padStart(2, "0")}:${String(utc.getUTCSeconds()).padStart(2, "0")}`;
   const fraction = fractionRaw.replace(/0+$/, "");
   return `${date}T${clock}${fraction ? `.${fraction}` : ""}Z`;
-}
-
-function timestampComparable(value: string): string {
-  return value.replace(/(?:\.(\d+))?Z$/, (_match, fraction = "") => `.${fraction.padEnd(9, "0")}Z`);
 }
 
 function requireObject(value: unknown, field: string): Record<string, unknown> {
