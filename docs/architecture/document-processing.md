@@ -307,6 +307,43 @@ causes remain distinct from corrupt evidence. This verification concerns the
 stored sanitized Markdown; it does not prove provider correctness or quote
 verbatim bytes from the original PDF, email, or Office file.
 
+## Read the section around a quotation
+
+The [outline and section reads](http-api.md#retained-text-sections) use the same
+retained citation authority. They accept historical attachments without a
+configured processing profile. A saved reference is an anchor, not a retention
+lease. Each page checks authority again; a successful first page does not promise
+that a later page will remain available.
+
+Navigation reads are stateless. A service admits two at a time, shared between
+outline and section requests. Waiting is cancelable and consumes no report,
+export or processing-job slot. Within `CaptureContext`, the service resolves
+metadata, copies the entire verified artifact and closes the stream. It releases
+capture protection before parsing. Purge and repack can then proceed while the
+request works from its owned bytes. Logical trash after admission does not
+invalidate that read; later requests see the changed authority.
+
+A navigation request accepts at most 4 MiB of Markdown, 65,536 LF characters and
+4,096 document-root headings. Goldmark with GFM derives headings from the stored
+Markdown without rendering or normalizing it again. A synthetic root covers all
+text; each heading includes its subsections. Section bounds count Unicode code
+points and preserve source whitespace, escapes and line endings. Labels are
+bounded navigation metadata, not quotations. The [HTTP reference](http-api.md#retained-text-sections)
+owns boundary, label and pagination rules.
+
+The admission slot covers parsing and response construction as well as I/O.
+Cancellation is checked around parsing and during scans, but Goldmark's
+synchronous parser cannot be interrupted mid-call. These input and concurrency
+caps bound admitted work, not a fixed heap or CPU budget. Returned strings do not
+retain the whole source buffer or syntax tree. Nothing is cached or stored after
+the operation.
+
+Every page rereads and reparses the whole artifact, even a final empty page.
+Choose the largest useful page size. Existing short citations still stream
+artifacts up to 64 MiB, independently of navigation slots. `rendition get` can
+retrieve an attachment still active for its version; it cannot retrieve a
+superseded attachment. Navigation does not add historical bulk download.
+
 ## Retain, restore, or remove derived results
 
 A processing profile declares whether to retain provider Markdown, sanitized

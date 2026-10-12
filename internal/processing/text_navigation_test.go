@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/iotest"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -27,9 +28,11 @@ import (
 func TestTextNavigationService(t *testing.T) {
 	t.Parallel()
 	f := NewTextCitationTestFixture(t)
-	outline, err := f.Service.GetTextOutline(t.Context(), document.TextOutlineRequest{Citation: f.Citation})
+	outline, err := f.Service.GetTextOutline(t.Context(),
+		document.TextOutlineRequest{Citation: f.Citation})
 	require.NoError(t, err)
-	request := document.TextSectionRequest{Citation: f.Citation, Section: outline.EnclosingSection, MaxChars: 16000}
+	request := document.TextSectionRequest{Citation: f.Citation,
+		Section: outline.EnclosingSection, MaxChars: 16000}
 	before, err := f.Service.ReadTextSection(t.Context(), request)
 	require.NoError(t, err)
 	require.True(t, before.Complete)
@@ -62,7 +65,8 @@ func TestTextNavigationVerification(t *testing.T) {
 		source verifiedBlobReader
 		cause  error
 	}{
-		{"unverified", citationReadBoundary{source: f.blobs, unverified: true}, pack.ErrVerificationIncomplete},
+		{"unverified", citationReadBoundary{source: f.blobs, unverified: true},
+			pack.ErrVerificationIncomplete},
 		{"dropped", citationReadBoundary{source: f.blobs, wrap: func(io.Reader) io.Reader {
 			return iotest.ErrReader(io.ErrUnexpectedEOF)
 		}}, io.ErrUnexpectedEOF},
@@ -107,7 +111,8 @@ func TestTextNavigationReadLimits(t *testing.T) {
 	_, err = readTextNavigationBlob(t.Context(), nil, citation, size+1)
 	require.ErrorIs(t, err, document.ErrTextNavigationLimit)
 	stream := &instrumentedVerifiedStream{reader: strings.NewReader(strings.Repeat("x", int(size)+8))}
-	_, err = readTextNavigationBlob(t.Context(), instrumentedVerifiedSource{stream: stream, size: size}, citation, size)
+	_, err = readTextNavigationBlob(t.Context(),
+		instrumentedVerifiedSource{stream: stream, size: size}, citation, size)
 	require.ErrorIs(t, err, document.ErrCitationIntegrity)
 	require.NotErrorIs(t, err, document.ErrTextNavigationLimit)
 	require.LessOrEqual(t, stream.bytesRead, int(size)+1)
@@ -119,6 +124,7 @@ func TestTextNavigationReadLimits(t *testing.T) {
 
 type navigationPausedCatalog struct {
 	*store.PackCatalog
+
 	entered chan struct{}
 	resume  chan struct{}
 	calls   atomic.Int32
@@ -144,47 +150,49 @@ func (c *navigationPausedCatalog) ResolveLocations(
 
 func TestTextNavigationAdmission(t *testing.T) {
 	t.Parallel()
-	f := NewTextCitationTestFixture(t)
-	paused := &navigationPausedCatalog{PackCatalog: store.NewPackCatalog(f.Catalog),
-		entered: make(chan struct{}, 2), resume: make(chan struct{})}
-	release := sync.OnceFunc(func() { close(paused.resume) })
-	defer release()
-	blobs, err := blob.New(paused, filepath.Join(filepath.Dir(f.fixture.databasePath), "blobs"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, blobs.Close()) })
-	f.Service.blobs = blobs
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	request := document.TextOutlineRequest{Citation: f.Citation}
-	done := make(chan error, 2)
-	for range 2 {
-		go func() { _, err := f.Service.GetTextOutline(ctx, request); done <- err }()
-	}
-	for range 2 {
-		select {
-		case <-paused.entered:
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
+	synctest.Test(t, func(t *testing.T) {
+		f := NewTextCitationTestFixture(t)
+		paused := &navigationPausedCatalog{PackCatalog: store.NewPackCatalog(f.Catalog),
+			entered: make(chan struct{}, 2), resume: make(chan struct{})}
+		release := sync.OnceFunc(func() { close(paused.resume) })
+		defer release()
+		blobs, err := blob.New(paused, filepath.Join(filepath.Dir(f.fixture.databasePath), "blobs"))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, blobs.Close()) })
+		f.Service.blobs = blobs
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		request := document.TextOutlineRequest{Citation: f.Citation}
+		done := make(chan error, 2)
+		for range 2 {
+			go func() { _, err := f.Service.GetTextOutline(ctx, request); done <- err }()
 		}
-	}
-	waiting, stop := context.WithTimeout(ctx, 50*time.Millisecond)
-	defer stop()
-	_, err = f.Service.GetTextOutline(waiting, request)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.Equal(t, int32(2), paused.calls.Load(), "third read must not reach physical I/O")
-	quote, err := f.Service.ResolveTextCitation(ctx, f.Citation)
-	require.NoError(t, err)
-	require.Equal(t, "é界🙂", quote.Text)
-	release()
-	for range 2 {
-		require.NoError(t, <-done)
-	}
-	bad := request
-	bad.Citation.BuildID = strings.Repeat("f", 64)
-	_, err = f.Service.GetTextOutline(ctx, bad)
-	require.ErrorIs(t, err, document.ErrCitationUnavailable)
-	_, err = f.Service.GetTextOutline(ctx, request)
-	require.NoError(t, err)
+		for range 2 {
+			select {
+			case <-paused.entered:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+		}
+		waiting, stop := context.WithTimeout(ctx, 50*time.Millisecond)
+		defer stop()
+		_, err = f.Service.GetTextOutline(waiting, request)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Equal(t, int32(2), paused.calls.Load(), "third read must not reach physical I/O")
+		quote, err := f.Service.ResolveTextCitation(ctx, f.Citation)
+		require.NoError(t, err)
+		require.Equal(t, "é界🙂", quote.Text)
+		release()
+		for range 2 {
+			require.NoError(t, <-done)
+		}
+		bad := request
+		bad.Citation.BuildID = strings.Repeat("f", 64)
+		_, err = f.Service.GetTextOutline(ctx, bad)
+		require.ErrorIs(t, err, document.ErrCitationUnavailable)
+		_, err = f.Service.GetTextOutline(ctx, request)
+		require.NoError(t, err)
+	})
 }
 
 type navigationParsePause struct {
@@ -199,54 +207,59 @@ func (p navigationParsePause) Transform(_ *ast.Document, _ text.Reader, _ parser
 
 func TestTextNavigationParsingReleasesCapture(t *testing.T) {
 	t.Parallel()
-	f := NewTextCitationTestFixture(t)
-	request := document.TextOutlineRequest{Citation: f.Citation}
-	entered, resume := make(chan struct{}, 2), make(chan struct{})
-	release := sync.OnceFunc(func() { close(resume) })
-	defer release()
-	f.Service.textParser = func() parser.Parser {
-		p := newTextSectionParser()
-		p.AddOptions(parser.WithASTTransformers(util.Prioritized(navigationParsePause{entered, resume}, 1000)))
-		return p
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	done := make(chan error, 2)
-	for range 2 {
-		go func() { _, err := f.Service.GetTextOutline(ctx, request); done <- err }()
-	}
-	for range 2 {
-		select {
-		case <-entered:
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
+	synctest.Test(t, func(t *testing.T) {
+		f := NewTextCitationTestFixture(t)
+		request := document.TextOutlineRequest{Citation: f.Citation}
+		entered, resume := make(chan struct{}, 2), make(chan struct{})
+		release := sync.OnceFunc(func() { close(resume) })
+		defer release()
+		f.Service.textParser = func() parser.Parser {
+			p := newTextSectionParser()
+			p.AddOptions(parser.WithASTTransformers(
+				util.Prioritized(navigationParsePause{entered, resume}, 1000)))
+			return p
 		}
-	}
-	waiting, stop := context.WithTimeout(ctx, 50*time.Millisecond)
-	defer stop()
-	_, err := f.Service.GetTextOutline(waiting, request)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	purge := DerivativePurgeRequest{AttachmentIDs: []string{f.Citation.RenditionAttachmentID}}
-	plan, err := f.Service.PlanDerivativePurge(ctx, purge)
-	require.NoError(t, err)
-	receipt, err := f.Service.RunDerivativePurge(ctx, DerivativePurgeJobRequest{
-		DerivativePurgeRequest: purge, PlanFingerprint: plan.Fingerprint})
-	require.NoError(t, err, "purge must finish while the actual parser is paused")
-	require.Equal(t, 1, receipt.RemovedAttachments)
-	release()
-	for range 2 {
-		require.NoError(t, <-done)
-	}
-	_, err = f.Service.GetTextOutline(ctx, request)
-	require.ErrorIs(t, err, document.ErrCitationUnavailable)
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		done := make(chan error, 2)
+		for range 2 {
+			go func() { _, err := f.Service.GetTextOutline(ctx, request); done <- err }()
+		}
+		for range 2 {
+			select {
+			case <-entered:
+			case <-ctx.Done():
+				t.Fatal(ctx.Err())
+			}
+		}
+		waiting, stop := context.WithTimeout(ctx, 50*time.Millisecond)
+		defer stop()
+		_, err := f.Service.GetTextOutline(waiting, request)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		purge := DerivativePurgeRequest{AttachmentIDs: []string{f.Citation.RenditionAttachmentID}}
+		plan, err := f.Service.PlanDerivativePurge(ctx, purge)
+		require.NoError(t, err)
+		receipt, err := f.Service.RunDerivativePurge(ctx, DerivativePurgeJobRequest{
+			DerivativePurgeRequest: purge, PlanFingerprint: plan.Fingerprint})
+		require.NoError(t, err, "purge must finish while the actual parser is paused")
+		require.Equal(t, 1, receipt.RemovedAttachments)
+		release()
+		for range 2 {
+			require.NoError(t, <-done)
+		}
+		_, err = f.Service.GetTextOutline(ctx, request)
+		require.ErrorIs(t, err, document.ErrCitationUnavailable)
+	})
 }
 
 func TestTextNavigationMutationAfterSnapshot(t *testing.T) {
 	t.Parallel()
 	f := NewTextCitationTestFixture(t)
-	outline, err := f.Service.GetTextOutline(t.Context(), document.TextOutlineRequest{Citation: f.Citation})
+	outline, err := f.Service.GetTextOutline(t.Context(),
+		document.TextOutlineRequest{Citation: f.Citation})
 	require.NoError(t, err)
-	request := document.TextSectionRequest{Citation: f.Citation, Section: outline.EnclosingSection, MaxChars: 16000}
+	request := document.TextSectionRequest{Citation: f.Citation,
+		Section: outline.EnclosingSection, MaxChars: 16000}
 	entered, resume := make(chan struct{}), make(chan struct{})
 	release := sync.OnceFunc(func() { close(resume) })
 	defer release()

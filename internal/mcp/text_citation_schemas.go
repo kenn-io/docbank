@@ -3,7 +3,7 @@ package mcp
 import "math"
 
 //nolint:goconst // Citation wire fields remain beside their closed schemas.
-func textCitationSchemas() (schema, schema) {
+func textCitationProperties() (schema, []string) {
 	properties := schema{
 		"version": integerSchema(1, 1), "vault_uid": uuidSchema(),
 		"node_id":            integerSchema(1, math.MaxInt64),
@@ -14,6 +14,11 @@ func textCitationSchemas() (schema, schema) {
 	}
 	required := []string{"version", "vault_uid", "node_id", "content_version_id", "content_sha256",
 		"rendition_attachment_id", "build_id", "rendition_sha256", "start", "end"}
+	return properties, required
+}
+
+func textCitationSchemas() (schema, schema) {
+	properties, required := textCitationProperties()
 	text := stringSchema(maxRenditionChars)
 	text["minLength"] = 1
 	return rootObjectSchema(properties, required...), rootObjectSchema(withPrivateCache(schema{

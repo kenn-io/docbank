@@ -29,6 +29,7 @@ func (c *Connection) GetTextOutline(
 	defer func() { _ = response.Body.Close() }()
 	var transport struct {
 		document.TextOutlinePage
+
 		Schema string `json:"$schema,omitzero"`
 	}
 	if err := decodeCitationResponse(response, &transport, 256<<10); err != nil {
@@ -56,6 +57,7 @@ func (c *Connection) ReadTextSection(
 	defer func() { _ = response.Body.Close() }()
 	var transport struct {
 		document.TextSectionPage
+
 		Schema string `json:"$schema,omitzero"`
 	}
 	if err := decodeCitationResponse(response, &transport, 256<<10); err != nil {
@@ -76,7 +78,8 @@ func validateTextOutlinePage(
 		page.Total < 1 || page.Total > document.MaxTextNavigationHeadings+1 || page.Offset > page.Total ||
 		len(page.Sections) != min(document.TextOutlinePageSize, page.Total-page.Offset) ||
 		page.EnclosingSection.Start < 0 || page.EnclosingSection.Start > request.Citation.Start ||
-		page.EnclosingSection.End < request.Citation.End || page.EnclosingSection.End > page.DocumentChars {
+		page.EnclosingSection.End < request.Citation.End ||
+		page.EnclosingSection.End > page.DocumentChars {
 		return invalid
 	}
 	end := page.Offset + len(page.Sections)
@@ -117,8 +120,10 @@ func validateTextSectionPage(
 	start := request.Section.Start + request.Offset
 	end := start + min(request.MaxChars, request.Section.End-start)
 	digest := sha256.Sum256([]byte(page.Text))
-	if page.Citation != request.Citation || page.Section != request.Section || page.Offset != request.Offset ||
-		page.ActualStart != start || page.ActualEnd != end || page.NextOffset != end-request.Section.Start ||
+	if page.Citation != request.Citation || page.Section != request.Section ||
+		page.Offset != request.Offset ||
+		page.ActualStart != start || page.ActualEnd != end ||
+		page.NextOffset != end-request.Section.Start ||
 		page.Complete != (end == request.Section.End) || !utf8.ValidString(page.Text) ||
 		utf8.RuneCountInString(page.Text) != end-start || page.TextBytes != len(page.Text) ||
 		page.TextSHA256 != hex.EncodeToString(digest[:]) {

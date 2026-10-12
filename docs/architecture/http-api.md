@@ -119,6 +119,8 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `GET /renditions/{attachment_id}` · `POST /renditions/select` | stream retained sanitized Markdown by attachment or source selector | Implemented |
 | `POST /evidence/windows` | read bounded text from an exact current/live file and active rendition | Implemented |
 | `POST /text-citations/resolve` | reopen an exact quote from retained rendition text | Implemented |
+| `POST /text-citations/outline` | read headings and whole-section bounds from retained text | Implemented |
+| `POST /text-citations/section` | read an exact page of a retained text section | Implemented |
 | `GET /coverage?profile=&vault_uid=&content_version_id=` · `POST /search` | inspect separate rendition/embedding coverage / search an authorized source-version set | Implemented |
 | `POST /search/similar` | stored-vector neighbors | Implemented |
 | `POST /derivatives/purge-plans` · `POST /derivatives/purge-jobs` | preview / run a live derivative purge without changing immutable backups | Implemented |
@@ -558,6 +560,117 @@ Retention and concurrency rules belong to
 [document-processing architecture](document-processing.md#reopen-a-saved-quotation).
 This quote is verified retained text, not an offline proof or a claim about the
 original document's bytes.
+
+#### Retained text sections
+
+`POST /api/v1/text-citations/outline` (`getTextOutline`) and
+`POST /api/v1/text-citations/section` (`readTextSection`) navigate the exact
+Markdown identified by a [saved citation](#retained-text-citations). Both are
+API-key reads; browser sessions are not admitted. Each request body is limited
+to 16 KiB, uses the normal 60-second deadline, and returns `Cache-Control: no-store`.
+All request fields below are required. Unknown members and explicit nulls are
+rejected, including inside nested objects. There are no implicit defaults.
+
+The citation remains a valid nonempty anchor of at most 16,000 code points.
+Use `[0,1)` when there is no particular quote. Empty artifacts have no valid
+anchor. The chosen section need not contain the anchor.
+
+**Outline:** send `{citation, offset}`, where `offset` is an entry index from
+0 to 4,097. The result contains:
+
+| Field | Meaning |
+| --- | --- |
+| `citation` | Unchanged input reference |
+| `document_chars` | Positive total code-point count |
+| `enclosing_section` | `{start,end}` containing the entire anchor |
+| `offset`, `total` | Echoed entry offset; total entries from 1 to 4,097 |
+| `sections` | Non-null array of at most 50 entries, in root-then-source order |
+| `next_offset` | Present only when more entries remain; equals `offset + len(sections)` |
+
+Entries contain `start`, `end`, `level` from 0 to 6, `title_markdown` and
+`title_truncated`. The synthetic root is first, with bounds `[0,document_chars)`,
+level 0 and an empty untruncated label. Only ATX and Setext headings directly
+under the Markdown document root create further entries. Headings inside lists
+or blockquotes remain content; fenced and indented code does not create headings.
+Empty and repeated headings still create distinct entries.
+
+A heading starts at the beginning of its first physical title line, including
+indentation and markers. It ends at the next heading of equal or smaller level,
+or EOF, so it includes subsections and intervening whitespace. Multiline Setext
+headings begin at their first title line, not the underline. Root and first
+heading may share bounds. The enclosing section is the greatest-start heading
+that contains the entire citation, or root when none does. A quote spanning
+siblings therefore selects their enclosing parent or root.
+
+Labels preserve inline Markdown and escapes from the heading's source segments,
+trim outer whitespace and join multiple title lines with one ASCII space. They
+contain at most 160 code points; truncation sets `title_truncated` and adds no
+ellipsis. They are not quotation text. Generated headings also participate, and
+plaintext `#` comments may become stored headings. This is the rendition's
+Markdown outline, not the original file's layout or source-language structure.
+
+An outline offset equal to `total` returns an empty final array without a next
+offset. An offset beyond `total` fails. The total and enclosing section always
+come from the entire admitted artifact; heading overflow never returns a partial
+outline as if it were complete.
+
+**Section:** send `{citation, section: {start,end}, offset, max_chars}`. Section
+bounds are absolute code-point positions and must match a root or complete
+heading section. `offset` is relative to the section, from zero through its
+length. `max_chars` is 1–16,000. All positions are at most 2,147,483,647; section
+end must exceed start. A whole section may exceed the citation length limit.
+
+The response echoes `citation`, `section` and `offset`, and returns `actual_start`,
+`actual_end`, `next_offset`, `complete`, `text`, `text_sha256` and `text_bytes`:
+
+```text
+actual_start = section.start + offset
+actual_end = min(actual_start + max_chars, section.end)
+next_offset = actual_end - section.start
+complete = (actual_end == section.end)
+```
+
+Text is the exact UTF-8 byte slice for that code-point range. Its code-point
+count equals `actual_end - actual_start`, byte count equals `text_bytes`, and
+lowercase SHA-256 equals `text_sha256`. At the terminal offset it is empty, with
+zero bytes, the standard empty digest, `complete: true` and unchanged offset.
+Beyond-end offsets and invented section bounds fail instead of being clamped.
+Every nonterminal success advances the offset. Callers may change `max_chars`
+between pages. A nonempty page becomes a regular citation by substituting its
+absolute `actual_start` and `actual_end` into the echoed citation.
+
+Navigation caps the artifact at 4 MiB, 65,536 LF characters and 4,096 headings.
+A declared oversize artifact is refused before I/O. Otherwise the full size,
+UTF-8 and digest must verify and the stream must close before content-dependent
+range errors or parser limits are reported. Extra or missing bytes in an admitted
+stream are integrity failures, not ordinary limit refusals. An interrupted stream
+keeps its I/O cause. Existing deadline/cancellation precedence is unchanged.
+
+| Status / code | Meaning and recovery |
+| --- | --- |
+| Huma validation response, ordinarily 422 | Correct missing/null fields, types, schema bounds or unknown members; handler codes do not replace schema errors |
+| 400 / `invalid_text_navigation` | Strict decoding rejected the body after schema validation |
+| 422 / `invalid_text_citation` | Correct the citation's identities or cross-field range |
+| 416 / `invalid_citation_range` | Choose an anchor inside this rendition |
+| 422 / `invalid_text_navigation` | Fetch the outline and correct whole-section bounds or offset |
+| 422 / `text_navigation_limit` | Use short citations within their limits; bulk download requires an attachment still active for its version |
+| 404 / `citation_unavailable` | Check retained authority and bytes; the read does not regenerate evidence |
+| 500 / `citation_integrity` | Investigate stored evidence; no text or outline is returned |
+| 504 / `citation_timeout`, 408 / `citation_canceled` | Retry the same read deliberately later; includes admission and maintenance waits |
+| 503 / `processing_unavailable` | Restore processing-service availability |
+| 500 / `citation_failed` | Inspect the daemon log for the preserved cause |
+
+The ordinary 413 body limit remains separate. The daemon connection bounds each
+navigation response to 256 KiB, permits Huma's `$schema`, and checks echoed
+identities, bounds and pagination. Section responses also undergo independent
+UTF-8, code-point count, byte count and hash checks. Short citation responses
+retain their existing 1 MiB bound. The client cannot prove Markdown section
+boundaries without the full artifact.
+
+See [read lifetime and admission](document-processing.md#read-the-section-around-a-quotation)
+for repeated-read cost, maintenance exclusion and cancellation limits. No page
+keeps evidence alive for the next one. If a later page fails, previously returned
+text remains partial.
 
 #### Similar documents
 

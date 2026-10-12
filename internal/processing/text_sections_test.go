@@ -35,7 +35,8 @@ func TestTextSectionsLiteralBoundaries(t *testing.T) {
 		page, err := index.outline(document.TextOutlineRequest{
 			Citation: document.TextCitation{Start: tc.start, End: tc.end}})
 		require.NoError(t, err)
-		require.Equal(t, document.TextSectionRange{Start: tc.wantStart, End: tc.wantEnd}, page.EnclosingSection)
+		require.Equal(t, document.TextSectionRange{Start: tc.wantStart, End: tc.wantEnd},
+			page.EnclosingSection)
 	}
 }
 
@@ -51,14 +52,20 @@ func TestTextSectionsMarkdown(t *testing.T) {
 			{Start: 0, End: 25}, {Start: 0, End: 25, Level: 1},
 			{Start: 3, End: 15, Level: 3, TitleMarkdown: "Same"},
 			{Start: 15, End: 25, Level: 3, TitleMarkdown: "Same"}}},
-		{"unicode CRLF indentation", "é界e\u0301\r\n\r\n   # **Hi** \\*x\\*\r\nz", []document.TextOutlineEntry{
-			{Start: 0, End: 28}, {Start: 8, End: 28, Level: 1, TitleMarkdown: "**Hi** \\*x\\*"}}},
-		{"containers and code", "> # quote\n\n- # list\n\n```\n# fence\n```\n\n    # code\n\n\\# escaped\n\n# Real\nx",
-			[]document.TextOutlineEntry{{Start: 0, End: 70}, {Start: 62, End: 70, Level: 1, TitleMarkdown: "Real"}}},
+		{"unicode CRLF indentation", "é界e\u0301\r\n\r\n   # **Hi** \\*x\\*\r\nz",
+			[]document.TextOutlineEntry{
+				{Start: 0, End: 28}, {Start: 8, End: 28, Level: 1, TitleMarkdown: "**Hi** \\*x\\*"}}},
+		{"containers and code",
+			"> # quote\n\n- # list\n\n```\n# fence\n```\n\n    # code\n\n\\# escaped\n\n# Real\nx",
+			[]document.TextOutlineEntry{{Start: 0, End: 70},
+				{Start: 62, End: 70, Level: 1, TitleMarkdown: "Real"}}},
 		{"GFM table", "| A | B |\n| - | - |\n| # nope | ok |\n\n# End\nx",
-			[]document.TextOutlineEntry{{Start: 0, End: 44}, {Start: 37, End: 44, Level: 1, TitleMarkdown: "End"}}},
+			[]document.TextOutlineEntry{{Start: 0, End: 44},
+				{Start: 37, End: 44, Level: 1, TitleMarkdown: "End"}}},
 	} {
-		t.Run(tc.name, func(t *testing.T) { require.Equal(t, tc.want, sectionIndex(t, tc.source).sections) })
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, sectionIndex(t, tc.source).sections)
+		})
 	}
 }
 
@@ -153,7 +160,8 @@ func TestTextSectionsPages(t *testing.T) {
 	require.Empty(t, page.Text)
 	require.Zero(t, page.TextBytes)
 	require.Equal(t, request.Offset, page.NextOffset)
-	require.Equal(t, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", page.TextSHA256)
+	require.Equal(t, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		page.TextSHA256)
 	request.Offset++
 	_, err = index.page(t.Context(), []byte(source), request)
 	require.ErrorIs(t, err, document.ErrInvalidTextNavigation)

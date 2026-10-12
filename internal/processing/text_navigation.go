@@ -17,7 +17,7 @@ func (service *Service) GetTextOutline(
 		return document.TextOutlinePage{}, err
 	}
 	if err := service.navigationSlots.Acquire(ctx, 1); err != nil {
-		return document.TextOutlinePage{}, err
+		return document.TextOutlinePage{}, fmt.Errorf("waiting for text navigation: %w", err)
 	}
 	defer service.navigationSlots.Release(1)
 	data, err := service.readTextNavigation(ctx, request.Citation)
@@ -39,7 +39,7 @@ func (service *Service) ReadTextSection(
 		return document.TextSectionPage{}, err
 	}
 	if err := service.navigationSlots.Acquire(ctx, 1); err != nil {
-		return document.TextSectionPage{}, err
+		return document.TextSectionPage{}, fmt.Errorf("waiting for text navigation: %w", err)
 	}
 	defer service.navigationSlots.Release(1)
 	data, err := service.readTextNavigation(ctx, request.Citation)

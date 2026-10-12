@@ -183,6 +183,8 @@ resource links, is capped at 1 MiB.
 | `get_document` | Requires an exact positive node ID and current content-version UUID. A stale, trashed, moved-to-another-version, or mismatched identity is rejected. |
 | `list_document_versions` | Lists immutable versions, including each original's `blob_hash` and size, for one live file. Limit defaults to 100 and is capped at 250; offset is capped at 1,000,000. |
 | `resolve_text_citation` | Reopens a [saved quotation](#saved-text-citations) from exact retained rendition text. |
+| `get_text_outline` | Reads the headings and whole-section bounds of [retained text](#read-complete-retained-sections). |
+| `read_text_section` | Reads an exact page of a retained section, with explicit completion. |
 | `read_rendition_text` | Reads the exact vault/node/version/attachment tuple described under [Resources](#resources-and-rendition-windows). |
 | `get_processing_plan` | Requires an exact node ID, content-version UUID, and 1–128-character processing profile name. Returns the complete provider, trust-boundary, retention, estimate, consent, and backup disclosure plus its fingerprint. |
 | `get_processing_status` | Reads one stable 64-hex-character job identity. A response contains at most 64 embedding job IDs. |
@@ -356,6 +358,53 @@ before any response starts, never after a domain failure.
 The [HTTP contract](../architecture/http-api.md#retained-text-citations) owns the
 complete field and error table. Current/live rendition resources and windows
 retain their existing behavior.
+
+## Read complete retained sections
+
+`get_text_outline` and `read_text_section` are default read-only tools on stdio
+and HTTP. They use the saved citation above and need no write opt-in. A valid
+historical rendition works even without a configured or executable profile.
+
+1. Send `get_text_outline` `{citation, offset: 0}`. If you have no particular
+   quote, use citation range `[0,1)` with the exact retained identities.
+2. Choose the returned `enclosing_section`, or any `sections` entry. The
+   enclosing section contains the entire anchor, including an anchor crossing
+   smaller sections. To browse more entries, use the optional `next_offset`.
+3. Send `read_text_section` `{citation, section: {start,end}, offset: 0,
+   max_chars: 16000}`. The section includes its subsections.
+4. Append `text`, replace the relative offset with `next_offset`, and continue
+   until `complete` is true. Keep the citation and section unchanged. A page is
+   not a complete section until then; a later failure leaves a partial result.
+5. To cite a nonempty page, copy its citation and substitute `actual_start` and
+   `actual_end`. `resolve_text_citation` reopens those exact bytes.
+
+Sections describe stored Markdown. They preserve code-point offsets, escapes,
+combining marks and line endings. `title_markdown` is a navigation label, limited
+to 160 code points with explicit `title_truncated`; it is not quotation text.
+The plaintext adapter also normalizes through Markdown, so `#` comments in
+Python, YAML or plain text can appear as headings. This does not reconstruct
+source-language structure or the original document's layout.
+
+Each request verifies and parses the whole retained artifact. Navigation is
+limited to 4 MiB, 65,536 LF characters and 4,096 headings, with two concurrent
+reads per service. Outline pages contain at most 50 entries. Section pages
+contain 1–16,000 code points; use the largest useful page size to avoid repeated
+reads. Waiting counts against the daemon deadline. Parsing is synchronous and
+cannot be interrupted mid-call. Results use private cache scope and zero TTL.
+
+`invalid_text_navigation` means to correct whole-section bounds or offsets
+using the same rendition's outline. `text_navigation_limit` means the artifact
+exceeds a navigation cap. Short citations still support artifacts up to 64 MiB.
+`rendition get` can download an attachment still active for its version; a
+superseded attachment has no general bulk-download path here. Existing citation
+errors keep their meanings. A missing processing service or a transport/decode
+failure keeps the existing generic MCP error behavior.
+
+Every page checks retained authority again. Trash, pruning or purge between
+pages can stop a read sequence; there is no cursor, saved outline or retention
+lease. The full [HTTP contract](../architecture/http-api.md#retained-text-sections)
+owns fields, limits and errors. Neither page hashes nor a saved citation prove
+that provider text quotes the original file verbatim.
 
 ## Optional processing start
 

@@ -32,7 +32,8 @@ func TestTextNavigationHTTP(t *testing.T) {
 	require.Equal(t, f.citation, outline.Citation)
 	require.Equal(t, []document.TextOutlineEntry{{Start: 0, End: 15}}, outline.Sections)
 	require.Equal(t, document.TextSectionRange{Start: 0, End: 15}, outline.EnclosingSection)
-	section := document.TextSectionRequest{Citation: f.citation, Section: outline.EnclosingSection, MaxChars: 16000}
+	section := document.TextSectionRequest{Citation: f.citation,
+		Section: outline.EnclosingSection, MaxChars: 16000}
 	resp, body = do(t, f.server, http.MethodPost, sectionPath, nil, section)
 	require.Equal(t, 200, resp.StatusCode, body)
 	require.Equal(t, "no-store", resp.Header.Get("Cache-Control"))
@@ -147,8 +148,10 @@ func TestTextNavigationHTTPAvailability(t *testing.T) {
 		require.NoError(t, err)
 		citation := document.TextCitation{Version: 1, VaultUID: vault, NodeID: node.ID,
 			ContentVersionID: version, ContentSHA256: node.BlobHash, BuildID: fixture.build,
-			RenditionAttachmentID: fixture.attachment, RenditionSHA256: testHash(string(fixture.markdown)), End: 1}
-		resp, body := do(t, server, http.MethodPost, outlinePath, nil, document.TextOutlineRequest{Citation: citation})
+			RenditionAttachmentID: fixture.attachment,
+			RenditionSHA256:       testHash(string(fixture.markdown)), End: 1}
+		resp, body := do(t, server, http.MethodPost, outlinePath, nil,
+			document.TextOutlineRequest{Citation: citation})
 		require.Equal(t, 422, resp.StatusCode, body)
 		require.Contains(t, body, "text_navigation_limit")
 		require.NotContains(t, body, `"sections":`)
@@ -163,9 +166,11 @@ func TestTextNavigationHTTPSectionShape(t *testing.T) {
 		"missing max":    func(m map[string]any) { delete(m, "max_chars") },
 		"null section":   func(m map[string]any) { m["section"] = nil },
 		"null max":       func(m map[string]any) { m["max_chars"] = nil },
-		"nested extra":   func(m map[string]any) { m["section"] = map[string]any{"start": 0, "end": 15, "extra": true} },
-		"not a section":  func(m map[string]any) { m["section"] = map[string]any{"start": 1, "end": 14} },
-		"past end":       func(m map[string]any) { m["offset"] = 16 },
+		"nested extra": func(m map[string]any) {
+			m["section"] = map[string]any{"start": 0, "end": 15, "extra": true}
+		},
+		"not a section": func(m map[string]any) { m["section"] = map[string]any{"start": 1, "end": 14} },
+		"past end":      func(m map[string]any) { m["offset"] = 16 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			input := map[string]any{"citation": f.citation, "section": map[string]any{"start": 0, "end": 15},

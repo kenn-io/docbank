@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 )
@@ -21,7 +22,8 @@ func TestTextNavigationClient(t *testing.T) {
 	request := document.TextOutlineRequest{Citation: citation}
 	valid := document.TextOutlinePage{Citation: citation, DocumentChars: 9,
 		EnclosingSection: document.TextSectionRange{Start: 0, End: 9}, Total: 2,
-		Sections: []document.TextOutlineEntry{{Start: 0, End: 9}, {Start: 0, End: 9, Level: 1, TitleMarkdown: "T"}}}
+		Sections: []document.TextOutlineEntry{{Start: 0, End: 9},
+			{Start: 0, End: 9, Level: 1, TitleMarkdown: "T"}}}
 	for name, mutate := range map[string]func(*document.TextOutlinePage){
 		"valid duplicate bounds": nil,
 		"identity":               func(p *document.TextOutlinePage) { p.Citation.NodeID++ },
@@ -29,11 +31,16 @@ func TestTextNavigationClient(t *testing.T) {
 		"enclosure":              func(p *document.TextOutlinePage) { p.EnclosingSection.Start = 2 },
 		"root":                   func(p *document.TextOutlinePage) { p.Sections[0].Level = 1 },
 		"root title":             func(p *document.TextOutlinePage) { p.Sections[0].TitleMarkdown = "x" },
-		"order":                  func(p *document.TextOutlinePage) { p.Sections = append(p.Sections, p.Sections[1]); p.Total++ },
-		"label":                  func(p *document.TextOutlinePage) { p.Sections[1].TitleMarkdown = strings.Repeat("界", 161) },
-		"count":                  func(p *document.TextOutlinePage) { p.Total++ },
-		"next":                   func(p *document.TextOutlinePage) { p.NextOffset = new(2) },
-		"offset":                 func(p *document.TextOutlinePage) { p.Offset = 1 },
+		"order": func(p *document.TextOutlinePage) {
+			p.Sections = append(p.Sections, p.Sections[1])
+			p.Total++
+		},
+		"label": func(p *document.TextOutlinePage) {
+			p.Sections[1].TitleMarkdown = strings.Repeat("界", 161)
+		},
+		"count":  func(p *document.TextOutlinePage) { p.Total++ },
+		"next":   func(p *document.TextOutlinePage) { p.NextOffset = new(2) },
+		"offset": func(p *document.TextOutlinePage) { p.Offset = 1 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := valid
@@ -44,10 +51,10 @@ func TestTextNavigationClient(t *testing.T) {
 			encoded, err := json.Marshal(response)
 			require.NoError(t, err)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, "/api/v1/text-citations/outline", r.URL.Path)
+				assert.Equal(t, "/api/v1/text-citations/outline", r.URL.Path)
 				var got document.TextOutlineRequest
-				require.NoError(t, json.UnmarshalRead(r.Body, &got))
-				require.Equal(t, request, got)
+				assert.NoError(t, json.UnmarshalRead(r.Body, &got))
+				assert.Equal(t, request, got)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write(encoded)
 			}))
@@ -96,10 +103,10 @@ func TestTextNavigationClientSection(t *testing.T) {
 			encoded, err := json.Marshal(response)
 			require.NoError(t, err)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, "/api/v1/text-citations/section", r.URL.Path)
+				assert.Equal(t, "/api/v1/text-citations/section", r.URL.Path)
 				var got document.TextSectionRequest
-				require.NoError(t, json.UnmarshalRead(r.Body, &got))
-				require.Equal(t, request, got)
+				assert.NoError(t, json.UnmarshalRead(r.Body, &got))
+				assert.Equal(t, request, got)
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write(encoded)
 			}))
@@ -118,8 +125,10 @@ func TestTextNavigationClientSection(t *testing.T) {
 func TestTextNavigationClientTransport(t *testing.T) {
 	t.Parallel()
 	request := document.TextOutlineRequest{Citation: clientCitation(t).Citation, Offset: 1}
-	valid := document.TextOutlinePage{Citation: request.Citation, DocumentChars: 5, Total: 1, Offset: 1,
-		EnclosingSection: document.TextSectionRange{Start: 0, End: 5}, Sections: []document.TextOutlineEntry{}}
+	valid := document.TextOutlinePage{Citation: request.Citation, DocumentChars: 5, Total: 1,
+		Offset:           1,
+		EnclosingSection: document.TextSectionRange{Start: 0, End: 5},
+		Sections:         []document.TextOutlineEntry{}}
 	encoded, err := json.Marshal(valid)
 	require.NoError(t, err)
 	for _, tc := range []struct {

@@ -105,7 +105,7 @@ func countSectionChars(ctx context.Context, data []byte) (int, error) {
 func sectionTitle(heading *ast.Heading, data []byte) (string, bool) {
 	var title strings.Builder
 	lines := heading.Lines()
-	for i := 0; i < lines.Len(); i++ {
+	for i := range lines.Len() {
 		if i > 0 {
 			title.WriteByte(' ')
 		}
@@ -170,7 +170,8 @@ func (index textSectionIndex) page(
 		return document.TextSectionPage{}, err
 	}
 	digest := sha256.Sum256([]byte(quote))
-	return document.TextSectionPage{Citation: request.Citation, Section: section, Offset: request.Offset,
+	return document.TextSectionPage{Citation: request.Citation,
+		Section: section, Offset: request.Offset,
 		ActualStart: start, ActualEnd: end, NextOffset: end - section.Start, Complete: end == section.End,
 		Text: quote, TextBytes: len(quote), TextSHA256: hex.EncodeToString(digest[:])}, nil
 }

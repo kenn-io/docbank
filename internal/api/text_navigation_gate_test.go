@@ -20,7 +20,8 @@ func TestTextNavigationCaptureOrdering(t *testing.T) {
 					resume: make(chan struct{})}
 				f := newCitationHTTPFixture(t, gate)
 				f.server.Close()
-				purge := processing.DerivativePurgeRequest{AttachmentIDs: []string{f.citation.RenditionAttachmentID}}
+				purge := processing.DerivativePurgeRequest{
+					AttachmentIDs: []string{f.citation.RenditionAttachmentID}}
 				plan, err := f.service.PlanDerivativePurge(t.Context(), purge)
 				require.NoError(t, err)
 				ctx, cancel := context.WithCancel(t.Context())
@@ -61,7 +62,8 @@ func TestTextNavigationCaptureOrdering(t *testing.T) {
 					require.NotEmpty(t, outline.Sections)
 				}
 				require.NoError(t, <-purged)
-				_, err = f.service.GetTextOutline(t.Context(), document.TextOutlineRequest{Citation: f.citation})
+				_, err = f.service.GetTextOutline(t.Context(),
+					document.TextOutlineRequest{Citation: f.citation})
 				require.ErrorIs(t, err, document.ErrCitationUnavailable)
 			})
 		})
