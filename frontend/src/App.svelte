@@ -239,6 +239,7 @@
   let photoValidated = $state(false);
   let photoAccessError = $state("");
   let photoChangeID: string | undefined;
+  let photoAccessChecked = false;
   let photoConcealed = false;
   let photoAccessVersion = 0;
   const maxPhotoAccessFailures = 3;
@@ -275,8 +276,9 @@
   async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
     // The refreshed workspace reports an open photo that is no longer listed, so the viewer stays.
     if (photoState && result.change_id !== photoChangeID) void invalidateLibrary(false);
-    // Hiding or unhiding changes album counts and covers.
-    if (photoChangeID !== undefined && result.change_id !== photoChangeID) void photoAlbums?.load();
+    // Hiding or unhiding changes album counts and covers. The server omits change_id until the first hide.
+    if (photoAccessChecked && result.change_id !== photoChangeID) void photoAlbums?.load();
+    photoAccessChecked = true;
     photoChangeID = result.change_id;
     if (!photoMode || hiddenMode) return;
     const state = photoState;
@@ -295,7 +297,7 @@
 
   $effect(() => {
     if (!webSession) return;
-    return () => { hiddenPhotoActionError = ""; discardLibrary(); photoValidated = false; photoChangeID = undefined; };
+    return () => { hiddenPhotoActionError = ""; discardLibrary(); photoValidated = false; photoChangeID = undefined; photoAccessChecked = false; };
   });
   $effect(() => {
     if (!webSession) return;

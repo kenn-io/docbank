@@ -657,7 +657,7 @@ it("opens and closes the loupe inside an album without leaving it", async () => 
   expect(location.hash).not.toContain("photo=");
 });
 
-it("conceals an open album when hidden photos change, then rereads its photos and album counts", async () => {
+it.each([undefined, "first"])("conceals an open album when hidden photos change, then rereads its photos and album counts, initial change=%s", async initial => {
   const album = photoAlbum({ id: "22222222-2222-4222-8222-0000000000ab", included_count: 1, member_count: 1 });
   history.replaceState(null, "", `/photos/albums/${album.id}#web_session=synthetic&web_upload_secret=proof`);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
@@ -667,7 +667,7 @@ it("conceals an open album when hidden photos change, then rereads its photos an
   let changed = false;
   let albumReads = 0;
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, change_id: changed ? "second" : "first" });
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, change_id: changed ? "second" : initial });
     if (url.endsWith("/photos/albums")) { albumReads++; return Response.json([{ ...album, included_count: changed ? 0 : 1 }]); }
     if (url.endsWith("/photos/assets/query")) {
       expect(JSON.parse(init.body as string).query.filters.set_ids).toEqual([album.id]);

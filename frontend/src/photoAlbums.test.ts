@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { PhotoAlbums, photoDragType } from "./photoAlbums.svelte.js";
 import { Photos, photoQuery } from "./photos.svelte.js";
-import { photoAlbum, albumResponse as response } from "./photo-test-fixtures.js";
+import { photo, photoAlbum, albumResponse as response } from "./photo-test-fixtures.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const album = photoAlbum();
@@ -95,7 +95,11 @@ it.each(["over-limit", "whole-query", "external payload", "unselected photo"])("
   const photos = new Photos("scoped", vi.fn());
   photos.total = 12000;
   photos.selection.selectedIDs = new Set(Array.from({ length: 1001 }, (_, id) => String(id)));
-  photos.allResults = kind !== "over-limit";
+  photos.allResults = kind !== "over-limit" && kind !== "unselected photo";
+  if (kind === "unselected photo") {
+    photos.items = [photo(1), photo(2)];
+    photos.select("photo-1", new MouseEvent("click"), ["photo-1", "photo-2"]);
+  }
   const transfer = { setData: vi.fn(), types: [photoDragType], effectAllowed: "" };
   const event = { dataTransfer: transfer, preventDefault: vi.fn() } as unknown as DragEvent;
   const members = vi.spyOn(albums, "members");
@@ -105,7 +109,7 @@ it.each(["over-limit", "whole-query", "external payload", "unselected photo"])("
     await albums.drop(album, event);
     photos.allResults = true;
   }
-  albums.startDrag(kind === "unselected photo" ? "unselected" : "0", event, photos);
+  albums.startDrag(kind === "unselected photo" ? "photo-2" : "0", event, photos);
   if (kind === "over-limit") {
     expect(event.preventDefault).toHaveBeenCalledOnce();
     expect(transfer.setData).not.toHaveBeenCalled();
@@ -113,7 +117,8 @@ it.each(["over-limit", "whole-query", "external payload", "unselected photo"])("
     expect(fetcher).not.toHaveBeenCalled();
     expect(albums.error).toBe("Select all 12,000 photos to add more than 1,000 at once.");
   } else if (kind === "unselected photo") {
-    expect(albums.drag).toEqual({ asset_ids: ["unselected"] });
+    expect(photos.allResults).toBe(false);
+    expect(albums.drag).toEqual({ asset_ids: ["photo-2"] });
   } else {
     expect(albums.drag).toEqual({ query: photoQuery });
     await albums.drop(album, event);
