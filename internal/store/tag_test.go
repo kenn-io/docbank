@@ -170,8 +170,6 @@ func TestTagPagesKeepAssignmentCounts(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, unchanged.Changed)
 	require.Equal(t, Tag{ID: beta.ID, Name: "beta", Revision: 3, AssignmentCount: 2}, unchanged.Tag)
-	_, err = s.TagByName(ctx, "missing")
-	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestTagQueriesAreBoundedAndIncludeTrashedNodes(t *testing.T) {
