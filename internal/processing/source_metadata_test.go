@@ -768,9 +768,9 @@ func TestExtractSourceMetadataWarnsForUndecodableEmailFields(t *testing.T) {
 	assert.Contains(t, sourceMetadataWarningCodes(metadata), "unparseable_metadata")
 }
 
-func TestExtractSourceMetadataRequiresEmailHeaders(t *testing.T) {
+func TestExtractSourceMetadataRejectsUnsupportedTextAndXML(t *testing.T) {
 	t.Parallel()
-	for _, payload := range []string{"", "plain text\r\n\r\nbody", "\r\nFrom: body@example.test\r\n"} {
+	for _, payload := range []string{`<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"><channel rdf:about="https://example.test/feed"/></rdf:RDF>`, "", "plain text\r\n\r\nbody", "\r\nFrom: body@example.test\r\n", `<?xml version="1.0"?><note/>`} {
 		metadata, err := ExtractSourceMetadata(t.Context(), sourceMetadataTestSpool(t), []byte(payload))
 		require.NoError(t, err)
 		assert.Empty(t, metadata.Fields)

@@ -1,12 +1,54 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
-import { Photos, loadDensity } from "./photos.svelte.js";
+import { Photos, loadDensity, photoQuery } from "./photos.svelte.js";
 import { photo } from "./photo-test-fixtures.js";
 import * as snapshots from "./snapshots.js";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 const response = (items: ReturnType<typeof photo>[], cursor?: string) => new Response(JSON.stringify({ items, total: 3, next_cursor: cursor }));
+
+it("cancels the previous scope and carries album sort through paging and refresh", async () => {
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve)).mockResolvedValueOnce(response([photo(2)], "album-next")).mockResolvedValueOnce(response([photo(3)])).mockResolvedValueOnce(response([photo(2), photo(3)]));
+  vi.stubGlobal("fetch", fetcher);
+  const album = { ...photoQuery, filters: { set_ids: ["album"] }, sort: { field: "added_time" as const, direction: "desc" as const } };
+  const photos = new Photos("scoped", vi.fn(), false, album);
+  photos.items = [photo(1)]; photos.started = true; photos.cursor = "old-next";
+  photos.scrollTop = 1200; photos.selectLoaded(); photos.allResults = true;
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  const pending = photos.loadMore();
+  const query = { ...album, sort: { field: "import_time" as const, direction: "desc" as const } };
+  await photos.setSort(query.sort);
+  finish(response([photo(4)])); await pending;
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-2"]);
+  expect(photos.selection.selectedIDs.size).toBe(0); expect(photos.allResults).toBe(false); expect(photos.scrollTop).toBe(0);
+  await photos.loadMore(); await photos.refresh();
+  expect(fetcher.mock.calls.slice(1).map(([, init]) => JSON.parse(init.body).query)).toEqual([query, query, query]);
+  expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true);
+  photos.dispose();
+});
+
+it.each(["confirmed", "partial", "lost response", "rejected"])("retains trash progress and reports completion: %s", async kind => {
+  const partial = kind === "partial", lost = kind === "lost response", rejected = kind === "rejected";
+  const fetcher = lost ? vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch")) : vi.fn().mockResolvedValueOnce(rejected ? new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }) : new Response(JSON.stringify({ id: "photo-1", revision: 2 })));
+  if (partial || rejected) fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }));
+  fetcher.mockResolvedValueOnce(lost ? response([photo(1), photo(2)]) : new Response(JSON.stringify({ detail: "Refresh unavailable" }), { status: 503 }));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2)]; photos.total = 7; photos.started = true;
+  if (partial || rejected) photos.selectLoaded();
+  else photos.select("photo-1", new MouseEvent("click"), ["photo-1", "photo-2"]);
+  const ontrashed = vi.fn();
+  expect(await photos.trashSelected(undefined, ontrashed)).toBe(!partial && !lost && !rejected);
+  expect(ontrashed).toHaveBeenCalledTimes(rejected ? 0 : 1);
+  expect(photos.items.map(item => item.asset_id)).toEqual(lost || rejected ? ["photo-1", "photo-2"] : ["photo-2"]);
+  expect(photos.total).toBe(lost ? 3 : rejected ? 7 : 6);
+  expect([...photos.selection.selectedIDs]).toEqual(rejected ? ["photo-1", "photo-2"] : lost ? ["photo-1"] : partial ? ["photo-2"] : []);
+  expect(photos.trashTargets.map(item => item.asset_id)).toEqual(rejected ? ["photo-1", "photo-2"] : lost ? ["photo-1"] : partial ? ["photo-2"] : []);
+  expect(photos.error).toBe(lost ? "" : "Refresh unavailable");
+  photos.dispose();
+});
 
 it("conceals after a confirmed hide while finishing the captured batch and reporting failures", async () => {
   let finish!: (response: Response) => void;
@@ -445,8 +487,10 @@ it("maps single, modifier and checkbox clicks to selection", () => {
   photos.dispose();
 });
 
-it("remembers density with safe defaults for unknown or unavailable storage", () => {
+it("remembers density with safe defaults for unknown or unavailable storage", async () => {
   const photos = new Photos("scoped", vi.fn());
+  new Photos("scoped", vi.fn()).setDensity("large");
+  expect(photos.density).toBe("large");
   photos.setDensity("compact");
   expect(new Photos("scoped", vi.fn()).density).toBe("compact");
   localStorage.setItem("docbank.photos.density", "__proto__");
@@ -688,4 +732,89 @@ it.each(["display", "excluded", "version", "download-display", "download-node", 
     fetcher.mockResolvedValue(new Response(JSON.stringify({id:2, kind:"file", current_version_id:current.content_version_id, blob_hash:"b".repeat(64), size:10, mime_type:"image/jpeg", revision:1, name:current.name})));
     expect(await photos.original(current, new AbortController().signal)).toBe("blob:original"); expect(read.mock.calls[0]![1].nodeID).toBe(2);
   }
+});
+
+it.each(["deselected anchor", "displaced selection"])("reconciles selection across refresh: %s", async kind => {
+  if (kind === "deselected anchor") {
+    const items = [photo(1), photo(2), photo(3)];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(items)));
+    const photos = new Photos("scoped", vi.fn()); photos.items = items;
+    const ids = items.map(item => item.asset_id);
+    photos.select(ids[0], new MouseEvent("click"), ids);
+    photos.select(ids[1], new MouseEvent("click", { ctrlKey: true }), ids);
+    photos.select(ids[1], new MouseEvent("click", { ctrlKey: true }), ids);
+    await photos.refresh();
+    expect(photos.selection.anchorID).toBe(ids[1]);
+    photos.select(ids[2], new MouseEvent("click", { shiftKey: true }), ids);
+    expect([...photos.selection.selectedIDs]).toEqual(ids);
+    return;
+  }
+  const fetcher = vi.fn().mockResolvedValueOnce(response([photo(2)], "next"));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn()); photos.items = [photo(1)];
+  photos.selection = { selectedIDs: new Set(["photo-1", "off-page"]), anchorID: undefined };
+  photos.selectLoaded();
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  await photos.refresh();
+  expect(photos.selection.selectedIDs.size).toBe(0);
+  expect(fetcher).toHaveBeenCalledOnce();
+  photos.selectAllResults();
+  fetcher.mockResolvedValueOnce(response([photo(3)], "next"));
+  await photos.refresh();
+  expect(photos.scope()).toEqual({ query: photoQuery });
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-3"]);
+  photos.selectLoaded();
+  expect(photos.allResults).toBe(false);
+  expect(photos.scope()).toEqual({ asset_ids: ["photo-3"] });
+});
+
+it("keeps an album scope through timeline counts, date filters, sort changes, and whole-query selection", async () => {
+  const counts = vi.spyOn(snapshots, "fetchPhotoTimeline").mockResolvedValue({ facets: [{ dimension: "capture_day", available: true, total: 1, missing: 0, other: 0, values: [] }] } as unknown as snapshots.PhotoTimelineCounts);
+  const fetcher = vi.fn(async () => response([photo(1)]));
+  vi.stubGlobal("fetch", fetcher);
+  const album = { ...photoQuery, filters: { set_ids: ["album"] }, sort: { field: "added_time" as const, direction: "desc" as const } };
+  const photos = new Photos("scoped", vi.fn(), false, album);
+  const sent = () => JSON.parse((fetcher.mock.calls.at(-1) as unknown as [string, RequestInit])[1].body as string).query;
+  await photos.loadTimeline();
+  expect(counts.mock.calls[0]![1].filters).toEqual({ set_ids: ["album"] });
+  await photos.selectDate("2024-02");
+  expect(sent()).toMatchObject({ filters: { set_ids: ["album"], capture_after: "2024-02-01", capture_before: "2024-03-01" }, sort: { field: "added_time" } });
+  await photos.setSort({ field: "import_time", direction: "desc" });
+  expect(sent()).toMatchObject({ filters: { set_ids: ["album"], capture_after: "2024-02-01" }, sort: { field: "import_time" } });
+  photos.selectAllResults();
+  expect(photos.scope().query?.filters).toMatchObject({ set_ids: ["album"], capture_after: "2024-02-01" });
+  await photos.selectDate();
+  expect(sent().filters).toEqual({ set_ids: ["album"] });
+  photos.dispose();
+});
+
+it("keeps a pending timeline request when an album sort changes", async () => {
+  let finish!: (page: snapshots.PhotoTimelineCounts) => void;
+  const counts = vi.spyOn(snapshots, "fetchPhotoTimeline").mockImplementation(() => new Promise(resolve => finish = resolve));
+  vi.stubGlobal("fetch", vi.fn(async () => response([photo(1)])));
+  const photos = new Photos("scoped", vi.fn(), false, { ...photoQuery, filters: { set_ids: ["album"] }, sort: { field: "added_time", direction: "desc" } });
+  photos.setView("timeline");
+  await vi.waitFor(() => expect(counts).toHaveBeenCalledOnce());
+  await photos.setSort({ field: "import_time", direction: "desc" });
+  expect(counts.mock.calls[0]![2].aborted).toBe(false);
+  expect(photos.timelineLoading).toBe(true);
+  finish({ facets: [{ dimension: "capture_day", available: true, total: 1, missing: 0, other: 0, values: [] }] } as unknown as snapshots.PhotoTimelineCounts);
+  await vi.waitFor(() => expect(photos.timeline?.total).toBe(1));
+  expect(photos.timelineLoading).toBe(false);
+  expect(counts).toHaveBeenCalledOnce();
+  photos.dispose();
+});
+
+it("refuses to hide when the whole query is selected", async () => {
+  const fetcher = vi.fn();
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1), photo(2)]; photos.started = true; photos.total = 500;
+  photos.selectAllResults();
+  const report = vi.fn();
+  await photos.setHidden("photo-1", undefined, undefined, report);
+  expect(report).toHaveBeenCalledWith("Hide changes loaded photos only. Choose Select loaded photos first.");
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(photos.allResults).toBe(true);
+  photos.dispose();
 });

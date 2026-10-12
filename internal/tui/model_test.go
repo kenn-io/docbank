@@ -1109,6 +1109,33 @@ func TestHistoryDetailShowsCompleteAttachmentTransition(t *testing.T) {
 	assert.Contains(t, detail, `Tag name: "final"`)
 }
 
+func TestHistoryDetailShowsPhotoDecisions(t *testing.T) {
+	backend := newFakeBackend()
+	page := backend.history[""]
+	const fileID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	before := store.PhotoAuthoredSnapshot{FileID: fileID, NodeID: page.Node.ID, Revision: 1}
+	after := before
+	after.Revision = 2
+	after.Values = store.PhotoAuthored{Rating: 5, Flag: "pick", Label: "red", Caption: "River\n\x1b[31m", Creator: "Example photographer", Copyright: "Example rights", Rotation: 90}
+	page.Items = []api.AuditEvent{{Kind: "photo_authored", Attachment: &api.AuditAttachmentChange{
+		Kind: "photo_authored", Identity: api.AuditAttachmentIdentity{FileID: fileID, NodeID: page.Node.ID},
+		Before: &api.AuditAttachmentState{Photo: &before}, After: &api.AuditAttachmentState{Photo: &after},
+	}}}
+	backend.history[""] = page
+	model, err := New(t.Context(), backend)
+	require.NoError(t, err)
+	model.width, model.height = 100, 60
+	model = runModelCommand(t, model, model.loadDirectory(0, navigationInitial, model.requestID))
+	model.selectNode(3)
+	model, cmd := updateModel(t, model, runeKey('a'))
+	model = runModelCommand(t, model, cmd)
+	model, _ = updateModel(t, model, key(tea.KeyEnter))
+	detail := model.render()
+	for _, want := range []string{fileID, "Revision: 1", "Revision: 2", "Rating: 0", "Rating: 5", `Flag: "pick"`, `Label: "red"`, `Caption: "River\n\x1b[31m"`, `Creator: "Example photographer"`, `Copyright: "Example rights"`, "Rotation: 90"} {
+		assert.Contains(t, detail, want)
+	}
+}
+
 func TestHistoryPathsRemainTerminalSafe(t *testing.T) {
 	event := api.AuditEvent{
 		OldPath: &api.AuditPathState{Path: "/old\nname", State: "live"},

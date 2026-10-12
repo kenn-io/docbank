@@ -1,4 +1,5 @@
 import { offerPreparedDownload } from "./download.js";
+import { sha256Digest } from "./crypto.js";
 import * as generated from "./generated/docbank.js";
 import type {
   BatesAllocation,
@@ -208,7 +209,7 @@ function canonical(value: unknown): string {
 }
 
 export async function batesRecipeSHA256(recipe: BatesRecipe): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical(recipe)));
+  const digest = await sha256Digest(new TextEncoder().encode(canonical(recipe)));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 

@@ -1,4 +1,5 @@
 import { APIError } from "./api-transport.js";
+import { randomUUID } from "./crypto.js";
 import {
   pageBinding,
   readPageImage,
@@ -179,7 +180,7 @@ export class PageViewerSession {
     const page = this.state.page;
     let operation = this.operations.get(page);
     if (!operation) {
-      operation = crypto.randomUUID();
+      operation = randomUUID();
       this.operations.set(page, operation);
     }
     const previousJob = this.state.job;

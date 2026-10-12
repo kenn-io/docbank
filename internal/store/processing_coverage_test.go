@@ -197,3 +197,75 @@ func TestProcessingCoverageChunkRequiresCurrentEvidence(t *testing.T) {
 	assert.Equal(t, 1, coverage.Embeddings[0].Unavailable)
 	assert.Zero(t, coverage.Embeddings[0].Complete)
 }
+
+func TestProcessingCoverageSharedBuildKeepsVersionStates(t *testing.T) {
+	t.Parallel()
+	s, versions := newRenditionCatalogFixture(t)
+	profile := catalogProcessingProfile(t, false)
+	build := catalogRenditionBuild(s, profile)
+	require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+	for i, version := range versions {
+		require.NoError(t, publishRenditionForTest(t, s, RenditionAttachmentRecord{
+			ID: fmt.Sprintf("%064x", i+1), VaultID: s.VaultID(), ContentVersionID: version,
+			BuildID: build.ID, Profile: profile, AttachedAt: nowRFC3339(),
+		}, nowRFC3339(), fakeHash("c1")))
+	}
+	missing, err := s.CreateFile(t.Context(), s.RootID(), "unprocessed.pdf", catalogSourceHash, 20, "application/pdf")
+	require.NoError(t, err)
+	request := renditionJobTestRequest(versions[0], profile)
+	grantRenditionJobConsent(t, s, request)
+	_, _, err = s.EnqueueRenditionJob(t.Context(), request)
+	require.NoError(t, err)
+	scope := ProcessingCoverageScope{
+		ContentVersionIDs:            append(versions, missing.CurrentVersionID, "00000000-0000-4000-8000-000000000001"),
+		ProcessingProfileFingerprint: profile.Fingerprint,
+	}
+	coverage, err := s.ProcessingCoverage(t.Context(), scope)
+	require.NoError(t, err)
+	assert.Equal(t, ProcessingClassCoverage{Name: "rendition", State: "rebuilding", Total: 4,
+		Complete: 1, Rebuilding: 1, PreviousGenerationServing: 1, Unavailable: 1, Stale: 1}, coverage.Renditions)
+
+	version, err := s.ContentVersionByID(t.Context(), versions[1])
+	require.NoError(t, err)
+	node, err := s.NodeByID(t.Context(), version.NodeID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), node.ID, node.Revision)
+	require.NoError(t, err)
+	coverage, err = s.ProcessingCoverage(t.Context(), scope)
+	require.NoError(t, err)
+	assert.Equal(t, ProcessingClassCoverage{Name: "rendition", State: "rebuilding", Total: 4,
+		Rebuilding: 1, PreviousGenerationServing: 1, Unavailable: 1, Stale: 2}, coverage.Renditions)
+}
+
+func TestProcessingCoverageValidatesEachBuildAndSnapshot(t *testing.T) {
+	t.Parallel()
+	for _, corruptBuild := range []string{catalogBuildID, catalogBuildReplacement} {
+		t.Run(corruptBuild, func(t *testing.T) {
+			s, versions := newRenditionCatalogFixture(t)
+			profile := catalogProcessingProfile(t, false)
+			for _, id := range []string{catalogBuildID, catalogBuildReplacement} {
+				build := catalogRenditionBuild(s, profile)
+				build.ID = id
+				require.NoError(t, s.StageRenditionBuild(t.Context(), build))
+			}
+			for i, id := range []string{catalogBuildID, catalogBuildReplacement} {
+				require.NoError(t, publishRenditionForTest(t, s, RenditionAttachmentRecord{
+					ID: fmt.Sprintf("%064x", i+1), VaultID: s.VaultID(), ContentVersionID: versions[i],
+					BuildID: id, Profile: profile, AttachedAt: nowRFC3339(),
+				}, nowRFC3339(), fakeHash("c1")))
+			}
+			scope := ProcessingCoverageScope{ContentVersionIDs: versions, ProcessingProfileFingerprint: profile.Fingerprint}
+			coverage, err := s.ProcessingCoverage(t.Context(), scope)
+			require.NoError(t, err)
+			assert.Equal(t, 2, coverage.Renditions.Complete)
+			// Deliberately corrupt retained text after a successful read. Coverage
+			// must still validate every distinct build in the new snapshot.
+			_, err = s.db.Exec(`DROP TRIGGER rendition_lexical_segments_immutable_update`)
+			require.NoError(t, err)
+			_, err = s.db.Exec(`UPDATE rendition_lexical_segments SET char_end=999 WHERE build_id=?`, corruptBuild)
+			require.NoError(t, err)
+			_, err = s.ProcessingCoverage(t.Context(), scope)
+			require.ErrorContains(t, err, "rendition lexical segment 0 is invalid")
+		})
+	}
+}

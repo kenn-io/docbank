@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"fmt"
 )
 
@@ -15,8 +16,9 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 	}
 	assetIDs := make(map[string]struct{})
 	var targetFileIDs []string
+	var photoNodeIDs []int64
 	for _, nodeID := range nodeIDs {
-		rows, err := tx.QueryContext(ctx, `SELECT asset_id, file_id, role FROM photo_files WHERE node_id=?`, nodeID)
+		rows, err := tx.QueryContext(ctx, `SELECT COALESCE(asset_id,''), file_id, role FROM photo_files WHERE node_id=?`, nodeID)
 		if err != nil {
 			return fmt.Errorf("finding photo memberships for purged node %d: %w", nodeID, err)
 		}
@@ -25,6 +27,10 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 			if err := rows.Scan(&assetID, &fileID, &role); err != nil {
 				_ = rows.Close() //nolint:sqlclosecheck // close before returning the scan error.
 				return err
+			}
+			photoNodeIDs = append(photoNodeIDs, nodeID)
+			if assetID == "" {
+				continue
 			}
 			assetIDs[assetID] = struct{}{}
 			if photoSidecarTargetRole(role) {
@@ -60,9 +66,6 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 			return err
 		}
 	}
-	if len(assetIDs) == 0 {
-		return nil
-	}
 	before := make(map[string]PhotoAsset, len(assetIDs))
 	for assetID := range assetIDs {
 		asset, err := photoAssetByIDQuery(ctx, tx, assetID)
@@ -72,8 +75,25 @@ func adjustPhotosForPurgedNodesTx(ctx context.Context, tx *sql.Tx, nodeIDs []int
 		before[assetID] = asset
 	}
 	for _, targetFileID := range targetFileIDs {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM photo_files WHERE sidecar_of_file_id=?`, targetFileID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_files SET asset_id=NULL,sidecar_of_file_id=NULL WHERE sidecar_of_file_id=?`, targetFileID); err != nil {
 			return fmt.Errorf("removing sidecars for purged photo source %s: %w", targetFileID, err)
+		}
+	}
+	if len(photoNodeIDs) > 0 {
+		encoded, err := json.Marshal(photoNodeIDs)
+		if err != nil {
+			return fmt.Errorf("encoding purged photo nodes: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `WITH RECURSIVE nodes_to_purge(id) AS (SELECT value FROM json_each(?)), doomed(receipt_id) AS (
+ SELECT r.receipt_id FROM photo_change_receipts r
+ WHERE r.operation IN ('authored','authored_undo','authored_sidecar') AND
+ (EXISTS (SELECT 1 FROM json_each(r.after_json,'$.after') entry WHERE json_extract(entry.value,'$.node_id') IN (SELECT id FROM nodes_to_purge))
+ OR json_extract(r.after_json,'$.sidecar.node_id') IN (SELECT id FROM nodes_to_purge))
+ UNION
+ SELECT r.receipt_id FROM photo_change_receipts r JOIN doomed d ON json_extract(r.after_json,'$.undo_of')=d.receipt_id
+ WHERE r.operation='authored_undo'
+ ) DELETE FROM photo_change_receipts WHERE receipt_id IN (SELECT receipt_id FROM doomed)`, string(encoded)); err != nil {
+			return fmt.Errorf("removing authored receipts for purged nodes: %w", err)
 		}
 	}
 	for _, nodeID := range nodeIDs {

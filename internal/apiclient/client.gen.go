@@ -194,6 +194,183 @@ func (c *Client) ReportTelemetryEvent(ctx context.Context, options *ReportTeleme
 	return responseParser(ctx, resp)
 }
 
+// GetWebSignIn Check whether browser key login is enabled
+func (c *Client) GetWebSignIn(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetWebSignInResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/web-auth",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetWebSignInResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetWebSignInResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetWebSignInResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/web-auth")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// LoginWebSignIn Sign in using the configured API key
+func (c *Client) LoginWebSignIn(ctx context.Context, options *LoginWebSignInRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LoginWebSignInResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/daemon/web-auth/login",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*LoginWebSignInResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(LoginWebSignInResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "LoginWebSignInResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/web-auth/login")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListWebSignIns List browser key logins (master API only)
+func (c *Client) ListWebSignIns(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListWebSignInsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/web-auth/sessions",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ListWebSignInsResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ListWebSignInsResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ListWebSignInsResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/web-auth/sessions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RevokeWebSignIn Revoke a browser key login (master API only)
+func (c *Client) RevokeWebSignIn(ctx context.Context, options *RevokeWebSignInRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/daemon/web-auth/sessions/{id}",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*struct{}, error) {
+		switch resp.StatusCode {
+
+		case 204:
+
+			target := new(struct{})
+
+			return target, nil
+
+		default:
+
+			return nil, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/daemon/web-auth/sessions/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 204)
+	}
+	return responseParser(ctx, resp)
+}
+
 // CancelWebDownload Discard a prepared browser download
 func (c *Client) CancelWebDownload(ctx context.Context, options *CancelWebDownloadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
 	var err error
@@ -13712,6 +13889,65 @@ func (o *ReportTelemetryEventRequestOptions) GetHeader() (map[string]string, err
 	return nil, nil
 }
 
+// LoginWebSignInRequestOptions is the options needed to make a request to LoginWebSignIn.
+type LoginWebSignInRequestOptions struct {
+	Body *LoginWebSignInBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *LoginWebSignInRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *LoginWebSignInRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *LoginWebSignInRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *LoginWebSignInRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// RevokeWebSignInRequestOptions is the options needed to make a request to RevokeWebSignIn.
+type RevokeWebSignInRequestOptions struct {
+	PathParams *RevokeWebSignInPath
+}
+
+// GetPathParams returns the path params as a map.
+func (o *RevokeWebSignInRequestOptions) GetPathParams() (map[string]any, error) {
+	encoded, err := json.Marshal(o.PathParams, json.StringifyNumbers(true))
+	if err != nil {
+		return nil, err
+	}
+	var params map[string]any
+	err = json.Unmarshal(encoded, &params)
+	return params, err
+}
+
+// GetQuery returns the query params as a map.
+func (o *RevokeWebSignInRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *RevokeWebSignInRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *RevokeWebSignInRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // CancelWebDownloadRequestOptions is the options needed to make a request to CancelWebDownload.
 type CancelWebDownloadRequestOptions struct {
 	Query *CancelWebDownloadQuery
@@ -22449,11 +22685,30 @@ const (
 	VerifiedEmpty                            RenditionTextReceiptState = "verified_empty"
 )
 
+type SavedQueryFiltersSchemaFlags string
+
+const (
+	Empty  SavedQueryFiltersSchemaFlags = ""
+	Pick   SavedQueryFiltersSchemaFlags = "pick"
+	Reject SavedQueryFiltersSchemaFlags = "reject"
+)
+
 type SavedQueryFiltersSchemaKinds string
 
 const (
 	SavedQueryFiltersSchemaKindsPhoto SavedQueryFiltersSchemaKinds = "photo"
 	SavedQueryFiltersSchemaKindsVideo SavedQueryFiltersSchemaKinds = "video"
+)
+
+type SavedQueryFiltersSchemaLabels string
+
+const (
+	Blue                               SavedQueryFiltersSchemaLabels = "blue"
+	Green                              SavedQueryFiltersSchemaLabels = "green"
+	Purple                             SavedQueryFiltersSchemaLabels = "purple"
+	Red                                SavedQueryFiltersSchemaLabels = "red"
+	SavedQueryFiltersSchemaLabelsEmpty SavedQueryFiltersSchemaLabels = ""
+	Yellow                             SavedQueryFiltersSchemaLabels = "yellow"
 )
 
 type SavedQueryFiltersSchemaMediaFamilies string
@@ -22765,6 +23020,10 @@ type UploadFileHeaders struct {
 
 	// XDocbankBlobSize Expected raw file byte length
 	XDocbankBlobSize int64 `json:"X-Docbank-Blob-Size"`
+}
+
+type RevokeWebSignInPath struct {
+	ID string `json:"id"`
 }
 
 type AuditScopeHistoryPath struct {
@@ -23331,6 +23590,10 @@ type ReportTelemetryEventBody struct {
 	// Event An event the daemon's telemetry allowlist names. Other events return 400.
 	Event      string                    `json:"event"`
 	Properties *TelemetryEventProperties `json:"properties,omitempty"`
+}
+
+type LoginWebSignInBody struct {
+	APIKey string `json:"api_key"`
 }
 
 type PrepareWebDownloadBody struct {
@@ -23962,6 +24225,20 @@ type ChallengeDaemonResponse struct {
 type ReportTelemetryEventResponse struct {
 	// Status queued when the event is queued or its screen was already sent today; disabled when telemetry is off and nothing is sent.
 	Status ReportTelemetryEventResponseStatus `json:"status"`
+}
+
+type GetWebSignInResponse struct {
+	Enabled bool           `json:"enabled"`
+	Session *WebTabSession `json:"session,omitempty"`
+}
+
+type LoginWebSignInResponse struct {
+	Enabled bool           `json:"enabled"`
+	Session *WebTabSession `json:"session,omitempty"`
+}
+
+type ListWebSignInsResponse struct {
+	Items []WebSignInRecord `json:"items"`
 }
 
 type PrepareWebDownloadResponse = []byte
@@ -26007,6 +26284,10 @@ type PhotoAlbumSummary = api.PhotoAlbumSummary
 
 type PhotoAsset = api.PhotoAsset
 
+type PhotoAuthored = store.PhotoAuthored
+
+type PhotoAuthoredSnapshot = store.PhotoAuthoredSnapshot
+
 type PhotoBrowsePage = api.PhotoBrowsePage
 
 type PhotoBrowseRequest = api.PhotoBrowseRequest
@@ -26323,6 +26604,7 @@ type SavedQueryFiltersSchema struct {
 	ExcludePaths         []string                               `json:"exclude_paths,omitempty"`
 	ExcludeTagIds        []uuid.UUID                            `json:"exclude_tag_ids,omitempty"`
 	Extensions           []string                               `json:"extensions,omitempty"`
+	Flags                []SavedQueryFiltersSchemaFlags         `json:"flags,omitempty"`
 	FocusMax             *string                                `json:"focus_max,omitempty"`
 	FocusMin             *string                                `json:"focus_min,omitempty"`
 	FramingMax           *string                                `json:"framing_max,omitempty"`
@@ -26332,6 +26614,7 @@ type SavedQueryFiltersSchema struct {
 	IsoMax               *int64                                 `json:"iso_max,omitempty"`
 	IsoMin               *int64                                 `json:"iso_min,omitempty"`
 	Kinds                []SavedQueryFiltersSchemaKinds         `json:"kinds,omitempty"`
+	Labels               []SavedQueryFiltersSchemaLabels        `json:"labels,omitempty"`
 	Lenses               []string                               `json:"lenses,omitempty"`
 	MediaFamilies        []SavedQueryFiltersSchemaMediaFamilies `json:"media_families,omitempty"`
 	MimeTypes            []string                               `json:"mime_types,omitempty"`
@@ -26339,6 +26622,8 @@ type SavedQueryFiltersSchema struct {
 	ModifiedBefore       *time.Time                             `json:"modified_before,omitempty"`
 	NoTags               *bool                                  `json:"no_tags,omitempty"`
 	Paths                []string                               `json:"paths,omitempty"`
+	RatingMax            *int64                                 `json:"rating_max,omitempty"`
+	RatingMin            *int64                                 `json:"rating_min,omitempty"`
 	SetIds               []uuid.UUID                            `json:"set_ids,omitempty"`
 	SizeMax              *int64                                 `json:"size_max,omitempty"`
 	SizeMin              *int64                                 `json:"size_min,omitempty"`
@@ -26563,6 +26848,13 @@ type VolumeLimits = bundle.VolumeLimits
 type WatchedInbox = api.WatchedInbox
 
 type WatchedInboxList = api.WatchedInboxList
+
+type WebSignInRecord = api.WebSignInRecord
+
+type WebTabSession struct {
+	Token        string `json:"token"`
+	UploadSecret string `json:"upload_secret"`
+}
 
 type WorkspaceFacetValue = api.WorkspaceFacetValue
 

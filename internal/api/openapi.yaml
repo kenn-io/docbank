@@ -139,6 +139,7 @@ components:
             - tag_definition
             - tag_assignment
             - provenance
+            - photo_authored
           type: string
       required:
         - kind
@@ -151,6 +152,9 @@ components:
     AuditAttachmentIdentity:
       additionalProperties: false
       properties:
+        file_id:
+          format: uuid
+          type: string
         node_id:
           format: int64
           minimum: 1
@@ -181,6 +185,8 @@ components:
           type: string
         original_path:
           type: string
+        photo:
+          $ref: "#/components/schemas/PhotoAuthoredSnapshot"
         provenance_id:
           pattern: ^[0-9a-f]{64}$
           type: string
@@ -6787,6 +6793,10 @@ components:
           items:
             type: string
           type: array
+        flags:
+          items:
+            type: string
+          type: array
         focus_max:
           type:
             - string
@@ -6821,6 +6831,10 @@ components:
           items:
             type: string
           type: array
+        labels:
+          items:
+            type: string
+          type: array
         lenses:
           items:
             type: string
@@ -6843,6 +6857,16 @@ components:
           items:
             type: string
           type: array
+        rating_max:
+          format: int64
+          type:
+            - integer
+            - "null"
+        rating_min:
+          format: int64
+          type:
+            - integer
+            - "null"
         set_ids:
           items:
             type: string
@@ -11450,6 +11474,10 @@ components:
           format: uri
           readOnly: true
           type: string
+        agreement:
+          additionalProperties:
+            type: boolean
+          type: object
         created_at:
           format: date-time
           type: string
@@ -11501,6 +11529,7 @@ components:
           format: date-time
           type: string
       required:
+        - agreement
         - id
         - kind
         - revision
@@ -11513,6 +11542,85 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    PhotoAuthored:
+      additionalProperties: false
+      properties:
+        caption:
+          description: At most 16384 UTF-8 bytes.
+          maxLength: 16384
+          type: string
+        copyright:
+          description: At most 16384 UTF-8 bytes.
+          maxLength: 16384
+          type: string
+        creator:
+          description: At most 16384 UTF-8 bytes.
+          maxLength: 16384
+          type: string
+        flag:
+          enum:
+            - ""
+            - pick
+            - reject
+          type: string
+        label:
+          enum:
+            - ""
+            - red
+            - yellow
+            - green
+            - blue
+            - purple
+          type: string
+        rating:
+          format: int64
+          maximum: 5
+          minimum: 0
+          type: integer
+        rotation:
+          enum:
+            - 0
+            - 90
+            - 180
+            - 270
+          format: int64
+          type: integer
+      required:
+        - rating
+        - flag
+        - label
+        - caption
+        - creator
+        - copyright
+        - rotation
+      type: object
+      x-go-type: store.PhotoAuthored
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoAuthoredSnapshot:
+      additionalProperties: false
+      properties:
+        file_id:
+          type: string
+        node_id:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          type: integer
+        values:
+          $ref: "#/components/schemas/PhotoAuthored"
+      required:
+        - file_id
+        - node_id
+        - revision
+        - values
+      type: object
+      x-go-type: store.PhotoAuthoredSnapshot
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
     PhotoBrowsePage:
       additionalProperties: false
       properties:
@@ -11733,13 +11841,49 @@ components:
         asset_id:
           format: uuid
           type: string
+        caption:
+          description: At most 16384 UTF-8 bytes.
+          maxLength: 16384
+          type: string
+        copyright:
+          description: At most 16384 UTF-8 bytes.
+          maxLength: 16384
+          type: string
         created_at:
           format: date-time
+          type: string
+        creator:
+          description: At most 16384 UTF-8 bytes.
+          maxLength: 16384
+          type: string
+        flag:
+          enum:
+            - ""
+            - pick
+            - reject
           type: string
         id:
           format: uuid
           type: string
+        label:
+          enum:
+            - ""
+            - red
+            - yellow
+            - green
+            - blue
+            - purple
+          type: string
         node_id:
+          format: int64
+          minimum: 1
+          type: integer
+        rating:
+          format: int64
+          maximum: 5
+          minimum: 0
+          type: integer
+        revision:
           format: int64
           minimum: 1
           type: integer
@@ -11750,12 +11894,28 @@ components:
             - video
             - sidecar
           type: string
+        rotation:
+          enum:
+            - 0
+            - 90
+            - 180
+            - 270
+          format: int64
+          type: integer
         sidecar_of_file_id:
           format: uuid
           type:
             - string
             - "null"
       required:
+        - revision
+        - rating
+        - flag
+        - label
+        - caption
+        - creator
+        - copyright
+        - rotation
         - id
         - asset_id
         - node_id
@@ -12839,6 +12999,8 @@ components:
           type: array
         profile_fingerprint:
           pattern: ^[0-9a-f]{64}$
+          type: string
+        rendition_ineligible_reason:
           type: string
         retained_classes:
           items:
@@ -14552,6 +14714,15 @@ components:
             type: string
           maxItems: 32
           type: array
+        flags:
+          items:
+            enum:
+              - ""
+              - pick
+              - reject
+            type: string
+          maxItems: 64
+          type: array
         focus_max:
           maxLength: 64
           type:
@@ -14621,6 +14792,18 @@ components:
             type: string
           maxItems: 64
           type: array
+        labels:
+          items:
+            enum:
+              - ""
+              - red
+              - yellow
+              - green
+              - blue
+              - purple
+            type: string
+          maxItems: 64
+          type: array
         lenses:
           items:
             type: string
@@ -14669,6 +14852,20 @@ components:
             type: string
           maxItems: 64
           type: array
+        rating_max:
+          format: int64
+          maximum: 5
+          minimum: 0
+          type:
+            - integer
+            - "null"
+        rating_min:
+          format: int64
+          maximum: 5
+          minimum: 0
+          type:
+            - integer
+            - "null"
         set_ids:
           items:
             format: uuid
@@ -17301,6 +17498,37 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    WebSignInRecord:
+      additionalProperties: false
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+      required:
+        - id
+        - created_at
+        - expires_at
+      type: object
+      x-go-type: api.WebSignInRecord
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    WebTabSession:
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+        upload_secret:
+          type: string
+      required:
+        - token
+        - upload_secret
+      type: object
     WorkspaceFacetValue:
       additionalProperties: false
       properties:
@@ -17769,6 +17997,88 @@ paths:
         "500":
           description: Telemetry capture failed
       summary: Report an anonymous interface usage event
+  /api/daemon/web-auth:
+    get:
+      operationId: getWebSignIn
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  enabled:
+                    type: boolean
+                  session:
+                    $ref: "#/components/schemas/WebTabSession"
+                required:
+                  - enabled
+                type: object
+          description: Browser sign-in status and optional process-local tab credentials
+      summary: Check whether browser key login is enabled
+  /api/daemon/web-auth/login:
+    post:
+      operationId: loginWebSignIn
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: false
+              properties:
+                api_key:
+                  type: string
+              required:
+                - api_key
+              type: object
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  enabled:
+                    type: boolean
+                  session:
+                    $ref: "#/components/schemas/WebTabSession"
+                required:
+                  - enabled
+                type: object
+          description: Browser sign-in status and optional process-local tab credentials
+      summary: Sign in using the configured API key
+  /api/daemon/web-auth/sessions:
+    get:
+      operationId: listWebSignIns
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: false
+                properties:
+                  items:
+                    items:
+                      $ref: "#/components/schemas/WebSignInRecord"
+                    type: array
+                required:
+                  - items
+                type: object
+          description: Live browser logins
+      summary: List browser key logins (master API only)
+  /api/daemon/web-auth/sessions/{id}:
+    delete:
+      operationId: revokeWebSignIn
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Browser login revoked
+      summary: Revoke a browser key login (master API only)
   /api/daemon/web-download:
     delete:
       operationId: cancelWebDownload
@@ -17880,7 +18190,7 @@ paths:
       summary: Issue a scoped browser session
   /api/v1/audit/enable:
     post:
-      description: Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, and provenance across the vault, including outside the selected scope; preview again after any stale-token response.
+      description: Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, provenance, photo decisions, captions, creators, and copyrights across the vault, including outside the selected scope; preview again after any stale-token response.
       operationId: enableAudit
       requestBody:
         content:

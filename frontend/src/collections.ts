@@ -27,7 +27,7 @@ function integer(value: unknown, min = 0): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= min;
 }
 
-function timestamp(value: unknown): value is string {
+export function timestamp(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
 

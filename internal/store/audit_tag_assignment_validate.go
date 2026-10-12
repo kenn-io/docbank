@@ -15,29 +15,91 @@ type replayedTagAssignment struct {
 	assign     bool
 }
 
+func (replay *auditedHistoryReplay) validateAttachmentMutation(vaultID string, mutation audit.Record) (string, error) {
+	operationID, err := auditUUIDField(mutation, auditOperationIDField)
+	if err != nil {
+		return "", err
+	}
+	sequence, err := positiveAuditInteger("operation sequence", replay.allocationCount+1)
+	if err != nil {
+		return "", err
+	}
+	for _, check := range []func() error{
+		func() error { return requireAuditUUID(mutation, auditVaultIDField, vaultID) },
+		func() error { return requireAuditUnsigned(mutation, "operation_sequence", sequence) },
+		func() error {
+			return requireAuditAbsentFields(mutation, "grouping_id", auditTopologyDeltaField, "path_effect_digest", "witness_change_digest")
+		},
+		func() error { return requireAuditUnsigned(mutation, auditPathEffectCountField, 0) },
+		func() error { return requireAuditUnsigned(mutation, auditWitnessChangeCountField, 0) },
+	} {
+		if err := check(); err != nil {
+			return "", err
+		}
+	}
+	bindings, err := auditRecordListField(mutation, "baselines")
+	if err != nil {
+		return "", err
+	}
+	if len(bindings) != 0 {
+		return "", errors.New("attachment mutation cannot bind an enrollment baseline")
+	}
+	return operationID, nil
+}
+
+func validateAttachmentDelta(mutation audit.Record, operationID string, deltas map[string]storedAuditRecord, used map[string]bool) (audit.Record, string, error) {
+	digest, err := auditDigestField(mutation, "attached_metadata_change_digest")
+	if err != nil {
+		return audit.Record{}, "", err
+	}
+	delta, ok := deltas[digest]
+	if !ok || used[digest] {
+		return audit.Record{}, "", errors.New("attachment mutation lacks one unique delta")
+	}
+	if err := requireAuditUUID(delta.record, auditOperationIDField, operationID); err != nil {
+		return audit.Record{}, "", err
+	}
+	changes, err := auditRecordListField(delta.record, "changes")
+	if err != nil {
+		return audit.Record{}, "", err
+	}
+	if len(changes) != 1 {
+		return audit.Record{}, "", errors.New("attachment mutation must contain exactly one change")
+	}
+	return changes[0], digest, nil
+}
+
+func (replay *auditedHistoryReplay) validateAttachmentEventState(event audit.Record, nodeID uint64) error {
+	state := replay.states[nodeID]
+	revision, err := auditUnsignedField(state, "node_revision")
+	if err != nil {
+		return err
+	}
+	current, err := auditOptionalUUIDField(state, "current_version_id")
+	if err != nil {
+		return err
+	}
+	if err := requireAuditUnsigned(event, "prior_node_revision", revision); err != nil {
+		return err
+	}
+	if err := requireAuditUnsigned(event, "resulting_node_revision", revision+1); err != nil {
+		return err
+	}
+	for _, field := range []string{auditPriorCurrentVersionIDField, auditResultingCurrentVersionIDField} {
+		if err := requireAuditOptionalUUID(event, field, current); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (replay *auditedHistoryReplay) applyTagAssignment(
 	vaultID string, mutation, allocation, scopeEntry storedAuditRecord,
 	deltaRecords, eventRecords map[string]storedAuditRecord,
 	usedDeltas, usedEvents map[string]bool,
 ) error {
-	operationID, err := auditUUIDField(mutation.record, auditOperationIDField)
+	operationID, err := replay.validateAttachmentMutation(vaultID, mutation.record)
 	if err != nil {
-		return err
-	}
-	nextSequence := replay.allocationCount + 1
-	auditSequence, err := positiveAuditInteger("operation sequence", nextSequence)
-	if err != nil {
-		return err
-	}
-	if err := requireAuditUUID(mutation.record, auditVaultIDField, vaultID); err != nil {
-		return err
-	}
-	if err := requireAuditUnsigned(
-		mutation.record, "operation_sequence", auditSequence,
-	); err != nil {
-		return err
-	}
-	if err := requireAuditAbsent(mutation.record, "grouping_id"); err != nil {
 		return err
 	}
 	transition, err := replay.validateTagAssignmentDelta(
@@ -55,24 +117,6 @@ func (replay *auditedHistoryReplay) applyTagAssignment(
 		mutation.record, []uint64{transition.nodeID},
 	); err != nil {
 		return err
-	}
-	bindings, err := auditRecordListField(mutation.record, "baselines")
-	if err != nil {
-		return err
-	}
-	if len(bindings) != 0 {
-		return errors.New("tag assignment cannot bind an enrollment baseline")
-	}
-	if err := requireAuditAbsentFields(
-		mutation.record, auditTopologyDeltaField, "path_effect_digest",
-		"witness_change_digest",
-	); err != nil {
-		return err
-	}
-	for _, field := range []string{"path_effect_count", auditWitnessChangeCountField} {
-		if err := requireAuditUnsigned(mutation.record, field, 0); err != nil {
-			return err
-		}
 	}
 	if err := requireAuditUnsigned(
 		mutation.record, auditAttachedMetadataChangeCountField, 1,
@@ -99,29 +143,10 @@ func (replay *auditedHistoryReplay) validateTagAssignmentDelta(
 	mutation audit.Record, operationID string,
 	deltaRecords map[string]storedAuditRecord, usedDeltas map[string]bool,
 ) (replayedTagAssignment, error) {
-	digest, err := auditDigestField(mutation, "attached_metadata_change_digest")
+	change, digest, err := validateAttachmentDelta(mutation, operationID, deltaRecords, usedDeltas)
 	if err != nil {
 		return replayedTagAssignment{}, err
 	}
-	delta, ok := deltaRecords[digest]
-	if !ok || usedDeltas[digest] {
-		return replayedTagAssignment{}, errors.New(
-			"tag assignment lacks one unique attached-metadata delta",
-		)
-	}
-	if err := requireAuditUUID(delta.record, auditOperationIDField, operationID); err != nil {
-		return replayedTagAssignment{}, err
-	}
-	changes, err := auditRecordListField(delta.record, "changes")
-	if err != nil {
-		return replayedTagAssignment{}, err
-	}
-	if len(changes) != 1 {
-		return replayedTagAssignment{}, errors.New(
-			"tag assignment must contain exactly one attached-metadata change",
-		)
-	}
-	change := changes[0]
 	if err := requireAuditText(change, "record_kind", auditTagAssignmentKind); err != nil {
 		return replayedTagAssignment{}, err
 	}
@@ -259,13 +284,7 @@ func (replay *auditedHistoryReplay) validateTagAssignmentEvent(
 	if err != nil || !auditRecordEqual(storedIdentity, identity) {
 		return errors.New("tag assignment event identity does not match its attachment")
 	}
-	state := replay.states[transition.nodeID]
-	revision, err := auditUnsignedField(state, "node_revision")
-	if err != nil {
-		return err
-	}
-	current, err := auditOptionalUUIDField(state, "current_version_id")
-	if err != nil {
+	if err := replay.validateAttachmentEventState(event, transition.nodeID); err != nil {
 		return err
 	}
 	checks := []func() error{
@@ -275,10 +294,6 @@ func (replay *auditedHistoryReplay) validateTagAssignmentEvent(
 		func() error { return requireAuditUUID(event, auditScopeIDField, replay.scopeID) },
 		func() error { return requireAuditText(event, "attachment_kind", auditTagAssignmentKind) },
 		func() error { return requireAuditUnsigned(event, auditEventOrdinalField, 0) },
-		func() error { return requireAuditUnsigned(event, "prior_node_revision", revision) },
-		func() error { return requireAuditUnsigned(event, "resulting_node_revision", revision+1) },
-		func() error { return requireAuditOptionalUUID(event, "prior_current_version_id", current) },
-		func() error { return requireAuditOptionalUUID(event, "resulting_current_version_id", current) },
 		func() error { return requireMatchingEventEnvelope(mutation, event) },
 		func() error {
 			return requireAuditAbsentFields(

@@ -32,8 +32,8 @@ func photoNumber(value float64) document.SourceMetadataValueV1 {
 	return document.SourceMetadataValueV1{Kind: document.SourceMetadataNumber, Number: &value}
 }
 
-func photoBoolean(value bool) document.SourceMetadataValueV1 {
-	return document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: &value}
+func photoBoolean() document.SourceMetadataValueV1 {
+	return document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(true)}
 }
 
 func photoTimestamp(raw, normalized string, precision document.SourceMetadataTimestampPrecision,
@@ -109,7 +109,7 @@ func TestPhotoTechnicalMetadataISOAlias(t *testing.T) {
 func TestPhotoTechnicalMetadataIgnoresBooleanCameraKey(t *testing.T) {
 	t.Parallel()
 	canonical := photoCanonical(t,
-		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoBoolean(true)),
+		photoMetadataField("image.exif.camera_model", "image.exif", "Model", photoBoolean()),
 		photoMetadataField("image.exif.lens_model", "image.exif", "LensModel", photoString("Lens 1")),
 	)
 	metadata, _, err := document.DecodeSourceMetadataV1(canonical)

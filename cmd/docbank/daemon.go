@@ -402,6 +402,10 @@ func runServe(ctx context.Context) (retErr error) {
 	if webListener != nil {
 		defer func() { _ = webListener.Close() }()
 	}
+	if cfg.Web.PublicOrigin != "" && webURL == "" {
+		logger.Warn("[web] public_origin ignored: this build has no web application assets; "+
+			"browser sign-in and the Host allowlist are disabled", "public_origin", cfg.Web.PublicOrigin)
+	}
 
 	shutdownToken, err := randomHex32()
 	if err != nil {
@@ -412,6 +416,7 @@ func runServe(ctx context.Context) (retErr error) {
 	// otherwise a fresh per-run key is generated and published only to
 	// same-user clients via the runtime record inside owner-private DOCBANK_HOME
 	// — never over the network, never logged.
+	webLoginEnabled := cfg.Server.APIKey != ""
 	apiKey := cfg.Server.APIKey
 	if apiKey == "" {
 		apiKey, err = randomHex32()
@@ -517,6 +522,7 @@ func runServe(ctx context.Context) (retErr error) {
 		EmailPDFUnavailableReason: emailPDFUnavailableReason,
 		StartedAt:                 time.Now(), ShutdownToken: shutdownToken, Shutdown: stop, Tracker: tracker,
 		Jobs: jobSupervisor, Gate: operationGate, WebURL: webURL, BlobRegistry: blobRegistry,
+		WebLoginEnabled: webLoginEnabled, APIAddress: addr,
 		Processing: processingService, EnsureEmail: processing.EnsureEmailTarget,
 		PublishEmailDocuments: processing.PublishEmailDocuments,
 		PageRuntime:           pageRuntime,
@@ -695,6 +701,19 @@ func startProcessingJobs(
 	}
 	if err := supervisor.Start("extract:source-metadata", metadata.Run); err != nil {
 		return fmt.Errorf("starting source metadata backfill: %w", err)
+	}
+	sidecars := &processing.Backfill[store.PhotoSidecarTarget]{Name: "photo-sidecars", Page: 10, IdleDelay: time.Second, List: func(ctx context.Context, after string, limit int) ([]store.PhotoSidecarTarget, error) {
+		attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		return s.MissingPhotoSidecarsAfter(attempt, processing.SourceMetadataExtractorFingerprint, after, limit)
+	}, Key: func(t store.PhotoSidecarTarget) string { return strconv.FormatInt(t.NodeID, 10) }, Mutate: gate.MutateContext, Logger: logger, Process: func(ctx context.Context, t store.PhotoSidecarTarget) error {
+		attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		_, err := s.InitializePhotoSidecar(attempt, t)
+		return err
+	}}
+	if err := supervisor.Start("extract:photo-sidecars", sidecars.Run); err != nil {
+		return fmt.Errorf("starting photo sidecar backfill: %w", err)
 	}
 	previews, err := newVisualPreviewBackfill(s, blobs, gate, logger)
 	if err != nil {

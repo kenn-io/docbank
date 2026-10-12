@@ -58,6 +58,8 @@ var (
 )
 
 var recordSchemas = map[string]recordSchema{
+	"photo_authored":          schema(field("file_id", uuidRule), field("node_id", unsignedRule), field("revision", unsignedRule), field("rating", unsignedRule), field("flag", textRule), field("label", textRule), field("caption", textRule), field("creator", textRule), field("copyright", textRule), field("rotation", unsignedRule)),
+	"photo_authored_identity": schema(field("file_id", uuidRule)),
 	"unknown_origin": schema(
 		field("node_id", unsignedRule),
 		field("parent_id", absentRule),
@@ -213,7 +215,7 @@ var recordSchemas = map[string]recordSchema{
 		field("scope_id", uuidRule),
 		field("target_node_id", optionalUnsigned),
 		field("attachment_kind", optional(textEnum(
-			"provenance", "tag_assignment", "tag_definition",
+			"provenance", "tag_assignment", "tag_definition", "photo_authored",
 		))),
 		field("attachment_identity", optional(eventAttachmentIdentityRule())),
 		field("source_version_id", optionalUUID),
@@ -492,34 +494,34 @@ func orderedListOf(element valueRule, policy collectionPolicy) valueRule {
 }
 
 func attachedRecordRule() valueRule {
-	return recordOf("ingest", "provenance", "tag_assignment", "tag_definition",
+	return recordOf("ingest", "provenance", "tag_assignment", "tag_definition", "photo_authored",
 		"derivative_purge_suppression", "provenance_version_binding")
 }
 
 func attachedIdentityRule() valueRule {
-	return recordOf("ingest_identity", "provenance_identity_ref", "tag_assignment_identity",
+	return recordOf("ingest_identity", "provenance_identity_ref", "tag_assignment_identity", "photo_authored_identity",
 		"tag_definition_identity", "derivative_purge_suppression_identity",
 		"provenance_version_binding_identity")
 }
 
 func eventAttachmentIdentityRule() valueRule {
-	return recordOf("provenance_identity_ref", "tag_assignment_identity", "tag_definition_identity")
+	return recordOf("provenance_identity_ref", "tag_assignment_identity", "photo_authored_identity", "tag_definition_identity")
 }
 
 func attachedRecordKindRule() valueRule {
-	return textEnum("ingest", "provenance", "tag_assignment", "tag_definition",
+	return textEnum("ingest", "provenance", "tag_assignment", "tag_definition", "photo_authored",
 		"derivative_purge_suppression", "provenance_version_binding")
 }
 
 func eventPayloadRule() valueRule {
-	return recordOf("content_version", "path_state", "provenance", "tag_assignment", "tag_definition", "topology_node")
+	return recordOf("content_version", "path_state", "provenance", "tag_assignment", "tag_definition", "photo_authored", "topology_node")
 }
 
 func eventKindRule() valueRule {
 	return textEnum(
 		"audit_enroll", "audit_inherit", "content_create", "content_replace", "content_revert",
 		"ingest_observe", "node_create", "node_path", "provenance_add", "provenance_supersede", "tag_assign",
-		"tag_define", "tag_delete", "tag_rename", "tag_unassign",
+		"photo_authored", "tag_define", "tag_delete", "tag_rename", "tag_unassign",
 	)
 }
 

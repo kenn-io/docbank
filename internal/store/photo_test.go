@@ -11,6 +11,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func authoredPair(t *testing.T, s *Store) PhotoAsset {
+	t.Helper()
+	ctx := t.Context()
+	raw, err := s.CreateFile(ctx, s.RootID(), "capture.cr2", fakeHash("a1"), 4, "application/octet-stream")
+	require.NoError(t, err)
+	jpg, err := s.CreateFile(ctx, s.RootID(), "capture.jpg", fakeHash("b2"), 4, "image/jpeg")
+	require.NoError(t, err)
+	owned, err := s.PhotoAssetForNode(ctx, jpg.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, owned.ID, owned.Revision, owned.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	asset, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
+	require.NoError(t, err)
+	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpg.ID, PhotoRoleImage, nil)
+	require.NoError(t, err)
+	return asset
+}
+
 func TestClassifyPhotoMediaMatrix(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -99,18 +117,7 @@ func TestPhotoDisplayPrecedenceAndDetachFallback(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	raw, err := s.CreateFile(ctx, s.RootID(), "capture.cr2", fakeHash("a1"), 4, "application/octet-stream")
-	require.NoError(t, err)
-	jpeg, err := s.CreateFile(ctx, s.RootID(), "capture.jpg", fakeHash("b2"), 4, "image/jpeg")
-	require.NoError(t, err)
-	jpegAsset, err := s.PhotoAssetForNode(ctx, jpeg.ID)
-	require.NoError(t, err)
-	_, err = s.DetachPhotoFile(ctx, jpegAsset.ID, jpegAsset.Revision, jpegAsset.Files[0].ID, PhotoDetachOptions{})
-	require.NoError(t, err)
-	asset, err := s.PromotePhotoNode(ctx, raw.ID, nil, PhotoRoleRAW, "")
-	require.NoError(t, err)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, jpeg.ID, PhotoRoleImage, nil)
-	require.NoError(t, err)
+	asset := authoredPair(t, s)
 	assert.Equal(t, PhotoDisplayDefault, asset.DisplaySource)
 	assert.Equal(t, PhotoRoleRAW, fileByID(asset.Files, *asset.DisplayFileID).Role)
 	preference := "image"

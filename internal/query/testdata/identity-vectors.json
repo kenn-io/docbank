@@ -90,6 +90,12 @@
       "input_json": "{\"sort\":{\"field\":\"import_time\"}}",
       "canonical_utf8": "{\"filters\":{},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"import_time\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
       "fingerprint": "sha256:4b41467eb19bddedfad3a345276886421fa589a66ed11858a5fd788ebca1a78a"
+    },
+    {
+      "name": "query_photo_decisions_sorted_unique",
+      "input_json": "{\"filters\":{\"rating_min\":3,\"rating_max\":5,\"flags\":[\"reject\",\"pick\",\"\",\"pick\"],\"labels\":[\"red\",\"\",\"blue\"]}}",
+      "canonical_utf8": "{\"filters\":{\"flags\":[\"\",\"pick\",\"reject\"],\"labels\":[\"\",\"blue\",\"red\"],\"rating_max\":5,\"rating_min\":3},\"mode\":\"lexical\",\"sort\":{\"direction\":\"asc\",\"field\":\"name\"},\"syntax\":\"simple\",\"text\":\"\",\"v\":1}",
+      "fingerprint": "sha256:2cf9e62be5d55e8e7effee808a755a242a7efcdffdb78396f22ea1962c404adc"
     }
   ],
   "highlight_sets": [
@@ -136,7 +142,12 @@
     {"name": "timestamp_invalid_offset_hour", "json_text": "{\"filters\":{\"modified_after\":\"2026-09-09T00:00:00+24:00\"}}"},
     {"name": "timestamp_invalid_offset_minute", "json_text": "{\"filters\":{\"modified_after\":\"2026-09-09T00:00:00+23:60\"}}"},
     {"name": "timestamp_normalizes_before_year_zero", "json_text": "{\"filters\":{\"modified_after\":\"0000-01-01T00:00:00+23:59\"}}"},
-    {"name": "timestamp_normalizes_after_year_9999", "json_text": "{\"filters\":{\"modified_after\":\"9999-12-31T23:59:59-23:59\"}}"}
+    {"name": "timestamp_normalizes_after_year_9999", "json_text": "{\"filters\":{\"modified_after\":\"9999-12-31T23:59:59-23:59\"}}"},
+    {"name": "rating_bounds_reversed", "json_text": "{\"filters\":{\"rating_min\":4,\"rating_max\":3}}"},
+    {"name": "rating_out_of_range", "json_text": "{\"filters\":{\"rating_min\":6}}"},
+    {"name": "rating_fractional", "json_text": "{\"filters\":{\"rating_min\":2.5}}"},
+    {"name": "flag_wrong_case", "json_text": "{\"filters\":{\"flags\":[\"PICK\"]}}"},
+    {"name": "label_unknown_color", "json_text": "{\"filters\":{\"labels\":[\"orange\"]}}"}
   ],
   "invalid_highlight_sets": [
     {"name": "null_terms", "json_text": "{\"v\":1,\"terms\":null}"},

@@ -1,12 +1,13 @@
-import { getNode, hidePhotoAsset, unhidePhotoAsset, preparePhotoPreview, listPhotoAssets, trashPhotoAsset, type PhotoPreviewSlot, type PhotoBrowseRow, type SavedQueryV1Schema } from "./generated/docbank.js";
+import { getNode, hidePhotoAsset, unhidePhotoAsset, preparePhotoPreview, listPhotoAssets, trashPhotoAsset, type PhotoPreviewSlot, type PhotoBrowseRow, type SavedQueryV1Schema, type PhotoAlbumMembersRequest } from "./generated/docbank.js";
 import { readVerifiedPreview } from "./download.js";
 import { selectedSourceFromNode } from "./selectedSource.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
+import { randomUUID } from "./crypto.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
 import { clearSelection, reconcileIDSelection, toggleIDSelection, type SelectionState } from "./selection.js";
 import { fetchPhotoTimeline } from "./snapshots.js";
-import type { Query } from "./query.js";
+import type { Query, QuerySort } from "./query.js";
 import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 
 export const photoQuery: Query = { v: 1, syntax: "advanced", mode: "lexical", text: "", filters: {}, sort: { field: "capture_time", direction: "desc" } };
@@ -20,14 +21,17 @@ export function loadDensity(): Density {
   return "comfortable";
 }
 
+let density = $state<Density>(loadDensity());
+
 export interface PhotoReturn { contextID: string; assetID: string; control: "image" | "open" | "check"; scrollTop: number }
 
 export class Photos {
-  readonly contextID = crypto.randomUUID();
+  readonly contextID = randomUUID();
   viewerReturn = $state.raw<PhotoReturn>();
   view = $state<"grid" | "timeline">("grid");
   date = $state<string | undefined>();
-  query = $state<Query>(photoQuery);
+  baseQuery = $state.raw<Query>(photoQuery);
+  query = $state.raw<Query>(photoQuery);
   timeline = $state<CaptureDayFacet | undefined>();
   timelineLoading = $state(false);
   timelineError = $state("");
@@ -44,8 +48,9 @@ export class Photos {
   error = $state("");
   scrollTop = $state(0);
   grouping = $state<"months" | "sessions">("months");
-  density = $state<Density>(loadDensity());
+  get density() { return density; }
   selection = $state<SelectionState<string>>(clearSelection<string>());
+  allResults = $state(false);
   started = $state(false);
   private expired = false;
   private replacement: "refresh" | "expiry" | "date" | undefined;
@@ -53,7 +58,25 @@ export class Photos {
   private controller = new AbortController();
   private disposed = false;
 
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false) {}
+  constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false, query: Query = photoQuery) { this.baseQuery = query; this.query = query; }
+
+  setSort(sort: QuerySort) {
+    if (this.disposed) return;
+    // Timeline counts ignore sort, so only photo paging restarts.
+    this.controller.abort();
+    this.controller = new AbortController();
+    this.loading = false;
+    this.baseQuery = { ...this.baseQuery, sort };
+    this.query = { ...this.query, sort };
+    this.items = []; this.total = 0; this.cursor = undefined; this.scrollTop = 0;
+    this.started = false; this.expired = false; this.replacement = undefined; this.error = "";
+    this.clearSelection();
+    return this.loadMore();
+  }
+
+  scope(): PhotoAlbumMembersRequest {
+    return this.allResults ? { query: structuredClone(this.query) } : { asset_ids: [...this.selection.selectedIDs] };
+  }
 
   async lookup(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {
     try {
@@ -106,9 +129,9 @@ export class Photos {
     } catch (cause) { URL.revokeObjectURL(objectURL); throw cause; }
   }
 
-  setDensity(density: Density) {
-    this.density = density;
-    try { localPreferenceStorage()?.setItem(densityKey, density); } catch { /* Keep the current session's preference. */ }
+  setDensity(value: Density) {
+    density = value;
+    try { localPreferenceStorage()?.setItem(densityKey, value); } catch { /* Keep the current session's preference. */ }
   }
 
   async loadMore(preserve?: () => (() => Promise<void>) | undefined) {
@@ -125,6 +148,7 @@ export class Photos {
         seen.add(item.asset_id);
         return true;
       })];
+      if (this.allResults) this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined };
       this.total = page.total;
       this.cursor = page.next_cursor;
       this.started = true;
@@ -141,6 +165,11 @@ export class Photos {
 
   async setHidden(id: string, preserve?: () => (() => Promise<void>) | undefined, onhidden?: () => void | Promise<void>, onactionerror?: (error: string) => void, oninvalidate?: () => void | Promise<void>) {
     if (this.hiding || this.trashing || this.disposed) return;
+    if (this.allResults && this.selection.selectedIDs.has(id)) {
+      this.actionError = "Hide changes loaded photos only. Choose Select loaded photos first.";
+      onactionerror?.(this.actionError);
+      return;
+    }
     const members = this.resolveTargets(this.selection.selectedIDs.has(id) ? this.selection.selectedIDs : [id]);
     if (!members) {
       this.actionError = "Load and select the photos again before changing their visibility.";
@@ -216,7 +245,7 @@ export class Photos {
     this.timelineLoading = true;
     this.timelineError = "";
     try {
-      const page = await fetchPhotoTimeline(this.session, photoQuery, controller.signal);
+      const page = await fetchPhotoTimeline(this.session, this.baseQuery, controller.signal);
       if (!controller.signal.aborted) this.timeline = page.facets[0];
     } catch (cause) {
       if (controller.signal.aborted) return;
@@ -241,7 +270,7 @@ export class Photos {
     let signal = controller.signal;
     this.replacement = mode;
     this.replacementDate = date;
-    const query = mode === "date" ? captureDateQuery(photoQuery, date) : this.query;
+    const query = mode === "date" ? captureDateQuery(this.baseQuery, date) : this.query;
     this.loading = true;
     this.error = "";
     const count = this.items.length;
@@ -274,6 +303,7 @@ export class Photos {
         }
       }
       if (signal.aborted) throw signal.reason;
+      if (controller.signal.aborted) return false;
       const restore = mode === "date" ? undefined : preserve?.();
       this.items = [...candidate.values()];
       this.total = total;
@@ -285,7 +315,8 @@ export class Photos {
         this.scrollTop = 0;
         this.clearSelection();
       } else {
-        this.selection = reconcileIDSelection(this.selection, eligible);
+        this.selection = this.allResults ? { selectedIDs: new Set(candidate.keys()), anchorID: undefined } : reconcileIDSelection(this.selection, eligible);
+        if (!this.selection.selectedIDs.size) this.allResults = false;
         this.trashTargets = this.trashTargets.filter(item => eligible.has(item.asset_id) && this.selection.selectedIDs.has(item.asset_id));
       }
       this.expired = false;
@@ -295,7 +326,7 @@ export class Photos {
     } catch (cause) {
       if (controller.signal.aborted) return false;
       if (cause instanceof APIError && (cause.status === 401 || this.hidden && cause.status === 403)) this.onauthfailure(cause);
-      this.error = signal.aborted ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
+      this.error = signal.aborted || cause instanceof DOMException && cause.name === "TimeoutError" ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
       return false;
     } finally {
       if (!controller.signal.aborted) this.loading = false;
@@ -352,6 +383,7 @@ export class Photos {
 
   select(id: string, event: MouseEvent, orderedIDs: string[]) {
     if (event.button !== 0) return;
+    this.allResults = false;
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
       this.selection = toggleIDSelection(this.selection, orderedIDs, id, event.shiftKey || !this.selection.selectedIDs.has(id), event.shiftKey);
     } else this.selection = { selectedIDs: new Set([id]), anchorID: id };
@@ -359,6 +391,7 @@ export class Photos {
   }
 
   check(id: string, checked: boolean, range: boolean, orderedIDs: string[]) {
+    this.allResults = false;
     this.selection = toggleIDSelection(this.selection, orderedIDs, id, checked, range);
     this.pruneTrashTargets();
   }
@@ -384,7 +417,8 @@ export class Photos {
 
   private pruneTrashTargets() { this.trashTargets = this.trashTargets.filter(item => this.selection.selectedIDs.has(item.asset_id)); }
 
-  clearSelection() { this.selection = clearSelection<string>(); this.trashTargets = []; }
-  selectLoaded() { this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
+  clearSelection() { this.allResults = false; this.selection = clearSelection<string>(); this.trashTargets = []; }
+  selectLoaded() { this.allResults = false; this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined }; this.pruneTrashTargets(); }
+  selectAllResults() { this.selectLoaded(); this.allResults = true; }
   dispose() { this.viewerReturn = undefined; this.disposed = true; this.controller.abort(); this.timelineController.abort(); }
 }

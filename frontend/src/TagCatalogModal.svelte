@@ -10,7 +10,7 @@
 </script>
 
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import CheckIcon from "@lucide/svelte/icons/check";
   import PencilIcon from "@lucide/svelte/icons/pencil";
   import PlusIcon from "@lucide/svelte/icons/plus";
@@ -57,6 +57,13 @@
   let failure = $state("");
   let notice = $state("");
   const currentGroups = $derived(groupTags(current));
+  let destroyed = false;
+  onDestroy(() => { destroyed = true; });
+
+  // A reply from an ended session must not change a newer session's view.
+  function stale(requestSession: string): boolean {
+    return destroyed || session !== requestSession;
+  }
 
   function close(): void {
     if (!pending) onclose();
@@ -85,31 +92,35 @@
 
   async function create(): Promise<void> {
     if (disabled || pending || newName === "") return;
+    const requestSession = session;
     pending = true;
     failure = "";
     notice = "";
     try {
-      const tag = await createTag(session, newName);
+      const tag = await createTag(requestSession, newName);
+      if (stale(requestSession)) return;
       current = sortTags([...current, tag]);
       currentTotal += 1;
       newName = "";
       notice = `Created ${tag.name}.`;
       onchanged({ kind: "created", tag });
     } catch (cause) {
-      reportFailure(cause);
+      if (!stale(requestSession)) reportFailure(cause);
     } finally {
-      pending = false;
+      if (!destroyed) pending = false;
     }
   }
 
   async function saveRename(): Promise<void> {
     const tag = current.find((item) => item.id === editingID);
     if (!tag || disabled || pending || editName === "") return;
+    const requestSession = session;
     pending = true;
     failure = "";
     notice = "";
     try {
-      const renamed = await renameTag(session, tag.id, tag.revision, editName);
+      const renamed = await renameTag(requestSession, tag.id, tag.revision, editName);
+      if (stale(requestSession)) return;
       current = sortTags(
         current.map((item) => (item.id === renamed.id ? renamed : item)),
       );
@@ -118,20 +129,22 @@
       notice = `Renamed tag to ${renamed.name}.`;
       onchanged({ kind: "renamed", tag: renamed });
     } catch (cause) {
-      reportFailure(cause);
+      if (!stale(requestSession)) reportFailure(cause);
     } finally {
-      pending = false;
+      if (!destroyed) pending = false;
     }
   }
 
   async function confirmDelete(): Promise<void> {
     if (!deleting || disabled || pending) return;
     const target = deleting;
+    const requestSession = session;
     pending = true;
     failure = "";
     notice = "";
     try {
-      const receipt = await deleteTag(session, target.id, target.revision);
+      const receipt = await deleteTag(requestSession, target.id, target.revision);
+      if (stale(requestSession)) return;
       current = current.filter((tag) => tag.id !== target.id);
       currentTotal = Math.max(0, currentTotal - 1);
       deleting = null;
@@ -142,9 +155,9 @@
         removedAssignments: receipt.removed_assignments,
       });
     } catch (cause) {
-      reportFailure(cause);
+      if (!stale(requestSession)) reportFailure(cause);
     } finally {
-      pending = false;
+      if (!destroyed) pending = false;
     }
   }
 </script>

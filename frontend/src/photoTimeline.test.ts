@@ -68,3 +68,9 @@ it.each([ ["time_budget_exceeded", /Timeline took too long/], ["snapshot_busy", 
   expect(screen.queryByRole("navigation", { name: "Timeline years" })).toBeNull();
   await fireEvent.click(screen.getByRole("button", { name: "Retry timeline" })); expect(retry).toHaveBeenCalledTimes(1);
 });
+
+it("adds date bounds to the base filters so an album date stays inside the album", () => {
+  const base = { ...parseQuery("{}"), filters: { set_ids: ["11111111-1111-4111-8111-111111111111"] } };
+  expect(captureDateQuery(base, "2025-12").filters).toEqual({ set_ids: ["11111111-1111-4111-8111-111111111111"], capture_after: "2025-12-01", capture_before: "2026-01-01" });
+  expect(captureDateQuery(base).filters).toEqual({ set_ids: ["11111111-1111-4111-8111-111111111111"] });
+});

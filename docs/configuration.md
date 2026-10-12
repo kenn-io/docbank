@@ -128,6 +128,10 @@ idle_timeout = "30m"  # background daemons only; "0" = never
 
 [web]
 enabled = true
+public_origin = ""             # empty = loopback web origin; set = 32+ char api_key
+allowed_hosts = []             # extra exact host[:port] authorities; needs public_origin
+trust_private_network = false  # explicit trust for non-loopback HTTP
+session_lifetime = "24h"       # key-login lifetime, 1m..2160h; 0 = 24h
 
 [mcp.http]
 credential_binding = "" # empty = HTTP MCP cannot start without an env binding
@@ -179,7 +183,7 @@ exclude = [".DS_Store", "cache/"]
 - **`[web] enabled`**: serves the embedded web application at `/`.
   `docbank web` starts or reconnects to the compatible daemon and opens an
   authenticated browser session on a fresh per-daemon loopback origin,
-  independent of a configured `api_port`. Disabling it 404s `/`, `/photos`, and `/assets/`.
+  independent of a configured `api_port`. Disabling it 404s `/`, `/photos`, `/photos/albums`, canonical `/photos/albums/{id}`, and `/assets/`.
   The API and `/docs` are unaffected. See [Web application](usage/web.md).
 - **`[mcp.http] credential_binding`**: names the separate inbound credential
   used by `docbank mcp --transport http`. An empty value leaves stdio available

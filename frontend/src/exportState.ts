@@ -1,4 +1,5 @@
 import { APIError } from "./api-transport.js";
+import { randomUUID } from "./crypto.js";
 import { cancelWebDownload } from "./generated/docbank.js";
 import { captureSnapshotTargets, type SnapshotPage } from "./snapshots.js";
 import {
@@ -57,8 +58,8 @@ export class ExportSession {
     this.input = copied;
     this.policies = policies.map(p => ({ ...p }));
     this.options = JSON.parse(JSON.stringify(options)) as ExportOptions;
-    this.planID = crypto.randomUUID();
-    if (changed) { this.sourceID = crypto.randomUUID(); this.members = undefined; this.source = undefined; }
+    this.planID = randomUUID();
+    if (changed) { this.sourceID = randomUUID(); this.members = undefined; this.source = undefined; }
     const job = this.state.active?.job;
     const status = this.state.active ? (!job || ["queued", "running"].includes(job.state) ? "disconnected" : this.state.status) : "idle";
     this.emit({ ...this.state, status, reviewed: undefined, error: undefined, problems: undefined, problemsLoading: false, problemsError: undefined, ...(changed ? { recipes: undefined, publications: undefined, publicationSelections: undefined } : {}) });
@@ -90,13 +91,13 @@ export class ExportSession {
 
   selectPublication(version: string, operation: string): void {
     if (this.disposed || this.state.active || !this.state.publications?.items.some(c => c.version_id === version && c.operation_id === operation)) return;
-    this.stop(); this.planID = crypto.randomUUID();
+    this.stop(); this.planID = randomUUID();
     this.emit({ ...this.state, status: "idle", reviewed: undefined, error: undefined, publicationSelections: { ...this.state.publicationSelections, [version]: operation } });
   }
 
   private async prepareSource(input: ExportInput, started: { generation: number; signal: AbortSignal }): Promise<ExportSource | undefined> {
     if (this.source && exportExpired(this.source.expires_at)) {
-      this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
+      this.source = undefined; this.sourceID = randomUUID(); this.planID = randomUUID();
     }
     if (this.source) return this.source;
     if ("collectionID" in input) {
@@ -122,7 +123,7 @@ export class ExportSession {
   async preview(): Promise<void> {
     if (!this.input || this.disposed) return;
     if (this.state.status === "expired") {
-      this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
+      this.source = undefined; this.sourceID = randomUUID(); this.planID = randomUUID();
     }
     const input = this.input, started = this.begin();
     this.emit({ ...this.state, status: "preparing", reviewed: undefined, error: undefined, problemsError: undefined });
@@ -176,7 +177,7 @@ export class ExportSession {
     if (exportExpired(reviewed.plan.expires_at)) {
       this.emit({ ...this.state, status: "expired", reviewed: undefined, error: new Error("The export plan expired. Preview again.") }); return;
     }
-    const active = { plan: reviewed.plan, label: reviewed.label, id: crypto.randomUUID() };
+    const active = { plan: reviewed.plan, label: reviewed.label, id: randomUUID() };
     const started = this.begin();
     this.emit({ ...this.state, status: "starting", active, error: undefined, downloadOffered: false });
     try {
@@ -247,12 +248,12 @@ export class ExportSession {
   }
   resetPreparation(): void {
     if (this.disposed || this.state.active) return;
-    this.stop(); this.members = undefined; this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
+    this.stop(); this.members = undefined; this.source = undefined; this.sourceID = randomUUID(); this.planID = randomUUID();
     this.emit({ status: "idle" });
   }
   clearFinished(): void {
     if (!this.state.active?.job || !["completed", "canceled", "failed"].includes(this.state.active.job.state)) return;
-    this.stop(); this.source = undefined; this.sourceID = crypto.randomUUID(); this.planID = crypto.randomUUID();
+    this.stop(); this.source = undefined; this.sourceID = randomUUID(); this.planID = randomUUID();
     this.emit({ status: "idle" });
   }
   dispose(): void { this.close(); this.disposed = true; }

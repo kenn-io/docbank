@@ -98,6 +98,9 @@ type ProcessingPlan struct {
 	ConsentRequired    bool                `json:"consent_required"`
 	ConsentState       string              `json:"consent_state" enum:"active,required,expired,revoked"`
 	BackupConsequence  string              `json:"backup_consequence"`
+	// RenditionIneligibleReason is set when local inspection refuses to send
+	// this source to the rendition provider; starting the plan then fails.
+	RenditionIneligibleReason string `json:"rendition_ineligible_reason,omitzero"`
 }
 
 type StartProcessingRequest struct {
@@ -809,6 +812,7 @@ type AuditPathState struct {
 
 // AuditAttachmentIdentity is the stable key of one tag or provenance record.
 type AuditAttachmentIdentity struct {
+	FileID       string `json:"file_id,omitzero" format:"uuid"`
 	TagID        string `json:"tag_id,omitzero" format:"uuid"`
 	NodeID       int64  `json:"node_id,omitzero" minimum:"1"`
 	ProvenanceID string `json:"provenance_id,omitzero" pattern:"^[0-9a-f]{64}$"`
@@ -816,20 +820,21 @@ type AuditAttachmentIdentity struct {
 
 // AuditAttachmentState is one typed side of a tag or provenance transition.
 type AuditAttachmentState struct {
-	TagID         string  `json:"tag_id,omitzero" format:"uuid"`
-	NodeID        int64   `json:"node_id,omitzero" minimum:"1"`
-	TagName       string  `json:"tag_name,omitzero"`
-	ProvenanceID  string  `json:"provenance_id,omitzero" pattern:"^[0-9a-f]{64}$"`
-	IngestID      string  `json:"ingest_id,omitzero" format:"uuid"`
-	OriginalPath  *string `json:"original_path,omitempty"`
-	OriginalMTime *string `json:"original_mtime,omitempty" format:"date-time"`
-	Supersedes    *string `json:"supersedes,omitempty" pattern:"^[0-9a-f]{64}$"`
+	Photo         *store.PhotoAuthoredSnapshot `json:"photo,omitempty"`
+	TagID         string                       `json:"tag_id,omitzero" format:"uuid"`
+	NodeID        int64                        `json:"node_id,omitzero" minimum:"1"`
+	TagName       string                       `json:"tag_name,omitzero"`
+	ProvenanceID  string                       `json:"provenance_id,omitzero" pattern:"^[0-9a-f]{64}$"`
+	IngestID      string                       `json:"ingest_id,omitzero" format:"uuid"`
+	OriginalPath  *string                      `json:"original_path,omitempty"`
+	OriginalMTime *string                      `json:"original_mtime,omitempty" format:"date-time"`
+	Supersedes    *string                      `json:"supersedes,omitempty" pattern:"^[0-9a-f]{64}$"`
 }
 
 // AuditAttachmentChange provides the stable identity and complete before/after
 // payload for one tag or provenance event.
 type AuditAttachmentChange struct {
-	Kind     string                  `json:"kind" enum:"tag_definition,tag_assignment,provenance"`
+	Kind     string                  `json:"kind" enum:"tag_definition,tag_assignment,provenance,photo_authored"`
 	Identity AuditAttachmentIdentity `json:"identity"`
 	Before   *AuditAttachmentState   `json:"before,omitempty"`
 	After    *AuditAttachmentState   `json:"after,omitempty"`

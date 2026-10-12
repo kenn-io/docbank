@@ -206,9 +206,14 @@ lowercase letter, and contain only lowercase letters, digits, `_`, or `-`.
 The response includes `fingerprint`, `vault_uid`, `selector`,
 `profile_fingerprint`, `flow`, `disclosed_classes`, `retained_classes`,
 `estimate`, `consent_required`, `consent_state`, and `backup_consequence`.
-Each flow identifies the provider, capability, trust boundary, input classes,
-any filename disclosure, and a `runtime_disclosure` object. Review it before
-granting consent or starting work. The runtime disclosure contains:
+When the profile has a rendition stage, the daemon inspects the source locally
+before it answers. If inspection refuses the source,
+`rendition_ineligible_reason` names the inspector's reason, such as
+`unbounded_media_family` or `semantic_units_exceeded`, and starting the plan
+fails with `rendition_source_ineligible`. Each flow identifies the provider,
+capability, trust boundary, input classes, any filename disclosure, and a
+`runtime_disclosure` object. Review it before granting consent or starting
+work. The runtime disclosure contains:
 
 | Field | Meaning |
 |-------|---------|
@@ -807,6 +812,7 @@ envelope. Common processing codes are:
 | 422 | `processing_profile_unavailable`, `foreign_vault`, `version_node_mismatch` | Profile or source identity does not match |
 | 422 | `invalid_processing_consent_expiry`, `search_query_required`, `validation` | Invalid expiry, blank query, or request schema violation |
 | 422 | `rendition_failed` | Required rendition work failed |
+| 422 | `rendition_source_ineligible` | Local inspection refuses to send this source to the rendition provider; the plan's `rendition_ineligible_reason` says why |
 | 404 | `not_found` | Requested node, version, job, or active rendition is absent |
 | 503 | `processing_unavailable` | The processing service is not configured |
 | 500 | `processing_failed` | An otherwise unclassified processing failure |
@@ -1002,6 +1008,9 @@ fields, not additional parameters for `GET /search`:
 | `modified_after`, `modified_before` | RFC3339 timestamps, normalized to UTC |
 | `size_min`, `size_max` | Byte counts from 0 through 9,007,199,254,740,991 |
 | `text_coverage` | Array of at most 6 entries: `complete`, `partial`, `failed`, `unprocessed`, `none`, or `unavailable` |
+| `rating_min`, `rating_max` | Inclusive integer bounds from 0 through 5; minimum must be <= maximum |
+| `flags` | At most 64 entries: `""`, `pick`, or `reject` |
+| `labels` | At most 64 entries: `""`, `red`, `yellow`, `green`, `blue`, or `purple` |
 | `kinds` | At most 64 entries, `photo` or `video` |
 | `cameras`, `lenses` | At most 64 complete make/model strings, matched with Unicode case folding; each 1 through 256 Unicode characters |
 | `iso_min`, `iso_max` | Inclusive safe nonnegative integer bounds; zero is accepted |
@@ -1011,6 +1020,8 @@ fields, not additional parameters for `GET /search`:
 | `unevaluated` | `true` selects live, included photo display versions with pending or unavailable measurements; structured `false` acts as omission |
 | `asset_ids` | At most 64 canonical UUIDv4 values |
 | `set_ids` | At most 64 canonical album UUIDv4 values |
+
+Typed `flags:[""]` and `labels:[""]` select unflagged and unlabeled files. Expression operands must be nonempty. In Photos, `NOT flag:pick` selects unflagged and rejected photos, and `NOT label:red` selects unlabeled photos and other colors. In Documents, both also match files that aren't photos.
 
 Quality filters follow the same version as other photo metadata filters. Photos uses the asset's selected display; Documents uses each document's own version. `unevaluated:true` applies only to versions eligible for measurement. Expressions reject `unevaluated:false`; use `focus_min:0` for measured photos.
 
@@ -1068,7 +1079,7 @@ dropping it.
 
 These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
-and `/`, `/photos`, and `/assets/` (the static web application, when `[web] enabled`).
+and `/`, `/photos`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
 
 A hidden `POST /api/daemon/shutdown` (not in the OpenAPI document) backs
 `docbank daemon stop`. It isn't auth-exempt: it requires both the API key and
@@ -1076,7 +1087,33 @@ its own shutdown token. The hidden `POST /api/daemon/web-session` exchanges
 that master authority for a random daemon-lifetime browser token, an
 independent upload-proof secret, and the fresh loopback origin dedicated to
 that daemon lifetime. `DELETE /api/daemon/web-session` revokes the calling
-browser session.
+browser session. A configured API key also enables browser key login:
+
+| Route | Authentication and behavior |
+| --- | --- |
+| `GET /api/daemon/web-auth` | Unauthenticated; reports `enabled: true` only when key login is configured and the request uses the sign-in Host and, if supplied, Origin. Other hosts get `enabled: false`. Returns no vault data or credentials. |
+| `POST /api/daemon/web-auth/login` | Exact Host and Origin, JSON `{"api_key":"..."}`; exchanges the configured key for scoped tab credentials and a shared HttpOnly instance cookie. Never echoes the key. |
+| `GET /api/daemon/web-auth/sessions` | Master API key only; lists live key-login session IDs and creation/expiry dates. |
+| `DELETE /api/daemon/web-auth/sessions/{id}` | Master API key only; revokes the named tab and cancels its resources. |
+
+Key-login requests require `X-Docbank-Web-Session` and the instance cookie.
+Mutations also require the exact configured Origin. A missing tab token
+returns 401; cookie, Host or Origin rejection returns 403. The cookie alone
+grants no authority. `DELETE /api/daemon/web-session`
+signs out only the calling tab, leaving the shared cookie and other tabs intact.
+Login accepts at most 32 KiB of JSON, enough for a 4096-byte key with every
+character escaped, and rejects unknown members. It has no
+failed-attempt lockout, because the same key is accepted on every API route;
+instead, configuration requires a key of at least 32 characters when
+`public_origin` is set. Tab credentials are process-local; reloads and daemon
+restarts require a new key login. Every request passes the server Host
+allowlist. `public_origin` adds its host and `[web] allowed_hosts` to that
+list. It also adds a stricter check: every shared-listener request, including
+API-key and unauthenticated health/static requests, must use one of those
+authorities or a concrete loopback backend authority. Protected responses use `Cache-Control: private, no-store`
+and vary on `Cookie` and `X-Docbank-Web-Session`.
+See [server sign-in](../usage/web.md#sign-in-on-a-server-or-container) for
+lifetime, deployment trust and session-management commands.
 
 `POST /api/daemon/telemetry/events` takes one anonymous interface event with optional allowlisted `properties`,
 such as `app_opened` or `session_ended`, from a browser session or the API key. The daemon answers
@@ -1085,7 +1122,7 @@ such as `app_opened` or `session_ended`, from a browser session or the API key. 
 See [anonymous usage telemetry](../configuration.md#anonymous-usage-telemetry).
 
 Browser session tokens authenticate only the routes used by the built-in
-document, tag-definition/assignment, saved-definition, recoverable-trash,
+document, photo browsing, album, tag-definition/assignment, saved-definition, recoverable-trash,
 storage, job, configured-backup, verified-download, and usage-event workflows.
 They are not another general API credential. Browser file bytes use the
 hidden `/api/daemon/web-upload` WebSocket instead. The page verifies a
@@ -1335,7 +1372,7 @@ as reads in this slice.
 
 `GET /photos/albums` lists albums with `member_count` for members that still have a file, `included_count` for visible included members, and current ready grid covers. `POST /photos/albums` creates one; `GET /photos/albums/{set_id}` inspects it. `PUT /photos/albums/{set_id}` changes optional `name` or `starred`. `PUT /photos/albums/{set_id}/cover` chooses a member through `asset_id`, or clears the override when omitted. `POST /photos/albums/{set_id}/duplicate` supplies a new `name`. `DELETE /photos/albums/{set_id}` deletes the album while retaining its photos. Existing-album writes require `If-Match` and return the album with its ETag.
 
-`POST /photos/albums/{set_id}/members/add` and `/members/remove` accept either `asset_ids` with at most 1,000 entries or a strict `query`, with optional `coverage`. The full query scope resolves within the atomic write and, like photo browsing, covers only visible photos; removing hidden members requires their `asset_ids` and an unlock. Hidden explicit cover IDs are omitted while locked; selecting a hidden cover requires an unlock. Changes advance the album revision once and record every changed asset ID across bounded receipts. No-ops preserve the revision. Album routes require daemon API-key access. Browser sessions can browse members through the existing photo query route with `filters.set_ids`, but cannot mutate or list albums. See [Albums](../usage/photos.md#albums) for member ordering, visibility, and cover selection.
+`POST /photos/albums/{set_id}/members/add` and `/members/remove` accept either `asset_ids` with at most 1,000 entries or a strict `query`, with optional `coverage`. The full query scope resolves within the atomic write and, like photo browsing, covers only visible photos; removing hidden members requires their `asset_ids` and an unlock. Hidden explicit cover IDs are omitted while locked; selecting a hidden cover requires an unlock. Changes advance the album revision once and record every changed asset ID across bounded receipts. No-ops preserve the revision. Scoped browser sessions can list, create, update, duplicate, and delete albums, choose covers, and add or remove members through these exact method/path pairs with canonical UUIDv4 IDs and empty query strings. Existing-album writes retain the same revision checks. See [Albums](../usage/photos.md#albums) for member ordering, visibility, and cover selection.
 
 `POST /photos/imports` starts a folder import from a daemon-host path and
 returns `202` with the queued `StorageOperation`, or `422` when the path is not
@@ -2025,7 +2062,7 @@ Host checks precede authentication and accept loopback, the concrete bind IP,
 the dedicated browser origin, and explicit `allowed_hosts`; wildcard listeners
 do not accept arbitrary names. Server-path ingest remains loopback-peer only.
 `/health`, `/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
-`/`, `/photos`, and `/assets/` are auth-exempt. Everything else, including the shutdown
+`/`, `/photos`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
 route, requires the key.
 
 ## Error mapping

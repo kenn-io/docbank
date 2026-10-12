@@ -182,3 +182,39 @@ it("keeps a stale assignment decision visible for refresh", async () => {
     ).toBeTruthy(),
   );
 });
+
+it("ignores a pending authorization failure after the modal is destroyed", async () => {
+  let resolveResponse!: (response: Response) => void;
+  let markFetchStarted!: () => void;
+  const response = new Promise<Response>((resolve) => { resolveResponse = resolve; });
+  const fetchStarted = new Promise<void>((resolve) => { markFetchStarted = resolve; });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+    markFetchStarted();
+    return response;
+  });
+  const onauthfailure = vi.fn();
+
+  const mounted = render(ManageTagsModal, {
+    session: "old-tab",
+    node,
+    catalog: [tax],
+    catalogTotal: 1,
+    assignedTags: [tax],
+    assignedTotal: 1,
+    disabled: false,
+    onclose: vi.fn(),
+    onchanged: vi.fn(),
+    onauthfailure,
+  });
+
+  await fireEvent.click(screen.getByRole("button", { name: "Remove tag tax" }));
+  await fetchStarted;
+  mounted.unmount();
+  resolveResponse(new Response(JSON.stringify({ detail: "session expired" }), {
+    status: 401,
+    headers: { "Content-Type": "application/problem+json" },
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(onauthfailure).not.toHaveBeenCalled();
+});

@@ -2,6 +2,7 @@ import type {
   AuditAttachmentState,
   AuditEvent,
   AuditPathState,
+  PhotoAuthored,
 } from "./generated/docbank.js";
 
 const eventLabels: Record<string, string> = {
@@ -12,6 +13,7 @@ const eventLabels: Record<string, string> = {
   content_revert: "Earlier content restored",
   node_create: "Document created",
   node_path: "Path changed",
+  photo_authored: "Photo decisions changed",
   provenance_add: "Provenance recorded",
   provenance_supersede: "Provenance superseded",
   tag_assign: "Tag assigned",
@@ -43,6 +45,7 @@ export function auditEventSummary(event: AuditEvent): string {
     case "tag_unassign":
     case "provenance_add":
     case "provenance_supersede":
+    case "photo_authored":
       if (event.attachment) return attachmentSummary(event);
       break;
   }
@@ -67,6 +70,21 @@ function provenanceSummary(state: AuditAttachmentState | undefined): string {
   return state.original_path || `Ingest ${shortID(state.ingest_id)}`;
 }
 
+const photoDecisionKeys: (keyof PhotoAuthored)[] = [
+  "rating",
+  "flag",
+  "label",
+  "caption",
+  "creator",
+  "copyright",
+  "rotation",
+];
+
+function photoSummary(before: PhotoAuthored | undefined, after: PhotoAuthored | undefined): string {
+  const changed = photoDecisionKeys.filter((key) => before?.[key] !== after?.[key]);
+  return changed.length > 0 ? `Changed ${changed.join(", ")}` : "Decisions unchanged";
+}
+
 function attachmentSummary(event: AuditEvent): string {
   const change = event.attachment;
   if (!change) return `Revision ${event.prior_node_revision} → ${event.resulting_node_revision}`;
@@ -77,5 +95,8 @@ function attachmentSummary(event: AuditEvent): string {
       return `Tag ${shortID(change.identity.tag_id)} on id:${change.identity.node_id ?? event.node_id}`;
     case "provenance":
       return provenanceSummary(change.after ?? change.before);
+    case "photo_authored":
+      return photoSummary(change.before?.photo?.values, change.after?.photo?.values);
   }
+  return `Revision ${event.prior_node_revision} → ${event.resulting_node_revision}`;
 }

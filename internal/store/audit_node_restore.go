@@ -94,7 +94,7 @@ func (s *Store) prepareAuditedRestore(
 			node.ID, node.Revision, ifRev, ErrStaleRevision,
 		)
 	}
-	target, err := s.restoreTargetTx(tx, node)
+	target, err := s.restoreTargetTx(ctx, tx, node)
 	if err != nil {
 		return snapshot, err
 	}

@@ -168,7 +168,7 @@ func (s *Store) photoImportCurrentDuplicateTx(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT `+nodeCols+`, COALESCE(p.original_path, '')
 		FROM `+nodeFrom+`
-		LEFT JOIN photo_files pf ON pf.node_id=n.id
+		LEFT JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL
 		LEFT JOIN provenance p ON p.node_id=n.id
 		  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
 		WHERE n.trashed_at IS NULL AND `+photoFilter+` AND cv.blob_hash=?
@@ -241,7 +241,7 @@ func (s *Store) photoImportChangedSourceTx(
 		SELECT DISTINCT n.id FROM nodes n
 		JOIN provenance p ON p.node_id=n.id
 		  AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
-		LEFT JOIN photo_files pf ON pf.node_id=n.id
+		LEFT JOIN photo_files pf ON pf.node_id=n.id AND pf.asset_id IS NOT NULL
 		WHERE n.kind='file' AND n.trashed_at IS NULL AND `+photoFilter+` AND p.original_path=?
 		  -- A node shared with another source path keeps its bytes; the edit becomes its own file.
 		  AND NOT EXISTS (SELECT 1 FROM provenance other
@@ -559,24 +559,32 @@ func (s *Store) IngestPhotoGroup(ctx context.Context, run IngestRun, group Photo
 			}
 		}
 		attached := false
-		for i, node := range nodes {
-			if owners[i] != "" {
-				continue
-			}
-			file := PhotoFile{AssetID: target.ID, NodeID: node.ID, Role: roles[i], CreatedAt: nowRFC3339()}
-			if roles[i] == PhotoRoleSidecar {
-				sourceID, err := photoSidecarSourceTx(ctx, tx, target.ID)
-				if err != nil {
+		for _, sidecars := range []bool{false, true} {
+			for i, node := range nodes {
+				if (roles[i] == PhotoRoleSidecar) != sidecars {
+					continue
+				}
+				if owners[i] != "" {
+					continue
+				}
+				file := PhotoFile{AssetID: target.ID, NodeID: node.ID, Role: roles[i], CreatedAt: nowRFC3339()}
+				if roles[i] == PhotoRoleSidecar {
+					sourceID, _, err := photoSidecarSourceTx(ctx, tx, target.ID, group.Members[i].OriginalPath, "")
+					if err != nil {
+						return err
+					}
+					if sourceID == "" {
+						continue
+					}
+					file.SidecarOfID = &sourceID
+				} else if err := validatePhotoFileForAsset(target.Kind, roles[i], photoImportNodeFacts(node, group.Members[i], roles[i])); err != nil {
 					return err
 				}
-				file.SidecarOfID = &sourceID
-			} else if err := validatePhotoFileForAsset(target.Kind, roles[i], photoImportNodeFacts(node, group.Members[i], roles[i])); err != nil {
-				return err
+				if err := s.insertPhotoFileTx(ctx, tx, file); err != nil {
+					return err
+				}
+				attached = true
 			}
-			if err := s.insertPhotoFileTx(ctx, tx, file); err != nil {
-				return err
-			}
-			attached = true
 		}
 		if attached {
 			updated, err := commitPhotoAssetTx(ctx, tx, target, target, "import")
@@ -612,21 +620,54 @@ func (s *Store) importUnpairedPhotosTx(ctx context.Context, tx *sql.Tx, nodes []
 	return created, nil
 }
 
-func photoSidecarSourceTx(ctx context.Context, tx *sql.Tx, assetID string) (string, error) {
-	files, err := loadPhotoFiles(ctx, tx, assetID)
-	if err != nil {
-		return "", err
+func photoSidecarSourceTx(ctx context.Context, q metadataQuerier, assetID, sidecarPath, extension string) (string, bool, error) {
+	name := filepath.Base(sidecarPath)
+	original := strings.TrimSuffix(name, filepath.Ext(name))
+	source := ClassifyPhotoSource(original)
+	bound := source.Kind == PhotoSourceRAW || source.Kind == PhotoSourceImage
+	if !bound && extension != "" {
+		original += "." + strings.TrimPrefix(extension, ".")
+		bound = true
 	}
-	sourceID := ""
-	for _, file := range files {
-		if file.Role == PhotoRoleRAW || sourceID == "" && file.Role == PhotoRoleImage {
-			sourceID = file.ID
+	rows, err := q.QueryContext(ctx, `SELECT f.file_id,f.role,n.name,COALESCE(p.original_path,'') FROM photo_files f
+ JOIN nodes n ON n.id=f.node_id LEFT JOIN provenance p ON p.node_id=n.id
+ AND EXISTS (SELECT 1 FROM ingests i WHERE i.id=p.ingest_id AND i.source_kind NOT LIKE 'embedded:%')
+ AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
+ WHERE f.asset_id=? AND f.role IN ('raw','image') AND n.trashed_at IS NULL ORDER BY f.file_id`, assetID)
+	if err != nil {
+		return "", bound, err
+	}
+	defer func() { _ = rows.Close() }()
+	id, fallback := "", ""
+	for rows.Next() {
+		var fileID, role, nodeName, path string
+		if err := rows.Scan(&fileID, &role, &nodeName, &path); err != nil {
+			return "", bound, err
+		}
+		if role == PhotoRoleRAW || fallback == "" {
+			fallback = fileID
+		}
+		candidate := nodeName
+		if path != "" {
+			if !strings.EqualFold(filepath.Dir(path), filepath.Dir(sidecarPath)) {
+				continue
+			}
+			candidate = filepath.Base(path)
+		}
+		if bound && strings.EqualFold(norm.NFC.String(candidate), norm.NFC.String(original)) {
+			if id != "" && id != fileID {
+				return "", true, nil
+			}
+			id = fileID
 		}
 	}
-	if sourceID == "" {
-		return "", fmt.Errorf("%w: photo %s has no RAW or image for a sidecar", ErrInvalidPhotoAsset, assetID)
+	if err := rows.Err(); err != nil {
+		return "", bound, err
 	}
-	return sourceID, nil
+	if !bound {
+		id = fallback
+	}
+	return id, bound, nil
 }
 
 func photoImportAmbiguity(

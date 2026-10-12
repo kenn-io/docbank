@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-10-11
 title: Photo assets
-description: Group camera files, browse photos in the web app, and organize albums through the CLI or HTTP API.
+description: Group camera files, browse photos, and organize albums in the web app, CLI, or HTTP API.
 ---
 
 # Photo assets
@@ -57,8 +57,10 @@ and 40 million pixels. Use verified download in Documents for larger images.
 Animated WebP originals may animate in the browser. RAW photos always use
 server-produced JPEG previews.
 
-A `/photos#photo=<asset-id>` URL opens that photo directly. Direct views have
-no query navigation or thumbnail rail. Close returns to Library. Back and
+A `/photos#photo=<asset-id>` URL opens that photo directly; an album URL such
+as `/photos/albums/<album-id>#photo=<asset-id>` works the same way. Direct views
+have no query navigation or thumbnail rail. Close returns to Library or to the
+album in the URL. Back and
 Forward also update the viewer. Browser sessions stay in memory. After a reload,
 run `docbank web` for a fresh session, then append `&photo=<asset-id>` to its
 fragment to reopen the direct photo.
@@ -97,13 +99,13 @@ grid density. The browser remembers the density across reloads and fresh
 Click a photo to select it. Shift-click adds the range from the previous
 selection, including loaded photos outside the screen. Ctrl-click or
 Command-click toggles a photo. Each photo also has a checkbox for touch.
-The selection dock can select all loaded photos or clear the selection.
+The selection dock can select loaded photos, select the complete live query, or clear the selection.
 
-Photos, selection, and scroll position stay in place across Documents/Photos switches until the session locks or ends. Switching workspaces stops unfinished photo reads while retaining loaded photos. Previews already seen stay in a private browser cache while their Photos view is active. Only mounted photos keep image URLs. Docbank deletes the cache when leaving the view, when the session locks or ends, or when the page closes. If a page closes without that cleanup, for example after a browser crash, the next signed-in session at the same `docbank web` address deletes the leftover cache. Caches from earlier addresses stay in browser storage until site data is cleared. Previews still display when browser storage is unavailable, but revisiting them may download them again. Preview downloads bypass the browser HTTP cache, so only that private cache retains bytes.
+Photos, selection, and scroll position stay in place across Documents/Photos switches until the session locks or ends. Leaving an album for Library, Albums, or another album resets that album's sort, selection, and scroll position. Library keeps its own selection and position. Switching workspaces stops unfinished photo reads while retaining loaded photos. Previews already seen stay in a private browser cache while their Photos view is active. Only mounted photos keep image URLs. Docbank deletes the cache when leaving the view, when the session locks or ends, or when the page closes. If a page closes without that cleanup, for example after a browser crash, the next signed-in session at the same `docbank web` address deletes the leftover cache. Caches from earlier addresses stay in browser storage until site data is cleared. Previews still display when browser storage is unavailable, but revisiting them may download them again. Preview downloads bypass the browser HTTP cache, so only that private cache retains bytes.
 Pending, unsupported, and failed previews have separate placeholders. Choose
 Refresh previews to reload the listing after background preview work finishes.
 If a page fails to load, the earlier photos remain visible. Retry requests the
-failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Selection retains photos in that range; imports or deletions may move the visible photo outside it. Failed attempts keep the earlier view available for Retry. Recovery stops after one minute and offers Retry if it needs more time.
+failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Refresh keeps selections and the range anchor only within the refreshed pages, plus failed trash targets. Whole-query selection keeps its query scope. Failed attempts keep the earlier view available for Retry. Each refresh page has a one-minute deadline.
 
 ## Hidden photos
 
@@ -111,7 +113,7 @@ Choose Hidden in the Photos sidebar and set a passcode. Open a photo's actions m
 
 Hidden photos disappear from Library, photo queries, and album contents. Albums retain their membership; their included count covers only visible photos. Background imports keep updating hidden files, including late sidecars. Import receipts retain ordinary photo IDs and file details. Documents, document tools, original bytes, and exports still expose the underlying files. Hidden is a Photos privacy control.
 
-Enter the passcode in Hidden to unlock for five minutes. The countdown uses the server's remaining time, so a wrong browser clock does not change it. Lock closes every active Hidden session, and so does locking or ending any browser session. Locking and expiry clear the Hidden grid, selection, and browser preview cache. Photos check for committed changes every two seconds, with a two-second request timeout. A visibility change conceals the grid and clears cached previews before refreshing. An open Library photo stays open when the refresh still lists it; otherwise its viewer reports that the photo left the result. Background views stay concealed until status validation and refresh succeed. Hidden conceals after any failed check. Library conceals after a denied check or three failed checks in a row; a concealed view stays concealed until Retry or a later check succeeds. Expired browser sessions use the shared session-expired screen. Reloads retain grouping, density, loaded range, scroll position and the selection of unaffected photos; failed batch targets stay available for retry. Hidden previews carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
+Enter the passcode in Hidden to unlock for five minutes. The countdown uses the server's remaining time, so a wrong browser clock does not change it. Lock closes every active Hidden session, and so does locking or ending any browser session. Locking and expiry clear the Hidden grid, selection, and browser preview cache. Photos check for committed changes every two seconds, with a two-second request timeout. A visibility change conceals the grid and clears cached previews before refreshing. An open Library photo stays open when the refresh still lists it; otherwise its viewer reports that the photo left the result. Background views stay concealed until status validation and refresh succeed. Hidden conceals after any failed check. Library, Albums, and each open album follow the Library rules, and each is checked again when you open it. Library conceals after a denied check or three failed checks in a row; a concealed view stays concealed until Retry or a later check succeeds. Expired browser sessions use the shared session-expired screen. Reloads retain grouping, density, loaded range, scroll position and the selection of unaffected photos; failed batch targets stay available for retry. Hidden previews carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
 
 Hidden supports direct links at `/photos/hidden#photo=<asset-id>` after unlock. Viewer navigation, larger previews and supported originals use the active Library or Hidden scope. Locking or concealing the view closes its viewer and removes displayed bytes.
 
@@ -131,6 +133,89 @@ docbank photos hidden reset
 Passcodes must be 1 to 1,024 bytes without CR or LF line breaks. Canonically equivalent Unicode spellings use the same passcode. CLI input uses protected terminal input or one line from stdin. Terminal setup and change ask for the new passcode twice. Change reads the current and new passcode on separate lines. CLI commands prompt for the passcode when reading or editing a hidden asset and forward the unlock cookie only within that invocation, without saving a credential file. For hidden photo details, run `docbank photos assets inspect /path/to/photo.jpg` and enter the passcode. This returns the details without unhiding the asset; MCP photo tools remain locked. Hide requires an asset ID. Unhide also accepts an asset ID or `id:<node-id>`; ordinary Documents and MCP document tools retain file access. Hidden state `change_id` is an opaque equality token: compare it for changes without interpreting or ordering its value. HTTP operations live under `/api/v1/photos/hidden`; hide and unhide use `/api/v1/photos/assets/{asset_id}/hide` and `/unhide` with `If-Match`. Browser sessions can use the interactive operations. Reset requires the daemon API key.
 
 A hide retry that returns `hidden_locked` already took effect.
+
+## Ratings and other decisions
+
+Each RAW, image, and video member stores its own rating, flag, label, caption,
+creator, copyright, and rotation. A RAW rated 5 and a JPEG rated 3 keep those
+values. Inspection returns every file's revision and an `agreement` map.
+`false` for a field means the displayable members have mixed values.
+
+| Decision | Allowed values |
+| --- | --- |
+| Rating | 0 through 5 |
+| Flag | empty, `pick`, or `reject` |
+| Label | empty, `red`, `yellow`, `green`, `blue`, or `purple` |
+| Rotation | 0, 90, 180, or 270 degrees |
+| Caption, creator, copyright | Up to 16 KiB of UTF-8 text each |
+
+A new member starts at revision 1 with no decisions. Detach and reattach keep
+each file's identity, decisions, and revision. Hidden is a Photos privacy
+control: Documents queries and audit history still show a hidden photo's
+decisions.
+
+### Decisions from XMP sidecars
+
+The daemon fills in an original file's decisions from its imported XMP sidecar
+while that file is still at revision 1. Once a sidecar sets a decision, later
+packets don't change it.
+
+The daemon picks the original for each sidecar this way:
+
+- A qualified name such as `capture.JPG.xmp` selects that original.
+- A basename-only packet such as `capture.xmp` can select an extension with
+  `photoshop:SidecarForExtension`. Without that claim, the packet applies to
+  its linked file, which import prefers to be the RAW.
+- A missing, ambiguous, or conflicting binding makes no decision. If you attach
+  `capture.JPG.xmp` to the RAW, the name and the attachment conflict. The packet
+  applies after you attach it to the JPEG.
+- The daemon handles one photo's sidecars one at a time, lowest node ID first.
+  When two select the same original, the first that makes a decision wins. An
+  empty or rejected packet makes no decision, so the next sidecar can apply.
+- An audited vault refuses changes outside its audit scopes, so sidecars make no
+  decision there. Enrolling a scope that covers the photo makes its sidecars
+  eligible again.
+- A trashed original gets no decision. Restoring it makes the sidecar eligible
+  again.
+
+The daemon reads these XMP properties:
+
+| Decision | XMP property |
+| --- | --- |
+| Rating | `xmp:Rating`. A rating of -1 means reject with rating 0. |
+| Label | `xmp:Label`, case-insensitive |
+| Flag | `Pick` in the `https://teststrip.app/xmp/1.0/` namespace |
+| Rotation | `Rotation` in the `https://teststrip.app/xmp/1.0/` namespace |
+| Caption | `dc:description`, preferring the `x-default` language |
+| Creator | The first `dc:creator` entry |
+| Copyright | `dc:rights`, preferring the `x-default` language |
+
+An unsupported value is ignored and the other decisions still apply. That
+covers custom color labels, fractional ratings, unknown picks, other rotations,
+and text over 16 KiB. Whitespace-only text counts as absent; other text keeps
+its spaces and newlines. Malformed XML, a repeated property, or nesting deeper
+than 64 elements rejects the whole packet. Empty and rejected packets leave the file, its
+revision, and audit history unchanged. Sidecars don't import `dc:subject` as
+tags or `tiff:Orientation` as rotation.
+
+Each applied packet records the sidecar file and content version that supplied
+it. Sidecar source-metadata detail shows a valid-packet fact or a warning.
+Replacing a sidecar's bytes can still fill in a file that has no decision.
+The daemon reconsiders a sidecar when the photo's members change, including
+renames and restoration. Cancellation, stale inputs, and read failures retry.
+
+Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. In Photos,
+each decision filter reads the asset's display file. With the default RAW display
+rated 5/pick and a paired JPEG rated 1/red, `rating:5`, `flag:pick`,
+`NOT rating:1`, and `NOT label:red` match, including with a linked XMP sidecar.
+Both typed bounds from 3 through 3 and `rating_min:3 AND rating_max:3` exclude
+the photo. Selecting the JPEG reverses those rating, flag, and label matches.
+Changing the display file changes these decision matches.
+Documents queries read each file's own decisions, so `NOT flag:pick` there
+also matches files that aren't photos. Decisions and their receipts round-trip
+through JSONL backup and restore.
+Advanced expressions accept `rating:5`, `rating_min:4`, `rating_max:3`,
+`flag:pick`, and `label:red`.
 
 ## Previews
 
@@ -219,9 +304,16 @@ performs role, ownership, sidecar, display, and audit checks.
 
 ## Albums
 
-Albums group photo assets without moving their files. Manage albums through
-the CLI or HTTP API. The web app's Photos workspace browses the library;
-album management is not available there.
+Albums group photo assets without moving their files. Manage albums in the
+web app, CLI, or HTTP API.
+
+In the web app, open Photos, then Albums. Cards and sidebar entries show starred albums first, with included photo counts. Cards also show covers. Open an album to rename, star, duplicate, or delete it, or sort its photos by Added, Captured, or Imported. Timeline, date choices, and the photo viewer work inside an album and stay within its photos. Select one photo and choose Use as cover. Removing photos from an album or deleting the album keeps the photos in Library.
+
+To use the newest ready photo as the cover again, run `docbank photos albums cover <album-id>` or use the HTTP API.
+
+Select photos in Library or an album, then choose Add to album in the selection dock. Type to find an album or create one. B adds to the last album chosen until you reload or the session locks; the dock and sidebar show that target. Without a target, B opens the picker. You can also drag a photo or selection onto a sidebar album. After every album change, Docbank reloads the album list. Membership changes also refresh the affected album's photo view. Trash and restore reload albums and every started photo view. A failed create or duplicate also reloads Albums, where the album may already appear.
+
+Select loaded photos selects only the pages already loaded. Select all N photos selects the complete live query, including unloaded pages. Add to album, B, and drag use that same scope. Trash and Hide change loaded photos only, so they are unavailable while all N photos are selected. The server resolves the query when you add, so the refreshed album count can reflect imports made since browsing. Explicit selections allow up to 1,000 photos per album change. For larger selections, choose Select all N photos to send one atomic query write. A revision conflict shows the server error and reloads the album list. An open form shows the reloaded album and keeps what you typed. Save again to retry with its current revision.
 
 Create an album, add selected asset UUIDs or a complete query result, then
 browse its members:
@@ -297,8 +389,7 @@ folder must exist when you start the import. Otherwise the command fails with
 exit code 2 and no import starts.
 
 Files with the same folder and name, such as `IMG_0001.ARW`, `IMG_0001.JPG`,
-and `IMG_0001.XMP`, become one photo. The XMP sidecar attaches to the RAW, or
-to the JPEG when there is no RAW. An XMP with no same-name RAW or JPEG imports
+and `IMG_0001.XMP`, become one photo. A qualified XMP filename attaches to its named original. Unqualified names attach to the RAW, or to the JPEG when there is no RAW; their packet extension claim selects the authored target after extraction. An XMP with no same-name RAW or JPEG imports
 as a plain file. A later full scan pairs companions when both source files
 are still present. Matching uses files in the scan and their current duplicate
 owners. A video always becomes its own photo. Each photo commits in one
@@ -372,11 +463,14 @@ the previous page boundary.
 
 Use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`,
 `iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`,
-`capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, or `asset:` or `set:`
+`capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, `rating:5`, `flag:pick`,
+`label:red`, or `asset:` or `set:`
 followed by a canonical asset or album UUIDv4. Existing `collection:`, tag, and text predicates combine
 with these fields. Camera and lens match the complete make or model, ignoring
 case using Unicode case folding. Values in one typed filter array combine with
 OR. Separate filters combine with AND.
+
+Use typed `flags:[""]` or `labels:[""]` to select unflagged or unlabeled photos. Expression operands must be nonempty. `NOT flag:pick` selects unflagged and rejected photos; `NOT label:red` selects unlabeled photos and other colors.
 
 Dates use the photo's recorded local calendar day, with an inclusive lower
 bound and exclusive upper bound. A January 1 photo remains in January 1 date

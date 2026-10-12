@@ -92,7 +92,72 @@ export const AuditAttachmentChangeKind = {
   tag_definition: 'tag_definition',
   tag_assignment: 'tag_assignment',
   provenance: 'provenance',
+  photo_authored: 'photo_authored',
 } as const;
+
+export type PhotoAuthoredFlag = typeof PhotoAuthoredFlag[keyof typeof PhotoAuthoredFlag];
+
+
+export const PhotoAuthoredFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
+export type PhotoAuthoredLabel = typeof PhotoAuthoredLabel[keyof typeof PhotoAuthoredLabel];
+
+
+export const PhotoAuthoredLabel = {
+  '': '',
+  red: 'red',
+  yellow: 'yellow',
+  green: 'green',
+  blue: 'blue',
+  purple: 'purple',
+} as const;
+
+export type PhotoAuthoredRotation = typeof PhotoAuthoredRotation[keyof typeof PhotoAuthoredRotation];
+
+
+export const PhotoAuthoredRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
+export interface PhotoAuthored {
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @maxLength 16384
+     */
+  caption: string;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @maxLength 16384
+     */
+  copyright: string;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @maxLength 16384
+     */
+  creator: string;
+  flag: PhotoAuthoredFlag;
+  label: PhotoAuthoredLabel;
+  /**
+     * @minimum 0
+     * @maximum 5
+     */
+  rating: number;
+  rotation: PhotoAuthoredRotation;
+}
+
+export interface PhotoAuthoredSnapshot {
+  file_id: string;
+  node_id: number;
+  revision: number;
+  values: PhotoAuthored;
+}
 
 export interface AuditAttachmentState {
   ingest_id?: string;
@@ -100,6 +165,7 @@ export interface AuditAttachmentState {
   node_id?: number;
   original_mtime?: string;
   original_path?: string;
+  photo?: PhotoAuthoredSnapshot;
   /** @pattern ^[0-9a-f]{64}$ */
   provenance_id?: string;
   /** @pattern ^[0-9a-f]{64}$ */
@@ -109,6 +175,7 @@ export interface AuditAttachmentState {
 }
 
 export interface AuditAttachmentIdentity {
+  file_id?: string;
   /** @minimum 1 */
   node_id?: number;
   /** @pattern ^[0-9a-f]{64}$ */
@@ -2939,6 +3006,7 @@ export interface Filters {
   exclude_paths?: string[];
   exclude_tag_ids?: string[];
   extensions?: string[];
+  flags?: string[];
   /** @nullable */
   focus_max?: string | null;
   /** @nullable */
@@ -2954,6 +3022,7 @@ export interface Filters {
   /** @nullable */
   iso_min?: number | null;
   kinds?: string[];
+  labels?: string[];
   lenses?: string[];
   media_families?: string[];
   mime_types?: string[];
@@ -2961,6 +3030,10 @@ export interface Filters {
   modified_before?: string;
   no_tags?: boolean;
   paths?: string[];
+  /** @nullable */
+  rating_max?: number | null;
+  /** @nullable */
+  rating_min?: number | null;
   set_ids?: string[];
   /** @nullable */
   size_max?: number | null;
@@ -4473,12 +4546,33 @@ export interface WorkspaceQueryCoverage {
   profile_fingerprint?: string;
 }
 
+export type SavedQueryFiltersSchemaFlagsItem = typeof SavedQueryFiltersSchemaFlagsItem[keyof typeof SavedQueryFiltersSchemaFlagsItem];
+
+
+export const SavedQueryFiltersSchemaFlagsItem = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
 export type SavedQueryFiltersSchemaKindsItem = typeof SavedQueryFiltersSchemaKindsItem[keyof typeof SavedQueryFiltersSchemaKindsItem];
 
 
 export const SavedQueryFiltersSchemaKindsItem = {
   photo: 'photo',
   video: 'video',
+} as const;
+
+export type SavedQueryFiltersSchemaLabelsItem = typeof SavedQueryFiltersSchemaLabelsItem[keyof typeof SavedQueryFiltersSchemaLabelsItem];
+
+
+export const SavedQueryFiltersSchemaLabelsItem = {
+  '': '',
+  red: 'red',
+  yellow: 'yellow',
+  green: 'green',
+  blue: 'blue',
+  purple: 'purple',
 } as const;
 
 export type SavedQueryFiltersSchemaMediaFamiliesItem = typeof SavedQueryFiltersSchemaMediaFamiliesItem[keyof typeof SavedQueryFiltersSchemaMediaFamiliesItem];
@@ -4610,6 +4704,8 @@ export interface SavedQueryFiltersSchema {
      * @items.pattern ^[a-z0-9](?:[a-z0-9_-]{0,31})$
      */
   extensions?: string[];
+  /** @maxItems 64 */
+  flags?: SavedQueryFiltersSchemaFlagsItem[];
   /**
      * @maxLength 64
      * @nullable
@@ -4649,6 +4745,8 @@ export interface SavedQueryFiltersSchema {
   /** @maxItems 64 */
   kinds?: SavedQueryFiltersSchemaKindsItem[];
   /** @maxItems 64 */
+  labels?: SavedQueryFiltersSchemaLabelsItem[];
+  /** @maxItems 64 */
   lenses?: string[];
   /** @maxItems 13 */
   media_families?: SavedQueryFiltersSchemaMediaFamiliesItem[];
@@ -4662,6 +4760,18 @@ export interface SavedQueryFiltersSchema {
   no_tags?: boolean | null;
   /** @maxItems 64 */
   paths?: string[];
+  /**
+     * @minimum 0
+     * @maximum 5
+     * @nullable
+     */
+  rating_max?: number | null;
+  /**
+     * @minimum 0
+     * @maximum 5
+     * @nullable
+     */
+  rating_min?: number | null;
   /** @maxItems 64 */
   set_ids?: string[];
   /**
@@ -4792,6 +4902,8 @@ export interface PhotoAlbumSummary {
   updated_at: string;
 }
 
+export type PhotoAssetAgreement = {[key: string]: boolean};
+
 export type PhotoAssetDisplaySource = typeof PhotoAssetDisplaySource[keyof typeof PhotoAssetDisplaySource];
 
 
@@ -4810,6 +4922,27 @@ export const PhotoAssetKind = {
   video: 'video',
 } as const;
 
+export type PhotoFileFlag = typeof PhotoFileFlag[keyof typeof PhotoFileFlag];
+
+
+export const PhotoFileFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
+export type PhotoFileLabel = typeof PhotoFileLabel[keyof typeof PhotoFileLabel];
+
+
+export const PhotoFileLabel = {
+  '': '',
+  red: 'red',
+  yellow: 'yellow',
+  green: 'green',
+  blue: 'blue',
+  purple: 'purple',
+} as const;
+
 export type PhotoFileRole = typeof PhotoFileRole[keyof typeof PhotoFileRole];
 
 
@@ -4820,13 +4953,48 @@ export const PhotoFileRole = {
   sidecar: 'sidecar',
 } as const;
 
+export type PhotoFileRotation = typeof PhotoFileRotation[keyof typeof PhotoFileRotation];
+
+
+export const PhotoFileRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
 export interface PhotoFile {
   asset_id: string;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @maxLength 16384
+     */
+  caption: string;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @maxLength 16384
+     */
+  copyright: string;
   created_at: string;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @maxLength 16384
+     */
+  creator: string;
+  flag: PhotoFileFlag;
   id: string;
+  label: PhotoFileLabel;
   /** @minimum 1 */
   node_id: number;
+  /**
+     * @minimum 0
+     * @maximum 5
+     */
+  rating: number;
+  /** @minimum 1 */
+  revision: number;
   role: PhotoFileRole;
+  rotation: PhotoFileRotation;
   /** @nullable */
   sidecar_of_file_id?: string | null;
 }
@@ -4834,6 +5002,7 @@ export interface PhotoFile {
 export interface PhotoAsset {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  agreement: PhotoAssetAgreement;
   created_at: string;
   /** @nullable */
   display_file_id?: string | null;
@@ -5550,6 +5719,7 @@ export interface ProcessingPlan {
   flow: ProcessingFlowHop[];
   /** @pattern ^[0-9a-f]{64}$ */
   profile_fingerprint: string;
+  rendition_ineligible_reason?: string;
   retained_classes: string[];
   selector: ProcessingSelector;
   vault_uid: string;
@@ -7021,6 +7191,17 @@ export interface WatchedInboxList {
   items: WatchedInbox[];
 }
 
+export interface WebSignInRecord {
+  created_at: string;
+  expires_at: string;
+  id: string;
+}
+
+export interface WebTabSession {
+  token: string;
+  upload_secret: string;
+}
+
 export type WorkspaceQueryCreateRequestFacetsItem = typeof WorkspaceQueryCreateRequestFacetsItem[keyof typeof WorkspaceQueryCreateRequestFacetsItem];
 
 
@@ -7101,6 +7282,24 @@ export const ReportTelemetryEvent202Status = {
 export type ReportTelemetryEvent202 = {
   /** queued when the event is queued or its screen was already sent today; disabled when telemetry is off and nothing is sent. */
   status: ReportTelemetryEvent202Status;
+};
+
+export type GetWebSignIn200 = {
+  enabled: boolean;
+  session?: WebTabSession;
+};
+
+export type LoginWebSignInBody = {
+  api_key: string;
+};
+
+export type LoginWebSignIn200 = {
+  enabled: boolean;
+  session?: WebTabSession;
+};
+
+export type ListWebSignIns200 = {
+  items: WebSignInRecord[];
 };
 
 export type CancelWebDownloadParams = {
@@ -8157,6 +8356,116 @@ return sessionJSON<ReportTelemetryEvent202>(getReportTelemetryEventUrl(),
 
 
 
+export const getGetWebSignInUrl = () => {
+
+
+
+
+  return `/api/daemon/web-auth`
+}
+
+/**
+ * @summary Check whether browser key login is enabled
+ */
+export const getWebSignIn = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<GetWebSignIn200> => {
+
+  return sessionJSON<GetWebSignIn200>(getGetWebSignInUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getLoginWebSignInUrl = () => {
+
+
+
+
+  return `/api/daemon/web-auth/login`
+}
+
+/**
+ * @summary Sign in using the configured API key
+ */
+export const loginWebSignIn = async (loginWebSignInBody: LoginWebSignInBody, options?: Parameters<typeof sessionJSON>[1]): Promise<LoginWebSignIn200> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return sessionJSON<LoginWebSignIn200>(getLoginWebSignInUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(loginWebSignInBody)
+  }
+);}
+
+
+
+export const getListWebSignInsUrl = () => {
+
+
+
+
+  return `/api/daemon/web-auth/sessions`
+}
+
+/**
+ * @summary List browser key logins (master API only)
+ */
+export const listWebSignIns = async ( options?: Parameters<typeof sessionJSON>[1]): Promise<ListWebSignIns200> => {
+
+  return sessionJSON<ListWebSignIns200>(getListWebSignInsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export const getRevokeWebSignInUrl = (id: string,) => {
+
+
+
+
+  return `/api/daemon/web-auth/sessions/${encodeURIComponent(String(id))}`
+}
+
+/**
+ * @summary Revoke a browser key login (master API only)
+ */
+export const revokeWebSignIn = async (id: string, options?: Parameters<typeof sessionJSON>[1]): Promise<void> => {
+
+  return sessionJSON<void>(getRevokeWebSignInUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
 export const getCancelWebDownloadUrl = (params: CancelWebDownloadParams,) => {
   const normalizedParams = new URLSearchParams();
 
@@ -8283,7 +8592,7 @@ export const getEnableAuditUrl = () => {
 }
 
 /**
- * Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, and provenance across the vault, including outside the selected scope; preview again after any stale-token response.
+ * Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, provenance, photo decisions, captions, creators, and copyrights across the vault, including outside the selected scope; preview again after any stale-token response.
  * @summary Permanently enable the exact reviewed audit scope
  */
 export const enableAudit = async (enableAuditRequest: NonReadonly<EnableAuditRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<AuditStatus> => {
@@ -14281,7 +14590,7 @@ export const getCreatePhotoAlbumUrl = () => {
 /**
  * @summary Create an empty album
  */
-export const createPhotoAlbum = async (photoAlbumNameRequest: NonReadonly<PhotoAlbumNameRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+export const createPhotoAlbum = (photoAlbumNameRequest: NonReadonly<PhotoAlbumNameRequest>, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -14297,7 +14606,7 @@ export const createPhotoAlbum = async (photoAlbumNameRequest: NonReadonly<PhotoA
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getCreatePhotoAlbumUrl(),
+return sessionResponse<PhotoAlbum>(getCreatePhotoAlbumUrl(),
   {
     ...options,
     method: 'POST',
@@ -14319,8 +14628,8 @@ export const getDeletePhotoAlbumUrl = (setId: string,) => {
 /**
  * @summary Delete an album and keep its photos
  */
-export const deletePhotoAlbum = async (setId: string,
-    headers: DeletePhotoAlbumHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+export const deletePhotoAlbum = (setId: string,
+    headers: DeletePhotoAlbumHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -14336,7 +14645,7 @@ export const deletePhotoAlbum = async (setId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getDeletePhotoAlbumUrl(setId),
+return sessionResponse<PhotoAlbum>(getDeletePhotoAlbumUrl(setId),
   {
     ...options,
     method: 'DELETE',
@@ -14382,9 +14691,9 @@ export const getUpdatePhotoAlbumUrl = (setId: string,) => {
 /**
  * @summary Rename or star an album
  */
-export const updatePhotoAlbum = async (setId: string,
+export const updatePhotoAlbum = (setId: string,
     updatePhotoAlbumRequest: NonReadonly<UpdatePhotoAlbumRequest>,
-    headers: UpdatePhotoAlbumHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+    headers: UpdatePhotoAlbumHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -14400,7 +14709,7 @@ export const updatePhotoAlbum = async (setId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getUpdatePhotoAlbumUrl(setId),
+return sessionResponse<PhotoAlbum>(getUpdatePhotoAlbumUrl(setId),
   {
     ...options,
     method: 'PUT',
@@ -14422,9 +14731,9 @@ export const getSetPhotoAlbumCoverUrl = (setId: string,) => {
 /**
  * @summary Choose or reset an album cover
  */
-export const setPhotoAlbumCover = async (setId: string,
+export const setPhotoAlbumCover = (setId: string,
     photoAlbumCoverRequest: NonReadonly<PhotoAlbumCoverRequest>,
-    headers: SetPhotoAlbumCoverHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+    headers: SetPhotoAlbumCoverHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -14440,7 +14749,7 @@ export const setPhotoAlbumCover = async (setId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getSetPhotoAlbumCoverUrl(setId),
+return sessionResponse<PhotoAlbum>(getSetPhotoAlbumCoverUrl(setId),
   {
     ...options,
     method: 'PUT',
@@ -14462,9 +14771,9 @@ export const getDuplicatePhotoAlbumUrl = (setId: string,) => {
 /**
  * @summary Duplicate an album and its member order
  */
-export const duplicatePhotoAlbum = async (setId: string,
+export const duplicatePhotoAlbum = (setId: string,
     photoAlbumNameRequest: NonReadonly<PhotoAlbumNameRequest>,
-    headers: DuplicatePhotoAlbumHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+    headers: DuplicatePhotoAlbumHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -14480,7 +14789,7 @@ export const duplicatePhotoAlbum = async (setId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getDuplicatePhotoAlbumUrl(setId),
+return sessionResponse<PhotoAlbum>(getDuplicatePhotoAlbumUrl(setId),
   {
     ...options,
     method: 'POST',
@@ -14502,9 +14811,9 @@ export const getAddPhotoAlbumMembersUrl = (setId: string,) => {
 /**
  * @summary Add explicit photos or complete search results
  */
-export const addPhotoAlbumMembers = async (setId: string,
+export const addPhotoAlbumMembers = (setId: string,
     photoAlbumMembersRequest: NonReadonly<PhotoAlbumMembersRequest>,
-    headers: AddPhotoAlbumMembersHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+    headers: AddPhotoAlbumMembersHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -14520,7 +14829,7 @@ export const addPhotoAlbumMembers = async (setId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getAddPhotoAlbumMembersUrl(setId),
+return sessionResponse<PhotoAlbum>(getAddPhotoAlbumMembersUrl(setId),
   {
     ...options,
     method: 'POST',
@@ -14542,9 +14851,9 @@ export const getRemovePhotoAlbumMembersUrl = (setId: string,) => {
 /**
  * @summary Remove explicit photos or complete search results
  */
-export const removePhotoAlbumMembers = async (setId: string,
+export const removePhotoAlbumMembers = (setId: string,
     photoAlbumMembersRequest: NonReadonly<PhotoAlbumMembersRequest>,
-    headers: RemovePhotoAlbumMembersHeaders, options?: Parameters<typeof sessionJSON>[1]): Promise<PhotoAlbum> => {
+    headers: RemovePhotoAlbumMembersHeaders, options?: Parameters<typeof sessionResponse>[1]) => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -14560,7 +14869,7 @@ export const removePhotoAlbumMembers = async (setId: string,
     }
     return headers;
   };
-return sessionJSON<PhotoAlbum>(getRemovePhotoAlbumMembersUrl(setId),
+return sessionResponse<PhotoAlbum>(getRemovePhotoAlbumMembersUrl(setId),
   {
     ...options,
     method: 'POST',

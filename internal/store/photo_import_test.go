@@ -135,6 +135,101 @@ func TestPhotoImportAtomicGroup(t *testing.T) {
 	assert.Equal(t, result.Asset.ID, rerun.Asset.ID)
 }
 
+func TestPhotoImportQualifiedSidecarTargets(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"ambiguous", "qualified RAW first", "qualified JPEG first", "missing extension claim"} {
+		t.Run(mode, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			root := t.TempDir()
+			run, err := s.BeginIngest(ctx, "photo-import", root)
+			require.NoError(t, err)
+			members := []PhotoImportMember{
+				photoImportTestMember(filepath.Join(root, "capture.ARW"), PhotoRoleRAW, fakeHash("a1"), "image/x-sony-arw"),
+				photoImportTestMember(filepath.Join(root, "capture.JPG"), PhotoRoleImage, fakeHash("b2"), "image/jpeg"),
+				photoImportTestMember(filepath.Join(root, "capture.ARW.xmp"), PhotoRoleSidecar, fakeHash("c3"), "application/rdf+xml"),
+				photoImportTestMember(filepath.Join(root, "capture.JPG.xmp"), PhotoRoleSidecar, fakeHash("d4"), "application/rdf+xml"),
+			}
+			if mode == "ambiguous" {
+				members[2] = photoImportTestMember(filepath.Join(root, "capture.jpg"), PhotoRoleImage, fakeHash("e5"), "image/jpeg")
+			}
+			if mode == "missing extension claim" {
+				members[3] = photoImportTestMember(filepath.Join(root, "capture.xmp"), PhotoRoleSidecar, fakeHash("d4"), "application/rdf+xml")
+			}
+			if mode == "qualified JPEG first" {
+				members[0], members[3] = members[3], members[0]
+			}
+			result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(members...))
+			require.NoError(t, err)
+			if mode == "ambiguous" {
+				require.Len(t, result.Asset.Files, 3)
+				_, err = s.PhotoAssetForNode(ctx, result.Nodes[3].ID)
+				require.ErrorIs(t, err, ErrNotFound)
+				return
+			}
+			jpg := fileByRole(result.Asset.Files, PhotoRoleImage)
+			receipts := map[string]PhotoAuthoredReceipt{}
+			var rawSidecar, jpgSidecar PhotoFile
+			for _, f := range result.Asset.Files {
+				if f.Role != PhotoRoleSidecar {
+					continue
+				}
+				node, err := s.NodeByID(ctx, f.NodeID)
+				require.NoError(t, err)
+				rating, caption, extension := int64(5), "", ""
+				if node.Name == "capture.ARW.xmp" {
+					rawSidecar = f
+				} else {
+					jpgSidecar = f
+					rating, caption = 3, "JPEG caption"
+					if mode == "missing extension claim" {
+						extension = "NEF"
+					} else {
+						require.Equal(t, &jpg.ID, f.SidecarOfID)
+					}
+				}
+				canonical := photoCanonical(t,
+					photoMetadataField("image.xmp.packet_valid", "image.xmp", "packet", photoBoolean()),
+					photoMetadataField("image.xmp.rating", "image.xmp", "Rating", photoInteger(rating)),
+					photoMetadataField("image.xmp.caption", "image.xmp", "description", photoString(caption)),
+					photoMetadataField("image.xmp.sidecar_for_extension", "image.xmp", "SidecarForExtension", photoString(extension)),
+				)
+				_, err = s.PublishSourceMetadata(ctx, node.BlobHash, fakeHash("ee"), canonical)
+				require.NoError(t, err)
+			}
+			for {
+				targets, err := s.MissingPhotoSidecarsAfter(ctx, fakeHash("ee"), "", 1)
+				require.NoError(t, err)
+				if len(targets) == 0 {
+					break
+				}
+				receipt, err := s.InitializePhotoSidecar(ctx, targets[0])
+				require.NoError(t, err)
+				if len(receipt.After) > 0 {
+					receipts[receipt.After[0].FileID] = receipt
+				}
+			}
+			asset, err := s.PhotoAssetByID(ctx, result.Asset.ID)
+			require.NoError(t, err)
+			raw, jpg := fileByRole(asset.Files, PhotoRoleRAW), fileByRole(asset.Files, PhotoRoleImage)
+			assert.Equal(t, 5, raw.Rating)
+			assert.Equal(t, int64(2), raw.Revision)
+			require.NotNil(t, receipts[raw.ID].Sidecar)
+			assert.Equal(t, rawSidecar.ID, receipts[raw.ID].Sidecar.FileID)
+			if mode == "missing extension claim" {
+				assert.Zero(t, jpg.Rating)
+				assert.Equal(t, int64(1), jpg.Revision)
+			} else {
+				assert.Equal(t, 3, jpg.Rating)
+				assert.Equal(t, "JPEG caption", jpg.Caption)
+				assert.Equal(t, int64(2), jpg.Revision)
+				require.NotNil(t, receipts[jpg.ID].Sidecar)
+				assert.Equal(t, jpgSidecar.ID, receipts[jpg.ID].Sidecar.FileID)
+			}
+		})
+	}
+}
+
 func TestPhotoImportSeparatePhotosAreReported(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
