@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-10
+last_edited: 2026-10-12
 title: Document processing
 description: How Docbank derives readable text and search data while keeping original versions and requiring consent for processing.
 ---
@@ -197,6 +197,12 @@ remains available. Those documents are not also counted as `complete`. Embedding
 coverage uses the same current attachment and evidence checks as search. A
 missing required result keeps aggregate coverage `partial` even if other work
 is rebuilding. See the [HTTP coverage contract](http-api.md#coverage-and-source-fenced-search).
+
+Within that snapshot, rendition coverage fully validates each distinct build
+and attachment-profile pair once. Documents sharing a build retain their own
+visibility and rebuilding counts without reloading the same extracted text.
+Validation results are discarded when the request ends; later reads evaluate
+the current catalog again.
 
 The owning implementations are the
 [rendition worker](https://github.com/kenn-io/docbank/blob/main/internal/processing/rendition_worker.go),
