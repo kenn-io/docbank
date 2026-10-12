@@ -141,6 +141,13 @@ func TestResolveProcessingSourceFenceUsesOneReadSnapshot(t *testing.T) {
 	created, err := s.CreateFile(t.Context(), s.RootID(), "snapshot.txt", fakeHash("old"), 3, "text/plain")
 	require.NoError(t, err)
 
+	tag, err := s.CreateTag(t.Context(), "snapshot-tag")
+	require.NoError(t, err)
+	change, err := s.AssignTag(t.Context(), tag.ID, created.ID, created.Revision)
+	require.NoError(t, err)
+	created = change.Node
+	filters := SearchOptions{TagID: tag.ID}
+
 	snapshot, err := s.BeginMetadataSnapshot(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = snapshot.Close() })
@@ -150,11 +157,17 @@ func TestResolveProcessingSourceFenceUsesOneReadSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, replacement.ID, replaced.CurrentVersionID)
 
-	resolved, err := s.resolveFilteredProcessingSourceFenceSnapshot(t.Context(), snapshot.tx, SearchOptions{})
+	_, err = s.DeleteTag(t.Context(), tag.ID, change.Tag.Revision)
+	require.NoError(t, err)
+
+	resolved, err := s.resolveFilteredProcessingSourceFenceSnapshot(t.Context(), snapshot.tx, filters)
 	require.NoError(t, err)
 	assert.Equal(t, []string{created.CurrentVersionID}, resolved.ContentVersionIDs,
 		"one resolution must not mix authority committed after its snapshot was pinned")
 	require.NoError(t, snapshot.Close())
+
+	_, err = s.ResolveProcessingSourceFence(t.Context(), ProcessingSourceFenceRequest{Filters: &filters})
+	require.ErrorIs(t, err, ErrNotFound, "a fresh resolution must observe the tag deletion")
 
 	resolved, err = s.ResolveProcessingSourceFence(t.Context(), ProcessingSourceFenceRequest{
 		Filters: &SearchOptions{},
@@ -217,11 +230,13 @@ func setProcessingFenceModifiedAt(s *Store, nodeID int64, value string) error {
 func TestProcessingSourceFencePreservesCanceledQuery(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
+	tag, err := s.CreateTag(t.Context(), "cancelled-scope")
+	require.NoError(t, err)
 	tx, err := s.db.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err = s.resolveFilteredProcessingSourceFenceSnapshot(ctx, tx, SearchOptions{})
+	_, err = s.resolveFilteredProcessingSourceFenceSnapshot(ctx, tx, SearchOptions{TagID: tag.ID})
 	require.ErrorIs(t, err, context.Canceled)
 }

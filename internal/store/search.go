@@ -97,7 +97,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 	if fq == "" {
 		return nil, false, nil
 	}
-	filterSQL, filterArgs := searchFilterSQL(opts)
+	nameFilterSQL, filterSQL, filterArgs := searchCandidateFiltersSQL(opts)
 	selectedCTE, selectedJoin, attachmentSelection, selectedArgs := "", "", "", []any(nil)
 	if len(opts.SelectedBuilds) != 0 {
 		encoded, err := json.Marshal(opts.SelectedBuilds)
@@ -124,7 +124,7 @@ func (s *Store) SearchExplainedLexicalCandidates(ctx context.Context, query stri
 		rows, err := s.db.QueryContext(ctx, `WITH name_matches AS (`+names.SQL+`)
 		SELECT `+nodeCols+` FROM `+nodeFrom+`
 		JOIN name_matches ON name_matches.doc_key=n.id
-		WHERE n.kind='file' AND cv.version_id IS NOT NULL AND n.trashed_at IS NULL `+filterSQL+`
+		WHERE n.kind='file' AND cv.version_id IS NOT NULL AND n.trashed_at IS NULL `+nameFilterSQL+`
 		ORDER BY name_matches.score DESC,n.name,n.id
 		LIMIT ?`, nameArgs...)
 		if err != nil {
@@ -2095,7 +2095,7 @@ func (s *Store) SearchPageWithOptions(
 	if fq == "" {
 		return s.searchFilterPage(ctx, limit, opts)
 	}
-	filterSQL, filterArgs := searchFilterSQL(opts)
+	nameFilterSQL, filterSQL, filterArgs := searchCandidateFiltersSQL(opts)
 	names, err := nameSearchCandidates(fq)
 	if err != nil {
 		return nil, false, err
@@ -2107,7 +2107,7 @@ func (s *Store) SearchPageWithOptions(
 		SELECT `+nodeCols+`
 		FROM `+nodeFrom+`
 		JOIN name_matches ON name_matches.doc_key=n.id
-		WHERE n.trashed_at IS NULL `+filterSQL+`
+		WHERE n.trashed_at IS NULL `+nameFilterSQL+`
 		ORDER BY name_matches.score DESC,n.name,n.id
 		LIMIT ?`, nameArgs...)
 	if err != nil {
@@ -2199,8 +2199,17 @@ func (s *Store) normalizeSearchOptionsWithQuerier(
 		opts.ContentVersionIDs = ids
 	}
 	if opts.TagID != "" {
-		if _, err := tagByIDQuery(ctx, queryer, opts.TagID); err != nil {
+		if err := validateUUIDv4(opts.TagID); err != nil {
+			return SearchOptions{}, fmt.Errorf("search tag %q: %w", opts.TagID, ErrNotFound)
+		}
+		// Scope validation needs the definition, not its assignment count.
+		var exists bool
+		if err := queryer.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM tags WHERE id=?)`, opts.TagID).Scan(&exists); err != nil {
 			return SearchOptions{}, fmt.Errorf("search tag %q: %w", opts.TagID, err)
+		}
+		if !exists {
+			return SearchOptions{}, fmt.Errorf("search tag %q: %w", opts.TagID, ErrNotFound)
 		}
 	}
 	normalizedMIME, err := NormalizeSearchMIMEType(opts.MIMEType)
@@ -2285,6 +2294,26 @@ func (s *Store) searchFilterPage(
 		hits = hits[:limit]
 	}
 	return hits, truncated, nil
+}
+
+// Text search already selects candidates. Probe their memberships instead of
+// collecting every node with the tag, which can dwarf a selective text match.
+func searchCandidateFiltersSQL(opts SearchOptions) (names, content string, args []any) {
+	tagID := opts.TagID
+	opts.TagID = ""
+	filter, args := searchFilterSQL(opts)
+	if tagID == "" {
+		return filter, filter, args
+	}
+	// Key the membership join by the name candidate so it can precede file metadata.
+	names = filter + ` AND EXISTS (
+		SELECT 1 FROM node_tags WHERE node_id=name_matches.doc_key AND tag_id=?
+	)`
+	// LIMIT keeps the content probe from becoming a join after file metadata.
+	content = filter + ` AND EXISTS (
+		SELECT 1 FROM node_tags WHERE node_id=n.id AND tag_id=? LIMIT 1
+	)`
+	return names, content, append(args, tagID)
 }
 
 func searchFilterSQL(opts SearchOptions) (string, []any) {

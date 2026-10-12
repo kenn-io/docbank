@@ -61,8 +61,8 @@ func BenchmarkTags(b *testing.B) {
 	}
 }
 
-// BenchmarkTaggedNodes measures tag lookups and bounded node pages as membership
-// grows. Catalog creation and assignments are excluded from timing.
+// BenchmarkTaggedNodes measures tag lookups, filtered searches, and bounded node
+// pages as the catalog grows. Creation and assignments are excluded from timing.
 func BenchmarkTaggedNodes(b *testing.B) {
 	for _, files := range []int{0, 100, 10000} {
 		b.Run(fmt.Sprintf("files=%d", files), func(b *testing.B) {
@@ -119,6 +119,51 @@ func BenchmarkTaggedNodes(b *testing.B) {
 					}
 				})
 			}
+			opts := SearchOptions{TagID: tag.ID}
+			b.Run("search_validate", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					got, err := s.NormalizeSearchOptions(b.Context(), opts)
+					if err != nil || got.TagID != tag.ID {
+						b.Fatalf("options=%+v err=%v", got, err)
+					}
+				}
+			})
+			sparseTag, err := s.CreateTag(b.Context(), "one-record")
+			require.NoError(b, err)
+			if files != 0 {
+				_, err = s.db.ExecContext(b.Context(),
+					`INSERT INTO node_tags(node_id,tag_id) VALUES(?,?)`, selected.ID, sparseTag.ID)
+				require.NoError(b, err)
+			}
+			for _, scope := range []struct {
+				name, tagID string
+				members     int
+			}{
+				{"all", tag.ID, files},
+				{"one", sparseTag.ID, min(files, 1)},
+			} {
+				for _, query := range []string{"file-000000", "file", ""} {
+					want := scope.members
+					if query == "file-000000" {
+						want = min(want, 1)
+					}
+					b.Run(fmt.Sprintf("search/members=%s/query=%s", scope.name, query), func(b *testing.B) {
+						b.ReportAllocs()
+						for b.Loop() {
+							hits, truncated, err := s.SearchPageWithOptions(b.Context(), query, 50,
+								SearchOptions{TagID: scope.tagID})
+							if err != nil || truncated != (want > 50) || len(hits) != min(want, 50) {
+								b.Fatalf("hits=%d truncated=%t err=%v", len(hits), truncated, err)
+							}
+							if want == 1 && (hits[0].Node.ID != selected.ID || hits[0].Path != "/file-000000.bin") {
+								b.Fatalf("unexpected hit: %+v", hits[0])
+							}
+						}
+					})
+				}
+			}
+
 			if files == 0 {
 				return
 			}
