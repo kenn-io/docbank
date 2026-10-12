@@ -163,11 +163,14 @@ identify their source with `match: "filter"`. `mime_type` and `under_node_id`
 narrow a page but cannot anchor a blank query alone. A blank unanchored query
 returns `422 search_query_required`.
 
-Tag selection uses the tag index. Time-window selection has a live-node index
-matching the result ordering. Combined filters can still require substantial
-work before reaching `limit`. The normal `limit` and `truncated` contract
-remains in force, without a cursor. If `truncated` is true, the page is
-incomplete. Narrowing time bounds cannot split a group with identical
+Search scope validation checks that the tag definition exists without counting
+its assignments. Tags with no assignments are valid scopes. Lexical searches
+check each candidate's tag membership through the node/tag index. Filename
+queries bind that check to the text index candidate ID; filter-only searches select tagged nodes through the tag index. Time-window selection has
+a live-node index matching the result ordering. Combined filters can still
+require substantial work before reaching `limit`. The normal `limit` and
+`truncated` contract remains in force, without a cursor. If `truncated` is true,
+the page is incomplete. Narrowing time bounds cannot split a group with identical
 modification timestamps, such as nodes restored together.
 
 ### Document processing

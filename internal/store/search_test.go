@@ -773,22 +773,32 @@ func TestSearchExplainedLexicalCandidatesRanksFilteredNamesBeforeLimit(t *testin
 	ctx := t.Context()
 	docs, err := s.Mkdir(ctx, s.RootID(), "docs")
 	require.NoError(t, err)
+	tag, err := s.CreateTag(ctx, "selected")
+	require.NoError(t, err)
 	for _, name := range []string{"tax c.pdf", "tax b.pdf", "tax tax tax.pdf"} {
-		_, err := s.CreateFile(ctx, docs.ID, name, fakeHash(name), 1, "application/pdf")
+		node, err := s.CreateFile(ctx, docs.ID, name, fakeHash(name), 1, "application/pdf")
+		require.NoError(t, err)
+		_, err = s.AssignTag(ctx, tag.ID, node.ID, node.Revision)
 		require.NoError(t, err)
 	}
-	// Higher-ranked matches outside the scope must not consume the page.
-	_, err = s.CreateFile(ctx, s.RootID(), "tax tax tax tax.pdf", fakeHash("outside"), 1, "application/pdf")
+	_, err = s.CreateFile(ctx, docs.ID, "tax tax tax tax tax tax.pdf", fakeHash("untagged"), 1, "application/pdf")
 	require.NoError(t, err)
-	_, err = s.CreateFile(ctx, docs.ID, "tax tax tax tax.txt", fakeHash("text"), 1, "text/plain")
+	// Higher-ranked matches outside the scope must not consume the page.
+	outside, err := s.CreateFile(ctx, s.RootID(), "tax tax tax tax.pdf", fakeHash("outside"), 1, "application/pdf")
+	require.NoError(t, err)
+	text, err := s.CreateFile(ctx, docs.ID, "tax tax tax tax.txt", fakeHash("text"), 1, "text/plain")
 	require.NoError(t, err)
 	trashed, err := s.CreateFile(ctx, docs.ID, "tax tax tax tax tax.pdf", fakeHash("trashed"), 1, "application/pdf")
 	require.NoError(t, err)
+	for _, node := range []Node{outside, text, trashed} {
+		_, err = s.AssignTag(ctx, tag.ID, node.ID, node.Revision)
+		require.NoError(t, err)
+	}
 	_, _, err = s.Trash(ctx, trashed.ID, UnconditionalRev)
 	require.NoError(t, err)
 
 	candidates, truncated, err := s.SearchExplainedLexicalCandidates(ctx, "tax", 2,
-		SearchOptions{UnderNodeID: docs.ID, MIMEType: "application/pdf"}, false)
+		SearchOptions{TagID: tag.ID, UnderNodeID: docs.ID, MIMEType: "application/pdf"}, false)
 	require.NoError(t, err)
 	require.Len(t, candidates, 2)
 	assert.True(t, truncated)
@@ -926,6 +936,11 @@ func TestSearchPageFiltersNameAndContentMatchesByTag(t *testing.T) {
 	tag, err := s.CreateTag(ctx, "taxes")
 	require.NoError(t, err)
 
+	hits, truncated, err := s.SearchPageWithOptions(ctx, "quarterly", 10, SearchOptions{TagID: tag.ID})
+	require.NoError(t, err)
+	assert.Empty(t, hits, "an existing tag with no assignments is a valid search scope")
+	assert.False(t, truncated)
+
 	nameMatch, err := s.CreateFile(
 		ctx, s.RootID(), "quarterly-return.pdf", fakeHash("a1"), 4, "application/pdf",
 	)
@@ -947,7 +962,7 @@ func TestSearchPageFiltersNameAndContentMatchesByTag(t *testing.T) {
 		Status: ExtractionOK, Text: "quarterly tax notes",
 	}))
 
-	hits, truncated, err := s.SearchPageWithOptions(
+	hits, truncated, err = s.SearchPageWithOptions(
 		ctx, "quarterly", 10, SearchOptions{TagID: tag.ID},
 	)
 	require.NoError(t, err)
@@ -960,6 +975,15 @@ func TestSearchPageFiltersNameAndContentMatchesByTag(t *testing.T) {
 	assert.NotEqual(t, untagged.ID, hits[0].Node.ID)
 	assert.NotEqual(t, untagged.ID, hits[1].Node.ID)
 
+	candidates, truncated, err := s.SearchExplainedLexicalCandidates(
+		ctx, "quarterly", 10, SearchOptions{TagID: tag.ID}, false,
+	)
+	require.NoError(t, err)
+	require.Len(t, candidates, 2)
+	assert.False(t, truncated)
+	assert.Equal(t, nameMatch.ID, candidates[0].Node.ID)
+	assert.Equal(t, contentMatch.ID, candidates[1].Node.ID)
+
 	hits, truncated, err = s.SearchPageWithOptions(
 		ctx, "quarterly", 1, SearchOptions{TagID: tag.ID},
 	)
@@ -967,10 +991,10 @@ func TestSearchPageFiltersNameAndContentMatchesByTag(t *testing.T) {
 	assert.Len(t, hits, 1)
 	assert.True(t, truncated)
 
-	_, _, err = s.SearchPageWithOptions(ctx, "quarterly", 10, SearchOptions{
-		TagID: "11111111-1111-4111-8111-111111111111",
-	})
-	require.ErrorIs(t, err, ErrNotFound)
+	for _, id := range []string{"11111111-1111-4111-8111-111111111111", "not-a-uuid"} {
+		_, _, err = s.SearchPageWithOptions(ctx, "quarterly", 10, SearchOptions{TagID: id})
+		require.ErrorIs(t, err, ErrNotFound)
+	}
 }
 
 func TestSearchPageFiltersCurrentMediaTypeWithParameters(t *testing.T) {
