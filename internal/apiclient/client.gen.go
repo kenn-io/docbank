@@ -26466,6 +26466,12 @@ type PhotoHiddenState = store.PhotoHiddenState
 
 type PhotoImportStartRequest = api.PhotoImportStartRequest
 
+type PhotoMapRow = api.PhotoMapRow
+
+type PhotoMapRowPreviewsStruct struct {
+	Grid PhotoPreviewSlot `json:"grid"`
+}
+
 type PhotoPreviewSlot = api.PhotoPreviewSlot
 
 type PhotoPreviewSlots = api.PhotoPreviewSlots

@@ -2,11 +2,11 @@
   import { Checkbox, Menu, MenuTrigger, MenuContent, MenuItem } from "@kenn-io/kit-ui";
   import RotateCcw from "@lucide/svelte/icons/rotate-ccw";
   import ImageIcon from "@lucide/svelte/icons/image";
-  import type { PhotoBrowseRow } from "./generated/docbank.js";
+  import type { PhotoGridRow } from "./photoGrid.js";
   import { previewObjectURL, type PhotoPreviewCache } from "./photoPreviewCache.js";
 
   let { photo, cache, selected, onclick, oncheck, onhidden, hidden = false, onopen, compact = false, ondragstart, ondragend }: {
-    photo: PhotoBrowseRow;
+    photo: PhotoGridRow;
     cache: PhotoPreviewCache;
     selected: boolean;
     onhidden?: () => void;

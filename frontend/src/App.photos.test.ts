@@ -1,13 +1,16 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
-import { photo, photoAlbum, albumResponse, storage } from "./photo-test-fixtures.js";
+import { photo, mapPhoto, photoAlbum, albumResponse, storage } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
 import { Photos } from "./photos.svelte.js";
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] })) : fetcher(url, init));
 
-afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); });
+const map = vi.hoisted(() => ({props:undefined as {items:ReturnType<typeof mapPhoto>[]} | undefined}));
+vi.mock("./PhotoMap.svelte",()=>({default:(_anchor:unknown,props:NonNullable<typeof map.props>)=>{map.props=props;return {};}}));
+
+afterEach(() => { cleanup(); map.props=undefined; document.querySelectorAll('meta[name="docbank-map-tiles"]').forEach(meta=>meta.remove()); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); });
 
 it.each(["server", "stale first page"])("refreshes an album opened again during a delayed membership write with a %s response", async outcome => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
@@ -192,7 +195,7 @@ it.each(["document trash", "delayed photo trash", "restore"])("refreshes albums 
     Object.assign(before, reads);
     finishTrash();
   }
-  await waitFor(() => { for (const key of ["albums", "album", "library"] as const) expect(reads[key]).toBeGreaterThan(before[key]); });
+  await waitFor(() => { for (const key of ["albums", "album", "library"] as (keyof typeof reads)[]) expect(reads[key]).toBeGreaterThan(before[key]); });
   if (operation === "document trash") await fireEvent.click(screen.getByRole("button", { name: "Photos" }));
   await screen.findByText(operation === "restore" ? "1 photos · 1 loaded" : "This album is empty");
 });
@@ -667,9 +670,43 @@ it.each([false, true])("keeps direct links and history scoped and conceals a mou
   expect(revoke.mock.calls.length).toBeGreaterThan(before);
 });
 
-it("opens and closes the loupe inside an album without leaving it", async () => {
+it.each(["failed", "revalidated"])("mounts a fresh scoped Map progressively after Library entry, %s", async outcome => {
+ history.replaceState(null,"","/photos#web_session=synthetic&web_upload_secret=proof");storage();
+ vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
+ const meta=document.createElement("meta");meta.name="docbank-map-tiles";meta.content=JSON.stringify({tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19});document.head.append(meta);
+ let finish!:(value:Response)=>void, changed=false, retry=false;const queries:unknown[]=[];
+ let library:Photos|undefined;const resume=Photos.prototype.resume;vi.spyOn(Photos.prototype,"resume").mockImplementation(function(this:Photos,...args){if(!this.projection)library=this;return resume.apply(this,args);});
+ let poll!:()=>void;const interval=globalThis.setInterval;
+ vi.spyOn(globalThis,"setInterval").mockImplementation((callback,delay,...args)=>{if(delay === 2000){poll=callback as ()=>void;return 0 as unknown as ReturnType<typeof setInterval>;}return interval(callback,delay,...args);});
+ vi.stubGlobal("fetch",vi.fn(async(url:string,init:RequestInit)=>{
+  if(url.endsWith("/photos/hidden")) return Response.json({configured:true,change_id:changed?"second":"first"});
+  if(url.endsWith("/photos/assets/query")) {
+   const request=JSON.parse(String(init.body));queries.push(request);
+   if(!request.projection) return Response.json({items:[photo(1)],total:1});
+   if(changed || request.cursor && !retry) return new Promise<Response>(resolve=>finish=resolve);
+   return Response.json({items:[],map_items:[mapPhoto(retry?2:1)],total:2,...(!retry?{next_cursor:"second"}:{})});
+  }
+  return Response.json({items:[],nodes:[],tags:[],profiles:[]});
+ }));render(App);await screen.findByRole("button",{name:"Open Photo 1.jpg"});
+ library!.baseQuery={...library!.baseQuery,filters:{gps_bounds:{south:"-1",west:"10",north:"1",east:"15"}}};await library!.selectDate("2024");
+ await fireEvent.click(screen.getByRole("button",{name:"Map"}));
+ await waitFor(()=>expect(finish).toBeTypeOf("function"));await waitFor(()=>expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-1"]));
+ expect(queries.at(-1)).toMatchObject({projection:"map",query:{filters:{capture_after:"2024-01-01",capture_before:"2025-01-01",gps_bounds:{south:"-1",west:"10",north:"1",east:"15"}}}});
+ if(outcome === "failed") {finish(Response.json({detail:"Page unavailable"},{status:503}));await screen.findByText("Page unavailable");expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-1"]);retry=true;await fireEvent.click(screen.getByRole("button",{name:"Retry"}));}
+ else finish(Response.json({items:[],map_items:[mapPhoto(2)],total:2}));
+ await waitFor(()=>expect(map.props?.items).toHaveLength(2));
+ if(outcome === "revalidated") {
+  const previous=finish;changed=true;poll();await waitFor(()=>expect(finish).not.toBe(previous));
+  expect(screen.queryByRole("heading",{name:"Photos in view"})).toBeNull();finish(Response.json({detail:"Map unavailable"},{status:503}));await screen.findByText("Map unavailable");expect(screen.queryByRole("heading",{name:"Photos in view"})).toBeNull();
+  const failed=finish;await fireEvent.click(screen.getByRole("button",{name:"Retry"}));await waitFor(()=>expect(finish).not.toBe(failed));finish(Response.json({items:[],map_items:[mapPhoto(2)],total:1}));
+  await waitFor(()=>expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-2"]));
+ }
+});
+
+it.each(["Library", "album"])("closes the %s viewer from its active sidebar entry without reloading", async kind => {
   const album = photoAlbum({ id: "22222222-2222-4222-8222-0000000000aa", included_count: 1, member_count: 1 });
-  history.replaceState(null, "", `/photos/albums/${album.id}#web_session=synthetic&web_upload_secret=proof`);
+  const path=kind === "album" ? `/photos/albums/${album.id}` : "/photos";
+  history.replaceState(null, "", `${path}#web_session=synthetic&web_upload_secret=proof`);
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
@@ -684,20 +721,22 @@ it("opens and closes the loupe inside an album without leaving it", async () => 
   render(App);
   await fireEvent.keyDown(await screen.findByRole("button", { name: "Select Photo 1.jpg" }), { key: "Enter" });
   await screen.findByRole("dialog", { name: /Photo viewer/ });
-  expect(location.pathname).toBe(`/photos/albums/${album.id}`);
+  expect(location.pathname).toBe(path);
   expect(new URLSearchParams(location.hash.slice(1)).get("photo")).toBe("photo-1");
-  expect(screen.getByRole("main", { name: "Photo album" })).toBeTruthy();
-  expect(queries[0]?.filters?.set_ids).toEqual([album.id]);
-  await fireEvent.click(screen.getByRole("button", { name: "Close photo viewer" }));
+  expect(screen.getByRole("main", { name: kind === "album" ? "Photo album" : "Photo library" })).toBeTruthy();
+  expect(queries[0]?.filters?.set_ids).toEqual(kind === "album" ? [album.id] : undefined);
+  const reads=queries.length;
+  await fireEvent.click(screen.getByRole("button", { name: kind === "album" ? /^Trip/ : "Library" }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull());
   await waitFor(() => expect(location.hash).not.toContain("photo="));
-  expect(location.pathname).toBe(`/photos/albums/${album.id}`);
+  expect(queries).toHaveLength(reads);
+  expect(location.pathname).toBe(path);
   await fireEvent.keyDown(await screen.findByRole("button", { name: "Select Photo 1.jpg" }), { key: "Enter" });
   await screen.findByRole("dialog", { name: /Photo viewer/ });
-  await fireEvent.click(screen.getByRole("button", { name: "Library" }));
+  await fireEvent.click(screen.getByRole("button", { name: kind === "Library" ? "Close photo viewer" : "Library" }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull());
   expect(location.pathname).toBe("/photos");
-  expect(location.hash).not.toContain("photo=");
+  await waitFor(() => expect(location.hash).not.toContain("photo="));
 });
 
 it.each([undefined, "first"])("conceals an open album when hidden photos change, then rereads its photos and album counts, initial change=%s", async initial => {

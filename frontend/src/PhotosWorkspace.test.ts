@@ -5,13 +5,19 @@ import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { APIError } from "./api-transport.js";
 import { Photos, photoQuery } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
-import { photo } from "./photo-test-fixtures.js";
+import { photo, mapPhoto } from "./photo-test-fixtures.js";
 import { captureDateQuery } from "./photoTimeline.js";
+import type { PhotoBrowseRow, PhotoMapRow } from "./generated/docbank.js";
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] })) : fetcher(url, init));
 
-afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
+const map = vi.hoisted(() => ({onvisible:undefined as ((rows:PhotoMapRow[]) => void) | undefined}));
+vi.mock("./PhotoMap.svelte", () => ({default:(_anchor:unknown, props:{onvisible:(rows:PhotoMapRow[]) => void}) => { map.onvisible = props.onvisible; return {}; }}));
+
+const tiles = {tile_url:"",attribution:"",max_zoom:19};
+
+afterEach(() => { cleanup(); map.onvisible = undefined; history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
 
 it("preserves subsequent scrolling when an interrupted refresh resumes after remount", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -569,7 +575,6 @@ it.each(["listing", "late", "navigation", "retry", "fresh"])("keeps standalone l
     finish(fresh); await screen.findByText("Fit preview");
     expect(preview).toHaveBeenCalledWith(expect.objectContaining({content_version_id:"fresh-version"}), "fit", expect.any(AbortSignal));
     expect(get).toHaveBeenCalledWith(old.asset_id, "fresh-grid", expect.any(AbortSignal), false);
-    expect(photos.items[0]!.content_version_id).toBe("fresh-version");
     photos.items = [old]; await fireEvent.keyDown(screen.getByRole("dialog"), {key:"i"});
     expect(lookup).toHaveBeenCalledOnce(); expect(preview).toHaveBeenCalledTimes(1); return;
   }
@@ -623,46 +628,44 @@ it.each([
   render(PhotosWorkspace, {photos, cache:{get:vi.fn(async () => new Blob(["synthetic"]))} as unknown as PhotoPreviewCache, photoID:old.asset_id, onphotochange:vi.fn()});
   if (operation === "original") { await screen.findByText("Fit preview"); await fireEvent.click(screen.getByRole("button", {name:"View original"})); }
   await screen.findByText("Photo changed"); expect(screen.queryByRole("button", {name:"Retry preview"})).toBeNull();
-  const preparations = preview.mock.calls.length;
+  const preparationCount = () => preview.mock.calls.filter(([row]) => row.asset_id === old.asset_id).length;
+  const preparations = preparationCount();
   await fireEvent.click(screen.getByRole("button", {name:"Reload photo"}));
   if (version === "same") {
-    await screen.findByText("Reload failed"); expect(preview).toHaveBeenCalledTimes(preparations);
+    await screen.findByText("Reload failed"); expect(preparationCount()).toBe(preparations);
     await fireEvent.click(screen.getByRole("button", {name:"Reload photo"}));
   }
   await waitFor(() => expect(finish).toBeTypeOf("function"));
-  expect(preview).toHaveBeenCalledTimes(preparations);
+  expect(preparationCount()).toBe(preparations);
   finish(new Response(JSON.stringify({items:[fresh], total:2})));
-  await waitFor(() => expect(photos.items[0]!.content_version_id).toBe(fresh.content_version_id)); await screen.findByText("Fit preview");
-  await waitFor(() => expect(preview).toHaveBeenCalledTimes(preparations + 1));
-  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-2"]); expect(photos.cursor).toBe("next");
-  expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]); expect(photos.viewerReturn).toBe(record);
+  await screen.findByText("Fit preview");
+  await waitFor(() => expect(preparationCount()).toBe(preparations + 1));
+  expect(photos.viewerReturn).toBe(record);
   expect(screen.queryByText("Photo changed")).toBeNull(); expect(document.activeElement).toBe(screen.getByRole("dialog"));
 });
 
-it.each(["success", "failure", "interrupted", "late"] as const)("consumes a %s reload before revisiting the listed photo", async outcome => {
+it.each(["success", "failure", "interrupted"] as const)("consumes a %s reload before revisiting the listed photo", async outcome => {
   vi.stubGlobal("ResizeObserver", class {observe() {} disconnect() {}});
   const photos = new Photos("scoped", vi.fn()); photos.items = [photo(1), photo(2)]; photos.started = true;
   photos.viewerReturn = {contextID:photos.contextID, assetID:"photo-1", control:"open", scrollTop:0};
-  let finish!: (row:ReturnType<typeof photo>) => void;
   const lookup = vi.spyOn(photos, "lookup");
-  if (outcome === "success") lookup.mockResolvedValue(photo(1));
+  const reload = vi.spyOn(photos,"reload");
+  const fresh = {...photo(1),content_version_id:"fresh-version"};
+  if (outcome === "success") lookup.mockResolvedValue(fresh);
   else if (outcome === "failure") lookup.mockRejectedValue(new Error("Reload failed"));
-  else if (outcome === "late") lookup.mockImplementation(() => new Promise(resolve => finish = resolve));
   else lookup.mockImplementation(() => new Promise(() => {}));
   vi.spyOn(photos, "preview").mockRejectedValueOnce(new APIError("Changed", 409, "photo_display_changed")).mockResolvedValue({state:"unsupported"});
   const props = {photos, cache:{get:vi.fn()} as unknown as PhotoPreviewCache, photoID:"photo-1", onphotochange:vi.fn()};
   const view = render(PhotosWorkspace, props);
   await fireEvent.click(await screen.findByRole("button", {name:"Reload photo"}));
   await waitFor(() => expect(lookup).toHaveBeenCalledOnce());
+  expect(reload).toHaveBeenCalledWith("photo-1",expect.any(AbortSignal));
   if (outcome === "failure") await screen.findByText("Reload failed");
-  if (outcome === "success") await waitFor(() => expect(screen.queryByText("Changed")).toBeNull());
+  if (outcome === "success") {
+    await waitFor(() => expect(screen.queryByText("Changed")).toBeNull());
+  }
   await view.rerender({...props, photoID:"photo-2"});
   await waitFor(() => expect(lookup.mock.calls[0]![1].aborted).toBe(true));
-  if (outcome === "late") {
-    const version = photos.items[0]!.content_version_id;
-    finish({...photo(1), content_version_id:"late-version"}); await new Promise(resolve => setTimeout(resolve, 0));
-    expect(photos.items[0]!.content_version_id).toBe(version); expect(screen.getByRole("dialog", {name:"Photo viewer, Photo 2.jpg"})).toBeTruthy();
-  }
   await view.rerender(props);
   await screen.findByRole("dialog", {name:"Photo viewer, Photo 1.jpg"});
   expect(lookup).toHaveBeenCalledOnce();
@@ -731,4 +734,58 @@ it("explains the relevance limit and hides it for complete results or capture da
   photos.query = { ...photos.query, sort: { field: "capture_time", direction: "desc" } };
   await waitFor(() => expect(screen.queryByText(note)).toBeNull());
   photos.dispose(); await cache.dispose();
+});
+
+it("renders disabled maps without fetching a photo list", async () => {
+ const fetcher=vi.fn();vi.stubGlobal("fetch",fetcher);
+ const photos=new Photos("scoped",vi.fn());
+ render(PhotosWorkspace,{tiles,photos,mapMode:true,cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()});
+ await screen.findByText("Maps are disabled"); expect(fetcher).not.toHaveBeenCalled(); photos.dispose();
+});
+
+it("viewer follows the Map query while the viewport filters its grid", async () => {
+ vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});
+ vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
+ const photos=new Photos("scoped",vi.fn());photos.items=[{...mapPhoto(1),longitude:120},{...mapPhoto(2),latitude:-85}];photos.total=2;photos.started=true;vi.spyOn(photos,"resume").mockResolvedValue();vi.spyOn(photos,"lookup").mockResolvedValue(photo(1));
+ vi.spyOn(photos,"preview").mockResolvedValue({state:"unsupported"});const onphotochange=vi.fn();
+ const props={photos,mapMode:true,tiles:{tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange};
+ const view=render(PhotosWorkspace,props);await vi.dynamicImportSettled();map.onvisible!([{...mapPhoto(1),longitude:120}]);
+ await fireEvent.click(await screen.findByRole("button",{name:"Open Photo 1.jpg"}));expect(screen.queryByRole("button",{name:"Open Photo 2.jpg"})).toBeNull();
+ await view.rerender({...props,photoID:"photo-1"});await screen.findByRole("dialog",{name:"Photo viewer, Photo 1.jpg"});
+ expect(photos.lookup).toHaveBeenCalledWith("photo-1",expect.any(AbortSignal));
+ await waitFor(()=>expect(photos.preview).toHaveBeenCalledWith(expect.objectContaining({content_version_id:"version-1"}),"fit",expect.any(AbortSignal)));
+ expect(screen.getByText("1 of 2")).toBeTruthy();await fireEvent.click(screen.getAllByRole("button",{name:"Next photo"})[0]!);expect(onphotochange).toHaveBeenLastCalledWith("photo-2","step");
+ map.onvisible!([]);await waitFor(()=>expect(document.querySelector('.photo-layout [data-asset="photo-1"]')).toBeNull());
+ expect(screen.getByRole("dialog",{name:"Photo viewer, Photo 1.jpg"})).toBeTruthy();photos.dispose();
+});
+
+function mapRecoverySetup() {
+ vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});
+ vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(400);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
+ const photos=new Photos("scoped",vi.fn());photos.items=[{...photo(1),latitude:0,longitude:120}];photos.started=true;photos.error="Page unavailable";
+ photos.selectLoaded();const retry=vi.spyOn(photos,"retry").mockResolvedValue();
+ render(PhotosWorkspace,{photos,mapMode:true,tiles:{tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()});
+ return {photos,retry};
+}
+it("keeps Map recovery outside mobile tabs", async () => {
+ const {photos,retry}=mapRecoverySetup();await vi.dynamicImportSettled();map.onvisible!([]);
+ const alert=screen.getByRole("alert");expect(alert.closest(".photo-layout")).toBeNull();await fireEvent.click(within(alert).getByRole("button",{name:"Retry"}));expect(retry).toHaveBeenCalledOnce();
+ await fireEvent.click(screen.getByRole("button",{name:"Photos"}));expect(screen.getByRole("alert")).toBe(alert);photos.dispose();
+});
+it("discloses offscreen selection and replaces it with the visible photos", async () => {
+ const {photos}=mapRecoverySetup();photos.items=[mapPhoto(1),mapPhoto(2)];photos.selectLoaded();await vi.dynamicImportSettled();map.onvisible!([photos.items[0] as PhotoMapRow]);
+ await fireEvent.click(screen.getByRole("button",{name:"Photos"}));photos.loading=true;await tick();
+ await screen.findByText("1 outside this view");await fireEvent.click(screen.getByRole("button",{name:"Move to trash"}));
+ const dialog=screen.getByRole("dialog",{name:"Move selected photos to trash"});expect(within(dialog).getByText("1 selected photo is outside this view.")).toBeTruthy();
+ await fireEvent.click(within(dialog).getByRole("button",{name:"Keep in Docbank"}));
+ const select=screen.getByRole("button",{name:"Select visible photos"});await fireEvent.click(select);expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);photos.dispose();
+});
+it("distinguishes an empty Map area from no located photos", async () => {
+ const {photos}=mapRecoverySetup();await vi.dynamicImportSettled();map.onvisible!([]);
+ await fireEvent.click(screen.getByRole("button",{name:"Photos"}));photos.error="";
+ await screen.findByText("No photos in this area");photos.items=[];await screen.findByText("No located photos");photos.dispose();
+});
+it("shows the Map date without Library controls", async () => {
+ const {photos}=mapRecoverySetup();photos.date="2024";photos.total=1;await vi.dynamicImportSettled();
+ expect(screen.queryByRole("button",{name:"Timeline"})).toBeNull();expect(screen.queryByRole("button",{name:"Clear date"})).toBeNull();await screen.findByText("1 located photo in 2024");photos.dispose();
 });

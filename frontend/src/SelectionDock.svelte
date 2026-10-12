@@ -4,6 +4,8 @@
 
   interface Props {
     selectedCount: number;
+    outsideCount?: number;
+    selectVisible?: boolean;
     visibleDocumentCount: number;
     truncated?: boolean;
     onclear: () => void;
@@ -27,6 +29,8 @@
 
   let {
     selectedCount,
+    outsideCount = 0,
+    selectVisible = false,
     visibleDocumentCount,
     truncated = false,
     onclear,
@@ -64,6 +68,7 @@
   {#snippet header()}
     <div class="selection-summary">
       <strong>{allResults ? `All ${wholeQueryCount.toLocaleString()} photos selected` : `${selectedCount} selected ${context === "photos" ? (selectedCount === 1 ? "photo" : "photos") : `on this ${context === "snapshot" ? "frozen page" : "page"}`}`}</strong>
+      {#if outsideCount}<span>{outsideCount} outside this view</span>{/if}
       {#if context === "snapshot"}
         <span>Visible selection only · whole query has {wholeQueryCount} documents</span>
       {:else if truncated && context !== "photos"}<span>More results exist beyond this page</span>{/if}
@@ -75,7 +80,7 @@
       size="sm"
       disabled={visibleSelected && selectedCount === visibleDocumentCount && !allResults}
       onclick={onselectvisible}
-    >{context === "photos" ? "Select loaded photos" : "Select visible documents"}</Button>
+    >{context === "photos" ? selectVisible ? "Select visible photos" : "Select loaded photos" : "Select visible documents"}</Button>
     <Button size="sm" onclick={onclear}>Clear selection</Button>
     {#if context === "photos" && onallresults && !allResults && visibleSelected && wholeQueryCount > 0}<Button size="sm" tone="info" onclick={onallresults}>Select all {wholeQueryCount.toLocaleString()} photos</Button>{/if}
     {#if photoActions}{@render photoActions()}{/if}

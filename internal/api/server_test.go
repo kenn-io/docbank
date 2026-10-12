@@ -327,6 +327,9 @@ func TestWebApplication(t *testing.T) {
 	photoResp, photoBody := get(t, ts, "/photos", map[string]string{"X-Api-Key": ""})
 	assert.Equal(t, http.StatusOK, photoResp.StatusCode)
 	assert.Equal(t, body, photoBody)
+	mapResp, mapBody := get(t, ts, "/photos/map", map[string]string{"X-Api-Key": ""})
+	assert.Equal(t, http.StatusOK, mapResp.StatusCode)
+	assert.Equal(t, body, mapBody)
 	for _, header := range []string{"Content-Type", "Cache-Control", "Content-Security-Policy", "Referrer-Policy", "X-Content-Type-Options"} {
 		assert.Equal(t, resp.Header.Get(header), photoResp.Header.Get(header))
 	}

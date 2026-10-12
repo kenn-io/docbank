@@ -259,7 +259,7 @@ func NewServer(d Deps) *Server {
 	if s.webSessions.login != nil {
 		webLoginOrigin = s.webSessions.login.origin
 	}
-	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL, webLoginOrigin)
+	registerWeb(mux, d.Cfg.Web.Enabled, d.WebURL, webLoginOrigin, d.Cfg.Web.MapTiles)
 	registerWebSession(mux, d.Cfg.Web.Enabled, d.WebURL, s.webSessions)
 	registerWebSignIn(mux, s.webSessions)
 	registerWebSignInOpenAPI(humaAPI)

@@ -118,7 +118,7 @@ Photos, selection, and scroll position stay in place across Documents/Photos swi
 Pending, unsupported, and failed previews have separate placeholders. Choose
 Refresh previews to reload the listing after background preview work finishes.
 If a page fails to load, the earlier photos remain visible. Retry requests the
-failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Refresh keeps selections and the range anchor only within the refreshed pages, plus failed trash targets. Whole-query selection keeps its query scope. Failed attempts keep the earlier view available for Retry. Each refresh page has a one-minute deadline.
+failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Whole-query selection keeps its query scope. Selection retains photos in that range; imports or deletions may move the visible photo outside it. Failed attempts keep the earlier view available for Retry. Each page has a one-minute limit and offers Retry if it needs more time.
 
 ## Hidden photos
 
@@ -555,7 +555,8 @@ preview for the supplied `content_version_id`. Include `hidden: true` and an act
 slot shape as browsing, reuses retained terminal outcomes, and refuses an
 excluded, trashed, or changed display. Each request has a 30-second bound.
 Camera, lens, exposure, dimensions, and orientation come from the current
-display's technical metadata. Browser photo rows omit GPS coordinates.
+display's technical metadata. When map tiles are configured, browser Map-projection
+rows include the selected display file's nullable GPS latitude and longitude.
 
 ## Count photos by capture day
 
@@ -595,3 +596,9 @@ Open **Trash** in either workspace to restore a photo group. Trash lists files, 
 Trash keeps file bytes, content versions, photo relationships, and album membership intact. Trash and restore each advance the affected asset revision once and record a change receipt. Permanent deletion waits until every member is trashed, old enough, and free of retention references. For a partially trashed photo, trash the remaining companions with the asset action or detach its live companions before emptying trash. See [Trash and garbage collection](trash-and-gc.md).
 
 Metadata JSONL v1 includes `trash` and `restore` receipts recording the operation and asset revision change; node trash state remains in the node records. Older Docbank clients refuse imports containing these operations; use a version that supports photo trash to restore that metadata.
+
+## Map
+
+Configure [photo map tiles](../configuration.md#photo-map-tiles) in `[web.map_tiles]` and restart Docbank, then choose Map beside Library to browse GPS-positioned photos from the current query. Markers group nearby photos into numbered clusters. Click a marker to open the photo viewer; Escape returns focus to the marker or its cluster and retains the map position. Switching workspaces resets the map position. A cluster zooms in or spreads overlapping markers so you can open each photo.
+
+Map inherits Library's filters, date and sort, then adds GPS eligibility. Each visit starts a fresh result and selection, fetching every matching located photo in pages of 250. Markers appear as pages arrive; the grid appears after loading completes. Earlier results stay visible during a refresh or if it fails. Retry resumes the failed page; an expired cursor starts a fresh load. The viewer and arrow keys follow the Map query, while the viewport filters only the grid. Panning retains selection, and the trash confirmation discloses selections outside the grid.

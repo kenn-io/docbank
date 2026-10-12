@@ -12,12 +12,13 @@ import (
 
 // PhotoBrowseRequest carries strict QueryV1 JSON and live-page options.
 type PhotoBrowseRequest struct {
-	Hidden   bool                   `json:"hidden,omitempty"`
-	Query    QueryPayload           `json:"query"`
-	Coverage WorkspaceQueryCoverage `json:"coverage,omitzero"`
-	PageSize int                    `json:"page_size,omitempty,omitzero" minimum:"1" maximum:"250" default:"50"`
-	Facets   []string               `json:"facets,omitempty" maxItems:"5" uniqueItems:"true" enum:"camera,lens,year,location,set"`
-	Cursor   string                 `json:"cursor,omitempty" maxLength:"32768"`
+	Projection string                 `json:"projection,omitempty" enum:"map"`
+	Hidden     bool                   `json:"hidden,omitempty"`
+	Query      QueryPayload           `json:"query"`
+	Coverage   WorkspaceQueryCoverage `json:"coverage,omitzero"`
+	PageSize   int                    `json:"page_size,omitempty,omitzero" minimum:"1" maximum:"250" default:"50"`
+	Facets     []string               `json:"facets,omitempty" maxItems:"5" uniqueItems:"true" enum:"camera,lens,year,location,set"`
+	Cursor     string                 `json:"cursor,omitempty" maxLength:"32768"`
 }
 
 type PhotoPreviewSlot struct {
@@ -72,7 +73,22 @@ type PhotoBrowseRow struct {
 	Previews             PhotoPreviewSlots `json:"previews"`
 }
 
+type PhotoMapRow struct {
+	AssetID     string   `json:"asset_id" format:"uuid"`
+	Revision    int64    `json:"revision" minimum:"1"`
+	Name        string   `json:"name"`
+	CaptureTime *string  `json:"capture_time" nullable:"true"`
+	WidthPX     *int64   `json:"width_px" nullable:"true"`
+	HeightPX    *int64   `json:"height_px" nullable:"true"`
+	Latitude    *float64 `json:"latitude" nullable:"true"`
+	Longitude   *float64 `json:"longitude" nullable:"true"`
+	Previews    struct {
+		Grid PhotoPreviewSlot `json:"grid"`
+	} `json:"previews"`
+}
+
 type PhotoBrowsePage struct {
+	MapItems   []PhotoMapRow    `json:"map_items,omitempty"`
 	Items      []PhotoBrowseRow `json:"items"`
 	Total      int64            `json:"total" minimum:"0"`
 	Facets     []WorkspaceFacet `json:"facets"`

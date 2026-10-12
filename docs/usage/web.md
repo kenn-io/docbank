@@ -45,9 +45,9 @@ require the CLI or another API client.
 ## Browse the vault
 
 **Documents** and **Photos** at the top of the sidebar switch workspaces.
-Photos shows **Library**, **Albums**, and your album list in the sidebar.
+Photos shows **Library**, **Map**, **Albums**, and your album list in the sidebar.
 Documents/Photos switches keep your place until the session locks. Leaving an album resets its view. Open Library at `/photos`, the
-album index at `/photos/albums`, or an album at `/photos/albums/{id}`. See [Browse photos](photos.md#browse-in-the-web-app).
+album index at `/photos/albums`, or an album at `/photos/albums/{id}`. Map requires [tile configuration](../configuration.md#photo-map-tiles) and a restart. See [Browse photos](photos.md#browse-in-the-web-app).
 
 Use the labeled sidebar for **All files**, **Saved queries**, **Collections**,
 and **Trash**. **Review and export** holds search reports, Bates exports, and
@@ -590,7 +590,7 @@ diagnostics must still be resolved. Without this option, the worker verifies
 every declared file before creating document entries. **Index package-supplied
 text** makes the sender's text files searchable.
 
-Browser row responses omit fields marked sensitive by the retained mapping.
+Browser source metadata omits fields marked sensitive by the retained mapping; compact Map-projection rows include latitude and longitude when map tiles are configured.
 Member lists and raw timeline inputs require the daemon API key.
 
 Closing the drawer stops its progress updates. **Lock web session** revokes

@@ -191,7 +191,7 @@ func authExempt(path string) bool {
 		return true
 	}
 	switch path {
-	case webAuthPath, webLoginPath, "/", "/photos", "/photos/hidden", "/health", kitPingPath, daemonauth.ChallengePath,
+	case webAuthPath, webLoginPath, "/", "/photos", "/photos/hidden", "/photos/map", "/health", kitPingPath, daemonauth.ChallengePath,
 		webDownloadFilePath, webUploadSocketPath:
 		return true
 	}

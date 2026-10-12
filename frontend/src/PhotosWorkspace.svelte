@@ -10,7 +10,7 @@
   import PhotoGrid from "./PhotoGrid.svelte";
   import PhotoLoupe from "./PhotoLoupe.svelte";
   import PhotoTimeline from "./PhotoTimeline.svelte";
-  import type { PhotoBrowseRow } from "./generated/docbank.js";
+  import type { PhotoBrowseRow, PhotoMapRow } from "./generated/docbank.js";
   import FacetSidebar from "./FacetSidebar.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
@@ -18,7 +18,9 @@
   import { type PhotoAlbums, type PhotoAlbumItem } from "./photoAlbums.svelte.js";
   import PhotoRejectsModal from "./PhotoRejectsModal.svelte";
 
-  let { photos, cache, title = "Library", albums, albumID = "", onnavigate = () => {}, ontrashed, onhidden, onactionerror, oninvalidate, photoID = "", onphotochange = () => {} }: { photos: Photos; cache: PhotoPreviewCache; title?: string; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void; onhidden?: () => void | Promise<void>; onactionerror?: (error: string) => void; oninvalidate?: () => void | Promise<void>; photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void } = $props();
+  import type PhotoMap from "./PhotoMap.svelte";
+  import type { MapTiles } from "./photoMap.js";
+  let { photos, cache, title = "Library", mapMode = false, tiles = { tile_url: "", attribution: "", max_zoom: 19 }, albums, albumID = "", onnavigate = () => {}, ontrashed, onhidden, onactionerror, oninvalidate, photoID = "", onphotochange = () => {} }: { photos: Photos; cache: PhotoPreviewCache; title?: string; mapMode?: boolean; tiles?: MapTiles; albums?: PhotoAlbums; albumID?: string; onnavigate?: (path: string) => void; ontrashed?: (source: Photos) => void; onhidden?: () => void | Promise<void>; onactionerror?: (error: string) => void; oninvalidate?: () => void | Promise<void>; photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void } = $props();
   const album = $derived(albums?.items.find(item => item.id === albumID));
   let alive = true;
   onDestroy(() => alive = false);
@@ -33,6 +35,11 @@
   let duplicateName = $state("");
   let renameInput = $state<HTMLInputElement>();
   const albumSortOptions = [{ value: "added_time", label: "Added" }, { value: "capture_time", label: "Captured" }, { value: "import_time", label: "Imported" }];
+  let map = $state<PhotoMap>();
+  let visible = $state.raw<PhotoMapRow[]>([]);
+  let mobileTab = $state("map");
+  const shown = $derived(mapMode ? visible : photos.items);
+  const shownIDs = $derived(new Set(shown.map(item => item.asset_id)));
   let trashOpen = $state(false);
   let direct = $state<PhotoBrowseRow>();
   let detailError = $state("");
@@ -55,10 +62,12 @@
     detailController = controller;
     const explicit = reload?.id === id && reload !== consumedReload;
     if (!explicit) { direct = undefined; detailError = ""; }
-    if (!explicit && fromGrid && listed) { detailLoading = false; return () => controller.abort(); }
+    if (!explicit && fromGrid && listedRow && "content_version_id" in listedRow) { detailLoading = false; return () => controller.abort(); }
     detailLoading = true;
     if (explicit) consumedReload = reload;
-    void photos.lookup(id, AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)])).then(photo => { if (!controller.signal.aborted) { const index = photos.items.findIndex(item => item.asset_id === id); if (index >= 0) photos.items[index] = photo; direct = photo; detailError = ""; if (explicit) reloadRevision++; } }).catch(cause => { if (!controller.signal.aborted) detailError = cause instanceof Error ? cause.message : String(cause); }).finally(() => { if (!controller.signal.aborted) detailLoading = false; });
+    const version = untrack(() => current?.content_version_id);
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
+    void (explicit ? photos.reload(id, signal) : photos.lookup(id, signal)).then(photo => { if (!signal.aborted) { direct = photo; detailError = ""; if (explicit && photo.content_version_id === version) reloadRevision++; } }).catch(cause => { if (!controller.signal.aborted) detailError = cause instanceof Error ? cause.message : String(cause); }).finally(() => { if (!controller.signal.aborted) detailLoading = false; });
     return () => controller.abort();
   });
   async function restoreGrid() {
@@ -67,14 +76,18 @@
     if (photoID || photos.viewerReturn !== record) return;
     if (record === localReturn) await restorePosition?.();
     await tick();
+    if (record.control === "marker") { map?.focus(record.assetID); photos.viewerReturn = undefined; clearOpening(); return; }
     const control = record.control === "check" ? "input[type=checkbox]" : record.control === "open" ? ".open-photo" : ".photo-image";
     const target = record === localReturn && openingElement?.isConnected ? openingElement : document.querySelector<HTMLElement>(`[data-asset="${record.assetID}"] ${control}`);
     target?.focus({ preventScroll: true });
     if (!photoID && photos.viewerReturn === record) photos.viewerReturn = undefined;
+    clearOpening();
   }
+  function clearOpening() { openingElement = undefined; openingID = ""; restorePosition = undefined; localReturn = undefined; }
   export function captureReturn(element: HTMLElement = document.activeElement as HTMLElement) {
-    openingElement = element; openingID = element.closest<HTMLElement>("[data-asset]")?.dataset.asset ?? ""; restorePosition = preserve();
-    photos.viewerReturn = {contextID:photos.contextID, assetID:openingID, control:element.matches(".open-photo") ? "open" : element.matches("input[type=checkbox]") ? "check" : "image", scrollTop:photos.scrollTop};
+    openingElement = element; openingID = element.dataset.mapAsset ?? element.closest<HTMLElement>("[data-asset]")?.dataset.asset ?? "";
+    restorePosition = preserve();
+    photos.viewerReturn = {contextID:photos.contextID, assetID:openingID, control:element.dataset.mapAsset ? "marker" : element.matches(".open-photo") ? "open" : element.matches("input[type=checkbox]") ? "check" : "image", scrollTop:photos.scrollTop};
     localReturn = photos.viewerReturn;
   }
   function open(id: string, element: HTMLElement) {
@@ -87,16 +100,16 @@
     const id = current.asset_id;
     const index = ordered.findIndex(item => item.asset_id === id);
     if (index < 0) return;
-    if (direction === 1 && index === ordered.length - 1 && photos.cursor) await photos.loadMore(preserve);
+    if (photos.cursor && direction === 1 && index === ordered.length - 1) {
+      await photos.loadMore(preserve);
+    }
     if (controller.signal.aborted || photoID !== id) return;
     const currentIndex = ordered.findIndex(item => item.asset_id === id);
     if (currentIndex < 0) return;
     const next = ordered[currentIndex + direction];
     if (next) onphotochange(next.asset_id, "step");
   }
-  async function retryNavigation() {
-    await photos.retry(preserve);
-  }
+  async function retryNavigation() { await photos.retry(preserve); }
   function select(id: string, event: MouseEvent) {
     const touch = "pointerType" in event && event.pointerType === "touch";
     if (touch && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
@@ -114,12 +127,14 @@
     onactionerror?.("");
     await photos.setHidden(id, preserve, onhidden, onactionerror, oninvalidate);
   }
-  const groups = $derived(groupPhotos(photos.items, photos.query.sort?.field === "relevance" ? "relevance" : albumID && photos.query.sort?.field !== "capture_time" ? "flat" : photos.grouping));
-  // Albums keep their own scope and sort, so search and filter counts live in Library and Hidden.
-  const searchable = $derived(!albumID);
+  const groups = $derived(groupPhotos(shown, photos.query.sort?.field === "relevance" ? "relevance" : albumID && photos.query.sort?.field !== "capture_time" ? "flat" : photos.grouping));
+  // Albums keep their own scope and sort, and Map inherits Library's query, so search and filter counts live in Library and Hidden.
+  const searchable = $derived(!albumID && !mapMode);
   const filtered = $derived(searchable && (Boolean(photos.baseQuery.text.trim()) || Object.values(photos.baseQuery.filters ?? {}).some(value => Array.isArray(value) ? value.length > 0 : value !== undefined && value !== false && value !== "")));
   const ordered = $derived(photos.items);
-  const current = $derived(photoID ? (fromGrid ? ordered.find(item => item.asset_id === photoID) ?? direct : direct) : undefined);
+  const outsideSelection = $derived(mapMode ? [...photos.selection.selectedIDs].filter(id => !shownIDs.has(id)).length : 0);
+  const listedRow = $derived(photos.items.find(item => item.asset_id === photoID));
+  const current = $derived(photoID ? fromGrid && listedRow && "content_version_id" in listedRow ? listedRow : direct : undefined);
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));
   const dateLabel = $derived(photos.date?.length === 7 ? monthLabel(photos.date) : photos.date);
   const densityOptions = [{ value: "compact", label: "Compact" }, { value: "comfortable", label: "Comfortable" }, { value: "large", label: "Large" }];
@@ -129,7 +144,9 @@
   const groupingOptions = [{ value: "months", label: "Months" }, { value: "sessions", label: "Capture sessions" }];
 
   onMount(() => {
-    void photos.resume(preserve);
+    if (!mapMode || tiles.tile_url) {
+      void photos.resume(preserve);
+    }
     return () => { photos.cancelPending(); openingElement = undefined; restorePosition = undefined; localReturn = undefined; };
   });
   function relayout(change: () => void) {
@@ -180,16 +197,30 @@
 
 <svelte:window onkeydown={escape} />
 <main class="photos-workspace" aria-label={albumID ? "Photo album" : "Photo library"}>
-  <div class="library-grid" inert={!!photoID}>
+  {#if mapMode && !tiles.tile_url}
+    <EmptyState title="Maps are disabled" description="Configure [web.map_tiles] in config.toml and restart Docbank." />
+  {:else}
+  {#if mapMode}
+    <div class="map-disclosure">{new URL(tiles.tile_url).host} receives your IP address and viewed map areas.</div>
+    {#if photos.started}<div class="map-controls"><span>{photos.total.toLocaleString()} located photo{photos.total === 1 ? "" : "s"}{photos.date ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}` : ""}</span></div>{/if}
+    <div class="map-tabs"><Button size="sm" surface={mobileTab === "map" ? "solid" : "outline"} onclick={() => mobileTab = "map"}>Map</Button><Button size="sm" surface={mobileTab === "photos" ? "solid" : "outline"} onclick={() => mobileTab = "photos"}>Photos</Button></div>
+  {/if}
+  {#if mapMode && photos.loading}<div class="photo-loading" role="status"><Spinner size={14} />Loading located photos: {photos.items.length.toLocaleString()} of {photos.total.toLocaleString()}</div>{/if}
+  {#if photos.error}
+    <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void retryNavigation()}>Retry</Button></div>
+  {/if}
+  <div class:map-layout={mapMode} class:show-photos={mobileTab === "photos"} class="photo-layout" inert={!!photoID}>
+  {#snippet libraryGrid()}
+  <div class="library-grid">
   <div class="photo-toolbar browser-toolbar">
     <div class="library-title">
       {#if albumID}<button type="button" class="album-back" onclick={() => onnavigate("/photos/albums")}>Albums</button>{/if}
       {#if renaming && renameAlbum}<form onsubmit={event => { event.preventDefault(); void rename(); }}>{@render sourceSummary(renameAlbum)}<TextInput ariaLabel="Album name" bind:value={name} bind:inputEl={renameInput} onkeydown={event => { if (event.key === "Escape") { event.preventDefault(); renaming = false; } }} /><Button type="submit" size="sm" disabled={albums?.busy || !name.trim()}>Save</Button><Button size="sm" onclick={() => renaming = false}>Cancel</Button>{#if renameError}<span role="alert">{renameError}</span>{/if}</form>
-      {:else}<h1>{albumID ? album?.name ?? "Album" : title}</h1>{/if}
-      <span>{!photos.started ? (photos.loading ? "Loading photos" : "Photos") : `${photos.total.toLocaleString()} photos`}{photos.date ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}` : ""}{photos.started ? ` · ${photos.items.length.toLocaleString()} loaded` : ""}</span>
+      {:else}<h1>{mapMode ? "Photos in view" : albumID ? album?.name ?? "Album" : title}</h1>{/if}
+      {#if !mapMode || photos.started && (!photos.loading || !!photos.error)}<span>{mapMode ? shown.length.toLocaleString() + " photos" : !photos.started ? (photos.loading ? "Loading photos" : "Photos") : `${photos.total.toLocaleString()} photos`}{!mapMode && photos.date ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}` : ""}{!mapMode && photos.started ? ` · ${photos.items.length.toLocaleString()} loaded` : ""}</span>{/if}
     </div>
     <div class="toolbar-actions">
-      {#if !photos.hidden}<nav class="photo-views" aria-label="Photo views"><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "grid"} onclick={() => photos.setView("grid")}>Grid</button><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "timeline"} onclick={() => photos.setView("timeline")}>Timeline</button></nav>{/if}
+      {#if !mapMode && !photos.hidden}<nav class="photo-views" aria-label="Photo views"><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "grid"} onclick={() => photos.setView("grid")}>Grid</button><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "timeline"} onclick={() => photos.setView("timeline")}>Timeline</button></nav>{/if}
       <div class="photo-options">
         {#if albumID}<SelectDropdown title="Sort photos" value={photos.query.sort?.field ?? "added_time"} options={albumSortOptions} onchange={value => void photos.setSort({ field: value as "added_time" | "capture_time" | "import_time", direction: "desc" })} />{/if}
         {#if !albumID || photos.query.sort?.field === "capture_time"}<SelectDropdown title="Group photos" disabled={photos.query.sort?.field !== "capture_time"} value={photos.grouping} options={groupingOptions} onchange={value => relayout(() => photos.grouping = value as "months" | "sessions")} />{/if}
@@ -198,7 +229,7 @@
       {#if album && albums}
         <IconButton ariaLabel={album.starred ? "Unstar album" : "Star album"} title={album.starred ? "Unstar album" : "Star album"} ariaPressed={album.starred} disabled={albums.busy || renaming} onclick={() => void albums!.update(album!, { starred: !album!.starred })}><StarIcon size="16" fill={album.starred ? "currentColor" : "none"} /></IconButton>
         <Menu align="end"><MenuTrigger ariaLabel="Album actions" disabled={albums.busy || renaming}>More</MenuTrigger><MenuContent ariaLabel="Album actions"><MenuItem onselect={beginRename}>Rename</MenuItem><MenuItem onselect={() => openModal("duplicate")}>Duplicate…</MenuItem><MenuItem tone="danger" onselect={() => openModal("delete")}>Delete album…</MenuItem></MenuContent></Menu>
-      {/if}<Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || albums?.busy} onclick={() => void refreshView()}>Refresh previews</Button>
+      {/if}{#if !mapMode}<Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || albums?.busy} onclick={() => void refreshView()}>Refresh previews</Button>{/if}
       <Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || photos.rejectsLoading} onclick={() => { rejectsOpen = true; void photos.previewRejects(); }}>Move rejects</Button>
     </div>
   </div>
@@ -213,10 +244,10 @@
     {/if}
   </form>
   {/if}
-  {#if photos.date}
+  {#if !mapMode && photos.date}
     <div class="photo-date-selection"><Button size="sm" onclick={() => void photos.selectDate()}>Clear date</Button></div>
   {/if}
-  {#if photos.view === "timeline"}
+  {#if !mapMode && photos.view === "timeline"}
     <PhotoTimeline facet={photos.timeline} loading={photos.timelineLoading} error={photos.timelineError} selected={photos.date} onselect={date => void photos.selectDate(date)} onretry={() => void photos.loadTimeline()} />
   {/if}
   {#if albums && modal !== "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
@@ -224,9 +255,6 @@
   {#if albums?.notice}<div class="photo-notice" role="status">{albums.notice}{#if albums.noticeID}<a href={`/photos/albums/${albums.noticeID}`} onclick={event => { event.preventDefault(); onnavigate(`/photos/albums/${albums!.noticeID}`); }}>Open album</a>{/if}</div>{/if}
   {#if photos.query.sort?.field === "relevance" && photos.total > photos.items.length}
     <p class="photo-search-limit">Showing the best 250 of {photos.total.toLocaleString()} matches. Refine the search or sort by capture date to see all.</p>
-  {/if}
-  {#if photos.error}
-    <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
   {/if}
   <div class="photo-browser">
   {#if searchable}
@@ -238,20 +266,20 @@
   {/if}
   <div class="photo-results">
   {#if albumID && albums && albums.initialized && !albums.loading && !albums.busy && modal !== "delete" && !albums.loadError && !album}<EmptyState title="Album not found"><Button onclick={() => onnavigate("/photos/albums")}>Back to albums</Button></EmptyState>
-  {:else if photos.items.length}
+  {:else if shown.length}
     {#key photos.baseQuery}
-    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading || !!photoID} {cache} hidden={photos.hidden} onhidden={id => void setHidden(id)} selectedIDs={photos.selection.selectedIDs} onselect={select} onopen={open} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} ondragstart={albums ? (id, event) => albums?.startDrag(id, event, photos) : undefined} ondragend={albums ? () => { if (albums) albums.drag = undefined; } : undefined} />
+    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading || !!photoID} {cache} hidden={photos.hidden} onhidden={id => void setHidden(id)} selectedIDs={photos.selection.selectedIDs} onselect={select} onopen={open} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => { if (!mapMode) void photos.loadMore(preserve); }} ondragstart={albums ? (id, event) => albums?.startDrag(id, event, photos) : undefined} ondragend={albums ? () => { if (albums) albums.drag = undefined; } : undefined} />
     {/key}
-  {:else if !photos.loading && !photos.error}
-    <EmptyState title={photos.date ? `No photos ${photos.date.length === 10 ? "on this day" : photos.date.length === 7 ? "in this month" : "in this year"}` : filtered ? "No matching photos" : photos.hidden ? "No hidden photos" : albumID ? "This album is empty" : "Your photo library is empty"} description={photos.date ? undefined : filtered ? "Clear a filter or try another search." : photos.hidden ? "Choose Hide from a photo's actions menu in Library." : albumID ? "Go to Library, select photos, then choose Add to album or press B." : "Import photos with docbank photos import to browse them here."}>
+  {:else if !(photos.loading || photos.error)}
+    <EmptyState title={mapMode ? photos.items.length ? "No photos in this area" : "No located photos" : photos.date ? `No photos ${photos.date.length === 10 ? "on this day" : photos.date.length === 7 ? "in this month" : "in this year"}` : filtered ? "No matching photos" : photos.hidden ? "No hidden photos" : albumID ? "This album is empty" : "Your photo library is empty"} description={mapMode || photos.date ? undefined : filtered ? "Clear a filter or try another search." : photos.hidden ? "Choose Hide from a photo's actions menu in Library." : albumID ? "Go to Library, select photos, then choose Add to album or press B." : "Import photos with docbank photos import to browse them here."}>
       {#snippet icon()}<ImageIcon size="24" />{/snippet}
       {#if albumID && !photos.date}<Button onclick={() => onnavigate("/photos")}>Go to Library</Button>{/if}
     </EmptyState>
   {/if}
-  <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
+  {#if !mapMode}<div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>{/if}
   </div></div>
   {#if !photoID}
-  <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} loadedSelected={photos.items.every(item => photos.selection.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.total} allResults={photos.allResults} onallresults={() => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.hiding || photos.loading || photos.allResults}>
+  <SelectionDock context="photos" selectVisible={mapMode} outsideCount={outsideSelection} selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={shown.length} loadedSelected={shown.every(item => photos.selection.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.total} allResults={photos.allResults} onallresults={mapMode ? undefined : () => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded(mapMode ? orderedIDs : undefined)} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.hiding || !mapMode && (photos.loading || photos.allResults)}>
     {#snippet photoActions()}
       {#if albums}<PhotoAlbumPicker bind:this={picker} {photos} {albums} />{/if}
       {#if album && albums}<Button size="sm" disabled={albums.busy || !photos.allResults && photos.selection.selectedIDs.size > 1000} onclick={() => void remove()}>Remove from album</Button><Button size="sm" disabled={albums.busy || photos.allResults || photos.selection.selectedIDs.size !== 1} onclick={() => void albums!.cover(album!, [...photos.selection.selectedIDs][0])}>Use as cover</Button>{/if}
@@ -259,7 +287,16 @@
   </SelectionDock>
   {/if}
   </div>
-  {#if photoID}<PhotoLoupe photo={current} error={detailError} note={membershipNote} reloading={detailLoading} {reloadRevision} onreload={() => reload = {id:photoID}} onretry={retryNavigation} {photos} {cache} items={fromGrid ? ordered : []} canLoadMore={fromGrid && !!photos.cursor} onmove={move} onchoose={id => onphotochange(id, "step")} onclose={() => onphotochange("", "close")} />{/if}
+  {/snippet}
+  {#if mapMode}
+    {#await import("./PhotoMap.svelte") then { default: PhotoMap }}
+      <div class="map-pane"><PhotoMap bind:this={map} items={photos.items.filter((row): row is PhotoMapRow => "latitude" in row)} complete={!photos.loading || !!photos.error} {tiles} onopen={open} onvisible={rows => { visible = rows; }} /></div>
+      {@render libraryGrid()}
+    {:catch}<EmptyState title="Map couldn't load" description="Reload this page to try again." />{/await}
+  {:else}{@render libraryGrid()}{/if}
+  </div>
+  {/if}
+  {#if photoID}<PhotoLoupe photo={current} error={detailError} note={membershipNote} reloading={detailLoading} {reloadRevision} onreload={() => reload = {id:photoID}} onretry={retryNavigation} {photos} {cache} items={fromGrid ? ordered : []} canLoadMore={fromGrid && (!photos.started || !!photos.cursor)} onmove={move} onchoose={id => onphotochange(id, "step")} onclose={() => onphotochange("", "close")} />{/if}
 </main>
 {#if modal && modalAlbum && albums}
   <Modal title={modal === "delete" ? "Delete album" : "Duplicate album"} onclose={() => { if (!albums.busy) modal = undefined; }}>
@@ -277,6 +314,7 @@
 {#if trashOpen}
   <Modal title="Move selected photos to trash?" tone="danger" ariaLabel="Move selected photos to trash" onclose={() => { if (!photos.trashing) trashOpen = false; }} closeOnOverlayClick={!photos.trashing}>
     <p>Move {photos.selection.selectedIDs.size} selected photo{photos.selection.selectedIDs.size === 1 ? "" : "s"} and every RAW, image, video, and sidecar member to recoverable trash. Stored files and album membership stay intact.</p>
+    {#if outsideSelection}<p>{outsideSelection} selected photo{outsideSelection === 1 ? " is" : "s are"} outside this view.</p>{/if}
     {#if photos.trashError}<p role="alert">{photos.trashError} Failed photos remain selected for retry.</p>{/if}
     {#snippet footer()}
       <Button disabled={photos.trashing} onclick={() => trashOpen = false}>Keep in Docbank</Button>
@@ -286,6 +324,19 @@
 {/if}
 
 <style>
+  .photo-layout { display: flex; flex: 1; min-height: 0; }
+  .map-layout .map-pane { flex: 0 0 60%; min-width: 0; }
+  .map-layout .library-grid { width: 40%; }
+  .map-disclosure, .map-controls { padding: 8px 16px; color: var(--text-muted); font-size: var(--font-size-xs); }
+  .map-controls { display: flex; align-items: center; gap: 12px; }
+  .map-tabs { display: none; }
+  @media (max-width: 900px) {
+    .map-tabs { display: flex; gap: 8px; padding: 8px; }
+    .map-layout .map-pane { flex-basis: 100%; }
+    .map-layout .library-grid { display: none; width: 100%; }
+    .map-layout.show-photos .map-pane { display: none; }
+    .map-layout.show-photos .library-grid { display: flex; }
+  }
   .library-grid { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .photos-workspace { position: relative; max-height: calc(100dvh - var(--header-height)); display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; background: var(--bg-surface); }
   .photo-search { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-default); }

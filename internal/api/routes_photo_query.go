@@ -58,13 +58,32 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			}
 			boundary = &position
 		}
+		if in.Body.Projection == "map" {
+			request.Recipes = map[string]string{"grid": recipes["grid"]}
+		}
 		page, err := d.Store.ListPhotoAssets(ctx, request, boundary)
 
 		if err != nil {
 			return nil, workspaceQueryError(err)
 		}
 		wire := PhotoBrowsePage{Items: make([]PhotoBrowseRow, len(page.Items)), Total: page.Total, Facets: fromStoreFacets(page.Facets)}
+		if in.Body.Projection == "map" {
+			wire.Items = []PhotoBrowseRow{}
+			wire.MapItems = make([]PhotoMapRow, len(page.Items))
+		}
 		for i, row := range page.Items {
+			if in.Body.Projection == "map" {
+				mapped := PhotoMapRow{AssetID: row.AssetID, Revision: row.Revision, Name: row.Name, CaptureTime: row.Fields.CaptureTime, WidthPX: row.Fields.WidthPX, HeightPX: row.Fields.HeightPX, Latitude: row.Fields.Latitude, Longitude: row.Fields.Longitude}
+				if slot, ok := row.Previews["grid"]; ok {
+					preview := photoPreviewSlot(row.AssetID, slot.State, slot.Generation)
+					mapped.Previews.Grid = PhotoPreviewSlot{State: preview.State, GenerationID: preview.GenerationID, Width: preview.Width, Height: preview.Height}
+				}
+				if browserSessionRequest(ctx) && d.Cfg.Web.MapTiles.TileURL == "" {
+					mapped.Latitude, mapped.Longitude = nil, nil
+				}
+				wire.MapItems[i] = mapped
+				continue
+			}
 			slots := map[string]PhotoPreviewSlot{}
 			for size, slot := range row.Previews {
 				out := photoPreviewSlot(row.AssetID, slot.State, slot.Generation)

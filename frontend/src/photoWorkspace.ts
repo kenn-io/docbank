@@ -15,7 +15,8 @@ export async function revalidatePhotoWorkspace(workspace: PhotoWorkspace, sessio
   if (!valid()) return false;
   const refreshed = await workspace.photos.refresh();
   if (!valid() || workspace.photos.hiding || workspace.photos.trashing) return false;
-  if (workspace.photos.error) throw new Error(workspace.photos.error);
+  const error = workspace.photos.error;
+  if (error) throw new Error(error);
   if (!refreshed) return false;
   workspace.cache = new PhotoPreviewCache(session, onauthfailure, workspace.photos.hidden);
   return true;

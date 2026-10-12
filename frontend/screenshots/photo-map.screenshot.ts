@@ -1,0 +1,208 @@
+import { expect, test } from "@playwright/test";
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
+import path from "node:path";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+const exec = promisify(execFile);
+const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
+const output = process.env.DOCBANK_MAP_PROOF_DIR;
+test.skip(!output, "DOCBANK_MAP_PROOF_DIR enables synthetic map proof");
+test("photo map privacy, clusters, marker return and mobile grid", async ({ page }) => {
+  test.setTimeout(300_000);
+  await mkdir(output!, { recursive: true });
+  const workspace = await mkdtemp(path.join(output!, "map-proof-"));
+  const vault = path.join(workspace, "vault");
+  const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0", GOCACHE: process.env.GOCACHE };
+  const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
+  const errors: string[] = [];
+  page.on("pageerror", error => { errors.push(error.message); console.error(error.stack); });
+  let externalRequests = 0, listings = 0, mapChunks = 0, libraryReads = 0;
+  page.on("request", request => { if (/\/assets\/PhotoMap-[^/]+\.js$/.test(new URL(request.url()).pathname)) mapChunks++; if (request.url().endsWith("/photos/assets/query")) { listings++; const filters=request.postDataJSON().query.filters; if(!filters.gps_bounds && !filters.asset_ids) libraryReads++; } if (new URL(request.url()).hostname === "tiles.example.org") externalRequests++; });
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "L", {configurable:true, set(leaflet:typeof import("leaflet")) {
+      Object.defineProperty(window, "L", {value:leaflet,writable:true,configurable:true});
+      leaflet.Map.addInitHook(function(this:import("leaflet").Map) { (window as typeof window & {photoMap:import("leaflet").Map}).photoMap=this; });
+    }});
+  });
+  try {
+    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", "-map", vault, "15"], { cwd: repository, env, timeout: 180_000 });
+    const disabledURL = new URL(await run("web", "--no-browser")); disabledURL.pathname = "/photos/map";
+    await page.goto(disabledURL.href);
+    await page.getByText("Maps are disabled", {exact:true}).waitFor();
+    expect(externalRequests).toBe(0); expect(mapChunks).toBe(0);
+    await page.screenshot({path:path.join(output!, "photo-map-disabled-1440-dark.png"), animations:"disabled"});
+    await run("daemon", "stop");
+    await writeFile(path.join(vault, "config.toml"), '[web.map_tiles]\ntile_url = "https://tiles.example.org/{z}/{x}/{y}.png"\nattribution = "Example map provider"\nmax_zoom = 19\n');
+    await page.route("https://tiles.example.org/**", route => route.fulfill({ contentType:"image/svg+xml", body:'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="#d7e2df"/><path d="M0 64H256M0 192H256M64 0V256M192 0V256" stroke="#f6f8f4" stroke-width="6"/><path d="M0 128H256M128 0V256" stroke="#b9ccca" stroke-width="2"/></svg>' }));
+    const enabledURL = new URL(await run("web", "--no-browser")); enabledURL.pathname = "/photos/map";
+    const initialPage=page.waitForResponse(response=>new URL(response.url()).pathname === "/api/v1/photos/assets/query" && response.status() === 200);
+    const beforeMap=libraryReads;
+    await page.goto(enabledURL.href);
+    const queryPage=await (await initialPage).json();
+    await expect(page.getByText("14 located photos", {exact:true})).toBeVisible();expect(libraryReads).toBe(beforeMap);
+    await expect(page.locator(".photo-map-cluster").first()).toBeVisible(); expect(mapChunks).toBe(1);
+    await expect(page.getByText("tiles.example.org receives your IP address and viewed map areas.", {exact:true})).toBeVisible();
+    await expect.poll(() => externalRequests).toBeGreaterThan(0);
+    await expect(page.getByTestId("photo-scroll").locator("img")).toHaveCount(9);
+    await page.screenshot({path:path.join(output!, "photo-map-enabled-1440-dark.png"), animations:"disabled"});
+    await page.evaluate(() => (window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([0,372],2,{animate:false}));
+    await expect.poll(() => page.evaluate(() => (window as typeof window & {photoMap:import("leaflet").Map}).photoMap.getCenter().lng)).toBeLessThanOrEqual(180);
+    await expect(page.getByRole("button",{name:"Open Synthetic-photo-00007.jpg"})).toBeVisible();
+    await page.evaluate(() => (window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([0,0],0,{animate:false}));
+    await expect(page.getByText("14 photos",{exact:true})).toBeVisible();
+    await expect(page.getByRole("button",{name:"Open Synthetic-photo-00007.jpg"})).toBeVisible();
+    await expect(page.locator(".leaflet-tile-loaded")).toHaveCount(1);
+    await expect(page.locator(".leaflet-tile-loaded")).toHaveCSS("opacity","1");
+    await page.screenshot({path:path.join(output!, "photo-map-world-1440-dark.png"),animations:"disabled"});
+    await page.getByRole("button",{name:"Open Synthetic-photo-00014.jpg"}).click();
+    await expect(page.getByRole("dialog",{name:"Photo viewer, Synthetic-photo-00014.jpg"})).toBeVisible();
+    await page.getByRole("button",{name:"Next photo",exact:true}).first().click();
+    await expect(page.getByRole("dialog",{name:"Photo viewer, Synthetic-photo-00010.jpg"})).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => (window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([20,0],2,{animate:false}));
+    for(const key of ["Enter","Space"]) {
+      const ordinary=page.locator(".photo-map-cluster").filter({hasText:/^6$/});await expect(ordinary).toHaveCount(1);await ordinary.press(key);
+      await expect.poll(()=>page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.getZoom())).toBeGreaterThan(2);
+      await expect(page.locator(".leaflet-zoom-anim, .leaflet-cluster-anim")).toHaveCount(0);
+      await page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([20,0],2,{animate:false}));
+    }
+    const mapBox = await page.locator(".photo-map").boundingBox();
+    const queries = listings;
+    await page.getByRole("checkbox", {name:"Select photo Synthetic-photo-00007.jpg"}).check();
+    await page.mouse.move(mapBox!.x + mapBox!.width / 2, mapBox!.y + mapBox!.height / 2);
+    await page.mouse.down(); await page.mouse.move(mapBox!.x + mapBox!.width / 2 + 30, mapBox!.y + mapBox!.height / 2, {steps:5}); await page.mouse.up();
+    await page.locator(".leaflet-control-zoom-in").click();
+    await expect(page.getByRole("checkbox", {name:"Select photo Synthetic-photo-00007.jpg"})).toBeChecked();
+    expect(listings).toBe(queries);
+    await page.locator(".leaflet-control-zoom-out").click();
+    await expect(page.locator(".leaflet-zoom-anim, .leaflet-cluster-anim")).toHaveCount(0);
+    const expandedOverlap=async()=>{
+      const first=page.locator('.photo-map-dot[title="Synthetic-photo-00009.jpg"]'),second=page.locator('.photo-map-dot[title="Synthetic-photo-00010.jpg"]');
+      await expect(page.locator(".leaflet-cluster-anim")).toHaveCount(0);await expect(first).toHaveCSS("opacity","1");await expect(second).toHaveCSS("opacity","1");
+      await expect.poll(async()=>{const a=await first.boundingBox(),b=await second.boundingBox();return a&&b?Math.hypot(a.x-b.x,a.y-b.y):0;}).toBeGreaterThan(20);
+    };
+    await page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([40.748816666666667,-73.98565555555555],19,{animate:false}));
+    await expect(page.locator(".leaflet-zoom-anim, .leaflet-cluster-anim")).toHaveCount(0);
+    for(const key of ["Enter","Space"]) {
+      await page.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+      await expect(page.locator(".leaflet-zoom-anim, .leaflet-cluster-anim")).toHaveCount(0);
+      await expect(page.locator(".photo-map-cluster").filter({hasText:/^2$/})).toHaveCount(1);await page.locator(".photo-map-cluster").filter({hasText:/^2$/}).press(key);
+      await expandedOverlap();
+      await expect(page.getByText("2 photos",{exact:true})).toBeVisible();
+      if(key === "Enter") {await page.locator(".leaflet-control-zoom-out").click();await expect(page.locator(".leaflet-zoom-anim, .leaflet-cluster-anim")).toHaveCount(0);await page.locator(".leaflet-control-zoom-in").click();await expect(page.locator(".leaflet-zoom-anim, .leaflet-cluster-anim")).toHaveCount(0);}
+    }
+    await page.evaluate(()=>{const map=(window as typeof window & {photoMap:import("leaflet").Map}).photoMap;map.panBy([map.getSize().x/2-8,0],{animate:false});});
+    await expect(page.locator(".leaflet-cluster-anim")).toHaveCount(0);await page.locator(".photo-map-cluster").filter({hasText:/^2$/}).press("Space");await expandedOverlap();
+    await expect(page.getByText("2 photos",{exact:true})).toBeVisible();
+    await page.screenshot({path:path.join(output!, "photo-map-overlap-1440-dark.png"), animations:"disabled"});
+
+    await page.getByRole("button",{name:"Move to trash",exact:true}).click();
+    await page.getByRole("dialog",{name:"Move selected photos to trash"}).waitFor();
+    await page.screenshot({path:path.join(output!, "photo-map-selection-1440-dark.png"),animations:"disabled"});
+    await page.getByRole("button",{name:"Keep in Docbank"}).click();
+    await page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([20,0],2,{animate:false}));
+    await expect(page.locator(".leaflet-zoom-anim, .leaflet-cluster-anim")).toHaveCount(0);
+    const marker = page.locator('.photo-map-dot[title="Synthetic-photo-00007.jpg"]');
+    await expect(marker).toBeVisible();
+    await marker.press("Enter");
+    await expect(page.locator(".photo-loupe")).toBeVisible();
+    await expect(page.locator(".photo-viewport img")).toBeVisible({timeout:60_000});
+    await page.screenshot({path:path.join(output!, "photo-map-viewer-1440-dark.png"), animations:"disabled"});
+    await page.keyboard.press("Escape");
+    await expect(marker).toBeFocused();
+    await page.getByRole("button", {name:"Open Synthetic-photo-00009.jpg"}).click();
+    await expect(page.getByRole("dialog", {name:"Photo viewer, Synthetic-photo-00009.jpg"})).toBeVisible();
+    await page.setViewportSize({width:400,height:860});
+    await expect(page.getByRole("button", {name:"Next photo",exact:true}).first()).toBeEnabled();
+    await expect(page.getByRole("dialog", {name:"Photo viewer, Synthetic-photo-00009.jpg"})).toBeVisible();
+    await expect(page.locator(".photo-viewport img")).toBeVisible({timeout:60_000});
+    await page.screenshot({path:path.join(output!, "photo-map-viewer-400-dark.png"), animations:"disabled"});
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", {name:"Map",exact:true}).last().click();
+    await expect(page.locator(".photo-map")).toBeVisible();
+    await page.screenshot({path:path.join(output!, "photo-map-enabled-400-dark.png"), animations:"disabled"});
+    await page.locator(".map-tabs").getByRole("button", {name:"Photos",exact:true}).click();
+    await expect(page.getByTestId("photo-scroll").locator("img").first()).toBeVisible();
+    await page.screenshot({path:path.join(output!, "photo-map-grid-400-dark.png"), animations:"disabled"});
+    await page.setViewportSize({width:1440,height:960});
+    await page.getByRole("button",{name:"Library",exact:true}).click();
+    await page.getByRole("button",{name:"Timeline",exact:true}).click();
+    await page.getByRole("navigation",{name:"Timeline years"}).getByRole("button",{name:"2022 10",exact:true}).click();
+    await expect(page.getByText(/photos in 2022 ·/)).toBeVisible();
+    await page.getByRole("button",{name:"Map",exact:true}).first().click();
+    await expect(page.locator(".photo-map-cluster").first()).toBeVisible();
+    await expect(page.getByTestId("photo-scroll").locator("img").first()).toBeVisible();
+    await page.screenshot({path:path.join(output!, "photo-map-date-1440-dark.png"),animations:"disabled"});
+    await page.getByRole("button",{name:"Library",exact:true}).click();
+    await page.getByRole("button",{name:"Clear date",exact:true}).click();
+    await expect(page.getByText("15 photos · 15 loaded",{exact:true})).toBeVisible();
+    let releasePage!:()=>void;const pendingPage=new Promise<void>(resolve=>releasePage=resolve);
+    let releaseCluster!:()=>void;const pendingCluster=new Promise<void>(resolve=>releaseCluster=resolve);
+    let neighbor:unknown,joining:unknown,failed=false;
+    await page.route("**/photos/assets/query",async route=>{
+      const request=route.request().postDataJSON();const cursor=request.cursor;
+      if(request.query.filters.asset_ids || !request.projection) {await route.fallback();return;}
+      if(cursor === "proof-next") {await pendingPage;await route.fulfill({json:{items:[],map_items:[neighbor],total:14,next_cursor:"proof-cluster"}});}
+      else if(cursor === "proof-cluster") {await pendingCluster;await route.fulfill({json:{items:[],map_items:[joining],total:14,next_cursor:"proof-retry"}});}
+      else if(cursor === "proof-retry") {
+        if(!failed) {failed=true;await route.fulfill({status:503,json:{detail:"Page unavailable"}});}else await route.fulfill({json:{items:[],map_items:[],total:14}});
+      } else {
+        neighbor={...queryPage.map_items.find((item:{name:string})=>item.name === "Synthetic-photo-00008.jpg"),latitude:0,longitude:12};
+        joining={...queryPage.map_items.find((item:{name:string})=>item.name === "Synthetic-photo-00001.jpg"),latitude:40.748836666666667,longitude:-73.98563555555555};
+        await route.fulfill({json:{...queryPage,items:[],map_items:queryPage.map_items.filter((item:{name:string})=>!["Synthetic-photo-00008.jpg","Synthetic-photo-00001.jpg"].includes(item.name)).map((item:{name:string})=>item.name === "Synthetic-photo-00009.jpg"?{...item,latitude:40.748826666666667,longitude:-73.98564555555555}:item),next_cursor:"proof-next"}});
+      }
+    });
+    await page.setViewportSize({width:1440,height:960});await page.getByRole("navigation",{name:"Docbank navigation"}).getByRole("button",{name:"Map",exact:true}).click();
+    await expect(page.getByText("Loading located photos: 12 of 14",{exact:true})).toBeVisible();await expect(page.locator(".photo-map-cluster, .photo-map-dot").first()).toBeVisible();
+    await page.screenshot({path:path.join(output!,"photo-map-loading-1440-dark.png"),animations:"disabled"});
+    const partial=page.locator('.photo-map-dot[title="Synthetic-photo-00007.jpg"]');await partial.press("Enter");
+    await expect(page.getByRole("dialog",{name:"Photo viewer, Synthetic-photo-00007.jpg"})).toBeVisible();await page.keyboard.press("Escape");await expect(partial).toBeFocused();
+    await partial.press("Enter");await expect(page.getByRole("dialog",{name:"Photo viewer, Synthetic-photo-00007.jpg"})).toBeVisible();const beforeClose=listings;
+    await page.getByRole("navigation",{name:"Docbank navigation"}).getByRole("button",{name:"Map",exact:true}).click();await expect(page.getByRole("dialog",{name:/Photo viewer/})).toHaveCount(0);expect(listings).toBe(beforeClose);
+    await page.setViewportSize({width:400,height:860});await page.locator(".map-tabs").getByRole("button",{name:"Map",exact:true}).click();
+    releasePage();await expect(page.getByText("Loading located photos: 13 of 14",{exact:true})).toBeVisible();await expect(page.locator(".photo-map-cluster, .photo-map-dot").first()).toBeVisible();await expect(page.locator(".photo-map")).toBeVisible();
+    releaseCluster();await page.getByText("Page unavailable",{exact:true}).waitFor();await expect(page.locator(".photo-map-cluster, .photo-map-dot").first()).toBeVisible();
+    await page.screenshot({path:path.join(output!,"photo-map-retry-400-dark.png"),animations:"disabled"});
+    await page.locator(".map-tabs").getByRole("button",{name:"Photos",exact:true}).click();await expect(page.getByRole("button",{name:"Retry",exact:true})).toBeVisible();
+    await page.getByRole("button",{name:"Retry",exact:true}).click();await expect(page.getByText("14 located photos",{exact:true})).toBeVisible();
+    await page.locator(".map-tabs").getByRole("button",{name:"Map",exact:true}).click();await expect(page.locator(".photo-map")).toBeVisible();
+    await page.setViewportSize({width:1440,height:960});await page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([40.748826666666667,-73.98564555555555],19,{animate:false}));
+    await expect(page.getByText("3 photos",{exact:true})).toBeVisible();await expect(page.getByRole("button",{name:"Open Synthetic-photo-00001.jpg"})).toBeVisible();await expect(page.locator(".photo-map-cluster").filter({hasText:/^3$/})).toHaveCount(1);
+    await page.screenshot({path:path.join(output!,"photo-map-growing-cluster-1440-dark.png"),animations:"disabled"});
+    await page.unroute("**/photos/assets/query");await page.goto("about:blank");await page.goto(enabledURL.href);
+    await expect(page.getByText("14 located photos",{exact:true})).toBeVisible();
+    await page.setViewportSize({width:400,height:860});
+    await page.locator(".map-tabs").getByRole("button",{name:"Map",exact:true}).click();
+    await page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([40.748816666666667,-73.98565555555555],19,{animate:false}));
+    await expect(page.locator(".leaflet-zoom-anim, .leaflet-cluster-anim")).toHaveCount(0);await expect(page.locator(".photo-map-cluster").filter({hasText:/^2$/})).toHaveCount(1);await page.locator(".photo-map-cluster").filter({hasText:/^2$/}).press("Enter");await expandedOverlap();
+    await page.locator(".map-tabs").getByRole("button",{name:"Photos",exact:true}).click();await page.getByRole("checkbox",{name:"Select photo Synthetic-photo-00009.jpg"}).check();
+    await page.getByRole("button",{name:"Move to trash",exact:true}).click();await page.getByRole("dialog",{name:"Move selected photos to trash"}).getByRole("button",{name:"Move to trash",exact:true}).click();
+    await expect(page.getByRole("dialog",{name:"Move selected photos to trash"})).toHaveCount(0);await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
+    await expect(page.getByRole("button",{name:"Open Synthetic-photo-00010.jpg"})).toBeVisible();await expect(page.getByRole("button",{name:"Open Synthetic-photo-00009.jpg"})).toHaveCount(0);
+    await page.locator(".map-tabs").getByRole("button",{name:"Map",exact:true}).click();await expect(page.locator(".leaflet-cluster-anim")).toHaveCount(0);await page.locator('.photo-map-dot[title="Synthetic-photo-00010.jpg"]').press("Enter");await expect(page.getByRole("dialog",{name:"Photo viewer, Synthetic-photo-00010.jpg"})).toBeVisible();await page.keyboard.press("Escape");
+    await expect(page.locator(".photo-map")).toBeVisible();await expect(page.locator('.photo-map-dot[title="Synthetic-photo-00010.jpg"]')).toBeFocused();
+    await page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.panBy([5,0],{animate:false}));await expect(page.locator(".photo-map")).toBeVisible();
+    await expect(page.locator(".leaflet-cluster-anim")).toHaveCount(0);await expect(page.locator('.photo-map-dot[title="Synthetic-photo-00010.jpg"]')).toHaveCSS("opacity","1");
+    await page.screenshot({path:path.join(output!,"photo-map-overlap-trash-400-dark.png"),animations:"disabled"});
+    await page.route("**/photos/assets/query",route=>route.request().postDataJSON().query.filters.gps_bounds?route.fulfill({status:503,json:{detail:"Map unavailable"}}):route.fallback());
+    await page.evaluate(()=>{Object.defineProperty(document,"visibilityState",{configurable:true,value:"hidden"});document.dispatchEvent(new Event("visibilitychange"));});
+    await page.evaluate(()=>{Object.defineProperty(document,"visibilityState",{configurable:true,value:"visible"});document.dispatchEvent(new Event("visibilitychange"));});
+    await page.getByRole("alert").waitFor();await page.getByRole("button",{name:"Retry",exact:true}).waitFor();
+    await page.screenshot({path:path.join(output!,"photo-map-access-retry-400-dark.png"),animations:"disabled"});
+    await page.unroute("**/photos/assets/query");await page.getByRole("button",{name:"Retry",exact:true}).click();await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
+    await page.route("**/assets/PhotoMap-*.js",route=>route.abort());
+    await page.setViewportSize({width:1440,height:960});await page.goto("about:blank");await page.goto(enabledURL.href);
+    await expect(page.getByText("Map couldn't load",{exact:true})).toBeVisible();
+    await expect(page.getByText("No photos in this area",{exact:true})).toHaveCount(0);await expect(page.getByRole("heading",{name:"Photos in view",exact:true})).toHaveCount(0);await expect(page.getByRole("button",{name:"Select visible photos",exact:true})).toHaveCount(0);
+    await page.screenshot({path:path.join(output!,"photo-map-chunk-error-1440-dark.png"),animations:"disabled"});
+    await page.unroute("**/assets/PhotoMap-*.js");await page.goto("about:blank");await page.goto(enabledURL.href);
+    await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
+    await expect(page.locator(".photo-map-cluster").first()).toBeVisible();
+    expect(errors).toEqual([]);
+    await writeFile(path.join(output!, "preview.json"), JSON.stringify({url:enabledURL.href, workspace, binary}, null, 2));
+  } finally {
+    if (!process.env.DOCBANK_KEEP_MAP_PREVIEW) { await run("daemon", "stop"); await rm(workspace, {recursive:true,force:true}); }
+  }
+});

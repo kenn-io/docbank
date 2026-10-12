@@ -1094,7 +1094,7 @@ dropping it.
 
 These root-level routes are outside `/api/v1` and auth-exempt: `GET /health`,
 `GET /api/ping` (daemon discovery), `GET /docs` and the OpenAPI documents,
-and `/`, `/photos`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
+and `/`, `/photos`, `/photos/map`, `/photos/albums`, `/photos/albums/{set_id}`, and `/assets/` (the static web application, when `[web] enabled`). Album page IDs must be canonical UUIDv4 values.
 
 A hidden `POST /api/daemon/shutdown` (not in the OpenAPI document) backs
 `docbank daemon stop`. It isn't auth-exempt: it requires both the API key and
@@ -1415,7 +1415,9 @@ Later pages reuse the first page's total while rows remain live; a new browse re
 
 `GET /photos/assets/{asset_id}/previews/{generation_id}` returns complete verified JPEG bytes for an included asset's current display version. An unavailable or stale generation returns 404. Missing retained bytes return `photo_preview_unavailable`; failed byte verification returns `photo_preview_corrupt`. Success includes Content-Length, Content-Digest, the quoted generation ETag and `X-Content-Type-Options: nosniff`. Visible previews use `Cache-Control: private, no-cache`; hidden previews require an unlock and use `no-store`, including `304`. A matching `If-None-Match` returns bodyless `304` after checking current display eligibility, without reopening the blob. Excluded or replaced displays return `404` even with a matching validator. Responses also vary by Cookie. Browser sessions permit the exact list POST, timeline POST, prepare POST, preview GET, hidden-state GET, interactive hidden POSTs and asset hide/unhide POSTs and `POST /photos/assets/{asset_id}/trash`, `POST /photos/rejects/preflight`, and `POST /photos/rejects/trash` with empty query strings. Reset requires the API key. Preview slot states are `missing`, `ready`, `unsupported` and `failed`; only ready results carry URLs. This read never generates a derivative.
 
-Browse rows include current-display camera make/model, lens make/model, ISO, aperture, exposure time/bias, focal length and orientation; absent metadata fields serialize as JSON null. GPS remains outside browse rows.
+Optional `projection: "map"` returns compact `map_items` with asset ID, revision, name, capture time, dimensions, coordinates and the grid preview state/generation/dimensions; `items` is empty and `map_items` is omitted when empty. It uses the same query, total and cursor contract. Omit the projection for viewer metadata and fit/large previews.
+
+Browse rows include current-display camera make/model, lens make/model, ISO, aperture, exposure time/bias, focal length and orientation; absent metadata fields serialize as JSON null. Compact Map rows alone include `latitude` and `longitude`, decimal-degree numbers from the selected display file or JSON null when absent. Browser-session requests receive null for both unless `[web.map_tiles]` is configured; API-key responses are independent of tile configuration.
 
 `POST /photos/assets/{asset_id}/preview` accepts `content_version_id`, `size` (`fit` or `large`) and optional `hidden` (default false); hidden preparation requires an unlock and returns a preview slot. It verifies the current eligible display version before and after on-demand production under the mutation gate, with a 30-second request limit. A version mismatch at admission returns 409 `photo_display_changed`; a display replaced or excluded during production returns 404. Missing or mismatched source bytes return 503 `photo_preview_unavailable`; retry after restoring the source. Preparation timeouts and cancellation return 503 `photo_preview_unavailable` with distinct messages and a retry instruction. Retained failed and unsupported slots are returned unchanged.
 
@@ -2097,7 +2099,7 @@ Host checks precede authentication and accept loopback, the concrete bind IP,
 the dedicated browser origin, and explicit `allowed_hosts`; wildcard listeners
 do not accept arbitrary names. Server-path ingest remains loopback-peer only.
 `/health`, `/api/ping`, `/docs`, the OpenAPI documents, and the static web application at
-`/`, `/photos`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
+`/`, `/photos`, `/photos/map`, `/photos/albums`, canonical `/photos/albums/{id}` pages, and `/assets/` are auth-exempt. Everything else, including the shutdown
 route, requires the key.
 
 ## Error mapping

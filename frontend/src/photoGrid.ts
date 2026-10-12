@@ -1,4 +1,6 @@
-import type { PhotoBrowseRow } from "./generated/docbank.js";
+import type { PhotoBrowseRow, PhotoPreviewSlot } from "./generated/docbank.js";
+
+export type PhotoGridRow = Pick<PhotoBrowseRow, "asset_id" | "name" | "capture_time" | "width_px" | "height_px"> & { previews: { grid: PhotoPreviewSlot } };
 
 export type LayoutItem = { aspect: number };
 
@@ -66,9 +68,9 @@ export function computeJustified(items: LayoutItem[], opts: LayoutOptions): Layo
 export const HEADER_HEIGHT = 56;
 export const ROW_HEIGHTS = { compact: 140, comfortable: 200, large: 280 };
 export type Density = keyof typeof ROW_HEIGHTS;
-export type PhotoGroup = { key: string; label: string; year: string; items: PhotoBrowseRow[] };
+export type PhotoGroup = { key: string; label: string; year: string; items: PhotoGridRow[] };
 
-export function photoAspect(photo: PhotoBrowseRow): number {
+export function photoAspect(photo: PhotoGridRow): number {
   const preview = photo.previews.grid;
   const width = preview.width ?? photo.width_px;
   const height = preview.height ?? photo.height_px;
@@ -90,7 +92,7 @@ function captureClock(value: string): number {
   return utcYear >= 1 && utcYear <= 9999 ? clock : NaN;
 }
 
-export function groupPhotos(items: PhotoBrowseRow[], grouping: "months" | "sessions" | "flat" | "relevance"): PhotoGroup[] {
+export function groupPhotos(items: PhotoGridRow[], grouping: "months" | "sessions" | "flat" | "relevance"): PhotoGroup[] {
   if (grouping === "flat") return items.length ? [{ key: "all", label: "Photos", year: "", items }] : [];
   if (grouping === "relevance") return items.length ? [{ key: grouping, label: "Search results", year: "", items }] : [];
   const clocks = new Map(items.map(item => [item, item.capture_time ? captureClock(item.capture_time) : NaN]));
@@ -130,7 +132,7 @@ export function groupPhotos(items: PhotoBrowseRow[], grouping: "months" | "sessi
   return groups;
 }
 
-export function computeMonthLayout(items: PhotoBrowseRow[], containerWidth: number, targetRowHeight: number) {
+export function computeMonthLayout(items: PhotoGridRow[], containerWidth: number, targetRowHeight: number) {
   const layout = computeJustified(items.map(item => ({ aspect: photoAspect(item) })), { containerWidth, targetRowHeight });
   return { ...layout, intrinsicHeight: items.length ? layout.totalHeight + HEADER_HEIGHT : 0 };
 }
