@@ -26,6 +26,7 @@ export function loadDensity(): Density {
 
 let density = $state<Density>(loadDensity());
 
+export interface MapView { lat: number; lng: number; zoom: number }
 export interface PhotoReturn { contextID: string; assetID: string; control: "image" | "open" | "check" | "marker"; scrollTop: number }
 
 export type PhotoRow = PhotoBrowseRow | PhotoMapRow;
@@ -63,6 +64,8 @@ export class Photos {
   trashTargets = $state<PhotoTarget[]>([]);
   error = $state("");
   scrollTop = $state(0);
+  // Map remounts after every access check, so its position lives with the list, like scrollTop.
+  mapView: MapView | undefined;
   grouping = $state<"months" | "sessions">("months");
   get density() { return density; }
   selection = $state<SelectionState<string>>(clearSelection<string>());

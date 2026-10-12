@@ -6,7 +6,8 @@
   import "leaflet.markercluster/dist/MarkerCluster.css";
   import { type MapTiles } from "./photoMap.js";
   import type { PhotoMapRow } from "./generated/docbank.js";
-  let { items, complete = true, tiles, onopen, onvisible }: { items: PhotoMapRow[]; complete?: boolean; tiles: MapTiles; onopen: (id: string, element: HTMLElement) => void; onvisible: (rows: PhotoMapRow[]) => void } = $props();
+  import type { MapView } from "./photos.svelte.js";
+  let { items, complete = true, tiles, view, onopen, onvisible, onview }: { items: PhotoMapRow[]; complete?: boolean; tiles: MapTiles; view?: MapView; onopen: (id: string, element: HTMLElement) => void; onvisible: (rows: PhotoMapRow[]) => void; onview?: (view: MapView) => void } = $props();
   let container: HTMLDivElement;
   let map: L.Map | undefined;
   let cluster: L.MarkerClusterGroup | undefined;
@@ -61,7 +62,7 @@
   }
   onMount(() => {
     const bounds: L.LatLngBoundsExpression = [[-90,-180],[90,180]];
-    map = L.map(container, { maxZoom: tiles.max_zoom, maxBounds: bounds, maxBoundsViscosity: 1 }).setView([20,0], 2);
+    map = L.map(container, { maxZoom: tiles.max_zoom, maxBounds: bounds, maxBoundsViscosity: 1 }).setView(view ? [view.lat, view.lng] : [20,0], view?.zoom ?? 2);
     const attribution = document.createElement("span"); attribution.textContent = tiles.attribution;
     L.tileLayer(tiles.tile_url, { attribution: attribution.innerHTML, maxZoom: tiles.max_zoom, noWrap: true, bounds }).addTo(map);
     cluster = L.markerClusterGroup({ showCoverageOnHover: false, iconCreateFunction: group => L.divIcon({ className: "photo-map-cluster", html: String(group.getChildCount()), iconSize: [36,36] }) });
@@ -69,7 +70,7 @@
       if ("originalEvent" in event && event.originalEvent instanceof KeyboardEvent && event.originalEvent.key === " ") { event.originalEvent.preventDefault(); cluster?.fire("click", event); }
     });
     cluster.addTo(map); build();
-    map.on("moveend", visible);
+    map.on("moveend", () => { visible(); const center = map!.getCenter(); onview?.({ lat: center.lat, lng: center.lng, zoom: map!.getZoom() }); });
     const observer = new ResizeObserver(() => { if (container.clientWidth && container.clientHeight) map?.invalidateSize(); }); observer.observe(container);
     return () => { cancelBuild(); observer.disconnect(); map?.remove(); map = undefined; cluster = undefined; markers.clear(); };
   });

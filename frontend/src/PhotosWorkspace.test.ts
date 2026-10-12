@@ -3,7 +3,7 @@ import { tick } from "svelte";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { APIError } from "./api-transport.js";
-import { Photos, photoQuery } from "./photos.svelte.js";
+import { Photos, photoQuery, type MapView } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photo, mapPhoto } from "./photo-test-fixtures.js";
 import { captureDateQuery } from "./photoTimeline.js";
@@ -12,12 +12,12 @@ import type { PhotoBrowseRow, PhotoMapRow } from "./generated/docbank.js";
 // Answers background filter-count requests so tests that predate counts see only their own reads.
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] })) : fetcher(url, init));
 
-const map = vi.hoisted(() => ({onvisible:undefined as ((rows:PhotoMapRow[]) => void) | undefined}));
-vi.mock("./PhotoMap.svelte", () => ({default:(_anchor:unknown, props:{onvisible:(rows:PhotoMapRow[]) => void}) => { map.onvisible = props.onvisible; return {}; }}));
+const map = vi.hoisted(() => ({onvisible:undefined as ((rows:PhotoMapRow[]) => void) | undefined, props:undefined as {view?:MapView; onview:(view:MapView) => void} | undefined}));
+vi.mock("./PhotoMap.svelte", () => ({default:(_anchor:unknown, props:{onvisible:(rows:PhotoMapRow[]) => void; view?:MapView; onview:(view:MapView) => void}) => { map.onvisible = props.onvisible; map.props = props; return {}; }}));
 
 const tiles = {tile_url:"",attribution:"",max_zoom:19};
 
-afterEach(() => { cleanup(); map.onvisible = undefined; history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
+afterEach(() => { cleanup(); map.onvisible = undefined; map.props = undefined; history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
 
 it("preserves subsequent scrolling when an interrupted refresh resumes after remount", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -748,6 +748,16 @@ it("keeps the Library selection when Escape is pressed on disabled maps", async 
  render(PhotosWorkspace,{tiles,photos,mapMode:true,cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()});
  await screen.findByText("Maps are disabled");await fireEvent.keyDown(window,{key:"Escape"});
  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);photos.dispose();
+});
+
+it("reopens the map where it was after a remount", async () => {
+ vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});
+ const photos=new Photos("scoped",vi.fn());photos.items=[mapPhoto(1)];photos.total=1;photos.started=true;vi.spyOn(photos,"resume").mockResolvedValue();
+ const props={photos,mapMode:true,tiles:{tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()};
+ const first=render(PhotosWorkspace,props);await vi.dynamicImportSettled();expect(map.props!.view).toBeUndefined();
+ map.props!.onview({lat:48.8,lng:2.3,zoom:12});first.unmount();
+ render(PhotosWorkspace,props);await vi.dynamicImportSettled();
+ expect(map.props!.view).toEqual({lat:48.8,lng:2.3,zoom:12});photos.dispose();
 });
 
 it("keeps the Map viewer open while the located list refreshes", async () => {
