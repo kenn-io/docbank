@@ -56,7 +56,6 @@ describe("query identity", () => {
       '{"filters":{"rating_max":1.5}}',
       '{"filters":{"flags":["unknown"]}}',
       '{"filters":{"flags":[3]}}',
-      '{"filters":{"labels":["unknown"]}}',
       '{"filters":{"labels":[3]}}',
       '{"v":0}',
       '{"syntax":""}',

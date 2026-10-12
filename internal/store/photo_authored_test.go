@@ -784,14 +784,24 @@ func TestPhotoSidecarSharedEvidence(t *testing.T) {
 
 func TestPhotoSidecarIdleScanSkipsJudgedGeneration(t *testing.T) {
 	t.Parallel()
+	valid := photoCanonical(t, photoMetadataField("image.xmp.packet_valid", "image.xmp", "packet", photoBoolean()))
+	// The extractor reports a malformed packet with a warning and no packet_valid fact.
+	rejected, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{
+		ContractVersion: document.SourceMetadataContractV1,
+		Warnings: []document.SourceMetadataWarningV1{{
+			Code: "unparseable_metadata", Namespace: "image.xmp", SourceField: "packet",
+			Detail: "standalone XMP packet could not be read",
+		}},
+	})
+	require.NoError(t, err)
 	for _, test := range []struct {
-		name  string
-		valid bool
-	}{{"valid empty packet", true}, {"invalid packet", false}} {
+		name      string
+		canonical []byte
+	}{{"valid empty packet", valid}, {"rejected packet", rejected}} {
 		t.Run(test.name, func(t *testing.T) {
 			s, _, f, sidecar := authoredSidecar(t)
 			ctx := t.Context()
-			canonical := photoCanonical(t, document.SourceMetadataFieldV1{Key: "image.xmp.packet_valid", Namespace: "image.xmp", SourceField: "packet", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataBoolean, Boolean: new(test.valid)}})
+			canonical := test.canonical
 			_, err := s.PublishSourceMetadata(ctx, sidecar.BlobHash, fakeHash("ee"), canonical)
 			require.NoError(t, err)
 			targets, err := s.MissingPhotoSidecarsAfter(ctx, fakeHash("ee"), "", 10)
