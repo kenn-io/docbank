@@ -42,3 +42,11 @@ func TestPhotoCheckoutCreateRejectsMissingCapacityBeforeDaemon(t *testing.T) {
 	cmd.SetArgs([]string{"create", "destination", "--all"})
 	require.ErrorContains(t, cmd.Execute(), "positive --byte-limit")
 }
+
+func TestPhotoCheckoutCreateRejectsNegativeLimitBeforeDaemon(t *testing.T) {
+	for _, selector := range []string{"--asset", "--album"} {
+		cmd := newPhotoCheckoutCmd()
+		cmd.SetArgs([]string{"create", "destination", selector, "00000000-0000-4000-8000-000000000001", "--byte-limit", "-1"})
+		require.ErrorContains(t, cmd.Execute(), "--byte-limit must be nonnegative")
+	}
+}

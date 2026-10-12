@@ -5,7 +5,7 @@ import (
 	"errors"
 )
 
-const photoCheckoutsStorageSchemaVersion = 33
+const photoCheckoutsStorageSchemaVersion = 34
 
 type metadataPhotoCheckout struct {
 	Type      string                 `json:"type"`

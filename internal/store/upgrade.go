@@ -123,6 +123,23 @@ var releasedStorageSchemas = []releasedStorageSchema{
 	},
 }
 
+// predecessorStorageSchema supports vaults created by the preceding in-flight schema.
+var predecessorStorageSchema = releasedStorageSchema{
+	version: 33, release: "predecessor schema v33", backupSuffix: ".schema-v33.bak",
+	validate: func(db *sql.DB, _, _ []string) error {
+		return validateReleasedLayout(db, "predecessor schema v33", schemaV33Layout)
+	},
+	exportMetadata: func(ctx context.Context, source *sql.Tx, dst io.Writer) error {
+		return exportReleasedMetadataSnapshot(ctx, source, dst, 33)
+	},
+	restoreSourceState:         restoreV28SourceState,
+	keepsProcessingIncarnation: true,
+}
+
+func storageCutoverSources() []releasedStorageSchema {
+	return append(slices.Clone(releasedStorageSchemas), predecessorStorageSchema)
+}
+
 var (
 	renameUpgradeFile         = atomicfile.Replace
 	removeInvalidUpgradeStage = removeUpgradeFileSet
@@ -277,15 +294,14 @@ func classifyDatabaseSchema(driver docsqlite.Driver, db *sql.DB) (databaseSchema
 			}
 			return databaseSchema{version: version, current: true}, nil
 		}
-		for i := range releasedStorageSchemas {
-			source := &releasedStorageSchemas[i]
+		for _, source := range storageCutoverSources() {
 			if source.version != version {
 				continue
 			}
 			if err := source.validate(db, blobs, packs); err != nil {
 				return databaseSchema{}, err
 			}
-			return databaseSchema{version: version, source: source}, nil
+			return databaseSchema{version: version, source: &source}, nil
 		}
 		return databaseSchema{}, fmt.Errorf(
 			"opening database: development schema version %d has no supported JSONL cutover; recreate the vault",
@@ -1292,7 +1308,7 @@ func recoverInterruptedUpgrade(path string, driver docsqlite.Driver) error {
 	var interrupted *interruptedUpgrade
 	newestBackupVersion := 0
 	newestBackupPath := ""
-	for _, source := range releasedStorageSchemas {
+	for _, source := range storageCutoverSources() {
 		backupPath := path + source.backupSuffix
 		stagePath := upgradeStagePath(path, source.version)
 		_, backupErr := os.Stat(backupPath)
@@ -1396,7 +1412,7 @@ func validateUpgradeStage(path string, driver docsqlite.Driver) error {
 
 func cleanupStaleUpgradeFiles(path string) error {
 	var cleanupErr error
-	for _, source := range releasedStorageSchemas {
+	for _, source := range storageCutoverSources() {
 		cleanupErr = errors.Join(
 			cleanupErr,
 			removeUpgradeFileSet(upgradeStagePath(path, source.version)),
@@ -1599,3 +1615,23 @@ var schemaV29Layout = strings.Replace(schemaV28Layout,
 	`"photo_sets": ["cover_asset_id", "created_at", "deleted_at", "name", "revision", "set_id", "starred", "updated_at"],
   "photo_set_members": ["added_at", "asset_id", "set_id"],
   "photo_change_receipts": ["after_json", "after_revision", "asset_id", "before_json", "before_revision", "created_at", "operation", "receipt_id", "set_id", "settings_key"]`, 1)
+
+// Schema 33 adds photo authorship, quality signals, sidecar identity, and hidden credentials.
+var schemaV33Layout = func() string {
+	var layout map[string][]string
+	if err := json.Unmarshal([]byte(schemaV29Layout), &layout); err != nil {
+		panic(err)
+	}
+	layout["photo_assets"] = []string{"asset_id", "created_at", "display_file_id", "display_override_file_id", "excluded_at", "hidden_at", "kind", "revision", "updated_at"}
+	layout["photo_files"] = []string{"asset_id", "caption", "copyright", "created_at", "creator", "file_id", "flag", "label", "node_id", "rating", "revision", "role", "rotation", "sidecar_of_file_id"}
+	layout["photo_sidecar_considered"] = []string{"asset_id", "asset_revision", "extractor_fingerprint", "member_revisions", "sidecar_file_id", "version_id"}
+	layout["photo_quality_signals"] = []string{"aesthetics", "blur", "brightness", "color_blue", "color_green", "color_red", "content_version_id", "evaluator_fingerprint", "focus", "framing", "state"}
+	layout["photo_hidden_credentials"] = []string{"passcode_hash", "singleton"}
+	layout["photo_hidden_failures"] = []string{"failure_id", "occurred_at"}
+	layout["photo_hidden_lockout"] = []string{"locked_until", "singleton"}
+	encoded, err := json.Marshal(layout)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
+}()

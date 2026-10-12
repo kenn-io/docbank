@@ -58,6 +58,16 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	status, err := client.PhotoCheckoutStatus(t.Context(), id)
 	require.NoError(t, err)
 	require.Equal(t, checkout, status.Checkout)
+	for _, state := range []string{"running", "completed", "cancelled"} {
+		created.Checkout.State = state
+		created.Operation.State = state
+		if state != "running" {
+			created.Operation.FinishedAt = "2026-01-01T00:00:00Z"
+		}
+		result, err = client.CreatePhotoCheckout(t.Context(), api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100})
+		require.NoError(t, err)
+		require.Equal(t, created, result)
+	}
 	created.Checkout.State = "failed"
 	created.Checkout.Error = "supervisor is stopping"
 	created.Operation.State = "failed"
@@ -72,7 +82,5 @@ func TestPhotoCheckoutClients(t *testing.T) {
 		require.Error(t, err)
 	}
 	_, err = client.PhotoCheckoutStatus(t.Context(), "bad")
-	require.Error(t, err)
-	_, err = client.CreatePhotoCheckout(t.Context(), api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination})
 	require.Error(t, err)
 }

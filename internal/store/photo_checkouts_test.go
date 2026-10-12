@@ -3,10 +3,12 @@ package store
 import (
 	"bytes"
 	"context"
+	"errors"
 	"math"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
@@ -67,6 +69,8 @@ func TestPhotoCheckoutCapacityAndFrozenBases(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 	a := albumAsset(t, s, "photo.jpg")
+	_, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "checkout", -1)
+	require.ErrorContains(t, err, "byte_limit must be nonnegative")
 	for _, limit := range []int64{0, -1, 19} {
 		_, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", limit)
 		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
@@ -306,6 +310,40 @@ func TestPhotoCheckoutMetadataRequiresVersionOwnership(t *testing.T) {
 			actual, err := detached.PhotoCheckoutEntries(t.Context(), checkout.ID)
 			require.NoError(t, err)
 			require.Equal(t, entries, actual)
+		})
+	}
+}
+
+func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
+	t.Parallel()
+	for _, terminal := range []StorageOperationState{StorageOperationCancelled, StorageOperationFailed} {
+		t.Run(string(terminal), func(t *testing.T) {
+			s := newTestStore(t)
+			asset := albumAsset(t, s, "photo.jpg")
+			checkout, op, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			require.NoError(t, err)
+			_, err = s.ClaimStorageOperation(t.Context(), op.ID)
+			require.NoError(t, err)
+			require.NoError(t, s.SetPhotoCheckoutState(t.Context(), checkout.ID, "running", ""))
+			require.NoError(t, s.DeferStorageOperation(t.Context(), op.ID, errors.New("waiting for readable lane controls")))
+			paused, err := s.PhotoCheckout(t.Context(), checkout.ID)
+			require.NoError(t, err)
+			require.Equal(t, "queued", paused.State)
+			require.Contains(t, paused.Error, "lane controls")
+			list, err := s.ListPhotoCheckouts(t.Context())
+			require.NoError(t, err)
+			require.Equal(t, paused, list[0])
+			_, err = s.ClaimStorageOperation(t.Context(), op.ID)
+			require.NoError(t, err)
+			resumed, err := s.PhotoCheckout(t.Context(), checkout.ID)
+			require.NoError(t, err)
+			require.Equal(t, "running", resumed.State)
+			require.Empty(t, resumed.Error)
+			require.NoError(t, s.FinishStorageOperation(t.Context(), op.ID, terminal, "{}", "terminal error", time.Now().Add(time.Hour)))
+			finished, err := s.PhotoCheckout(t.Context(), checkout.ID)
+			require.NoError(t, err)
+			require.Equal(t, string(terminal), finished.State)
+			require.Equal(t, "terminal error", finished.Error)
 		})
 	}
 }

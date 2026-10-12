@@ -38,6 +38,7 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	var created api.PhotoCheckoutCreateResult
 	require.NoError(t, json.Unmarshal([]byte(body), &created))
 	require.Equal(t, "photo_checkout", created.Operation.Kind)
+	require.Equal(t, created.Operation.State, created.Checkout.State)
 	require.Equal(t, created.Operation.ID, created.Checkout.OperationID)
 	require.Eventually(t, func() bool {
 		op, err := catalog.StorageOperation(t.Context(), created.Operation.ID)

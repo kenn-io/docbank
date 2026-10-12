@@ -141,47 +141,49 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 	}
 	sort.Strings(ids)
 	entries := make([]PhotoCheckoutEntry, 0)
-	for _, id := range ids {
-		rows, err := tx.QueryContext(ctx, `SELECT f.file_id,f.asset_id,v.version_id,v.blob_hash,v.size,n.name,COALESCE(p.capture_date,'')
+	encodedIDs, err := json.Marshal(ids)
+	if err != nil {
+		return nil, estimate, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT f.file_id,f.asset_id,v.version_id,v.blob_hash,v.size,n.name,COALESCE(p.capture_date,'')
  FROM photo_files f JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
  JOIN photo_assets a ON a.asset_id=f.asset_id JOIN photo_files display ON display.file_id=a.display_file_id
  JOIN nodes display_node ON display_node.id=display.node_id JOIN content_versions display_version ON display_version.version_id=display_node.current_version_id
  LEFT JOIN source_metadata_heads h ON h.source_sha256=display_version.blob_hash LEFT JOIN photo_technical_metadata p ON p.generation_id=h.generation_id
- WHERE f.asset_id=? AND n.trashed_at IS NULL ORDER BY f.file_id`, id)
-		if err != nil {
+ WHERE f.asset_id IN (SELECT value FROM json_each(?)) AND n.trashed_at IS NULL ORDER BY f.asset_id,f.file_id`, string(encodedIDs))
+	if err != nil {
+		return nil, estimate, err
+	}
+	for rows.Next() {
+		var entry PhotoCheckoutEntry
+		var name, date string
+		if err := rows.Scan(&entry.FileID, &entry.AssetID, &entry.VersionID, &entry.Hash, &entry.Size, &name, &date); err != nil {
+			_ = rows.Close()
 			return nil, estimate, err
 		}
-		for rows.Next() {
-			var entry PhotoCheckoutEntry
-			var name, date string
-			if err := rows.Scan(&entry.FileID, &entry.AssetID, &entry.VersionID, &entry.Hash, &entry.Size, &name, &date); err != nil {
-				_ = rows.Close()
-				return nil, estimate, err
-			}
-			if entry.Size < 0 || entry.Size > math.MaxInt64-estimate.Bytes {
-				_ = rows.Close()
-				return nil, estimate, fmt.Errorf("%w: selected bytes overflow", ErrInvalidPhotoCheckout)
-			}
-			folder := "undated"
-			if len(date) >= 10 {
-				folder = strings.ReplaceAll(date[:10], "-", "/")
-			}
-			if err := validateCheckoutFilename(name); err != nil {
-				_ = rows.Close()
-				return nil, estimate, fmt.Errorf("filename %q: %w", name, err)
-			}
-			entry.Path = path.Join(folder, id, name)
-			if err := validateCheckoutPath(entry.Path); err != nil {
-				_ = rows.Close()
-				return nil, estimate, err
-			}
-			entries = append(entries, entry)
-			estimate.Files++
-			estimate.Bytes += entry.Size
+		if entry.Size < 0 || entry.Size > math.MaxInt64-estimate.Bytes {
+			_ = rows.Close()
+			return nil, estimate, fmt.Errorf("%w: selected bytes overflow", ErrInvalidPhotoCheckout)
 		}
-		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		folder := "undated"
+		if len(date) >= 10 {
+			folder = strings.ReplaceAll(date[:10], "-", "/")
+		}
+		if err := validateCheckoutFilename(name); err != nil {
+			_ = rows.Close()
+			return nil, estimate, fmt.Errorf("filename %q: %w", name, err)
+		}
+		entry.Path = path.Join(folder, entry.AssetID, name)
+		if err := validateCheckoutPath(entry.Path); err != nil {
+			_ = rows.Close()
 			return nil, estimate, err
 		}
+		entries = append(entries, entry)
+		estimate.Files++
+		estimate.Bytes += entry.Size
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, estimate, err
 	}
 	estimate.Assets = int64(len(assets))
 	return entries, estimate, nil
@@ -201,7 +203,10 @@ func (s *Store) EstimatePhotoCheckout(ctx context.Context, selection PhotoChecko
 func (s *Store) CreatePhotoCheckout(ctx context.Context, selection PhotoCheckoutSelection, destination string, byteLimit int64) (PhotoCheckout, StorageOperation, error) {
 	var checkout PhotoCheckout
 	var operation StorageOperation
-	if byteLimit < 0 || selection.All && byteLimit == 0 {
+	if byteLimit < 0 {
+		return checkout, operation, fmt.Errorf("%w: byte_limit must be nonnegative", ErrInvalidPhotoCheckout)
+	}
+	if selection.All && byteLimit == 0 {
 		return checkout, operation, fmt.Errorf("%w: all requires a positive byte_limit", ErrInvalidPhotoCheckout)
 	}
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
@@ -284,7 +289,7 @@ func validateCheckoutPath(name string) error {
 	return nil
 }
 
-const photoCheckoutSelect = `SELECT checkout_id,selection_json,byte_limit,created_at,COALESCE(destination,''),COALESCE(operation_id,''),state,error FROM photo_checkouts`
+const photoCheckoutSelect = `SELECT c.checkout_id,c.selection_json,c.byte_limit,c.created_at,COALESCE(c.destination,''),COALESCE(c.operation_id,''),COALESCE(o.state,c.state),COALESCE(o.error,c.error) FROM photo_checkouts c LEFT JOIN storage_operations o ON o.operation_id=c.operation_id`
 
 func scanPhotoCheckout(row scanner) (PhotoCheckout, error) {
 	var out PhotoCheckout
@@ -299,11 +304,26 @@ func scanPhotoCheckout(row scanner) (PhotoCheckout, error) {
 }
 
 func (s *Store) PhotoCheckout(ctx context.Context, id string) (PhotoCheckout, error) {
-	return scanPhotoCheckout(s.db.QueryRowContext(ctx, photoCheckoutSelect+` WHERE checkout_id=?`, id))
+	return scanPhotoCheckout(s.db.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=?`, id))
+}
+
+func (s *Store) PhotoCheckoutOperation(ctx context.Context, id string) (PhotoCheckout, StorageOperation, error) {
+	var checkout PhotoCheckout
+	var operation StorageOperation
+	err := s.photoReadTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		checkout, err = scanPhotoCheckout(tx.QueryRowContext(ctx, photoCheckoutSelect+` WHERE c.checkout_id=?`, id))
+		if err != nil {
+			return err
+		}
+		operation, err = scanStorageOperation(tx.QueryRowContext(ctx, storageOperationSelect+` WHERE operation_id=?`, checkout.OperationID))
+		return err
+	})
+	return checkout, operation, err
 }
 
 func (s *Store) ListPhotoCheckouts(ctx context.Context) ([]PhotoCheckout, error) {
-	rows, err := s.db.QueryContext(ctx, photoCheckoutSelect+` ORDER BY created_at,checkout_id`)
+	rows, err := s.db.QueryContext(ctx, photoCheckoutSelect+` ORDER BY c.created_at,c.checkout_id`)
 	if err != nil {
 		return nil, err
 	}
@@ -370,5 +390,20 @@ func (s *Store) FinishPhotoCheckout(ctx context.Context, id, operationID string,
 		}
 		result, err := tx.ExecContext(ctx, `UPDATE photo_checkouts SET state=?,error=? WHERE checkout_id=? AND operation_id=?`, string(state), boundedStorageOperationError(failure), id, operationID)
 		return requireOneStorageOperationRow(result, err, operationID, "finishing checkout")
+	})
+}
+
+// ObservePhotoCheckout rebuilds machine-local copy observations from verified files.
+func (s *Store) ObservePhotoCheckout(ctx context.Context, id, operationID string, fileIDs []string) error {
+	encoded, err := json.Marshal(fileIDs)
+	if err != nil {
+		return err
+	}
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_checkout_entries SET published=(file_id IN (SELECT value FROM json_each(?))) WHERE checkout_id=?`, string(encoded), id); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE storage_operations SET completed_objects=(SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=? AND published=1),copied_objects=(SELECT COUNT(*) FROM photo_checkout_entries WHERE checkout_id=? AND published=1),copied_bytes=(SELECT COALESCE(SUM(size),0) FROM photo_checkout_entries WHERE checkout_id=? AND published=1) WHERE operation_id=?`, id, id, id, operationID)
+		return err
 	})
 }

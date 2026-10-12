@@ -28,6 +28,9 @@ var schemaV0150SQL string
 //go:embed testdata/schema-v0.15.1.sql
 var schemaV0151SQL string
 
+//go:embed testdata/schema-predecessor-v33.sql
+var schemaPredecessorV33SQL string
+
 // releasedSchemaFixtures holds the exact schema.sql of every release from
 // v0.15.0 on, keyed by storage schema version.
 var releasedSchemaFixtures = map[int]string{28: schemaV0150SQL, 29: schemaV0151SQL}
@@ -671,5 +674,45 @@ func seedReleasedMtime(t *testing.T, db *sql.DB, nodeID int64, mtime string) {
 	} {
 		_, err := db.Exec(statement.query, statement.args...)
 		require.NoError(t, err)
+	}
+}
+func TestPhotoCheckoutSchema33CutoverAndMetadata(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			database := filepath.Join(t.TempDir(), "vault.db")
+			db, legacy := newReleasedFixtureStore(t, database, driver.driver, schemaPredecessorV33SQL, 33)
+			pending, err := legacy.CreateLocalOperation(t.Context(), StorageOperationKindPhotoImport, `{"source_root":"example"}`)
+			require.NoError(t, err)
+			photo := createReleasedFixtureFile(t, legacy, "photo.jpg", fakeHash("e5"), 8, "image/jpeg")
+			seedReleasedPhotoAsset(t, db, photo.ID)
+			snapshot, err := db.BeginTx(t.Context(), &sql.TxOptions{ReadOnly: true})
+			require.NoError(t, err)
+			var metadata bytes.Buffer
+			require.NoError(t, exportReleasedMetadataSnapshot(t.Context(), snapshot, &metadata, 33))
+			require.NotContains(t, metadata.String(), `"type":"photo_checkout`)
+			require.NoError(t, snapshot.Rollback())
+			require.NoError(t, db.Close())
+			restored := newTestStore(t)
+			require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
+			upgraded, err := Open(database, driver.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, upgraded.Close()) })
+			require.FileExists(t, database+".schema-v33.bak")
+			var version int
+			require.NoError(t, upgraded.db.QueryRow(`SELECT schema_version FROM vault_metadata`).Scan(&version))
+			require.Equal(t, 34, version)
+			operation, err := upgraded.StorageOperation(t.Context(), pending.ID)
+			require.NoError(t, err)
+			require.Equal(t, StorageOperationQueued, operation.State)
+			_, _, err = upgraded.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", 100)
+			require.NoError(t, err)
+			metadata.Reset()
+			require.NoError(t, upgraded.ExportMetadata(t.Context(), &metadata))
+			require.Contains(t, metadata.String(), `"type":"photo_checkout"`)
+			require.Contains(t, metadata.String(), `"type":"photo_checkout_entry"`)
+			current := newTestStore(t)
+			require.NoError(t, current.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
+		})
 	}
 }

@@ -114,6 +114,15 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 			return err
 		}
 	}
+	for _, watch := range s.Config.Watches {
+		_, overlap, err := ingest.WatchBindingOverlap([]config.WatchConfig{watch}, config.StoreBindingConfig{Kind: "filesystem", Path: destination})
+		if overlap {
+			return fmt.Errorf("%w: destination overlaps a watched folder", store.ErrInvalidPhotoCheckout)
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	// Reject a replacement between opening the handle and checking its pathname.
 	held, err := root.Stat(".")
 	if err != nil {
@@ -168,33 +177,70 @@ func (s Service) Recover(ctx context.Context) error {
 		if !exists {
 			return fmt.Errorf("checkout operation %s has no definition", op.ID)
 		}
+		failure := "checkout creation was interrupted; partial copies and frozen bases are retained"
 		if c.Destination != "" {
 			canonical, err := filepath.EvalSymlinks(c.Destination)
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
 			var root *os.Root
 			if err == nil && canonical == c.Destination {
 				root, err = os.OpenRoot(c.Destination)
 			}
 			if root != nil {
 				entries, entriesErr := s.Store.PhotoCheckoutEntries(ctx, c.ID)
-				if entriesErr == nil {
-					for _, e := range entries {
-						entriesErr = errors.Join(entriesErr, filepublish.CleanupRootStages(root, filepath.Dir(filepath.FromSlash(e.Path))))
+				if entriesErr != nil {
+					_ = root.Close()
+					return entriesErr
+				}
+				var verified []string
+				cleaned := map[string]bool{}
+				for _, e := range entries {
+					parent := filepath.Dir(filepath.FromSlash(e.Path))
+					if !cleaned[parent] {
+						entriesErr = errors.Join(entriesErr, filepublish.CleanupRootStages(root, parent))
+						cleaned[parent] = true
 					}
+					matches, verifyErr := observeCheckoutFile(root, e)
+					entriesErr = errors.Join(entriesErr, verifyErr)
+					if matches {
+						verified = append(verified, e.FileID)
+					}
+				}
+				if err := s.Store.ObservePhotoCheckout(ctx, c.ID, c.OperationID, verified); err != nil {
+					_ = root.Close()
+					return err
 				}
 				err = errors.Join(entriesErr, root.Close())
 			}
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
+				failure += "; staging cleanup failed: " + err.Error()
 			}
 		}
-		if err := s.finish(ctx, c, store.StorageOperationFailed, op.ReceiptJSON, "checkout creation was interrupted; partial copies and frozen bases are retained"); err != nil {
+		if err := s.finish(ctx, c, store.StorageOperationFailed, op.ReceiptJSON, failure); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func observeCheckoutFile(root *os.Root, entry store.PhotoCheckoutEntry) (bool, error) {
+	name := filepath.FromSlash(entry.Path)
+	info, err := root.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() || info.Size() != entry.Size {
+		return false, nil
+	}
+	file, err := root.Open(name)
+	if err != nil {
+		return false, err
+	}
+	digest := sha256.New()
+	size, readErr := io.Copy(digest, file)
+	err = errors.Join(readErr, file.Close())
+	return err == nil && size == entry.Size && hex.EncodeToString(digest.Sum(nil)) == entry.Hash, err
 }
 
 func (s Service) finish(ctx context.Context, c store.PhotoCheckout, state store.StorageOperationState, receipt, failure string) error {
@@ -226,7 +272,7 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 			if copyErr != nil || cancelled {
 				break
 			}
-			copyErr = s.copy(ctx, root, entry)
+			copyErr = s.copy(ctx, root, c.Destination, entry)
 			if copyErr != nil {
 				break
 			}
@@ -241,6 +287,9 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if copyErr == nil && !cancelled {
+		copyErr = checkDestinationIdentity(root, c.Destination)
+	}
 	if !cancelled {
 		cancelled, err = s.Store.FinalizeLocalOperation(ctx, c.OperationID)
 		if err != nil {
@@ -248,6 +297,9 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 		}
 	}
 	state, failure := store.StorageOperationCompleted, ""
+	if copyErr == nil && !cancelled {
+		copyErr = checkDestinationIdentity(root, c.Destination)
+	}
 	if cancelled {
 		state = store.StorageOperationCancelled
 	} else if copyErr != nil {
@@ -256,7 +308,16 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 	return errors.Join(copyErr, s.finish(context.WithoutCancel(ctx), c, state, "{}", failure))
 }
 
-func (s Service) copy(ctx context.Context, root *os.Root, e store.PhotoCheckoutEntry) (retErr error) {
+func checkDestinationIdentity(root *os.Root, destination string) error {
+	held, heldErr := root.Stat(".")
+	named, namedErr := os.Stat(destination)
+	if heldErr != nil || namedErr != nil || !os.SameFile(held, named) {
+		return fmt.Errorf("%w: destination changed during checkout: %v", store.ErrInvalidPhotoCheckout, errors.Join(heldErr, namedErr))
+	}
+	return nil
+}
+
+func (s Service) copy(ctx context.Context, root *os.Root, destination string, e store.PhotoCheckoutEntry) (retErr error) {
 	parent := filepath.Dir(filepath.FromSlash(e.Path))
 	if err := root.MkdirAll(parent, 0o755); err != nil {
 		return err
@@ -301,6 +362,12 @@ func (s Service) copy(ctx context.Context, root *os.Root, e store.PhotoCheckoutE
 	}
 	stage.File = nil
 	return s.mutate(ctx, func() error {
-		return s.Store.PublishPhotoCheckoutEntry(ctx, e, func() (bool, error) { return stage.Publish(filepath.FromSlash(e.Path)) })
+		return s.Store.PublishPhotoCheckoutEntry(ctx, e, func() (bool, error) {
+			if err := checkDestinationIdentity(root, destination); err != nil {
+				return false, err
+			}
+			installed, err := stage.Publish(filepath.FromSlash(e.Path))
+			return installed, errors.Join(err, checkDestinationIdentity(root, destination))
+		})
 	})
 }

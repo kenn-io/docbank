@@ -278,7 +278,7 @@ func TestOpenRejectsUnreleasedSchemaWithoutCutover(t *testing.T) {
 			_, err = s.db.Exec(`DROP TABLE provenance_version_bindings`)
 			require.NoError(t, err)
 			unreleased := currentStorageSchemaVersion - 1
-			for slices.Contains(releasedStorageSchemaVersions, unreleased) {
+			for slices.Contains(releasedStorageSchemaVersions, unreleased) || unreleased == predecessorStorageSchema.version {
 				unreleased--
 			}
 			_, err = s.db.Exec(`UPDATE vault_metadata SET schema_version=? WHERE singleton=1`, unreleased)
