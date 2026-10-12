@@ -750,6 +750,21 @@ it("keeps the Library selection when Escape is pressed on disabled maps", async 
  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);photos.dispose();
 });
 
+it("keeps the Map viewer open while the located list refreshes", async () => {
+ vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});
+ vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
+ const photos=new Photos("scoped",vi.fn());photos.items=[mapPhoto(1),mapPhoto(2)];photos.total=2;photos.started=true;vi.spyOn(photos,"resume").mockResolvedValue();
+ const lookup=vi.spyOn(photos,"lookup").mockResolvedValue(photo(1));vi.spyOn(photos,"preview").mockResolvedValue({state:"unsupported"});
+ const props={photos,mapMode:true,tiles:{tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19},cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()};
+ const view=render(PhotosWorkspace,props);await vi.dynamicImportSettled();map.onvisible!([mapPhoto(1)]);
+ await fireEvent.click(await screen.findByRole("button",{name:"Open Photo 1.jpg"}));
+ await view.rerender({...props,photoID:"photo-1"});await screen.findByRole("dialog",{name:"Photo viewer, Photo 1.jpg"});await waitFor(()=>expect(lookup).toHaveBeenCalledOnce());
+ photos.items=photos.items.map(row=>({...row}));await tick();
+ expect(lookup).toHaveBeenCalledOnce();
+ photos.items=photos.items.map(row=>row.asset_id==="photo-1"?{...row,revision:row.revision+1}:row);
+ await waitFor(()=>expect(lookup).toHaveBeenCalledTimes(2));expect(screen.getByRole("dialog",{name:"Photo viewer, Photo 1.jpg"})).toBeTruthy();photos.dispose();
+});
+
 it("viewer follows the Map query while the viewport filters its grid", async () => {
  vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});
  vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
