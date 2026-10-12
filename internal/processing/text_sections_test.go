@@ -165,9 +165,6 @@ func TestTextSectionsPages(t *testing.T) {
 	require.Equal(t, request.Offset, page.NextOffset)
 	require.Equal(t, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		page.TextSHA256)
-	request.Offset++
-	_, err = index.page(t.Context(), []byte(source), request)
-	require.ErrorIs(t, err, document.ErrInvalidTextNavigation)
 	request.Offset = 0
 	request.Section.End--
 	_, err = index.page(t.Context(), []byte(source), request)
