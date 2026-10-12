@@ -124,6 +124,12 @@ after checking current versions, scope, and evidence. A single survivor keeps
 the single-node path lookup. Concurrent moves cannot mix those checks with
 paths from a later snapshot.
 
+Collection list pages discover active membership once for both the exact total
+and page selection. File counts and current byte totals are calculated only for
+the selected collections. The single statement keeps membership, labels, totals,
+and summaries in one snapshot. Empty or exhausted pages still return the exact
+collection count.
+
 ## Durable write ordering
 
 The ingest invariant is **bytes before reference**:
