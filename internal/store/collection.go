@@ -90,50 +90,52 @@ func (s *Store) Collections(
 	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, 0, fmt.Errorf("starting collection snapshot: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	var total int
-	if err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
-		SELECT COUNT(DISTINCT ingest_id) FROM collection_members`).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("counting collections: %w", err)
-	}
-	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
-		SELECT `+collectionColumns+`
-		FROM ingests i
-		JOIN collection_members cm ON cm.ingest_id=i.id
-		JOIN nodes n ON n.id=cm.node_id
-		JOIN content_versions cv ON cv.version_id=n.current_version_id
+	// Share membership discovery between the total and page. Only selected
+	// collections need file and byte totals; an empty page still returns a total.
+	rows, err := s.db.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`,
+		eligible AS (SELECT DISTINCT ingest_id FROM collection_members),
+		totals AS (SELECT COUNT(*) AS total FROM eligible),
+		selected AS (
+			SELECT i.* FROM ingests i JOIN eligible e ON e.ingest_id=i.id
+			ORDER BY i.started_at DESC, i.id LIMIT ? OFFSET ?
+		)
+		SELECT totals.total, COALESCE(i.id, ''), COALESCE(i.source_kind, ''),
+			COALESCE(i.source_desc, ''), COALESCE(i.started_at, ''),
+			COUNT(cm.node_id), COALESCE(SUM(cv.size), 0), l.label,
+			COALESCE(l.revision, 1), COALESCE(l.updated_at, i.started_at, '')
+		FROM totals LEFT JOIN selected i ON true
+		LEFT JOIN collection_members cm ON cm.ingest_id=i.id
+		LEFT JOIN nodes n ON n.id=cm.node_id
+		LEFT JOIN content_versions cv ON cv.version_id=n.current_version_id
 		LEFT JOIN collection_labels l ON l.ingest_id=i.id
-		GROUP BY i.id, i.source_kind, i.source_desc, i.started_at,
+		GROUP BY totals.total, i.id, i.source_kind, i.source_desc, i.started_at,
 			l.label, l.revision, l.updated_at
-		ORDER BY i.started_at DESC, i.id
-		LIMIT ? OFFSET ?`, limit, offset)
+		ORDER BY i.started_at DESC, i.id`, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing collections: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	collections := make([]Collection, 0)
+	var total int
 	for rows.Next() {
-		collection, scanErr := scanCollection(rows)
-		if scanErr != nil {
-			_ = rows.Close()
-			return nil, 0, scanErr
+		var collection Collection
+		var label sql.NullString
+		if err := rows.Scan(&total, &collection.ID, &collection.SourceKind,
+			&collection.SourceDescription, &collection.StartedAt,
+			&collection.FileCount, &collection.TotalBytes, &label,
+			&collection.LabelRevision, &collection.LabelUpdatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scanning collection: %w", err)
 		}
-		collections = append(collections, collection)
+		if collection.ID != "" {
+			collection.Label = stringPtr(label)
+			collections = append(collections, collection)
+		}
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
 		return nil, 0, fmt.Errorf("listing collections: %w", err)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, 0, fmt.Errorf("closing collections: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, 0, fmt.Errorf("closing collection snapshot: %w", err)
 	}
 	return collections, total, nil
 }

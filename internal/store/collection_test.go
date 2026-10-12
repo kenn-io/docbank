@@ -58,6 +58,31 @@ func TestCollectionsExposeActiveOperationalMembership(t *testing.T) {
 	assert.Equal(t, int64(1), collections[1].LabelRevision)
 	assert.Equal(t, first.record.StartedAt, collections[1].LabelUpdatedAt)
 
+	// The newer embedded run cannot consume a page slot. Totals describe all
+	// eligible collections even when the selected page is exhausted.
+	for _, test := range []struct {
+		offset int
+		id     string
+		bytes  int64
+	}{
+		{offset: 0, id: second.ID(), bytes: 12},
+		{offset: 1, id: first.ID(), bytes: 10},
+		{offset: 2},
+		{offset: 10},
+	} {
+		page, total, err := s.Collections(ctx, 1, test.offset)
+		require.NoError(t, err)
+		require.Equal(t, 2, total)
+		if test.id == "" {
+			require.Empty(t, page)
+			continue
+		}
+		require.Len(t, page, 1)
+		assert.Equal(t, test.id, page[0].ID)
+		assert.Equal(t, int64(2), page[0].FileCount)
+		assert.Equal(t, test.bytes, page[0].TotalBytes)
+	}
+
 	page, err := s.CollectionMembers(ctx, first.ID(), 1, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, page.Total)
@@ -193,6 +218,10 @@ func TestCollectionMembershipFollowsSupersessionAndTrash(t *testing.T) {
 	addCollectionMembership(t, s, correction, node.ID, "opaque/corrected.txt", &prior)
 	_, err = s.CollectionByID(ctx, run.ID())
 	require.ErrorIs(t, err, ErrNotFound)
+	collections, total, err = s.Collections(ctx, 1, 0)
+	require.NoError(t, err)
+	assert.Empty(t, collections)
+	assert.Zero(t, total)
 }
 
 func TestCollectionReadBounds(t *testing.T) {
