@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-09
+last_edited: 2026-10-10
 title: Document processing
 description: Preview, consent to, and run document processing. The original version is never changed.
 ---
@@ -84,7 +84,9 @@ with the `docbank-docling-document/v1` adapter, then select it from a processing
 profile. The daemon can convert locally admitted PDFs, PPTX/XLSX files, plain
 text/Markdown, and PNG/JPEG images through your Docling Serve deployment.
 DOCX remains blocked by local inspection; this profile does not admit HTML,
-TIFF, legacy Office, audio, or video.
+TIFF, legacy Office, audio, or video. When local inspection refuses a file,
+its plan shows the reason on an `ineligible:` line and `processing build`
+fails with `rendition_source_ineligible`.
 
 Import the original, inspect its plan, and consent to the exact destination:
 

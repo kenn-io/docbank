@@ -184,6 +184,31 @@ func TestListDocumentsDoesNotReplayPageAfterDaemonStops(t *testing.T) {
 	assert.Equal(t, int32(1), pageCalls.Load())
 }
 
+func TestProcessingPlanToolReportsIneligibleSource(t *testing.T) {
+	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v1/processing/plans" {
+			http.NotFound(response, request)
+			return
+		}
+		writeDaemonJSON(t, response, api.ProcessingPlan{
+			Fingerprint: strings.Repeat("a", 64), VaultUID: testVaultID,
+			Selector:           api.ProcessingSelector{NodeID: 7, ContentVersionID: testVersionID, Profile: "local"},
+			ProfileFingerprint: strings.Repeat("b", 64), Flow: []api.ProcessingFlowHop{},
+			DisclosedClasses: []string{}, RetainedClasses: []string{}, ConsentState: "required",
+			BackupConsequence: "derivatives are backed up", RenditionIneligibleReason: "unbounded_media_family",
+		})
+	}))
+	t.Cleanup(daemon.Close)
+	lease := newDaemonLeaseWith(func(context.Context) (*daemonconn.Connection, error) {
+		return daemonconn.New(daemon.URL, ""), nil
+	}, func(*daemonconn.Connection) error { return nil })
+	result, err := invokeReadTool(t.Context(), lease, "get_processing_plan", map[string]any{
+		"node_id": 7, "content_version_id": testVersionID, "profile": "local",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "unbounded_media_family", structuredMap(t, result.StructuredContent)["rendition_ineligible_reason"])
+}
+
 func TestReadToolResultCapFailsClosed(t *testing.T) {
 	daemon := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/api/v1/processing/plans" {

@@ -128,7 +128,7 @@
   }
 
   async function execute(): Promise<void> {
-    if (!plan || !node.current_version_id) return;
+    if (!plan || plan.rendition_ineligible_reason || !node.current_version_id) return;
     cancelProcessing();
     const active = new AbortController();
     processingController = active;
@@ -340,7 +340,10 @@
           <p class="retention-warning">Extracted text is saved in the vault and included in backups.</p>
         {/if}
         <p class="consent-copy">Consent covers this processing profile and operator scope until revoked or expired. The exact plan fingerprint is still reviewed before each run.</p>
-        <Button size="sm" tone="info" disabled={running || loading} onclick={() => void execute()}>
+        {#if plan.rendition_ineligible_reason}
+          <p class="retention-warning">This profile can't process this file: {plan.rendition_ineligible_reason.replaceAll("_", " ")}.</p>
+        {/if}
+        <Button size="sm" tone="info" disabled={running || loading || !!plan.rendition_ineligible_reason} onclick={() => void execute()}>
           {#if running}<Spinner size={14} /> Running…{:else}<ActivityIcon size="14" aria-hidden="true" /> {plan.consent_required ? "Consent and run" : "Run processing"}{/if}
         </Button>
         <Button size="sm" surface="soft" disabled={running || loading} onclick={() => void revokeConsent()}>Revoke all processing consent</Button>
