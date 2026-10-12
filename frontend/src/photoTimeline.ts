@@ -22,12 +22,12 @@ export function timelineYears(facet: CaptureDayFacet): TimelineYear[] {
 }
 
 export function captureDateQuery(base: Query, date?: string): Query {
-  if (!date) return { ...base, filters: {} };
+  if (!date) return base;
   const after = normalizeCaptureDate(date.length === 4 ? `${date}-01-01` : date.length === 7 ? `${date}-01` : date)!;
   const end = new Date(`${after}T00:00:00Z`);
   if (date.length === 4) end.setUTCFullYear(end.getUTCFullYear() + 1);
   else if (date.length === 7) end.setUTCMonth(end.getUTCMonth() + 1);
   else end.setUTCDate(end.getUTCDate() + 1);
   const before = end.getUTCFullYear() <= 9999 ? end.toISOString().slice(0, 10) : undefined;
-  return { ...base, filters: { capture_after: after, ...(before ? { capture_before: before } : {}) } };
+  return { ...base, filters: { ...base.filters, capture_after: after, ...(before ? { capture_before: before } : {}) } };
 }

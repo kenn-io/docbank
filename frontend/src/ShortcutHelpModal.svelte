@@ -39,6 +39,7 @@
     { combo: "space", action: "Toggle inspected file selection" },
     { combo: "enter", action: "Open inspected row" },
     { combo: "escape", action: "Clear page selection" },
+    { combo: "b", action: "Add selected photos to album" },
     { combo: "?", action: "Show keyboard shortcuts" },
   ];
 

@@ -184,6 +184,9 @@ func clearLongRunningBodyReadDeadlines(api huma.API) {
 // web assets carry no vault data. Everything else requires the key —
 // the daemon always has one; see NewServer.
 func authExempt(path string) bool {
+	if isPhotoAlbumPage(path) {
+		return true
+	}
 	switch path {
 	case "/", "/photos", "/photos/hidden", "/health", kitPingPath, daemonauth.ChallengePath,
 		webDownloadFilePath, webUploadSocketPath:

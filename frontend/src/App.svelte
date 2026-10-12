@@ -73,6 +73,10 @@
   import SelectionDock from "./SelectionDock.svelte";
   import PhotosWorkspace from "./PhotosWorkspace.svelte";
   import HiddenPhotos from "./HiddenPhotos.svelte";
+  import PhotoAlbumsIndex from "./PhotoAlbumsIndex.svelte";
+  import { PhotoAlbums, photoDragType } from "./photoAlbums.svelte.js";
+  import StarIcon from "@lucide/svelte/icons/star";
+  import TargetIcon from "@lucide/svelte/icons/target";
   import { localPreferenceStorage } from "./browser-storage.js";
   import { Photos, type PhotoReturn } from "./photos.svelte.js";
   import { PhotoPreviewCache } from "./photoPreviewCache.js";
@@ -185,12 +189,18 @@
   let webSession = $state("");
   let stopSessionReporting: (() => Promise<void>) | undefined;
   let photoMode = $state(location.pathname.startsWith("/photos"));
-  let hiddenMode = $state(location.pathname === "/photos/hidden");
+  let photoPath = $state(location.pathname);
+  const hiddenMode = $derived(photoMode && photoPath === "/photos/hidden");
+  const albumID = $derived(photoPath.startsWith("/photos/albums/") ? photoPath.slice("/photos/albums/".length) : "");
+  let photoAlbums = $state<PhotoAlbums>();
+  let albumPhotos = $state<Photos>();
+  let dragOver = $state("");
+  const hashWithoutPhoto = () => new URLSearchParams(location.hash.slice(1)).has("photo") ? "" : location.hash;
   let hiddenPhotoActionError = $state("");
   let hiddenWorkspace = $state<{ refresh: () => Promise<void>; activePhotos: () => Photos | undefined; captureReturn: () => void }>();
   let libraryWorkspace = $state<PhotosWorkspace>();
   let photoID = $state(new URLSearchParams(location.hash.slice(1)).get("photo") ?? "");
-  const activePhotos = () => hiddenMode ? hiddenWorkspace?.activePhotos() : photoState?.photos;
+  const activePhotos = () => hiddenMode ? hiddenWorkspace?.activePhotos() : albumID ? albumPhotos : photoState?.photos;
   function clearPhoto() {
     if (!photoID) return;
     const photos = activePhotos();
@@ -198,18 +208,23 @@
     changePhoto("", "close");
   }
   function syncPhotoLocation() {
-    const id = new URLSearchParams(location.hash.slice(1)).get("photo") ?? "", photos = location.pathname === "/photos/hidden" ? hiddenWorkspace?.activePhotos() : photoState?.photos;
+    clearPhotoNotice();
+    const id = new URLSearchParams(location.hash.slice(1)).get("photo") ?? "", path = location.pathname;
+    const showing = photoMode && path === photoPath;
+    // Album views are recreated when their path changes, so only the open album can keep a return record.
+    const photos = path === "/photos/hidden" ? hiddenWorkspace?.activePhotos() : path === "/photos" ? photoState?.photos : showing && albumID ? albumPhotos : undefined;
+    const workspace = path === "/photos/hidden" ? hiddenWorkspace : libraryWorkspace;
     const record = history.state?.photoReturn as PhotoReturn | undefined;
     if (id && photos) {
-      if (!photoID && photoMode && record?.contextID === photos.contextID && (hiddenMode ? hiddenWorkspace : libraryWorkspace)) {
-        (hiddenMode ? hiddenWorkspace : libraryWorkspace)?.captureReturn();
+      if (!photoID && showing && record?.contextID === photos.contextID && workspace) {
+        workspace.captureReturn();
         history.replaceState({...history.state, photoReturn:photos.viewerReturn}, "", location.href);
       } else {
         photos.viewerReturn = record?.contextID === photos.contextID ? record : undefined;
         if (photos.viewerReturn) photos.scrollTop = photos.viewerReturn.scrollTop;
       }
-    } else if (location.pathname.startsWith("/photos") && photos?.viewerReturn) photos.scrollTop = photos.viewerReturn.scrollTop;
-    photoMode = location.pathname.startsWith("/photos"); hiddenMode = location.pathname === "/photos/hidden"; photoID = id;
+    } else if (path.startsWith("/photos") && photos?.viewerReturn) photos.scrollTop = photos.viewerReturn.scrollTop;
+    photoMode = path.startsWith("/photos"); if (photoMode) photoPath = path; photoID = id;
   }
   function changePhoto(id: string, mode: "open" | "step" | "close") {
     if (mode === "close" && history.state?.photoReturn?.contextID === activePhotos()?.contextID) history.back();
@@ -240,18 +255,36 @@
     photoValidated = false;
     photoConcealed = true;
     photoAccessVersion++;
+    albumPhotos?.cancelPending();
     return concealPhotoWorkspace(photoState);
+  }
+  // Album views share Library's preview cache, so revalidation refreshes whichever list is open.
+  async function revalidateLibrary(state: PhotoWorkspace, photos: Photos | undefined, valid: () => boolean) {
+    if (!photos) {
+      await state.cache.dispose();
+      await tick();
+      if (!valid()) return false;
+      state.cache = new PhotoPreviewCache(webSession, handleFailure);
+      return true;
+    }
+    const view = { photos, cache: state.cache };
+    const revalidated = await revalidatePhotoWorkspace(view, webSession, handleFailure, valid);
+    state.cache = view.cache;
+    return revalidated;
   }
   async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
     // The refreshed workspace reports an open photo that is no longer listed, so the viewer stays.
     if (photoState && result.change_id !== photoChangeID) void invalidateLibrary(false);
+    // Hiding or unhiding changes album counts and covers.
+    if (photoChangeID !== undefined && result.change_id !== photoChangeID) void photoAlbums?.load();
     photoChangeID = result.change_id;
     if (!photoMode || hiddenMode) return;
     const state = photoState;
-    if (state?.photos.hiding || state?.photos.trashing || photoConcealed && state?.photos.loading) return;
+    const photos = albumID ? albumPhotos : photoPath === "/photos/albums" ? undefined : state?.photos;
+    if (photos?.hiding || photos?.trashing || photoConcealed && photos?.loading) return;
     const version = photoAccessVersion;
     if (state && photoConcealed) {
-      if (!await revalidatePhotoWorkspace(state, webSession, handleFailure, () => version === photoAccessVersion)) return;
+      if (!await revalidateLibrary(state, photos, () => version === photoAccessVersion)) return;
     }
     if (version !== photoAccessVersion || document.visibilityState !== "visible") return;
     photoState ??= { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
@@ -265,9 +298,30 @@
     return () => { hiddenPhotoActionError = ""; discardLibrary(); photoValidated = false; photoChangeID = undefined; };
   });
   $effect(() => {
+    if (!webSession) return;
+    const albums = new PhotoAlbums(webSession, handleFailure, id => photosChanged(undefined, id));
+    photoAlbums = albums;
+    return () => { albums.dispose(); photoAlbums = undefined; };
+  });
+  $effect(() => {
+    const session = webSession;
+    const id = albumID;
+    if (!session || !id) { albumPhotos = undefined; return; }
+    const photos = new Photos(session, handleFailure, false, { v: 1, syntax: "advanced", mode: "lexical", text: "", filters: { set_ids: [id] }, sort: { field: "added_time", direction: "desc" } });
+    albumPhotos = photos;
+    return () => photos.dispose();
+  });
+  $effect(() => {
+    void photoPath;
+    const albums = photoAlbums;
+    if (photoMode && albums) untrack(() => void albums.load());
+  });
+  $effect(() => {
     if (!webSession || !photoMode) return;
     const session = webSession;
     const hidden = hiddenMode;
+    // Library, the album index, and each album are separate views; leaving one conceals it until access is checked again.
+    void photoPath;
     let current = true;
     let pending = false;
     let failures = 0;
@@ -299,21 +353,36 @@
     const poll = setInterval(() => void check(), 2000);
     return () => { current = false; checkPhotoAccess = undefined; controller.abort(); clearInterval(poll); document.removeEventListener("visibilitychange", visibility); if (!hidden) void invalidateLibrary(false); };
   });
-  function refreshLibrary() {
-    if (libraryWorkspace) void libraryWorkspace.refresh();
-    else if (photoState?.photos.started) void photoState.photos.refresh();
+  function clearPhotoNotice() { if (photoAlbums) { photoAlbums.notice = ""; photoAlbums.noticeID = ""; photoAlbums.error = ""; } }
+
+  function navigatePhotos(path: string) {
+    clearPhotoNotice();
+    navOpen = false;
+    if (photoMode && path === photoPath && path === location.pathname && !photoID) return;
+    hiddenPhotoActionError = "";
+    const previous = activePhotos();
+    if (previous) previous.viewerReturn = undefined;
+    photoMode = true;
+    photoPath = path;
+    photoID = "";
+    history.pushState(null, "", `${path}${location.search}${hashWithoutPhoto()}`);
+    if (path === "/photos/albums") void tick().then(() => document.querySelector<HTMLButtonElement>('[data-albums-nav]')?.focus());
   }
 
-  function switchWorkspace(photos: boolean, hidden = false) {
+  function switchWorkspace(photos: boolean) {
+    if (photos) {
+      navigatePhotos(photoMode || photoPath === "/photos/hidden" || !photoPath.startsWith("/photos") ? "/photos" : photoPath);
+      return;
+    }
+    clearPhotoNotice();
     navOpen = false;
-    if (photoMode === photos && hiddenMode === hidden) return;
+    if (!photoMode) return;
     hiddenPhotoActionError = "";
     const previous = activePhotos();
     if (previous) previous.viewerReturn = undefined;
     photoID = "";
-    photoMode = photos;
-    hiddenMode = hidden;
-    history.pushState(null, "", `${photos ? hidden ? "/photos/hidden" : "/photos" : "/"}${location.search}${new URLSearchParams(location.hash.slice(1)).has("photo") ? "" : location.hash}`);
+    photoMode = false;
+    history.pushState(null, "", `/${location.search}${hashWithoutPhoto()}`);
   }
   let uploadChannel = $state<VerifiedUploadChannel | null>(null);
   let uploadChannelError = $state("");
@@ -1708,7 +1777,8 @@
     await loadDirectory(parent.id, true, exact.id, false, { node: exact, path });
   }
 
-  function handleTrashed(_receipt?: Node): void {
+  function handleTrashed(_receipt?: Node, source?: Photos): void {
+    void photosChanged(source);
     selectNode(undefined);
 
     // Cached views may contain the removed node or pre-trash parent revisions.
@@ -1729,8 +1799,16 @@
     void loadTagCatalog();
   }
 
+  async function photosChanged(source?: Photos, affectedAlbumID?: string): Promise<void> {
+    const visible = albumID ? albumPhotos : photoState?.photos;
+    await Promise.all([
+      affectedAlbumID ? undefined : photoAlbums?.load(),
+      ...[photoState?.photos, albumPhotos].filter(photos => (photos?.started || photos?.loading) && photos !== source && (!affectedAlbumID || photos.query.filters?.set_ids?.includes(affectedAlbumID))).map(photos => libraryWorkspace && photos === visible ? libraryWorkspace.refresh() : photos!.refresh()),
+    ]);
+  }
+
   function handleRestored(_receipt: Node): void {
-    refreshLibrary();
+    void photosChanged();
     void hiddenWorkspace?.refresh();
     selectNode(undefined);
 
@@ -2057,7 +2135,22 @@
         <button type="button" class="nav-item" aria-current={photoMode ? "page" : undefined} onclick={() => switchWorkspace(true)}><ImageIcon size="16" aria-hidden="true" />Photos</button>
       </div>
       {#if photoMode}
-        <div class="nav-group"><button type="button" class="nav-item" aria-current={!hiddenMode ? "page" : undefined} onclick={() => switchWorkspace(true)}><LibraryIcon size="16" aria-hidden="true" />Library</button><button type="button" class="nav-item" aria-current={hiddenMode ? "page" : undefined} onclick={() => switchWorkspace(true, true)}><EyeOffIcon size="16" aria-hidden="true" />Hidden</button><button type="button" class="nav-item" aria-label="Recoverable trash" onclick={() => openPanel({ kind: "trash" })}><Trash2Icon size="16" aria-hidden="true" />Trash</button></div>
+        <div class="nav-group">
+          <button type="button" class="nav-item" aria-current={photoPath === "/photos" ? "page" : undefined} onclick={() => navigatePhotos("/photos")}><LibraryIcon size="16" aria-hidden="true" />Library</button>
+          <button type="button" class="nav-item" data-albums-nav aria-current={photoPath === "/photos/albums" ? "page" : undefined} onclick={() => navigatePhotos("/photos/albums")}><FoldersIcon size="16" aria-hidden="true" />Albums</button>
+          <button type="button" class="nav-item" aria-current={hiddenMode ? "page" : undefined} onclick={() => navigatePhotos("/photos/hidden")}><EyeOffIcon size="16" aria-hidden="true" />Hidden</button>
+          <button type="button" class="nav-item" aria-label="Recoverable trash" onclick={() => openPanel({ kind: "trash" })}><Trash2Icon size="16" aria-hidden="true" />Trash</button>
+        </div>
+        {#if photoAlbums}
+          <div class="nav-group album-targets"><h2>Albums</h2>
+            {#if photoAlbums.loadError}<span class="sidebar-album-error">Albums unavailable</span><Button size="sm" disabled={photoAlbums.busy} onclick={() => void photoAlbums?.load()}>Retry albums</Button>{/if}
+            {#each photoAlbums.items as album (album.id)}
+              <button type="button" class="nav-item" class:album-drop={dragOver === album.id} title={album.name} aria-current={albumID === album.id ? "page" : undefined} onclick={() => navigatePhotos(`/photos/albums/${album.id}`)} ondragover={event => { if (event.dataTransfer?.types.includes(photoDragType) && photoAlbums?.drag) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; dragOver = album.id; } }} ondragleave={() => dragOver = ""} ondrop={event => { dragOver = ""; void photoAlbums?.drop(album, event); }}>
+                {#if album.starred}<StarIcon size="14" aria-hidden="true" />{/if}<span class="sidebar-album-name">{album.name}</span><span class="sidebar-album-count">{photoAlbums.loadError || album.included_count === undefined ? "Count unavailable" : album.included_count.toLocaleString()}</span>{#if photoAlbums.targetID === album.id}<TargetIcon size="14" aria-label="B target" />{/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
       {:else}
       <div class="nav-group">
         <button type="button" class="nav-item"
@@ -2185,7 +2278,9 @@
     {#if photoMode}
       {#if hiddenMode}<HiddenPhotos bind:this={hiddenWorkspace} {photoID} onphotochange={changePhoto} onconceal={clearPhoto} session={webSession} onauthfailure={handleFailure} onstate={result => { void acceptPhotoAccess(result).catch(cause => { void invalidateLibrary(); photoAccessError = cause instanceof Error ? cause.message : String(cause); }); }} onaccessfailure={invalidateLibrary} ontrashed={() => { handleTrashed(); void hiddenWorkspace?.refresh(); }} onunhidden={() => { void invalidateLibrary(); void hiddenWorkspace?.refresh(); }} onactionerror={error => hiddenPhotoActionError = error} photoActionError={hiddenPhotoActionError} />{:else if photoValidated && photoState}
       {#if hiddenPhotoActionError}<p role="alert">{hiddenPhotoActionError}</p>{/if}
-      {#each [photoState] as current (current)}<PhotosWorkspace bind:this={libraryWorkspace} photos={current.photos} cache={current.cache} {photoID} onphotochange={changePhoto} ontrashed={() => handleTrashed()} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/each}
+      {#if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex albums={photoAlbums} cache={photoState.cache} onnavigate={navigatePhotos} />{/if}
+      {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace bind:this={libraryWorkspace} photos={albumPhotos} cache={photoState.cache} albums={photoAlbums} {albumID} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
+      {:else}{#each [photoState] as current (current)}<PhotosWorkspace bind:this={libraryWorkspace} photos={current.photos} cache={current.cache} albums={photoAlbums} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/each}{/if}
       {:else if photoAccessError}<p role="alert">{photoAccessError}</p><Button size="sm" onclick={() => void checkPhotoAccess?.()}>Retry</Button>{:else}<Spinner />
       {/if}
     {:else}
@@ -3189,6 +3284,10 @@
 {/if}
 
 <style>
+  .sidebar-album-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .sidebar-album-count, .sidebar-album-error { color: var(--text-muted); font-size: var(--font-size-xs); }
+  .album-targets h2 { color: var(--text-muted); font-size: var(--font-size-xs); margin: var(--space-3); }
+  .album-drop { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
   .telemetry-note { display: grid; gap: var(--space-4); line-height: 1.5; }
   .telemetry-note p { margin: 0; }
   .telemetry-note code { overflow-wrap: anywhere; }

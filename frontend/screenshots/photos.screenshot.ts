@@ -4,11 +4,11 @@ import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
 import { listPhotoAssets } from "../src/generated/docbank.js";
 
+import { photoFixture, repository } from "./photo-fixture.js";
+
 const exec = promisify(execFile);
-const repository = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const binary = process.env.DOCBANK_SCREENSHOT_BINARY ?? path.join(repository, "bin", process.platform === "win32" ? "docbank.exe" : "docbank");
 const output = process.env.DOCBANK_PHOTOS_SCREENSHOT_DIR;
 test.skip(!output, "DOCBANK_PHOTOS_SCREENSHOT_DIR enables synthetic photo proof");
@@ -253,9 +253,7 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
 test("10,000 photos stay windowed, retain previews and selection, and remember density", async ({ page }) => {
   test.setTimeout(900_000);
   const workspace = await mkdtemp(path.join(repository, ".superpowers", "photos-proof-"));
-  const vault = path.join(workspace, "vault");
-  const env = { ...process.env, DOCBANK_HOME: vault, DOCBANK_LOCK_DIR: path.join(workspace, "locks"), DOCBANK_TELEMETRY_ENABLED: "0" };
-  const run = async (...args: string[]) => (await exec(binary, args, { cwd: repository, env, timeout: 60_000 })).stdout.trim();
+  const { run, seed, dispose } = photoFixture(workspace);
   const requests = new Map<string, number>();
   let listings = 0;
   page.on("request", request => {
@@ -272,7 +270,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       URL.createObjectURL = blob => { const url = create(blob); active.add(url); return url; };
       URL.revokeObjectURL = url => { active.delete(url); revoke(url); };
     });
-    await exec("go", ["run", "-tags", "fts5", "./frontend/screenshots/photos-fixture.go", vault], { cwd: repository, env, timeout: 480_000 });
+    await seed();
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
     let releaseTransition!: () => void;
@@ -467,8 +465,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       previewURL.pathname = "/photos";
       await writeFile(path.join(output!, "photos-preview.json"), JSON.stringify({ url: previewURL.href, workspace }, null, 2));
     } else {
-      await run("daemon", "stop");
-      await rm(workspace, { recursive: true, force: true });
+      await dispose();
     }
   }
 });
