@@ -459,8 +459,8 @@ func validateRenditionExecutionIdentity(identity RenditionExecutionIdentityV1) e
 		seen[role] = struct{}{}
 	}
 	if authorization.SourceBytes <= 0 || authorization.SourceBytes > maxRenditionSourceBytes ||
-		authorization.MaxProviderMarkdownBytes < 0 || authorization.MaxProviderMarkdownBytes > maxRenditionMarkdownBytes ||
-		authorization.MaxArtifactBytes < 0 || authorization.MaxArtifactBytes > maxRenditionArtifactBytes ||
+		authorization.MaxProviderMarkdownBytes < 0 || authorization.MaxProviderMarkdownBytes > MaxRenditionMarkdownBytes ||
+		authorization.MaxArtifactBytes < 0 || authorization.MaxArtifactBytes > MaxRenditionArtifactBytes ||
 		authorization.MaxArtifacts < 0 || authorization.MaxArtifacts > maxRenditionArtifacts ||
 		authorization.MaxArtifacts > len(authorization.AllowedArtifactRoles) ||
 		authorization.MaxTotalResultBytes <= 0 || authorization.MaxTotalResultBytes > maxRenditionTotalResultBytes {

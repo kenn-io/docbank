@@ -642,7 +642,7 @@ func validRenditionRuntimeConfig(t *testing.T) Config {
 		Runtime: &RenditionRuntimeConfig{
 			Endpoint: "https://provider.example.invalid", RequestTimeout: Duration(time.Second),
 			TotalTimeout: Duration(10 * time.Second), PollInterval: Duration(time.Second), MaxPollAttempts: 4,
-			AllowedCIDRs: []string{"192.0.2.0/24"}, ProxyMode: "disabled",
+			AllowedCIDRs: []string{"10.0.0.0/8"}, ProxyMode: "disabled",
 			ConnectTimeout: Duration(time.Second), KeepAlive: Duration(time.Second),
 			TLSHandshakeTimeout: Duration(time.Second),
 		},
@@ -1048,9 +1048,9 @@ func TestDoclingDocumentRuntime(t *testing.T) {
 		{"missing credential", func(c *Config) { c.CredentialBindings = nil }, "runtime credential binding"},
 		{"endpoint path", func(c *Config) { c.RenditionProfiles["primary"].Runtime.Endpoint += "/v1" }, "root origin"},
 		{"endpoint query", func(c *Config) { c.RenditionProfiles["primary"].Runtime.Endpoint += "?token=synthetic" }, "credential-free"},
-		{"public network", func(c *Config) { c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{"8.8.8.0/24"} }, "private or loopback"},
-		{"private supernet", func(c *Config) { c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{"10.0.0.0/7"} }, "private or loopback"},
-		{"all IPv6", func(c *Config) { c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{"::/0"} }, "private or loopback"},
+		{"public network", func(c *Config) { c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{"8.8.8.0/24"} }, "private, shared, or loopback"},
+		{"private supernet", func(c *Config) { c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{"10.0.0.0/7"} }, "private, shared, or loopback"},
+		{"all IPv6", func(c *Config) { c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{"::/0"} }, "private, shared, or loopback"},
 		{"invalid CIDR", func(c *Config) { c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{"synthetic"} }, "allowed CIDR"},
 		{"ambient proxy", func(c *Config) { c.RenditionProfiles["primary"].Runtime.ProxyMode = "environment" }, "proxy-disabled"},
 		{"HTTP hosted", func(c *Config) {
@@ -1085,7 +1085,8 @@ func TestDoclingDocumentRuntime(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) { c := valid(); test.mutate(&c); require.ErrorContains(t, c.Validate(), test.want) })
 	}
-	for _, network := range []string{"127.0.0.0/8", "10.1.0.0/16", "172.18.0.0/16", "192.168.1.0/24", "::1/128", "fd00::/64"} {
+	for _, network := range []string{"127.0.0.0/8", "10.1.0.0/16", "172.18.0.0/16", "192.168.1.0/24",
+		"100.100.1.0/24", "::1/128", "fd00::/64"} {
 		t.Run(network, func(t *testing.T) {
 			c := valid()
 			c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{network}
@@ -1100,4 +1101,34 @@ func TestDoclingDocumentRuntime(t *testing.T) {
 		c.RenditionProfiles["primary"] = p
 		require.NoError(t, c.Validate())
 	})
+}
+
+func TestDoclingOperatorNetworkRequiresPrivateCIDRs(t *testing.T) {
+	for _, adapter := range []string{DoclingASRAdapterContract, DoclingDocumentAdapterContract} {
+		for _, test := range []struct {
+			network string
+			valid   bool
+		}{
+			{"10.0.0.0/8", true}, {"100.64.0.0/10", true}, {"fd7a:115c:a1e0::/48", true},
+			{"100.0.0.0/8", false}, {"192.0.2.0/24", false}, {"0.0.0.0/0", false},
+			{"::ffff:10.0.0.0/104", false}, {"169.254.0.0/16", false}, {"fe80::/10", false},
+		} {
+			t.Run(adapter+"/"+test.network, func(t *testing.T) {
+				cfg := validRenditionRuntimeConfig(t)
+				p := cfg.RenditionProfiles["primary"]
+				if adapter == DoclingDocumentAdapterContract {
+					p.AdapterContract, p.MaxTranscriptChars = adapter, 0
+					p.RequestedArtifacts = []string{string(document.EvidenceArtifactMarkdown)}
+				}
+				p.Runtime.AllowedCIDRs = []string{test.network}
+				cfg.RenditionProfiles["primary"] = p
+				err := cfg.Validate()
+				if test.valid {
+					require.NoError(t, err)
+					return
+				}
+				require.ErrorContains(t, err, "private, shared, or loopback")
+			})
+		}
+	}
 }
