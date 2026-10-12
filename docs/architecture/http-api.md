@@ -1856,6 +1856,9 @@ Tag definitions use stable server-generated UUIDv4 identities, mutable,
 unique NFC-normalized names, and a revision covering both the definition and
 its assignment set. `POST /tags`, `GET /tags`, `GET /tags/by-name`,
 and `GET|PATCH|DELETE /tags/{tag_id}` expose definition lifecycle.
+Single-tag lookups count assignments through the tag index, including live
+and trashed nodes, in the same query as the definition. This avoids joining
+and grouping the assignment rows.
 `GET /nodes/{id}/tags` and `GET /tags/{tag_id}/nodes` provide bounded forward
 and reverse listings. Reverse results include a path only for live nodes.
 `live_only=true` returns a bounded live projection and `omitted_trashed` count

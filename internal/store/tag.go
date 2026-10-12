@@ -110,9 +110,9 @@ func tagByIDQuery(ctx context.Context, queryer rowQuerier, id string) (Tag, erro
 		return Tag{}, fmt.Errorf("tag %q: %w", id, ErrNotFound)
 	}
 	tag, err := scanTag(queryer.QueryRowContext(ctx, `
-		SELECT t.id, t.name, t.revision, COUNT(nt.node_id)
-		FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
-		WHERE t.id = ? GROUP BY t.id, t.name, t.revision`, id))
+		SELECT t.id, t.name, t.revision,
+		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = t.id)
+		FROM tags t WHERE t.id = ?`, id))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, err)
 	}
@@ -126,9 +126,9 @@ func (s *Store) TagByName(ctx context.Context, name string) (Tag, error) {
 		return Tag{}, err
 	}
 	tag, err := scanTag(s.db.QueryRowContext(ctx, `
-		SELECT t.id, t.name, t.revision, COUNT(nt.node_id)
-		FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
-		WHERE t.name = ? GROUP BY t.id, t.name, t.revision`, name))
+		SELECT t.id, t.name, t.revision,
+		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = t.id)
+		FROM tags t WHERE t.name = ?`, name))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", name, err)
 	}
@@ -619,9 +619,9 @@ func tagByIDTx(tx *sql.Tx, id string) (Tag, error) {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, ErrNotFound)
 	}
 	tag, err := scanTag(tx.QueryRow(`
-		SELECT t.id, t.name, t.revision, COUNT(nt.node_id)
-		FROM tags t LEFT JOIN node_tags nt ON nt.tag_id = t.id
-		WHERE t.id = ? GROUP BY t.id, t.name, t.revision`, id))
+		SELECT t.id, t.name, t.revision,
+		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = t.id)
+		FROM tags t WHERE t.id = ?`, id))
 	if err != nil {
 		return Tag{}, fmt.Errorf("tag %q: %w", id, err)
 	}
