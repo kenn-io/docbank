@@ -877,6 +877,15 @@ it.each(["complete", "partial", "rejected", "uncertain"])("reconciles Map trash 
  expect(fetcher).toHaveBeenCalledTimes(outcome === "partial" || outcome === "uncertain"?3:outcome === "rejected"?2:1);photos.dispose();
 });
 
+it("restarts an interrupted first Library page after Reload", async () => {
+ let finish!:(value:Response)=>void;
+ const fetcher=vi.fn().mockImplementationOnce(()=>new Promise(resolve=>finish=resolve))
+  .mockResolvedValueOnce(response([{...photo(1),revision:2}])).mockResolvedValueOnce(response([photo(1),photo(2)]));stubPhotoFetch(fetcher);
+ const photos=new Photos("scoped",vi.fn());const pending=photos.loadMore();await vi.waitFor(()=>expect(finish).toBeTypeOf("function"));
+ await photos.reload("photo-1",new AbortController().signal);finish(response([photo(3)]));await pending;
+ await vi.waitFor(()=>expect(photos.started).toBe(true));expect(photos.items.map(row=>row.asset_id)).toEqual(["photo-1","photo-2"]);photos.dispose();
+});
+
 it("resumes an interrupted GPS page after Reload", async () => {
  let finish!:(value:Response)=>void;
  const query={...photoQuery,filters:{gps_bounds:{south:"-90",west:"-180",north:"90",east:"180"}}};

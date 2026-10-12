@@ -129,14 +129,14 @@ export class Photos {
         this.cancelPending(true);
         this.items = this.items.map(item => item.asset_id === assetID ? row : item);
         this.trashTargets = this.trashTargets.map(item => item.asset_id === assetID ? row : item);
-        if (this.projection) void this.resume();
+        void this.resume();
       }
       return await this.detail(row, signal);
     } catch (cause) {
       if (!signal.aborted && !this.disposed && this.query === query && cause instanceof APIError && cause.status === 404) {
         this.cancelPending(true);
         if (this.items.some(item => item.asset_id === assetID) || this.trashTargets.some(item => item.asset_id === assetID)) this.removeTarget(assetID);
-        if (this.projection) void this.resume();
+        void this.resume();
         if (query.text || Object.keys(query.filters).length) return this.lookup(assetID, signal);
       }
       throw cause;
