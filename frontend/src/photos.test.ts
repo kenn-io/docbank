@@ -912,3 +912,17 @@ it.each([
   }
   photos.dispose();
 });
+
+it("requests filter counts for the library but not for an album", async () => {
+  for (const album of [false, true]) {
+    const fetcher = vi.fn(async (_url: string, _init: RequestInit) => response([photo(1)]));
+    vi.stubGlobal("fetch", fetcher);
+    const scope = album ? { ...photoQuery, filters: { set_ids: ["00000000-0000-4000-8000-000000000001"] } } : photoQuery;
+    const photos = new Photos("scoped", vi.fn(), false, scope);
+    await photos.loadMore();
+    await vi.waitFor(() => expect(photos.facetsLoading).toBe(false));
+    const counted = fetcher.mock.calls.filter(([, init]) => JSON.parse(String(init.body)).facets?.length).length;
+    expect(counted).toBe(album ? 0 : 1);
+    photos.dispose();
+  }
+});

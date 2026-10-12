@@ -64,7 +64,10 @@ export class Photos {
   private needsFacets = false;
   private disposed = false;
 
-  constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false, query: Query = photoQuery) { this.baseQuery = query; this.query = query; }
+  // Album views show no filter counts, so an album-scoped store never requests them.
+  private readonly albumScoped: boolean;
+
+  constructor(private session: string, private onauthfailure: (cause: unknown) => void, readonly hidden = false, query: Query = photoQuery) { this.baseQuery = query; this.query = query; this.albumScoped = Boolean(query.filters?.set_ids?.length); }
 
   setSort(sort: QuerySort) {
     if (this.disposed) return;
@@ -414,15 +417,15 @@ export class Photos {
   }
 
   async retryFacets() {
-    if (this.disposed || !this.started || this.facetsLoading) return;
+    if (this.disposed || !this.started || this.facetsLoading || this.albumScoped) return;
     this.facetsController.abort();
     const controller = this.facetsController = new AbortController();
     this.needsFacets = true;
     this.facetsLoading = true; this.facetsError = ""; this.facetsRetryable = true;
-    // Counts describe the whole scope, like timeline counts, so a selected date does not narrow them.
-    const query = parseQuery(canonicalQuery(this.baseQuery));
-    query.sort = { field: "capture_time", direction: "desc" };
     try {
+      // Counts describe the whole scope, like timeline counts, so a selected date does not narrow them.
+      const query = parseQuery(canonicalQuery(this.baseQuery));
+      query.sort = { field: "capture_time", direction: "desc" };
       const page = await listPhotoAssets({ query, hidden: this.hidden, facets: [...photoFacets], page_size: 1 }, { session: this.session, signal: controller.signal });
       if (controller.signal.aborted) return;
       this.facets = (page.facets ?? []) as SnapshotPage["facets"];
