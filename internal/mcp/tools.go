@@ -497,6 +497,8 @@ func stableDomainError(err error) (string, int) {
 		return facts.Code, 0
 	case "stale_revision", "invalid_photo_asset", "photo_node_not_eligible", "photo_node_owned", "audit_mutation_unsupported", "package_incomplete":
 		return facts.Code, 0
+	case "hidden_locked":
+		return facts.Code, 0
 	default:
 		return "", 0
 	}
@@ -630,6 +632,8 @@ func domainErrorMessage(code string) string {
 		return "The selected node cannot be enrolled in a photo asset."
 	case "photo_node_owned":
 		return "The selected node already belongs to a photo asset."
+	case "hidden_locked":
+		return "Use the corresponding docbank photos CLI command and enter the Hidden passcode. MCP photo tools remain locked."
 	case "stale_revision":
 		return "The revision is stale; read the current state and retry with its revision."
 	case "audit_mutation_unsupported":

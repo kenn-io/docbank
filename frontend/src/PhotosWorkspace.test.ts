@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { tick } from "svelte";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { APIError } from "./api-transport.js";
@@ -9,15 +10,54 @@ import { captureDateQuery } from "./photoTimeline.js";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
 
+it("preserves subsequent scrolling when an interrupted refresh resumes after remount", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const cell = this.closest<HTMLElement>(".cell");
+    const scroll = this.closest<HTMLElement>(".photo-scroll");
+    return cell && scroll ? new DOMRect(0, Number.parseFloat(cell.style.top) + 56 - scroll.scrollTop, Number.parseFloat(cell.style.width), Number.parseFloat(cell.style.height)) : new DOMRect(0, 0, 1000, 400);
+  });
+  const items = Array.from({ length: 60 }, (_, index) => photo(index + 1));
+  let finishRefresh!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn().mockImplementationOnce(() => new Promise(() => {}))
+    .mockImplementationOnce(() => new Promise<Response>(resolve => finishRefresh = resolve)));
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = items; photos.total = items.length; photos.started = true; photos.scrollTop = 500;
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  const view = render(PhotosWorkspace, { photos, cache });
+  await waitFor(() => expect(screen.getByTestId("photo-scroll").scrollTop).toBe(500));
+  await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
+  view.unmount();
+  render(PhotosWorkspace, { photos, cache });
+  const scroll = screen.getByTestId("photo-scroll");
+  await waitFor(() => expect(scroll.scrollTop).toBe(500));
+  scroll.scrollTop = 1000;
+  await fireEvent.scroll(scroll);
+  finishRefresh(new Response(JSON.stringify({ items, total: items.length })));
+  await waitFor(() => expect(photos.loading).toBe(false));
+  await tick();
+  expect(scroll.scrollTop).toBe(1000);
+  expect(photos.scrollTop).toBe(1000);
+  photos.dispose(); await cache.dispose();
+});
+
 it("keeps failed confirmation visible and closes after cancellation or success", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-1", revision: 2 })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Photo changed" }), { status: 412 }))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3)], total: 3 })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ id: "photo-3", revision: 2 })))
-    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(2)], total: 1 })));
+  let listings = 0;
+  const fetcher = vi.fn(async (url: string, options: RequestInit) => {
+    if (url.endsWith("/query")) {
+      const ids = JSON.parse(String(options.body)).query.filters?.asset_ids;
+      if (ids) return Response.json({ items: [photo(2)].filter(item => ids.includes(item.asset_id)), total: 1 });
+      const first = ++listings === 1;
+      return Response.json({ items: [photo(first ? 3 : 2)], total: first ? 3 : 1 });
+    }
+    if (url.endsWith("/photo-2/trash")) return Response.json({ detail: "Photo changed" }, { status: 412 });
+    return Response.json({ id: url.split("/").at(-2), revision: 2 });
+  });
   vi.stubGlobal("fetch", fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();

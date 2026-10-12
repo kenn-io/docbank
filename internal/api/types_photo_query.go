@@ -12,6 +12,7 @@ import (
 
 // PhotoBrowseRequest carries strict QueryV1 JSON and live-page options.
 type PhotoBrowseRequest struct {
+	Hidden   bool                   `json:"hidden,omitempty"`
 	Query    QueryPayload           `json:"query"`
 	Coverage WorkspaceQueryCoverage `json:"coverage,omitzero"`
 	PageSize int                    `json:"page_size,omitempty,omitzero" minimum:"1" maximum:"250" default:"50"`
@@ -88,6 +89,7 @@ func (PhotoQuality) Schema(r huma.Registry) *huma.Schema {
 }
 
 type PreparePhotoPreviewRequest struct {
+	Hidden           bool   `json:"hidden,omitempty" default:"false"`
 	ContentVersionID string `json:"content_version_id" format:"uuid"`
 	Size             string `json:"size" enum:"fit,large"`
 }

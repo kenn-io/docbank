@@ -16,6 +16,8 @@ primary holds every retained blob. Stop the daemon before making that copy.
 Run `docbank verify` before relying on the result. [Backup and recovery](backup.md)
 owns the complete capture and restore contract.
 
+Hidden-photo backups preserve credentials, failed attempts and lockout expiry. Unlock sessions stay in memory and expire on restart or restore.
+
 This page owns the on-disk layout, schema relationships, and upgrade rules.
 Start with [How Docbank works](overview.md) for the document model.
 

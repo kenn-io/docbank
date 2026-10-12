@@ -12,7 +12,7 @@
   import type { PhotoBrowseRow } from "./generated/docbank.js";
   import SelectionDock from "./SelectionDock.svelte";
 
-  let { photos, cache, photoID, onphotochange, ontrashed }: { photos: Photos; cache: PhotoPreviewCache; ontrashed?: () => void; photoID: string; onphotochange: (id: string, mode: "open" | "step" | "close") => void } = $props();
+  let { photos, cache, title = "Library", ontrashed, onhidden, onactionerror, oninvalidate, photoID = "", onphotochange = () => {} }: { photos: Photos; cache: PhotoPreviewCache; title?: string; ontrashed?: () => void; onhidden?: () => void | Promise<void>; onactionerror?: (error: string) => void; oninvalidate?: () => void | Promise<void>; photoID?: string; onphotochange?: (id: string, mode: "open" | "step" | "close") => void } = $props();
   let trashOpen = $state(false);
   let direct = $state<PhotoBrowseRow>();
   let detailError = $state("");
@@ -87,6 +87,12 @@
   }
   let grid = $state<{ preservePosition: () => (() => Promise<void>) }>();
   const preserve = () => grid?.preservePosition();
+  export function refresh() { return photos.refresh(preserve); }
+  async function setHidden(id: string) {
+    if (photos.hiding || photos.trashing) return;
+    onactionerror?.("");
+    await photos.setHidden(id, preserve, onhidden, onactionerror, oninvalidate);
+  }
   const groups = $derived(groupPhotos(photos.items, photos.grouping));
   const ordered = $derived(photos.items);
   const current = $derived(photoID ? (fromGrid ? ordered.find(item => item.asset_id === photoID) ?? direct : direct) : undefined);
@@ -113,16 +119,17 @@
 <main class="photos-workspace" aria-label="Photo library">
   <div class="library-grid" inert={!!photoID}>
   <div class="photo-toolbar browser-toolbar">
-    <div class="library-title"><h1>Library</h1><span>{!photos.started ? (photos.loading ? "Loading photos" : "Photos") : `${photos.total.toLocaleString()} photos`}{photos.date ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}` : ""}{photos.started ? ` · ${photos.items.length.toLocaleString()} loaded` : ""}</span></div>
+    <div class="library-title"><h1>{title}</h1><span>{!photos.started ? (photos.loading ? "Loading photos" : "Photos") : `${photos.total.toLocaleString()} photos`}{photos.date ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}` : ""}{photos.started ? ` · ${photos.items.length.toLocaleString()} loaded` : ""}</span></div>
     <div class="toolbar-actions">
-      <nav class="photo-views" aria-label="Photo views"><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "grid"} onclick={() => photos.setView("grid")}>Grid</button><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "timeline"} onclick={() => photos.setView("timeline")}>Timeline</button></nav>
+      {#if !photos.hidden}<nav class="photo-views" aria-label="Photo views"><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "grid"} onclick={() => photos.setView("grid")}>Grid</button><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "timeline"} onclick={() => photos.setView("timeline")}>Timeline</button></nav>{/if}
       <div class="photo-options">
         <SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => relayout(() => photos.grouping = value as "months" | "sessions")} />
         <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => relayout(() => photos.setDensity(value as Density))} />
       </div>
-      <Button size="sm" disabled={photos.loading} onclick={() => void photos.refresh(preserve)}>Refresh previews</Button>
+      <Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing} onclick={() => void photos.refresh(preserve)}>Refresh previews</Button>
     </div>
   </div>
+  {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
   {#if photos.date}
     <div class="photo-date-selection"><Button size="sm" onclick={() => void photos.selectDate()}>Clear date</Button></div>
   {/if}
@@ -133,14 +140,14 @@
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
   {/if}
   {#if photos.items.length}
-    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading || !!photoID} {cache} selectedIDs={photos.selection.selectedIDs} onselect={select} onopen={open} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} />
+    <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading || !!photoID} {cache} hidden={photos.hidden} onhidden={id => void setHidden(id)} selectedIDs={photos.selection.selectedIDs} onselect={select} onopen={open} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} />
   {:else if !photos.loading && !photos.error}
-    <EmptyState title={photos.date ? `No photos ${photos.date.length === 10 ? "on this day" : photos.date.length === 7 ? "in this month" : "in this year"}` : "Your photo library is empty"} description={photos.date ? undefined : "Import photos with docbank photos import to browse them here."}>
+    <EmptyState title={photos.date ? `No photos ${photos.date.length === 10 ? "on this day" : photos.date.length === 7 ? "in this month" : "in this year"}` : photos.hidden ? "No hidden photos" : "Your photo library is empty"} description={photos.date ? undefined : photos.hidden ? "Choose Hide from a photo's actions menu in Library." : "Import photos with docbank photos import to browse them here."}>
       {#snippet icon()}<ImageIcon size="24" />{/snippet}
     </EmptyState>
   {/if}
   <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
-  {#if !photoID}<SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.loading} />{/if}
+  {#if !photoID}<SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.hiding || photos.loading} />{/if}
   </div>
   {#if photoID}<PhotoLoupe photo={current} error={detailError} note={membershipNote} reloading={detailLoading} {reloadRevision} onreload={() => reload = {id:photoID}} onretry={retryNavigation} {photos} {cache} items={fromGrid ? ordered : []} canLoadMore={fromGrid && !!photos.cursor} onmove={move} onchoose={id => onphotochange(id, "step")} onclose={() => onphotochange("", "close")} />{/if}
 </main>

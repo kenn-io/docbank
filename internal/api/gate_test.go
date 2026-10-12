@@ -132,6 +132,7 @@ func TestQueuedMaintenanceRejectsRouteMutation(t *testing.T) {
 		var apiErr *Error
 		require.ErrorAs(t, err, &apiErr)
 		assert.Equal(t, "maintenance_busy", apiErr.Code)
+		assert.Equal(t, http.StatusServiceUnavailable, apiErr.Status)
 
 		releaseOnce.Do(func() { close(releaseCapture) })
 		synctest.Wait()

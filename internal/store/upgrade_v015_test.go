@@ -220,7 +220,7 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 			t.Run(fmt.Sprintf("v%d/%s", version, driver.name), func(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "docbank.db")
 				db, legacy := newReleasedFixtureStore(t, path, driver.driver, schema, version)
-				_, err := legacy.CreateFile(t.Context(), legacy.RootID(), "released.txt", fakeHash("e5"), 8, "text/plain")
+				node, err := legacy.CreateFile(t.Context(), legacy.RootID(), "released.jpg", fakeHash("e5"), 8, "image/jpeg")
 				require.NoError(t, err)
 				require.NoError(t, db.Close())
 				s, err := Open(path, driver.driver)
@@ -229,6 +229,10 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				var current int
 				require.NoError(t, s.db.QueryRow(`SELECT schema_version FROM vault_metadata`).Scan(&current))
 				assert.Equal(t, currentStorageSchemaVersion, current)
+				asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
+				require.NoError(t, err)
+				require.Nil(t, asset.HiddenAt)
+				require.Equal(t, node.ID, asset.Files[0].NodeID)
 			})
 		}
 	}

@@ -180,6 +180,10 @@ func NewServer(d Deps) *Server {
 		}
 		s.webDownloads.revokeOwner(owner)
 		if d.Store != nil {
+			// Hidden unlocks are vault-wide, so ending any browser session locks Hidden.
+			if err := d.Store.LockPhotoHidden(context.Background()); err != nil {
+				d.Logger.Error("lock hidden photos after browser session ended", "error", err)
+			}
 			// The credential is already revoked and active streams interrupted.
 			// Do not abandon its durable cancellation behind a maintenance barrier.
 			ctx := context.Background()
@@ -231,6 +235,7 @@ func NewServer(d Deps) *Server {
 	registerPackageRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions)
 	registerBatesRoutes(mux, humaAPI, d, g, s.webDownloads, s.webSessions, cursorService)
 	registerPhotoRoutes(humaAPI, d, g)
+	registerPhotoHiddenRoutes(humaAPI, d, g)
 	registerPhotoSetRoutes(humaAPI, d, g)
 	registerPhotoQueryRoutes(humaAPI, d, cursorService, g)
 	registerPhotoTimelineRoute(humaAPI, s.snapshots)
@@ -251,7 +256,7 @@ func NewServer(d Deps) *Server {
 	registerWebUpload(mux, d.Cfg.Web.Enabled, d.WebURL, d, g, s.webSessions)
 	registerWebDownload(mux, d.Cfg.Web.Enabled, d, s.webDownloads, s.webSessions, s.termReports)
 
-	h := http.Handler(mux)
+	h := photoHiddenMiddleware(http.Handler(mux))
 	h = authMiddleware(h, d.Cfg.Server.APIKey, s.webSessions, s.masterOwner)
 	h = loopbackMiddleware(h)
 	h = hostMiddleware(h, d.Cfg.Server, d.WebURL)
@@ -354,6 +359,8 @@ func markRevisionPreconditionsRequired(api huma.API) {
 		{"/api/v1/photos/assets/{asset_id}/files", http.MethodPost},
 		{"/api/v1/photos/assets/{asset_id}/files/{file_id}", http.MethodDelete},
 		{"/api/v1/photos/assets/{asset_id}/exclude", http.MethodPost},
+		{"/api/v1/photos/assets/{asset_id}/hide", http.MethodPost},
+		{"/api/v1/photos/assets/{asset_id}/unhide", http.MethodPost},
 		{"/api/v1/photos/assets/{asset_id}/trash", http.MethodPost},
 		{"/api/v1/photos/assets/{asset_id}/display", http.MethodPut},
 		{"/api/v1/photos/albums/{set_id}", http.MethodPut},

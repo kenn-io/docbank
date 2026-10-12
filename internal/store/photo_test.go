@@ -415,6 +415,8 @@ func TestPhotoMutationsRequireRevision(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision+1, true)
 	require.ErrorIs(t, err, ErrStaleRevision)
+	_, err = s.SetPhotoAssetExcluded(ctx, "00000000-0000-4000-8000-000000000001", 0, true)
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestPhotoSidecarTargetsAndNoDisplayableMember(t *testing.T) {

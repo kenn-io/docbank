@@ -120,15 +120,15 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 
 	require.True(t, discoverOptions(true).Accept(rec, info))
 
+	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
+	assert.False(t, discoverOptions(true).Accept(rec, info), "mismatched protocol revision must be replaced")
+	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")
+
 	delete(rec.Metadata, metaProtocolVersion)
 	assert.False(t, discoverOptions(true).Accept(rec, info),
 		"same-version record without a protocol revision must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info),
 		"status/stop discovery must still see incompatible daemons")
-
-	rec.Metadata[metaProtocolVersion] = "69"
-	assert.False(t, discoverOptions(true).Accept(rec, info),
-		"same-version daemon without lane-control routes must be replaced")
 }
 
 func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
@@ -178,7 +178,7 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
-	rec.Metadata[metaProtocolVersion] = "69"
+	rec.Metadata[metaProtocolVersion] = "70"
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root, func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {

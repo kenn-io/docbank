@@ -29,6 +29,7 @@ type VisualPreviewGeneration struct {
 // VisualPreviewView is a preview result joined to its exact source
 // version and publication time.
 type VisualPreviewView struct {
+	Hidden      bool
 	Version     ContentVersion
 	Generation  VisualPreviewGeneration
 	PublishedAt string
@@ -426,12 +427,18 @@ func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, gen
 	}
 	defer func() { _ = tx.Rollback() }()
 	var versionID, recipe string
-	err = tx.QueryRowContext(ctx, `SELECT v.version_id,g.recipe_fingerprint FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id JOIN visual_preview_generations g ON g.content_version_id=v.version_id WHERE `+liveIncludedDisplayPredicate+` AND a.asset_id=? AND g.generation_id=?`, assetID, generationID).Scan(&versionID, &recipe)
+	var hidden *string
+	err = tx.QueryRowContext(ctx, `SELECT a.hidden_at,v.version_id,g.recipe_fingerprint FROM photo_assets a JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id JOIN visual_preview_generations g ON g.content_version_id=v.version_id WHERE `+liveIncludedDisplayPredicate+` AND a.asset_id=? AND g.generation_id=?`, assetID, generationID).Scan(&hidden, &versionID, &recipe)
 	if errors.Is(err, sql.ErrNoRows) {
 		return VisualPreviewView{}, ErrNotFound
 	}
 	if err != nil {
 		return VisualPreviewView{}, err
+	}
+	if hidden != nil {
+		if _, err := s.hiddenSession(ctx, tx); err != nil {
+			return VisualPreviewView{}, err
+		}
 	}
 	version, err := scanContentVersion(tx.QueryRowContext(ctx, `SELECT `+contentVersionCols+` FROM content_versions WHERE version_id=?`, versionID))
 	if err != nil {
@@ -447,7 +454,7 @@ func (s *Store) PhotoVisualPreviewByGeneration(ctx context.Context, assetID, gen
 	if err := tx.Commit(); err != nil {
 		return VisualPreviewView{}, err
 	}
-	return VisualPreviewView{Version: version, Generation: generation, PublishedAt: generation.CreatedAt}, nil
+	return VisualPreviewView{Hidden: hidden != nil, Version: version, Generation: generation, PublishedAt: generation.CreatedAt}, nil
 }
 
 func photoPreviewGenerations(ctx context.Context, q metadataQuerier, versions []string, recipes map[string]string) (map[string]map[string]VisualPreviewGeneration, error) {

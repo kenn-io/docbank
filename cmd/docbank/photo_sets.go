@@ -20,7 +20,7 @@ func photoAlbumRevision(cmd *cobra.Command, c *daemonconn.Connection, id string)
 	}
 }
 
-func photoAlbumWrite(use, short, example string, args cobra.PositionalArgs, write func(*cobra.Command, *daemonconn.Connection, []string, int64) (api.PhotoAlbum, error)) *cobra.Command {
+func photoAlbumWrite(use, short, example string, args cobra.PositionalArgs, write func(*cobra.Command, *daemonconn.Connection, []string, int64, string) (api.PhotoAlbum, error)) *cobra.Command {
 	command := &cobra.Command{
 		Use:     use,
 		Short:   short,
@@ -34,7 +34,9 @@ func photoAlbumWrite(use, short, example string, args cobra.PositionalArgs, writ
 			if err != nil {
 				return err
 			}
-			album, err := withPhotoRevision(cmd, photoAlbumRevision(cmd, c, args[0]), func(revision *int64) (api.PhotoAlbum, error) { return write(cmd, c, args, *revision) })
+			album, err := withPhotoHidden(cmd, c, func(cookie string) (api.PhotoAlbum, error) {
+				return withPhotoRevision(cmd, photoAlbumRevision(cmd, c, args[0]), func(revision *int64) (api.PhotoAlbum, error) { return write(cmd, c, args, *revision, cookie) })
+			})
 			if err != nil {
 				return err
 			}
@@ -101,25 +103,25 @@ Output: JSON.`,
 			}
 			return writeCLIJSON(cmd.OutOrStdout(), out)
 		}}
-	rename := photoAlbumWrite("rename <album-id> <name>", "Rename an album", "  docbank photos albums rename <album-id> 'Acme site visit'", cobra.ExactArgs(2), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64) (api.PhotoAlbum, error) {
+	rename := photoAlbumWrite("rename <album-id> <name>", "Rename an album", "  docbank photos albums rename <album-id> 'Acme site visit'", cobra.ExactArgs(2), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, _ string) (api.PhotoAlbum, error) {
 		return c.UpdatePhotoAlbum(cmd.Context(), args[0], revision, api.UpdatePhotoAlbumRequest{Name: &args[1]})
 	})
 	starred := true
-	star := photoAlbumWrite("star <album-id>", "Star or unstar an album", "  docbank photos albums star <album-id> --starred=false", cobra.ExactArgs(1), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64) (api.PhotoAlbum, error) {
+	star := photoAlbumWrite("star <album-id>", "Star or unstar an album", "  docbank photos albums star <album-id> --starred=false", cobra.ExactArgs(1), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, _ string) (api.PhotoAlbum, error) {
 		return c.UpdatePhotoAlbum(cmd.Context(), args[0], revision, api.UpdatePhotoAlbumRequest{Starred: &starred})
 	})
 	star.Flags().BoolVar(&starred, "starred", true, "star the album")
-	cover := photoAlbumWrite("cover <album-id> [asset-id]", "Choose a cover or reset to newest ready member", "  docbank photos albums cover <album-id> <asset-id>", cobra.RangeArgs(1, 2), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64) (api.PhotoAlbum, error) {
+	cover := photoAlbumWrite("cover <album-id> [asset-id]", "Choose a cover or reset to newest ready member", "  docbank photos albums cover <album-id> <asset-id>", cobra.RangeArgs(1, 2), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, cookie string) (api.PhotoAlbum, error) {
 		var id *string
 		if len(args) == 2 {
 			id = &args[1]
 		}
-		return c.SetPhotoAlbumCover(cmd.Context(), args[0], revision, id)
+		return c.SetPhotoAlbumCover(cmd.Context(), args[0], revision, id, cookie)
 	})
-	duplicate := photoAlbumWrite("duplicate <album-id> <name>", "Copy an album and its member order", "  docbank photos albums duplicate <album-id> 'Acme copy'", cobra.ExactArgs(2), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64) (api.PhotoAlbum, error) {
+	duplicate := photoAlbumWrite("duplicate <album-id> <name>", "Copy an album and its member order", "  docbank photos albums duplicate <album-id> 'Acme copy'", cobra.ExactArgs(2), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, _ string) (api.PhotoAlbum, error) {
 		return c.DuplicatePhotoAlbum(cmd.Context(), args[0], revision, args[1])
 	})
-	deleteAlbum := photoAlbumWrite("delete <album-id>", "Delete an album and keep its photos", "  docbank photos albums delete <album-id>", cobra.ExactArgs(1), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64) (api.PhotoAlbum, error) {
+	deleteAlbum := photoAlbumWrite("delete <album-id>", "Delete an album and keep its photos", "  docbank photos albums delete <album-id>", cobra.ExactArgs(1), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, _ string) (api.PhotoAlbum, error) {
 		return c.DeletePhotoAlbum(cmd.Context(), args[0], revision)
 	})
 	for _, add := range []bool{true, false} {
@@ -128,7 +130,7 @@ Output: JSON.`,
 			name = "add"
 		}
 		var raw, coverage, profile string
-		command := photoAlbumWrite(name+" <album-id> [asset-id ...]", strings.ToUpper(name[:1])+name[1:]+" selected photos or complete search results", "  docbank photos albums "+name+" <album-id> <asset-id>", cobra.MinimumNArgs(1), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64) (api.PhotoAlbum, error) {
+		command := photoAlbumWrite(name+" <album-id> [asset-id ...]", strings.ToUpper(name[:1])+name[1:]+" selected photos or complete search results", "  docbank photos albums "+name+" <album-id> <asset-id>", cobra.MinimumNArgs(1), func(cmd *cobra.Command, c *daemonconn.Connection, args []string, revision int64, cookie string) (api.PhotoAlbum, error) {
 			if (raw == "") == (len(args) == 1) {
 				return api.PhotoAlbum{}, usageError(errors.New("provide asset IDs or --query"))
 			}
@@ -141,9 +143,9 @@ Output: JSON.`,
 				body.Query = &payload
 			}
 			if add {
-				return c.AddPhotoAlbumMembers(cmd.Context(), args[0], revision, body)
+				return c.AddPhotoAlbumMembers(cmd.Context(), args[0], revision, body, cookie)
 			}
-			return c.RemovePhotoAlbumMembers(cmd.Context(), args[0], revision, body)
+			return c.RemovePhotoAlbumMembers(cmd.Context(), args[0], revision, body, cookie)
 		})
 		command.Flags().StringVar(&raw, "query", "", "strict QueryV1 JSON selecting the complete result")
 		command.Flags().StringVar(&coverage, "coverage", "", "coverage configuration: configured or unconfigured")

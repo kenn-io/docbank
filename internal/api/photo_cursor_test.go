@@ -21,6 +21,12 @@ func TestPhotoBrowserPermissions(t *testing.T) {
 	}{
 		{http.MethodPost, "/api/v1/photos/assets/query", true}, {http.MethodGet, preview, true},
 		{http.MethodPost, base + "/trash", true},
+		{http.MethodPost, base + "/hide", true}, {http.MethodPost, base + "/unhide", true},
+		{http.MethodGet, base + "/hide", false}, {http.MethodPost, base + "/unhide?extra=1", false},
+		{http.MethodGet, "/api/v1/photos/hidden", true}, {http.MethodGet, "/api/v1/photos/hidden?extra=1", false},
+		{http.MethodPost, "/api/v1/photos/hidden/change", true}, {http.MethodPost, "/api/v1/photos/hidden/disable", true},
+		{http.MethodPost, "/api/v1/photos/hidden/lock", true}, {http.MethodGet, "/api/v1/photos/hidden/lock", false},
+		{http.MethodPost, "/api/v1/photos/hidden/change?extra=1", false}, {http.MethodPost, "/api/v1/photos/hidden/reset", false},
 		{http.MethodGet, base + "?run=true", false},
 		{http.MethodPost, base + "/trash?run=true", false},
 		{http.MethodPost, base + "/trash/extra", false},

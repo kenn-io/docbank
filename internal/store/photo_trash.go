@@ -13,7 +13,7 @@ func (s *Store) TrashPhotoAsset(ctx context.Context, assetID string, revision in
 	var asset PhotoAsset
 	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		var err error
-		asset, err = photoAssetForMutationTx(ctx, tx, assetID, revision)
+		asset, err = s.photoAssetForMutationTx(ctx, tx, assetID, revision)
 		if err != nil {
 			return err
 		}

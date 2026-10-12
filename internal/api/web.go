@@ -29,6 +29,7 @@ func registerWeb(mux *http.ServeMux, enabled bool, webURL string) {
 	}
 	mux.HandleFunc("GET /{$}", index)
 	mux.HandleFunc("GET /photos", index)
+	mux.HandleFunc("GET /photos/hidden", index)
 	mux.Handle("GET /assets/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setWebHeaders(w, webURL)
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")

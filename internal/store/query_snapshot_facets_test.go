@@ -51,6 +51,13 @@ func TestQuerySnapshotCaptureDayMatchesPhotoScope(t *testing.T) {
 	for i := range 5 {
 		browsePhotoNode(t, s, fmt.Sprintf("unrelated-%d.txt", i), browseHash(fmt.Sprintf("unrelated-%d", i)), "text/plain")
 	}
+	hidden := browsePhotoNode(t, s, "hidden.jpg", browseHash("calendar-hidden"), "image/jpeg")
+	browsePhotoMetadata(t, s, hidden, "hidden-day", photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp("2023-03-03T12:00:00", "2023-03-03T12:00:00", document.SourceMetadataPrecisionSecond, document.SourceMetadataTimezoneOmitted, "")))
+	hiddenAsset, err := s.PhotoAssetForNode(ctx, hidden.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "correct"))
+	_, err = s.SetPhotoAssetHidden(ctx, hiddenAsset.ID, hiddenAsset.Revision, true)
+	require.NoError(t, err)
 	_, err = s.materializeQuerySnapshot(ctx, SnapshotRequest{Query: snapshotTestQuery(t, `{}`)}, snapshotMaterializeOptions{MaxRows: 1})
 	require.ErrorIs(t, err, ErrQuerySnapshotTooLarge)
 	outside := snapshotTestQuery(t, `{"syntax":"advanced","text":"saved:Sidecars AND capture_after:2025-01-01 AND capture_before:2025-01-02"}`)

@@ -4,7 +4,7 @@
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import PhotoCell from "./PhotoCell.svelte";
 
-  let { group, layout, offset, top, bottom, cache, selectedIDs, onselect, oncheck, onopen }: {
+  let { group, layout, offset, top, bottom, cache, selectedIDs, onselect, oncheck, onhidden, hidden = false, onopen }: {
     group: PhotoGroup;
     layout: { rows: Row[]; totalHeight: number; intrinsicHeight: number };
     offset: number;
@@ -13,6 +13,8 @@
     cache: PhotoPreviewCache;
     selectedIDs: ReadonlySet<string>;
     onselect: (id: string, event: MouseEvent) => void;
+    onhidden?: (id: string) => void;
+    hidden?: boolean;
     onopen: (id: string, element: HTMLElement) => void;
     oncheck: (id: string, checked: boolean, range: boolean) => void;
   } = $props();
@@ -28,7 +30,7 @@
       {#each cells as cell (cell.photo.asset_id)}
         {@const photo = cell.photo}
         <div class="cell" style:left={`${cell.x}px`} style:top={`${cell.y}px`} style:width={`${cell.width}px`} style:height={`${cell.height}px`}>
-          <PhotoCell {photo} {cache} selected={selectedIDs.has(photo.asset_id)} onclick={event => onselect(photo.asset_id, event)} oncheck={(checked, range) => oncheck(photo.asset_id, checked, range)} onopen={element => onopen(photo.asset_id, element)} />
+          <PhotoCell {hidden} onhidden={() => onhidden?.(photo.asset_id)} {photo} {cache} selected={selectedIDs.has(photo.asset_id)} onclick={event => onselect(photo.asset_id, event)} oncheck={(checked, range) => oncheck(photo.asset_id, checked, range)} onopen={element => onopen(photo.asset_id, element)} />
         </div>
       {/each}
     </div>

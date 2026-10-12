@@ -219,13 +219,13 @@ func materializeCaptureDayFacet(
 	ctx context.Context, q metadataQuerier, compiled CompiledQuery, generation string,
 	coverage CoverageSelection, dayLimit int64,
 ) (SnapshotFacet, error) {
-	match, err := photoBrowseMatch(compiled, generation, coverage)
+	match, err := photoBrowseMatch(compiled, generation, coverage, false)
 	if err != nil {
 		return SnapshotFacet{}, err
 	}
 	statement, args, err := bindQueryPopulation(compiledQueryFragment{
 		sql: `SELECT COALESCE(p.capture_date,''),COUNT(*) FROM ` + photoBrowseDisplayFrom +
-			` WHERE ` + photoBrowseLiveDisplay + ` AND ` + match.sql +
+			` WHERE ` + photoBrowseLiveDisplay + ` AND ` + photoVisibilityPredicate(false) + ` AND ` + match.sql +
 			` GROUP BY COALESCE(p.capture_date,'') ORDER BY COALESCE(p.capture_date,'') DESC`,
 		args: match.args, relations: match.relations,
 	}, coverage, generation)

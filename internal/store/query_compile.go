@@ -53,6 +53,7 @@ func compileQuery(
 // Photos use display metadata for every member; document queries use each file's metadata.
 type queryCompiler struct {
 	photoDisplayMetadata bool
+	photoHidden          bool
 }
 
 func (c queryCompiler) compile(
@@ -294,7 +295,7 @@ func (c queryCompiler) compileSavedPredicate(expression *query.ResolvedExpressio
 	}
 	if c.photoDisplayMetadata {
 		nested = joinCompiledFragments([]compiledQueryFragment{
-			nested, {sql: photoBrowseEligibleMemberPredicate},
+			nested, {sql: photoBrowseEligibleMemberPredicate(c.photoHidden)},
 		}, ` AND `)
 	}
 	population := selectCompiledPopulation(nested, true)
