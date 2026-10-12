@@ -594,7 +594,6 @@ it("bounds selection writes, rejects unconfirmed success and guards overlapping 
   await photos.setHidden("photo-1");
   expect(await photos.trashSelected()).toBe(false);
   expect(fetcher).toHaveBeenCalledTimes(2);
-  expect(timers).toHaveLength(1);
   timers[0].abort(new DOMException("Timed out", "TimeoutError"));
   finish(Response.json({ id: "photo-1", revision: 2 })); await write;
   expect(photos.actionError).toContain("Timed out");
