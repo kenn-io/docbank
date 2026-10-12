@@ -2,6 +2,7 @@ import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { APIError } from "./api-transport.js";
+import { randomUUID } from "./crypto.js";
 import { type BrowserSession } from "./browser-session.js";
 import type { UploadReceipt } from "./generated/docbank.js";
 
@@ -213,7 +214,7 @@ export class VerifiedUploadChannel implements UploadTransport {
     if (this.busy) throw new Error("Another browser upload is already active.");
     throwIfAborted(signal);
     this.busy = true;
-    const requestID = crypto.randomUUID();
+    const requestID = randomUUID();
     const name = file.name.normalize("NFC");
     let readyForBytes = false;
     try {
@@ -288,7 +289,7 @@ export class VerifiedUploadChannel implements UploadTransport {
     if (this.busy) throw new Error("Another browser upload is already active.");
     throwIfAborted(signal);
     this.busy = true;
-    const requestID = crypto.randomUUID();
+    const requestID = randomUUID();
     let readyForBytes = false;
     try {
       this.send({
@@ -334,7 +335,7 @@ export class VerifiedUploadChannel implements UploadTransport {
     if (this.busy) throw new Error("Another browser upload is already active.");
     throwIfAborted(signal);
     this.busy = true;
-    const requestID = crypto.randomUUID();
+    const requestID = randomUUID();
     let readyForBytes = false;
     try {
       this.send({ type: "begin_mailbox_chunk", request_id: requestID,

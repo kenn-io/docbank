@@ -12,6 +12,7 @@
     Spinner,
   } from "@kenn-io/kit-ui";
   import { APIError, sessionEmpty } from "./api-transport.js";
+  import { randomUUID } from "./crypto.js";
   import type { Node } from "./generated/docbank.js";
   import { formatBytes } from "./format.js";
   import {
@@ -114,7 +115,7 @@
     busy = true;
     error = "";
     controller = new AbortController();
-    if (!containerID) containerID = crypto.randomUUID();
+    if (!containerID) containerID = randomUUID();
     try {
       container = await uploadMailboxArchive(
         session,
@@ -147,7 +148,7 @@
     if (!container || !preview || busy) return;
     busy = true;
     error = "";
-    if (!jobID) jobID = crypto.randomUUID();
+    if (!jobID) jobID = randomUUID();
     try {
       job = await mailboxJSON<MailboxJob>(
         session,

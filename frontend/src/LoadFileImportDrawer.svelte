@@ -4,6 +4,7 @@
   import FileArchiveIcon from "@lucide/svelte/icons/file-archive";
   import { Button, Card, Checkbox, Chip, DetailDrawer, IconButton, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
+  import { randomUUID } from "./crypto.js";
   import { formatBytes } from "./format.js";
   import type { PackageImportJob, PackagePreflight } from "./generated/docbank.js";
   import { preflightPackageZIP, readPackageImport, startPackageImport, uploadPackageZIP, type PackageChannel } from "./loadfile.js";
@@ -38,7 +39,7 @@
   async function previewPackage(): Promise<void> {
     if (!file || busy) return;
     busy = true; error = ""; controller = new AbortController();
-    if (!containerID) containerID = crypto.randomUUID();
+    if (!containerID) containerID = randomUUID();
     try {
       if (!sourceSealed) {
         await uploadPackageZIP(session, channel, file, containerID, controller.signal, (label, progress) => {
@@ -55,7 +56,7 @@
   async function start(): Promise<void> {
     if (!preview || busy) return;
     busy = true; error = "";
-    if (!operationID) operationID = crypto.randomUUID();
+    if (!operationID) operationID = randomUUID();
     try {
       job = await startPackageImport(session, {
         preflight_id: preview.preflight_id, into: destination, name, party,

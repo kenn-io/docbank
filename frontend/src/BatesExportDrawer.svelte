@@ -4,6 +4,7 @@
   import XIcon from "@lucide/svelte/icons/x";
   import { Button, Card, Chip, CopyButton, DetailDrawer, EmptyState, IconButton, SelectDropdown, Spinner, TextInput } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
+  import { randomUUID } from "./crypto.js";
   import {
     batesRecipe,
     clearPendingBatesReservation,
@@ -196,7 +197,7 @@
     if (!pending) {
       if (!selectedSource || !plan) return;
       remember({
-        operation_id: crypto.randomUUID(),
+        operation_id: randomUUID(),
         snapshot_id: selectedSource.snapshot_id,
         recipe: batesRecipe(plan.namespace, plan.start_sequence, position, Number(margin)),
         plan,
