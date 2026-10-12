@@ -24,6 +24,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/yuin/goldmark/parser"
+	"golang.org/x/sync/semaphore"
+
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/upload"
@@ -110,6 +113,8 @@ type configuredProfile struct {
 }
 
 type Service struct {
+	navigationSlots     *semaphore.Weighted
+	textParser          func() parser.Parser
 	catalog             *store.Store
 	blobs               *blob.Store
 	gate                processingOperationGate
@@ -378,7 +383,8 @@ func NewService(config ServiceConfig) (*Service, error) {
 	maps.Copy(mediaOrigins, config.MediaOrigins)
 	mediaOriginProbes := make(map[string]MediaOriginProbe, len(config.MediaOriginProbes))
 	maps.Copy(mediaOriginProbes, config.MediaOriginProbes)
-	service := &Service{catalog: config.Catalog, blobs: config.Blobs, gate: config.Gate,
+	service := &Service{navigationSlots: semaphore.NewWeighted(2), textParser: newTextSectionParser,
+		catalog: config.Catalog, blobs: config.Blobs, gate: config.Gate,
 		profiles:       make(map[string]configuredProfile, len(config.Profiles)),
 		principal:      config.Principal,
 		scope:          config.Scope,
