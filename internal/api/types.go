@@ -98,6 +98,9 @@ type ProcessingPlan struct {
 	ConsentRequired    bool                `json:"consent_required"`
 	ConsentState       string              `json:"consent_state" enum:"active,required,expired,revoked"`
 	BackupConsequence  string              `json:"backup_consequence"`
+	// RenditionIneligibleReason is set when local inspection refuses to send
+	// this source to the rendition provider; starting the plan then fails.
+	RenditionIneligibleReason string `json:"rendition_ineligible_reason,omitzero"`
 }
 
 type StartProcessingRequest struct {

@@ -59,6 +59,9 @@ const (
 	CapabilityReasonExternalReference  CapabilityReason = "external_reference"
 	CapabilityReasonSemanticUnits      CapabilityReason = "semantic_units_exceeded"
 	CapabilityReasonVisualBounds       CapabilityReason = "visual_bounds_exceeded"
+	// CapabilityReasonEmptySource marks a zero-byte source. InspectCapability
+	// rejects such a policy outright; callers report this reason instead.
+	CapabilityReasonEmptySource CapabilityReason = "empty_source"
 )
 
 // InspectionPolicy binds finite preflight limits and downstream authority to

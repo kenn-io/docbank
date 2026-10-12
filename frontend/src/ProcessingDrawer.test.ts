@@ -453,6 +453,30 @@ describe("document processing drawer", () => {
     expect(screen.queryByText("Durable job")).toBeNull();
   });
 
+  it("blocks a run when local inspection refuses the source", async () => {
+    const versionID = "11111111-1111-4111-8111-111111111111";
+    const fingerprint = "a".repeat(64);
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/v1/processing/profiles") return Response.json([{ name: "private", fingerprint, rendition: true, embedding_bindings: [] }]);
+      if (path === "/api/v1/processing/plans") return Response.json({ fingerprint, vault_uid: versionID, selector: { node_id: 42, content_version_id: versionID, profile: "private" }, profile_fingerprint: fingerprint, flow: [], disclosed_classes: [], retained_classes: [], estimate: { source_bytes: 1, provider_calls: 1, vector_spaces: 0 }, consent_required: true, consent_state: "required", backup_consequence: "none", rendition_ineligible_reason: "unbounded_media_family" });
+      if (path.startsWith("/api/v1/coverage?")) return Response.json({ vault_uid: versionID, profile_fingerprint: fingerprint, state: "missing", renditions: { name: "rendition", required: true, state: "missing", complete: 0, unavailable: 0, stale: 0, ineligible: 0, rebuilding: 0, previous_generation_serving: 0, total: 1 }, embeddings: [] });
+      throw new Error(`unexpected request: ${path}`);
+    });
+
+    render(ProcessingDrawer, {
+      session: "short-lived",
+      node: { id: 42, name: "report.docx", kind: "file", current_version_id: versionID, size: 1, revision: 1, created_at: "", modified_at: "" },
+      path: "/Reports/report.docx", onclose: vi.fn(), onauthfailure: vi.fn(), onrendition: vi.fn(),
+    });
+
+    const run = await screen.findByRole("button", { name: "Consent and run" });
+    expect(screen.getByText("This profile can't process this file: unbounded media family.")).toBeTruthy();
+    expect((run as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.click(run);
+    expect(fetch.mock.calls.map(([input]) => String(input))).not.toContain("/api/v1/processing/jobs");
+  });
+
   it("does not render a result revoked from the exact-version consumer fence", async () => {
     const versionID = "11111111-1111-4111-8111-111111111111";
     const revokedVersionID = "22222222-2222-4222-8222-222222222222";

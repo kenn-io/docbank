@@ -198,6 +198,10 @@ func TestDaemonDoclingDocumentProcessing(t *testing.T) {
 		{name: "PDF pages exceed max units", filename: "report.pdf", source: doclingTestPDFPages(2), disclose: true, maxUnits: 1, failure: "max-units"},
 		{name: "PPTX slides exceed max units", filename: "deck.pptx", source: doclingTestPPTX(t, 2), disclose: true, maxUnits: 1, failure: "max-units"},
 		{name: "XLSX sheets exceed max units", filename: "book.xlsx", source: doclingTestXLSX(t, 2), disclose: true, maxUnits: 1, failure: "max-units"},
+		{name: "DOCX is not inspectable", filename: "report.docx", source: doclingTestZIP(t, []doclingTestZIPEntry{
+			{name: "[Content_Types].xml", body: `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`},
+			{name: "word/document.xml", body: `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>`},
+		}), failure: "unbounded"},
 		{name: "redirect refused", failure: "redirect"},
 		{name: "missing secret", failure: "secret"},
 	} {
@@ -316,14 +320,16 @@ func TestDaemonDoclingDocumentProcessing(t *testing.T) {
 			require.Equal(t, test.disclose, plan.Flow[0].DiscloseFilename)
 			require.Equal(t, p.DeploymentFingerprint, plan.Flow[0].RuntimeDisclosure.Deployment)
 			require.True(t, plan.ConsentRequired)
+			wantIneligible := map[string]string{"max-units": "semantic_units_exceeded", "unbounded": "unbounded_media_family"}[test.failure]
+			require.Equal(t, wantIneligible, plan.RenditionIneligibleReason)
 			require.Zero(t, requests.Load(), "ingest and planning must not call Docling")
 			_, err = daemon.StartProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint}, plan.ProfileFingerprint)
 			require.Error(t, err)
 			require.Zero(t, requests.Load(), "no consent must prevent egress")
 			job, err := daemon.EnqueueProcessing(t.Context(), api.StartProcessingRequest{Selector: selector, PlanFingerprint: plan.Fingerprint, Consent: true}, plan.ProfileFingerprint)
-			if test.failure == "max-units" && err != nil {
-				require.ErrorContains(t, err, "processing_failed")
-				require.Zero(t, requests.Load(), "a local source-unit limit must reject the document before provider egress")
+			if wantIneligible != "" {
+				require.ErrorContains(t, err, "422 rendition_source_ineligible")
+				require.Zero(t, requests.Load(), "local inspection must reject the document before provider egress")
 				require.Zero(t, redirects.Load(), "a rejected source must not follow provider redirects")
 				return
 			}
