@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/home"
 	"go.kenn.io/docbank/internal/processing"
+	"go.kenn.io/docbank/internal/query"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -102,15 +103,21 @@ func main() {
 		if index == 46 {
 			date = "2024-02-29T23:30:00"
 		}
+		camera, model, lens := "Canon", "Canon EOS R6", "RF 24-70mm F2.8"
+		if index%2 == 1 {
+			camera, model, lens = "Nikon", "Nikon Z6", "NIKKOR Z 35mm F1.8"
+		}
 		fields := []document.SourceMetadataFieldV1{
 			{Key: "created", Namespace: "image.exif", SourceField: "DateTimeOriginal", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataTimestamp, Timestamp: &document.SourceMetadataTimestampV1{Raw: date, Normalized: date, Precision: document.SourceMetadataPrecisionSecond, Timezone: document.SourceMetadataTimezoneOmitted}}},
-			{Key: "image.exif.camera_make", Namespace: "image.exif", SourceField: "Make", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Synthetic Camera")}},
-			{Key: "image.exif.camera_model", Namespace: "image.exif", SourceField: "Model", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Model 1")}},
-			{Key: "image.exif.lens_model", Namespace: "image.exif", SourceField: "LensModel", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("Synthetic 50mm")}},
+			{Key: "image.exif.camera_make", Namespace: "image.exif", SourceField: "Make", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: &camera}},
+			{Key: "image.exif.camera_model", Namespace: "image.exif", SourceField: "Model", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: &model}},
+			{Key: "image.exif.lens_model", Namespace: "image.exif", SourceField: "LensModel", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: &lens}},
 			{Key: "image.exif.iso", Namespace: "image.exif", SourceField: "PhotographicSensitivity", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataInteger, Integer: new(int64(400))}},
 			{Key: "image.exif.f_number", Namespace: "image.exif", SourceField: "FNumber", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataNumber, Number: new(2.8)}},
 			{Key: "image.exif.exposure_time_seconds", Namespace: "image.exif", SourceField: "ExposureTime", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataNumber, Number: new(0.004)}},
 			{Key: "image.exif.focal_length_mm", Namespace: "image.exif", SourceField: "FocalLength", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataNumber, Number: new(50.0)}},
+			{Key: "image.exif.gps_latitude", Namespace: "image.exif", SourceField: "GPSLatitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("48.8566")}},
+			{Key: "image.exif.gps_longitude", Namespace: "image.exif", SourceField: "GPSLongitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("2.3522")}},
 		}
 		metadata, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: fields})
 		check(err)
@@ -146,6 +153,12 @@ func main() {
 		_, err = s.PublishVisualPreviewGeneration(ctx, node.CurrentVersionID, item.canonical, &item.physical)
 		check(err)
 	}
+	album, err := s.CreatePhotoSet(ctx, "Paris walks")
+	check(err)
+	scope, err := query.Parse([]byte(`{"filters":{"cameras":["Canon EOS R6"]}}`))
+	check(err)
+	_, err = s.ChangePhotoSetMembers(ctx, album.ID, album.Revision, true, store.PhotoSetSelection{Query: &scope})
+	check(err)
 	check(s.Checkpoint(ctx))
 	fmt.Printf("seeded %d synthetic photos\n", count)
 }

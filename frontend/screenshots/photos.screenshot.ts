@@ -252,7 +252,7 @@ test("timeline seeks an unloaded leap day and preserves full-scope counts", asyn
 
 test("10,000 photos stay windowed, retain previews and selection, and remember density", async ({ page }) => {
   test.setTimeout(900_000);
-  const workspace = await mkdtemp(path.join(repository, ".superpowers", "photos-proof-"));
+  const workspace = process.env.DOCBANK_PHOTO_PROOF_WORKSPACE ?? await mkdtemp(path.join(repository, ".superpowers", "photos-proof-"));
   const { run, seed, dispose } = photoFixture(workspace);
   const requests = new Map<string, number>();
   let listings = 0;
@@ -270,7 +270,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       URL.createObjectURL = blob => { const url = create(blob); active.add(url); return url; };
       URL.revokeObjectURL = url => { active.delete(url); revoke(url); };
     });
-    await seed();
+    if (!process.env.DOCBANK_PHOTO_PROOF_WORKSPACE) await seed();
     const webURL = new URL(await run("web", "--no-browser"));
     webURL.pathname = "/photos";
     let releaseTransition!: () => void;
@@ -279,6 +279,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
     const transitionHold = new Promise<void>(resolve => releaseTransition = resolve);
     await page.route("**/api/v1/photos/assets/query", async route => {
       const body = route.request().postDataJSON();
+      if (body.facets?.length) { await route.continue(); return; }
       body.page_size = 100;
       const url = new URL(route.request().url());
       const host = url.host;
@@ -323,6 +324,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       await page.keyboard.press("Enter");
       await scroll.evaluate((element, gap) => element.scrollTop = element.scrollHeight - element.clientHeight - gap, anchor ? 400 : 0);
     };
+    await expect(page.getByRole("group", { name: "Camera facet" }).getByRole("button", { name: "Canon EOS R6, 5000 photos" })).toBeVisible();
     for (let count = 0; count < 50; count++) {
       if (await page.getByText("10,000 photos · 10,000 loaded").isVisible()) break;
       const loaded = await page.locator(".library-title span").innerText();
@@ -464,7 +466,7 @@ test("10,000 photos stay windowed, retain previews and selection, and remember d
       const previewURL = new URL(await run("web", "--no-browser"));
       previewURL.pathname = "/photos";
       await writeFile(path.join(output!, "photos-preview.json"), JSON.stringify({ url: previewURL.href, workspace }, null, 2));
-    } else {
+    } else if (!process.env.DOCBANK_PHOTO_PROOF_WORKSPACE) {
       await dispose();
     }
   }
@@ -705,7 +707,7 @@ test("photo loupe opens, upgrades, navigates, restores focus and reloads a direc
     await page.getByRole("button", { name: "View original", exact: true }).click();
     await expect(page.getByText("Original", { exact: true })).toBeVisible({ timeout: 60_000 });
     await page.keyboard.press("i");
-    await expect(page.getByRole("complementary", { name: "Photo details" }).getByText("Synthetic Camera Model 1")).toBeVisible();
+    await expect(page.getByRole("complementary", { name: "Photo details" }).getByText(/^(Canon Canon EOS R6|Nikon Nikon Z6)$/)).toBeVisible();
     for (const width of [1440, 400]) {
       await page.setViewportSize({ width, height: 960 });
       for (const theme of ["light", "dark"]) {

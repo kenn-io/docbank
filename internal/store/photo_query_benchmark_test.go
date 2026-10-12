@@ -23,6 +23,8 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, s.Close()) })
 	ctx := b.Context()
+	_, err = s.db.ExecContext(ctx, `PRAGMA synchronous=OFF`)
+	require.NoError(b, err)
 	for i := range assetCount {
 		node, err := s.CreateFile(ctx, s.RootID(), fmt.Sprintf("capture-%05d.jpg", i), browseHash(fmt.Sprintf("benchmark-source-%d", i)), 20, "image/jpeg")
 		require.NoError(b, err)
@@ -48,6 +50,8 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 		_, err = s.PublishSourceMetadata(ctx, node.BlobHash, browseHash("benchmark-metadata"), canonical)
 		require.NoError(b, err)
 	}
+	_, err = s.db.ExecContext(ctx, `PRAGMA synchronous=FULL`)
+	require.NoError(b, err)
 	var assets, heads, projected, captured int
 	require.NoError(b, s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM photo_assets), (SELECT count(*) FROM source_metadata_heads), (SELECT count(*) FROM photo_technical_metadata), (SELECT count(*) FROM photo_technical_metadata WHERE capture_time IS NOT NULL)`).Scan(&assets, &heads, &projected, &captured))
 	require.Equal(b, assetCount, assets)
@@ -64,6 +68,7 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 		recipes[size] = fingerprint
 	}
 	for _, tc := range []struct{ name, raw string }{
+		{"ranked", `{"text":"Synthetic","sort":{"field":"relevance","direction":"desc"}}`},
 		{"capture_asc", `{"sort":{"field":"capture_time","direction":"asc"}}`},
 		{"capture_desc", `{"sort":{"field":"capture_time","direction":"desc"}}`},
 		{"import", `{"sort":{"field":"import_time","direction":"desc"}}`},
@@ -73,6 +78,40 @@ func benchmarkPhotoBrowse(b *testing.B, assetCount int) {
 		value, err := query.Parse([]byte(tc.raw))
 		require.NoError(b, err)
 		request := PhotoBrowseRequest{Query: value, PageSize: 50, Recipes: recipes}
+		if tc.name == "ranked" {
+			b.Run("ranked/counts", func(b *testing.B) {
+				counts := request
+				counts.Query.Sort = query.Sort{Field: "capture_time", Direction: "desc"}
+				counts.PageSize = 1
+				counts.Facets = []string{"camera", "lens", "year", "location", "set"}
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					page, err := s.ListPhotoAssets(ctx, counts, nil)
+					require.NoError(b, err)
+					require.Len(b, page.Facets, 5)
+					var available int
+					for _, facet := range page.Facets {
+						if facet.Available {
+							available++
+						}
+					}
+					b.ReportMetric(float64(available), "available-facets")
+				}
+			})
+			b.Run("ranked/first", func(b *testing.B) {
+				b.ReportAllocs()
+				for range b.N {
+					page, err := s.ListPhotoAssets(ctx, request, nil)
+					require.NoError(b, err)
+					require.Len(b, page.Items, 50)
+					require.Equal(b, int64(assetCount), page.Total)
+					require.Empty(b, page.Facets)
+					require.Nil(b, page.Next)
+				}
+			})
+			continue
+		}
 		first, err := s.ListPhotoAssets(ctx, request, nil)
 		require.NoError(b, err)
 		require.Len(b, first.Items, 50)

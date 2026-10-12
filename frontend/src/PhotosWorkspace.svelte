@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onDestroy, onMount, tick } from "svelte";
-  import { Button, EmptyState, IconButton, Menu, MenuTrigger, MenuContent, MenuItem, Modal, TextInput, SelectDropdown, Spinner } from "@kenn-io/kit-ui";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
+  import { Button, EmptyState, IconButton, Menu, MenuTrigger, MenuContent, MenuItem, Modal, TextInput, SelectDropdown, SearchInput, Spinner } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
   import type { Photos, PhotoReturn } from "./photos.svelte.js";
@@ -11,6 +11,7 @@
   import PhotoLoupe from "./PhotoLoupe.svelte";
   import PhotoTimeline from "./PhotoTimeline.svelte";
   import type { PhotoBrowseRow } from "./generated/docbank.js";
+  import FacetSidebar from "./FacetSidebar.svelte";
   import SelectionDock from "./SelectionDock.svelte";
   import PhotoAlbumPicker from "./PhotoAlbumPicker.svelte";
   import PhotoAlbumPending from "./PhotoAlbumPending.svelte";
@@ -30,7 +31,7 @@
   let modalAlbum = $state<PhotoAlbumItem>();
   let duplicateName = $state("");
   let renameInput = $state<HTMLInputElement>();
-  const sortOptions = [{ value: "added_time", label: "Added" }, { value: "capture_time", label: "Captured" }, { value: "import_time", label: "Imported" }];
+  const albumSortOptions = [{ value: "added_time", label: "Added" }, { value: "capture_time", label: "Captured" }, { value: "import_time", label: "Imported" }];
   let trashOpen = $state(false);
   let direct = $state<PhotoBrowseRow>();
   let detailError = $state("");
@@ -111,12 +112,18 @@
     onactionerror?.("");
     await photos.setHidden(id, preserve, onhidden, onactionerror, oninvalidate);
   }
-  const groups = $derived(groupPhotos(photos.items, albumID && photos.query.sort?.field !== "capture_time" ? "flat" : photos.grouping));
+  const groups = $derived(groupPhotos(photos.items, photos.query.sort?.field === "relevance" ? "relevance" : albumID && photos.query.sort?.field !== "capture_time" ? "flat" : photos.grouping));
+  // Albums keep their own scope and sort, so search and filter counts live in Library and Hidden.
+  const searchable = $derived(!albumID);
+  const filtered = $derived(searchable && (Boolean(photos.baseQuery.text.trim()) || Object.values(photos.baseQuery.filters ?? {}).some(value => Array.isArray(value) ? value.length > 0 : value !== undefined && value !== false && value !== "")));
   const ordered = $derived(photos.items);
   const current = $derived(photoID ? (fromGrid ? ordered.find(item => item.asset_id === photoID) ?? direct : direct) : undefined);
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));
   const dateLabel = $derived(photos.date?.length === 7 ? monthLabel(photos.date) : photos.date);
   const densityOptions = [{ value: "compact", label: "Compact" }, { value: "comfortable", label: "Comfortable" }, { value: "large", label: "Large" }];
+  let search = $state(untrack(() => photos.baseQuery.text));
+  $effect(() => { search = photos.query.text; });
+  const sortOptions = $derived([{ value: "capture_time", label: "Capture date" }, ...(photos.baseQuery.text.trim() ? [{ value: "relevance", label: "Relevance" }] : [])]);
   const groupingOptions = [{ value: "months", label: "Months" }, { value: "sessions", label: "Capture sessions" }];
 
   onMount(() => {
@@ -182,8 +189,8 @@
     <div class="toolbar-actions">
       {#if !photos.hidden}<nav class="photo-views" aria-label="Photo views"><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "grid"} onclick={() => photos.setView("grid")}>Grid</button><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "timeline"} onclick={() => photos.setView("timeline")}>Timeline</button></nav>{/if}
       <div class="photo-options">
-        {#if albumID}<SelectDropdown title="Sort photos" value={photos.query.sort?.field ?? "added_time"} options={sortOptions} onchange={value => void photos.setSort({ field: value as "added_time" | "capture_time" | "import_time", direction: "desc" })} />{/if}
-        {#if !albumID || photos.query.sort?.field === "capture_time"}<SelectDropdown title="Group photos" value={photos.grouping} options={groupingOptions} onchange={value => relayout(() => photos.grouping = value as "months" | "sessions")} />{/if}
+        {#if albumID}<SelectDropdown title="Sort photos" value={photos.query.sort?.field ?? "added_time"} options={albumSortOptions} onchange={value => void photos.setSort({ field: value as "added_time" | "capture_time" | "import_time", direction: "desc" })} />{/if}
+        {#if !albumID || photos.query.sort?.field === "capture_time"}<SelectDropdown title="Group photos" disabled={photos.query.sort?.field !== "capture_time"} value={photos.grouping} options={groupingOptions} onchange={value => relayout(() => photos.grouping = value as "months" | "sessions")} />{/if}
         <SelectDropdown title="Grid density" value={photos.density} options={densityOptions} onchange={value => relayout(() => photos.setDensity(value as Density))} />
       </div>
       {#if album && albums}
@@ -193,6 +200,16 @@
     </div>
   </div>
   {#if photos.actionError && !onactionerror}<p role="alert">{photos.actionError}</p>{/if}
+  {#if searchable}
+  <form class="photo-search" onsubmit={event => { event.preventDefault(); void photos.setQuery({ ...photos.baseQuery, text: search, syntax: "simple", sort: { field: search.trim() ? "relevance" : "capture_time", direction: "desc" } }); }}>
+    <SearchInput disabled={photos.loading || photos.hiding || photos.trashing} ariaLabel="Search photos" placeholder="Search photos" bind:value={search} />
+    <Button type="submit" size="sm" disabled={photos.loading || photos.hiding || photos.trashing}>Search</Button>
+    <SelectDropdown disabled={photos.loading || photos.hiding || photos.trashing} title="Sort photos" value={photos.query.sort?.field} options={sortOptions} onchange={value => void photos.setSort({ field: value as "capture_time" | "relevance", direction: "desc" })} />
+    {#if filtered}
+      <Button type="button" size="sm" disabled={photos.loading || photos.hiding || photos.trashing} onclick={() => { search = ""; void photos.setQuery({ ...photos.baseQuery, text: "", filters: {}, sort: { field: "capture_time", direction: "desc" } }); }}>Clear filters</Button>
+    {/if}
+  </form>
+  {/if}
   {#if photos.date}
     <div class="photo-date-selection"><Button size="sm" onclick={() => void photos.selectDate()}>Clear date</Button></div>
   {/if}
@@ -202,21 +219,34 @@
   {#if albums && modal !== "duplicate"}<PhotoAlbumPending {albums} {onnavigate} />{/if}
   {#if albums?.error}<div class="photo-error" role="alert">{albums.error}</div>{/if}
   {#if albums?.notice}<div class="photo-notice" role="status">{albums.notice}{#if albums.noticeID}<a href={`/photos/albums/${albums.noticeID}`} onclick={event => { event.preventDefault(); onnavigate(`/photos/albums/${albums!.noticeID}`); }}>Open album</a>{/if}</div>{/if}
+  {#if photos.query.sort?.field === "relevance" && photos.total > photos.items.length}
+    <p class="photo-search-limit">Showing the best 250 of {photos.total.toLocaleString()} matches. Refine the search or sort by capture date to see all.</p>
+  {/if}
   {#if photos.error}
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
   {/if}
+  <div class="photo-browser">
+  {#if searchable}
+  <div class="photo-facets">
+    {#if photos.facetsLoading}<div class="photo-loading" role="status"><Spinner size={14} />Loading counts…</div>{/if}
+    {#if photos.facetsError}<div class="photo-error" role="alert"><span>{photos.facetsError}</span>{#if photos.facetsRetryable}<Button size="sm" onclick={() => void photos.retryFacets()}>Retry counts</Button>{/if}</div>{/if}
+    <FacetSidebar disabled={photos.loading || photos.hiding || photos.trashing} facets={photos.facets} query={photos.baseQuery} unit="photos" onchange={value => void photos.setQuery(value)} />
+  </div>
+  {/if}
+  <div class="photo-results">
   {#if albumID && albums && albums.initialized && !albums.loading && !albums.busy && modal !== "delete" && !albums.loadError && !album}<EmptyState title="Album not found"><Button onclick={() => onnavigate("/photos/albums")}>Back to albums</Button></EmptyState>
   {:else if photos.items.length}
     {#key photos.baseQuery}
     <PhotoGrid bind:this={grid} bind:scrollTop={photos.scrollTop} {groups} targetRowHeight={ROW_HEIGHTS[photos.density]} loading={photos.loading || !!photoID} {cache} hidden={photos.hidden} onhidden={id => void setHidden(id)} selectedIDs={photos.selection.selectedIDs} onselect={select} onopen={open} oncheck={(id, checked, range) => photos.check(id, checked, range, orderedIDs)} onloadmore={() => void photos.loadMore(preserve)} ondragstart={albums ? (id, event) => albums?.startDrag(id, event, photos) : undefined} ondragend={albums ? () => { if (albums) albums.drag = undefined; } : undefined} />
     {/key}
   {:else if !photos.loading && !photos.error}
-    <EmptyState title={photos.date ? `No photos ${photos.date.length === 10 ? "on this day" : photos.date.length === 7 ? "in this month" : "in this year"}` : photos.hidden ? "No hidden photos" : albumID ? "This album is empty" : "Your photo library is empty"} description={photos.date ? undefined : photos.hidden ? "Choose Hide from a photo's actions menu in Library." : albumID ? "Go to Library, select photos, then choose Add to album or press B." : "Import photos with docbank photos import to browse them here."}>
+    <EmptyState title={photos.date ? `No photos ${photos.date.length === 10 ? "on this day" : photos.date.length === 7 ? "in this month" : "in this year"}` : filtered ? "No matching photos" : photos.hidden ? "No hidden photos" : albumID ? "This album is empty" : "Your photo library is empty"} description={photos.date ? undefined : filtered ? "Clear a filter or try another search." : photos.hidden ? "Choose Hide from a photo's actions menu in Library." : albumID ? "Go to Library, select photos, then choose Add to album or press B." : "Import photos with docbank photos import to browse them here."}>
       {#snippet icon()}<ImageIcon size="24" />{/snippet}
       {#if albumID && !photos.date}<Button onclick={() => onnavigate("/photos")}>Go to Library</Button>{/if}
     </EmptyState>
   {/if}
   <div class="photo-loading" role="status">{#if photos.loading}<Spinner size={14} />Loading photos…{:else if photos.cursor && !photos.error}<Button size="sm" onclick={() => void photos.loadMore(preserve)}>Load more</Button>{/if}</div>
+  </div></div>
   {#if !photoID}
   <SelectionDock context="photos" selectedCount={photos.selection.selectedIDs.size} visibleDocumentCount={photos.items.length} loadedSelected={photos.items.every(item => photos.selection.selectedIDs.has(item.asset_id))} wholeQueryCount={photos.total} allResults={photos.allResults} onallresults={() => photos.selectAllResults()} onclear={() => photos.clearSelection()} onselectvisible={() => photos.selectLoaded()} ontrash={() => { photos.trashError = ""; trashOpen = true; }} trashDisabled={photos.trashing || photos.hiding || photos.loading || photos.allResults}>
     {#snippet photoActions()}
@@ -251,6 +281,13 @@
 <style>
   .library-grid { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .photos-workspace { position: relative; max-height: calc(100dvh - var(--header-height)); display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; background: var(--bg-surface); }
+  .photo-search { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-default); }
+  .photo-search-limit { margin: 0; padding: var(--space-3) var(--space-5); color: var(--text-muted); font-size: var(--font-size-sm); }
+  .photo-browser { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+  .photo-facets { display: flex; flex-direction: column; width: 230px; flex-shrink: 0; overflow: auto; }
+  .photo-facets :global(.facets) { flex: 1; }
+  .photo-results { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+  @media (max-width: 640px) { .photo-browser { flex-direction: column; } .photo-facets { width: auto; max-height: 180px; } }
   .photo-toolbar { border-bottom: 1px solid var(--border-default); }
   .photo-date-selection { display: flex; gap: var(--space-3); align-items: center; padding: var(--space-2) var(--space-5); font-size: var(--font-size-sm); color: var(--text-primary); }
   .library-title h1 { margin: 0 0 4px; font-size: var(--font-size-lg); color: var(--text-primary); }
