@@ -260,23 +260,20 @@ func duplicateReferences(
 func duplicateCollections(
 	ctx context.Context, tx *sql.Tx, nodeID int64,
 ) ([]DuplicateCollection, int, error) {
-	var total int
-	if err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
-		SELECT COUNT(*) FROM collection_members WHERE node_id=?`, nodeID).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("counting collections for duplicate node %d: %w", nodeID, err)
-	}
+	// One extra row tells us whether the preview supplies the exact total.
 	rows, err := tx.QueryContext(ctx, `WITH `+CollectionMembershipCTE+`
 		SELECT cm.ingest_id, l.label
 		FROM collection_members cm
 		LEFT JOIN collection_labels l ON l.ingest_id=cm.ingest_id
 		WHERE cm.node_id=?
 		ORDER BY cm.ingest_id ASC
-		LIMIT ?`, nodeID, maxDuplicateCollections)
+		LIMIT ?`, nodeID, maxDuplicateCollections+1)
 	if err != nil {
 		return nil, 0, fmt.Errorf("listing collections for duplicate node %d: %w", nodeID, err)
 	}
 	defer func() { _ = rows.Close() }()
-	collections := make([]DuplicateCollection, 0, min(total, maxDuplicateCollections))
+	var total int
+	collections := make([]DuplicateCollection, 0)
 	for rows.Next() {
 		var collection DuplicateCollection
 		var label sql.NullString
@@ -285,14 +282,23 @@ func duplicateCollections(
 				"scanning collections for duplicate node %d: %w", nodeID, err,
 			)
 		}
-		collection.Label = stringPtr(label)
-		collections = append(collections, collection)
+		total++
+		if total <= maxDuplicateCollections {
+			collection.Label = stringPtr(label)
+			collections = append(collections, collection)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("listing collections for duplicate node %d: %w", nodeID, err)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, 0, fmt.Errorf("closing collections for duplicate node %d: %w", nodeID, err)
+	}
+	if total > maxDuplicateCollections {
+		if err := tx.QueryRowContext(ctx, `WITH `+CollectionMembershipCTE+`
+			SELECT COUNT(*) FROM collection_members WHERE node_id=?`, nodeID).Scan(&total); err != nil {
+			return nil, 0, fmt.Errorf("counting collections for duplicate node %d: %w", nodeID, err)
+		}
 	}
 	return collections, total, nil
 }

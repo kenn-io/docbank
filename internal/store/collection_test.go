@@ -251,11 +251,11 @@ func TestCollectionReadBounds(t *testing.T) {
 }
 
 func addCollectionMembership(
-	t *testing.T, s *Store, run IngestRun, nodeID int64, originalPath string, supersedes *string,
+	tb testing.TB, s *Store, run IngestRun, nodeID int64, originalPath string, supersedes *string,
 ) {
-	t.Helper()
+	tb.Helper()
 	ctx := context.Background()
-	require.NoError(t, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	require.NoError(tb, s.withStorageTx(ctx, func(tx *sql.Tx) error {
 		if _, err := ensureIngestRunTx(ctx, tx, run); err != nil {
 			return err
 		}
