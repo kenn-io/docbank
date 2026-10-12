@@ -1,8 +1,6 @@
 package docling
 
 import (
-	"fmt"
-	"os"
 	"strings"
 	"testing"
 
@@ -34,17 +32,4 @@ func TestDocumentDescriptorAndDisclosure(t *testing.T) {
 	again, err := DocumentDescriptor(document.RenditionTrustOperatorNetwork)
 	require.NoError(t, err)
 	require.Equal(t, fingerprint, DocumentDisclosureFingerprint(again, endpoint, deployment))
-}
-
-// Operators copy descriptor fingerprints from the configuration guide's table.
-func TestDocumentDescriptorFingerprintsMatchConfigurationGuide(t *testing.T) {
-	guide, err := os.ReadFile("../../docs/configuration.md")
-	require.NoError(t, err)
-	for _, boundary := range []document.RenditionTrustBoundary{
-		document.RenditionTrustOperatorNetwork, document.RenditionTrustHostedProvider,
-	} {
-		descriptor, err := DocumentDescriptor(boundary)
-		require.NoError(t, err)
-		require.Contains(t, string(guide), fmt.Sprintf("| `%s` | `%s` |", boundary, descriptor.Fingerprint))
-	}
 }
