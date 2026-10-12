@@ -130,6 +130,11 @@ the selected collections. The single statement keeps membership, labels, totals,
 and summaries in one snapshot. Empty or exhausted pages still return the exact
 collection count.
 
+Duplicate references preview up to 16 active operational collections. The query
+reads one extra membership to detect truncation. When all memberships fit, the
+preview supplies the exact count; larger sets use a separate count in the same
+read snapshot. Empty membership returns an empty preview and a zero total.
+
 ## Durable write ordering
 
 The ingest invariant is **bytes before reference**:

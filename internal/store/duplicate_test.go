@@ -104,6 +104,55 @@ func TestDuplicateGroupByHashUsesExactLiveCurrentRelation(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestDuplicateCollectionPreviewCountsAtLimit(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	hash := fakeHash("34")
+	first, err := s.CreateFile(ctx, s.RootID(), "first.txt", hash, 12, "text/plain")
+	require.NoError(t, err)
+	second, err := s.CreateFile(ctx, s.RootID(), "second.txt", hash, 12, "text/plain")
+	require.NoError(t, err)
+	all := make([]DuplicateCollection, 0)
+	for _, count := range []int{0, 1, 16, 17, 33} {
+		t.Run(fmt.Sprintf("memberships=%d", count), func(t *testing.T) {
+			for len(all) < count {
+				index := len(all)
+				var label *string
+				if index%2 != 0 {
+					label = new(fmt.Sprintf("Collection %02d", index))
+				}
+				run, err := s.BeginIngestWithLabel(ctx, "cli", "Synthetic collection", label)
+				require.NoError(t, err)
+				addCollectionMembership(t, s, run, first.ID,
+					fmt.Sprintf("/synthetic/source-%02d.txt", index), nil)
+				all = append(all, DuplicateCollection{ID: run.ID(), Label: label})
+			}
+			want := append([]DuplicateCollection{}, all...)
+			sort.Slice(want, func(i, j int) bool { return want[i].ID < want[j].ID })
+			want = want[:min(count, 16)]
+			group, err := s.DuplicateGroupByHash(ctx, hash, 12)
+			require.NoError(t, err)
+			require.Len(t, group.References, 2)
+			refs := make(map[int64]DuplicateReference)
+			for _, ref := range group.References {
+				refs[ref.Reference.Node.ID] = ref
+			}
+			ref, ok := refs[first.ID]
+			require.True(t, ok)
+			assert.Equal(t, count, ref.CollectionCount)
+			assert.Equal(t, want, ref.Collections)
+			assert.Equal(t, count > 16, ref.CollectionsTruncated)
+			empty, ok := refs[second.ID]
+			require.True(t, ok)
+			assert.Zero(t, empty.CollectionCount)
+			assert.Empty(t, empty.Collections)
+			assert.NotNil(t, empty.Collections)
+			assert.False(t, empty.CollectionsTruncated)
+		})
+	}
+}
+
 func TestDuplicateReferencesExposeActiveOperationalCollections(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
