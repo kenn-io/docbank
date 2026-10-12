@@ -127,6 +127,25 @@ func BenchmarkCollectionReads(b *testing.B) {
 					}
 				}
 			})
+			for _, selection := range []struct {
+				name  string
+				run   IngestRun
+				files int64
+			}{{"quality", target, 100}, {"quality_other", other, int64(unrelated)}} {
+				if selection.files == 0 {
+					continue
+				}
+				b.Run(selection.name, func(b *testing.B) {
+					b.ReportAllocs()
+					for b.Loop() {
+						report, err := s.CollectionQuality(ctx, selection.run.ID(), CoverageSelection{}, nil)
+						if err != nil || report.Collection.FileCount != selection.files ||
+							report.Collection.TotalBytes != 8*selection.files || report.DuplicateDocuments != 0 {
+							b.Fatalf("quality = %+v, err = %v", report, err)
+						}
+					}
+				})
+			}
 		})
 	}
 }

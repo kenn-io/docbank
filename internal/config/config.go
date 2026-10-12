@@ -914,11 +914,11 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 	if err != nil {
 		return err
 	}
-	if profile.AdapterContract == DoclingDocumentAdapterContract && profile.TrustBoundary == string(document.RenditionTrustOperatorNetwork) {
+	if profile.TrustBoundary == string(document.RenditionTrustOperatorNetwork) {
 		for _, value := range runtime.AllowedCIDRs {
 			network, _ := netip.ParsePrefix(value) // Parsed by validateProviderEgressConfig.
 			if !privateRenditionNetwork(network) {
-				return fmt.Errorf("%s operator_network allowed CIDRs must be private or loopback", prefix)
+				return fmt.Errorf("%s operator_network allowed CIDRs must be private, shared, or loopback", prefix)
 			}
 		}
 	}
@@ -937,12 +937,17 @@ func validateRenditionRuntimeConfig(profile RenditionProfileConfig, prefix strin
 	return nil
 }
 
-// Require the entire allowlisted prefix to remain inside one private or loopback
-// network; checking only its first address could authorize a public supernet.
+var privateRenditionNetworks = []netip.Prefix{
+	netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("172.16.0.0/12"), netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("::1/128"), netip.MustParsePrefix("fc00::/7"),
+}
+
+// Require the entire allowlisted prefix to remain inside one private, shared, or
+// loopback network; checking only its first address could authorize a public supernet.
 func privateRenditionNetwork(network netip.Prefix) bool {
 	network = network.Masked()
-	for _, value := range []string{"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7"} {
-		allowed := netip.MustParsePrefix(value)
+	for _, allowed := range privateRenditionNetworks {
 		if network.Addr().BitLen() == allowed.Addr().BitLen() && network.Bits() >= allowed.Bits() && allowed.Contains(network.Addr()) {
 			return true
 		}

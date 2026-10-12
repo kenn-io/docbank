@@ -93,6 +93,42 @@ func TestCollectionQualityCensusAndFreshFingerprint(t *testing.T) {
 	require.NotEqual(t, got.SourceFingerprint, changed.SourceFingerprint)
 }
 
+func TestCollectionQualityCountsDuplicatesOutsideCollection(t *testing.T) {
+	t.Parallel()
+	s, run, _, _ := collectionCoverageFixture(t, 0)
+	for i, hash := range []string{fakeHash("a1"), fakeHash("b1"), fakeHash("c1")} {
+		name := fmt.Sprintf("selected-%d.pdf", i)
+		_, err := s.IngestFileExact(t.Context(), run, s.RootID(), name, hash, 8, "application/pdf", name, "")
+		require.NoError(t, err)
+	}
+	live, err := s.CreateFile(t.Context(), s.RootID(), "outside-live.pdf", fakeHash("a1"), 8, "application/pdf")
+	require.NoError(t, err)
+	historical, err := s.CreateFile(t.Context(), s.RootID(), "outside-history.pdf", fakeHash("b1"), 8, "application/pdf")
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(t.Context(), historical.ID, historical.Revision, fakeHash("d1"), 8, "application/pdf")
+	require.NoError(t, err)
+	trashed, err := s.CreateFile(t.Context(), s.RootID(), "outside-trash.pdf", fakeHash("c1"), 8, "application/pdf")
+	require.NoError(t, err)
+	_, _, err = s.Trash(t.Context(), trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	_, err = s.CreateFile(t.Context(), s.RootID(), "unrelated-duplicate.pdf", fakeHash("d1"), 8, "application/pdf")
+	require.NoError(t, err)
+
+	before, err := s.CollectionQuality(t.Context(), run.ID(), CoverageSelection{}, []string{"duplicates"})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), before.Collection.FileCount)
+	require.Equal(t, int64(1), before.DuplicateDocuments)
+	require.Equal(t, []QualityBucket{{"unique", 2}, {"duplicate", 1}}, qualityDimension(t, before, "duplicates").Values)
+
+	_, _, err = s.Trash(t.Context(), live.ID, live.Revision)
+	require.NoError(t, err)
+	after, err := s.CollectionQuality(t.Context(), run.ID(), CoverageSelection{}, []string{"duplicates"})
+	require.NoError(t, err)
+	require.Equal(t, int64(0), after.DuplicateDocuments)
+	require.Equal(t, []QualityBucket{{"unique", 3}}, qualityDimension(t, after, "duplicates").Values)
+	require.NotEqual(t, before.SourceFingerprint, after.SourceFingerprint)
+}
+
 func TestCollectionQualityTopFiftyAndConcentrations(t *testing.T) {
 	t.Parallel()
 	s, run, _, _ := collectionCoverageFixture(t, 0)

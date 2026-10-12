@@ -144,11 +144,11 @@ useful shapes:
   rendition or embedding provider, may cross a hosted-provider trust boundary.
   The reviewed plan identifies the provider and the input class it receives:
   the original file, a rendition chunk, an original-file embedding input, or
-  query text. Docbank does not treat a hosted profile as private. A configured Docling document runtime can receive an original file and retain
-  searchable Markdown. A configured
-  Docling ASR profile can receive an original supplied WAV or MP3 file and
-  publish generated transcript evidence. The daemon reports the provider
-  destination before the operator grants consent.
+  query text. Docbank does not treat a hosted profile as private. A configured
+  Docling document runtime can receive an original file and retain searchable
+  Markdown. A configured Docling ASR profile can receive an original supplied
+  WAV or MP3 file and publish generated transcript evidence. The daemon
+  reports the provider destination before the operator grants consent.
 - **Direct embedding.** A profile can embed an original file without a
   rendition provider. That flow has no readable rendition or lexical body
   index, so a relevant direct-file result comes without a text excerpt.

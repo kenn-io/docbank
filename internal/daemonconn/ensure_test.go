@@ -154,7 +154,7 @@ func TestWebDiscoveryRequiresAdvertisedCapability(t *testing.T) {
 
 func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 	t.Setenv("DOCBANK_LOCK_DIR", t.TempDir())
-	for _, revision := range []string{"71", "73"} {
+	for _, revision := range []string{"71", "73", "74"} {
 		t.Run(revision, func(t *testing.T) {
 			root, rec := startUnresponsiveRuntime(t)
 			assetID := "00000000-0000-4000-8000-000000000001"

@@ -151,8 +151,8 @@ running" for `add`, `ls`, `cat`, and the rest. The protocol revision in the
 runtime record distinguishes incompatible development builds that share the
 same version string. A missing or mismatched revision forces replacement
 before a CLI data request or MCP tool request is sent. Retained-text navigation
-requires revision 74, so a development daemon without the outline and section
-routes is replaced before those reads. `daemon status` and `daemon stop` are
+bumps the protocol revision so development daemons without the outline and
+section routes are replaced before those reads. `daemon status` and `daemon stop` are
 discovery-only and never start a daemon, so checking on or stopping the daemon
 can't accidentally spawn one.
 

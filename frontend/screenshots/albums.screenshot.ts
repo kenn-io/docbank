@@ -57,7 +57,7 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
     await expect.poll(() => adds.length).toBe(3);
     await nav.getByRole("button", { name: "Albums", exact: true }).click();
     await expect(page.getByRole("main", { name: "Albums" }).getByText("10,000 photos")).toBeVisible();
-    const card = page.locator(".album-card a").first();
+    const card = page.locator(".album-card a").filter({ hasText: "Trip" });
     albumID = (await card.getAttribute("href"))!.split("/").at(-1)!;
     await card.click();
     await expect(page.getByRole("main", { name: "Photo album" })).toBeVisible();
@@ -98,7 +98,7 @@ test("organizes a 10,000-photo query through the dock, B and sidebar drag", asyn
       await expect(page.locator(".album-cover img").first()).toBeVisible();
       await page.waitForLoadState("networkidle");
       await page.screenshot({ path: path.join(output!, `web-albums-index-${width}-dark.png`), animations: "disabled" });
-      await page.locator(".album-card a").first().click();
+      await page.locator(".album-card a").filter({ hasText: "Trip" }).click();
       await expect(page.locator(".photo-cell img").first()).toBeVisible();
     }
     await page.goBack();
