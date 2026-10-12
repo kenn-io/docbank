@@ -76,26 +76,32 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 	result := ProcessingCoverageSnapshot{Renditions: ProcessingClassCoverage{Name: "rendition", Total: len(opts.ContentVersionIDs)}}
 	filterSQL, filterArgs := searchFilterSQL(opts)
 	rows, err := tx.QueryContext(ctx, `SELECT COALESCE(h.attachment_id,''),
+		COALESCE(a.build_id,''), COALESCE(a.profile_fingerprint,''),
 		EXISTS(SELECT 1 FROM rendition_job_waiters w
 			JOIN rendition_jobs j ON j.job_id=w.job_id
 			WHERE w.content_version_id=cv.version_id AND w.profile_fingerprint=? AND w.state='waiting'
 			AND j.state IN ('queued','running','retry_wait'))
 		FROM `+nodeFrom+`
 		LEFT JOIN rendition_heads h ON h.content_version_id=cv.version_id AND h.profile_fingerprint=?
+		LEFT JOIN rendition_attachments a ON a.attachment_id=h.attachment_id
 		WHERE n.kind='file' AND n.trashed_at IS NULL AND cv.version_id IS NOT NULL `+filterSQL,
 		append([]any{scope.ProcessingProfileFingerprint, scope.ProcessingProfileFingerprint}, filterArgs...)...)
 	if err != nil {
 		return ProcessingCoverageSnapshot{}, err
 	}
 	defer func() { _ = rows.Close() }()
+	type renditionValidationKey struct {
+		buildID, profileFingerprint string
+	}
 	type renditionHead struct {
 		attachmentID string
 		rebuilding   bool
+		key          renditionValidationKey
 	}
-	var heads []renditionHead
+	heads := make([]renditionHead, 0, len(opts.ContentVersionIDs))
 	for rows.Next() {
 		var head renditionHead
-		if err := rows.Scan(&head.attachmentID, &head.rebuilding); err != nil {
+		if err := rows.Scan(&head.attachmentID, &head.key.buildID, &head.key.profileFingerprint, &head.rebuilding); err != nil {
 			return ProcessingCoverageSnapshot{}, err
 		}
 		heads = append(heads, head)
@@ -104,10 +110,19 @@ func (s *Store) ProcessingCoverage(ctx context.Context, scope ProcessingCoverage
 		return ProcessingCoverageSnapshot{}, err
 	}
 	result.Renditions.Stale = len(opts.ContentVersionIDs) - len(heads)
+	// Shared builds need full validation only once per attachment profile in
+	// this read snapshot. Keep counting each version's state independently.
+	validated := make(map[renditionValidationKey]bool)
 	for _, head := range heads {
-		complete, err := processingRenditionAvailableTx(ctx, tx, head.attachmentID)
-		if err != nil {
-			return ProcessingCoverageSnapshot{}, err
+		complete := validated[head.key]
+		if !complete {
+			complete, err = processingRenditionAvailableTx(ctx, tx, head.attachmentID)
+			if err != nil {
+				return ProcessingCoverageSnapshot{}, err
+			}
+			if complete {
+				validated[head.key] = true
+			}
 		}
 		countProcessingCoverage(&result.Renditions, complete, head.rebuilding)
 	}
