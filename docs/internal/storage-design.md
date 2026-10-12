@@ -114,6 +114,11 @@ with one query, and loads metadata only for the final node. Nested paths use
 a recursive query. Reads use the caller's transaction when supplied. A missing
 ancestor takes precedence over an invalid name later in the path.
 
+Trash restore first probes the original name and its first suffix. If both
+are occupied, one recursive query probes exact live sibling names in suffix
+order and stops at the first gap. This avoids a database call per occupied suffix while preserving the
+smallest available name, case sensitivity, and extension placement.
+
 Filename search results, collection member pages, and candidate revalidation
 for expanded or reranked document searches resolve the selected nodes' paths
 with one recursive query. Input positions preserve result order and repeated

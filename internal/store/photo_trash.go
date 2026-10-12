@@ -146,7 +146,7 @@ func restoreRootTx(ctx context.Context, s *Store, tx *sql.Tx, node Node, active 
 	if active {
 		return s.restoreAuditedTx(ctx, tx, node, node.Revision)
 	}
-	target, err := s.restoreTargetTx(tx, node)
+	target, err := s.restoreTargetTx(ctx, tx, node)
 	if err != nil {
 		return Node{}, err
 	}

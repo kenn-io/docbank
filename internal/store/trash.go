@@ -141,9 +141,10 @@ func (s *Store) trashNodeTx(tx *sql.Tx, n Node, now string) error {
 
 // nextFreeNameTx finds the smallest free suffix candidate among live
 // siblings: name, "name (2)", "name (3)", ...
-func nextFreeNameTx(tx *sql.Tx, parentID int64, name string) (string, error) {
+func nextFreeNameTx(ctx context.Context, tx *sql.Tx, parentID int64, name string) (string, error) {
 	base, ext := splitSuffix(name)
-	for n := 1; ; n++ {
+	// Keep the common original-name and first-suffix cases as point lookups.
+	for n := 1; n <= 2; n++ {
 		candidate := suffixedName(base, ext, n)
 		var one int
 		err := tx.QueryRow(
@@ -156,6 +157,24 @@ func nextFreeNameTx(tx *sql.Tx, parentID int64, name string) (string, error) {
 			return "", fmt.Errorf("probing name %q: %w", candidate, err)
 		}
 	}
+	// Probe exact candidates through the live sibling index in one statement.
+	// Stop at the first gap, including when later suffixes are already taken.
+	var ordinal int
+	err := tx.QueryRowContext(ctx, `
+		WITH RECURSIVE candidates(n) AS (
+			SELECT 3
+			UNION ALL
+			SELECT n + 1 FROM candidates
+			WHERE EXISTS (
+				SELECT 1 FROM nodes WHERE parent_id = ? AND trashed_at IS NULL
+				AND name = ? || ' (' || candidates.n || ')' || ?
+			)
+		)
+		SELECT MAX(n) FROM candidates`, parentID, base, ext).Scan(&ordinal)
+	if err != nil {
+		return "", fmt.Errorf("finding free suffix for %q: %w", name, err)
+	}
+	return suffixedName(base, ext, ordinal), nil
 }
 
 // Restore returns a trash root or photo member to its original location (or the tree root if
@@ -197,7 +216,7 @@ type restoreTarget struct {
 	finalName      string
 }
 
-func (s *Store) restoreTargetTx(tx *sql.Tx, node Node) (restoreTarget, error) {
+func (s *Store) restoreTargetTx(ctx context.Context, tx *sql.Tx, node Node) (restoreTarget, error) {
 	var trashParent sql.NullInt64
 	var trashName sql.NullString
 	if err := tx.QueryRow(
@@ -218,7 +237,7 @@ func (s *Store) restoreTargetTx(tx *sql.Tx, node Node) (restoreTarget, error) {
 			return restoreTarget{}, err
 		}
 	}
-	finalName, err := nextFreeNameTx(tx, target.destID, target.originalName)
+	finalName, err := nextFreeNameTx(ctx, tx, target.destID, target.originalName)
 	if err != nil {
 		return restoreTarget{}, err
 	}

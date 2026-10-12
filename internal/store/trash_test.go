@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -43,6 +44,81 @@ func TestTrashAndRestoreRoundTrip(t *testing.T) {
 	back, err := s.NodeByPath(ctx, "/docs (2)/a.txt")
 	require.NoError(t, err)
 	assert.Equal(t, f.ID, back.ID)
+}
+
+func TestRestoreChoosesFirstAvailableExactName(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, original, want string
+		occupied             []string
+	}{
+		{"original free", "report.pdf", "report.pdf", []string{"report (2).pdf"}},
+		{"noncanonical suffixes", "report.pdf", "report (2).pdf",
+			[]string{"report.pdf", "report (02).pdf", "report (+2).pdf", "Report (2).pdf", "report (3).pdf"}},
+		{"gap", "report.pdf", "report (3).pdf",
+			[]string{"report.pdf", "report (2).pdf", "report (4).pdf"}},
+		{"later gap", "report.pdf", "report (4).pdf",
+			[]string{"report.pdf", "report (2).pdf", "report (3).pdf", "report (5).pdf"}},
+		{"dotfile", ".hidden", ".hidden (3)", []string{".hidden", ".hidden (2)"}},
+		{"literal characters", "résumé_%[x].tar.gz", "résumé_%[x].tar (3).gz",
+			[]string{"résumé_%[x].tar.gz", "résumé_%[x].tar (2).gz"}},
+		{"already suffixed", "report (2).pdf", "report (2) (3).pdf",
+			[]string{"report (2).pdf", "report (2) (2).pdf"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := newTestStore(t)
+			ctx := t.Context()
+			node, err := s.CreateFile(ctx, s.RootID(), tc.original, fakeHash("a1"), 1, "text/plain")
+			require.NoError(t, err)
+			_, _, err = s.Trash(ctx, node.ID, UnconditionalRev)
+			require.NoError(t, err)
+			for i, name := range tc.occupied {
+				if i%2 == 0 {
+					_, err = s.Mkdir(ctx, s.RootID(), name)
+				} else {
+					_, err = s.CreateFile(ctx, s.RootID(), name, fakeHash("a2"), 1, "text/plain")
+				}
+				require.NoError(t, err)
+			}
+			// A trashed sibling and a node in another directory do not reserve
+			// the chosen name in the restore destination.
+			old, err := s.Mkdir(ctx, s.RootID(), tc.want)
+			require.NoError(t, err)
+			_, _, err = s.Trash(ctx, old.ID, UnconditionalRev)
+			require.NoError(t, err)
+			other, err := s.Mkdir(ctx, s.RootID(), "other")
+			require.NoError(t, err)
+			_, err = s.Mkdir(ctx, other.ID, tc.want)
+			require.NoError(t, err)
+
+			restored, path, err := s.Restore(ctx, node.ID, UnconditionalRev)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, restored.Name)
+			assert.Equal(t, "/"+tc.want, path)
+			found, err := s.NodeByPath(ctx, path)
+			require.NoError(t, err)
+			assert.Equal(t, node.ID, found.ID)
+		})
+	}
+}
+
+func TestRestoreNameCollisionHonorsCanceledSearch(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	_, err := s.Mkdir(t.Context(), s.RootID(), "report.pdf")
+	require.NoError(t, err)
+	_, err = s.Mkdir(t.Context(), s.RootID(), "report (2).pdf")
+	require.NoError(t, err)
+	tx, err := s.writeDB.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, tx.Rollback()) }()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	// Keep the transaction alive: both point probes succeed, but the longer
+	// suffix search must use the caller's canceled context.
+	_, err = nextFreeNameTx(ctx, tx, s.RootID(), "report.pdf")
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestNestedTrashRestoreKeepsEarlierTrash(t *testing.T) {
