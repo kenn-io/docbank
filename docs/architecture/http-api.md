@@ -100,6 +100,8 @@ on a running daemon) and authenticates with `X-Api-Key` /
 | `PUT /photos/assets/{asset_id}/display` · `GET\|PUT /photos/settings` | set an asset display override or vault preference | Implemented |
 | `POST /photos/assets/{asset_id}/hide` · `POST /photos/assets/{asset_id}/unhide` | change Photos visibility under `If-Match` | Implemented |
 | `GET /photos/hidden` · `POST /photos/hidden/{setup,change,disable,unlock,lock,reset}` | manage the vault passcode and five-minute unlock | Implemented |
+| `POST /photos/checkouts/estimate` · `POST /photos/checkouts` | estimate or create writable photo copies; creation is loopback-only | Implemented |
+| `GET /photos/checkouts` · `GET /photos/checkouts/{id}` | list checkout definitions or inspect frozen files and copy results | Implemented |
 | `GET /people` · `POST /people` | list, search, and create active canonical people | Implemented |
 | `GET /people/by-id/{person_id}` | inspect one person, its identities, and its external UIDs | Implemented |
 | `PATCH /people/by-id/{person_id}` · `POST /people/by-id/{person_id}/retire` | rename or retire one person under `If-Match` | Implemented |
@@ -1479,6 +1481,8 @@ an existing folder. The import is a durable job of kind `photo_import`.
 skipped, changed, failed, ambiguous and unsupported counts, plus the groups
 left unpaired. `POST /jobs/{operation_id}/cancel` stops it before the next
 group. Starting an import requires the API key on a loopback connection.
+
+`POST /photos/checkouts/estimate` accepts a selection with `asset_ids`, `album_ids`, inclusive `years: {from, to}`, or `all`. `POST /photos/checkouts` accepts `{selection, destination, byte_limit}` and returns `202` with `{checkout, operation}`. Creation requires a loopback connection and daemon API credentials. All checkout routes refuse browser sessions. Jobs reports progress and accepts cancellation by operation ID. See [Create writable copies](../usage/photos.md#create-writable-copies) for destination safety, frozen-version retention, and restore behavior.
 
 `POST /photos/assets/query` executes [photo asset browsing](../usage/photos.md#browse-photo-assets-over-http). It accepts strict `query`, optional `coverage`, `page_size` from 1 through 250, `facets`, `cursor`, and `hidden`. The default page size is 50. With `projection: "map"`, `page_size` allows up to 1,000. Larger pages return a validation error. Hidden defaults to false; true lists only hidden assets and validates the unlock on every request. It returns one item per eligible matching asset, the full `total`, and requested `camera`, `lens`, `year`, `location`, `set`, `rating`, `flag`, or `label` facets on the first page, and `relevance_available`. Facets count distinct assets across the whole scope while omitting their own root filter. Camera and lens group Unicode-folded make/model identities and emit original spellings as keys; an asset can count under both make and model.
 

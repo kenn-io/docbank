@@ -201,6 +201,10 @@ docbank photos assets hide <asset-id> [--revision REV]
 docbank photos assets unhide <asset-id|node-selector> [--revision REV]
 docbank photos import <source-root> [destination] [--json]
 docbank photos timeline [--query QUERY_JSON] [--coverage configured|unconfigured] [--profile-fingerprint FP]
+docbank photos checkout estimate [--asset ID] [--album ID] [--years YYYY:YYYY] [--all]
+docbank photos checkout create <destination> [--asset ID] [--album ID] [--years YYYY:YYYY] [--all] [--byte-limit N]
+docbank photos checkout list
+docbank photos checkout status <checkout-id>
 ```
 
 Photo commands emit JSON through the daemon. Image and concrete video files are
@@ -213,8 +217,7 @@ image member and never become the display member. `timeline` counts the photos
 a QueryV1 scope selects by recorded capture day; see
 [Count photos by capture day](usage/photos.md#count-photos-by-capture-day).
 
-Photo assets, albums, memberships, settings, and bounded decision receipts are
-included in JSONL backup and restore.
+Photo assets, albums, memberships, settings, bounded decision receipts, and checkout definitions and frozen bases are included in JSONL backup and restore. Restored checkouts are unbound. See [Create writable copies](usage/photos.md#create-writable-copies) for destination, capacity, and retention rules.
 
 ### Photo albums
 

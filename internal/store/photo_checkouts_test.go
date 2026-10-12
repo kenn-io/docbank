@@ -1,0 +1,228 @@
+package store
+
+import (
+	"bytes"
+	"context"
+	"math"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/document"
+)
+
+func TestPhotoCheckoutSelections(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	a := albumAsset(t, s, "first.jpg")
+	b := albumAsset(t, s, "last.jpg")
+	c := albumAsset(t, s, "outside.jpg")
+	for _, v := range []struct {
+		asset PhotoAsset
+		date  string
+	}{{a, "2024-01-01"}, {b, "2024-12-31"}, {c, "2025-01-01"}} {
+		n, err := s.NodeByID(ctx, v.asset.Files[0].NodeID)
+		require.NoError(t, err)
+		browsePhotoMetadata(t, s, n, v.date, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(v.date, v.date, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
+	}
+	set, err := s.CreatePhotoSet(ctx, "Trip")
+	require.NoError(t, err)
+	_, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{a.ID, b.ID}})
+	require.NoError(t, err)
+	for _, test := range []struct {
+		selection PhotoCheckoutSelection
+		count     int64
+	}{
+		{PhotoCheckoutSelection{All: true}, 3},
+		{PhotoCheckoutSelection{AssetIDs: []string{a.ID, a.ID}}, 1},
+		{PhotoCheckoutSelection{AlbumIDs: []string{set.ID}}, 2},
+		{PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2024, To: 2024}}, 2},
+		{PhotoCheckoutSelection{AssetIDs: []string{c.ID}, AlbumIDs: []string{set.ID}, Years: &PhotoCheckoutYears{From: 2024, To: 2024}}, 3},
+	} {
+		estimate, err := s.EstimatePhotoCheckout(ctx, test.selection)
+		require.NoError(t, err)
+		require.Equal(t, test.count, estimate.Assets)
+		require.Equal(t, test.count, estimate.Files)
+		require.Equal(t, test.count*20, estimate.Bytes)
+	}
+	_, err = s.SetPhotoAssetExcluded(ctx, c.ID, c.Revision, true)
+	require.NoError(t, err)
+	_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET hidden_at=? WHERE asset_id=?`, nowRFC3339(), b.ID)
+	require.NoError(t, err)
+	estimate, err := s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{a.ID, b.ID, c.ID}, AlbumIDs: []string{set.ID}})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), estimate.Files)
+	for _, bad := range []PhotoCheckoutSelection{{}, {AssetIDs: []string{"bad"}}, {AlbumIDs: []string{"bad"}}, {Years: &PhotoCheckoutYears{From: 0, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2025, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2024, To: 10000}}} {
+		_, err := s.EstimatePhotoCheckout(ctx, bad)
+		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+	}
+	_, err = s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{"00000000-0000-4000-8000-000000000001"}})
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestPhotoCheckoutCapacityAndFrozenBases(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	a := albumAsset(t, s, "photo.jpg")
+	for _, limit := range []int64{0, -1, 19} {
+		_, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", limit)
+		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+	}
+	c, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", 20)
+	require.NoError(t, err)
+	require.Equal(t, StorageOperationKindPhotoCheckout, op.Kind)
+	require.Equal(t, op.ID, c.OperationID)
+	require.Equal(t, int64(1), op.TotalObjects)
+	entries, err := s.PhotoCheckoutEntries(ctx, c.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	n, err := s.NodeByID(ctx, a.Files[0].NodeID)
+	require.NoError(t, err)
+	require.Equal(t, n.CurrentVersionID, entries[0].VersionID)
+	require.Equal(t, n.BlobHash, entries[0].Hash)
+	n, _, err = s.ReplaceContent(ctx, n.ID, n.Revision, browseHash("replacement"), 30, "image/jpeg")
+	require.NoError(t, err)
+	prune, err := s.PruneContentVersions(ctx, n.ID, n.Revision, VersionPruneSelector{AllPrior: true}, true)
+	require.NoError(t, err)
+	require.Zero(t, prune.DeletedVersions)
+	require.Len(t, prune.DependencyRetained, 1)
+	require.Equal(t, entries[0].VersionID, prune.DependencyRetained[0].ID)
+	n, err = s.NodeByID(ctx, n.ID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, n.ID, n.Revision)
+	require.NoError(t, err)
+	empty, err := s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	require.Zero(t, empty.Candidates)
+	_, err = s.NodeByID(ctx, n.ID)
+	require.NoError(t, err)
+}
+
+func TestPhotoCheckoutPublicationRechecksVisibility(t *testing.T) {
+	t.Parallel()
+	for _, column := range []string{"hidden_at", "excluded_at"} {
+		t.Run(column, func(t *testing.T) {
+			s := newTestStore(t)
+			a := albumAsset(t, s, "photo.jpg")
+			c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "checkout", 0)
+			require.NoError(t, err)
+			entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+			require.NoError(t, err)
+			_, err = s.db.ExecContext(t.Context(), `UPDATE photo_assets SET `+column+`=? WHERE asset_id=?`, nowRFC3339(), a.ID)
+			require.NoError(t, err)
+			called := false
+			err = s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { called = true; return true, nil })
+			require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+			require.False(t, called)
+		})
+	}
+}
+
+func TestPhotoCheckoutMetadataRestoresUnbound(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			s, err := Open(filepath.Join(t.TempDir(), "source.db"), driver.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, s.Close()) })
+			a := albumAsset(t, s, "photo.jpg")
+			c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "machine-local-checkout", 0)
+			require.NoError(t, err)
+			entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.NoError(t, s.PublishPhotoCheckoutEntry(t.Context(), entries[0], func() (bool, error) { return true, nil }))
+			require.NoError(t, s.SetPhotoCheckoutState(t.Context(), c.ID, "failed", "machine-local-error"))
+			var exported bytes.Buffer
+			require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+			require.NotContains(t, exported.String(), "machine-local-")
+			restored, err := Open(filepath.Join(t.TempDir(), "restored.db"), driver.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, restored.Close()) })
+			require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(exported.Bytes())))
+			actual, err := restored.PhotoCheckout(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.Equal(t, "unbound", actual.State)
+			require.Empty(t, actual.Destination)
+			require.Empty(t, actual.OperationID)
+			require.Empty(t, actual.Error)
+			actualEntries, err := restored.PhotoCheckoutEntries(t.Context(), c.ID)
+			require.NoError(t, err)
+			entries[0].Published = false
+			require.Equal(t, entries, actualEntries)
+			var roundtrip bytes.Buffer
+			require.NoError(t, restored.ExportMetadata(t.Context(), &roundtrip))
+			require.Equal(t, exported.String(), roundtrip.String())
+			for _, bad := range []string{strings.Replace(exported.String(), `"relative_path":"undated/`, `"relative_path":"../`, 1), strings.Replace(exported.String(), `"size":20,"relative_path"`, `"size":21,"relative_path"`, 1)} {
+				invalid, err := Open(filepath.Join(t.TempDir(), "invalid.db"), driver.driver)
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, invalid.Close()) })
+				require.Error(t, invalid.ImportMetadata(t.Context(), strings.NewReader(bad)))
+			}
+		})
+	}
+}
+
+func TestPhotoCheckoutAuditedMutationRefused(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	a := albumAsset(t, s, "photo.jpg")
+	seedInitialAuditAuthority(t, s, s.RootID())
+	_, _, err := s.CreatePhotoCheckout(context.Background(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "checkout", 0)
+	require.ErrorIs(t, err, ErrAuditMutationUnsupported)
+	checkouts, err := s.ListPhotoCheckouts(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, checkouts)
+	ops, err := s.StorageOperations(t.Context(), 10)
+	require.NoError(t, err)
+	require.Empty(t, ops)
+}
+
+func TestPhotoCheckoutFreezesEveryGroupedMemberOnce(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	root := filepath.Join(t.TempDir(), "camera")
+	group := photoImportTestGroup(
+		photoImportTestMember(filepath.Join(root, "IMG.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
+		photoImportTestMember(filepath.Join(root, "IMG.JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg"),
+		photoImportTestMember(filepath.Join(root, "IMG.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"),
+	)
+	result, err := s.IngestPhotoGroup(ctx, run, group)
+	require.NoError(t, err)
+	for _, node := range result.Nodes {
+		node, err = s.NodeByID(ctx, node.ID)
+		require.NoError(t, err)
+		date := "2025-12-31"
+		if node.Name == "IMG.ARW" {
+			date = "2024-01-02"
+		}
+		browsePhotoMetadata(t, s, node, node.Name, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(date, date, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
+	}
+	set, err := s.CreatePhotoSet(ctx, "Trip")
+	require.NoError(t, err)
+	_, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{result.Asset.ID}})
+	require.NoError(t, err)
+	c, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}, AlbumIDs: []string{set.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(ctx, c.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+	for _, entry := range entries {
+		require.True(t, strings.HasPrefix(entry.Path, "2024/01/02/"+result.Asset.ID+"/"))
+	}
+}
+
+func TestPhotoCheckoutRejectsByteOverflow(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	_, err := s.CreateFile(t.Context(), s.RootID(), "large.jpg", browseHash("large"), math.MaxInt64, "image/jpeg")
+	require.NoError(t, err)
+	albumAsset(t, s, "small.jpg")
+	_, err = s.EstimatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true})
+	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+}

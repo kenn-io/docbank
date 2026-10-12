@@ -529,6 +529,29 @@ runs. It leaves out source paths and the unpaired-group list. Cancel takes
 effect before the next group. A daemon restart resumes an unfinished import by
 scanning the folder again.
 
+## Create writable copies
+
+Use a checkout to edit copies outside the vault while Docbank retains their exact source versions:
+
+```text
+docbank photos checkout estimate --album <album-id>
+docbank photos checkout create <empty-folder> --album <album-id>
+docbank photos checkout create <empty-folder> --years 2023:2025
+docbank photos checkout create <empty-folder> --all --byte-limit 100000000000
+docbank photos checkout list
+docbank photos checkout status <checkout-id>
+docbank jobs show <operation-id> --json
+docbank jobs cancel <operation-id>
+```
+
+Combine `--asset`, `--album`, and `--years` to copy their union. Each file appears once. Year ranges include both endpoints. Hidden and excluded photos stay out. `--all` requires a positive byte limit; other selections can also set one. Estimate returns asset count, file count, and bytes without creating a checkout.
+
+The destination must be an existing empty folder on the daemon's computer, separate from the vault, storage roots, watched folders, and other checkouts. Creation requires a local daemon connection. Docbank writes writable files under capture-date and asset-ID folders, uses `undated` when capture metadata is absent, and verifies every copy before publication. It preserves any file that appears at a destination while copying.
+
+Creation returns the checkout and operation IDs as JSON. Jobs reports progress and accepts cancellation. A failed or interrupted creation keeps its ID, partial files, error, and frozen source versions. After a daemon restart, an interrupted creation reports failure. It doesn't resume copying. Pruning history or emptying trash keeps the frozen versions available.
+
+Backup includes checkout selections and frozen versions. Restore leaves checkouts unbound and carries no machine paths, job state, or copy observations. Checkout creation is unavailable in audited vaults. Committing edits, retirement, and rebinding aren't available yet.
+
 ## HTTP and JSONL
 
 The daemon exposes asset inspection by asset ID or node ID, plus create,

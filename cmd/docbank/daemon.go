@@ -509,6 +509,10 @@ func runServe(ctx context.Context) (retErr error) {
 	if err := photoImports.Resume(sigCtx, jobSupervisor); err != nil {
 		return err
 	}
+	photoCheckouts := api.NewPhotoCheckoutService(api.Deps{Store: s, Blobs: blobs, VaultRoot: layout.Root, Cfg: cfg, Gate: operationGate, Tracker: tracker})
+	if err := photoCheckouts.Recover(sigCtx); err != nil {
+		return err
+	}
 	if telemetryReporter.Enabled() {
 		if err := jobSupervisor.Start(telemetry.HeartbeatJobName, func(ctx context.Context) error {
 			telemetry.RunHeartbeat(ctx, telemetryReporter, logger)

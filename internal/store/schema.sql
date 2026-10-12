@@ -2734,3 +2734,27 @@ CREATE TRIGGER IF NOT EXISTS person_candidate_faces_update AFTER UPDATE OF evide
  DELETE FROM person_candidate_faces WHERE candidate_id=NEW.candidate_id;
  INSERT OR IGNORE INTO person_candidate_faces SELECT NEW.candidate_id,json_extract(e.value,'$.evidence_id'),json_extract(e.value,'$.content_version_id') FROM json_each(CAST(NEW.evidence_json AS TEXT)) e WHERE json_extract(e.value,'$.evidence_kind')='face';
 END;
+
+CREATE TABLE IF NOT EXISTS photo_checkouts (
+    checkout_id TEXT PRIMARY KEY,
+    selection_json TEXT NOT NULL,
+    byte_limit INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    destination TEXT,
+    operation_id TEXT,
+    state TEXT NOT NULL DEFAULT 'unbound',
+    error TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS photo_checkout_entries (
+    checkout_id TEXT NOT NULL REFERENCES photo_checkouts(checkout_id),
+    file_id TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    version_id TEXT NOT NULL REFERENCES content_versions(version_id),
+    blob_hash TEXT NOT NULL REFERENCES blobs(hash),
+    size INTEGER NOT NULL,
+    relative_path TEXT NOT NULL,
+    published INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (checkout_id,file_id),
+    UNIQUE (checkout_id,relative_path)
+);
+CREATE INDEX IF NOT EXISTS photo_checkout_entries_version ON photo_checkout_entries(version_id);

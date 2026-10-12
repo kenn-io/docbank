@@ -36,7 +36,7 @@ const (
 )
 
 var storageOperationKinds = []string{
-	storageOperationKindPlace, storageOperationKindEvacuate, "repair", "salvage", StorageOperationKindPhotoImport,
+	storageOperationKindPlace, storageOperationKindEvacuate, "repair", "salvage", StorageOperationKindPhotoImport, StorageOperationKindPhotoCheckout,
 }
 
 type StorageOperationCreate struct {
@@ -85,6 +85,16 @@ type StorageOperationCleanup struct {
 func (s *Store) CreateStorageOperation(
 	ctx context.Context, input StorageOperationCreate,
 ) (StorageOperation, error) {
+	var out StorageOperation
+	err := s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		out, err = createStorageOperationTx(ctx, tx, input)
+		return err
+	})
+	return out, err
+}
+
+func createStorageOperationTx(ctx context.Context, tx *sql.Tx, input StorageOperationCreate) (StorageOperation, error) {
 	storeReferences, err := validateStorageOperationCreate(input)
 	if err != nil {
 		return StorageOperation{}, err
@@ -99,7 +109,7 @@ func (s *Store) CreateStorageOperation(
 		Valid:  input.SourceStoreID != "",
 	}
 	var created StorageOperation
-	err = s.withStorageTx(ctx, func(tx *sql.Tx) error {
+	err = func() error {
 		if _, pruneErr := pruneExpiredStorageOperationsTx(
 			ctx, tx, time.Now().UTC(),
 		); pruneErr != nil {
@@ -169,7 +179,7 @@ func (s *Store) CreateStorageOperation(
 			ctx, storageOperationSelect+` WHERE operation_id=?`, id,
 		))
 		return err
-	})
+	}()
 	return created, err
 }
 
@@ -464,6 +474,12 @@ func (s *Store) FinishStorageOperation(
 	ctx context.Context, id string, state StorageOperationState,
 	receiptJSON, failure string, retentionUntil time.Time,
 ) error {
+	return s.withStorageTx(ctx, func(tx *sql.Tx) error {
+		return finishStorageOperationTx(ctx, tx, id, state, receiptJSON, failure, retentionUntil)
+	})
+}
+
+func finishStorageOperationTx(ctx context.Context, tx *sql.Tx, id string, state StorageOperationState, receiptJSON, failure string, retentionUntil time.Time) error {
 	switch state {
 	case StorageOperationCompleted, StorageOperationFailed, StorageOperationCancelled:
 	default:
@@ -475,7 +491,7 @@ func (s *Store) FinishStorageOperation(
 	if !retentionUntil.IsZero() {
 		retention = retentionUntil.UTC().Format(timestampLayout)
 	}
-	result, err := s.db.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		UPDATE storage_operations
 		SET state=?,receipt_json=?,error=?,updated_at=?,finished_at=?,retention_until=?
 		WHERE operation_id=? AND state IN (?,?)`,

@@ -233,7 +233,9 @@ func retainMediaAuthorityVersionsTx(tx *sql.Tx, candidates, retained map[string]
 	rows, err := tx.Query(`SELECT content_version_id FROM media_source_versions
 		WHERE content_version_id IN (`+placeholders(len(ids))+`)
 		UNION SELECT content_version_id FROM media_input_artifacts
-		WHERE content_version_id IN (`+placeholders(len(ids))+`)`, append(args, args...)...)
+		WHERE content_version_id IN (`+placeholders(len(ids))+`)
+		UNION SELECT version_id FROM photo_checkout_entries
+		WHERE version_id IN (`+placeholders(len(ids))+`)`, append(append(args, args...), args...)...)
 	if err != nil {
 		return fmt.Errorf("checking media authority before version pruning: %w", err)
 	}

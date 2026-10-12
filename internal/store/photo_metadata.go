@@ -331,6 +331,11 @@ func validatePhotoMetadataState(ctx context.Context, tx metadataQuerier, version
 			return fmt.Errorf("validating photo metadata: %w", err)
 		}
 	}
+	if version >= photoCheckoutsStorageSchemaVersion {
+		if err := validatePhotoCheckoutReferences(ctx, tx); err != nil {
+			return err
+		}
+	}
 	if version >= photoAuthoredStorageSchemaVersion {
 		if err := validatePhotoAuthoredReferences(ctx, tx); err != nil {
 			return err
@@ -428,6 +433,9 @@ func photoMetadataTablesForSchema(version int) []metadataRecordCodec {
 		if version < photoHiddenStorageSchemaVersion && table.kind() == metadataPhotoAssetType {
 			tables[i] = photoAssetMetadataBeforeHidden
 		}
+	}
+	if version >= photoCheckoutsStorageSchemaVersion {
+		tables = append(tables, photoCheckoutMetadataTables...)
 	}
 	if version >= photoHiddenStorageSchemaVersion {
 		return append(tables, photoHiddenMetadataTables...)

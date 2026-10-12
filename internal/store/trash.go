@@ -437,6 +437,8 @@ func (s *Store) trashEmpty(
 		SELECT 1 FROM content_versions version JOIN subtree ON subtree.id=version.node_id
 		WHERE EXISTS (SELECT 1 FROM media_source_versions source
 			WHERE source.content_version_id=version.version_id)
+		   OR EXISTS (SELECT 1 FROM photo_checkout_entries checkout
+			WHERE checkout.version_id=version.version_id)
 		   OR EXISTS (SELECT 1 FROM media_input_artifacts input
 			WHERE input.content_version_id=version.version_id)
 		   OR EXISTS (SELECT 1 FROM mailbox_transfer_receipts receipt
