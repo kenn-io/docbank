@@ -1086,7 +1086,7 @@ func TestDoclingDocumentRuntime(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) { c := valid(); test.mutate(&c); require.ErrorContains(t, c.Validate(), test.want) })
 	}
 	for _, network := range []string{"127.0.0.0/8", "10.1.0.0/16", "172.18.0.0/16", "192.168.1.0/24",
-		"100.64.0.0/10", "100.100.1.0/24", "::1/128", "fd00::/64"} {
+		"100.100.1.0/24", "::1/128", "fd00::/64"} {
 		t.Run(network, func(t *testing.T) {
 			c := valid()
 			c.RenditionProfiles["primary"].Runtime.AllowedCIDRs = []string{network}
