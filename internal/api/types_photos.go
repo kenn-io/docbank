@@ -5,14 +5,15 @@ import "go.kenn.io/docbank/internal/store"
 // PhotoFile is the daemon representation of one ordinary file node in an
 // asset. The node remains authoritative for bytes and content versions.
 type PhotoFile struct {
-	Revision  int64  `json:"revision" minimum:"1"`
-	Rating    int    `json:"rating" minimum:"0" maximum:"5"`
-	Flag      string `json:"flag" enum:",pick,reject"`
-	Label     string `json:"label" enum:",red,yellow,green,blue,purple"`
-	Caption   string `json:"caption" maxLength:"16384" doc:"At most 16384 UTF-8 bytes."`
-	Creator   string `json:"creator" maxLength:"16384" doc:"At most 16384 UTF-8 bytes."`
-	Copyright string `json:"copyright" maxLength:"16384" doc:"At most 16384 UTF-8 bytes."`
-	Rotation  int    `json:"rotation" enum:"0,90,180,270"`
+	Confirmed store.PhotoAuthoredFields `json:"confirmed_fields,omitzero" maximum:"127" doc:"Confirmed fields bitmask: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, rotation=64. An absent key means no confirmed fields; zero is omitted. Empty text and zero values can be confirmed."`
+	Revision  int64                     `json:"revision" minimum:"1"`
+	Rating    int                       `json:"rating" minimum:"0" maximum:"5"`
+	Flag      string                    `json:"flag" enum:",pick,reject"`
+	Label     string                    `json:"label" enum:",red,yellow,green,blue,purple"`
+	Caption   string                    `json:"caption" maxLength:"16384" doc:"At most 16384 UTF-8 bytes."`
+	Creator   string                    `json:"creator" maxLength:"16384" doc:"At most 16384 UTF-8 bytes."`
+	Copyright string                    `json:"copyright" maxLength:"16384" doc:"At most 16384 UTF-8 bytes."`
+	Rotation  int                       `json:"rotation" enum:"0,90,180,270"`
 
 	ID          string  `json:"id" format:"uuid"`
 	AssetID     string  `json:"asset_id" format:"uuid"`
@@ -78,7 +79,7 @@ type photoSettingsOutput struct {
 }
 
 func fromStorePhotoFile(file store.PhotoFile) PhotoFile {
-	return PhotoFile{Revision: file.Revision, Rating: file.Rating, Flag: file.Flag, Label: file.Label, Caption: file.Caption, Creator: file.Creator, Copyright: file.Copyright, Rotation: file.Rotation, ID: file.ID, AssetID: file.AssetID, NodeID: file.NodeID, Role: file.Role, SidecarOfID: file.SidecarOfID, CreatedAt: file.CreatedAt}
+	return PhotoFile{Confirmed: file.Confirmed, Revision: file.Revision, Rating: file.Rating, Flag: file.Flag, Label: file.Label, Caption: file.Caption, Creator: file.Creator, Copyright: file.Copyright, Rotation: file.Rotation, ID: file.ID, AssetID: file.AssetID, NodeID: file.NodeID, Role: file.Role, SidecarOfID: file.SidecarOfID, CreatedAt: file.CreatedAt}
 }
 
 func fromStorePhotoAsset(asset store.PhotoAsset) PhotoAsset {

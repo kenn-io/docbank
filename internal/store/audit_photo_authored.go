@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 
 	"go.kenn.io/docbank/internal/audit"
 )
@@ -40,7 +41,7 @@ func photoAuthoredAuditRecord(s PhotoAuthoredSnapshot) (audit.Record, error) {
 		}
 		fields = append(fields, audit.Field{Name: f.name, Value: text})
 	}
-	fields = append(fields, audit.Field{Name: "rotation", Value: audit.Unsigned(uint64(rotation))}) //nolint:gosec // ValidatePhotoAuthored bounds rotation to 0 through 270.
+	fields = append(fields, audit.Field{Name: "rotation", Value: audit.Unsigned(uint64(rotation))}, audit.Field{Name: "confirmed_fields", Value: audit.Unsigned(uint64(v.Confirmed))}) //nolint:gosec // ValidatePhotoAuthored bounds rotation to 0 through 270.
 	return audit.Record{Kind: "photo_authored", Fields: fields}, nil
 }
 
@@ -64,6 +65,11 @@ func photoAuthoredFromAudit(r audit.Record) (PhotoAuthoredSnapshot, error) {
 		return s, ErrInvalidPhotoAsset
 	}
 	s.Values.Rating = int(rating)
+	confirmed, err := auditUnsignedField(r, "confirmed_fields")
+	if err != nil || confirmed > math.MaxUint8 {
+		return s, ErrInvalidPhotoAsset
+	}
+	s.Values.Confirmed = PhotoAuthoredFields(confirmed)
 	rotation, err := auditUnsignedField(r, "rotation")
 	if err != nil || rotation > 270 {
 		return s, ErrInvalidPhotoAsset
@@ -85,7 +91,7 @@ func photoAuthoredFromAudit(r audit.Record) (PhotoAuthoredSnapshot, error) {
 }
 
 func appendAuditPhotoAuthored(ctx context.Context, q metadataQuerier, records *[]audit.Record) error {
-	rows, err := q.QueryContext(ctx, `SELECT file_id,node_id,revision,rating,flag,label,caption,creator,copyright,rotation FROM photo_files WHERE role<>'sidecar' ORDER BY file_id`)
+	rows, err := q.QueryContext(ctx, `SELECT file_id,node_id,revision,rating,flag,label,caption,creator,copyright,rotation,confirmed_fields FROM photo_files WHERE role<>'sidecar' ORDER BY file_id`)
 	if err != nil {
 		return err
 	}
@@ -93,7 +99,7 @@ func appendAuditPhotoAuthored(ctx context.Context, q metadataQuerier, records *[
 	for rows.Next() {
 		var s PhotoAuthoredSnapshot
 		v := &s.Values
-		if err := rows.Scan(&s.FileID, &s.NodeID, &s.Revision, &v.Rating, &v.Flag, &v.Label, &v.Caption, &v.Creator, &v.Copyright, &v.Rotation); err != nil {
+		if err := rows.Scan(&s.FileID, &s.NodeID, &s.Revision, &v.Rating, &v.Flag, &v.Label, &v.Caption, &v.Creator, &v.Copyright, &v.Rotation, &v.Confirmed); err != nil {
 			return err
 		}
 		r, err := photoAuthoredAuditRecord(s)

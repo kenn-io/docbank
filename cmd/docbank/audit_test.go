@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,7 +20,7 @@ func TestHumanAuditHistoryShowsPhotoDecisions(t *testing.T) {
 	before := store.PhotoAuthoredSnapshot{FileID: fileID, NodeID: nodeID, Revision: 1}
 	after := before
 	after.Revision = 2
-	after.Values = store.PhotoAuthored{Rating: 5, Flag: "pick", Label: "red", Caption: "River\n\x1b[31m", Creator: "Example photographer", Copyright: "Example rights", Rotation: 90}
+	after.Values = store.PhotoAuthored{Confirmed: store.PhotoConfirmedAll, Rating: 5, Flag: "pick", Label: "red", Caption: "River\n\x1b[31m", Creator: "Example photographer", Copyright: "Example rights", Rotation: 90}
 	events := []api.AuditEvent{{NodeID: nodeID, Kind: "photo_authored", Attachment: &api.AuditAttachmentChange{
 		Kind: "photo_authored", Identity: api.AuditAttachmentIdentity{FileID: fileID, NodeID: nodeID},
 		Before: &api.AuditAttachmentState{Photo: &before}, After: &api.AuditAttachmentState{Photo: &after},
@@ -37,6 +38,23 @@ func TestHumanAuditHistoryShowsPhotoDecisions(t *testing.T) {
 				assert.Contains(t, output.String(), want)
 			}
 			assert.NotContains(t, output.String(), "\x1b")
+			assert.Contains(t, output.String(), "confirmed fields [rating, flag, label, caption, creator, copyright, rotation]")
+			original := after.Values
+			before.Values = store.PhotoAuthored{}
+			after.Values = store.PhotoAuthored{Confirmed: store.PhotoConfirmedCaption}
+			output.Reset()
+			if scope {
+				require.NoError(t, writeAuditScopeHistory(&output, api.AuditScopeEventPage{Items: events, Total: 1}))
+			} else {
+				require.NoError(t, writeAuditHistory(&output, api.AuditEventPage{Node: api.Node{ID: nodeID}, Items: events, Total: 1}))
+			}
+			states := strings.Split(output.String(), " -> ")
+			require.Len(t, states, 3)
+			assert.Contains(t, states[1], `caption ""`)
+			assert.Contains(t, states[1], "confirmed fields [none]")
+			assert.Contains(t, states[2], `caption ""`)
+			assert.Contains(t, states[2], "confirmed fields [caption]")
+			before.Values, after.Values = store.PhotoAuthored{}, original
 		})
 	}
 }

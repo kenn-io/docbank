@@ -825,7 +825,7 @@ first and explains the primary change for each event: live and retained-trash
 paths, content-version transitions, tag definitions and assignments, or
 provenance. Select an event to inspect its complete event, operation,
 scope, and node identities; canonical timestamp and origin; before/after
-revision, path, and version state; and typed tag or provenance payload.
+revision, path, and version state; and typed tag, provenance, or photo payload. Photo states show authored values and confirmed field names before and after edits and undo, including confirmation of an empty caption.
 
 The first page contains at most 50 events. **Load older events** follows the
 API's append-stable cursor, so new activity cannot shift or duplicate the

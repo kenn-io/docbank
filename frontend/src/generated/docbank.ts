@@ -133,6 +133,12 @@ export interface PhotoAuthored {
      */
   caption: string;
   /**
+     * Confirmation mask. See PhotoFile.confirmed_fields for supported bits.
+     * @minimum 0
+     * @maximum 127
+     */
+  confirmed_fields?: number;
+  /**
      * At most 16384 UTF-8 bytes.
      * @maxLength 16384
      */
@@ -4973,6 +4979,12 @@ export interface PhotoFile {
      * @maxLength 16384
      */
   caption: string;
+  /**
+     * Confirmed fields bitmask: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, rotation=64. An absent key means no confirmed fields; zero is omitted. Empty text and zero values can be confirmed.
+     * @minimum 0
+     * @maximum 127
+     */
+  confirmed_fields?: number;
   /**
      * At most 16384 UTF-8 bytes.
      * @maxLength 16384

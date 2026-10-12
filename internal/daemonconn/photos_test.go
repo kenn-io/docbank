@@ -146,6 +146,10 @@ func TestPhotoNodeAddressedResponsesMustContainTheNode(t *testing.T) {
 	require.True(t, IsResponseDecodeError(err))
 	_, err = client.AttachPhotoFile(t.Context(), assetID, 1, 1, "image", nil)
 	require.NoError(t, err)
+
+	asset.Files[0].Confirmed = 128
+	_, err = client.PhotoAsset(t.Context(), assetID)
+	require.ErrorContains(t, err, "unsupported confirmation bits")
 }
 
 func TestPhotoImportClients(t *testing.T) {

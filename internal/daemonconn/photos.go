@@ -26,9 +26,7 @@ func revisionIfMatch(revision int64) string {
 	return strconv.Quote(strconv.FormatInt(revision, 10))
 }
 
-// validatePhotoAssetResponse checks the identity, bounds, and ETag of a
-// daemon response. Graph policy stays in the store; the client only refuses a
-// response it cannot address or that disagrees with its own revision.
+// validatePhotoAssetResponse checks identity, supported encoding, bounds, and ETag; graph and product policy stay in the store.
 func validatePhotoAssetResponse(asset api.PhotoAsset, etag, requestedID string) error {
 	if !validUUIDv4(asset.ID) || asset.Revision < 1 || asset.Kind != "photo" && asset.Kind != "video" {
 		return errors.New("photo response has invalid identity, kind, or revision")
@@ -42,6 +40,9 @@ func validatePhotoAssetResponse(asset api.PhotoAsset, etag, requestedID string) 
 	for _, file := range asset.Files {
 		if !validUUIDv4(file.ID) || file.AssetID != asset.ID || file.NodeID < 1 {
 			return errors.New("photo response has invalid file identity")
+		}
+		if !file.Confirmed.Valid() {
+			return errors.New("photo response has unsupported confirmation bits")
 		}
 	}
 	return validatePhotoETag(etag, asset.Revision)

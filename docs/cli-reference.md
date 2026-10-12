@@ -791,7 +791,7 @@ membership.
 `audit history` reads canonical events for one protected node, newest first.
 Path events expose old and new coordinates with their live/trash state. Content
 events expose prior and resulting immutable version IDs. Tag and provenance
-events expose their stable identity and typed before/after state. The default
+events expose their stable identity and typed before/after state. Photo edits and undo show authored values and confirmed field names before and after, including confirmation of an empty caption. The default
 and maximum page sizes are 50 and 500. `next_cursor` in JSON, or the `next
 cursor` line in human output, continues
 through older events without shifting when a newer operation is appended. A

@@ -531,7 +531,7 @@ func normalizeReleasedUpgradeSnapshot(t *testing.T, data []byte) []map[string]an
 		var record map[string]any
 		require.NoError(t, json.Unmarshal(line, &record))
 		if record["type"] == "photo_file" {
-			defaults := map[string]any{"revision": float64(1), "rating": float64(0), "flag": "", "label": "", "caption": "", "creator": "", "copyright": "", "rotation": float64(0)}
+			defaults := map[string]any{"revision": float64(1), "rating": float64(0), "flag": "", "label": "", "caption": "", "creator": "", "copyright": "", "rotation": float64(0), "confirmed_fields": float64(0)}
 			for key, value := range defaults {
 				if _, ok := record[key]; !ok {
 					record[key] = value

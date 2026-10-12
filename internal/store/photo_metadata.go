@@ -35,14 +35,15 @@ type metadataPhotoAssetBeforeHidden struct {
 }
 
 type metadataPhotoFile struct {
-	Revision  int64  `json:"revision" db:"revision"`
-	Rating    int    `json:"rating" db:"rating"`
-	Flag      string `json:"flag" db:"flag"`
-	Label     string `json:"label" db:"label"`
-	Caption   string `json:"caption" db:"caption"`
-	Creator   string `json:"creator" db:"creator"`
-	Copyright string `json:"copyright" db:"copyright"`
-	Rotation  int    `json:"rotation" db:"rotation"`
+	Confirmed PhotoAuthoredFields `json:"confirmed_fields" db:"confirmed_fields"`
+	Revision  int64               `json:"revision" db:"revision"`
+	Rating    int                 `json:"rating" db:"rating"`
+	Flag      string              `json:"flag" db:"flag"`
+	Label     string              `json:"label" db:"label"`
+	Caption   string              `json:"caption" db:"caption"`
+	Creator   string              `json:"creator" db:"creator"`
+	Copyright string              `json:"copyright" db:"copyright"`
+	Rotation  int                 `json:"rotation" db:"rotation"`
 
 	Type        string  `json:"type"`
 	FileID      string  `json:"file_id" db:"file_id"`
@@ -225,7 +226,7 @@ func validatePhotoFileMetadataRecord(v metadataPhotoFile) error {
 	if v.Revision < 1 {
 		return errors.New("invalid photo file revision")
 	}
-	values := PhotoAuthored{Rating: v.Rating, Flag: v.Flag, Label: v.Label, Caption: v.Caption, Creator: v.Creator, Copyright: v.Copyright, Rotation: v.Rotation}
+	values := PhotoAuthored{Confirmed: v.Confirmed, Rating: v.Rating, Flag: v.Flag, Label: v.Label, Caption: v.Caption, Creator: v.Creator, Copyright: v.Copyright, Rotation: v.Rotation}
 	if err := ValidatePhotoAuthored(values); err != nil {
 		return err
 	}

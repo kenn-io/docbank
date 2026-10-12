@@ -11553,6 +11553,12 @@ components:
           description: At most 16384 UTF-8 bytes.
           maxLength: 16384
           type: string
+        confirmed_fields:
+          description: Confirmation mask. See PhotoFile.confirmed_fields for supported bits.
+          format: int32
+          maximum: 127
+          minimum: 0
+          type: integer
         copyright:
           description: At most 16384 UTF-8 bytes.
           maxLength: 16384
@@ -11898,6 +11904,12 @@ components:
           description: At most 16384 UTF-8 bytes.
           maxLength: 16384
           type: string
+        confirmed_fields:
+          description: "Confirmed fields bitmask: rating=1, flag=2, label=4, caption=8, creator=16, copyright=32, rotation=64. An absent key means no confirmed fields; zero is omitted. Empty text and zero values can be confirmed."
+          format: int32
+          maximum: 127
+          minimum: 0
+          type: integer
         copyright:
           description: At most 16384 UTF-8 bytes.
           maxLength: 16384

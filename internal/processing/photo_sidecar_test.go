@@ -25,7 +25,15 @@ func TestReadPhotoSidecar(t *testing.T) {
 		want         store.PhotoAuthored
 		invalid      bool
 	}{
+		{name: "repeated values", packet: photoSidecarHeader + `><xmp:Rating><rdf:value>0</rdf:value><rdf:value>5</rdf:value></xmp:Rating>` + photoSidecarFooter, invalid: true},
+		{name: "text before value", packet: photoSidecarHeader + `><xmp:Rating>0<rdf:value>5</rdf:value></xmp:Rating>` + photoSidecarFooter, invalid: true},
+		{name: "oversized text before value", packet: photoSidecarHeader + `><xmp:Rating>` + oversized + `<rdf:value>5</rdf:value></xmp:Rating>` + photoSidecarFooter, invalid: true},
+		{name: "text after value", packet: photoSidecarHeader + `><xmp:Rating><rdf:value>5</rdf:value>0</xmp:Rating>` + photoSidecarFooter, invalid: true},
+		{name: "text inside Alt", packet: photoSidecarHeader + `><dc:description><rdf:Alt>Caption<rdf:li>Other</rdf:li></rdf:Alt></dc:description>` + photoSidecarFooter, invalid: true},
+		{name: "padded value", packet: photoSidecarHeader + "><xmp:Rating>\n <rdf:value>5</rdf:value>\n </xmp:Rating>" + photoSidecarFooter, want: store.PhotoAuthored{Rating: 5}},
+		{name: "resource wrapper", packet: photoSidecarHeader + `><dc:creator rdf:parseType="Resource"><rdf:value>Author</rdf:value></dc:creator>` + photoSidecarFooter, want: store.PhotoAuthored{Creator: "Author"}},
 		{name: "empty", packet: photoSidecarHeader + `>` + photoSidecarFooter},
+		{name: "numeric zero", packet: photoSidecarHeader + ` ts:Rotation="0" xmp:Rating="0">` + photoSidecarFooter, want: store.PhotoAuthored{}},
 		{name: "empty containers", packet: photoSidecarHeader + "><dc:description>\n <rdf:Alt>\n </rdf:Alt>\n</dc:description><dc:creator>\n <rdf:Seq>\n </rdf:Seq>\n</dc:creator><dc:rights><rdf:Alt/></dc:rights>" + photoSidecarFooter},
 		{name: "blank scalar", packet: photoSidecarHeader + "><dc:description> \n\t </dc:description><dc:creator> </dc:creator><dc:rights>\n</dc:rights>" + photoSidecarFooter},
 		{name: "blank selected items", packet: photoSidecarHeader + `><dc:description><rdf:Alt><rdf:li>Other</rdf:li><rdf:li xml:lang="x-default"> </rdf:li></rdf:Alt></dc:description><dc:creator><rdf:Seq><rdf:li> </rdf:li><rdf:li>Other</rdf:li></rdf:Seq></dc:creator><dc:rights><rdf:Alt><rdf:li> </rdf:li></rdf:Alt></dc:rights>` + photoSidecarFooter},
@@ -172,7 +180,7 @@ func TestPhotoSidecarImportInitialization(t *testing.T) {
 			require.NoError(t, err)
 			for _, file := range asset.Files {
 				if file.Role == targetRole {
-					assert.Equal(t, store.PhotoAuthored{Rating: 4, Label: "red", Caption: "River"}, file.Authored())
+					assert.Equal(t, store.PhotoAuthored{Rating: 4, Label: "red", Caption: "River", Confirmed: store.PhotoConfirmedRating | store.PhotoConfirmedLabel | store.PhotoConfirmedCaption}, file.Authored())
 					assert.Equal(t, int64(2), file.Revision)
 					assert.Equal(t, file.ID, receipt.After[0].FileID)
 				} else {
