@@ -178,7 +178,7 @@ func TestEnsureReplacesOlderProtocolDaemon(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	rec.Address = strings.TrimPrefix(server.URL, "http://")
-	rec.Metadata[metaProtocolVersion] = "71"
+	rec.Metadata[metaProtocolVersion] = "72"
 	_, err := RuntimeStore(root).Write(rec)
 	require.NoError(t, err)
 	result, err := ensureDaemon(t.Context(), root, func(_ context.Context, _ string) (kitdaemon.RuntimeRecord, error) {

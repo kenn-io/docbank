@@ -1507,7 +1507,8 @@ cannot be read, `jobs` still lists every task and prints a warning to stderr;
 To recover malformed settings, repair or remove `lane-controls.json` in the
 vault directory. Removing it restores unpaused lanes with concurrency 1.
 Cancellation remains available while settings are unreadable.
-Every daemon registers `extract:plain-text`, `extract:source-metadata`, and
+Every daemon registers `extract:plain-text`, `extract:source-metadata`,
+`extract:photo-sidecars`, `derive:photo-quality`, and
 `maintenance:auxiliary-checksums`; `process:renditions` appears only when a
 rendition provider is bound, `telemetry:heartbeat` appears while anonymous
 usage telemetry is on, and configured watched inboxes add `watch:<name>`

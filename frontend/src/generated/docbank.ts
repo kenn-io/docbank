@@ -92,7 +92,72 @@ export const AuditAttachmentChangeKind = {
   tag_definition: 'tag_definition',
   tag_assignment: 'tag_assignment',
   provenance: 'provenance',
+  photo_authored: 'photo_authored',
 } as const;
+
+export type PhotoAuthoredFlag = typeof PhotoAuthoredFlag[keyof typeof PhotoAuthoredFlag];
+
+
+export const PhotoAuthoredFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
+export type PhotoAuthoredLabel = typeof PhotoAuthoredLabel[keyof typeof PhotoAuthoredLabel];
+
+
+export const PhotoAuthoredLabel = {
+  '': '',
+  red: 'red',
+  yellow: 'yellow',
+  green: 'green',
+  blue: 'blue',
+  purple: 'purple',
+} as const;
+
+export type PhotoAuthoredRotation = typeof PhotoAuthoredRotation[keyof typeof PhotoAuthoredRotation];
+
+
+export const PhotoAuthoredRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
+export interface PhotoAuthored {
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @maxLength 16384
+     */
+  caption: string;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @maxLength 16384
+     */
+  copyright: string;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @maxLength 16384
+     */
+  creator: string;
+  flag: PhotoAuthoredFlag;
+  label: PhotoAuthoredLabel;
+  /**
+     * @minimum 0
+     * @maximum 5
+     */
+  rating: number;
+  rotation: PhotoAuthoredRotation;
+}
+
+export interface PhotoAuthoredSnapshot {
+  file_id: string;
+  node_id: number;
+  revision: number;
+  values: PhotoAuthored;
+}
 
 export interface AuditAttachmentState {
   ingest_id?: string;
@@ -100,6 +165,7 @@ export interface AuditAttachmentState {
   node_id?: number;
   original_mtime?: string;
   original_path?: string;
+  photo?: PhotoAuthoredSnapshot;
   /** @pattern ^[0-9a-f]{64}$ */
   provenance_id?: string;
   /** @pattern ^[0-9a-f]{64}$ */
@@ -109,6 +175,7 @@ export interface AuditAttachmentState {
 }
 
 export interface AuditAttachmentIdentity {
+  file_id?: string;
   /** @minimum 1 */
   node_id?: number;
   /** @pattern ^[0-9a-f]{64}$ */
@@ -2939,6 +3006,7 @@ export interface Filters {
   exclude_paths?: string[];
   exclude_tag_ids?: string[];
   extensions?: string[];
+  flags?: string[];
   /** @nullable */
   focus_max?: string | null;
   /** @nullable */
@@ -2954,6 +3022,7 @@ export interface Filters {
   /** @nullable */
   iso_min?: number | null;
   kinds?: string[];
+  labels?: string[];
   lenses?: string[];
   media_families?: string[];
   mime_types?: string[];
@@ -2961,6 +3030,10 @@ export interface Filters {
   modified_before?: string;
   no_tags?: boolean;
   paths?: string[];
+  /** @nullable */
+  rating_max?: number | null;
+  /** @nullable */
+  rating_min?: number | null;
   set_ids?: string[];
   /** @nullable */
   size_max?: number | null;
@@ -4473,12 +4546,33 @@ export interface WorkspaceQueryCoverage {
   profile_fingerprint?: string;
 }
 
+export type SavedQueryFiltersSchemaFlagsItem = typeof SavedQueryFiltersSchemaFlagsItem[keyof typeof SavedQueryFiltersSchemaFlagsItem];
+
+
+export const SavedQueryFiltersSchemaFlagsItem = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
 export type SavedQueryFiltersSchemaKindsItem = typeof SavedQueryFiltersSchemaKindsItem[keyof typeof SavedQueryFiltersSchemaKindsItem];
 
 
 export const SavedQueryFiltersSchemaKindsItem = {
   photo: 'photo',
   video: 'video',
+} as const;
+
+export type SavedQueryFiltersSchemaLabelsItem = typeof SavedQueryFiltersSchemaLabelsItem[keyof typeof SavedQueryFiltersSchemaLabelsItem];
+
+
+export const SavedQueryFiltersSchemaLabelsItem = {
+  '': '',
+  red: 'red',
+  yellow: 'yellow',
+  green: 'green',
+  blue: 'blue',
+  purple: 'purple',
 } as const;
 
 export type SavedQueryFiltersSchemaMediaFamiliesItem = typeof SavedQueryFiltersSchemaMediaFamiliesItem[keyof typeof SavedQueryFiltersSchemaMediaFamiliesItem];
@@ -4610,6 +4704,8 @@ export interface SavedQueryFiltersSchema {
      * @items.pattern ^[a-z0-9](?:[a-z0-9_-]{0,31})$
      */
   extensions?: string[];
+  /** @maxItems 64 */
+  flags?: SavedQueryFiltersSchemaFlagsItem[];
   /**
      * @maxLength 64
      * @nullable
@@ -4649,6 +4745,8 @@ export interface SavedQueryFiltersSchema {
   /** @maxItems 64 */
   kinds?: SavedQueryFiltersSchemaKindsItem[];
   /** @maxItems 64 */
+  labels?: SavedQueryFiltersSchemaLabelsItem[];
+  /** @maxItems 64 */
   lenses?: string[];
   /** @maxItems 13 */
   media_families?: SavedQueryFiltersSchemaMediaFamiliesItem[];
@@ -4662,6 +4760,18 @@ export interface SavedQueryFiltersSchema {
   no_tags?: boolean | null;
   /** @maxItems 64 */
   paths?: string[];
+  /**
+     * @minimum 0
+     * @maximum 5
+     * @nullable
+     */
+  rating_max?: number | null;
+  /**
+     * @minimum 0
+     * @maximum 5
+     * @nullable
+     */
+  rating_min?: number | null;
   /** @maxItems 64 */
   set_ids?: string[];
   /**
@@ -4792,6 +4902,8 @@ export interface PhotoAlbumSummary {
   updated_at: string;
 }
 
+export type PhotoAssetAgreement = {[key: string]: boolean};
+
 export type PhotoAssetDisplaySource = typeof PhotoAssetDisplaySource[keyof typeof PhotoAssetDisplaySource];
 
 
@@ -4810,6 +4922,27 @@ export const PhotoAssetKind = {
   video: 'video',
 } as const;
 
+export type PhotoFileFlag = typeof PhotoFileFlag[keyof typeof PhotoFileFlag];
+
+
+export const PhotoFileFlag = {
+  '': '',
+  pick: 'pick',
+  reject: 'reject',
+} as const;
+
+export type PhotoFileLabel = typeof PhotoFileLabel[keyof typeof PhotoFileLabel];
+
+
+export const PhotoFileLabel = {
+  '': '',
+  red: 'red',
+  yellow: 'yellow',
+  green: 'green',
+  blue: 'blue',
+  purple: 'purple',
+} as const;
+
 export type PhotoFileRole = typeof PhotoFileRole[keyof typeof PhotoFileRole];
 
 
@@ -4820,13 +4953,48 @@ export const PhotoFileRole = {
   sidecar: 'sidecar',
 } as const;
 
+export type PhotoFileRotation = typeof PhotoFileRotation[keyof typeof PhotoFileRotation];
+
+
+export const PhotoFileRotation = {
+  NUMBER_0: 0,
+  NUMBER_90: 90,
+  NUMBER_180: 180,
+  NUMBER_270: 270,
+} as const;
+
 export interface PhotoFile {
   asset_id: string;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @maxLength 16384
+     */
+  caption: string;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @maxLength 16384
+     */
+  copyright: string;
   created_at: string;
+  /**
+     * At most 16384 UTF-8 bytes.
+     * @maxLength 16384
+     */
+  creator: string;
+  flag: PhotoFileFlag;
   id: string;
+  label: PhotoFileLabel;
   /** @minimum 1 */
   node_id: number;
+  /**
+     * @minimum 0
+     * @maximum 5
+     */
+  rating: number;
+  /** @minimum 1 */
+  revision: number;
   role: PhotoFileRole;
+  rotation: PhotoFileRotation;
   /** @nullable */
   sidecar_of_file_id?: string | null;
 }
@@ -4834,6 +5002,7 @@ export interface PhotoFile {
 export interface PhotoAsset {
   /** A URL to the JSON Schema for this object. */
   readonly $schema?: string;
+  agreement: PhotoAssetAgreement;
   created_at: string;
   /** @nullable */
   display_file_id?: string | null;
@@ -8156,7 +8325,7 @@ export const getEnableAuditUrl = () => {
 }
 
 /**
- * Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, and provenance across the vault, including outside the selected scope; preview again after any stale-token response.
+ * Consumes a one-use preview token. The acknowledgment explicitly accepts permanent protected history plus names, topology, tags, assignments, ingests, provenance, photo decisions, captions, creators, and copyrights across the vault, including outside the selected scope; preview again after any stale-token response.
  * @summary Permanently enable the exact reviewed audit scope
  */
 export const enableAudit = async (enableAuditRequest: NonReadonly<EnableAuditRequest>, options?: Parameters<typeof sessionJSON>[1]): Promise<AuditStatus> => {

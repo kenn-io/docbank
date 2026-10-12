@@ -171,13 +171,15 @@ The list includes the newest 1,000 durable storage records. Finished storage
 operations clear within an hour after their retention ends unless they still
 own pending cleanup.
 
-Every daemon runs three jobs that derive information from retained content:
+The daemon's content jobs include:
 
 - `extract:plain-text` verifies and indexes supported current text content with
   a bounded worker.
 - `extract:source-metadata` reads retained originals that the current extractor
   has not processed. It publishes typed metadata and keeps watching for new
   content.
+- `extract:photo-sidecars` initializes undecided photo files from linked XMP sidecars.
+- `derive:photo-quality` evaluates the selected display file's quality signals.
 - `maintenance:auxiliary-checksums` computes MD5 for retained blobs that
   predate auxiliary checksums, then completes. New writes record MD5 at ingest.
   On an existing vault, the first daemon start after this upgrade therefore

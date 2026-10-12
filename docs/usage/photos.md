@@ -134,6 +134,89 @@ Passcodes must be 1 to 1,024 bytes without CR or LF line breaks. Canonically equ
 
 A hide retry that returns `hidden_locked` already took effect.
 
+## Ratings and other decisions
+
+Each RAW, image, and video member stores its own rating, flag, label, caption,
+creator, copyright, and rotation. A RAW rated 5 and a JPEG rated 3 keep those
+values. Inspection returns every file's revision and an `agreement` map.
+`false` for a field means the displayable members have mixed values.
+
+| Decision | Allowed values |
+| --- | --- |
+| Rating | 0 through 5 |
+| Flag | empty, `pick`, or `reject` |
+| Label | empty, `red`, `yellow`, `green`, `blue`, or `purple` |
+| Rotation | 0, 90, 180, or 270 degrees |
+| Caption, creator, copyright | Up to 16 KiB of UTF-8 text each |
+
+A new member starts at revision 1 with no decisions. Detach and reattach keep
+each file's identity, decisions, and revision. Hidden is a Photos privacy
+control: Documents queries and audit history still show a hidden photo's
+decisions.
+
+### Decisions from XMP sidecars
+
+The daemon fills in an original file's decisions from its imported XMP sidecar
+while that file is still at revision 1. Once a sidecar sets a decision, later
+packets don't change it.
+
+The daemon picks the original for each sidecar this way:
+
+- A qualified name such as `capture.JPG.xmp` selects that original.
+- A basename-only packet such as `capture.xmp` can select an extension with
+  `photoshop:SidecarForExtension`. Without that claim, the packet applies to
+  its linked file, which import prefers to be the RAW.
+- A missing, ambiguous, or conflicting binding makes no decision. If you attach
+  `capture.JPG.xmp` to the RAW, the name and the attachment conflict. The packet
+  applies after you attach it to the JPEG.
+- The daemon handles one photo's sidecars one at a time, lowest node ID first.
+  When two select the same original, the first that makes a decision wins. An
+  empty or rejected packet makes no decision, so the next sidecar can apply.
+- An audited vault refuses changes outside its audit scopes, so sidecars make no
+  decision there. Enrolling a scope that covers the photo makes its sidecars
+  eligible again.
+- A trashed original gets no decision. Restoring it makes the sidecar eligible
+  again.
+
+The daemon reads these XMP properties:
+
+| Decision | XMP property |
+| --- | --- |
+| Rating | `xmp:Rating`. A rating of -1 means reject with rating 0. |
+| Label | `xmp:Label`, case-insensitive |
+| Flag | `Pick` in the `https://teststrip.app/xmp/1.0/` namespace |
+| Rotation | `Rotation` in the `https://teststrip.app/xmp/1.0/` namespace |
+| Caption | `dc:description`, preferring the `x-default` language |
+| Creator | The first `dc:creator` entry |
+| Copyright | `dc:rights`, preferring the `x-default` language |
+
+An unsupported value is ignored and the other decisions still apply. That
+covers custom color labels, fractional ratings, unknown picks, other rotations,
+and text over 16 KiB. Whitespace-only text counts as absent; other text keeps
+its spaces and newlines. Malformed XML, a repeated property, or nesting deeper
+than 64 elements rejects the whole packet. Empty and rejected packets leave the file, its
+revision, and audit history unchanged. Sidecars don't import `dc:subject` as
+tags or `tiff:Orientation` as rotation.
+
+Each applied packet records the sidecar file and content version that supplied
+it. Sidecar source-metadata detail shows a valid-packet fact or a warning.
+Replacing a sidecar's bytes can still fill in a file that has no decision.
+The daemon reconsiders a sidecar when the photo's members change, including
+renames and restoration. Cancellation, stale inputs, and read failures retry.
+
+Typed queries accept `rating_min`, `rating_max`, `flags`, and `labels`. In Photos,
+each decision filter reads the asset's display file. With the default RAW display
+rated 5/pick and a paired JPEG rated 1/red, `rating:5`, `flag:pick`,
+`NOT rating:1`, and `NOT label:red` match, including with a linked XMP sidecar.
+Both typed bounds from 3 through 3 and `rating_min:3 AND rating_max:3` exclude
+the photo. Selecting the JPEG reverses those rating, flag, and label matches.
+Changing the display file changes these decision matches.
+Documents queries read each file's own decisions, so `NOT flag:pick` there
+also matches files that aren't photos. Decisions and their receipts round-trip
+through JSONL backup and restore.
+Advanced expressions accept `rating:5`, `rating_min:4`, `rating_max:3`,
+`flag:pick`, and `label:red`.
+
 ## Previews
 
 The daemon produces a grid preview with a 512-pixel maximum edge for each
@@ -306,8 +389,7 @@ folder must exist when you start the import. Otherwise the command fails with
 exit code 2 and no import starts.
 
 Files with the same folder and name, such as `IMG_0001.ARW`, `IMG_0001.JPG`,
-and `IMG_0001.XMP`, become one photo. The XMP sidecar attaches to the RAW, or
-to the JPEG when there is no RAW. An XMP with no same-name RAW or JPEG imports
+and `IMG_0001.XMP`, become one photo. A qualified XMP filename attaches to its named original. Unqualified names attach to the RAW, or to the JPEG when there is no RAW; their packet extension claim selects the authored target after extraction. An XMP with no same-name RAW or JPEG imports
 as a plain file. A later full scan pairs companions when both source files
 are still present. Matching uses files in the scan and their current duplicate
 owners. A video always becomes its own photo. Each photo commits in one
@@ -381,11 +463,14 @@ the previous page boundary.
 
 Use `kind:photo`, `camera:"Synthetic Camera"`, `lens:"Synthetic Lens"`,
 `iso:400`, `iso_min:100`, `iso_max:800`, `capture_after:2024-01-01`,
-`capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, or `asset:` or `set:`
+`capture_before:2025-01-01`, `gps:"-10,170,10,-170"`, `rating:5`, `flag:pick`,
+`label:red`, or `asset:` or `set:`
 followed by a canonical asset or album UUIDv4. Existing `collection:`, tag, and text predicates combine
 with these fields. Camera and lens match the complete make or model, ignoring
 case using Unicode case folding. Values in one typed filter array combine with
 OR. Separate filters combine with AND.
+
+Use typed `flags:[""]` or `labels:[""]` to select unflagged or unlabeled photos. Expression operands must be nonempty. `NOT flag:pick` selects unflagged and rejected photos; `NOT label:red` selects unlabeled photos and other colors.
 
 Dates use the photo's recorded local calendar day, with an inclusive lower
 bound and exclusive upper bound. A January 1 photo remains in January 1 date

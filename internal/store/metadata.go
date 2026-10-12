@@ -1108,6 +1108,13 @@ func (s *Store) importMetadataLines(
 func (s *Store) importMetadataRecord(
 	ctx context.Context, tx *sql.Tx, kind string, raw jsontext.Value,
 ) error {
+	if kind == metadataPhotoFileType {
+		var err error
+		raw, err = normalizePhotoFileMetadata(raw)
+		if err != nil {
+			return err
+		}
+	}
 	required, ok := metadataRequiredFields[kind]
 	if !ok {
 		return fmt.Errorf("unknown record type %q", kind)

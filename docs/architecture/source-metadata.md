@@ -97,8 +97,9 @@ An extractor fingerprint identifies the complete local parser bundle. A parser
 change creates a new immutable generation and moves the active head for that
 content SHA-256. Old generations remain evidence. Retrying the same generation
 is idempotent. Because the fingerprint covers every parser, any change to it
-makes the daemon re-read and re-extract every retained original in every
-vault. Tests pin the parser descriptor and check that the shared email recipe,
+makes the daemon re-read and re-extract every retained original once in every
+vault. Moving those heads also rebuilds the affected document-event generations.
+Tests pin the parser descriptor and check that the shared email recipe,
 including the actual Go version, contributes to the fingerprint. Format
 [qualification](format-coverage.md#keep-the-record-current) uses a separate
 implementation identity that excludes only the Go version.
@@ -157,3 +158,50 @@ change. Missing or corrupt physical source bytes retain the embedded API's
 `ErrContentUnavailable` identity. All read surfaces bind fields to the
 requested version and keep filename, path, ingest time, and filesystem time in
 separate attachment facts.
+
+## Standalone photo sidecars
+
+The source extractor reads standalone XMP packets rooted at `x:xmpmeta` through
+the strict photo packet reader. Its v20 fingerprint causes one re-extraction of
+every retained original and rebuilds affected document-event generations.
+Other XML, including bare `rdf:RDF`, RSS, and SVG,
+falls through to the existing format checks. Valid packets publish `image.xmp.packet_valid` and supported
+rating, flag, label, caption, creator, copyright, rotation, and `photoshop:SidecarForExtension` claims.
+The reader ignores each unsupported value and keeps the other decisions: custom
+color labels, unknown picks, unsupported rotations, ratings that aren't whole
+numbers from -1 through 5, and text over 16 KiB. XMP types `xmp:Rating` as a
+real number, so `3.0` is a three-star rating. Caption, creator, and copyright
+text retain their whitespace. While reading a text property, the reader stops
+buffering once the text passes 16 KiB. Packets share the 64 MiB limit on
+extracted originals, so large editing data doesn't hide a rating. Malformed
+packets publish warnings without a valid-packet fact. The tolerant
+embedded XMP reader retains its existing behavior.
+The first top-level RDF description selects the subject. Matching descriptions
+combine its properties; other subjects and nested resources don't contribute decisions.
+
+Photo initialization consumes checksum-checked evidence from the running extractor
+fingerprint. It rechecks the sidecar version, bytes identity, membership, role,
+trash state, intended original, and target revision in its transaction. Qualified filenames take precedence over extension claims on basename-only packets. Imported names come from retained provenance; later explicit attachments retain authority. Resolving an old imported link changes only the authored target, preserving graph relationships. Empty or rejected packets
+make no owner edit; useful replacement bytes can initialize a revision-1 target.
+In an audited vault, a target outside every audit scope settles without a
+decision, because audited vaults refuse attachment changes there. Enrolling a
+scope that covers the target makes the sidecar eligible again.
+Schema 32 caches each considered packet in `photo_sidecar_considered`,
+keyed by sidecar file with its asset, asset revision, content version, extractor
+fingerprint, and an ordered snapshot of every member node ID, revision, and audit coverage, including trashed members. Pairing, rename, provenance, restoration, and audit enrollment changes make the sidecar eligible again. Idle listings read
+one work item per sidecar through the sidecar-only node index, in node-ID order.
+A sidecar waits until every live lower-node-ID sidecar in the same photo has a
+cached outcome for the current photo state, content version, and running
+fingerprint. Extraction order and the listing cursor therefore cannot let a
+higher-ID packet claim an original first; the first packet that makes a
+decision wins. A sibling whose packet never extracts or never settles holds
+back the higher-ID sidecars in that photo. Because one photo's sidecars never
+share a listing page, applying one cannot make a sibling in the same page
+stale. The background
+processor resolves the intended original and records its outcome under the
+maintenance gate, after checking the captured asset revision and member snapshot. A changed snapshot returns a stale revision error. Applied decisions record the resulting snapshot.
+Logical restore rebuilds this derived cache from retained source evidence.
+Applied decisions write the ordinary authored receipt with stable sidecar file,
+node, and content-version provenance, and advance the target node revision and
+modified time. Later pairing corrections preserve that
+historical identity. Authored values come from retained source evidence; imported binding conflicts consult graph receipts to preserve explicit attachment authority.
