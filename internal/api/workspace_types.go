@@ -201,17 +201,7 @@ func fromStoreWorkspacePage(page store.SnapshotPage) (WorkspaceQueryResponse, er
 		}
 		out.Rows = append(out.Rows, wire)
 	}
-	for _, facet := range page.Facets {
-		wire := WorkspaceFacet{Dimension: facet.Dimension, Available: facet.Available,
-			Reason: facet.Reason, Total: facet.Total, Values: []WorkspaceFacetValue{},
-			Missing: facet.Missing, Other: facet.Other}
-		for _, value := range facet.Values {
-			wire.Values = append(wire.Values, WorkspaceFacetValue{
-				Key: value.Key, Label: value.Label, Count: value.Count, Selected: value.Selected,
-			})
-		}
-		out.Facets = append(out.Facets, wire)
-	}
+	out.Facets = fromStoreFacets(page.Facets)
 	return out, nil
 }
 
@@ -230,4 +220,20 @@ func fromStoreSavedQueryRun(run store.SavedQueryRun) SavedQueryRun {
 		out.PreviousTotal = new(run.PreviousTotal)
 	}
 	return out
+}
+
+func fromStoreFacets(facets []store.SnapshotFacet) []WorkspaceFacet {
+	result := make([]WorkspaceFacet, 0, len(facets))
+	for _, facet := range facets {
+		wire := WorkspaceFacet{Dimension: facet.Dimension, Available: facet.Available,
+			Reason: facet.Reason, Total: facet.Total, Values: []WorkspaceFacetValue{},
+			Missing: facet.Missing, Other: facet.Other}
+		for _, value := range facet.Values {
+			wire.Values = append(wire.Values, WorkspaceFacetValue{
+				Key: value.Key, Label: value.Label, Count: value.Count, Selected: value.Selected,
+			})
+		}
+		result = append(result, wire)
+	}
+	return result
 }

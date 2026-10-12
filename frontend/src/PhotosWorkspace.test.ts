@@ -8,6 +8,9 @@ import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photo } from "./photo-test-fixtures.js";
 import { captureDateQuery } from "./photoTimeline.js";
 
+// Answers background filter-count requests so tests that predate counts see only their own reads.
+const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] })) : fetcher(url, init));
+
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
 
 it("preserves subsequent scrolling when an interrupted refresh resumes after remount", async () => {
@@ -21,7 +24,7 @@ it("preserves subsequent scrolling when an interrupted refresh resumes after rem
   });
   const items = Array.from({ length: 60 }, (_, index) => photo(index + 1));
   let finishRefresh!: (response: Response) => void;
-  vi.stubGlobal("fetch", vi.fn().mockImplementationOnce(() => new Promise(() => {}))
+  stubPhotoFetch(vi.fn().mockImplementationOnce(() => new Promise(() => {}))
     .mockImplementationOnce(() => new Promise<Response>(resolve => finishRefresh = resolve)));
   const photos = new Photos("scoped", vi.fn());
   photos.items = items; photos.total = items.length; photos.started = true; photos.scrollTop = 500;
@@ -43,6 +46,61 @@ it("preserves subsequent scrolling when an interrupted refresh resumes after rem
   photos.dispose(); await cache.dispose();
 });
 
+it("disables search and filters until a delayed Hide finishes", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  let finish!: (response: Response) => void;
+  vi.stubGlobal("fetch", vi.fn((url: string) => url.endsWith("/hide") ? new Promise<Response>(resolve => finish = resolve) : Promise.resolve(Response.json({ items: [], total: 0, facets: [] }))));
+  const photos = new Photos("scoped", vi.fn());
+  photos.items = [photo(1)]; photos.started = true;
+  photos.baseQuery = photos.query = { ...photos.query, text: "Canon" };
+  photos.facets = [{ dimension: "camera", available: true, reason: "", total: 1, missing: 0, other: 0, values: [{ key: "Canon", label: "Canon", count: 1, selected: false }] }];
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  const controls = [screen.getByRole("searchbox", { name: "Search photos" }), screen.getByRole("button", { name: "Search" }), screen.getByRole("combobox", { name: "Sort photos: Capture date" }), screen.getByRole("button", { name: "Clear filters" }), screen.getByRole("button", { name: "Canon, 1 photos" })];
+  expect(screen.getByRole("button", { name: "Clear filters" }).getAttribute("type")).toBe("button");
+  const pending = photos.setHidden("photo-1");
+  await waitFor(() => { for (const control of controls) expect(control.hasAttribute("disabled")).toBe(true); });
+  finish(Response.json({ id: "photo-1", revision: 2 }));
+  await pending;
+  await waitFor(() => { for (const control of controls.slice(0, 4)) expect(control.hasAttribute("disabled")).toBe(false); });
+  photos.dispose(); await cache.dispose();
+});
+
+it("restores applied search after a facet click and keeps empty-library guidance when clearing filters", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  Object.defineProperty(Element.prototype, "scrollIntoView", { configurable: true, value: vi.fn() });
+  const fetcher = vi.fn().mockImplementation(() => Promise.resolve(Response.json({ items: [], total: 0, facets: [] })));
+  vi.stubGlobal("fetch", fetcher);
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.facets = [{ dimension: "camera", available: true, reason: "", total: 1, missing: 0, other: 0, values: [{ key: "Canon", label: "Canon", count: 1, selected: false }] }];
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  await screen.findByText("Your photo library is empty");
+  expect(await screen.findByText(/Import photos with docbank photos import/)).toBeTruthy();
+  const search = screen.getByRole("searchbox", { name: "Search photos" }) as HTMLInputElement;
+  expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  await fireEvent.input(search, { target: { value: "Nikon" } });
+  expect(search.value).toBe("Nikon");
+  expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: "Canon, 1 photos" }));
+  await waitFor(() => expect(search.value).toBe(""));
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).query.text).toBe("");
+  await waitFor(() => expect(photos.loading).toBe(false));
+  await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull());
+  await screen.findByText("Your photo library is empty");
+  await fireEvent.click(screen.getByRole("combobox", { name: "Sort photos: Capture date" }));
+  expect(screen.queryByRole("option", { name: "Relevance" })).toBeNull();
+  await fireEvent.click(screen.getByRole("option", { name: "Capture date" }));
+  await photos.setQuery({ ...photos.query, filters: { iso_min: 0 } });
+  await screen.findByText("No matching photos");
+  await fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  await screen.findByText("Your photo library is empty");
+  expect(screen.getByText(/Import photos with docbank photos import/)).toBeTruthy();
+  photos.dispose(); await cache.dispose();
+});
+
 it("keeps failed confirmation visible and closes after cancellation or success", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -58,7 +116,7 @@ it("keeps failed confirmation visible and closes after cancellation or success",
     if (url.endsWith("/photo-2/trash")) return Response.json({ detail: "Photo changed" }, { status: 412 });
     return Response.json({ id: url.split("/").at(-2), revision: 2 });
   });
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const photos = new Photos("scoped", vi.fn());
   photos.items = [photo(1), photo(2)]; photos.started = true; photos.selectLoaded();
   const cache = new PhotoPreviewCache("scoped", vi.fn());
@@ -86,7 +144,7 @@ it("does not write the user's scroll position back to the grid", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
-  vi.stubGlobal("fetch", vi.fn());
+  stubPhotoFetch(vi.fn());
   const photos = new Photos("scoped", vi.fn());
   photos.items = Array.from({ length: 60 }, (_, index) => photo(index + 1)); photos.total = 60; photos.started = true;
   const cache = new PhotoPreviewCache("scoped", vi.fn());
@@ -125,7 +183,7 @@ it.each([
   const fetcher = vi.fn().mockImplementationOnce(() => new Promise(resolve => finish = resolve))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: replacement, total: 100, next_cursor: "new-page" })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(200)], total: 100 })));
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
   const cell = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
@@ -171,7 +229,7 @@ it("keeps loaded photos visible on paging failure and selects with touch checkbo
   const fetcher = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(1), photo(2)], total: 3, next_cursor: "next" })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Page unavailable" }), { status: 503 }))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(3, "2024-01-01T12:00:00")], total: 3 })));
-  vi.stubGlobal("fetch", fetcher);
+  vi.stubGlobal("fetch", (url: string, init: RequestInit) => JSON.parse(init.body as string).page_size === 1 ? Promise.resolve(new Response(JSON.stringify({ facets: [] }))) : fetcher(url, init));
   const photos = new Photos("scoped", vi.fn());
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
@@ -214,7 +272,7 @@ it("retains visible cells and pending previews across a prepend larger than the 
   let finishPreview!: (blob: Blob) => void;
   const get = vi.fn((id: string, _generation: string, _signal: AbortSignal) => id === "photo-2" ? new Promise<Blob>(resolve => finishPreview = resolve) : Promise.resolve(new Blob(["synthetic"])));
   let finishPage!: (response: Response) => void;
-  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => finishPage = resolve)));
+  stubPhotoFetch(vi.fn(() => new Promise<Response>(resolve => finishPage = resolve)));
   render(PhotosWorkspace, { photos, cache: { get } as unknown as PhotoPreviewCache, photoID: "", onphotochange: vi.fn() });
   const image = await screen.findByRole("img", { name: "Photo 1.jpg" });
   await waitFor(() => expect(get).toHaveBeenCalledTimes(6));
@@ -332,10 +390,13 @@ it.each(["density", "album trash"])("keeps the top photo after %s and pages that
   } else {
     fetcher.mockResolvedValueOnce(page(items.slice(0, 2), "repeat")).mockResolvedValueOnce(page(items.slice(0, 2), "rest")).mockResolvedValueOnce(page(items.slice(2)));
   }
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   render(PhotosWorkspace, { photos, cache, albumID: kind === "album trash" ? "album" : undefined, photoID: "", onphotochange: vi.fn() });
   await screen.findByText("60 photos · 60 loaded");
-  if (kind === "density") expect(fetcher).toHaveBeenCalledTimes(3);
+  if (kind === "density") {
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(fetcher.mock.calls.map(call => JSON.parse(call[1].body).cursor)).toEqual([undefined, "repeat", "rest"]);
+  }
   await waitFor(() => expect(photos.loading).toBe(false));
   const scroll = screen.getByTestId("photo-scroll");
   scroll.scrollTop = 1000;
@@ -396,7 +457,7 @@ it.each(["success", "grid", "removed", "pending"])("keeps query order and viewer
     if (expired && !body.cursor) return new Response(JSON.stringify({items:scenario === "removed" ? [initial[0]] : initial,total:3,next_cursor:"replacement"}));
     return new Response(JSON.stringify({items:[following],total:3}));
   });
-  let failed = scenario === "success" || scenario === "grid"; vi.stubGlobal("fetch",fetcher);
+  let failed = scenario === "success" || scenario === "grid"; stubPhotoFetch(fetcher);
   const photos = new Photos("scoped",vi.fn()); photos.items = initial; photos.total=3; photos.cursor="old"; photos.started=true; photos.loading=true;
   if (scenario === "grid") photos.error = "Continuation failed";
   let finishLookup!: (row:ReturnType<typeof photo>) => void;
@@ -554,7 +615,7 @@ it.each([
   let finish!: (response:Response) => void;
   const fetcher = vi.fn().mockImplementation(() => new Promise<Response>(resolve => finish = resolve));
   if (version === "same") fetcher.mockRejectedValueOnce(new Error("Reload failed"));
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const changed = new APIError("Photo changed", 409, "photo_display_changed");
   const preview = vi.spyOn(photos, "preview").mockResolvedValue({state:"ready", generation_id:"fresh-fit"});
   if (operation === "preview") preview.mockRejectedValueOnce(changed);
@@ -620,7 +681,7 @@ it("switches Grid and Timeline, seeks an empty day and clears its date", async (
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], total: 0 })))
     .mockResolvedValueOnce(new Response(JSON.stringify({ items: [photo(1)], total: 1 })));
-  vi.stubGlobal("fetch", fetcher);
+  stubPhotoFetch(fetcher);
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const view = render(PhotosWorkspace, { photos, cache, photoID: "", onphotochange: vi.fn() });
   expect(screen.getByRole("button", { name: "Grid", pressed: true })).toBeTruthy();
@@ -650,4 +711,24 @@ it("switches Grid and Timeline, seeks an empty day and clears its date", async (
   await fireEvent.click(screen.getByRole("button", { name: "Grid" }));
   expect(screen.queryByRole("region", { name: "Photo timeline" })).toBeNull();
   view.unmount(); photos.dispose(); await cache.dispose();
+});
+
+it("explains the relevance limit and hides it for complete results or capture dates", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const photos = new Photos("scoped", vi.fn());
+  photos.started = true;
+  photos.items = [photo(1)];
+  photos.total = 5000;
+  photos.query = { ...photos.query, text: "Canon", sort: { field: "relevance", direction: "desc" } };
+  const cache = new PhotoPreviewCache("scoped", vi.fn());
+  render(PhotosWorkspace, { photos, cache });
+  const note = "Showing the best 250 of 5,000 matches. Refine the search or sort by capture date to see all.";
+  await screen.findByText(note);
+  expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  photos.total = 1;
+  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  photos.total = 5000;
+  photos.query = { ...photos.query, sort: { field: "capture_time", direction: "desc" } };
+  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  photos.dispose(); await cache.dispose();
 });

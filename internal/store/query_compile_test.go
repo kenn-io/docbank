@@ -89,6 +89,21 @@ func TestCompiledQueryBindsSimpleAndAdvancedLexicalPredicates(t *testing.T) {
 	})
 }
 
+func TestCompileQueryCollectsLexicalOperandsOnlyForPhotos(t *testing.T) {
+	t.Parallel()
+	for _, text := range []string{`alpha`, `name:alpha OR NOT beta`, `alpha NEAR/4 beta`} {
+		t.Run(text, func(t *testing.T) {
+			value := compilerQuery(t, text)
+			documents, err := compileQuery(t.Context(), value, nil)
+			require.NoError(t, err)
+			require.Empty(t, documents.predicate.lexical)
+			photos, err := (queryCompiler{photoDisplayMetadata: true}).compile(t.Context(), value, nil)
+			require.NoError(t, err)
+			require.NotEmpty(t, photos.predicate.lexical)
+		})
+	}
+}
+
 func TestCompiledQueryBindClonesGenerationArguments(t *testing.T) {
 	t.Parallel()
 	compiled, err := compileQuery(t.Context(), compilerQuery(t, "alpha"), nil)
