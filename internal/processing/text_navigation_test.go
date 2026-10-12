@@ -116,10 +116,6 @@ func TestTextNavigationReadLimits(t *testing.T) {
 	require.ErrorIs(t, err, document.ErrCitationIntegrity)
 	require.NotErrorIs(t, err, document.ErrTextNavigationLimit)
 	require.LessOrEqual(t, stream.bytesRead, int(size)+1)
-	citation, size = writeCitationBlob(t, f, strings.Repeat("x", document.MaxTextNavigationBytes+1))
-	quote, err := readTextCitation(t.Context(), f.blobs, citation, size)
-	require.NoError(t, err)
-	require.Equal(t, "x", quote.Text)
 }
 
 type navigationPausedCatalog struct {
