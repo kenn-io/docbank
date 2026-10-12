@@ -94,6 +94,9 @@ func (m MapTilesConfig) Validate() error {
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
 		return errors.New("[web.map_tiles] tile_url must use a fixed HTTPS origin without credentials or fragments")
 	}
+	if strings.Contains(u.Hostname(), ":") {
+		return errors.New("[web.map_tiles] tile_url cannot use an IPv6 address; the browser's image policy cannot allow one")
+	}
 	if !validASCIIHostname(u.Hostname()) {
 		return errors.New("[web.map_tiles] tile_url requires a fixed ASCII hostname")
 	}

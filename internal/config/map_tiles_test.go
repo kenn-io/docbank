@@ -22,6 +22,7 @@ func TestMapTiles(t *testing.T) {
 		{"https://tiles.example.org/{z}/{x}/{y}#fragment", "tile_url must use a fixed HTTPS origin"},
 		{"https://tiles.example.org/{z}/{x}", "tile_url path requires"},
 		{"https://*.example.org/{z}/{x}/{y}", "tile_url requires a fixed ASCII hostname"},
+		{"https://[2001:db8::1]/{z}/{x}/{y}", "tile_url cannot use an IPv6 address"},
 		{"https://tiles.example.org?/{z}/{x}/{y}", "tile_url path requires"},
 		{"https://tiles.example.org:0/{z}/{x}/{y}", "tile_url port must be between"},
 		{"https://tiles.example.org/{z}/{x}/{y}/{s}", "tile_url has unsupported placeholders"},
