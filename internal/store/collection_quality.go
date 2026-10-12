@@ -144,11 +144,9 @@ type collectionQualityRow struct {
 }
 
 const qualityProjectionCTE = `quality_projection AS (
- SELECT p.*,n.name,COALESCE(v.mime_type,'') media_type,n.modified_at,v.size,
-  COALESCE(d.references_count,1) duplicate_count
+ SELECT p.*,n.name,COALESCE(v.mime_type,'') media_type,n.modified_at,v.size
  FROM processing_coverage p JOIN nodes n ON n.id=p.node_id
  JOIN content_versions v ON v.version_id=p.version_id
- LEFT JOIN duplicate_counts d ON d.blob_hash=p.blob_hash
 )`
 
 // Projection size includes fixed-width numeric storage and every selected
@@ -184,7 +182,11 @@ func collectionQualityCensusTx(ctx context.Context, q metadataQuerier, id string
 	cte := `WITH ` + CollectionMembershipCTE + `,` + CurrentContentMembershipCTE + `,
  coverage_members AS (SELECT node_id FROM collection_members WHERE ingest_id=?),
  ` + processingCoverageCTE() + `,
- duplicate_counts AS (SELECT blob_hash,COUNT(*) references_count FROM current_content_members GROUP BY blob_hash),
+ duplicate_counts AS (
+  SELECT blob_hash,COUNT(*) references_count FROM current_content_members
+  WHERE blob_hash IN (SELECT blob_hash FROM coverage_versions)
+  GROUP BY blob_hash
+ ),
  ` + qualityProjectionCTE
 	args := []any{id, selection.ProfileFingerprint, collection.Coverage.GenerationID}
 	var projectedBytes int64
@@ -194,10 +196,13 @@ func collectionQualityCensusTx(ctx context.Context, q metadataQuerier, id string
 	if err := validateCollectionQualityBounds(collection.FileCount, projectedBytes); err != nil {
 		return collectionQualityCensus{}, err
 	}
-	rows, err := q.QueryContext(ctx, cte+` SELECT node_id,version_id,blob_hash,name,media_type,modified_at,size,
+	// Duplicate counts have fixed width in the size bound; load them only for
+	// the admitted census, including matches outside the selected collection.
+	rows, err := q.QueryContext(ctx, cte+` SELECT node_id,version_id,p.blob_hash,name,media_type,modified_at,size,
  state,attachment_id,published_at,build_id,completeness,partial_success,truncated,lexical_segment_count,serving,
- waiter_id,job_id,waiter_state,job_state,waiter_updated_at,job_updated_at,duplicate_count
- FROM quality_projection ORDER BY node_id`, args...)
+ waiter_id,job_id,waiter_state,job_state,waiter_updated_at,job_updated_at,COALESCE(d.references_count,1)
+ FROM quality_projection p LEFT JOIN duplicate_counts d ON d.blob_hash=p.blob_hash
+ ORDER BY node_id`, args...)
 	if err != nil {
 		return collectionQualityCensus{}, err
 	}
