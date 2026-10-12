@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-11
+last_edited: 2026-10-12
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -1619,6 +1619,9 @@ census data, and five seconds. Size bounds return 413 `quality_too_large`.
 Interruption or timeout returns 503 `quality_unavailable`, not partial results.
 Frequency dimensions retain the top 50 values with missing and other counts.
 Duplicate membership is vault-wide current content, counted within this collection.
+The census groups only hashes present in the selected collection. Its size
+preflight reserves fixed space for the counts; duplicate grouping runs only
+when reading the admitted rows.
 Concentrations require at least ten members and 80% of the collection.
 Each request reads current source data. Extension and MIME buckets follow the
 query operand rules. Values that cannot name a concrete operand count as missing.
