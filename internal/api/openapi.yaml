@@ -16477,6 +16477,234 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document
         name: document
+    TextOutlineEntry:
+      additionalProperties: false
+      properties:
+        end:
+          format: int64
+          maximum: 2147483647
+          minimum: 1
+          type: integer
+        level:
+          format: int64
+          maximum: 6
+          minimum: 0
+          type: integer
+        start:
+          format: int64
+          maximum: 2147483647
+          minimum: 0
+          type: integer
+        title_markdown:
+          maxLength: 160
+          type: string
+        title_truncated:
+          type: boolean
+      required:
+        - start
+        - end
+        - level
+        - title_markdown
+        - title_truncated
+      type: object
+      x-go-type: document.TextOutlineEntry
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    TextOutlinePage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TextOutlinePage.json
+          format: uri
+          readOnly: true
+          type: string
+        citation:
+          $ref: "#/components/schemas/TextCitation"
+        document_chars:
+          format: int64
+          maximum: 2147483647
+          minimum: 1
+          type: integer
+        enclosing_section:
+          $ref: "#/components/schemas/TextSectionRange"
+        next_offset:
+          format: int64
+          maximum: 4096
+          minimum: 1
+          type: integer
+        offset:
+          format: int64
+          maximum: 4097
+          minimum: 0
+          type: integer
+        sections:
+          items:
+            $ref: "#/components/schemas/TextOutlineEntry"
+          maxItems: 50
+          type: array
+        total:
+          format: int64
+          maximum: 4097
+          minimum: 1
+          type: integer
+      required:
+        - citation
+        - document_chars
+        - enclosing_section
+        - offset
+        - total
+        - sections
+      type: object
+      x-go-type: document.TextOutlinePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    TextOutlineRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TextOutlineRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        citation:
+          $ref: "#/components/schemas/TextCitation"
+        offset:
+          format: int64
+          maximum: 4097
+          minimum: 0
+          type: integer
+      required:
+        - citation
+        - offset
+      type: object
+      x-go-type: document.TextOutlineRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    TextSectionPage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TextSectionPage.json
+          format: uri
+          readOnly: true
+          type: string
+        actual_end:
+          format: int64
+          maximum: 2147483647
+          minimum: 0
+          type: integer
+        actual_start:
+          format: int64
+          maximum: 2147483647
+          minimum: 0
+          type: integer
+        citation:
+          $ref: "#/components/schemas/TextCitation"
+        complete:
+          type: boolean
+        next_offset:
+          format: int64
+          maximum: 2147483647
+          minimum: 0
+          type: integer
+        offset:
+          format: int64
+          maximum: 2147483647
+          minimum: 0
+          type: integer
+        section:
+          $ref: "#/components/schemas/TextSectionRange"
+        text:
+          maxLength: 16000
+          type: string
+        text_bytes:
+          format: int64
+          maximum: 64000
+          minimum: 0
+          type: integer
+        text_sha256:
+          pattern: ^[0-9a-f]{64}$
+          type: string
+      required:
+        - citation
+        - section
+        - offset
+        - actual_start
+        - actual_end
+        - next_offset
+        - complete
+        - text
+        - text_sha256
+        - text_bytes
+      type: object
+      x-go-type: document.TextSectionPage
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    TextSectionRange:
+      additionalProperties: false
+      properties:
+        end:
+          format: int64
+          maximum: 2147483647
+          minimum: 1
+          type: integer
+        start:
+          format: int64
+          maximum: 2147483647
+          minimum: 0
+          type: integer
+      required:
+        - start
+        - end
+      type: object
+      x-go-type: document.TextSectionRange
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
+    TextSectionRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/TextSectionRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        citation:
+          $ref: "#/components/schemas/TextCitation"
+        max_chars:
+          format: int64
+          maximum: 16000
+          minimum: 1
+          type: integer
+        offset:
+          format: int64
+          maximum: 2147483647
+          minimum: 0
+          type: integer
+        section:
+          $ref: "#/components/schemas/TextSectionRange"
+      required:
+        - citation
+        - section
+        - offset
+        - max_chars
+      type: object
+      x-go-type: document.TextSectionRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     TicketOutputBody:
       additionalProperties: false
       properties:
@@ -25739,6 +25967,92 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: List live and trashed nodes carrying a tag
+  /api/v1/text-citations/outline:
+    post:
+      operationId: getTextOutline
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TextOutlineRequest"
+          application/octet-stream:
+            schema:
+              contentMediaType: application/octet-stream
+              format: binary
+              type: string
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextOutlinePage"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "408":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Timeout
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "416":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Requested Range Not Satisfiable
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+        "504":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Gateway Timeout
+      summary: Read the outline of an exact retained rendition
   /api/v1/text-citations/resolve:
     post:
       operationId: resolveTextCitation
@@ -25825,6 +26139,92 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Gateway Timeout
       summary: Resolve an exact quotation from retained rendition text
+  /api/v1/text-citations/section:
+    post:
+      operationId: readTextSection
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TextSectionRequest"
+          application/octet-stream:
+            schema:
+              contentMediaType: application/octet-stream
+              format: binary
+              type: string
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextSectionPage"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        "400":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Bad Request
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unauthorized
+        "404":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Not Found
+        "408":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Timeout
+        "413":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Request Entity Too Large
+        "416":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Requested Range Not Satisfiable
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+        "503":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Service Unavailable
+        "504":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Gateway Timeout
+      summary: Read a page of an exact retained text section
   /api/v1/timeline/coverage:
     get:
       operationId: readTimelineCoverage

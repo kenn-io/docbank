@@ -12637,6 +12637,53 @@ func (c *Client) ListTagNodes(ctx context.Context, options *ListTagNodesRequestO
 	return responseParser(ctx, resp)
 }
 
+// GetTextOutline Read the outline of an exact retained rendition
+func (c *Client) GetTextOutline(ctx context.Context, options *GetTextOutlineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTextOutlineResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/text-citations/outline",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*GetTextOutlineResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(GetTextOutlineResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "GetTextOutlineResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[GetTextOutlineErrorResponse](resp, "GetTextOutlineErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/text-citations/outline")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
 // ResolveTextCitation Resolve an exact quotation from retained rendition text
 func (c *Client) ResolveTextCitation(ctx context.Context, options *ResolveTextCitationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ResolveTextCitationResponse, error) {
 	var err error
@@ -12675,6 +12722,53 @@ func (c *Client) ResolveTextCitation(ctx context.Context, options *ResolveTextCi
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/text-citations/resolve")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	if resp.Streaming {
+		return nil, c.acceptStream(resp, 200)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReadTextSection Read a page of an exact retained text section
+func (c *Client) ReadTextSection(ctx context.Context, options *ReadTextSectionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReadTextSectionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/text-citations/section",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(_ context.Context, resp *runtime.Response) (*ReadTextSectionResponse, error) {
+		switch resp.StatusCode {
+
+		case 200:
+
+			target := new(ReadTextSectionResponse)
+			if err := json.Unmarshal(resp.Content, target); err != nil {
+				return nil, &runtime.ResponseDecodeError{
+					StatusCode: resp.StatusCode, ContentType: resp.Headers.Get("Content-Type"),
+					ContentLength: len(resp.Content), TargetType: "ReadTextSectionResponse", Body: resp.Content, Err: err,
+				}
+			}
+
+			return target, nil
+
+		default:
+
+			return nil, decodeAPIError[ReadTextSectionErrorResponse](resp, "ReadTextSectionErrorResponse")
+
+		}
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/text-citations/section")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -21783,6 +21877,34 @@ func (o *ListTagNodesRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// GetTextOutlineRequestOptions is the options needed to make a request to GetTextOutline.
+type GetTextOutlineRequestOptions struct {
+	Body *GetTextOutlineBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetTextOutlineRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetTextOutlineRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetTextOutlineRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetTextOutlineRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ResolveTextCitationRequestOptions is the options needed to make a request to ResolveTextCitation.
 type ResolveTextCitationRequestOptions struct {
 	Body *ResolveTextCitationBody
@@ -21808,6 +21930,34 @@ func (o *ResolveTextCitationRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ResolveTextCitationRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ReadTextSectionRequestOptions is the options needed to make a request to ReadTextSection.
+type ReadTextSectionRequestOptions struct {
+	Body *ReadTextSectionBody
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReadTextSectionRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReadTextSectionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReadTextSectionRequestOptions) GetBody() any {
+	if o.Body == nil {
+		return nil
+	}
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReadTextSectionRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
@@ -23475,7 +23625,11 @@ type CreateTagBody = CreateTagRequest
 
 type RenameTagBody = RenameTagRequest
 
+type GetTextOutlineBody = TextOutlineRequest
+
 type ResolveTextCitationBody = TextCitation
+
+type ReadTextSectionBody = TextSectionRequest
 
 type CreateTimelineRebuildBody = TimelineRebuildRequest
 
@@ -24926,6 +25080,28 @@ type ListTagNodesResponse = api.TaggedNodePage
 
 type ListTagNodesErrorResponse = Error
 
+type GetTextOutlineResponse = document.TextOutlinePage
+
+type GetTextOutlineErrorResponse api.Error
+
+type GetTextOutlineErrorResponseApplicationProblemPlusJSON api.Error
+
+type GetTextOutlineErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type GetTextOutlineErrorResponseApplicationProblemPlusJSON408 api.Error
+
+type GetTextOutlineErrorResponseApplicationProblemPlusJSON413 api.Error
+
+type GetTextOutlineErrorResponseApplicationProblemPlusJSON416 api.Error
+
+type GetTextOutlineErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type GetTextOutlineErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type GetTextOutlineErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type GetTextOutlineErrorResponseApplicationProblemPlusJSON504 api.Error
+
 type ResolveTextCitationResponse = document.ResolvedTextCitation
 
 type ResolveTextCitationErrorResponse api.Error
@@ -24947,6 +25123,28 @@ type ResolveTextCitationErrorResponseApplicationProblemPlusJSON500 api.Error
 type ResolveTextCitationErrorResponseApplicationProblemPlusJSON503 api.Error
 
 type ResolveTextCitationErrorResponseApplicationProblemPlusJSON504 api.Error
+
+type ReadTextSectionResponse = document.TextSectionPage
+
+type ReadTextSectionErrorResponse api.Error
+
+type ReadTextSectionErrorResponseApplicationProblemPlusJSON api.Error
+
+type ReadTextSectionErrorResponseApplicationProblemPlusJSON404 api.Error
+
+type ReadTextSectionErrorResponseApplicationProblemPlusJSON408 api.Error
+
+type ReadTextSectionErrorResponseApplicationProblemPlusJSON413 api.Error
+
+type ReadTextSectionErrorResponseApplicationProblemPlusJSON416 api.Error
+
+type ReadTextSectionErrorResponseApplicationProblemPlusJSON422 api.Error
+
+type ReadTextSectionErrorResponseApplicationProblemPlusJSON500 api.Error
+
+type ReadTextSectionErrorResponseApplicationProblemPlusJSON503 api.Error
+
+type ReadTextSectionErrorResponseApplicationProblemPlusJSON504 api.Error
 
 type ReadTimelineCoverageResponse = api.DocumentEventCoverage
 
@@ -26304,6 +26502,18 @@ type TermReportHistory = store.TermReportHistory
 type TermReportHistoryPage = store.TermReportHistoryPage
 
 type TextCitation = document.TextCitation
+
+type TextOutlineEntry = document.TextOutlineEntry
+
+type TextOutlinePage = document.TextOutlinePage
+
+type TextOutlineRequest = document.TextOutlineRequest
+
+type TextSectionPage = document.TextSectionPage
+
+type TextSectionRange = document.TextSectionRange
+
+type TextSectionRequest = document.TextSectionRequest
 
 type TicketOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
