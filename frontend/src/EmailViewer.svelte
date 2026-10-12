@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { Button, SelectDropdown } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
+  import { randomUUID } from "./crypto.js";
   import { getNode, type Node } from "./generated/docbank.js";
   import type { SelectedSource } from "./selectedSource.js";
   import EmailPDFButton from "./EmailPDFButton.svelte";
@@ -61,7 +62,7 @@
         if (alternative.kind === "html") {
           const result = await prepareEmailHTML(session,exact,alternative,controller.signal);
           if (!current) return;
-          const nonce = crypto.randomUUID();
+          const nonce = randomUUID();
           frame = { html:emailFrameDocument(result.html,nonce,location.origin), nonce };
           warnings = result.warnings;
         } else {

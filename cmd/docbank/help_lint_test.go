@@ -26,6 +26,7 @@ var helpEnvAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z_0-9]*=`)
 // Parents whose RunE performs work, rather than just cmd.Help().
 var workParents = map[string]bool{
 	"docbank jobs": true, "docbank mv": true, "docbank package import": true,
+	"docbank web": true, "docbank web sessions": true,
 }
 
 var helpAllCapsArgument = regexp.MustCompile(`^[A-Z]+$`)

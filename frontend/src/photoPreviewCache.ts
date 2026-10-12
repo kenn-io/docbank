@@ -1,5 +1,6 @@
 import { getReadPhotoPreviewUrl, readPhotoPreview } from "./generated/docbank.js";
 import { APIError } from "./api-transport.js";
+import { randomUUID } from "./crypto.js";
 
 const cachePrefix = "docbank-photo-previews-";
 const maxFetches = 6;
@@ -16,7 +17,7 @@ export function previewObjectURL(cache: PhotoPreviewCache, assetID: string, gene
 
 export class PhotoPreviewCache {
   private controller = new AbortController();
-  private name = `${cachePrefix}${crypto.randomUUID()}`;
+  private name = `${cachePrefix}${randomUUID()}`;
   private cache?: Promise<Cache>;
   private disposed?: Promise<void>;
   private releaseLock?: () => void;

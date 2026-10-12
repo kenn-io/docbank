@@ -41,6 +41,7 @@
     IconButton,
     Modal,
     SearchInput,
+    FormField,
     SelectDropdown,
     Spinner,
     Table,
@@ -105,9 +106,10 @@
   import MailboxImportDrawer from "./MailboxImportDrawer.svelte";
   import LoadFileImportDrawer from "./LoadFileImportDrawer.svelte";
   import VersionHistoryDrawer from "./VersionHistoryDrawer.svelte";
-  import { APIError } from "./api-transport.js";
+  import { APIError, isCurrentSessionError } from "./api-transport.js";
   import { changeNodeTag, documentSearch, liveNodeTags, resolveDocumentSourceFence } from "./receipts.js";
-  import { takeFragmentSession } from "./browser-session.js";
+  import { takeFragmentSession, type BrowserSession } from "./browser-session.js";
+  import { getSignInStatus, signIn, tabSession } from "./web-login.js";
   import { startScreenReporting } from "./screen-views.js";
   import { startAppOpenedReporting } from "./app-opened.js";
   import { startSessionReporting } from "./session-duration.js";
@@ -187,6 +189,12 @@
   };
 
   let webSession = $state("");
+  let keySignInEnabled = $state(false);
+  let keySession = $state(false);
+  let apiKey = $state("");
+  let signInPending = $state(false);
+  let disposeBrowserSession: (() => void) | undefined;
+  let mounted = false;
   let stopSessionReporting: (() => Promise<void>) | undefined;
   let photoMode = $state(location.pathname.startsWith("/photos"));
   let photoPath = $state(location.pathname);
@@ -660,45 +668,73 @@
       unregister.forEach((remove) => remove());
     };
 
+    mounted = true;
     const session = takeFragmentSession();
     if (photoMode && photoID) {
       const url = new URL(location.href); url.hash = `photo=${encodeURIComponent(photoID)}`;
       history.replaceState(null, "", url.href);
     } else if (savedQueryDraft) replaceQueryURL(savedQueryDraft);
-    if (session) {
-      webSession = session.token;
-      if (savedQueryDraft) queryBarOpen = true;
-      void loadRoot();
-      void loadTagCatalog();
-      void loadNaturalProfiles(session.token);
-      const stopAppOpened = startAppOpenedReporting(session.token);
-      stopSessionReporting = startSessionReporting(session.token);
-      const channel = new VerifiedUploadChannel(session, undefined, () => {
-        if (uploadChannel === channel) {
-          uploadChannelError =
-            "The verified upload channel ended. Run `docbank web` again before selecting more files.";
-        }
-      });
-      void channel.connect().then(
-        () => {
-          if (webSession === session.token) uploadChannel = channel;
-          else channel.close();
-        },
-        (cause) => {
-          uploadChannelError = cause instanceof Error ? cause.message : String(cause);
-        },
-      );
-      return () => {
-        stopAppOpened();
-        void stopSessionReporting?.();
-        stopSessionReporting = undefined;
-        channel.close();
-        detachShortcuts();
-        snapshot.reset();
-      };
-    }
-    return detachShortcuts;
+    if (session) activateBrowserSession(session);
+    else void getSignInStatus().then((status) => {
+      if (!mounted) return;
+      keySignInEnabled = status.enabled;
+    }).catch((cause) => { if (mounted) error = cause instanceof Error ? cause.message : String(cause); });
+    return () => {
+      mounted = false;
+      disposeBrowserSession?.();
+      detachShortcuts();
+      snapshot.reset();
+    };
   });
+
+  function activateBrowserSession(session: BrowserSession, keyLogin = false): void {
+    disposeBrowserSession?.();
+    webSession = session.token;
+    keySession = keyLogin;
+    error = "";
+    uploadChannelError = "";
+    if (savedQueryDraft) queryBarOpen = true;
+    void loadRoot();
+    void loadTagCatalog();
+    void loadNaturalProfiles(session.token);
+    const stopAppOpened = startAppOpenedReporting(session.token);
+    stopSessionReporting = startSessionReporting(session.token);
+    const channel = new VerifiedUploadChannel(session, undefined, () => {
+      if (uploadChannel !== channel) return;
+      uploadChannelError = keyLogin
+        ? "The verified upload channel ended. Reload and sign in again before selecting more files."
+        : "The verified upload channel ended. Run `docbank web` again before selecting more files.";
+    });
+    void channel.connect().then(() => {
+      if (mounted && webSession === session.token) uploadChannel = channel;
+      else channel.close();
+    }, (cause) => { if (mounted && webSession === session.token) uploadChannelError = cause instanceof Error ? cause.message : String(cause); });
+    const stopReporting = stopSessionReporting;
+    disposeBrowserSession = () => {
+      stopAppOpened();
+      void stopReporting();
+      channel.close();
+    };
+  }
+
+  async function submitSignIn(event: SubmitEvent): Promise<void> {
+    event.preventDefault();
+    if (signInPending) return;
+    const credential = apiKey;
+    apiKey = "";
+    signInPending = true;
+    error = "";
+    try {
+      const status = await signIn(credential);
+      const session = tabSession(status);
+      if (!session) throw new Error("The daemon did not issue a browser session.");
+      if (mounted) activateBrowserSession(session, true);
+    } catch (cause) {
+      if (mounted) error = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      signInPending = false;
+    }
+  }
 
   function clearBulkSelection(): void {
     bulkSelection = clearSelection();
@@ -952,32 +988,69 @@
     if (selectedRows.length > 0) downloadVisiblePageCSV(selectedRows);
   }
 
+  function resetLocalSessionUI(): void {
+    leaveSnapshotMode();
+    activePanel = null;
+    savedQueryDraft = null;
+    replaceQueryURL(null);
+    generation += 1;
+    auditGeneration += 1;
+    tagGeneration += 1;
+    tagCatalogGeneration += 1;
+    invalidateTagHotkeyMutation();
+    disposeBrowserSession?.();
+    disposeBrowserSession = undefined;
+    stopSessionReporting = undefined;
+    uploadChannel?.close();
+    uploadChannel = null;
+    webSession = "";
+    directory = null;
+    replaceRows([], false);
+    stack = [];
+    selectedID = undefined;
+    selectedAudit = null;
+    selectedTags = [];
+    selectedTagsTotal = 0;
+    selectedTagsLoading = false;
+    selectedTagsError = "";
+    tagCatalog = [];
+    tagCatalogTotal = 0;
+    tagCatalogListed = 0;
+    tagCatalogLoading = false;
+    tagCatalogError = "";
+    vaultID = "";
+    tagHotkeys = {};
+    shortcutNotice = "";
+    shortcutError = "";
+    auditLoading = false;
+    auditError = "";
+    manageTagsTarget = null;
+    batchTagsTargets = null;
+    batchTagsContext = "live";
+    shortcutHelpOpen = false;
+    activeQuery = "";
+    activeTagID = "";
+    naturalProfiles = [];
+    naturalSearchMode = "names";
+    naturalRerank = false;
+    submittedSearchQuery = "";
+    naturalProfileDefaultPending = null;
+    taggedInspected = 0;
+    taggedTotal = 0;
+    taggedTrashed = 0;
+    searchPending = false;
+    searchQuery = "";
+    tagFilterID = "";
+    clearBulkSelection();
+    error = "";
+  }
+
   function handleFailure(cause: unknown): void {
     if (cause instanceof APIError && cause.status === 401) {
-      leaveSnapshotMode();
-      activePanel = null;
-      savedQueryDraft = null;
-      replaceQueryURL(null);
-      uploadChannel?.close();
-      webSession = "";
-      uploadChannel = null;
-      shortcutHelpOpen = false;
-      tagCatalog = [];
-      tagCatalogListed = 0;
-      tagCatalogLoading = false;
-      vaultID = "";
-      tagHotkeys = {};
-      naturalProfiles = [];
-      naturalSearchMode = "names";
-      naturalRerank = false;
-      submittedSearchQuery = "";
-      naturalProfileDefaultPending = null;
-      invalidateTagHotkeyMutation();
-      selectedTags = [];
-      selectedTagsTotal = 0;
-      searchPending = false;
-      clearBulkSelection();
-      error = "The browser session expired or was rejected. Run `docbank web` again.";
+      if (!isCurrentSessionError(cause, webSession)) return;
+      const wasKeySession = keySession;
+      resetLocalSessionUI();
+      error = wasKeySession ? "The browser session expired or was rejected. Sign in again." : "The browser session expired or was rejected. Run `docbank web` again.";
       return;
     }
     error = cause instanceof Error ? cause.message : String(cause);
@@ -1977,54 +2050,9 @@
   }
 
   async function lock(): Promise<void> {
-    leaveSnapshotMode();
-    activePanel = null;
-    savedQueryDraft = null;
-    replaceQueryURL(null);
-    generation += 1;
-    auditGeneration += 1;
-    tagGeneration += 1;
-    tagCatalogGeneration += 1;
-    invalidateTagHotkeyMutation();
     const session = webSession;
     const stopReporting = stopSessionReporting;
-    stopSessionReporting = undefined;
-    uploadChannel?.close();
-    uploadChannel = null;
-    webSession = "";
-    directory = null;
-    replaceRows([], false);
-    stack = [];
-    selectedID = undefined;
-    selectedAudit = null;
-    selectedTags = [];
-    selectedTagsTotal = 0;
-    selectedTagsLoading = false;
-    selectedTagsError = "";
-    tagCatalog = [];
-    tagCatalogTotal = 0;
-    tagCatalogListed = 0;
-    tagCatalogLoading = false;
-    tagCatalogError = "";
-    vaultID = "";
-    tagHotkeys = {};
-    shortcutNotice = "";
-    shortcutError = "";
-    auditLoading = false;
-    auditError = "";
-    manageTagsTarget = null;
-    batchTagsTargets = null;
-    batchTagsContext = "live";
-    shortcutHelpOpen = false;
-    activeQuery = "";
-    activeTagID = "";
-    taggedInspected = 0;
-    taggedTotal = 0;
-    taggedTrashed = 0;
-    searchPending = false;
-    searchQuery = "";
-    tagFilterID = "";
-    error = "";
+    resetLocalSessionUI();
     await Promise.race([stopReporting?.(), new Promise<void>((resolve) => setTimeout(resolve, 1000))]);
     try {
       if (session) await generated.revokeWebSession({ session });
@@ -2116,10 +2144,16 @@
   <main class="unlock-shell">
     <Card level="raised" title="Open your Docbank">
       <div class="unlock-copy">
-        <p>
-          Run <code>docbank web</code> to create a new scoped browser session.
-          The vault API key is never stored in the browser.
-        </p>
+        {#if keySignInEnabled}
+          <p>Sign in with the API key from your Docbank operator.</p>
+          <form onsubmit={(event) => void submitSignIn(event)} class="signin-form" autocomplete="off">
+            <FormField field={{ id: "api-key", label: "API key", value: apiKey, disabled: signInPending }} type="password" autocomplete="off" required oninput={(value) => apiKey = value} />
+            <Button type="submit" tone="info" surface="solid" disabled={signInPending || !apiKey}>{signInPending ? "Signing in…" : "Sign in"}</Button>
+          </form>
+          <p>Your API key is exchanged for a scoped browser session and cleared after submission. Sign in again after a daemon restart.</p>
+        {:else}
+          <p>Run <code>docbank web</code> to create a new scoped browser session. The vault API key is never stored in the browser.</p>
+        {/if}
         {#if error}<p class="error" role="alert">{error}</p>{/if}
         {#if queryURLError}<p class="error" role="alert">Query URL could not be loaded: {queryURLError}</p>{/if}
       </div>
@@ -2270,7 +2304,7 @@
           </IconButton>
           {/if}
           <ThemeToggle />
-          <IconButton ariaLabel="Lock web session" onclick={() => void lock()}>
+          <IconButton ariaLabel={keySession ? "Sign out" : "Lock web session"} onclick={() => void lock()}>
             <LogOutIcon size="16" aria-hidden="true" />
           </IconButton>
         </div>
@@ -3290,6 +3324,7 @@
   .sidebar-album-count, .sidebar-album-error { color: var(--text-muted); font-size: var(--font-size-xs); }
   .album-targets h2 { color: var(--text-muted); font-size: var(--font-size-xs); margin: var(--space-3); }
   .album-drop { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
+  .signin-form { display: flex; flex-direction: column; gap: var(--space-4); }
   .telemetry-note { display: grid; gap: var(--space-4); line-height: 1.5; }
   .telemetry-note p { margin: 0; }
   .telemetry-note code { overflow-wrap: anywhere; }

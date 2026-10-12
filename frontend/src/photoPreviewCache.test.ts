@@ -18,6 +18,16 @@ it("keeps no-store previews out of browser storage", async () => {
   expect(opened.put).not.toHaveBeenCalled();
 });
 
+it("creates its cache namespace without secure-context randomUUID", () => {
+  vi.stubGlobal("crypto", {
+    getRandomValues: (bytes: Uint8Array) => {
+      bytes.fill(7);
+      return bytes;
+    },
+  });
+  expect(workspace()).toBeInstanceOf(PhotoPreviewCache);
+});
+
 it("retains bytes without fetch and cancels abandoned reads", async () => {
   const stored = storage();
   const fetcher = vi.fn(async (_url: string | URL | Request, _init: RequestInit) => new Response("synthetic-jpeg"));

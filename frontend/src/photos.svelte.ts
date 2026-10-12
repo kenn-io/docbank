@@ -3,6 +3,7 @@ import { readVerifiedPreview } from "./download.js";
 import { selectedSourceFromNode } from "./selectedSource.js";
 import { localPreferenceStorage } from "./browser-storage.js";
 import { APIError } from "./api-transport.js";
+import { randomUUID } from "./crypto.js";
 import { ROW_HEIGHTS, type Density } from "./photoGrid.js";
 import { clearSelection, reconcileIDSelection, toggleIDSelection, type SelectionState } from "./selection.js";
 import { fetchPhotoTimeline } from "./snapshots.js";
@@ -25,7 +26,7 @@ let density = $state<Density>(loadDensity());
 export interface PhotoReturn { contextID: string; assetID: string; control: "image" | "open" | "check"; scrollTop: number }
 
 export class Photos {
-  readonly contextID = crypto.randomUUID();
+  readonly contextID = randomUUID();
   viewerReturn = $state.raw<PhotoReturn>();
   view = $state<"grid" | "timeline">("grid");
   date = $state<string | undefined>();

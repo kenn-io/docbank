@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
   import { Button, Modal, Spinner } from "@kenn-io/kit-ui";
   import { APIError } from "./api-transport.js";
@@ -21,6 +22,8 @@
   } = $props();
 
   let pending = $state(false);
+  let destroyed = false;
+  onDestroy(() => { destroyed = true; });
   let failure = $state("");
 
   function close(): void {
@@ -29,19 +32,23 @@
 
   async function confirm(): Promise<void> {
     if (pending) return;
+    const requestSession = session;
     pending = true;
     failure = "";
     try {
-      const receipt = await restoreNode(session, node.id, node.revision);
+      const receipt = await restoreNode(requestSession, node.id, node.revision);
+      // A reply from an ended session must not reset a newer session's view.
+      if (destroyed || session !== requestSession) return;
       onrestored(receipt);
     } catch (cause) {
+      if (destroyed || session !== requestSession) return;
       if (cause instanceof APIError && cause.status === 401) {
         onauthfailure(cause);
         return;
       }
       failure = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      pending = false;
+      if (!destroyed) pending = false;
     }
   }
 </script>
