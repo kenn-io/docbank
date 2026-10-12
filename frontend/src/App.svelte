@@ -1803,9 +1803,13 @@
 
   async function photosChanged(source?: Photos, affectedAlbumID?: string): Promise<void> {
     const visible = albumID ? albumPhotos : photoState?.photos;
+    const loaded = [photoState?.photos, albumPhotos].filter((photos): photos is Photos => !!(photos?.started || photos?.loading));
+    const stale = loaded.filter(photos => photos !== source && (!affectedAlbumID || photos.query.filters?.set_ids?.includes(affectedAlbumID)));
     await Promise.all([
       affectedAlbumID ? undefined : photoAlbums?.load(),
-      ...[photoState?.photos, albumPhotos].filter(photos => (photos?.started || photos?.loading) && photos !== source && (!affectedAlbumID || photos.query.filters?.set_ids?.includes(affectedAlbumID))).map(photos => libraryWorkspace && photos === visible ? libraryWorkspace.refresh() : photos!.refresh()),
+      ...stale.map(photos => libraryWorkspace && photos === visible ? libraryWorkspace.refresh() : photos.refresh()),
+      // A membership change moves Albums counts even where the photo list itself stays current.
+      ...(affectedAlbumID ? loaded.filter(photos => !stale.includes(photos)).map(photos => photos.reloadCounts()) : []),
     ]);
   }
 

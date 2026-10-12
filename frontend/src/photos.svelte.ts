@@ -416,6 +416,16 @@ export class Photos {
     } finally { this[action] = false; }
   }
 
+  // reloadCounts replaces counts that a change outside this listing made stale,
+  // such as an album membership change, without reloading the photos.
+  reloadCounts() {
+    if (this.disposed || this.albumScoped) return;
+    this.facetsController.abort();
+    this.facetsLoading = false;
+    this.needsFacets = true;
+    return this.retryFacets();
+  }
+
   async retryFacets() {
     if (this.disposed || !this.started || this.facetsLoading || this.albumScoped) return;
     this.facetsController.abort();

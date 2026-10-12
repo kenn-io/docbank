@@ -60,6 +60,37 @@ it.each(["server", "stale first page"])("refreshes an album opened again during 
   expect(screen.queryByText("This album is empty")).toBeNull();
 });
 
+it("reloads Library album counts after adding photos to an album", async () => {
+  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+  Element.prototype.scrollIntoView = vi.fn();
+  const album = photoAlbum();
+  let included = false;
+  let countRequests = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/albums")) return albumResponse([{ ...album, included_count: included ? 1 : 0 }]);
+    if (url.endsWith("/photos/assets/query")) {
+      if (!JSON.parse(init.body as string).facets?.length) return albumResponse({ items: [photo(1)], total: 1 });
+      countRequests++;
+      const values = included ? [{ key: album.id, label: album.name, count: 1, selected: false }] : [];
+      return albumResponse({ items: [], total: 1, facets: [{ dimension: "set", available: true, reason: "", total: 1, missing: 0, other: 0, values }] });
+    }
+    if (url.endsWith(`/photos/albums/${album.id}/members/add`)) { included = true; return albumResponse({ ...album, revision: 2 }); }
+    if (url.includes("/nodes/1")) return albumResponse({ id: 1, kind: "dir", name: "", revision: 1, path: "/" });
+    return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+  }));
+  render(App);
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  await waitFor(() => expect(countRequests).toBe(1));
+  expect(screen.queryByRole("button", { name: `${album.name}, 1 photos` })).toBeNull();
+  await fireEvent.click(screen.getByRole("button", { name: /Add to album/ }));
+  await fireEvent.mouseDown(await screen.findByRole("option", { name: album.name }));
+  await within(screen.getByRole("group", { name: "Albums facet" })).findByRole("button", { name: `${album.name}, 1 photos` }, { timeout: 5000 });
+  expect(countRequests).toBe(2);
+});
+
 it("opens an album from the index, preserves its sort scope, and unstars without refetching", async () => {
   history.replaceState(null, "", "/photos/albums#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });

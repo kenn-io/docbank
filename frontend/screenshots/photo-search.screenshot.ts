@@ -49,7 +49,8 @@ test("photo search, whole-library facets and bounded relevance use the real vaul
     await camera.getByRole("button", { name: "Canon EOS R6, 5000 photos" }).click();
     await expect(page.getByText(/5,000 photos/)).toBeVisible();
     await expect(page.getByRole("searchbox", { name: "Search photos" })).toHaveValue("");
-    await expect(camera.getByRole("button", { name: "Nikon Z6, 5000 photos" })).toBeVisible();
+    // The fixture's 27 metadata-free photos fall on the Nikon side, so only 4,973 carry its camera and location.
+    await expect(camera.getByRole("button", { name: "Nikon Z6, 4973 photos" })).toBeVisible();
     await page.getByRole("button", { name: "Clear filters", exact: true }).click();
     await expect(page.getByText(/10,000 photos/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Clear filters", exact: true })).toHaveCount(0);
@@ -84,7 +85,7 @@ test("photo search, whole-library facets and bounded relevance use the real vaul
     await page.getByRole("button", { name: "Clear filters", exact: true }).click();
     await page.getByRole("searchbox", { name: "Search photos" }).fill("Paris");
     await page.getByRole("button", { name: "Search", exact: true }).click();
-    await expect(page.getByText(/10,000 photos/)).toBeVisible();
+    await expect(page.getByText(/9,973 photos/)).toBeVisible();
     await expect(page.getByRole("group", { name: "Location facet" }).getByRole("button").first()).toContainText("Paris");
   } finally {
     await context.close();
