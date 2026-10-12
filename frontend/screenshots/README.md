@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-11
 ---
 
 # Documentation screenshots
@@ -78,6 +78,8 @@ fixtures. Their setup is defined in the corresponding spec or Go test. They are
 not substitutes for the complete public image set.
 
 The 10,000-photo grid proof uses `DOCBANK_PHOTOS_SCREENSHOT_DIR`. It creates a synthetic vault and checks paging, selection, retained previews, recovery, and bounded image URLs. It runs separately from ordinary screenshot publication.
+
+The album proof uses `DOCBANK_ALBUMS_SCREENSHOT_DIR` to check adding photos by action, B, and drag, album navigation, and retained selection and scroll position.
 
 ## Report and original-export qualification
 

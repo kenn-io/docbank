@@ -231,6 +231,12 @@ linters:
         path: document/mistral/client\.go
         text: "G704"
 
+      # Same nondeterministic taint pass. These routes write verified PDF bytes
+      # as attachments with application/pdf and nosniff, not HTML.
+      - linters: [gosec]
+        path: internal/api/routes_(bates|email_pdf)\.go
+        text: "G705"
+
       - linters:
           - forbidigo
         path: _test\.go

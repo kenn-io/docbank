@@ -1,7 +1,7 @@
 ---
 last_edited: 2026-10-11
 title: Photo assets
-description: Group camera files, browse photos in the web app, and organize albums through the CLI or HTTP API.
+description: Group camera files, browse photos, and organize albums in the web app, CLI, or HTTP API.
 ---
 
 # Photo assets
@@ -57,8 +57,10 @@ and 40 million pixels. Use verified download in Documents for larger images.
 Animated WebP originals may animate in the browser. RAW photos always use
 server-produced JPEG previews.
 
-A `/photos#photo=<asset-id>` URL opens that photo directly. Direct views have
-no query navigation or thumbnail rail. Close returns to Library. Back and
+A `/photos#photo=<asset-id>` URL opens that photo directly; an album URL such
+as `/photos/albums/<album-id>#photo=<asset-id>` works the same way. Direct views
+have no query navigation or thumbnail rail. Close returns to Library or to the
+album in the URL. Back and
 Forward also update the viewer. Browser sessions stay in memory. After a reload,
 run `docbank web` for a fresh session, then append `&photo=<asset-id>` to its
 fragment to reopen the direct photo.
@@ -97,13 +99,13 @@ grid density. The browser remembers the density across reloads and fresh
 Click a photo to select it. Shift-click adds the range from the previous
 selection, including loaded photos outside the screen. Ctrl-click or
 Command-click toggles a photo. Each photo also has a checkbox for touch.
-The selection dock can select all loaded photos or clear the selection.
+The selection dock can select loaded photos, select the complete live query, or clear the selection.
 
-Photos, selection, and scroll position stay in place across Documents/Photos switches until the session locks or ends. Switching workspaces stops unfinished photo reads while retaining loaded photos. Previews already seen stay in a private browser cache while their Photos view is active. Only mounted photos keep image URLs. Docbank deletes the cache when leaving the view, when the session locks or ends, or when the page closes. If a page closes without that cleanup, for example after a browser crash, the next signed-in session at the same `docbank web` address deletes the leftover cache. Caches from earlier addresses stay in browser storage until site data is cleared. Previews still display when browser storage is unavailable, but revisiting them may download them again. Preview downloads bypass the browser HTTP cache, so only that private cache retains bytes.
+Photos, selection, and scroll position stay in place across Documents/Photos switches until the session locks or ends. Leaving an album for Library, Albums, or another album resets that album's sort, selection, and scroll position. Library keeps its own selection and position. Switching workspaces stops unfinished photo reads while retaining loaded photos. Previews already seen stay in a private browser cache while their Photos view is active. Only mounted photos keep image URLs. Docbank deletes the cache when leaving the view, when the session locks or ends, or when the page closes. If a page closes without that cleanup, for example after a browser crash, the next signed-in session at the same `docbank web` address deletes the leftover cache. Caches from earlier addresses stay in browser storage until site data is cleared. Previews still display when browser storage is unavailable, but revisiting them may download them again. Preview downloads bypass the browser HTTP cache, so only that private cache retains bytes.
 Pending, unsupported, and failed previews have separate placeholders. Choose
 Refresh previews to reload the listing after background preview work finishes.
 If a page fails to load, the earlier photos remain visible. Retry requests the
-failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Selection retains photos in that range; imports or deletions may move the visible photo outside it. Failed attempts keep the earlier view available for Retry. Recovery stops after one minute and offers Retry if it needs more time.
+failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Refresh keeps selections and the range anchor only within the refreshed pages, plus failed trash targets. Whole-query selection keeps its query scope. Failed attempts keep the earlier view available for Retry. Each refresh page has a one-minute deadline.
 
 ## Hidden photos
 
@@ -111,7 +113,7 @@ Choose Hidden in the Photos sidebar and set a passcode. Open a photo's actions m
 
 Hidden photos disappear from Library, photo queries, and album contents. Albums retain their membership; their included count covers only visible photos. Background imports keep updating hidden files, including late sidecars. Import receipts retain ordinary photo IDs and file details. Documents, document tools, original bytes, and exports still expose the underlying files. Hidden is a Photos privacy control.
 
-Enter the passcode in Hidden to unlock for five minutes. The countdown uses the server's remaining time, so a wrong browser clock does not change it. Lock closes every active Hidden session, and so does locking or ending any browser session. Locking and expiry clear the Hidden grid, selection, and browser preview cache. Photos check for committed changes every two seconds, with a two-second request timeout. A visibility change conceals the grid and clears cached previews before refreshing. An open Library photo stays open when the refresh still lists it; otherwise its viewer reports that the photo left the result. Background views stay concealed until status validation and refresh succeed. Hidden conceals after any failed check. Library conceals after a denied check or three failed checks in a row; a concealed view stays concealed until Retry or a later check succeeds. Expired browser sessions use the shared session-expired screen. Reloads retain grouping, density, loaded range, scroll position and the selection of unaffected photos; failed batch targets stay available for retry. Hidden previews carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
+Enter the passcode in Hidden to unlock for five minutes. The countdown uses the server's remaining time, so a wrong browser clock does not change it. Lock closes every active Hidden session, and so does locking or ending any browser session. Locking and expiry clear the Hidden grid, selection, and browser preview cache. Photos check for committed changes every two seconds, with a two-second request timeout. A visibility change conceals the grid and clears cached previews before refreshing. An open Library photo stays open when the refresh still lists it; otherwise its viewer reports that the photo left the result. Background views stay concealed until status validation and refresh succeed. Hidden conceals after any failed check. Library, Albums, and each open album follow the Library rules, and each is checked again when you open it. Library conceals after a denied check or three failed checks in a row; a concealed view stays concealed until Retry or a later check succeeds. Expired browser sessions use the shared session-expired screen. Reloads retain grouping, density, loaded range, scroll position and the selection of unaffected photos; failed batch targets stay available for retry. Hidden previews carry `Cache-Control: no-store`. Preview generation continues while a photo is hidden.
 
 Hidden supports direct links at `/photos/hidden#photo=<asset-id>` after unlock. Viewer navigation, larger previews and supported originals use the active Library or Hidden scope. Locking or concealing the view closes its viewer and removes displayed bytes.
 
@@ -219,9 +221,16 @@ performs role, ownership, sidecar, display, and audit checks.
 
 ## Albums
 
-Albums group photo assets without moving their files. Manage albums through
-the CLI or HTTP API. The web app's Photos workspace browses the library;
-album management is not available there.
+Albums group photo assets without moving their files. Manage albums in the
+web app, CLI, or HTTP API.
+
+In the web app, open Photos, then Albums. Cards and sidebar entries show starred albums first, with included photo counts. Cards also show covers. Open an album to rename, star, duplicate, or delete it, or sort its photos by Added, Captured, or Imported. Timeline, date choices, and the photo viewer work inside an album and stay within its photos. Select one photo and choose Use as cover. Removing photos from an album or deleting the album keeps the photos in Library.
+
+To use the newest ready photo as the cover again, run `docbank photos albums cover <album-id>` or use the HTTP API.
+
+Select photos in Library or an album, then choose Add to album in the selection dock. Type to find an album or create one. B adds to the last album chosen until you reload or the session locks; the dock and sidebar show that target. Without a target, B opens the picker. You can also drag a photo or selection onto a sidebar album. After every album change, Docbank reloads the album list. Membership changes also refresh the affected album's photo view. Trash and restore reload albums and every started photo view. A failed create or duplicate also reloads Albums, where the album may already appear.
+
+Select loaded photos selects only the pages already loaded. Select all N photos selects the complete live query, including unloaded pages. Add to album, B, and drag use that same scope. Trash and Hide change loaded photos only, so they are unavailable while all N photos are selected. The server resolves the query when you add, so the refreshed album count can reflect imports made since browsing. Explicit selections allow up to 1,000 photos per album change. For larger selections, choose Select all N photos to send one atomic query write. A revision conflict shows the server error and reloads the album list. An open form shows the reloaded album and keeps what you typed. Save again to retry with its current revision.
 
 Create an album, add selected asset UUIDs or a complete query result, then
 browse its members:

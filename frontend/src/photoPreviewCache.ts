@@ -4,6 +4,16 @@ import { APIError } from "./api-transport.js";
 const cachePrefix = "docbank-photo-previews-";
 const maxFetches = 6;
 
+export function previewObjectURL(cache: PhotoPreviewCache, assetID: string, generationID: string, onload: (url: string) => void, onfailure: (cause: unknown) => void, reload = false) {
+  const controller = new AbortController();
+  let current = true;
+  let url = "";
+  void cache.get(assetID, generationID, controller.signal, reload).then(blob => {
+    if (current) { url = URL.createObjectURL(blob); onload(url); }
+  }).catch(cause => { if (current) onfailure(cause); });
+  return () => { current = false; controller.abort(); if (url) URL.revokeObjectURL(url); };
+}
+
 export class PhotoPreviewCache {
   private controller = new AbortController();
   private name = `${cachePrefix}${crypto.randomUUID()}`;
