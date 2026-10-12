@@ -141,7 +141,7 @@ func TestFinalizePlannedIngestDirectoriesLeavesNoZeroDocumentReceipt(t *testing.
 	plan, err := s.PrepareIngestDirectory(ctx, "/new/inbox/empty")
 	require.NoError(t, err)
 
-	_, err = s.FinalizeIngestDirectories(ctx, run, []IngestDirectoryPlan{plan})
+	err = s.FinalizeIngestDirectories(ctx, run, []IngestDirectoryPlan{plan})
 	require.NoError(t, err)
 	_, err = s.NodeByPath(ctx, "/new/inbox/empty")
 	require.NoError(t, err)
@@ -200,7 +200,7 @@ func TestFinalizePlannedIngestDirectoriesRejectsEmptyOnlyAdmission(t *testing.T)
 			run, err := s.BeginIngestWithLabel(t.Context(), "cli", "empty loser", &label)
 			require.NoError(t, err)
 
-			_, err = s.FinalizeIngestDirectories(
+			err = s.FinalizeIngestDirectories(
 				t.Context(), run, []IngestDirectoryPlan{plan},
 			)
 			require.ErrorIs(t, err, test.want)
@@ -273,7 +273,7 @@ func TestIngestDirectoryResolutionKeepsSharedParentIdentity(t *testing.T) {
 			require.NoError(t, err)
 			beforeFinalize := exportStoreMetadata(t, s)
 
-			_, err = s.FinalizeIngestDirectories(
+			err = s.FinalizeIngestDirectories(
 				ctx, run, []IngestDirectoryPlan{emptyPlan, siblingPlan},
 			)
 			if mutation == "move" {

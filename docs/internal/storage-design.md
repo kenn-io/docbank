@@ -198,6 +198,13 @@ problems converges without discarding prior progress. The destination directory
 is ID-based once resolved so a concurrent move cannot cause later files to
 recreate an old path.
 
+Labeled imports defer missing directories until the label can be admitted
+atomically. While files remain to be imported, each committed directory
+resolution updates the pending plans. Finalization validates and commits the
+remaining directories in one transaction, then returns the report and discards
+the plans. It does not rebase plans after that final commit. An empty tree still
+creates its directories but leaves no collection receipt or initial label.
+
 Preflight and import share one request-scoped source-selection compiler and
 explicit-root-symlink model. Include and exclude patterns use Go's
 `path.Match` grammar over slash-normalized source-relative paths; a pattern
