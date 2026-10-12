@@ -44,11 +44,19 @@ func WithPhotoHiddenToken(ctx context.Context, token string) context.Context {
 	return context.WithValue(ctx, hiddenTokenKey{}, token)
 }
 
+// PhotoHiddenState reports deadlines both as server timestamps and as whole
+// seconds remaining, so clients can count down without trusting their clock.
 type PhotoHiddenState struct {
 	ChangeID    string  `json:"change_id,omitzero"`
 	Configured  bool    `json:"configured"`
 	ExpiresAt   *string `json:"expires_at,omitzero"`
+	ExpiresIn   *int64  `json:"expires_in,omitzero"`
 	LockedUntil *string `json:"locked_until,omitzero"`
+	LockedFor   *int64  `json:"locked_for,omitzero"`
+}
+
+func hiddenSecondsUntil(now, deadline time.Time) *int64 {
+	return new(int64((deadline.Sub(now) + time.Second - 1) / time.Second))
 }
 
 func validHiddenPasscode(passcode string) error {
@@ -102,28 +110,28 @@ func (s *Store) hiddenNow() time.Time {
 	return time.Now().UTC()
 }
 
-func (s *Store) hiddenSession(ctx context.Context, q metadataQuerier) (string, error) {
+func (s *Store) hiddenSession(ctx context.Context, q metadataQuerier) (time.Time, error) {
 	token, _ := ctx.Value(hiddenTokenKey{}).(string)
 	digest := hiddenTokenDigest(token)
 	if digest == "" {
-		return "", ErrHiddenLocked
+		return time.Time{}, ErrHiddenLocked
 	}
 	s.photoHiddenSessionsMu.Lock()
 	until := s.photoHiddenSessions[digest]
 	if !until.After(s.hiddenNow()) {
 		delete(s.photoHiddenSessions, digest)
 		s.photoHiddenSessionsMu.Unlock()
-		return "", ErrHiddenLocked
+		return time.Time{}, ErrHiddenLocked
 	}
 	s.photoHiddenSessionsMu.Unlock()
 	var configured bool
 	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_hidden_credentials WHERE singleton=1)`).Scan(&configured); err != nil {
-		return "", err
+		return time.Time{}, err
 	}
 	if !configured {
-		return "", ErrHiddenLocked
+		return time.Time{}, ErrHiddenLocked
 	}
-	return until.Format(timestampLayout), nil
+	return until, nil
 }
 
 func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) {
@@ -145,13 +153,15 @@ func (s *Store) PhotoHiddenState(ctx context.Context) (PhotoHiddenState, error) 
 			if err != nil {
 				return fmt.Errorf("reading hidden lockout expiry: %w", err)
 			}
-			if t.After(s.hiddenNow()) {
+			if now := s.hiddenNow(); t.After(now) {
 				state.LockedUntil = &until
+				state.LockedFor = hiddenSecondsUntil(now, t)
 			}
 		}
 		expiry, err := s.hiddenSession(ctx, tx)
 		if err == nil {
-			state.ExpiresAt = &expiry
+			state.ExpiresAt = new(expiry.Format(timestampLayout))
+			state.ExpiresIn = hiddenSecondsUntil(s.hiddenNow(), expiry)
 		} else if !errors.Is(err, ErrHiddenLocked) {
 			return err
 		}
@@ -231,6 +241,11 @@ func (s *Store) SetupPhotoHidden(ctx context.Context, passcode string) error {
 	if err := validHiddenPasscode(passcode); err != nil {
 		return err
 	}
+	// Hash before taking the vault's single write connection.
+	hash, err := hashHiddenPasscode(passcode)
+	if err != nil {
+		return err
+	}
 	return s.withLogicalTx(ctx, func(tx *sql.Tx) error {
 		var exists bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_hidden_credentials)`).Scan(&exists); err != nil {
@@ -239,11 +254,7 @@ func (s *Store) SetupPhotoHidden(ctx context.Context, passcode string) error {
 		if exists {
 			return ErrHiddenConfigured
 		}
-		hash, err := hashHiddenPasscode(passcode)
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO photo_hidden_credentials(singleton,passcode_hash) VALUES(1,?)`, hash)
+		_, err := tx.ExecContext(ctx, `INSERT INTO photo_hidden_credentials(singleton,passcode_hash) VALUES(1,?)`, hash)
 		return err
 	})
 }
@@ -291,13 +302,19 @@ func (s *Store) ChangePhotoHidden(ctx context.Context, old, next string) error {
 	if err := validHiddenPasscode(next); err != nil {
 		return err
 	}
-	return s.editPhotoHidden(ctx, old, "change", next)
+	// Hash before taking the vault's single write connection.
+	hash, err := hashHiddenPasscode(next)
+	if err != nil {
+		return err
+	}
+	return s.editPhotoHidden(ctx, old, "change", hash)
 }
 
 func (s *Store) DisablePhotoHidden(ctx context.Context, passcode string) error {
 	return s.editPhotoHidden(ctx, passcode, "disable", "")
 }
-func (s *Store) editPhotoHidden(ctx context.Context, passcode, operation, next string) error {
+
+func (s *Store) editPhotoHidden(ctx context.Context, passcode, operation, nextHash string) error {
 	s.photoHiddenAuthMu.Lock()
 	defer s.photoHiddenAuthMu.Unlock()
 	if err := validHiddenPasscode(passcode); err != nil {
@@ -343,11 +360,7 @@ func (s *Store) editPhotoHidden(ctx context.Context, passcode, operation, next s
 			}
 			return clearHiddenAuthTx(ctx, tx, true)
 		}
-		hash, err := hashHiddenPasscode(next)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE photo_hidden_credentials SET passcode_hash=? WHERE singleton=1`, hash); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_hidden_credentials SET passcode_hash=? WHERE singleton=1`, nextHash); err != nil {
 			return err
 		}
 		return clearHiddenAuthTx(ctx, tx, false)

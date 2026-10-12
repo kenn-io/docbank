@@ -30,7 +30,6 @@ type PhotoSetSummary struct {
 	PhotoSet
 
 	MemberCount           int64   `json:"member_count"`
-	HiddenCount           int64   `json:"hidden_count"`
 	IncludedCount         int64   `json:"included_count"`
 	EffectiveCoverAssetID *string `json:"effective_cover_asset_id,omitzero"`
 	CoverGenerationID     *string `json:"cover_generation_id,omitzero"`
@@ -75,7 +74,7 @@ func (s *Store) photoSetSummary(ctx context.Context, q metadataQuerier, set Phot
 	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m WHERE m.set_id=? AND EXISTS (SELECT 1 FROM photo_files f WHERE f.asset_id=m.asset_id)`, set.ID).Scan(&out.MemberCount); err != nil {
 		return out, err
 	}
-	if err := q.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN a.hidden_at IS NULL THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN a.hidden_at IS NOT NULL THEN 1 ELSE 0 END),0) FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE m.set_id=? AND `+photoBrowseLiveDisplay, set.ID).Scan(&out.IncludedCount, &out.HiddenCount); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_set_members m JOIN photo_assets a ON a.asset_id=m.asset_id JOIN photo_files f ON f.file_id=a.display_file_id JOIN nodes n ON n.id=f.node_id WHERE m.set_id=? AND `+photoBrowseLiveDisplay+` AND `+photoVisibilityPredicate(false), set.ID).Scan(&out.IncludedCount); err != nil {
 		return out, err
 	}
 	var id, generation string

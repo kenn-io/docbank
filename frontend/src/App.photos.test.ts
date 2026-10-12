@@ -32,7 +32,7 @@ it.each([false, true])("retains failed selection and browsing position through p
   let finish!: (response: Response) => void;
   const items = Array.from({ length: 60 }, (_, index) => ({ ...photo(index + 1, new Date(Date.UTC(2025, 5, 1, 12, 60 - index)).toISOString()), previews: { grid: { state: "ready", generation_id: "synthetic" } } }));
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", change_id: changed ? "second" : "first" });
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300, change_id: changed ? "second" : "first" });
     if (url.endsWith("/assets/query")) {
       const scope = !!JSON.parse(String(options?.body)).hidden;
       reads[Number(scope)]++;
@@ -142,6 +142,16 @@ it.each([false, true])("keeps concealed rows hidden when Trash restore interrupt
   await screen.findByText("Your photo library is empty");
 });
 
+async function failStatusReads(reads: () => number, count: number) {
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  for (const target = reads() + count; reads() < target;) {
+    const before = reads();
+    await fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(reads()).toBeGreaterThan(before), { timeout: 5000 });
+    await new Promise(resolve => setTimeout(resolve, 0));
+  }
+}
+
 it.each(["change", "failure", "background", "delayed page", "unrelated mutation"])("validates retained photo state after %s", async kind => {
   history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
@@ -195,6 +205,14 @@ it.each(["change", "failure", "background", "delayed page", "unrelated mutation"
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
     await fireEvent(document, new Event("visibilitychange"));
   }
+  if (kind === "failure") {
+    const reads = statusReads;
+    await waitFor(() => expect(statusReads).toBeGreaterThan(reads), { timeout: 5000 });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeTruthy();
+    expect(screen.queryByText("Status unavailable")).toBeNull();
+    await failStatusReads(() => statusReads, 2);
+  }
   await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Select photo Photo 1.jpg" })).toBeNull(), { timeout: 5000 });
   expect(screen.queryByText("1 selected photo")).toBeNull();
   await waitFor(() => expect(stored.data.has(cacheName)).toBe(false));
@@ -222,7 +240,7 @@ it("refreshes a remounted Hidden grid after a delayed unhide", async () => {
   let changed = false;
   let finish!: (response: Response) => void;
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z" });
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 });
     if (url.includes("/assets/query")) {
       const hidden = JSON.parse(String(options?.body)).hidden;
       const items = hidden && !changed ? [photo(1)] : [];
@@ -308,7 +326,7 @@ it.each([false, true])("Hidden trash invalidates Documents and Trash restore ref
   let hiddenReads = 0;
   const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
     if (url.endsWith("/photos/hidden/lock")) { unlocked = false; return Response.json({}); }
-    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z" } : {}) });
+    if (url.endsWith("/photos/hidden")) return Response.json({ configured: true, ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z", expires_in: 300 } : {}) });
     if (url.includes("/assets/query")) {
       const hidden = JSON.parse(String(options?.body)).hidden;
       if (hidden) hiddenReads++;
@@ -354,7 +372,7 @@ it.each([false, true])("Hidden trash invalidates Documents and Trash restore ref
   await screen.findByRole("cell", { name: "Photo 1.jpg" });
 });
 
-it.each([false, true])("keeps direct links and history scoped and clears a mounted viewer when access changes, hidden=%s", async hidden => {
+it.each([false, true])("keeps direct links and history scoped and conceals a mounted viewer when access changes, hidden=%s", async hidden => {
   const path = hidden ? "/photos/hidden" : "/photos";
   history.replaceState(null, "", `${path}#web_session=synthetic&web_upload_secret=proof&photo=photo-1`);
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -367,16 +385,18 @@ it.each([false, true])("keeps direct links and history scoped and clears a mount
   let unlocked = true;
   let changeID = "first";
   let unavailable = false;
+  let statusReads = 0;
+  let listed = true;
   let holdRefresh = false;
   let finishRefresh!: (response: Response) => void;
   const item = photo(1); item.previews.grid = { state: "ready", generation_id: "grid" }; item.previews.fit = { state: "ready", generation_id: "fit" };
   vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
-    if (url.endsWith("/photos/hidden")) { if (unavailable) throw new Error("Status unavailable"); return Response.json({ configured: true, change_id: changeID, ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z" } : {}) }); }
+    if (url.endsWith("/photos/hidden")) { statusReads++; if (unavailable) throw new Error("Status unavailable"); return Response.json({ configured: true, change_id: changeID, ...(unlocked ? { expires_at: "2099-01-01T00:00:00Z", expires_in: 300 } : {}) }); }
     if (url.endsWith("/hidden/lock")) { unlocked = false; return Response.json({ configured: true }); }
     if (url.endsWith("/assets/query")) {
       expect(JSON.parse(String(options?.body)).hidden).toBe(hidden);
       if (holdRefresh) { holdRefresh = false; return new Promise<Response>(resolve => finishRefresh = resolve); }
-      return Response.json({ items: [item], total: 1 });
+      return Response.json(listed ? { items: [item], total: 1 } : { items: [], total: 0 });
     }
     if (url.includes("/previews/")) return new Response("synthetic-jpeg");
     return Response.json({ items: [], nodes: [], tags: [], profiles: [] });
@@ -401,7 +421,7 @@ it.each([false, true])("keeps direct links and history scoped and clears a mount
     await screen.findByRole("button", { name: "Unlock" });
   } else {
     unavailable = true;
-    await fireEvent(document, new Event("visibilitychange"));
+    await failStatusReads(() => statusReads, 3);
     await screen.findByText("Status unavailable");
     expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
     expect(location.hash).toBe("#photo=photo-1");
@@ -419,11 +439,27 @@ it.each([false, true])("keeps direct links and history scoped and clears a mount
     visibility.mockReturnValue("visible");
     await fireEvent(document, new Event("visibilitychange"));
     await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+    const queries = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith("/assets/query")).length;
+    let refreshed = queries();
     changeID = "second";
     await fireEvent(document, new Event("visibilitychange"));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull());
+    await waitFor(() => expect(queries()).toBeGreaterThan(refreshed), { timeout: 5000 });
+    await screen.findByText("Fit preview");
+    expect(screen.getByRole("dialog", { name: "Photo viewer, Photo 1.jpg" })).toBeTruthy();
+    expect(location.hash).toBe("#photo=photo-1");
+    const shown = revoke.mock.calls.length;
+    refreshed = queries();
+    listed = false;
+    changeID = "third";
+    await fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(queries()).toBeGreaterThan(refreshed), { timeout: 5000 });
+    await screen.findByText("This photo is no longer in the refreshed result.");
+    expect(screen.queryByText("Fit preview")).toBeNull();
+    expect(revoke.mock.calls.length).toBeGreaterThan(shown);
+    return;
   }
   expect(screen.queryByRole("dialog", { name: /Photo viewer/ })).toBeNull();
-  expect(location.hash).toBe("");
+  await waitFor(() => expect(location.hash).toBe(""));
+  expect(history.state?.photoReturn).toBeUndefined();
   expect(revoke.mock.calls.length).toBeGreaterThan(before);
 });

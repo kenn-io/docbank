@@ -180,6 +180,10 @@ func NewServer(d Deps) *Server {
 		}
 		s.webDownloads.revokeOwner(owner)
 		if d.Store != nil {
+			// Hidden unlocks are vault-wide, so ending any browser session locks Hidden.
+			if err := d.Store.LockPhotoHidden(context.Background()); err != nil {
+				d.Logger.Error("lock hidden photos after browser session ended", "error", err)
+			}
 			// The credential is already revoked and active streams interrupted.
 			// Do not abandon its durable cancellation behind a maintenance barrier.
 			ctx := context.Background()

@@ -11403,10 +11403,6 @@ components:
           type:
             - string
             - "null"
-        hidden_count:
-          format: int64
-          minimum: 0
-          type: integer
         id:
           format: uuid
           type: string
@@ -11432,7 +11428,6 @@ components:
           type: string
       required:
         - member_count
-        - hidden_count
         - included_count
         - id
         - name
@@ -11809,6 +11804,16 @@ components:
         expires_at:
           type:
             - string
+            - "null"
+        expires_in:
+          format: int64
+          type:
+            - integer
+            - "null"
+        locked_for:
+          format: int64
+          type:
+            - integer
             - "null"
         locked_until:
           type:

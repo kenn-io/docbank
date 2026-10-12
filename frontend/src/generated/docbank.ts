@@ -4779,8 +4779,6 @@ export interface PhotoAlbumSummary {
   deleted_at?: string | null;
   /** @nullable */
   effective_cover_asset_id?: string | null;
-  /** @minimum 0 */
-  hidden_count: number;
   id: string;
   /** @minimum 0 */
   included_count: number;
@@ -5049,6 +5047,10 @@ export interface PhotoHiddenState {
   configured: boolean;
   /** @nullable */
   expires_at?: string | null;
+  /** @nullable */
+  expires_in?: number | null;
+  /** @nullable */
+  locked_for?: number | null;
   /** @nullable */
   locked_until?: string | null;
 }

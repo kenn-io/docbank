@@ -33,6 +33,31 @@ func TestPhotoHiddenPasscodeInput(t *testing.T) {
 	require.Equal(t, "new passcode", next)
 }
 
+func TestPhotoHiddenNewPasscodeConfirmation(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, input, want, err string
+		confirm                bool
+	}{
+		{name: "piped input reads one line", input: "first\nsecond\n", want: "first"},
+		{name: "matching confirmation", input: "same\nsame\n", want: "same", confirm: true},
+		{name: "mismatched confirmation", input: "typed\ntypo\n", err: "passcodes do not match", confirm: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cmd := &cobra.Command{}
+			cmd.SetIn(strings.NewReader(tc.input))
+			got, err := readNewPhotoPasscode(cmd, bufio.NewReaderSize(cmd.InOrStdin(), 2048), "Passcode", tc.confirm)
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
 func TestPhotoHiddenInvocationUnlock(t *testing.T) {
 	for _, passcode := range []string{"synthetic-passcode", "wrong-passcode", "", "\n"} {
 		t.Run(passcode, func(t *testing.T) {

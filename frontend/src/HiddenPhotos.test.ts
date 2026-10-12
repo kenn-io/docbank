@@ -4,7 +4,7 @@ import HiddenPhotos from "./HiddenPhotos.svelte";
 import { photo, storage } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
-const state = (unlocked: boolean) => ({ configured: true, ...(unlocked ? { expires_at: new Date(Date.now() + 300_000).toISOString() } : {}) });
+const state = (unlocked: boolean) => ({ configured: true, ...(unlocked ? { expires_at: new Date(Date.now() + 300_000).toISOString(), expires_in: 300 } : {}) });
 const prepare = () => { vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} }); vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000); vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800); };
 const problem = (status: number, detail: string, code = "") => new Response(JSON.stringify({ detail, code }), { status });
 
@@ -157,7 +157,7 @@ it("keeps one associated lockout visible outside management until its original d
     if (readFailed) throw new Error("Synthetic state read failed");
     if (url.endsWith("/change")) { locked = true; return problem(429, "Locked", "hidden_lockout"); }
     reads++;
-    return new Response(JSON.stringify({ ...state(false), ...(locked ? { locked_until: deadline } : {}) }));
+    return new Response(JSON.stringify({ ...state(false), ...(locked ? { locked_until: deadline, locked_for: 300 } : {}) }));
   }));
   render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
   const passcode = await screen.findByLabelText("Passcode", { exact: true });
@@ -243,6 +243,47 @@ it.each(["lock", "revoke", "expire", "denial", "trash denial", "read"])("clears 
     expect(screen.queryByText("Access unavailable")).toBeNull();
     expect(screen.getByText("1 selected photo")).toBeTruthy();
   }
+});
+
+it("counts down from server-relative seconds when the browser clock runs ahead", async () => {
+  prepare();
+  storage();
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const serverNow = now - 600_000;
+  const unlocked = { configured: true, expires_at: new Date(serverNow + 300_000).toISOString(), expires_in: 300 };
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/photos/hidden")) return Response.json(unlocked);
+    if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    return new Response("synthetic-jpeg", { headers: { "Cache-Control": "no-store" } });
+  }));
+  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  await screen.findByRole("main", { name: "Photo library" });
+  expect(screen.getByText("Locks in 5:00")).toBeTruthy();
+  now += 300_001;
+  await waitFor(() => expect(screen.queryByRole("main", { name: "Photo library" })).toBeNull());
+  expect(screen.getByLabelText("Passcode", { exact: true })).toBeTruthy();
+});
+
+it("moves focus to the successor control after unlock and lock", async () => {
+  prepare();
+  storage();
+  let unlocked = false;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.endsWith("/unlock")) { unlocked = true; return Response.json(state(true)); }
+    if (url.endsWith("/lock")) { unlocked = false; return Response.json(state(false)); }
+    if (url.endsWith("/photos/hidden")) return Response.json(state(unlocked));
+    if (url.includes("/assets/query")) return Response.json({ items: [photo(1)], total: 1 });
+    return new Response("synthetic-jpeg", { headers: { "Cache-Control": "no-store" } });
+  }));
+  render(HiddenPhotos, { session: "synthetic", onauthfailure: vi.fn() });
+  const passcode = await screen.findByLabelText("Passcode", { exact: true });
+  await waitFor(() => expect((passcode as HTMLInputElement).disabled).toBe(false));
+  await fireEvent.input(passcode, { target: { value: "synthetic" } });
+  await fireEvent.click(screen.getByRole("button", { name: "Unlock" }));
+  await waitFor(() => expect(document.activeElement?.id).toBe("hidden-controls"));
+  await fireEvent.click(screen.getByRole("button", { name: "Lock" }));
+  await waitFor(() => expect(document.activeElement?.id).toBe("hidden-passcode"));
 });
 
 it("failed access reads preserve an in-flight Lock and its action error", async () => {

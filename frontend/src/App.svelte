@@ -195,7 +195,7 @@
     if (!photoID) return;
     const photos = activePhotos();
     if (photos) photos.viewerReturn = undefined;
-    changePhoto("", "step");
+    changePhoto("", "close");
   }
   function syncPhotoLocation() {
     const id = new URLSearchParams(location.hash.slice(1)).get("photo") ?? "", photos = location.pathname === "/photos/hidden" ? hiddenWorkspace?.activePhotos() : photoState?.photos;
@@ -226,6 +226,7 @@
   let photoChangeID: string | undefined;
   let photoConcealed = false;
   let photoAccessVersion = 0;
+  const maxPhotoAccessFailures = 3;
   let checkPhotoAccess: (() => Promise<void>) | undefined;
   function discardLibrary() {
     photoAccessVersion++;
@@ -242,7 +243,8 @@
     return concealPhotoWorkspace(photoState);
   }
   async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
-    if (photoState && result.change_id !== photoChangeID) void invalidateLibrary();
+    // The refreshed workspace reports an open photo that is no longer listed, so the viewer stays.
+    if (photoState && result.change_id !== photoChangeID) void invalidateLibrary(false);
     photoChangeID = result.change_id;
     if (!photoMode || hiddenMode) return;
     const state = photoState;
@@ -268,6 +270,7 @@
     const hidden = hiddenMode;
     let current = true;
     let pending = false;
+    let failures = 0;
     let controller = new AbortController();
     photoValidated = false;
     const conceal = () => { void invalidateLibrary(false); };
@@ -277,9 +280,16 @@
       controller = new AbortController();
       try {
         const result = await generated.getPhotoHiddenState({ session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
+        failures = 0;
         if (current && !controller.signal.aborted) await acceptPhotoAccess(result);
       } catch (cause) {
-        if (current && !controller.signal.aborted) { void invalidateLibrary(cause instanceof APIError && (cause.status === 401 || cause.status === 403)); photoAccessError = cause instanceof Error ? cause.message : String(cause); if (cause instanceof APIError && cause.status === 401) handleFailure(cause); }
+        if (!current || controller.signal.aborted) return;
+        const denied = cause instanceof APIError && (cause.status === 401 || cause.status === 403);
+        // Library photos are not secret; conceal on denial, or once transient failures persist.
+        if (!denied && ++failures < maxPhotoAccessFailures && photoValidated) return;
+        void invalidateLibrary(denied);
+        photoAccessError = cause instanceof Error ? cause.message : String(cause);
+        if (cause instanceof APIError && cause.status === 401) handleFailure(cause);
       } finally { pending = false; }
     };
     checkPhotoAccess = check;
@@ -297,6 +307,7 @@
   function switchWorkspace(photos: boolean, hidden = false) {
     navOpen = false;
     if (photoMode === photos && hiddenMode === hidden) return;
+    hiddenPhotoActionError = "";
     const previous = activePhotos();
     if (previous) previous.viewerReturn = undefined;
     photoID = "";

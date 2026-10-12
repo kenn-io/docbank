@@ -31,8 +31,12 @@
   let actionPending = $state(false);
   let concealingAction = $state(false);
   const busy = $derived(actionPending);
-  const lockoutDescription = $derived(hiddenState.locked_until || lockoutError ? "hidden-lockout" : undefined);
   let remaining = $state(0);
+  // Deadlines come from server-relative seconds so a skewed browser clock cannot distort them.
+  let deadline = 0;
+  let lockDeadline = $state(0);
+  const secondsUntil = (at: number) => Math.max(0, Math.ceil((at - Date.now()) / 1000));
+  const lockoutDescription = $derived(lockDeadline || lockoutError ? "hidden-lockout" : undefined);
   let refreshController = new AbortController();
   let disposed = false;
   const options = () => ({ session, signal: AbortSignal.timeout(30_000) });
@@ -48,6 +52,7 @@
     workspace?.photos.dispose();
     workspace = undefined;
     remaining = 0;
+    deadline = 0;
   }
   function authorizationLost(cause: unknown) {
     clear();
@@ -55,7 +60,7 @@
     if (cause instanceof APIError && cause.status === 401) onauthfailure(cause);
     else void checkAccess();
   }
-  async function applyState(result: PhotoHiddenState, signal: AbortSignal) {
+  async function applyState(result: PhotoHiddenState, signal: AbortSignal, requestedAt: number) {
     onstate?.(result);
     if (workspace && (result.configured !== hiddenState.configured || result.expires_at !== hiddenState.expires_at)) clear();
     else if (workspace && result.change_id !== hiddenState.change_id) void conceal();
@@ -63,7 +68,9 @@
     lockoutError = "";
     hiddenState = result;
     resolved = true;
-    remaining = result.expires_at ? Math.max(0, Math.ceil((Date.parse(result.expires_at) - Date.now()) / 1000)) : 0;
+    lockDeadline = result.locked_for ? requestedAt + result.locked_for * 1000 : 0;
+    deadline = result.expires_in ? requestedAt + result.expires_in * 1000 : 0;
+    remaining = secondsUntil(deadline);
     if (!remaining || concealingAction) clear();
     else if (!workspace) { workspace = { photos: new Photos(session, authorizationLost, true), cache: new PhotoPreviewCache(session, authorizationLost, true) }; workspaceVisible = true; }
     else if (!workspaceVisible && !workspace.photos.hiding && !workspace.photos.trashing && !workspace.photos.loading) {
@@ -79,10 +86,12 @@
     refreshController = new AbortController();
     const controller = refreshController;
     reading = true;
+    // Anchoring at send time can only end access early, never late.
+    const requestedAt = Date.now();
     try {
       const result = await getPhotoHiddenState({ session, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]) });
       if (controller.signal.aborted || disposed) return;
-      await applyState(result, controller.signal);
+      await applyState(result, controller.signal, requestedAt);
     } catch (cause) {
       if (!controller.signal.aborted && !disposed) {
         readError = cause instanceof Error ? cause.message : String(cause);
@@ -115,6 +124,7 @@
     actionPending = true;
     concealingAction = kind !== "enter";
     let disableDispatched = false;
+    let succeeded = false;
     if (kind === "lock" || kind === "disable" || kind === "change") clear();
     try {
       if (kind === "enter") {
@@ -128,6 +138,7 @@
       nextPasscode = "";
       passcodeError = currentPasscodeError = nextPasscodeError = "";
       lockoutError = "";
+      succeeded = true;
     } catch (cause) {
       if (disposed) return;
       if (cause instanceof APIError && cause.status === 401) { onauthfailure(cause); return; }
@@ -142,7 +153,9 @@
       concealingAction = false;
       if (disableDispatched) onunhidden?.();
       if (!disposed) await checkAccess();
-      if (invalidField && !disposed) { await tick(); document.getElementById(invalidField)?.focus(); }
+      // Unlock, lock and disable replace the focused control; move focus to its successor.
+      const successor = invalidField ?? (!succeeded ? undefined : kind === "enter" ? "hidden-controls" : kind === "change" ? undefined : "hidden-passcode");
+      if (successor && !disposed) { await tick(); document.getElementById(successor)?.focus(); }
     }
   }
 
@@ -152,9 +165,9 @@
     const foreground = () => { if (document.visibilityState === "visible") void checkAccess(); else { refreshController.abort(); void conceal(); } };
     document.addEventListener("visibilitychange", foreground);
     const timer = setInterval(() => {
-      if (hiddenState.locked_until && Date.parse(hiddenState.locked_until) <= Date.now()) hiddenState.locked_until = undefined;
-      if (!hiddenState.expires_at) return;
-      remaining = Math.max(0, Math.ceil((Date.parse(hiddenState.expires_at) - Date.now()) / 1000));
+      if (lockDeadline && !secondsUntil(lockDeadline)) { lockDeadline = 0; hiddenState.locked_until = undefined; }
+      if (!deadline) return;
+      remaining = secondsUntil(deadline);
       if (!remaining) { clear(); hiddenState.expires_at = undefined; }
     }, 250);
     return () => { disposed = true; refreshController.abort(); clear(); clearInterval(timer); clearInterval(poll); document.removeEventListener("visibilitychange", foreground); passcode = ""; currentPasscode = ""; nextPasscode = ""; };
@@ -170,7 +183,7 @@
   {#if !resolved}
     <div class="hidden-gate"><h1>Hidden</h1>{#if reading}<Spinner />{/if}</div>
   {:else if workspace && remaining && workspaceVisible}
-    <div class="hidden-controls"><span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span><Button size="sm" disabled={actionPending} onclick={() => void action("lock")}>Lock</Button></div>
+    <div id="hidden-controls" class="hidden-controls" tabindex="-1"><span>Locks in {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, "0")}</span><Button size="sm" disabled={actionPending} onclick={() => void action("lock")}>Lock</Button></div>
     {#each [workspace] as current (current)}<PhotosWorkspace bind:this={photoWorkspace} photos={current.photos} cache={current.cache} title="Hidden" {photoID} {onphotochange} {ontrashed} onhidden={onunhidden} oninvalidate={conceal} {onactionerror} />{/each}
   {:else if workspace && remaining}
     <Spinner />
@@ -178,7 +191,7 @@
     <div class="hidden-gate">
       <h1>Hidden</h1>
       {#if hiddenState.configured}<p>Forgotten passcode? Run <code>docbank photos hidden reset</code>.</p>{:else}<p>Unlocks for five minutes.</p>{/if}
-      {#if lockoutDescription}<p id="hidden-lockout" class="lockout" role="status">{hiddenState.locked_until ? `Too many attempts. Try again after ${new Date(hiddenState.locked_until).toLocaleTimeString()}.` : lockoutError}</p>{/if}
+      {#if lockoutDescription}<p id="hidden-lockout" class="lockout" role="status">{lockDeadline ? `Too many attempts. Try again after ${new Date(lockDeadline).toLocaleTimeString()}.` : lockoutError}</p>{/if}
       <form aria-describedby={lockoutDescription} onsubmit={event => { event.preventDefault(); void action("enter"); }}>
         <FormField type="password" field={{ id: "hidden-passcode", label: "Passcode", value: passcode, error: passcodeError, disabled: busy }} autocomplete={hiddenState.configured ? "current-password" : "new-password"} oninput={value => { passcode = value; passcodeError = ""; }} />
         <Button type="submit" disabled={busy} ariaDescribedby={lockoutDescription}>{hiddenState.configured ? "Unlock" : "Set passcode"}</Button>

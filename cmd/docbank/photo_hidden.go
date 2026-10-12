@@ -15,8 +15,13 @@ import (
 	"golang.org/x/term"
 )
 
+func photoPasscodeTerminal(cmd *cobra.Command) (*os.File, bool) {
+	file, ok := cmd.InOrStdin().(*os.File)
+	return file, ok && term.IsTerminal(int(file.Fd()))
+}
+
 func readPhotoPasscode(cmd *cobra.Command, input *bufio.Reader, prompt string) (string, error) {
-	if file, ok := cmd.InOrStdin().(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+	if file, ok := photoPasscodeTerminal(cmd); ok {
 		_, _ = fmt.Fprint(cmd.ErrOrStderr(), prompt+": ")
 		bytes, err := term.ReadPassword(int(file.Fd()))
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr())
@@ -31,6 +36,22 @@ func readPhotoPasscode(cmd *cobra.Command, input *bufio.Reader, prompt string) (
 	}
 	value := strings.TrimSuffix(strings.TrimSuffix(string(bytes), "\n"), "\r")
 	return value, nil
+}
+
+// readNewPhotoPasscode asks a terminal user to repeat a new passcode; piped input stays one line.
+func readNewPhotoPasscode(cmd *cobra.Command, input *bufio.Reader, prompt string, confirm bool) (string, error) {
+	passcode, err := readPhotoPasscode(cmd, input, prompt)
+	if err != nil || !confirm {
+		return passcode, err
+	}
+	confirmation, err := readPhotoPasscode(cmd, input, "Confirm "+strings.ToLower(prompt[:1])+prompt[1:])
+	if err != nil {
+		return "", err
+	}
+	if confirmation != passcode {
+		return "", errors.New("passcodes do not match; nothing changed")
+	}
+	return passcode, nil
 }
 
 func withPhotoHidden[T any](cmd *cobra.Command, connection *daemonconn.Connection, run func(string) (T, error)) (T, error) {
@@ -70,14 +91,17 @@ func init() {
 			}
 			var passcode, next string
 			input := bufio.NewReaderSize(cmd.InOrStdin(), 2048)
-			if action != "lock" && action != "reset" {
+			_, terminal := photoPasscodeTerminal(cmd)
+			if action == "setup" {
+				passcode, err = readNewPhotoPasscode(cmd, input, "Passcode", terminal)
+			} else if action != "lock" && action != "reset" {
 				passcode, err = readPhotoPasscode(cmd, input, "Passcode")
-				if err != nil {
-					return err
-				}
+			}
+			if err != nil {
+				return err
 			}
 			if action == "change" {
-				next, err = readPhotoPasscode(cmd, input, "New passcode")
+				next, err = readNewPhotoPasscode(cmd, input, "New passcode", terminal)
 				if err != nil {
 					return err
 				}

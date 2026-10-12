@@ -124,7 +124,7 @@ func TestPhotoHiddenPreviewChecksBeforeETag(t *testing.T) {
 
 func TestPhotoHiddenBrowserAllowlistAndCookie(t *testing.T) {
 	t.Parallel()
-	ts, _ := newTestServer(t, nil)
+	ts, s := newTestServer(t, nil)
 	response, body := get(t, ts, "/photos/hidden", map[string]string{"X-Api-Key": ""})
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	require.Contains(t, response.Header.Get("Content-Type"), "text/html")
@@ -144,6 +144,15 @@ func TestPhotoHiddenBrowserAllowlistAndCookie(t *testing.T) {
 	require.True(t, cookies[0].HttpOnly)
 	require.Equal(t, http.SameSiteStrictMode, cookies[0].SameSite)
 	require.False(t, cookies[0].Secure)
+	unlocked := store.WithPhotoHiddenToken(t.Context(), cookies[0].Value)
+	state, err := s.PhotoHiddenState(unlocked)
+	require.NoError(t, err)
+	require.NotNil(t, state.ExpiresAt)
+	response, body = do(t, ts, http.MethodDelete, "/api/daemon/web-session", headers, nil)
+	require.Equal(t, http.StatusNoContent, response.StatusCode, body)
+	state, err = s.PhotoHiddenState(unlocked)
+	require.NoError(t, err)
+	require.Nil(t, state.ExpiresAt, "ending a browser session must lock Hidden")
 }
 
 func TestPhotoHiddenLockDuringMaintenance(t *testing.T) {

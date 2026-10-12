@@ -66,7 +66,8 @@ export class PhotoPreviewCache {
       let noStore = false;
       try {
         const fetchSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
-        const response = await readPhotoPreview(assetID, generationID, undefined, { session: this.session, signal: fetchSignal });
+        // The browser HTTP cache would keep bytes of photos hidden later; this class owns retention.
+        const response = await readPhotoPreview(assetID, generationID, undefined, { session: this.session, signal: fetchSignal, cache: "no-store" });
         noStore = /(?:^|,)\s*no-store\s*(?:,|$)/i.test(response.headers.get("Cache-Control") ?? "");
         bytes = await response.arrayBuffer();
       } finally { this.release(); }

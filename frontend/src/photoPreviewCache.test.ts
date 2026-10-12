@@ -30,6 +30,7 @@ it("retains bytes without fetch and cancels abandoned reads", async () => {
   expect(opened.put).toHaveBeenCalledTimes(1);
   expect(await (await cache.get("asset", "generation")).text()).toBe("synthetic-jpeg");
   expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(fetcher.mock.calls[0][1].cache).toBe("no-store");
   const key = opened.put.mock.calls[0][0];
   expect(key.credentials).toBe("omit");
   expect([...key.headers]).toHaveLength(0);
