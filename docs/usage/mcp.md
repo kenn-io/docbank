@@ -392,9 +392,12 @@ contain 1–16,000 code points; use the largest useful page size to avoid repeat
 reads. Waiting counts against the daemon deadline. Parsing is synchronous and
 cannot be interrupted mid-call. Results use private cache scope and zero TTL.
 
-`invalid_text_navigation` means to correct whole-section bounds or offsets
-using the same rendition's outline. `text_navigation_limit` means the artifact
-exceeds a navigation cap. Short citations still support artifacts up to 64 MiB.
+Malformed arguments, including negative offsets and reversed bounds, return
+MCP's generic invalid-arguments error before contacting the daemon. Once the
+daemon reads the rendition, `invalid_text_navigation` means to correct
+whole-section bounds or offsets using that rendition's outline.
+`text_navigation_limit` means the artifact exceeds a navigation cap. Short
+citations still support artifacts up to 64 MiB.
 `rendition get` can download an attachment still active for its version; a
 superseded attachment has no general bulk-download path here. Existing citation
 errors keep their meanings. A missing processing service or a transport/decode

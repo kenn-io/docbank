@@ -324,8 +324,11 @@ request works from its owned bytes. Logical trash after admission does not
 invalidate that read; later requests see the changed authority.
 
 A navigation request accepts at most 4 MiB of Markdown, 65,536 LF characters and
-4,096 document-root headings. Goldmark with GFM derives headings from the stored
-Markdown without rendering or normalizing it again. A synthetic root covers all
+4,096 document-root headings. Goldmark's block parsers and paragraph transformers,
+including GFM tables, derive headings from stored Markdown. Inline parsing is
+omitted: section titles use their source lines, and parsing emphasis, links and
+code spans can take quadratic time without contributing section information.
+The text is not rendered or normalized again. A synthetic root covers all
 text; each heading includes its subsections. Section bounds count Unicode code
 points and preserve source whitespace, escapes and line endings. Labels are
 bounded navigation metadata, not quotations. The [HTTP reference](http-api.md#retained-text-sections)
@@ -334,9 +337,9 @@ owns boundary, label and pagination rules.
 The admission slot covers parsing and response construction as well as I/O.
 Cancellation is checked around parsing and during scans, but Goldmark's
 synchronous parser cannot be interrupted mid-call. These input and concurrency
-caps bound admitted work, not a fixed heap or CPU budget. Returned strings do not
-retain the whole source buffer or syntax tree. Nothing is cached or stored after
-the operation.
+caps limit input size and concurrent reads, not a fixed heap or CPU budget.
+Returned strings do not retain the whole source buffer or syntax tree. Nothing
+is cached or stored after the operation.
 
 Every page rereads and reparses the whole artifact, even a final empty page.
 Choose the largest useful page size. Existing short citations still stream

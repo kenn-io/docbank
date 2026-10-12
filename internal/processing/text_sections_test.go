@@ -62,6 +62,9 @@ func TestTextSectionsMarkdown(t *testing.T) {
 		{"GFM table", "| A | B |\n| - | - |\n| # nope | ok |\n\n# End\nx",
 			[]document.TextOutlineEntry{{Start: 0, End: 44},
 				{Start: 37, End: 44, Level: 1, TitleMarkdown: "End"}}},
+		{"table before setext marker", "A | B\n- | -\nx | y\n---\n\n# End\nz",
+			[]document.TextOutlineEntry{{Start: 0, End: 30},
+				{Start: 23, End: 30, Level: 1, TitleMarkdown: "End"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, sectionIndex(t, tc.source).sections)
@@ -199,4 +202,41 @@ func TestTextSectionsLimits(t *testing.T) {
 	cancel()
 	_, err := buildTextSectionIndex(ctx, []byte("# x\n"), newTextSectionParser())
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+//nolint:paralleltest // AllocsPerRun forbids running during parallel tests.
+func TestTextSectionsInlineMarkerAllocations(t *testing.T) {
+	source := []byte("# Title\n" + strings.Repeat("[a](", 4096))
+	var index textSectionIndex
+	var err error
+	allocs := testing.AllocsPerRun(1, func() {
+		index, err = buildTextSectionIndex(t.Context(), source, newTextSectionParser())
+	})
+	require.NoError(t, err)
+	require.Equal(t, []document.TextOutlineEntry{
+		{Start: 0, End: 16392}, {Start: 0, End: 16392, Level: 1, TitleMarkdown: "Title"},
+	}, index.sections)
+	// A heading and one paragraph must not allocate a syntax node per inline marker.
+	require.Less(t, allocs, 1000.0)
+}
+
+func BenchmarkTextSectionsInlineMarkers(b *testing.B) {
+	for _, marker := range []struct{ name, text string }{
+		{"links", "[a]("}, {"emphasis", "*a"}, {"brackets", "["},
+	} {
+		for _, size := range []int{16 << 10, 128 << 10, 4 << 20} {
+			b.Run(fmt.Sprintf("%s/%dKiB", marker.name, size>>10), func(b *testing.B) {
+				data := []byte("# Title\n" + strings.Repeat(marker.text, (size-8)/len(marker.text)))
+				b.SetBytes(int64(len(data)))
+				b.ReportAllocs()
+				b.ResetTimer()
+				for b.Loop() {
+					index, err := buildTextSectionIndex(b.Context(), data, newTextSectionParser())
+					if err != nil || len(index.sections) != 2 || index.sections[1].TitleMarkdown != "Title" {
+						b.Fatalf("unexpected outline: %#v, %v", index, err)
+					}
+				}
+			})
+		}
+	}
 }

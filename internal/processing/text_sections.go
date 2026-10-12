@@ -9,11 +9,11 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 	"go.kenn.io/docbank/document"
 )
 
@@ -23,7 +23,13 @@ type textSectionIndex struct {
 }
 
 func newTextSectionParser() parser.Parser {
-	return goldmark.New(goldmark.WithExtensions(extension.GFM)).Parser()
+	// Inline parsing adds potentially quadratic work; titles use the original block lines.
+	return parser.NewParser(
+		parser.WithBlockParsers(parser.DefaultBlockParsers()...),
+		parser.WithParagraphTransformers(parser.DefaultParagraphTransformers()...),
+		parser.WithParagraphTransformers(
+			util.Prioritized(extension.NewTableParagraphTransformer(), 200)),
+	)
 }
 
 func buildTextSectionIndex(
