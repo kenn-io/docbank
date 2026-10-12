@@ -60,8 +60,15 @@ func registerPhotoCheckoutRoutes(api huma.API, d Deps, g *gate) {
 			return nil, FromStoreError(err)
 		}
 		if err := service.Start(d.Jobs, c, root); err != nil {
-			_ = root.Close()
 			d.Logger.Error("start queued photo checkout", "operation_id", op.ID, "error", err)
+			c, err = d.Store.PhotoCheckout(ctx, c.ID)
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
+			op, err = d.Store.StorageOperation(ctx, op.ID)
+			if err != nil {
+				return nil, FromStoreError(err)
+			}
 		}
 		return &struct{ Body PhotoCheckoutCreateResult }{PhotoCheckoutCreateResult{Checkout: c, Operation: storageOperationAPI(op)}}, nil
 	})

@@ -90,4 +90,33 @@ func TestPhotoCheckoutRoutesRequireDaemonCredentialsAndLocalCreation(t *testing.
 	catalog.Server.Handler().ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusForbidden, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "loopback_only")
+	require.Contains(t, recorder.Body.String(), "daemon's computer")
+	require.NotContains(t, recorder.Body.String(), "/uploads")
+}
+
+func TestPhotoCheckoutCreateReturnsPersistedStartFailure(t *testing.T) {
+	t.Parallel()
+	ts, catalog := newTestServer(t, func(d *api.Deps) {
+		d.Jobs = jobs.New(t.Context(), nil)
+		d.Jobs.Stop()
+	})
+	hash, size, err := catalog.Blobs.Write(strings.NewReader("photo bytes"))
+	require.NoError(t, err)
+	node, err := catalog.CreateFile(t.Context(), catalog.RootID(), "photo.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
+	require.NoError(t, err)
+	request := api.PhotoCheckoutCreateRequest{Selection: store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, Destination: t.TempDir()}
+	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/checkouts", nil, request)
+	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
+	var created api.PhotoCheckoutCreateResult
+	require.NoError(t, json.Unmarshal([]byte(body), &created))
+	require.Equal(t, "failed", created.Checkout.State)
+	require.Equal(t, "failed", created.Operation.State)
+	require.NotEmpty(t, created.Operation.FinishedAt)
+	require.Equal(t, created.Checkout.Error, created.Operation.Error)
+	require.Contains(t, created.Operation.Error, "stopping")
+	status, err := catalog.PhotoCheckout(t.Context(), created.Checkout.ID)
+	require.NoError(t, err)
+	require.Equal(t, created.Checkout, status)
 }

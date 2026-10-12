@@ -285,8 +285,12 @@ func loopbackMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(context.WithValue(r.Context(), remoteAddressContextKey{}, r.RemoteAddr))
 		if r.Method == http.MethodPost && isServerPathIngestRoute(r.URL.Path) && !isLoopbackRemote(r.RemoteAddr) {
+			message := "server-side path ingest is loopback-only; remote clients use POST /api/v1/uploads"
+			if r.URL.Path == "/api/v1/photos/checkouts" {
+				message = "photo checkout creation is loopback-only; run this command on the daemon's computer"
+			}
 			writeError(w, NewError(http.StatusForbidden, "loopback_only",
-				"server-side path ingest is loopback-only; remote clients use POST /api/v1/uploads"))
+				message))
 			return
 		}
 		next.ServeHTTP(w, r)

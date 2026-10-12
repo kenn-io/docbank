@@ -57,8 +57,11 @@ func (c *Connection) CreatePhotoCheckout(ctx context.Context, request api.PhotoC
 	if err := validatePhotoCheckoutResponse(out.Checkout, ""); err != nil {
 		return api.PhotoCheckoutCreateResult{}, &responseDecodeError{err: err}
 	}
-	if out.Operation.ID != out.Checkout.OperationID || out.Operation.Kind != store.StorageOperationKindPhotoCheckout || out.Operation.State != "queued" {
+	if out.Operation.ID != out.Checkout.OperationID || out.Operation.Kind != store.StorageOperationKindPhotoCheckout || out.Operation.State != out.Checkout.State || !slices.Contains([]string{"queued", "failed"}, out.Operation.State) {
 		return api.PhotoCheckoutCreateResult{}, &responseDecodeError{err: errors.New("invalid photo checkout creation operation")}
+	}
+	if out.Operation.State == "failed" && (out.Operation.FinishedAt == "" || out.Operation.Error == "" || out.Checkout.Error != out.Operation.Error) {
+		return api.PhotoCheckoutCreateResult{}, &responseDecodeError{err: errors.New("failed photo checkout creation has no terminal error")}
 	}
 	return *out, nil
 }

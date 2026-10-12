@@ -58,6 +58,14 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	status, err := client.PhotoCheckoutStatus(t.Context(), id)
 	require.NoError(t, err)
 	require.Equal(t, checkout, status.Checkout)
+	created.Checkout.State = "failed"
+	created.Checkout.Error = "supervisor is stopping"
+	created.Operation.State = "failed"
+	created.Operation.Error = created.Checkout.Error
+	created.Operation.FinishedAt = "2026-01-01T00:00:00Z"
+	result, err = client.CreatePhotoCheckout(t.Context(), api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100})
+	require.NoError(t, err)
+	require.Equal(t, created, result)
 	for _, invalid := range []api.PhotoCheckoutCreateResult{{}, {Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "repair", State: "queued"}}} {
 		created = invalid
 		_, err = client.CreatePhotoCheckout(t.Context(), api.PhotoCheckoutCreateRequest{Selection: selection, Destination: checkout.Destination, ByteLimit: 100})

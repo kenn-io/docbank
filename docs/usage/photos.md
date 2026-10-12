@@ -477,7 +477,7 @@ docbank jobs resume derive:visual-previews
 
 Preview concurrency accepts 1 through 4. Pause and concurrency survive a daemon
 restart. Restoring a backup starts with unpaused lanes and concurrency 1.
-Storage lanes `place`, `evacuate`, `repair`, and `salvage` also accept pause and
+Storage lanes `place`, `evacuate`, `repair`, `salvage`, and `photo_checkout` also accept pause and
 resume, keeping their existing concurrency. Cancellation uses the operation ID.
 Document workers show read-only controls in `jobs`.
 If lane settings cannot be read, the import waits and keeps its progress.
@@ -546,9 +546,9 @@ docbank jobs cancel <operation-id>
 
 Combine `--asset`, `--album`, and `--years` to copy their union. Each file appears once. Year ranges include both endpoints. Hidden and excluded photos stay out. `--all` requires a positive byte limit; other selections can also set one. Estimate returns asset count, file count, and bytes without creating a checkout.
 
-The destination must be an existing empty folder on the daemon's computer, separate from the vault, storage roots, watched folders, and other checkouts. Creation requires a local daemon connection. Docbank writes writable files under capture-date and asset-ID folders, uses `undated` when capture metadata is absent, and verifies every copy before publication. It preserves any file that appears at a destination while copying.
+The destination must be an existing empty folder on the daemon's computer, separate from the vault, storage roots, watched folders, and other checkouts. Creation requires a local daemon connection. Docbank preserves original filenames under capture-date and asset-ID folders so RAW, JPEG, and XMP members stay paired, uses `undated` when capture metadata is absent, and verifies every copy before publication. Creation rejects selections containing no files and filenames with Windows reserved names, forbidden punctuation, control characters, or trailing dots or spaces. Filename collisions fail without replacing existing copies.
 
-Creation returns the checkout and operation IDs as JSON. Jobs reports progress and accepts cancellation. A failed or interrupted creation keeps its ID, partial files, error, and frozen source versions. After a daemon restart, an interrupted creation reports failure. It doesn't resume copying. Pruning history or emptying trash keeps the frozen versions available.
+Creation returns the checkout and operation IDs as JSON. Jobs reports progress and accepts cancellation; pause or resume the `photo_checkout` lane to control copying. A failed, cancelled, or interrupted creation keeps its destination reserved until retirement, along with its ID, partial files, error, and frozen source versions. After a daemon restart, an interrupted creation reports failure. It doesn't resume copying. Pruning history or emptying trash keeps the frozen versions available.
 
 Backup includes checkout selections and frozen versions. Restore leaves checkouts unbound and carries no machine paths, job state, or copy observations. Checkout creation is unavailable in audited vaults. Committing edits, retirement, and rebinding aren't available yet.
 

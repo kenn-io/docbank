@@ -107,11 +107,11 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 			continue
 		}
 		overlap, err := ingest.PathsOverlap(destination, other)
-		if err != nil {
-			return err
-		}
 		if overlap {
 			return fmt.Errorf("%w: destination overlaps a vault, storage root, watched folder, or checkout", store.ErrInvalidPhotoCheckout)
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
 	}
 	// Reject a replacement between opening the handle and checking its pathname.
@@ -130,13 +130,15 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 }
 
 func (s Service) Start(supervisor *jobs.Supervisor, checkout store.PhotoCheckout, root *os.Root) error {
+	var err error
 	if supervisor == nil {
-		return errors.New("photo checkout requires a job supervisor")
+		err = errors.New("photo checkout requires a job supervisor")
+	} else {
+		err = supervisor.Start("storage:"+checkout.OperationID, func(ctx context.Context) error {
+			defer func() { _ = root.Close() }()
+			return s.Run(ctx, checkout, root)
+		})
 	}
-	err := supervisor.Start("storage:"+checkout.OperationID, func(ctx context.Context) error {
-		defer func() { _ = root.Close() }()
-		return s.Run(ctx, checkout, root)
-	})
 	if err != nil {
 		_ = root.Close()
 		return errors.Join(err, s.finish(context.Background(), checkout, store.StorageOperationFailed, "{}", err.Error()))
@@ -144,7 +146,7 @@ func (s Service) Start(supervisor *jobs.Supervisor, checkout store.PhotoCheckout
 	return nil
 }
 
-// Recover preserves partial results and records interruption without reopening a path.
+// Recover preserves published copies and removes only recognized private stages.
 func (s Service) Recover(ctx context.Context) error {
 	operations, err := s.Store.ResumableStorageOperations(ctx)
 	if err != nil {
@@ -165,6 +167,28 @@ func (s Service) Recover(ctx context.Context) error {
 		c, exists := byOperation[op.ID]
 		if !exists {
 			return fmt.Errorf("checkout operation %s has no definition", op.ID)
+		}
+		if c.Destination != "" {
+			canonical, err := filepath.EvalSymlinks(c.Destination)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			var root *os.Root
+			if err == nil && canonical == c.Destination {
+				root, err = os.OpenRoot(c.Destination)
+			}
+			if root != nil {
+				entries, entriesErr := s.Store.PhotoCheckoutEntries(ctx, c.ID)
+				if entriesErr == nil {
+					for _, e := range entries {
+						entriesErr = errors.Join(entriesErr, filepublish.CleanupRootStages(root, filepath.Dir(filepath.FromSlash(e.Path))))
+					}
+				}
+				err = errors.Join(entriesErr, root.Close())
+			}
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
 		}
 		if err := s.finish(ctx, c, store.StorageOperationFailed, op.ReceiptJSON, "checkout creation was interrupted; partial copies and frozen bases are retained"); err != nil {
 			return err
@@ -250,12 +274,11 @@ func (s Service) copy(ctx context.Context, root *os.Root, e store.PhotoCheckoutE
 		_ = stream.Close()
 		return errors.New("checkout source size differs from frozen base")
 	}
-	digest := sha256.New()
-	n, copyErr := io.Copy(io.MultiWriter(stage.File, digest), stream)
+	n, copyErr := io.Copy(stage.File, stream)
 	if err := errors.Join(copyErr, stream.Verify(), stream.Close()); err != nil {
 		return err
 	}
-	if n != e.Size || hex.EncodeToString(digest.Sum(nil)) != e.Hash {
+	if n != e.Size {
 		return errors.New("checkout bytes differ from frozen base")
 	}
 	if err := stage.File.Sync(); err != nil {
@@ -265,7 +288,7 @@ func (s Service) copy(ctx context.Context, root *os.Root, e store.PhotoCheckoutE
 	if _, err := stage.File.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	digest.Reset()
+	digest := sha256.New()
 	n, err = io.Copy(digest, stage.File)
 	if err != nil {
 		return err

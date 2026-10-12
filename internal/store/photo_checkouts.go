@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/docbank/internal/query"
 )
@@ -165,7 +166,15 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 			if len(date) >= 10 {
 				folder = strings.ReplaceAll(date[:10], "-", "/")
 			}
-			entry.Path = path.Join(folder, id, entry.FileID+path.Ext(name))
+			if err := validateCheckoutFilename(name); err != nil {
+				_ = rows.Close()
+				return nil, estimate, fmt.Errorf("filename %q: %w", name, err)
+			}
+			entry.Path = path.Join(folder, id, name)
+			if err := validateCheckoutPath(entry.Path); err != nil {
+				_ = rows.Close()
+				return nil, estimate, err
+			}
 			entries = append(entries, entry)
 			estimate.Files++
 			estimate.Bytes += entry.Size
@@ -203,6 +212,9 @@ func (s *Store) CreatePhotoCheckout(ctx context.Context, selection PhotoCheckout
 		if byteLimit > 0 && estimate.Bytes > byteLimit {
 			return fmt.Errorf("%w: selected bytes exceed byte_limit", ErrInvalidPhotoCheckout)
 		}
+		if len(entries) == 0 {
+			return fmt.Errorf("%w: selection contains no files", ErrInvalidPhotoCheckout)
+		}
 		id, err := newUUIDv4()
 		if err != nil {
 			return err
@@ -234,6 +246,42 @@ func (s *Store) CreatePhotoCheckout(ctx context.Context, selection PhotoCheckout
 		return nil
 	})
 	return checkout, operation, err
+}
+
+func validateCheckoutFilename(name string) error {
+	if !utf8.ValidString(name) || name == "" || name == "." || name == ".." || strings.ContainsAny(name, `<>:"/\|?*`+"\x00") || strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
+		return fmt.Errorf("%w: original filename is not portable", ErrInvalidPhotoCheckout)
+	}
+	base, _, _ := strings.Cut(name, ".")
+	base = strings.ToUpper(strings.TrimRight(base, " "))
+	switch base {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		return fmt.Errorf("%w: reserved Windows device filename", ErrInvalidPhotoCheckout)
+	}
+	if strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT") {
+		switch base[3:] {
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³":
+			return fmt.Errorf("%w: reserved Windows device filename", ErrInvalidPhotoCheckout)
+		}
+	}
+	for _, r := range name {
+		if r >= 1 && r <= 31 {
+			return fmt.Errorf("%w: original filename contains a control character", ErrInvalidPhotoCheckout)
+		}
+	}
+	return nil
+}
+
+func validateCheckoutPath(name string) error {
+	if name == "" || path.IsAbs(name) || path.Clean(name) != name {
+		return ErrInvalidPhotoCheckout
+	}
+	for _, component := range strings.Split(name, "/") {
+		if err := validateCheckoutFilename(component); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 const photoCheckoutSelect = `SELECT checkout_id,selection_json,byte_limit,created_at,COALESCE(destination,''),COALESCE(operation_id,''),state,error FROM photo_checkouts`

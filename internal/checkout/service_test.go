@@ -3,6 +3,8 @@ package checkout
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/blob"
 	"go.kenn.io/docbank/internal/config"
+	"go.kenn.io/docbank/internal/jobs"
 	"go.kenn.io/docbank/internal/store"
 )
 
@@ -210,4 +213,138 @@ func TestCheckoutRefusesCorruptBytes(t *testing.T) {
 	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 	require.NoError(t, err)
 	require.False(t, entries[0].Published)
+}
+
+func TestCheckoutCollidingOriginalNamesFailDuringCopy(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	first := checkoutPhoto(t, s, "photo.jpg", "first")
+	dir, err := s.Store.Mkdir(t.Context(), s.Store.RootID(), "other")
+	require.NoError(t, err)
+	hash, size, err := s.Blobs.Write(strings.NewReader("second"))
+	require.NoError(t, err)
+	second, err := s.Store.CreateFile(t.Context(), dir.ID, "photo.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
+	owned, err := s.Store.PhotoAssetForNode(t.Context(), second.ID)
+	require.NoError(t, err)
+	_, err = s.Store.DetachPhotoFile(t.Context(), owned.ID, owned.Revision, owned.Files[0].ID, store.PhotoDetachOptions{})
+	require.NoError(t, err)
+	_, err = s.Store.AttachPhotoFile(t.Context(), first.ID, first.Revision, second.ID, store.PhotoRoleImage, nil)
+	require.NoError(t, err)
+	c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{first.ID}}, t.TempDir(), 0)
+	require.NoError(t, err)
+	defer func() { _ = root.Close() }()
+	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	require.Equal(t, entries[0].Path, entries[1].Path)
+	require.Error(t, s.Run(t.Context(), c, root))
+	actual, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.True(t, actual[0].Published)
+	require.False(t, actual[1].Published)
+	content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
+	require.NoError(t, err)
+	source, _, err := s.Blobs.OpenStreamContext(t.Context(), entries[0].Hash)
+	require.NoError(t, err)
+	expected, err := io.ReadAll(source)
+	require.NoError(t, err)
+	require.NoError(t, source.Close())
+	require.Equal(t, expected, content)
+	finished, err := s.Store.StorageOperation(t.Context(), op.ID)
+	require.NoError(t, err)
+	require.Equal(t, store.StorageOperationFailed, finished.State)
+}
+
+func TestCheckoutAllowsUnrelatedMissingRoots(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+	selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
+	missing := filepath.Join(t.TempDir(), "missing")
+	s.Config.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: filepath.Join(missing, "archive")}}
+	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(missing, "watch")}}
+	_, _, err := s.Store.CreatePhotoCheckout(t.Context(), selection, filepath.Join(missing, "checkout"), 0)
+	require.NoError(t, err)
+	_, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
+	require.NoError(t, err)
+	require.NoError(t, root.Close())
+	destination := t.TempDir()
+	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(destination, "missing-descendant")}}
+	_, _, _, err = s.Prepare(t.Context(), selection, destination, 0)
+	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(destination, alias); err != nil {
+		t.Skip("symlink creation unavailable")
+	}
+	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(alias, "missing-descendant")}}
+	_, _, _, err = s.Prepare(t.Context(), selection, destination, 0)
+	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+}
+
+func TestCheckoutRecoveryRemovesOnlyExactEmptyableStages(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+	c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
+	require.NoError(t, err)
+	defer func() { _ = root.Close() }()
+	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+	require.NoError(t, err)
+	parent := filepath.Dir(filepath.FromSlash(entries[0].Path))
+	require.NoError(t, root.MkdirAll(parent, 0o755))
+	prefix := ".docbank-checkout-"
+	payload := filepath.Join(parent, prefix+strings.Repeat("a", 32))
+	empty := filepath.Join(parent, prefix+strings.Repeat("b", 32))
+	decoy := filepath.Join(parent, prefix+strings.Repeat("c", 32))
+	wrongName := filepath.Join(parent, prefix+"user-folder")
+	for _, dir := range []string{payload, empty, decoy, wrongName} {
+		require.NoError(t, root.Mkdir(dir, 0o700))
+	}
+	require.NoError(t, root.WriteFile(filepath.Join(payload, "payload.tmp"), []byte("partial bytes"), 0o600))
+	require.NoError(t, root.WriteFile(filepath.Join(decoy, "my-edit.jpg"), []byte("keep"), 0o600))
+	require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("published copy"), 0o600))
+	require.NoError(t, s.Recover(t.Context()))
+	for _, dir := range []string{payload, empty} {
+		_, err = root.Stat(dir)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
+	for _, dir := range []string{decoy, wrongName} {
+		_, err = root.Stat(dir)
+		require.NoError(t, err)
+	}
+	content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
+	require.NoError(t, err)
+	require.Equal(t, "published copy", string(content))
+	status, err := s.Store.PhotoCheckout(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.Equal(t, "failed", status.State)
+}
+
+func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
+	t.Parallel()
+	for _, stopped := range []bool{false, true} {
+		t.Run(fmt.Sprint(stopped), func(t *testing.T) {
+			s := checkoutService(t)
+			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+			c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
+			require.NoError(t, err)
+			var supervisor *jobs.Supervisor
+			if stopped {
+				supervisor = jobs.New(t.Context(), nil)
+				supervisor.Stop()
+			}
+			require.Error(t, s.Start(supervisor, c, root))
+			_, err = root.Stat(".")
+			require.Error(t, err)
+			status, err := s.Store.PhotoCheckout(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.Equal(t, "failed", status.State)
+			finished, err := s.Store.StorageOperation(t.Context(), op.ID)
+			require.NoError(t, err)
+			require.Equal(t, store.StorageOperationFailed, finished.State)
+			require.Equal(t, finished.Error, status.Error)
+			require.NotNil(t, finished.FinishedAt)
+		})
+	}
 }

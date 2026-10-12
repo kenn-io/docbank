@@ -155,7 +155,7 @@ func TestPhotoCheckoutMetadataRestoresUnbound(t *testing.T) {
 			var roundtrip bytes.Buffer
 			require.NoError(t, restored.ExportMetadata(t.Context(), &roundtrip))
 			require.Equal(t, exported.String(), roundtrip.String())
-			for _, bad := range []string{strings.Replace(exported.String(), `"relative_path":"undated/`, `"relative_path":"../`, 1), strings.Replace(exported.String(), `"size":20,"relative_path"`, `"size":21,"relative_path"`, 1)} {
+			for _, bad := range []string{strings.Replace(exported.String(), `"relative_path":"undated/`, `"relative_path":"../`, 1), strings.Replace(exported.String(), `"relative_path":"undated/`, `"relative_path":"CON/`, 1), strings.Replace(exported.String(), `"size":20,"relative_path"`, `"size":21,"relative_path"`, 1)} {
 				invalid, err := Open(filepath.Join(t.TempDir(), "invalid.db"), driver.driver)
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, invalid.Close()) })
@@ -215,6 +215,11 @@ func TestPhotoCheckoutFreezesEveryGroupedMemberOnce(t *testing.T) {
 	for _, entry := range entries {
 		require.True(t, strings.HasPrefix(entry.Path, "2024/01/02/"+result.Asset.ID+"/"))
 	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, filepath.Base(entry.Path))
+	}
+	require.ElementsMatch(t, []string{"IMG.ARW", "IMG.JPG", "IMG.XMP"}, names)
 }
 
 func TestPhotoCheckoutRejectsByteOverflow(t *testing.T) {
@@ -225,4 +230,82 @@ func TestPhotoCheckoutRejectsByteOverflow(t *testing.T) {
 	albumAsset(t, s, "small.jpg")
 	_, err = s.EstimatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true})
 	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+}
+
+func TestPhotoCheckoutRejectsNonportableNamesBeforeCreatingRecords(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"CON.jpg", "com¹.raw", "LPT9.xmp", "NUL .jpg", "bad:name.jpg", "bad?.jpg", "trailing.", "trailing ", "control\x01.jpg", "bad\\name.jpg", "bad\xff.jpg"} {
+		t.Run(name, func(t *testing.T) {
+			s := newTestStore(t)
+			asset := albumAsset(t, s, "photo.jpg")
+			_, err := s.db.ExecContext(t.Context(), `UPDATE nodes SET name=? WHERE id=?`, name, asset.Files[0].NodeID)
+			require.NoError(t, err)
+			_, _, err = s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+			require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+			require.Contains(t, err.Error(), "filename")
+			checkouts, err := s.ListPhotoCheckouts(t.Context())
+			require.NoError(t, err)
+			require.Empty(t, checkouts)
+			operations, err := s.StorageOperations(t.Context(), 10)
+			require.NoError(t, err)
+			require.Empty(t, operations)
+		})
+	}
+}
+
+func TestPhotoCheckoutRejectsEmptySelectionBeforeCreatingRecords(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	album, err := s.CreatePhotoSet(t.Context(), "Empty")
+	require.NoError(t, err)
+	for _, selection := range []PhotoCheckoutSelection{{All: true}, {AlbumIDs: []string{album.ID}}, {Years: &PhotoCheckoutYears{From: 2024, To: 2024}}} {
+		estimate, err := s.EstimatePhotoCheckout(t.Context(), selection)
+		require.NoError(t, err)
+		require.Zero(t, estimate.Files)
+		_, _, err = s.CreatePhotoCheckout(t.Context(), selection, "checkout", 100)
+		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+	}
+	checkouts, err := s.ListPhotoCheckouts(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, checkouts)
+	operations, err := s.StorageOperations(t.Context(), 10)
+	require.NoError(t, err)
+	require.Empty(t, operations)
+}
+
+func TestPhotoCheckoutMetadataRequiresVersionOwnership(t *testing.T) {
+	t.Parallel()
+	for _, driver := range v090UpgradeDrivers() {
+		t.Run(driver.name, func(t *testing.T) {
+			s, err := Open(filepath.Join(t.TempDir(), "source.db"), driver.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, s.Close()) })
+			first := albumAsset(t, s, "first.jpg")
+			second := albumAsset(t, s, "second.jpg")
+			checkout, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{first.ID}}, "checkout", 0)
+			require.NoError(t, err)
+			entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
+			require.NoError(t, err)
+			var backup bytes.Buffer
+			require.NoError(t, s.ExportMetadata(t.Context(), &backup))
+			original := `"type":"photo_checkout_entry","checkout_id":"` + checkout.ID + `","file_id":"` + entries[0].FileID + `"`
+			forged := `"type":"photo_checkout_entry","checkout_id":"` + checkout.ID + `","file_id":"` + second.Files[0].ID + `"`
+			require.Contains(t, backup.String(), original)
+			restored, err := Open(filepath.Join(t.TempDir(), "forged.db"), driver.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, restored.Close()) })
+			require.Error(t, restored.ImportMetadata(t.Context(), strings.NewReader(strings.Replace(backup.String(), original, forged, 1))))
+			_, err = s.DetachPhotoFile(t.Context(), first.ID, first.Revision, first.Files[0].ID, PhotoDetachOptions{})
+			require.NoError(t, err)
+			backup.Reset()
+			require.NoError(t, s.ExportMetadata(t.Context(), &backup))
+			detached, err := Open(filepath.Join(t.TempDir(), "detached.db"), driver.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, detached.Close()) })
+			require.NoError(t, detached.ImportMetadata(t.Context(), bytes.NewReader(backup.Bytes())))
+			actual, err := detached.PhotoCheckoutEntries(t.Context(), checkout.ID)
+			require.NoError(t, err)
+			require.Equal(t, entries, actual)
+		})
+	}
 }
