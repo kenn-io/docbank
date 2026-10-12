@@ -155,6 +155,7 @@
     void restore?.();
   }
   function escape(event: KeyboardEvent) {
+    if (mapMode && !tiles.tile_url) return;
     if (!photoID && event.key === "Escape" && !isAppShortcutSuppressed(event, false, document, ".photo-cell")) photos.clearSelection();
     if (albums && !photoID && event.key.toLowerCase() === "b" && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !isAppShortcutSuppressed(event, !photos.selection.selectedIDs.size, document, ".photo-cell")) {
       event.preventDefault();

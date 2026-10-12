@@ -743,6 +743,13 @@ it("renders disabled maps without fetching a photo list", async () => {
  await screen.findByText("Maps are disabled"); expect(fetcher).not.toHaveBeenCalled(); photos.dispose();
 });
 
+it("keeps the Library selection when Escape is pressed on disabled maps", async () => {
+ const photos=new Photos("scoped",vi.fn());photos.items=[photo(1)];photos.started=true;photos.selectLoaded();
+ render(PhotosWorkspace,{tiles,photos,mapMode:true,cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()});
+ await screen.findByText("Maps are disabled");await fireEvent.keyDown(window,{key:"Escape"});
+ expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);photos.dispose();
+});
+
 it("viewer follows the Map query while the viewport filters its grid", async () => {
  vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});
  vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
