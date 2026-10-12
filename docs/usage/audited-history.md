@@ -26,7 +26,8 @@ content reachable, so garbage collection cannot remove that content.
 
 !!! warning "First enrollment retains metadata from the whole vault"
     The first scope also permanently retains a snapshot of vault-wide metadata:
-    node names and folder structure, tags, assignments, ingests, and provenance.
+    node names and folder structure, tags, assignments, ingests, provenance,
+    photo decisions, captions, creators, and copyrights.
     This includes records outside the chosen directory. Those other documents
     do not become scope members, and their content versions are not protected,
     but their enrollment-time metadata remains in the audit evidence.

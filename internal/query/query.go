@@ -77,6 +77,10 @@ type Filters struct {
 	ColorBlueMin  *string `json:"color_blue_min,omitzero"`
 	ColorBlueMax  *string `json:"color_blue_max,omitzero"`
 
+	RatingMin     *int64     `json:"rating_min,omitzero"`
+	RatingMax     *int64     `json:"rating_max,omitzero"`
+	Flags         []string   `json:"flags,omitzero"`
+	Labels        []string   `json:"labels,omitzero"`
 	Kinds         []string   `json:"kinds,omitzero"`
 	Cameras       []string   `json:"cameras,omitzero"`
 	Lenses        []string   `json:"lenses,omitzero"`
@@ -140,6 +144,10 @@ type filtersInput struct {
 	ColorBlueMin  *string `json:"color_blue_min"`
 	ColorBlueMax  *string `json:"color_blue_max"`
 
+	RatingMin     *int64     `json:"rating_min"`
+	RatingMax     *int64     `json:"rating_max"`
+	Flags         *[]string  `json:"flags"`
+	Labels        *[]string  `json:"labels"`
 	Kinds         *[]string  `json:"kinds"`
 	Cameras       *[]string  `json:"cameras"`
 	Lenses        *[]string  `json:"lenses"`
@@ -175,7 +183,7 @@ var optionalFilterFields = withQualityFields(map[string]struct{}{
 	"tag_ids": {}, "exclude_tag_ids": {}, "no_tags": {}, "media_families": {},
 	"mime_types": {}, "extensions": {}, "modified_after": {}, "modified_before": {},
 	"size_min": {}, "size_max": {}, "text_coverage": {}, "has_duplicates": {},
-	"collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {}, "set_ids": {},
+	"rating_min": {}, "rating_max": {}, "flags": {}, "labels": {}, "collapse_duplicates": {}, "kinds": {}, "cameras": {}, "lenses": {}, "iso_min": {}, "iso_max": {}, "capture_after": {}, "capture_before": {}, "gps_bounds": {}, "asset_ids": {}, "set_ids": {},
 })
 
 // Parse validates and normalizes one bounded QueryV1 JSON value.
@@ -290,6 +298,18 @@ func (input filtersInput) value() Filters {
 	}
 	if input.Lenses != nil {
 		value.Lenses = *input.Lenses
+	}
+	if input.RatingMin != nil {
+		value.RatingMin = input.RatingMin
+	}
+	if input.RatingMax != nil {
+		value.RatingMax = input.RatingMax
+	}
+	if input.Flags != nil {
+		value.Flags = *input.Flags
+	}
+	if input.Labels != nil {
+		value.Labels = *input.Labels
 	}
 	if input.ISOMin != nil {
 		value.ISOMin = input.ISOMin

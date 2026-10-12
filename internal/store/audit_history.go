@@ -49,6 +49,7 @@ type AuditPathState struct {
 // AuditAttachmentIdentity identifies one tag or provenance record without
 // relying on its mutable display fields.
 type AuditAttachmentIdentity struct {
+	FileID       string
 	TagID        string
 	NodeID       int64
 	ProvenanceID string
@@ -57,6 +58,7 @@ type AuditAttachmentIdentity struct {
 // AuditAttachmentState is the typed before/after state of one attached record.
 // The enclosing change Kind determines which fields are present.
 type AuditAttachmentState struct {
+	Photo         *PhotoAuthoredSnapshot
 	TagID         string
 	NodeID        int64
 	TagName       string
@@ -521,6 +523,13 @@ func projectAuditAttachment(event audit.Record) (*AuditAttachmentChange, error) 
 	if result.After, err = projectAuditAttachmentState(*kind, after); err != nil {
 		return nil, err
 	}
+	if *kind == "photo_authored" {
+		if result.After != nil {
+			result.Identity.NodeID = result.After.NodeID
+		} else if result.Before != nil {
+			result.Identity.NodeID = result.Before.NodeID
+		}
+	}
 	return result, nil
 }
 
@@ -530,6 +539,11 @@ func projectAuditAttachmentIdentity(
 	var result AuditAttachmentIdentity
 	var err error
 	switch kind {
+	case "photo_authored":
+		if record.Kind != "photo_authored_identity" {
+			return result, ErrInvalidPhotoAsset
+		}
+		result.FileID, err = auditUUIDField(record, "file_id")
 	case auditTagDefinitionKind:
 		if record.Kind != "tag_definition_identity" {
 			return result, fmt.Errorf("tag-definition identity has kind %q", record.Kind)
@@ -565,6 +579,11 @@ func projectAuditAttachmentState(
 	result := &AuditAttachmentState{}
 	var err error
 	switch kind {
+	case "photo_authored":
+		var snapshot PhotoAuthoredSnapshot
+		snapshot, err = photoAuthoredFromAudit(*record)
+		result.Photo = &snapshot
+		result.NodeID = snapshot.NodeID
 	case auditTagDefinitionKind:
 		if result.TagID, err = auditUUIDField(*record, "tag_id"); err == nil {
 			result.TagName, err = auditTextField(*record, "name")

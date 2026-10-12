@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	_ "embed"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,30 +94,9 @@ func dumpReleasedTable(t *testing.T, q metadataQuerier, table string, out *strin
 func seedV0150PendingWork(t *testing.T, db *sql.DB, legacy *Store) (photoNodeID int64, jobID, operationID string) {
 	t.Helper()
 	ctx := t.Context()
-	node, err := legacy.CreateFile(ctx, legacy.RootID(), "released-photo.raw", fakeHash("a1"), 4, "application/octet-stream")
-	require.NoError(t, err)
-	const assetID, fileID, receiptID = "40000000-0000-4000-8000-000000000001",
-		"40000000-0000-4000-8000-000000000002", "40000000-0000-4000-8000-000000000003"
+	node := createReleasedFixtureFile(t, legacy, "released-photo.raw", fakeHash("a1"), 4, "application/octet-stream")
+	seedReleasedPhotoAsset(t, db, node.ID)
 	const at = "2026-10-05T12:00:00.000000000Z"
-	tx, err := db.BeginTx(ctx, nil)
-	require.NoError(t, err)
-	_, err = tx.Exec(`PRAGMA defer_foreign_keys=ON`)
-	require.NoError(t, err)
-	for _, statement := range []struct {
-		query string
-		args  []any
-	}{
-		{`INSERT INTO photo_assets(asset_id,kind,revision,display_file_id,created_at,updated_at) VALUES(?,'photo',1,?,?,?)`,
-			[]any{assetID, fileID, at, at}},
-		{`INSERT INTO photo_files(file_id,asset_id,node_id,role,created_at) VALUES(?,?,?,'image',?)`,
-			[]any{fileID, assetID, node.ID, at}},
-		{`INSERT INTO photo_change_receipts(receipt_id,operation,asset_id,before_revision,after_revision,before_json,after_json,created_at)
-			VALUES(?,'create',?,0,1,'{}','{}',?)`, []any{receiptID, assetID, at}},
-	} {
-		_, err := tx.Exec(statement.query, statement.args...)
-		require.NoError(t, err)
-	}
-	require.NoError(t, tx.Commit())
 
 	now := time.Now().UTC().Add(time.Second)
 	versions := seedRenditionCatalogVersions(t, legacy)
@@ -185,7 +165,7 @@ func TestUpgradeReleasedV0150PreservesAuthorityAndPendingWork(t *testing.T) {
 			assert.Equal(t, currentStorageSchemaVersion, version)
 			var upgraded bytes.Buffer
 			require.NoError(t, s.ExportMetadata(t.Context(), &upgraded))
-			assert.Equal(t, released.String(), upgraded.String())
+			assert.Equal(t, normalizeReleasedUpgradeSnapshot(t, released.Bytes()), normalizeReleasedUpgradeSnapshot(t, upgraded.Bytes()))
 			assert.Equal(t, pending, dumpReleasedOperationalTables(t, s.db))
 
 			current, err := s.CurrentProcessingIncarnation(t.Context())
@@ -220,8 +200,8 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 			t.Run(fmt.Sprintf("v%d/%s", version, driver.name), func(t *testing.T) {
 				path := filepath.Join(t.TempDir(), "docbank.db")
 				db, legacy := newReleasedFixtureStore(t, path, driver.driver, schema, version)
-				node, err := legacy.CreateFile(t.Context(), legacy.RootID(), "released.jpg", fakeHash("e5"), 8, "image/jpeg")
-				require.NoError(t, err)
+				node := createReleasedFixtureFile(t, legacy, "released.jpg", fakeHash("e5"), 8, "image/jpeg")
+				seedReleasedPhotoAsset(t, db, node.ID)
 				require.NoError(t, db.Close())
 				s, err := Open(path, driver.driver)
 				require.NoError(t, err)
@@ -531,4 +511,60 @@ func TestUpgradeReleasedV0150KeepsMailboxUpload(t *testing.T) {
 			require.NoError(t, s.PutMailboxChunk(ctx, upload.Owner, upload.ID, last), "the upload resumes")
 		})
 	}
+}
+
+func createReleasedFixtureFile(t *testing.T, legacy *Store, name, hash string, size int64, mime string) Node {
+	t.Helper()
+	var node Node
+	require.NoError(t, legacy.withStorageTx(t.Context(), func(tx *sql.Tx) error {
+		var err error
+		node, _, err = legacy.createFileTx(t.Context(), tx, legacy.RootID(), name, hash, size, mime)
+		return err
+	}))
+	return node
+}
+
+func normalizeReleasedUpgradeSnapshot(t *testing.T, data []byte) []map[string]any {
+	t.Helper()
+	var records []map[string]any
+	for line := range bytes.SplitSeq(bytes.TrimSpace(data), []byte{'\n'}) {
+		var record map[string]any
+		require.NoError(t, json.Unmarshal(line, &record))
+		if record["type"] == "photo_file" {
+			defaults := map[string]any{"revision": float64(1), "rating": float64(0), "flag": "", "label": "", "caption": "", "creator": "", "copyright": "", "rotation": float64(0)}
+			for key, value := range defaults {
+				if _, ok := record[key]; !ok {
+					record[key] = value
+				}
+			}
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+func seedReleasedPhotoAsset(t *testing.T, db *sql.DB, nodeID int64) {
+	t.Helper()
+	const assetID, fileID, receiptID = "40000000-0000-4000-8000-000000000001",
+		"40000000-0000-4000-8000-000000000002", "40000000-0000-4000-8000-000000000003"
+	const at = "2026-10-05T12:00:00.000000000Z"
+	tx, err := db.BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	_, err = tx.Exec(`PRAGMA defer_foreign_keys=ON`)
+	require.NoError(t, err)
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO photo_assets(asset_id,kind,revision,display_file_id,created_at,updated_at) VALUES(?,'photo',1,?,?,?)`,
+			[]any{assetID, fileID, at, at}},
+		{`INSERT INTO photo_files(file_id,asset_id,node_id,role,created_at) VALUES(?,?,?,'image',?)`,
+			[]any{fileID, assetID, nodeID, at}},
+		{`INSERT INTO photo_change_receipts(receipt_id,operation,asset_id,before_revision,after_revision,before_json,after_json,created_at)
+			VALUES(?,'create',?,0,1,'{}','{}',?)`, []any{receiptID, assetID, at}},
+	} {
+		_, err := tx.Exec(statement.query, statement.args...)
+		require.NoError(t, err)
+	}
+	require.NoError(t, tx.Commit())
 }

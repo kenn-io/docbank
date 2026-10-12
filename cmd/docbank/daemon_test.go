@@ -61,11 +61,11 @@ func TestDerivedBackfillsAreRegisteredOnce(t *testing.T) {
 	))
 	registered := map[string]int{}
 	for _, job := range supervisor.Snapshot() {
-		if job.Name == "derive:document-events" || job.Name == "derive:document-people" || job.Name == "derive:photo-quality" {
+		if job.Name == "derive:document-events" || job.Name == "derive:document-people" || job.Name == "derive:photo-quality" || job.Name == "extract:photo-sidecars" {
 			registered[job.Name]++
 		}
 	}
-	require.Equal(t, map[string]int{"derive:document-events": 1, "derive:document-people": 1, "derive:photo-quality": 1}, registered)
+	require.Equal(t, map[string]int{"derive:document-events": 1, "derive:document-people": 1, "derive:photo-quality": 1, "extract:photo-sidecars": 1}, registered)
 	emptyQuery, err := query.Parse([]byte(`{}`))
 	require.NoError(t, err)
 	var signals *document.PhotoQualitySignals

@@ -323,6 +323,17 @@
   <Card level="inset" padding="sm" eyebrow={label} title={state ? "Present" : "Absent"}>
     {#if state}
       <dl>
+        {#if state.photo}
+          <div><dt>File</dt><dd><code>{selectedEvent?.attachment?.identity.file_id}</code></dd></div>
+          <div><dt>File revision</dt><dd>{state.photo.revision}</dd></div>
+          <div><dt>Rating</dt><dd>{state.photo.values.rating}</dd></div>
+          <div><dt>Flag</dt><dd>{state.photo.values.flag || "(empty)"}</dd></div>
+          <div><dt>Label</dt><dd>{state.photo.values.label || "(empty)"}</dd></div>
+          <div><dt>Caption</dt><dd>{state.photo.values.caption || "(empty)"}</dd></div>
+          <div><dt>Creator</dt><dd>{state.photo.values.creator || "(empty)"}</dd></div>
+          <div><dt>Copyright</dt><dd>{state.photo.values.copyright || "(empty)"}</dd></div>
+          <div><dt>Rotation</dt><dd>{state.photo.values.rotation}°</dd></div>
+        {/if}
         {#if state.tag_name}<div><dt>Tag name</dt><dd>{state.tag_name}</dd></div>{/if}
         {#if state.ingest_id}<div><dt>Ingest</dt><dd><code>{state.ingest_id}</code></dd></div>{/if}
         {#if state.original_path !== undefined}

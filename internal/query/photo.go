@@ -95,11 +95,27 @@ func validPhotoLabel(value string) bool {
 
 func normalizePhotoFilters(value Filters) (Filters, error) {
 	var err error
+	for _, bound := range []*int64{value.RatingMin, value.RatingMax} {
+		if bound != nil && (*bound < 0 || *bound > 5) {
+			return Filters{}, errors.New("rating must be 0 through 5")
+		}
+	}
+	if value.RatingMin != nil {
+		value.RatingMin = new(*value.RatingMin)
+	}
+	if value.RatingMax != nil {
+		value.RatingMax = new(*value.RatingMax)
+	}
+	if value.RatingMin != nil && value.RatingMax != nil && *value.RatingMin > *value.RatingMax {
+		return Filters{}, errors.New("rating_min exceeds rating_max")
+	}
 	for _, set := range []struct {
 		values *[]string
 		valid  func(string) bool
 		name   string
 	}{
+		{&value.Flags, ValidPhotoFlag, "flags"},
+		{&value.Labels, ValidPhotoColorLabel, "labels"},
 		{&value.Kinds, func(v string) bool { return oneOf(v, "photo", "video") }, "kinds"}, {&value.Cameras, validPhotoLabel, "cameras"}, {&value.Lenses, validPhotoLabel, "lenses"}, {&value.AssetIDs, validUUIDv4, "asset_ids"}, {&value.SetIDs, validUUIDv4, "set_ids"},
 	} {
 		*set.values, err = normalizeSet(*set.values, maxIDValues, set.valid, set.name)
@@ -197,4 +213,14 @@ func CaptureTimeKey(normalized, precision, timezone, offset string) string {
 		return ""
 	}
 	return key
+}
+
+func PhotoFlags() []string { return []string{"", "pick", "reject"} }
+func PhotoColorLabels() []string {
+	return []string{"", "red", "yellow", "green", "blue", "purple"}
+}
+
+func ValidPhotoFlag(value string) bool { return oneOf(value, PhotoFlags()...) }
+func ValidPhotoColorLabel(value string) bool {
+	return oneOf(value, PhotoColorLabels()...)
 }
