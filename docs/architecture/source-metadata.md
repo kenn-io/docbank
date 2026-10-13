@@ -70,6 +70,12 @@ proprietary container headers need their own bounded parser.
 
 The daemon processes source metadata in the background. Embedded callers choose
 when to process a version with `EnsureSourceMetadata`. Both use the same parser.
+The background scan selects each retained original once, using an indexed
+existence check instead of joining every content version that shares its bytes.
+Historical and trashed versions still retain originals; blobs without a retained
+version are excluded. Work pages follow SHA-256 order and skip originals that
+already have evidence for the requested contract and extractor fingerprint.
+
 Originals through 64 MiB fit the general in-memory read. JPEG, TIFF-family, RAF,
 CR3, and MP4 originals beyond the 20 MiB general media-inspection limit use
 bounded media parsing instead. JPEG and TIFF-based files use a 20 MiB leading
