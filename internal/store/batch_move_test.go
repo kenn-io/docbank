@@ -73,6 +73,8 @@ func TestBatchMoveResolvesDestinationParentsInFinalTree(t *testing.T) {
 	ctx := t.Context()
 	a, err := s.Mkdir(ctx, s.RootID(), "a")
 	require.NoError(t, err)
+	unchanged, err := s.CreateFile(ctx, a.ID, "unchanged.txt", fakeHash("unchanged"), 9, "text/plain")
+	require.NoError(t, err)
 	_, err = s.Mkdir(ctx, s.RootID(), "x")
 	require.NoError(t, err)
 	item, err := s.CreateFile(ctx, s.RootID(), "item.txt", fakeHash("item"), 4, "text/plain")
@@ -91,14 +93,30 @@ func TestBatchMoveResolvesDestinationParentsInFinalTree(t *testing.T) {
 	results, err := s.BatchMove(ctx, []BatchMoveRequest{
 		{SourcePath: "/a", DestinationPath: "/x/a"},
 		{SourcePath: "/item.txt", DestinationPath: "/x/a/item.txt"},
+		{SourcePath: "/a/unchanged.txt", DestinationPath: "//x//a/unchanged.txt/"},
 	})
 	require.NoError(t, err)
+	require.Len(t, results, 3)
 	assert.Equal(t, "/x/a", results[0].Path)
 	assert.Equal(t, "/x/a/item.txt", results[1].Path)
+	assert.Equal(t, "/a/unchanged.txt", results[2].FromPath)
+	assert.Equal(t, "/x/a/unchanged.txt", results[2].Path)
+	assert.Equal(t, unchanged, results[2].Node, "moving only the ancestor preserves the node projection")
 	moved, err := s.NodeByPath(ctx, "/x/a/item.txt")
 	require.NoError(t, err)
 	assert.Equal(t, item.ID, moved.ID)
 	assert.Equal(t, a.ID, *moved.ParentID)
+	assert.Equal(t, moved, results[1].Node, "receipt includes the updated node projection")
+
+	results, err = s.BatchMove(ctx, []BatchMoveRequest{
+		{SourcePath: "/x/a/unchanged.txt", DestinationPath: "//x//a/unchanged.txt/"},
+		{NodeID: moved.ID, IfRevision: moved.Revision, DestinationPath: "/x/a/item.txt"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []BatchMoveResult{
+		{Node: unchanged, FromPath: "/x/a/unchanged.txt", Path: "/x/a/unchanged.txt"},
+		{Node: moved, FromPath: "/x/a/item.txt", Path: "/x/a/item.txt"},
+	}, results, "a wholly unchanged batch still returns canonical receipts in request order")
 }
 
 func TestBatchMoveSwapsDirectoryCoordinates(t *testing.T) {
