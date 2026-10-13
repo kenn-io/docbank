@@ -118,7 +118,7 @@ Photos, selection, and scroll position stay in place across Documents/Photos swi
 Pending, unsupported, and failed previews have separate placeholders. Choose
 Refresh previews to reload the listing after background preview work finishes.
 If a page fails to load, the earlier photos remain visible. Retry requests the
-failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Whole-query selection keeps its query scope. Selection retains photos in that range; imports or deletions may move the visible photo outside it. Failed attempts keep the earlier view available for Retry. Each page has a one-minute limit and offers Retry if it needs more time.
+failed page again. Refresh and expired-cursor recovery keep the current grid visible until the refreshed range succeeds. Refresh keeps selections and the range anchor only within the refreshed pages, plus failed trash targets. Whole-query selection keeps its query scope. Failed attempts keep the earlier view available for Retry. Each refresh page has a one-minute deadline.
 
 ## Hidden photos
 

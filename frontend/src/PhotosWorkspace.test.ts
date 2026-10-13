@@ -597,6 +597,7 @@ it.each(["listing", "late", "navigation", "retry", "fresh"])("keeps standalone l
     finish(fresh); await screen.findByText("Fit preview");
     expect(preview).toHaveBeenCalledWith(expect.objectContaining({content_version_id:"fresh-version"}), "fit", expect.any(AbortSignal));
     expect(get).toHaveBeenCalledWith(old.asset_id, "fresh-grid", expect.any(AbortSignal), false);
+    expect((photos.items[0] as PhotoBrowseRow).content_version_id).toBe("fresh-version");
     photos.items = [old]; await fireEvent.keyDown(screen.getByRole("dialog"), {key:"i"});
     expect(lookup).toHaveBeenCalledOnce(); expect(preview).toHaveBeenCalledTimes(1); return;
   }
@@ -650,44 +651,46 @@ it.each([
   render(PhotosWorkspace, {photos, cache:{get:vi.fn(async () => new Blob(["synthetic"]))} as unknown as PhotoPreviewCache, photoID:old.asset_id, onphotochange:vi.fn()});
   if (operation === "original") { await screen.findByText("Fit preview"); await fireEvent.click(screen.getByRole("button", {name:"View original"})); }
   await screen.findByText("Photo changed"); expect(screen.queryByRole("button", {name:"Retry preview"})).toBeNull();
-  const preparationCount = () => preview.mock.calls.filter(([row]) => row.asset_id === old.asset_id).length;
-  const preparations = preparationCount();
+  const preparations = preview.mock.calls.length;
   await fireEvent.click(screen.getByRole("button", {name:"Reload photo"}));
   if (version === "same") {
-    await screen.findByText("Reload failed"); expect(preparationCount()).toBe(preparations);
+    await screen.findByText("Reload failed"); expect(preview).toHaveBeenCalledTimes(preparations);
     await fireEvent.click(screen.getByRole("button", {name:"Reload photo"}));
   }
   await waitFor(() => expect(finish).toBeTypeOf("function"));
-  expect(preparationCount()).toBe(preparations);
+  expect(preview).toHaveBeenCalledTimes(preparations);
   finish(new Response(JSON.stringify({items:[fresh], total:2})));
-  await screen.findByText("Fit preview");
-  await waitFor(() => expect(preparationCount()).toBe(preparations + 1));
-  expect(photos.viewerReturn).toBe(record);
+  await waitFor(() => expect((photos.items[0] as PhotoBrowseRow).content_version_id).toBe(fresh.content_version_id)); await screen.findByText("Fit preview");
+  await waitFor(() => expect(preview).toHaveBeenCalledTimes(preparations + 1));
+  expect(photos.items.map(item => item.asset_id)).toEqual(["photo-1", "photo-2"]); expect(photos.cursor).toBe("next");
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-2"]); expect(photos.viewerReturn).toBe(record);
   expect(screen.queryByText("Photo changed")).toBeNull(); expect(document.activeElement).toBe(screen.getByRole("dialog"));
 });
 
-it.each(["success", "failure", "interrupted"] as const)("consumes a %s reload before revisiting the listed photo", async outcome => {
+it.each(["success", "failure", "interrupted", "late"] as const)("consumes a %s reload before revisiting the listed photo", async outcome => {
   vi.stubGlobal("ResizeObserver", class {observe() {} disconnect() {}});
   const photos = new Photos("scoped", vi.fn()); photos.items = [photo(1), photo(2)]; photos.started = true;
   photos.viewerReturn = {contextID:photos.contextID, assetID:"photo-1", control:"open", scrollTop:0};
+  let finish!: (row:ReturnType<typeof photo>) => void;
   const lookup = vi.spyOn(photos, "lookup");
-  const reload = vi.spyOn(photos,"reload");
-  const fresh = {...photo(1),content_version_id:"fresh-version"};
-  if (outcome === "success") lookup.mockResolvedValue(fresh);
+  if (outcome === "success") lookup.mockResolvedValue(photo(1));
   else if (outcome === "failure") lookup.mockRejectedValue(new Error("Reload failed"));
+  else if (outcome === "late") lookup.mockImplementation(() => new Promise(resolve => finish = resolve));
   else lookup.mockImplementation(() => new Promise(() => {}));
   vi.spyOn(photos, "preview").mockRejectedValueOnce(new APIError("Changed", 409, "photo_display_changed")).mockResolvedValue({state:"unsupported"});
   const props = {photos, cache:{get:vi.fn()} as unknown as PhotoPreviewCache, photoID:"photo-1", onphotochange:vi.fn()};
   const view = render(PhotosWorkspace, props);
   await fireEvent.click(await screen.findByRole("button", {name:"Reload photo"}));
   await waitFor(() => expect(lookup).toHaveBeenCalledOnce());
-  expect(reload).toHaveBeenCalledWith("photo-1",expect.any(AbortSignal));
   if (outcome === "failure") await screen.findByText("Reload failed");
-  if (outcome === "success") {
-    await waitFor(() => expect(screen.queryByText("Changed")).toBeNull());
-  }
+  if (outcome === "success") await waitFor(() => expect(screen.queryByText("Changed")).toBeNull());
   await view.rerender({...props, photoID:"photo-2"});
   await waitFor(() => expect(lookup.mock.calls[0]![1].aborted).toBe(true));
+  if (outcome === "late") {
+    const version = (photos.items[0] as PhotoBrowseRow).content_version_id;
+    finish({...photo(1), content_version_id:"late-version"}); await new Promise(resolve => setTimeout(resolve, 0));
+    expect((photos.items[0] as PhotoBrowseRow).content_version_id).toBe(version); expect(screen.getByRole("dialog", {name:"Photo viewer, Photo 2.jpg"})).toBeTruthy();
+  }
   await view.rerender(props);
   await screen.findByRole("dialog", {name:"Photo viewer, Photo 1.jpg"});
   expect(lookup).toHaveBeenCalledOnce();
@@ -756,6 +759,47 @@ it("explains the relevance limit and hides it for complete results or capture da
   photos.query = { ...photos.query, sort: { field: "capture_time", direction: "desc" } };
   await waitFor(() => expect(screen.queryByText(note)).toBeNull());
   photos.dispose(); await cache.dispose();
+});
+
+it("keeps a Library reload error through a list refresh", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const photos = new Photos("scoped", vi.fn()); photos.items = [photo(1)]; photos.started = true;
+  photos.viewerReturn = { contextID: photos.contextID, assetID: "photo-1", control: "open", scrollTop: 0 };
+  const lookup = vi.spyOn(photos, "lookup").mockRejectedValue(new Error("Reload failed"));
+  vi.spyOn(photos, "preview").mockRejectedValue(new APIError("Photo changed", 409, "photo_display_changed"));
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, photoID: "photo-1" });
+  await fireEvent.click(await screen.findByRole("button", { name: "Reload photo" }));
+  await screen.findByText("Reload failed");
+  photos.items = [{ ...photo(1), revision: 2 }]; await tick();
+  expect(screen.getByText("Reload failed")).toBeTruthy();
+  expect(lookup).toHaveBeenCalledOnce();
+  photos.dispose();
+});
+
+it("keeps Library recovery below its toolbar and inside the grid", async () => {
+  const photos = new Photos("scoped", vi.fn()); photos.started = true; photos.error = "Page unavailable";
+  const retry = vi.spyOn(photos, "retry").mockResolvedValue();
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  const alert = screen.getByRole("alert");
+  expect(alert.closest(".library-grid")).toBeTruthy();
+  expect(document.querySelector(".photo-toolbar")!.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  await fireEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+  expect(retry).toHaveBeenCalledOnce();
+  photos.dispose();
+});
+
+it.each([false, true])("enables viewer paging before the first page only for Map, map=%s", async mapMode => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, mapMode ? "map" : undefined);
+  photos.items = [photo(1)]; photos.loading = true;
+  photos.viewerReturn = { contextID: photos.contextID, assetID: "photo-1", control: "open", scrollTop: 0 };
+  vi.spyOn(photos, "resume").mockResolvedValue();
+  vi.spyOn(photos, "preview").mockResolvedValue({ state: "unsupported" });
+  render(PhotosWorkspace, { photos, mapMode, tiles: { tile_url: "https://tiles.example.org/{z}/{x}/{y}", attribution: "Example", max_zoom: 19 }, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, photoID: "photo-1" });
+  await screen.findByRole("dialog", { name: "Photo viewer, Photo 1.jpg" });
+  photos.loading = false; await tick();
+  expect(screen.getAllByRole("button", { name: "Next photo" }).every(button => (button as HTMLButtonElement).disabled)).toBe(!mapMode);
+  photos.dispose();
 });
 
 it("renders disabled maps without fetching and keeps the Library selection on Escape", async () => {

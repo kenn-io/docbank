@@ -126,6 +126,12 @@ export class Photos {
   }
 
   async reload(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {
+    if (!this.projection) {
+      const row = await this.lookup(assetID, signal);
+      signal.throwIfAborted();
+      this.items = this.items.map(item => item.asset_id === assetID ? row : item);
+      return row;
+    }
     const query = this.query;
     try {
       if (query.filters.asset_ids && !query.filters.asset_ids.includes(assetID)) throw new APIError("This photo is no longer in this view.", 404, "not_found");
@@ -221,7 +227,7 @@ export class Photos {
 
   async loadMore(preserve?: () => (() => Promise<void>) | undefined): Promise<void> {
     if (this.disposed || this.hiding || this.loading || this.trashing || this.error) return;
-    if (this.replacement) return this.retry(preserve);
+    if (this.projection && this.replacement) return this.retry(preserve);
     if (this.started && !this.cursor) return;
     this.loading = true;
     const controller = this.controller;
@@ -229,7 +235,7 @@ export class Photos {
     try {
       const first = !this.started;
       do {
-        signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
+        signal = this.projection ? AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]) : controller.signal;
         const page = await this.page(this.query, signal, this.cursor);
         if (signal.aborted) throw signal.reason;
         const seen = this.seenIDs ??= new Set(this.items.map(item => item.asset_id));
@@ -239,7 +245,7 @@ export class Photos {
         this.rows = [...previous, ...added];
         this.appendedFrom = previous;
         if (this.allResults) this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined };
-        if (!this.started) this.total = page.total;
+        if (!this.started || !this.projection) this.total = page.total;
         this.cursor = page.next_cursor;
         this.started = true;
         await restore?.();
@@ -248,8 +254,8 @@ export class Photos {
     } catch (cause) {
       if (controller.signal.aborted) return;
       this.authFailure(cause);
-      this.expired = cause instanceof APIError && (cause.code === "cursor_expired" || cause.code === "invalid_photo_cursor");
-      this.error = signal.aborted || cause instanceof Error && cause.name === "TimeoutError" ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
+      this.expired = cause instanceof APIError && (cause.code === "cursor_expired" || !!this.projection && cause.code === "invalid_photo_cursor");
+      this.error = this.projection && (signal.aborted || cause instanceof Error && cause.name === "TimeoutError") ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.loading = false;
     }
@@ -361,6 +367,7 @@ export class Photos {
   }
 
   private async eligibleSelection(ids: Iterable<string>, query: Query, signal: AbortSignal) {
+    query = this.projection ? query : photoQuery;
     const eligible = new Set(ids);
     const absent = this.trashTargets.filter(row => this.selection.selectedIDs.has(row.asset_id) && !eligible.has(row.asset_id));
     for (let offset = 0; offset < absent.length; offset += 64) {

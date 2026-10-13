@@ -66,17 +66,17 @@
     const id = photoID;
     if (!id) { direct = undefined; detailError = ""; if (fromGrid) void restoreGrid(); return; }
     const controller = new AbortController();
-    const explicit = reload?.id === id && reload !== consumedReload;
-    // Each accepted list refresh revalidates a grid-opened photo; an explicit reload updates the list itself, so it must not depend on it.
-    if (!explicit && fromGrid) void listedRow;
-    if (!explicit && reload?.id === id && reload === consumedReload && untrack(() => direct?.asset_id === id && (!fromGrid || listedRow === reloadedRow))) { detailLoading = false; return () => controller.abort(); }
-    if (!explicit) { if (untrack(() => direct?.asset_id) !== id) direct = undefined; detailError = ""; }
+    const explicit = reload?.id === id && reload !== (photos.projection ? consumedReload : untrack(() => consumedReload));
+    // Map list refreshes revalidate compact rows; explicit reloads update the list themselves.
+    if (photos.projection && !explicit && fromGrid) void listedRow;
+    if (photos.projection && !explicit && reload?.id === id && reload === consumedReload && untrack(() => direct?.asset_id === id && (!fromGrid || listedRow === reloadedRow))) { detailLoading = false; return () => controller.abort(); }
+    if (!explicit) { if (!photos.projection || untrack(() => direct?.asset_id) !== id) direct = undefined; detailError = ""; }
     if (!explicit && fromGrid && listedDetail) { detailLoading = false; return () => controller.abort(); }
     detailLoading = true;
     const request = reload;
     const version = untrack(() => current?.content_version_id);
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
-    void (explicit ? photos.reload(id, signal) : photos.lookup(id, signal)).then(photo => { if (!signal.aborted) { direct = photo; detailError = ""; if (explicit) { if (photo.content_version_id === version) reloadRevision++; reloadedRow = untrack(() => listedRow); consumedReload = request; } } }).catch(cause => { if (!controller.signal.aborted) detailError = cause instanceof Error ? cause.message : String(cause); }).finally(() => { if (!controller.signal.aborted) detailLoading = false; });
+    void (photos.projection && explicit ? photos.reload(id, signal) : photos.lookup(id, signal)).then(photo => { if (!signal.aborted) { if (!photos.projection) photos.items = photos.items.map(item => item.asset_id === id ? photo : item); direct = photo; detailError = ""; if (explicit) { if (!photos.projection || photo.content_version_id === version) reloadRevision++; reloadedRow = untrack(() => listedRow); consumedReload = request; } } }).catch(cause => { if (!controller.signal.aborted) detailError = cause instanceof Error ? cause.message : String(cause); }).finally(() => { if (!controller.signal.aborted) detailLoading = false; });
     return () => { controller.abort(); if (explicit) consumedReload = request; };
   });
   async function restoreGrid() {
@@ -217,7 +217,7 @@
     <div class="map-tabs"><Button size="sm" surface={mobileTab === "map" ? "solid" : "outline"} onclick={() => mobileTab = "map"}>Map</Button><Button size="sm" surface={mobileTab === "photos" ? "solid" : "outline"} onclick={() => mobileTab = "photos"}>Photos</Button></div>
   {/if}
   {#if mapMode && photos.loading}<div class="photo-loading" role="status"><Spinner size={14} />Loading located photos: {photos.items.length.toLocaleString()} of {photos.total.toLocaleString()}</div>{/if}
-  {#if photos.error}
+  {#if mapMode && photos.error}
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void retryNavigation()}>Retry</Button></div>
   {/if}
   <div class:map-layout={mapMode} class:show-photos={mobileTab === "photos"} class="photo-layout" inert={!!photoID}>
@@ -267,6 +267,9 @@
   {#if photos.query.sort?.field === "relevance" && photos.total > photos.items.length}
     <p class="photo-search-limit">Showing the best 250 of {photos.total.toLocaleString()} matches. Refine the search or sort by capture date to see all.</p>
   {/if}
+  {#if !mapMode && photos.error}
+    <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void photos.retry(preserve)}>Retry</Button></div>
+  {/if}
   <div class="photo-browser">
   {#if searchable}
   <div class="photo-facets">
@@ -307,7 +310,7 @@
   {:else}{@render libraryGrid()}{/if}
   </div>
   {/if}
-  {#if photoID}<PhotoLoupe photo={current} error={detailError} note={membershipNote} reloading={detailLoading} {reloadRevision} onreload={() => reload = {id:photoID}} onretry={retryNavigation} {photos} {cache} items={fromGrid ? ordered : []} canLoadMore={fromGrid && (!photos.started || !!photos.cursor)} onmove={move} onchoose={id => onphotochange(id, "step")} onclose={() => onphotochange("", "close")} />{/if}
+  {#if photoID}<PhotoLoupe photo={current} error={detailError} note={membershipNote} reloading={detailLoading} {reloadRevision} onreload={() => reload = {id:photoID}} onretry={retryNavigation} {photos} {cache} items={fromGrid ? ordered : []} canLoadMore={fromGrid && (mapMode && !photos.started || !!photos.cursor)} onmove={move} onchoose={id => onphotochange(id, "step")} onclose={() => onphotochange("", "close")} />{/if}
 </main>
 {#if modal && modalAlbum && albums}
   <Modal title={modal === "delete" ? "Delete album" : "Duplicate album"} onclose={() => { if (!albums.busy) modal = undefined; }}>
