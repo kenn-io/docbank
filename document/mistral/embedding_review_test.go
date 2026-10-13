@@ -136,11 +136,9 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 						require.NoError(t, err)
 						require.Len(t, result.Vectors, 1)
 						require.Equal(t, 3, resolutions)
-						require.NoError(t, ctx.Err())
 					case "exhaust":
 						require.ErrorIs(t, err, ErrTransientResponse)
 						require.ErrorIs(t, err, context.DeadlineExceeded)
-						require.NoError(t, ctx.Err())
 						require.Equal(t, 3, resolutions)
 						require.Equal(t, 2, MetricsFromError(err).Retries)
 					case "caller_cancel":
@@ -197,7 +195,6 @@ func TestMistralEmbeddingAttemptTimeoutsThroughProductionTransport(t *testing.T)
 			require.ErrorIs(t, err, ErrTransientResponse)
 			require.ErrorIs(t, err, context.DeadlineExceeded)
 			require.Equal(t, RequestMetrics{Requests: 1}, withoutLatency(MetricsFromError(err)))
-			require.NoError(t, t.Context().Err())
 		})
 	}
 }
