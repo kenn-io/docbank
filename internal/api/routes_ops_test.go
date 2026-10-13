@@ -390,21 +390,19 @@ func TestTrashListAndEmpty(t *testing.T) {
 	_, _, err = s.Trash(t.Context(), raw.ID, store.UnconditionalRev)
 	require.NoError(t, err)
 
-	var metadata bytes.Buffer
-	require.NoError(t, s.ExportMetadata(t.Context(), &metadata))
-	expectedStore, err := store.Open(filepath.Join(t.TempDir(), "expected.db"))
+	expected, err := s.TrashEmpty(t.Context(), 0, false)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, expectedStore.Close()) })
-	require.NoError(t, expectedStore.ImportMetadata(t.Context(), &metadata))
 	for _, run := range []bool{false, true} {
-		expected, err := expectedStore.TrashEmpty(t.Context(), 0, run)
-		require.NoError(t, err)
 		resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
 			map[string]any{"older_than": "", "run": run})
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)
 		var out api.TrashEmptyReport
 		require.NoError(t, json.Unmarshal([]byte(body), &out))
-		assert.Equal(t, api.TrashEmptyReport{CandidateRoots: expected.Candidates, RetainedRoots: expected.Retained, HeldRoots: expected.Held, Deleted: expected.Deleted, Run: expected.Run}, out)
+		want := api.TrashEmptyReport{CandidateRoots: expected.Candidates, RetainedRoots: expected.Retained, HeldRoots: expected.Held, Run: run}
+		if run {
+			want.Deleted = expected.Candidates
+		}
+		assert.Equal(t, want, out)
 	}
 
 	// Bad age string → 422.

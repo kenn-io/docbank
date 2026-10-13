@@ -276,52 +276,6 @@ func TestTrashedRootsPageIsBounded(t *testing.T) {
 	require.ErrorContains(t, err, "trash offset")
 }
 
-func TestTrashEmpty(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-
-	a, err := s.Mkdir(ctx, s.RootID(), "a")
-	require.NoError(t, err)
-	_, err = s.CreateFile(ctx, a.ID, "f.txt", fakeHash("a1"), 1, "text/plain")
-	require.NoError(t, err)
-	_, _, err = s.Trash(ctx, a.ID, -1)
-	require.NoError(t, err)
-
-	roots, err := s.TrashedRoots(ctx)
-	require.NoError(t, err)
-	require.Len(t, roots, 1)
-
-	// Nothing older than an hour.
-	rep, err := s.TrashEmpty(ctx, time.Hour, false)
-	require.NoError(t, err)
-	assert.Equal(t, int64(0), rep.Candidates)
-	assert.False(t, rep.Run)
-
-	// A dry run reports everything without deleting it.
-	rep, err = s.TrashEmpty(ctx, 0, false)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), rep.Candidates)
-	assert.Zero(t, rep.Deleted)
-	roots, err = s.TrashedRoots(ctx)
-	require.NoError(t, err)
-	require.Len(t, roots, 1)
-
-	// --run semantics delete exactly the reported roots.
-	rep, err = s.TrashEmpty(ctx, 0, true)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), rep.Candidates)
-	assert.Equal(t, int64(1), rep.Deleted)
-	assert.True(t, rep.Run)
-
-	// Subtree rows are gone (cascade), blob row remains (GC's job).
-	var nodeCount, blobCount int
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodeCount))
-	assert.Equal(t, 1, nodeCount) // just the root
-	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
-	assert.Equal(t, 1, blobCount)
-}
-
 func TestTrashEmptyRetainsMediaAuthorityAndCheckoutEntryPinsAndDeletesUnrelatedRoots(t *testing.T) {
 	t.Parallel()
 	for _, authority := range []string{"source version", "input artifact", "checkout entry", "sealed snapshot"} {
@@ -459,6 +413,9 @@ func TestVaultEmptyTrashBoundedStore(t *testing.T) {
 				_, _, err = s.Trash(ctx, node.ID, UnconditionalRev)
 				require.NoError(t, err)
 			}
+			recent, err := s.TrashEmptyBounded(ctx, time.Hour, test.limit, false)
+			require.NoError(t, err)
+			assert.Equal(t, TrashEmptyResult{}, recent)
 			for remaining := test.total; remaining > 0; remaining -= test.limit {
 				count, more := int64(min(remaining, test.limit)), remaining > test.limit
 				dryRun, err := s.TrashEmptyBounded(ctx, 0, test.limit, false)
@@ -474,7 +431,16 @@ func TestVaultEmptyTrashBoundedStore(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, roots, remaining-int(count))
 			}
-			_, err := s.TrashEmptyBounded(ctx, 0, 0, true)
+			var nodeCount, blobCount int
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&nodeCount))
+			assert.Equal(t, 1, nodeCount)
+			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobCount))
+			if test.populated {
+				assert.Equal(t, 1, blobCount)
+			} else {
+				assert.Zero(t, blobCount)
+			}
+			_, err = s.TrashEmptyBounded(ctx, 0, 0, true)
 			require.ErrorContains(t, err, "maximum trash roots must be positive")
 		})
 	}
