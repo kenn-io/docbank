@@ -70,15 +70,18 @@ func registerWeb(mux *http.ServeMux, enabled bool, webURL, loginOrigin string, t
 }
 
 func isPhotoMapPage(path string) bool {
-	id, ok := strings.CutPrefix(path, "/photos/map/")
-	return ok && query.ValidateTextOperand("set", id) == nil
+	return isPhotoSetPage(path, "/photos/map/")
 }
 
 func isPhotoAlbumPage(path string) bool {
 	if path == "/photos/albums" {
 		return true
 	}
-	id, ok := strings.CutPrefix(path, "/photos/albums/")
+	return isPhotoSetPage(path, "/photos/albums/")
+}
+
+func isPhotoSetPage(path, prefix string) bool {
+	id, ok := strings.CutPrefix(path, prefix)
 	return ok && query.ValidateTextOperand("set", id) == nil
 }
 

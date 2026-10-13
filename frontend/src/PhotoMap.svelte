@@ -7,18 +7,25 @@
   import { type MapTiles } from "./photoMap.js";
   import type { PhotoMapRow } from "./generated/docbank.js";
   import type { MapView } from "./photos.svelte.js";
-  let { items, complete = true, tiles, view, onopen, onvisible, onview }: { items: PhotoMapRow[]; complete?: boolean; tiles: MapTiles; view?: MapView; onopen: (id: string, element: HTMLElement) => void; onvisible: (rows: PhotoMapRow[]) => void; onview?: (view: MapView) => void } = $props();
+  let { items, tiles, view, onopen, onvisible, onview }: { items: PhotoMapRow[]; tiles: MapTiles; view?: MapView; onopen: (id: string, element: HTMLElement) => void; onvisible: (rows: PhotoMapRow[]) => void; onview?: (view: MapView) => void } = $props();
   let container: HTMLDivElement;
   let map: L.Map | undefined;
   let cluster: L.MarkerClusterGroup | undefined;
   let frame: number | undefined;
   let tileError = $state(false);
+  const failedTiles = new Set<string>();
+  let scanned: PhotoMapRow[] = [];
+  let inView: PhotoMapRow[] = [];
   const markers = new Map<string, L.Marker>();
   function cancelBuild() { if (frame !== undefined) L.Util.cancelAnimFrame(frame); frame = undefined; }
-  function visible() {
-    if (!map || !complete) return;
+  function visible(incremental = false) {
+    if (!map) return;
     const bounds = map.getPixelBounds();
-    onvisible(items.filter(row => row.latitude != null && row.longitude != null && bounds.contains(map!.project([row.latitude,row.longitude]))));
+    const append = incremental && items.length >= scanned.length && (!scanned.length || items[scanned.length - 1] === scanned[scanned.length - 1]);
+    const hits = (append ? items.slice(scanned.length) : items).filter(row => row.latitude != null && row.longitude != null && bounds.contains(map!.project([row.latitude,row.longitude])));
+    inView = append ? [...inView, ...hits] : hits;
+    scanned = items;
+    onvisible(inView);
   }
   function build(photos = items) {
     if (!cluster || !map) return;
@@ -53,9 +60,9 @@
       if (offset < pending.length) frame = L.Util.requestAnimFrame(batch);
     }
     if (pending.length) frame = L.Util.requestAnimFrame(batch);
-    visible();
+    visible(true);
   }
-  $effect(() => { void items; void complete; untrack(build); return cancelBuild; });
+  $effect(() => { void items; untrack(build); return cancelBuild; });
   export function focus(id: string) {
     const marker = markers.get(id);
     const element = marker ? cluster?.getVisibleParent(marker)?.getElement() : undefined;
@@ -65,7 +72,9 @@
     const bounds: L.LatLngBoundsExpression = [[-90,-180],[90,180]];
     map = L.map(container, { maxZoom: tiles.max_zoom, maxBounds: bounds, maxBoundsViscosity: 1 }).setView(view ? [view.lat, view.lng] : [20,0], view?.zoom ?? 2);
     const attribution = document.createElement("span"); attribution.textContent = tiles.attribution;
-    L.tileLayer(tiles.tile_url, { attribution: attribution.innerHTML, maxZoom: tiles.max_zoom, noWrap: true, bounds }).on("tileerror", () => { tileError = true; }).on("tileload", () => { tileError = false; }).addTo(map);
+    const tileKey = ({ coords }: L.TileEvent) => `${coords.z}/${coords.x}/${coords.y}`;
+    const clearTile = (event: L.TileEvent) => { failedTiles.delete(tileKey(event)); tileError = failedTiles.size > 0; };
+    L.tileLayer(tiles.tile_url, { attribution: attribution.innerHTML, maxZoom: tiles.max_zoom, noWrap: true, bounds }).on("tileerror", event => { failedTiles.add(tileKey(event)); tileError = true; }).on("tileload", clearTile).on("tileunload", clearTile).addTo(map);
     cluster = L.markerClusterGroup({ showCoverageOnHover: false, iconCreateFunction: group => L.divIcon({ className: "photo-map-cluster", html: String(group.getChildCount()), iconSize: [36,36] }) });
     cluster.on("clusterkeypress", event => {
       if ("originalEvent" in event && event.originalEvent instanceof KeyboardEvent && event.originalEvent.key === " ") { event.originalEvent.preventDefault(); cluster?.fire("click", event); }

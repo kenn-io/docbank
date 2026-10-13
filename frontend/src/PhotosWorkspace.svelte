@@ -228,7 +228,7 @@
       {#if albumID}<button type="button" class="album-back" onclick={() => onnavigate("/photos/albums")}>Albums</button>{/if}
       {#if renaming && renameAlbum}<form onsubmit={event => { event.preventDefault(); void rename(); }}>{@render sourceSummary(renameAlbum)}<TextInput ariaLabel="Album name" bind:value={name} bind:inputEl={renameInput} onkeydown={event => { if (event.key === "Escape") { event.preventDefault(); renaming = false; } }} /><Button type="submit" size="sm" disabled={albums?.busy || !name.trim()}>Save</Button><Button size="sm" onclick={() => renaming = false}>Cancel</Button>{#if renameError}<span role="alert">{renameError}</span>{/if}</form>
       {:else}<h1>{mapMode ? "Photos in view" : albumID ? album?.name ?? "Album" : title}</h1>{/if}
-      {#if !mapMode || photos.started && (!photos.loading || !!photos.error)}<span>{mapMode ? shown.length.toLocaleString() + " photos" : !photos.started ? (photos.loading ? "Loading photos" : "Photos") : `${photos.total.toLocaleString()} photos`}{!mapMode && photos.date ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}` : ""}{!mapMode && photos.started ? ` · ${photos.items.length.toLocaleString()} loaded` : ""}</span>{/if}
+      {#if !mapMode || photos.started}<span>{mapMode ? shown.length.toLocaleString() + " photos" : !photos.started ? (photos.loading ? "Loading photos" : "Photos") : `${photos.total.toLocaleString()} photos`}{!mapMode && photos.date ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}` : ""}{!mapMode && photos.started ? ` · ${photos.items.length.toLocaleString()} loaded` : ""}</span>{/if}
     </div>
     <div class="toolbar-actions">
       {#if !mapMode && !photos.hidden}<nav class="photo-views" aria-label="Photo views"><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "grid"} onclick={() => photos.setView("grid")}>Grid</button><button type="button" class="photo-toggle kit-button kit-control-states kit-button--sm" aria-pressed={photos.view === "timeline"} onclick={() => photos.setView("timeline")}>Timeline</button></nav>{/if}
@@ -301,7 +301,7 @@
   {/snippet}
   {#if mapMode}
     {#await import("./PhotoMap.svelte") then { default: PhotoMap }}
-      <div class="map-pane"><PhotoMap bind:this={map} items={photos.items.filter((row): row is PhotoMapRow => "latitude" in row)} complete={!photos.loading || !!photos.error} {tiles} view={photos.mapView} onopen={open} onvisible={rows => { visible = rows; }} onview={view => { photos.mapView = view; }} /></div>
+      <div class="map-pane"><PhotoMap bind:this={map} items={photos.items.filter((row): row is PhotoMapRow => "latitude" in row)} {tiles} view={photos.mapView} onopen={open} onvisible={rows => { visible = rows; }} onview={view => { photos.mapView = view; }} /></div>
       {@render libraryGrid()}
     {:catch}<EmptyState title="Map couldn't load" description="Reload this page to try again." />{/await}
   {:else}{@render libraryGrid()}{/if}

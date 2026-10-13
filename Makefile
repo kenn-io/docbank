@@ -72,7 +72,7 @@ report-export-browser-test: frontend
 
 photo-map-browser-test: frontend
 	go build -tags "$(BUILD_TAGS)" -o bin/docbank-map$(if $(filter Windows_NT,$(OS)),.exe) ./cmd/docbank
-	DOCBANK_SCREENSHOT_BINARY="$(CURDIR)/bin/docbank-map$(if $(filter Windows_NT,$(OS)),.exe)" DOCBANK_MAP_PROOF_DIR="$(CURDIR)/.superpowers/photo-map-proof" node frontend/node_modules/@playwright/test/cli.js test photo-map.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium
+	DOCBANK_SCREENSHOT_BINARY="$(CURDIR)/bin/docbank-map$(if $(filter Windows_NT,$(OS)),.exe)" DOCBANK_MAP_PROOF_DIR="$(CURDIR)/bin/photo-map-proof" node frontend/node_modules/@playwright/test/cli.js test photo-map.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium
 
 docs-screenshots:
 	cd frontend && npm run screenshots
