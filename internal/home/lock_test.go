@@ -371,7 +371,6 @@ func TestOpenAndLockExclusiveOwnsTargetThatAppearsBeforeScan(t *testing.T) {
 }
 
 func TestTryLockLaunchDoesNotCreateVaultRoot(t *testing.T) {
-	isolateTargetLockRegistry(t)
 	target := filepath.Join(t.TempDir(), "missing", "vault")
 	lock, err := (Layout{Root: target}).TryLockLaunch()
 	require.NoError(t, err)
@@ -384,7 +383,6 @@ func TestTryLockLaunchDoesNotCreateVaultRoot(t *testing.T) {
 }
 
 func TestTryLockLaunchUsesFilesystemIdentityForAliases(t *testing.T) {
-	isolateTargetLockRegistry(t)
 	base := t.TempDir()
 	realParent := filepath.Join(base, "real")
 	alias := filepath.Join(base, "alias")
@@ -402,7 +400,6 @@ func TestTryLockLaunchUsesFilesystemIdentityForAliases(t *testing.T) {
 }
 
 func TestTryLockLaunchRemainsStableWhenVaultAppears(t *testing.T) {
-	isolateTargetLockRegistry(t)
 	base := t.TempDir()
 	target := filepath.Join(base, "new", "vault")
 	lock, err := (Layout{Root: target}).TryLockLaunch()
@@ -416,7 +413,6 @@ func TestTryLockLaunchRemainsStableWhenVaultAppears(t *testing.T) {
 }
 
 func TestTryLockLaunchSerializesDifferentVaults(t *testing.T) {
-	isolateTargetLockRegistry(t)
 	base := t.TempDir()
 	first, err := (Layout{Root: filepath.Join(base, "one")}).TryLockLaunch()
 	require.NoError(t, err)
@@ -429,7 +425,7 @@ func TestTryLockLaunchSerializesDifferentVaults(t *testing.T) {
 func isolateTargetLockRegistry(t *testing.T) {
 	t.Helper()
 	require.Empty(t, targetLockRegistryTestBase,
-		"launch-lock tests must not run in parallel")
+		"target-lock registry tests must not run in parallel")
 	targetLockRegistryTestBase = t.TempDir()
 	t.Cleanup(func() { targetLockRegistryTestBase = "" })
 }

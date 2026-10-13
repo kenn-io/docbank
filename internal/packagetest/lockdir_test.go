@@ -12,6 +12,9 @@ import (
 
 func TestMain(m *testing.M) {
 	if os.Getenv("DOCBANK_LOCK_REGISTRY_TEST_CHILD") == "1" {
+		if os.Getenv("DOCBANK_LOCK_REGISTRY_TEST_REMOVE_FAIL") == "1" {
+			os.Exit(runWithLockRegistry(m, func(string) error { return os.ErrPermission }))
+		}
 		os.Exit(RunWithLockRegistry(m))
 	}
 	os.Exit(m.Run())
@@ -49,7 +52,7 @@ func TestRunWithLockRegistry(t *testing.T) {
 		command.Env = append(command.Env, "DOCBANK_LOCK_REGISTRY_TEST_CHILD=1", "DOCBANK_LOCK_REGISTRY_TEST_RESULT="+result)
 		return command
 	}
-	for _, mode := range []string{"success", "failure", "ambient", "ambient-lowercase", "mismatched", "inherited"} {
+	for _, mode := range []string{"success", "failure", "cleanup-failure", "test-and-cleanup-failure", "ambient", "ambient-lowercase", "mismatched", "inherited"} {
 		t.Run(mode, func(t *testing.T) {
 			result := filepath.Join(t.TempDir(), "registry-path")
 			command := newCommand(result)
@@ -72,11 +75,15 @@ func TestRunWithLockRegistry(t *testing.T) {
 			if mode == "mismatched" {
 				command.Env = append(command.Env, inheritedLockDirEnv+"="+t.TempDir())
 			}
-			if mode == "failure" {
+			cleanupFailure := mode == "cleanup-failure" || mode == "test-and-cleanup-failure"
+			if cleanupFailure {
+				command.Env = append(command.Env, "DOCBANK_LOCK_REGISTRY_TEST_REMOVE_FAIL=1")
+			}
+			if mode == "failure" || mode == "test-and-cleanup-failure" {
 				command.Env = append(command.Env, "DOCBANK_LOCK_REGISTRY_TEST_FAIL=1")
 			}
 			output, err := command.CombinedOutput()
-			if mode == "failure" {
+			if mode == "failure" || cleanupFailure {
 				var exitErr *exec.ExitError
 				require.ErrorAs(t, err, &exitErr, string(output))
 				require.Equal(t, 1, exitErr.ExitCode())
@@ -85,7 +92,11 @@ func TestRunWithLockRegistry(t *testing.T) {
 			}
 			data, err := os.ReadFile(result)
 			require.NoError(t, err)
-			if mode == "inherited" {
+			if cleanupFailure {
+				t.Cleanup(func() { require.NoError(t, os.RemoveAll(string(data))) })
+				require.Contains(t, string(output), "removing test lock registry:")
+				require.DirExists(t, string(data))
+			} else if mode == "inherited" {
 				require.Equal(t, inherited, string(data))
 				require.FileExists(t, filepath.Join(inherited, "synthetic.lock"))
 			} else {
