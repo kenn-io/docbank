@@ -389,6 +389,14 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
+			folder := "undated"
+			if scenario == "separate ingests" {
+				node, err := s.NodeByID(ctx, fileByRole(result.Asset.Files, PhotoRoleRAW).NodeID)
+				require.NoError(t, err)
+				date := "2024-06-15"
+				browsePhotoMetadata(t, s, node, date, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(date, date, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
+				folder = "2024/06/15"
+			}
 			checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
 			if scenario == "conflicting pair" {
 				require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
@@ -409,11 +417,14 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 			if scenario == "multiple sidecars" {
 				expected = []string{"RENAMED.ARW", "IMG.JPG", "RENAMED.XMP", "RENAMED.ARW.XMP"}
 			}
-			names := make([]string, 0, len(entries))
-			for _, entry := range entries {
-				names = append(names, filepath.Base(entry.Path))
+			for i := range expected {
+				expected[i] = folder + "/" + result.Asset.ID + "/" + expected[i]
 			}
-			require.ElementsMatch(t, expected, names)
+			paths := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				paths = append(paths, entry.Path)
+			}
+			require.ElementsMatch(t, expected, paths)
 		})
 	}
 	t.Run("first observation after replacement pruning and rename", func(t *testing.T) {
