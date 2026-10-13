@@ -89,8 +89,8 @@ func TestPhotoImportDiscovery(t *testing.T) {
 func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {
 	root := t.TempDir()
 	changed := filepath.Join(root, "IMG_0.JPG")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_0.ARW"), []byte("raw-0"), 0o600))
 	require.NoError(t, os.WriteFile(changed, []byte("jpeg-0"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(root, "IMG_1.JPG"), []byte("jpeg-1"), 0o600))
 	ing := newTestIngester(t)
 	calls := 0
 	report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{
@@ -104,13 +104,16 @@ func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Empty(t, report.Errors)
-	assert.Equal(t, int64(1), report.Receipt.Added)
-	assert.Equal(t, int64(1), report.Receipt.Changed)
-	assert.Zero(t, report.Receipt.Skipped)
+	assert.Zero(t, report.Receipt.Added)
+	for _, path := range []string{"/photos/IMG_0.ARW", "/photos/IMG_0.JPG"} {
+		_, err := ing.Store.NodeByPath(t.Context(), path)
+		require.ErrorIs(t, err, store.ErrNotFound)
+	}
 
 	rerun, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), rerun.Receipt.Added)
+	nodeByName(t, ing, "/photos/IMG_0.ARW")
 	nodeByName(t, ing, "/photos/IMG_0.JPG")
 }
 

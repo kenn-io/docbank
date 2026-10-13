@@ -93,23 +93,28 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.db.ExecContext(ctx, `UPDATE photo_assets SET hidden_at=? WHERE asset_id=?`, nowRFC3339(), b.ID)
 	require.NoError(t, err)
-	filtered := PhotoCheckoutSelection{AssetIDs: []string{a.ID, b.ID, c.ID}, AlbumIDs: []string{set.ID}}
-	estimate, err := s.EstimatePhotoCheckout(ctx, filtered)
-	require.NoError(t, err)
-	require.Equal(t, PhotoCheckoutEstimate{Assets: 1, Files: 3, Bytes: 33}, estimate)
-	checkout, _, err := s.CreatePhotoCheckout(ctx, filtered, t.TempDir(), estimate.Bytes)
-	require.NoError(t, err)
-	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
-	require.NoError(t, err)
-	var selectedFiles []string
-	for _, entry := range entries {
-		selectedFiles = append(selectedFiles, entry.FileID)
-	}
 	var eligibleFiles []string
 	for _, file := range a.Files {
 		eligibleFiles = append(eligibleFiles, file.ID)
 	}
-	require.ElementsMatch(t, eligibleFiles, selectedFiles)
+	for _, selection := range []PhotoCheckoutSelection{
+		{AssetIDs: []string{a.ID, b.ID, c.ID}, AlbumIDs: []string{set.ID}},
+		{All: true},
+		{Years: &PhotoCheckoutYears{From: 2024, To: 2025}},
+	} {
+		estimate, err := s.EstimatePhotoCheckout(ctx, selection)
+		require.NoError(t, err)
+		require.Equal(t, PhotoCheckoutEstimate{Assets: 1, Files: 3, Bytes: 33}, estimate)
+		checkout, _, err := s.CreatePhotoCheckout(ctx, selection, t.TempDir(), estimate.Bytes)
+		require.NoError(t, err)
+		entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+		require.NoError(t, err)
+		var selectedFiles []string
+		for _, entry := range entries {
+			selectedFiles = append(selectedFiles, entry.FileID)
+		}
+		require.ElementsMatch(t, eligibleFiles, selectedFiles)
+	}
 	for _, bad := range []PhotoCheckoutSelection{{}, {AssetIDs: []string{"bad"}}, {AlbumIDs: []string{"bad"}}, {Years: &PhotoCheckoutYears{From: 0, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2025, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2024, To: 10000}}} {
 		_, err := s.EstimatePhotoCheckout(ctx, bad)
 		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
@@ -451,24 +456,40 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
-			expected := []string{"IMG.JPG"}
-			if scenario != "trashed conflicting sidecar" {
-				expected = append(expected, name+".XMP")
-			}
+			expected := map[string]string{}
+			image := fileByRole(result.Asset.Files, PhotoRoleImage)
+			expected[image.ID] = folder + "/" + result.Asset.ID + "/IMG.JPG"
 			if scenario != "trashed target" {
-				expected = append(expected, name)
+				raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
+				rawName := name
+				if scenario == "multiple sidecars" {
+					rawName = "RENAMED.ARW"
+				}
+				expected[raw.ID] = folder + "/" + result.Asset.ID + "/" + rawName
 			}
-			if scenario == "multiple sidecars" {
-				expected = []string{"RENAMED.ARW", "IMG.JPG", "RENAMED.XMP", "RENAMED.ARW.XMP"}
+			if scenario != "trashed conflicting sidecar" {
+				for _, file := range result.Asset.Files {
+					if file.Role != PhotoRoleSidecar {
+						continue
+					}
+					node, err := s.NodeByID(ctx, file.NodeID)
+					require.NoError(t, err)
+					sidecarName := name + ".XMP"
+					if scenario == "multiple sidecars" {
+						if node.BlobHash == browseHash("first sidecar") {
+							sidecarName = "RENAMED.XMP"
+						} else {
+							sidecarName = "RENAMED.ARW.XMP"
+						}
+					}
+					expected[file.ID] = folder + "/" + result.Asset.ID + "/" + sidecarName
+				}
 			}
-			for i := range expected {
-				expected[i] = folder + "/" + result.Asset.ID + "/" + expected[i]
-			}
-			paths := make([]string, 0, len(entries))
+			actual := make(map[string]string, len(entries))
 			for _, entry := range entries {
-				paths = append(paths, entry.Path)
+				actual[entry.FileID] = entry.Path
 			}
-			require.ElementsMatch(t, expected, paths)
+			require.Equal(t, expected, actual)
 		})
 	}
 	t.Run("first observation after replacement pruning and rename", func(t *testing.T) {
