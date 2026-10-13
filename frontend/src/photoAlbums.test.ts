@@ -88,14 +88,14 @@ it.each([false, true])("returns membership feedback before photo refresh and pre
   expect(albums.notice).toBe("");
 });
 
-it.each(["over-limit", "whole-query", "external payload", "unselected photo"])("uses the selection scope for a drag: %s", async kind => {
+it.each(["over-limit", "map over-limit", "whole-query", "external payload", "unselected photo"])("uses the selection scope for a drag: %s", async kind => {
   const fetcher = vi.fn().mockResolvedValueOnce(response({ ...album, revision: 2 })).mockResolvedValueOnce(response([album]));
   vi.stubGlobal("fetch", fetcher);
   const albums = new PhotoAlbums("scoped", vi.fn());
-  const photos = new Photos("scoped", vi.fn());
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, kind === "map over-limit" ? "map" : undefined);
   photos.total = 12000;
   photos.selection.selectedIDs = new Set(Array.from({ length: 1001 }, (_, id) => String(id)));
-  photos.allResults = kind !== "over-limit" && kind !== "unselected photo";
+  photos.allResults = kind !== "over-limit" && kind !== "map over-limit" && kind !== "unselected photo";
   if (kind === "unselected photo") {
     photos.items = [photo(1), photo(2)];
     photos.select("photo-1", new MouseEvent("click"), ["photo-1", "photo-2"]);
@@ -110,12 +110,12 @@ it.each(["over-limit", "whole-query", "external payload", "unselected photo"])("
     photos.allResults = true;
   }
   albums.startDrag(kind === "unselected photo" ? "photo-2" : "0", event, photos);
-  if (kind === "over-limit") {
+  if (kind === "over-limit" || kind === "map over-limit") {
     expect(event.preventDefault).toHaveBeenCalledOnce();
     expect(transfer.setData).not.toHaveBeenCalled();
     await albums.drop(album, event);
     expect(fetcher).not.toHaveBeenCalled();
-    expect(albums.error).toBe("Select all 12,000 photos to add more than 1,000 at once.");
+    expect(albums.error).toBe(kind === "map over-limit" ? "Select 1,000 photos or fewer to add to an album." : "Select all 12,000 photos to add more than 1,000 at once.");
   } else if (kind === "unselected photo") {
     expect(photos.allResults).toBe(false);
     expect(albums.drag).toEqual({ asset_ids: ["photo-2"] });

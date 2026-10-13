@@ -389,7 +389,7 @@
     clearPhotoNotice();
     navOpen = false;
     if (photoMode && path === photoPath && path === location.pathname && !photoID) return;
-    if ((!photoMode || path !== photoPath) && (isMapPath(path) || mapMode)) void invalidateLibrary(false);
+    if (!photoMode || path !== photoPath) void invalidateLibrary(false);
     hiddenPhotoActionError = "";
     const previous = activePhotos();
     if (previous) previous.viewerReturn = undefined;

@@ -19,7 +19,7 @@ const tiles = {tile_url:"",attribution:"",max_zoom:19};
 
 afterEach(() => { cleanup(); map.onvisible = undefined; map.props = undefined; history.replaceState(null, "", "/"); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); new Photos("scoped", vi.fn()).setDensity("comfortable"); Reflect.deleteProperty(Element.prototype, "scrollIntoView"); });
 
-it("preserves subsequent scrolling when an interrupted refresh resumes after remount", async () => {
+it.each([false, true])("preserves subsequent scrolling when an interrupted refresh resumes after remount, map=%s", async mapMode => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
@@ -28,27 +28,37 @@ it("preserves subsequent scrolling when an interrupted refresh resumes after rem
     const scroll = this.closest<HTMLElement>(".photo-scroll");
     return cell && scroll ? new DOMRect(0, Number.parseFloat(cell.style.top) + 56 - scroll.scrollTop, Number.parseFloat(cell.style.width), Number.parseFloat(cell.style.height)) : new DOMRect(0, 0, 1000, 400);
   });
-  const items = Array.from({ length: 60 }, (_, index) => photo(index + 1));
+  const items = Array.from({ length: 60 }, (_, index) => mapMode ? mapPhoto(index + 1) : photo(index + 1));
   let finishRefresh!: (response: Response) => void;
   stubPhotoFetch(vi.fn().mockImplementationOnce(() => new Promise(() => {}))
     .mockImplementationOnce(() => new Promise<Response>(resolve => finishRefresh = resolve)));
-  const photos = new Photos("scoped", vi.fn());
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, mapMode ? "map" : undefined);
   photos.items = items; photos.total = items.length; photos.started = true; photos.scrollTop = 500;
+  photos.selectLoaded();
+  photos.mapView = { lat: 5, lng: 6, zoom: 7 };
   const cache = new PhotoPreviewCache("scoped", vi.fn());
-  const view = render(PhotosWorkspace, { photos, cache });
+  const props = { photos, cache, mapMode, tiles: { tile_url: "https://tiles.example.org/{z}/{x}/{y}", attribution: "Example", max_zoom: 19 } };
+  const view = render(PhotosWorkspace, props);
+  if (mapMode) { await vi.dynamicImportSettled(); map.onvisible!(items as PhotoMapRow[]); await tick(); }
   await waitFor(() => expect(screen.getByTestId("photo-scroll").scrollTop).toBe(500));
   await fireEvent.click(screen.getByRole("button", { name: "Refresh previews" }));
   view.unmount();
-  render(PhotosWorkspace, { photos, cache });
+  render(PhotosWorkspace, props);
+  if (mapMode) { await vi.dynamicImportSettled(); map.onvisible!(items as PhotoMapRow[]); await tick(); }
   const scroll = screen.getByTestId("photo-scroll");
   await waitFor(() => expect(scroll.scrollTop).toBe(500));
   scroll.scrollTop = 1000;
   await fireEvent.scroll(scroll);
-  finishRefresh(new Response(JSON.stringify({ items, total: items.length })));
+  const refreshed = items.map(item => ({ ...item, previews: { ...item.previews, grid: { state: "ready", generation_id: "refreshed" } } }));
+  finishRefresh(new Response(JSON.stringify({ [mapMode ? "map_items" : "items"]: refreshed, total: items.length })));
   await waitFor(() => expect(photos.loading).toBe(false));
   await tick();
   expect(scroll.scrollTop).toBe(1000);
   expect(photos.scrollTop).toBe(1000);
+  expect(photos.items[0].previews.grid).toEqual({ state: "ready", generation_id: "refreshed" });
+  expect(photos.selection.selectedIDs.size).toBe(items.length);
+  expect(photos.mapView).toEqual({ lat: 5, lng: 6, zoom: 7 });
+  if (mapMode) expect(map.props?.view).toEqual(photos.mapView);
   photos.dispose(); await cache.dispose();
 });
 

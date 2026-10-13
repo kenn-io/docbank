@@ -240,7 +240,7 @@
       {#if album && albums}
         <IconButton ariaLabel={album.starred ? "Unstar album" : "Star album"} title={album.starred ? "Unstar album" : "Star album"} ariaPressed={album.starred} disabled={albums.busy || renaming} onclick={() => void albums!.update(album!, { starred: !album!.starred })}><StarIcon size="16" fill={album.starred ? "currentColor" : "none"} /></IconButton>
         <Menu align="end"><MenuTrigger ariaLabel="Album actions" disabled={albums.busy || renaming}>More</MenuTrigger><MenuContent ariaLabel="Album actions"><MenuItem onselect={beginRename}>Rename</MenuItem><MenuItem onselect={() => openModal("duplicate")}>Duplicate…</MenuItem><MenuItem tone="danger" onselect={() => openModal("delete")}>Delete album…</MenuItem></MenuContent></Menu>
-      {/if}{#if !mapMode}<Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || albums?.busy} onclick={() => void refreshView()}>Refresh previews</Button>{/if}
+      {/if}<Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || albums?.busy} onclick={() => void refreshView()}>Refresh previews</Button>
       <Button size="sm" disabled={photos.loading || photos.hiding || photos.trashing || photos.rejectsLoading} onclick={() => { rejectsOpen = true; void photos.previewRejects(); }}>Move rejects</Button>
     </div>
   </div>

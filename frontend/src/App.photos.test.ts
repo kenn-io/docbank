@@ -773,30 +773,6 @@ it.each(["album", "direct album", "Hidden"])("keeps Map scoped when opened from 
   expect(queries).toHaveLength(reads);
 });
 
-it("keeps Library loaded when opening Albums", async () => {
-  history.replaceState(null, "", "/photos#web_session=synthetic&web_upload_secret=proof");
-  storage();
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  let reads = 0;
-  const refresh = vi.spyOn(Photos.prototype, "refresh");
-  stubPhotoFetch(vi.fn(async (url: string) => {
-    if (url.endsWith("/photos/hidden")) return albumResponse({ configured: false });
-    if (url.endsWith("/photos/albums")) return albumResponse([photoAlbum()]);
-    if (url.endsWith("/photos/assets/query")) { reads++; return albumResponse({ items: [photo(1)], total: 1 }); }
-    return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
-  }));
-  render(App);
-  await screen.findByRole("button", { name: "Open Photo 1.jpg" });
-  const before = reads;
-  await fireEvent.click(within(screen.getByRole("navigation", { name: "Docbank navigation" })).getByRole("button", { name: "Albums" }));
-  await screen.findByRole("heading", { name: "Albums" });
-  expect(location.pathname).toBe("/photos/albums");
-  expect(reads).toBe(before);
-  expect(refresh).not.toHaveBeenCalled();
-});
-
 it.each(["Library", "album"])("closes the %s viewer from its active sidebar entry without reloading", async kind => {
   const album = photoAlbum({ id: "22222222-2222-4222-8222-0000000000aa", included_count: 1, member_count: 1 });
   const path=kind === "album" ? `/photos/albums/${album.id}` : "/photos";

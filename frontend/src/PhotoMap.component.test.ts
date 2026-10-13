@@ -73,6 +73,9 @@ it("shows one provider notice when tiles fail repeatedly", async () => {
  const notices = screen.getAllByRole("alert");
  expect(notices).toHaveLength(1);
  expect(notices[0].textContent).toBe("Map tiles from tiles.example.org couldn't load. Check [web.map_tiles], then restart Docbank.");
+ const loaded = mocks.tile.on.mock.calls.find(([name]) => name === "tileload")![1];
+ loaded(); await tick();
+ expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it("replaces an interior marker when its coordinates or name change", async () => {

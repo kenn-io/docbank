@@ -55,7 +55,7 @@
     if (pending.length) frame = L.Util.requestAnimFrame(batch);
     visible();
   }
-  $effect(() => { for (const row of items) { void row.latitude; void row.longitude; void row.name; } void complete; untrack(build); return cancelBuild; });
+  $effect(() => { void items; void complete; untrack(build); return cancelBuild; });
   export function focus(id: string) {
     const marker = markers.get(id);
     const element = marker ? cluster?.getVisibleParent(marker)?.getElement() : undefined;
@@ -65,7 +65,7 @@
     const bounds: L.LatLngBoundsExpression = [[-90,-180],[90,180]];
     map = L.map(container, { maxZoom: tiles.max_zoom, maxBounds: bounds, maxBoundsViscosity: 1 }).setView(view ? [view.lat, view.lng] : [20,0], view?.zoom ?? 2);
     const attribution = document.createElement("span"); attribution.textContent = tiles.attribution;
-    L.tileLayer(tiles.tile_url, { attribution: attribution.innerHTML, maxZoom: tiles.max_zoom, noWrap: true, bounds }).on("tileerror", () => { tileError = true; }).addTo(map);
+    L.tileLayer(tiles.tile_url, { attribution: attribution.innerHTML, maxZoom: tiles.max_zoom, noWrap: true, bounds }).on("tileerror", () => { tileError = true; }).on("tileload", () => { tileError = false; }).addTo(map);
     cluster = L.markerClusterGroup({ showCoverageOnHover: false, iconCreateFunction: group => L.divIcon({ className: "photo-map-cluster", html: String(group.getChildCount()), iconSize: [36,36] }) });
     cluster.on("clusterkeypress", event => {
       if ("originalEvent" in event && event.originalEvent instanceof KeyboardEvent && event.originalEvent.key === " ") { event.originalEvent.preventDefault(); cluster?.fire("click", event); }
