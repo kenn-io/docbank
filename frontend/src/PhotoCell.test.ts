@@ -17,12 +17,17 @@ it("keeps Open accessible by name, Tab, and plain click", async () => {
   expect(onopen).toHaveBeenCalledExactlyOnceWith(button);
 });
 
-it.each([false, true])("opens a detail-1 pair once with selected=%s even if dblclick follows", async selected => {
+it.each([false, true].flatMap(selected => [undefined, "mouse", "touch"].map(pointerType => ({ selected, pointerType }))))("opens a touch detail-1 pair once with $selected selection and $pointerType click type even if dblclick follows", async ({ selected, pointerType }) => {
   const onclick = vi.fn(), oncheck = vi.fn(), onopen = vi.fn();
   render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected, onclick, oncheck, onopen });
   const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
-  await fireEvent.click(button, { detail: 1 });
-  await fireEvent.click(button, { detail: 1 });
+  for (const time of [1000, 1100]) {
+    await fireEvent.pointerDown(button, { pointerType: "touch" });
+    const event = new MouseEvent("click", { bubbles: true, detail: 1 });
+    Object.defineProperty(event, "pointerType", { value: pointerType });
+    Object.defineProperty(event, "timeStamp", { value: time });
+    await fireEvent(button, event);
+  }
   await fireEvent.doubleClick(button);
   expect(onclick).toHaveBeenCalledOnce();
   if (selected) expect(oncheck).not.toHaveBeenCalled();
@@ -34,8 +39,10 @@ it("breaks a detail-1 pair when the checkbox is clicked between images", async (
   const onclick = vi.fn(), onopen = vi.fn();
   render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen });
   const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
+  await fireEvent.pointerDown(button, { pointerType: "touch" });
   await fireEvent.click(button, { detail: 1 });
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
+  await fireEvent.pointerDown(button, { pointerType: "touch" });
   await fireEvent.click(button, { detail: 1 });
   expect(onclick).toHaveBeenCalledTimes(2);
   expect(onopen).not.toHaveBeenCalled();
@@ -47,8 +54,12 @@ it("breaks a detail-1 pair when another tile is clicked", async () => {
   render(PhotoCell, { ...props, photo: photo(1) });
   render(PhotoCell, { ...props, photo: photo(2) });
   const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
+  await fireEvent.pointerDown(button, { pointerType: "touch" });
   await fireEvent.click(button, { detail: 1 });
-  await fireEvent.click(screen.getByRole("button", { name: "Select Photo 2.jpg" }), { detail: 1 });
+  const second = screen.getByRole("button", { name: "Select Photo 2.jpg" });
+  await fireEvent.pointerDown(second, { pointerType: "touch" });
+  await fireEvent.click(second, { detail: 1 });
+  await fireEvent.pointerDown(button, { pointerType: "touch" });
   await fireEvent.click(button, { detail: 1 });
   expect(onclick).toHaveBeenCalledTimes(3);
   expect(onopen).not.toHaveBeenCalled();
@@ -59,6 +70,7 @@ it("keeps detail-1 clicks over 350 ms apart as single clicks", async () => {
   render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen });
   const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
   for (const time of [1000, 1351]) {
+    await fireEvent.pointerDown(button, { pointerType: "touch" });
     const event = new MouseEvent("click", { bubbles: true, detail: 1 });
     Object.defineProperty(event, "timeStamp", { value: time });
     await fireEvent(button, event);
@@ -72,6 +84,7 @@ it.each([false, true])("selects and opens a touch double-tap once with selected=
   render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected, onclick, oncheck, onopen });
   const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
   for (const detail of [1, 2]) {
+    await fireEvent.pointerDown(button, { pointerType: "touch" });
     const event = new MouseEvent("click", { bubbles: true, detail });
     Object.defineProperty(event, "pointerType", { value: "touch" });
     await fireEvent(button, event);
@@ -88,6 +101,7 @@ it("keeps compact touch clicks and never opens the viewer", async () => {
   render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, compact: true, onclick, oncheck, onopen });
   const button = screen.getByRole("button", { name: "Show Photo 1.jpg" });
   for (const detail of [1, 2]) {
+    await fireEvent.pointerDown(button, { pointerType: "touch" });
     const event = new MouseEvent("click", { bubbles: true, detail });
     Object.defineProperty(event, "pointerType", { value: "touch" });
     await fireEvent(button, event);
@@ -98,6 +112,39 @@ it("keeps compact touch clicks and never opens the viewer", async () => {
   expect(oncheck).not.toHaveBeenCalled();
   expect(onopen).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Open Photo 1.jpg" })).toBeNull();
+});
+
+it("keeps displaced Ctrl-clicks as separate mouse selections", async () => {
+  const onclick = vi.fn(), onopen = vi.fn();
+  render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen });
+  const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
+  for (const [time, position] of [[1000, 10], [1100, 100]]) {
+    await fireEvent.pointerDown(button, { pointerType: "mouse" });
+    const event = new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true, clientX: position, clientY: position });
+    Object.defineProperty(event, "pointerType", { value: "mouse" });
+    Object.defineProperty(event, "timeStamp", { value: time });
+    await fireEvent(button, event);
+  }
+  expect(onclick).toHaveBeenCalledTimes(2);
+  expect(onopen).not.toHaveBeenCalled();
+});
+
+it.each([
+  { pointerType: "mouse", detail: 1 }, { pointerType: "pen", detail: 1 }, { detail: 0 },
+  { pointerType: "touch", detail: 1, ctrlKey: true }, { pointerType: "touch", detail: 1, metaKey: true },
+  { pointerType: "touch", detail: 1, shiftKey: true }, { pointerType: "touch", detail: 1, altKey: true },
+])("clears a pending touch pair for $pointerType clicks with $detail detail and modifiers %j", async options => {
+  const onclick = vi.fn(), onopen = vi.fn();
+  render(PhotoCell, { photo: photo(1), cache: { get: vi.fn() } as unknown as PhotoPreviewCache, selected: false, onclick, onopen });
+  const button = screen.getByRole("button", { name: "Select Photo 1.jpg" });
+  await fireEvent.pointerDown(button, { pointerType: "touch" });
+  await fireEvent.click(button, { detail: 1 });
+  await fireEvent.pointerDown(button, { pointerType: options.pointerType });
+  await fireEvent.click(button, options);
+  await fireEvent.pointerDown(button, { pointerType: "touch" });
+  await fireEvent.click(button, { detail: 1 });
+  expect(onclick).toHaveBeenCalledTimes(3);
+  expect(onopen).not.toHaveBeenCalled();
 });
 
 it("revokes mounted URLs and ignores previews that complete after unmount", async () => {

@@ -459,13 +459,14 @@ it.each(["native", "detail-1"])("opens on touch with empty selection and keeps s
   const cell = await screen.findByRole("button", { name: "Select Photo 1.jpg" });
   await fireEvent.click(cell); expect(open).not.toHaveBeenCalled(); expect(photos.selection.selectedIDs.has("photo-1")).toBe(true);
   photos.clearSelection();
-  const touchEvent = new MouseEvent("click", { bubbles: true, button: 0 }); Object.defineProperty(touchEvent, "pointerType", { value: "touch" });
+  await fireEvent.pointerDown(cell, { pointerType: "touch" });
+  const touchEvent = new MouseEvent("click", { bubbles: true, button: 0, detail: 1 }); Object.defineProperty(touchEvent, "pointerType", { value: "touch" });
   await fireEvent(cell, touchEvent); expect(open).toHaveBeenCalledWith("photo-1", "open"); expect(photos.selection.selectedIDs.size).toBe(0);
   await fireEvent.click(screen.getByRole("checkbox", { name: "Select photo Photo 1.jpg" }));
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: false })));
   const second = screen.getByRole("button", { name: "Select Photo 2.jpg" });
   let time = 1000;
-  const tap = async (detail = 1, elapsed = 351) => { time += elapsed; const event = new MouseEvent("click", { bubbles: true, button: 0, detail }); Object.defineProperty(event, "pointerType", { value: "touch" }); Object.defineProperty(event, "timeStamp", { value: time }); await fireEvent(second, event); };
+  const tap = async (detail = 1, elapsed = 351) => { time += elapsed; await fireEvent.pointerDown(second, { pointerType: "touch" }); const event = new MouseEvent("click", { bubbles: true, button: 0, detail }); Object.defineProperty(event, "pointerType", { value: "touch" }); Object.defineProperty(event, "timeStamp", { value: time }); await fireEvent(second, event); };
   await tap(); expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
   await tap(); expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
   open.mockClear();
@@ -473,6 +474,27 @@ it.each(["native", "detail-1"])("opens on touch with empty selection and keeps s
   expect(open).toHaveBeenCalledExactlyOnceWith("photo-2", "open");
   expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
   await fireEvent.keyDown(cell, { key: "Enter" }); expect(open).toHaveBeenCalledTimes(2);
+});
+
+it("keeps only the first photo selected after two displaced Ctrl-clicks on the second", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const photos = new Photos("scoped", vi.fn()); photos.items = [photo(1), photo(2)]; photos.started = true;
+  const open = vi.fn();
+  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, photoID: "", onphotochange: open });
+  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
+  const second = screen.getByRole("button", { name: "Select Photo 2.jpg" });
+  for (const [time, position] of [[1000, 10], [1100, 100]]) {
+    await fireEvent.pointerDown(second, { pointerType: "mouse" });
+    const event = new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true, clientX: position, clientY: position });
+    Object.defineProperty(event, "pointerType", { value: "mouse" });
+    Object.defineProperty(event, "timeStamp", { value: time });
+    await fireEvent(second, event);
+  }
+  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
+  expect(open).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 it.each(["success", "grid", "removed", "pending"])("keeps query order and viewer membership after %s continuation", async scenario => {
