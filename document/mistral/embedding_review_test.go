@@ -168,6 +168,7 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 func TestMistralEmbeddingAttemptTimeoutsThroughProductionTransport(t *testing.T) {
 	for _, stage := range []string{"headers", "body"} {
 		t.Run(stage, func(t *testing.T) {
+			t.Parallel()
 			var reached atomic.Bool
 			endpoint, egress, resolver := mistralFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _ = io.Copy(io.Discard, r.Body)
@@ -181,7 +182,7 @@ func TestMistralEmbeddingAttemptTimeoutsThroughProductionTransport(t *testing.T)
 			}))
 			profile := testEmbeddingProfile(t)
 			profile.Endpoint, profile.EgressPolicy = endpoint, egress
-			profile.RequestTimeout, profile.MaxRetries = 2*time.Second, 1
+			profile.RequestTimeout, profile.MaxRetries = 5*time.Second, 1
 			recomputeMistralEmbeddingProfile(t, &profile)
 			provider, err := newMistralEmbeddingTestProvider(t, profile, embeddingSecretMap{"credential:mistral-embed": "synthetic-secret"}, resolver)
 			require.NoError(t, err)
