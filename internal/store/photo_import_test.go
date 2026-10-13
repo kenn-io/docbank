@@ -812,6 +812,20 @@ func TestPhotoImportMetadata(t *testing.T) {
 			continue
 		}
 		require.NoError(t, err)
+		if variant == "alternate source" {
+			var reexported bytes.Buffer
+			require.NoError(t, restored.ExportMetadata(ctx, &reexported))
+			for line := range bytes.SplitSeq(reexported.Bytes(), []byte{'\n'}) {
+				if !bytes.Contains(line, []byte(`"type":"photo_file"`)) {
+					continue
+				}
+				var file metadataPhotoFile
+				require.NoError(t, json.Unmarshal(line, &file))
+				if file.FileID == raw.ID {
+					require.Equal(t, &alternateSource, file.SourceProvenanceIdentity)
+				}
+			}
+		}
 		for _, file := range paired.Asset.Files {
 			if variant != "missing source_provenance_identity" && file.ID != raw.ID {
 				continue

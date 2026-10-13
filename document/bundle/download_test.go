@@ -8,7 +8,11 @@ import (
 func TestDownloadBasename(t *testing.T) {
 	for _, name := range []string{"", "docbank-bundle.zip", "Review 2026.zip", "résumé.zip"} {
 		got, err := DownloadBasename(name)
-		if err != nil || got == "" {
+		want := name
+		if want == "" {
+			want = "docbank-bundle.zip"
+		}
+		if err != nil || got != want {
 			t.Errorf("valid name %q: %q %v", name, got, err)
 		}
 	}

@@ -43,43 +43,6 @@ func checkoutPhoto(t *testing.T, s Service, name, content string) store.PhotoAss
 	return asset
 }
 
-func TestCheckoutCopiesWritableBases(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	a := checkoutPhoto(t, s, "photo.jpg", "original bytes")
-	destination := t.TempDir()
-	c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, destination, 0)
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	// The run must copy the frozen base even when the source head changes.
-	node, err := s.Store.NodeByID(t.Context(), a.Files[0].NodeID)
-	require.NoError(t, err)
-	hash, size, err := s.Blobs.Write(strings.NewReader("new bytes"))
-	require.NoError(t, err)
-	_, _, err = s.Store.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "image/jpeg")
-	require.NoError(t, err)
-	require.NoError(t, s.Run(t.Context(), c, root))
-	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	require.True(t, entries[0].Published)
-	content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
-	require.NoError(t, err)
-	require.Equal(t, "original bytes", string(content))
-	require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("edited"), 0o600))
-	stream, _, err := s.Blobs.OpenStreamContext(t.Context(), entries[0].Hash)
-	require.NoError(t, err)
-	source, err := io.ReadAll(stream)
-	require.NoError(t, err)
-	require.NoError(t, stream.Close())
-	require.Equal(t, "original bytes", string(source))
-	finished, err := s.Store.StorageOperation(t.Context(), op.ID)
-	require.NoError(t, err)
-	require.Equal(t, store.StorageOperationCompleted, finished.State)
-	require.Equal(t, int64(1), finished.CopiedObjects)
-	require.Equal(t, int64(len(content)), finished.CopiedBytes)
-}
-
 func TestCheckoutDestinationSafety(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
@@ -112,16 +75,6 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 	require.NoError(t, os.Mkdir(sub, 0o755))
 	reject(sub)
 	require.NoError(t, root.Close())
-	require.NoError(t, os.WriteFile(filepath.Join(c.Destination, "keep"), []byte("keep"), 0600))
-	err = s.Run(t.Context(), c, nil)
-	status, statusErr := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-	require.NoError(t, statusErr)
-	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
-	require.Equal(t, "failed", status.Checkout.State)
-	require.Zero(t, status.PublishedFiles)
-	content, err := os.ReadFile(filepath.Join(c.Destination, "keep"))
-	require.NoError(t, err)
-	require.Equal(t, "keep", string(content))
 	prior := t.TempDir()
 	reserved, _, priorRoot, err := s.Prepare(t.Context(), selection, prior, 0)
 	require.NoError(t, err)
@@ -280,27 +233,69 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 
 func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 	t.Parallel()
-	for _, failure := range []string{"admission retry", "operator cancellation", "daemon shutdown", "destination moved before completion", "collision", "became-invisible"} {
+	for _, failure := range []string{"success", "nonempty destination", "admission retry", "operator cancellation", "daemon shutdown", "destination moved before completion", "collision", "became-invisible"} {
 		t.Run(failure, func(t *testing.T) {
 			s := checkoutService(t)
 			names := []string{"first.jpg", "second.jpg", "third.jpg"}
-			if failure == "destination moved before completion" || failure == "operator cancellation" {
+			if failure == "destination moved before completion" || failure == "success" {
 				names = names[:1]
 			}
 			if failure == "admission retry" {
 				names = names[:2]
 			}
+			var assets []store.PhotoAsset
 			for _, name := range names {
-				checkoutPhoto(t, s, name, name)
+				assets = append(assets, checkoutPhoto(t, s, name, name))
 			}
 			c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
 			require.NoError(t, err)
 			defer func() { _ = root.Close() }()
-			if failure == "operator cancellation" {
-				require.NoError(t, s.Store.RequestStorageOperationCancel(t.Context(), op.ID))
-			}
 			entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
+			switch failure {
+			case "success":
+				// The run must copy the frozen base even when the source head changes.
+				node, err := s.Store.NodeByID(t.Context(), assets[0].Files[0].NodeID)
+				require.NoError(t, err)
+				hash, size, err := s.Blobs.Write(strings.NewReader("new bytes"))
+				require.NoError(t, err)
+				_, _, err = s.Store.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "image/jpeg")
+				require.NoError(t, err)
+				require.NoError(t, s.Run(t.Context(), c, root))
+				entries, err = s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+				require.NoError(t, err)
+				require.Len(t, entries, 1)
+				require.True(t, entries[0].Published)
+				content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
+				require.NoError(t, err)
+				require.Equal(t, "first.jpg", string(content))
+				require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("edited"), 0o600))
+				stream, _, err := s.Blobs.OpenStreamContext(t.Context(), entries[0].Hash)
+				require.NoError(t, err)
+				source, err := io.ReadAll(stream)
+				require.NoError(t, err)
+				require.NoError(t, stream.Close())
+				require.Equal(t, "first.jpg", string(source))
+				finished, err := s.Store.StorageOperation(t.Context(), op.ID)
+				require.NoError(t, err)
+				require.Equal(t, store.StorageOperationCompleted, finished.State)
+				require.Equal(t, int64(1), finished.CopiedObjects)
+				require.Equal(t, int64(len(content)), finished.CopiedBytes)
+				return
+			case "nonempty destination":
+				require.NoError(t, root.Close())
+				require.NoError(t, os.WriteFile(filepath.Join(c.Destination, "keep"), []byte("keep"), 0600))
+				err = s.Run(t.Context(), c, nil)
+				status, statusErr := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+				require.NoError(t, statusErr)
+				require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+				require.Equal(t, "failed", status.Checkout.State)
+				require.Zero(t, status.PublishedFiles)
+				content, err := os.ReadFile(filepath.Join(c.Destination, "keep"))
+				require.NoError(t, err)
+				require.Equal(t, "keep", string(content))
+				return
+			}
 			if failure == "admission retry" {
 				inflight := 0
 				beforeWork, afterCopy := false, false
@@ -370,6 +365,9 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 					require.NoError(t, err)
 				}
 				err := fn()
+				if failure == "operator cancellation" && publications == 1 {
+					require.NoError(t, s.Store.RequestStorageOperationCancel(ctx, op.ID))
+				}
 				if failure == "daemon shutdown" {
 					cancel()
 				}
@@ -388,15 +386,9 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 			runErr := s.Run(ctx, c, root)
 			if failure == "operator cancellation" {
 				require.NoError(t, runErr)
-				finished, err := s.Store.StorageOperation(t.Context(), op.ID)
-				require.NoError(t, err)
-				require.Equal(t, store.StorageOperationCancelled, finished.State)
-				files, err := os.ReadDir(c.Destination)
-				require.NoError(t, err)
-				require.Empty(t, files)
-				return
+			} else {
+				require.Error(t, runErr)
 			}
-			require.Error(t, runErr)
 			switch failure {
 			case "daemon shutdown":
 				require.ErrorIs(t, runErr, context.Canceled)
@@ -411,11 +403,16 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 			}
 			content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
 			require.NoError(t, err)
-			require.NotEmpty(t, content)
+			require.Equal(t, filepath.Base(entries[0].Path), string(content))
 			status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
 			require.NoError(t, err)
 			finished, err := s.Store.StorageOperation(t.Context(), op.ID)
 			require.NoError(t, err)
+			if failure == "operator cancellation" {
+				require.Equal(t, store.StorageOperationCancelled, finished.State)
+				require.Equal(t, int64(1), status.PublishedFiles)
+				return
+			}
 			if failure == "daemon shutdown" {
 				require.Equal(t, "running", status.Checkout.State)
 				require.Equal(t, store.StorageOperationRunning, finished.State)
