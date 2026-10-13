@@ -2,14 +2,11 @@
 
 Instructions for autonomous coding agents working in this repository.
 
-## Namespace runners
-
-Public Namespace runner profiles use **Restricted** access, which [disables workload access to Namespace features and APIs](https://namespace.so/docs/solutions/github-actions/runner-controls/access-levels).
-GitHub fork approvals, secrets, and token permissions are separate controls.
-Do not infer fork eligibility or network/cache isolation from this setting.
-
 ## Build and Test
 
+- Use GitHub-hosted runners for repository workflows. See the
+  [development guide](docs/internal/development.md#verification-contract)
+  for CI routing.
 - Go 1.27+ (go.mod is authoritative). Go 1.26 value-form `new(v)` and Go
   1.27 generic methods, promoted struct-literal fields, and assignment-context
   inference are in use; verify against the toolchain before treating unfamiliar
