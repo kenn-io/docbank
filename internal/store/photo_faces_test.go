@@ -60,6 +60,9 @@ func TestPhotoFaceRescanRetainsIDsAndDecisions(t *testing.T) {
 	faces, err := s.ReconcilePhotoFaces(ctx, node.CurrentVersionID, "detector-v1", []document.FaceBox{b, a})
 	require.NoError(t, err)
 	require.Len(t, faces, 2)
+	unchanged, err := s.ReconcilePhotoFaces(ctx, node.CurrentVersionID, "detector-v1", []document.FaceBox{a, b})
+	require.NoError(t, err)
+	require.Equal(t, faces, unchanged)
 	ids := map[document.FaceBox]string{}
 	for _, face := range faces {
 		ids[face.Box] = face.FaceID
@@ -239,6 +242,56 @@ func TestPhotoFaceHiddenReadsAndDecisions(t *testing.T) {
 	require.NoError(t, s.LockPhotoHidden(ctx))
 	_, _, err = s.PhotoFaces(unlocked, node.CurrentVersionID)
 	require.ErrorIs(t, err, ErrHiddenLocked)
+}
+
+func TestPhotoFaceHiddenQueueCapacity(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	_, visibleVersion := seedPeopleVersion(t, s)
+	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: 0.2, Height: 0.2}, "")
+	require.NoError(t, err)
+	candidate := openFaceCandidate(t, s, node.CurrentVersionID, face.FaceID, person.PersonID)
+	_, err = s.db.Exec(`WITH RECURSIVE seq(n) AS (
+		SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < ?
+	) INSERT INTO person_match_candidates(
+		candidate_id,actor_key,display_name,suggested_person_id,reason,evidence_json,evidence_sha256,
+		occurrence_count,revision,state,decided_person_id,created_at,decided_at
+	) SELECT printf('00000000-0000-4000-8000-%012d',n),c.actor_key,c.display_name,c.suggested_person_id,
+		c.reason,c.evidence_json,printf('%064d',n),c.occurrence_count,1,'open',NULL,c.created_at,NULL
+		FROM seq,person_match_candidates c WHERE c.candidate_id=?`, maxOpenPersonCandidates-1, candidate.CandidateID)
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	count, full, err := s.OpenPersonCandidateCount(ctx)
+	require.NoError(t, err)
+	require.Zero(t, count)
+	require.True(t, full)
+	coverage, err := s.DocumentPeopleCoverage(ctx)
+	require.NoError(t, err)
+	require.Zero(t, coverage.OpenCandidates)
+	require.True(t, coverage.CandidateQueueFull)
+	input := candidateForTest(t, "name_alias:overflow", "Overflow", "", []PersonCandidateOccurrence{{
+		ContentVersionID: visibleVersion, Role: "author", EvidenceKind: "source_metadata", EvidenceID: "overflow",
+	}})
+	require.NoError(t, s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		result, retained, err := s.OpenPersonCandidate(ctx, tx, input)
+		require.Empty(t, result.CandidateID)
+		require.False(t, retained)
+		return err
+	}))
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	count, full, err = s.OpenPersonCandidateCount(WithPhotoHiddenToken(ctx, token))
+	require.NoError(t, err)
+	require.EqualValues(t, maxOpenPersonCandidates, count)
+	require.True(t, full)
 }
 
 func TestPhotoFaceMetadataRoundTripAndInvalidReferences(t *testing.T) {

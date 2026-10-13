@@ -175,6 +175,12 @@ func IsResponseDecodeError(err error) bool {
 	return errors.As(err, &decode) || generated
 }
 
+// IsRetryableMutationError identifies failures for which callers should retain their retry ID.
+func IsRetryableMutationError(err error) bool {
+	status, _ := responseStatus(err)
+	return IsTransportError(err) || IsResponseDecodeError(err) || (status >= 500 && status < 600)
+}
+
 type problemError struct {
 	code               string
 	observedScopeCount int

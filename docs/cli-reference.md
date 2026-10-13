@@ -185,6 +185,8 @@ docbank photos assets detach <asset-id> <file-id> [--revision REV]
 docbank photos assets exclude <asset-id> [--revision REV] [--excluded=true]
 docbank photos assets promote <path-or-id> [--revision REV] [--kind KIND] [--role ROLE]
 docbank photos assets display <asset-id> [file-id] [--revision REV]
+docbank photos faces list <content-version-id>
+docbank photos faces create <content-version-id> [--box X,Y,WIDTH,HEIGHT] [--person ID] [--face-id UUID]
 docbank photos settings show
 docbank photos settings set raw|image [--revision REV]
 docbank photos settings reset [--revision REV]

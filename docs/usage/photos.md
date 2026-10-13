@@ -40,7 +40,7 @@ docbank photos faces list <content-version-id>
 
 A box is `x,y,width,height`, each measured as a fraction of the EXIF-oriented preview before authored rotation. Omit `--person` for an unnamed face, or omit `--box` to mark a person in the whole photo. Naming a face records the same `depicted` person link as a whole-photo mark. Multiple faces of one person share that link. List returns face boxes and asserted people, including whole-photo marks.
 
-A boxed create generates a face UUID. Retain the returned `face_id`, or use `--face-id <uuid>` to supply one. Retry with that same ID, box and version to recover the saved result. A supplied person must match the saved canonical person. A failed boxed command includes the ID to use for retry. Conflicting reuse fails.
+A boxed create generates a face UUID. Retain the returned `face_id`, or use `--face-id <uuid>` to supply one. Retry with that same ID, box and version to recover the saved result. A supplied person must match the saved canonical person. A boxed command includes the retry ID after a connection failure, a server failure, or an unreadable success response. Conflicting reuse fails.
 
 Face reads and writes require an unlock while the photo is Hidden. Audited vault writes return `audit_mutation_unsupported`. These commands record observations manually. Face detection, correction and undo are unavailable.
 

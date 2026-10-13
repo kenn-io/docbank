@@ -275,7 +275,7 @@ func (s *Store) ReconcilePhotoFaces(ctx context.Context, versionID, fingerprint 
 			usedNew[m.new] = true
 			face := old[m.old]
 			box := boxes[m.new]
-			if face.DetectorFingerprint == ManualFaceFingerprint {
+			if face.DetectorFingerprint == ManualFaceFingerprint || (face.DetectorFingerprint == fingerprint && face.Box == box) {
 				continue
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET detector_fingerprint=?,x=?,y=?,width=?,height=?,revision=revision+1 WHERE face_id=?`, fingerprint, box.X, box.Y, box.Width, box.Height, face.FaceID); err != nil {

@@ -266,11 +266,11 @@ func (s *Store) openPersonCandidateCount(ctx context.Context, q metadataQuerier)
 	if err != nil {
 		return 0, false, err
 	}
-	var count int64
-	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state='open' AND `+visible).Scan(&count); err != nil {
+	var count, globalCount int64
+	if err := q.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(CASE WHEN `+visible+` THEN 1 ELSE 0 END),0) FROM person_match_candidates WHERE state='open'`).Scan(&globalCount, &count); err != nil {
 		return 0, false, err
 	}
-	return count, count >= maxOpenPersonCandidates, nil
+	return count, globalCount >= maxOpenPersonCandidates, nil
 }
 
 func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDecision) (PersonMatchCandidate, error) {

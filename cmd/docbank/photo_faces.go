@@ -70,10 +70,7 @@ func photoFacesCommand() *cobra.Command {
 			return c.CreatePhotoFace(cmd.Context(), args[0], request, cookie)
 		})
 		if err != nil {
-			if request.FaceID != "" {
-				return fmt.Errorf("face create failed; retry with --face-id %s: %w", request.FaceID, err)
-			}
-			return err
+			return photoFaceCreateError(request.FaceID, err)
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), result)
 	}}
@@ -91,11 +88,15 @@ func photoFaceCreateRequest(box *document.FaceBox, personID, faceID string) (api
 	if box != nil && faceID == "" {
 		faceID = uuid.New().String()
 	}
-	if faceID != "" {
-		id, err := uuid.Parse(faceID)
-		if err != nil || id.Version() != 4 || id.Variant() != uuid.RFC4122 || id.String() != faceID {
-			return api.CreatePhotoFaceRequest{}, errors.New("face ID must be a canonical UUIDv4")
-		}
+	if faceID != "" && !daemonconn.IsCanonicalUUIDv4(faceID) {
+		return api.CreatePhotoFaceRequest{}, errors.New("face ID must be a canonical UUIDv4")
 	}
 	return api.CreatePhotoFaceRequest{FaceID: faceID, Box: box, PersonID: personID}, nil
+}
+
+func photoFaceCreateError(faceID string, err error) error {
+	if faceID != "" && daemonconn.IsRetryableMutationError(err) {
+		return fmt.Errorf("face create failed; retry with --face-id %s: %w", faceID, err)
+	}
+	return err
 }
