@@ -3,6 +3,7 @@ package daemonconn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"uuid"
@@ -79,7 +80,7 @@ func (c *Connection) PhotoCheckouts(ctx context.Context) ([]store.PhotoCheckout,
 func (c *Connection) PhotoCheckoutStatus(ctx context.Context, id string) (api.PhotoCheckoutStatus, error) {
 	parsed, err := uuid.Parse(id)
 	if err != nil {
-		return api.PhotoCheckoutStatus{}, err
+		return api.PhotoCheckoutStatus{}, fmt.Errorf("parsing checkout ID: %w", err)
 	}
 	out, err := c.API().GetPhotoCheckout(ctx, &apiclient.GetPhotoCheckoutRequestOptions{PathParams: &apiclient.GetPhotoCheckoutPath{ID: parsed}})
 	if err != nil {

@@ -468,6 +468,30 @@ func TestRevokePackageImportOwnerCancelsQueuedWork(t *testing.T) {
 	require.Equal(t, "cancelled", revoked.State)
 }
 
+func TestPackageImportCancellationRetainsCheckoutPinnedStaging(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	request, run, _ := prepareReceivedPackage(t, s, "checkout-pinned")
+	image, err := s.IngestFileExact(t.Context(), run, s.RootID(), "synthetic.jpg", browseHash("pkg-photo"), 1, "image/jpeg", "synthetic.jpg", "")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(t.Context(), image.ID)
+	require.NoError(t, err)
+	checkout, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	job := packageImportJobRequest(t, s, request)
+	_, err = s.AdmitPackageImport(t.Context(), run, request, job)
+	require.NoError(t, err)
+	cancelled, err := s.CancelPackageImportJob(t.Context(), job.Owner, job.OperationID)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", cancelled.State)
+	entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
+	require.NoError(t, err)
+	retained, err := s.NodeByID(t.Context(), image.ID)
+	require.NoError(t, err)
+	require.Equal(t, entries[0].VersionID, retained.CurrentVersionID)
+	require.NoError(t, validatePhotoMetadataState(t.Context(), s.db, currentStorageSchemaVersion))
+}
+
 func TestPackageImportDiscardRepairsPhotoAssets(t *testing.T) {
 	t.Parallel()
 	for _, outcome := range []string{"cancelled", "failed"} {

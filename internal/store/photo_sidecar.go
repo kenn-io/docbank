@@ -11,9 +11,10 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+// The earliest observed source keeps grouped reimports paired under their original names.
 const photoOriginalPathSQL = `(SELECT p.original_path FROM provenance p JOIN ingests i ON i.id=p.ingest_id
  WHERE p.node_id=n.id AND i.source_kind NOT LIKE 'embedded:%' AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
- ORDER BY p.identity LIMIT 1)`
+ ORDER BY COALESCE((SELECT MIN(b.observed_at) FROM provenance_version_bindings b WHERE b.provenance_identity=p.identity),i.started_at),i.started_at,i.id,p.original_path,p.identity LIMIT 1)`
 
 type PhotoSidecarTarget struct {
 	AssetID              string

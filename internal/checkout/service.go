@@ -64,11 +64,11 @@ func (s Service) Prepare(ctx context.Context, selection store.PhotoCheckoutSelec
 	}
 	canonical, err := filepath.EvalSymlinks(destination)
 	if err != nil {
-		return checkout, operation, nil, fmt.Errorf("%w: destination must be an existing folder: %v", store.ErrInvalidPhotoCheckout, err)
+		return checkout, operation, nil, fmt.Errorf("%w: destination must be an existing folder: %w", store.ErrInvalidPhotoCheckout, err)
 	}
 	root, err := os.OpenRoot(canonical)
 	if err != nil {
-		return checkout, operation, nil, fmt.Errorf("%w: opening destination: %v", store.ErrInvalidPhotoCheckout, err)
+		return checkout, operation, nil, fmt.Errorf("%w: opening destination: %w", store.ErrInvalidPhotoCheckout, err)
 	}
 	err = s.mutate(ctx, func() error {
 		if err := s.validateDestination(ctx, root, canonical, ""); err != nil {
@@ -167,7 +167,7 @@ func (s Service) Start(supervisor *jobs.Supervisor, c store.PhotoCheckout, root 
 			_ = root.Close()
 		}
 		if !errors.Is(err, jobs.ErrDuplicate) {
-			err = errors.Join(err, s.finish(context.Background(), c, store.StorageOperationFailed, "{}", err.Error()))
+			err = errors.Join(err, s.finish(context.Background(), c, store.StorageOperationFailed, err.Error()))
 		}
 	}
 	return err
@@ -220,6 +220,12 @@ func (s Service) Resume(ctx context.Context, supervisor *jobs.Supervisor) error 
 }
 
 func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
+	if s.ActivityBegin != nil {
+		s.ActivityBegin()
+		if s.ActivityEnd != nil {
+			defer s.ActivityEnd()
+		}
+	}
 	failure := "checkout creation was interrupted; partial copies and frozen bases are retained"
 	canonical, fsErr := filepath.EvalSymlinks(c.Destination)
 	var root *os.Root
@@ -264,7 +270,7 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 	if fsErr != nil && !errors.Is(fsErr, os.ErrNotExist) {
 		failure += "; reconciliation failed: " + fsErr.Error()
 	}
-	return s.finish(ctx, c, store.StorageOperationFailed, "{}", failure)
+	return s.finish(ctx, c, store.StorageOperationFailed, failure)
 }
 
 func observeCheckoutFile(ctx context.Context, root *os.Root, entry store.PhotoCheckoutEntry) (bool, error) {
@@ -288,8 +294,8 @@ func observeCheckoutFile(ctx context.Context, root *os.Root, entry store.PhotoCh
 	err = errors.Join(readErr, file.Close())
 	return err == nil && size == entry.Size && hex.EncodeToString(digest.Sum(nil)) == entry.Hash, err
 }
-func (s Service) finish(ctx context.Context, c store.PhotoCheckout, state store.StorageOperationState, receipt, failure string) error {
-	return s.Store.FinishPhotoCheckout(ctx, c.ID, c.OperationID, state, receipt, failure, time.Now().Add(30*24*time.Hour))
+func (s Service) finish(ctx context.Context, c store.PhotoCheckout, state store.StorageOperationState, failure string) error {
+	return s.Store.FinishPhotoCheckout(ctx, c.ID, c.OperationID, state, "{}", failure, time.Now().Add(30*24*time.Hour))
 }
 
 func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) error {
@@ -314,7 +320,7 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 		return err
 	}
 	if cancelled {
-		return s.finish(ctx, c, store.StorageOperationCancelled, "{}", "")
+		return s.finish(ctx, c, store.StorageOperationCancelled, "")
 	}
 	if root == nil {
 		canonical, err := filepath.EvalSymlinks(c.Destination)
@@ -325,12 +331,12 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 			root, err = os.OpenRoot(c.Destination)
 		}
 		if err != nil {
-			return s.finish(ctx, c, store.StorageOperationFailed, "{}", err.Error())
+			return s.finish(ctx, c, store.StorageOperationFailed, err.Error())
 		}
 		defer func() { _ = root.Close() }()
 		if !started {
 			if err := s.mutate(ctx, func() error { return s.validateDestination(ctx, root, c.Destination, c.ID) }); err != nil {
-				return errors.Join(err, s.finish(ctx, c, store.StorageOperationFailed, "{}", err.Error()))
+				return errors.Join(err, s.finish(ctx, c, store.StorageOperationFailed, err.Error()))
 			}
 		}
 	}
@@ -386,14 +392,17 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 	} else if copyErr != nil {
 		state, failure = store.StorageOperationFailed, copyErr.Error()
 	}
-	return errors.Join(copyErr, s.finish(context.WithoutCancel(ctx), c, state, "{}", failure))
+	return errors.Join(copyErr, s.finish(context.WithoutCancel(ctx), c, state, failure))
 }
 
 func checkDestinationIdentity(root *os.Root, destination string) error {
 	held, heldErr := root.Stat(".")
 	named, namedErr := os.Stat(destination)
-	if heldErr != nil || namedErr != nil || !os.SameFile(held, named) {
-		return fmt.Errorf("%w: destination changed during checkout: %v", store.ErrInvalidPhotoCheckout, errors.Join(heldErr, namedErr))
+	if err := errors.Join(heldErr, namedErr); err != nil {
+		return fmt.Errorf("%w: destination changed during checkout: %w", store.ErrInvalidPhotoCheckout, err)
+	}
+	if !os.SameFile(held, named) {
+		return fmt.Errorf("%w: destination changed during checkout", store.ErrInvalidPhotoCheckout)
 	}
 	return nil
 }

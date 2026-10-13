@@ -12,6 +12,8 @@ import (
 	"go.kenn.io/docbank/internal/store"
 )
 
+const photoCheckoutListCommand = "list"
+
 func checkoutSelection(cmd *cobra.Command) (store.PhotoCheckoutSelection, error) {
 	assets, _ := cmd.Flags().GetStringSlice("asset")
 	albums, _ := cmd.Flags().GetStringSlice("album")
@@ -37,13 +39,16 @@ func checkoutSelection(cmd *cobra.Command) (store.PhotoCheckoutSelection, error)
 }
 
 func newPhotoCheckoutCmd() *cobra.Command {
-	command := &cobra.Command{Use: "checkout", Short: "Create writable photo copies", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	command := &cobra.Command{Use: "checkout", Short: "Create writable photo copies", Long: `Estimate a selection, then create verified writable copies in an empty folder.
+The folder must be on the daemon's computer. List or inspect saved checkouts.`, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	for _, create := range []bool{false, true} {
 		use, short, args := "estimate", "Estimate selected files and bytes", cobra.NoArgs
+		example := "  docbank photos checkout estimate --years 2024:2025"
 		if create {
+			example = "  docbank photos checkout create ./photos --all --byte-limit 1000000000"
 			use, short, args = "create <destination>", "Copy selected photos to an empty daemon-host folder", cobra.ExactArgs(1)
 		}
-		child := &cobra.Command{Use: use, Short: short, Args: args, RunE: func(cmd *cobra.Command, args []string) error {
+		child := &cobra.Command{Use: use, Short: short, Example: example, Args: args, RunE: func(cmd *cobra.Command, args []string) error {
 			selection, err := checkoutSelection(cmd)
 			if err != nil {
 				return usageError(err)
@@ -92,7 +97,7 @@ func newPhotoCheckoutCmd() *cobra.Command {
 		}
 		command.AddCommand(child)
 	}
-	command.AddCommand(&cobra.Command{Use: "list", Short: "List photo checkouts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	command.AddCommand(&cobra.Command{Use: photoCheckoutListCommand, Short: "List photo checkouts", Example: "  docbank photos checkout list", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err
@@ -103,7 +108,7 @@ func newPhotoCheckoutCmd() *cobra.Command {
 		}
 		return writeCLIJSON(cmd.OutOrStdout(), out)
 	}})
-	command.AddCommand(&cobra.Command{Use: "status <checkout-id>", Short: "Inspect photo checkout progress", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	command.AddCommand(&cobra.Command{Use: "status <checkout-id>", Short: "Inspect photo checkout progress", Example: "  docbank photos checkout status 00000000-0000-4000-8000-000000000001", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		connection, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
 			return err

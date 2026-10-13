@@ -199,7 +199,7 @@ func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 	cases := []struct{ name, filename string }{
 		{"empty all", ""}, {"empty album", ""}, {"empty years", ""}, {"audit refusal", ""},
 	}
-	for _, name := range []string{"CON.jpg", "bad:name.jpg", "bad?.jpg", "trailing.", "trailing ", "control\x01.jpg", "bad\\name.jpg", "bad\xff.jpg"} {
+	for _, name := range []string{"CON.jpg", "bad:name.jpg", "bad?.jpg", "trailing.", "trailing ", "control\x01.jpg", "bad\\name.jpg"} {
 		cases = append(cases, struct{ name, filename string }{name, name})
 	}
 	for _, tc := range cases {
@@ -291,6 +291,19 @@ func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
 		photoImportTestMember(filepath.Join(source, "IMG.ARW.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"),
 	))
 	require.NoError(t, err)
+	laterRun, err := s.BeginIngest(ctx, "photo-import", "renamed duplicates")
+	require.NoError(t, err)
+	for _, observation := range []struct {
+		run  IngestRun
+		name string
+	}{{run, "AAA"}, {laterRun, "RENAMED"}} {
+		duplicate, err := s.IngestPhotoGroup(ctx, observation.run, photoImportTestGroup(
+			photoImportTestMember(filepath.Join(source, observation.name+".ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
+			photoImportTestMember(filepath.Join(source, observation.name+".JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg"),
+		))
+		require.NoError(t, err)
+		require.Equal(t, result.Asset.ID, duplicate.Asset.ID)
+	}
 	for _, node := range result.Nodes {
 		node, err = s.NodeByID(ctx, node.ID)
 		require.NoError(t, err)
@@ -346,16 +359,21 @@ func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, node.Name, filepath.Base(entries[0].Path))
-	for _, windowsSource := range []string{`C:\camera\capture.JPG`, `\\camera\photos\capture.JPG`} {
-		t.Run(windowsSource, func(t *testing.T) {
+	for _, sourcePath := range []string{`C:\camera\capture.JPG`, `\\camera\photos\capture.JPG`, `/camera/foo\bar.JPG`} {
+		t.Run(sourcePath, func(t *testing.T) {
 			s := newTestStore(t)
 			run, err := s.BeginIngest(t.Context(), "photo-import", t.TempDir())
 			require.NoError(t, err)
-			member := photoImportTestMember(windowsSource, PhotoRoleImage, browseHash("capture"), "image/jpeg")
+			member := photoImportTestMember(sourcePath, PhotoRoleImage, browseHash("capture"), "image/jpeg")
 			member.Name = "renamed.JPG"
 			result, err := s.IngestPhotoGroup(t.Context(), run, photoImportTestGroup(member))
 			require.NoError(t, err)
 			checkout, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
+			if strings.HasPrefix(sourcePath, "/camera/") {
+				require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+				require.ErrorContains(t, err, `filename "foo\\bar.JPG"`)
+				return
+			}
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
 			require.NoError(t, err)

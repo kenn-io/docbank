@@ -5,6 +5,7 @@ import (
 	"go.kenn.io/docbank/document/media/mediatest"
 	"go.kenn.io/docbank/internal/api"
 	"image/color"
+	"os"
 	"testing"
 	"time"
 
@@ -64,6 +65,8 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	var created api.PhotoCheckoutCreateResult
 	require.NoError(t, json.Unmarshal([]byte(out), &created))
 	t.Cleanup(func() {
+		poll := time.NewTicker(20 * time.Millisecond)
+		defer poll.Stop()
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
 			out, err := runCLI(t, "jobs", "show", created.Operation.ID, "--json")
@@ -71,12 +74,16 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 			if err == nil && json.Unmarshal([]byte(out), &operation) == nil && operation.FinishedAt != "" {
 				return
 			}
-			time.Sleep(20 * time.Millisecond)
+			<-poll.C
 		}
 	})
 	require.True(t, created.Checkout.Selection.All)
 	require.Equal(t, int64(100000), created.Checkout.ByteLimit)
-	require.Equal(t, destination, created.Checkout.Destination)
+	expectedDestination, err := os.Stat(destination)
+	require.NoError(t, err)
+	actualDestination, err := os.Stat(created.Checkout.Destination)
+	require.NoError(t, err)
+	require.True(t, os.SameFile(expectedDestination, actualDestination))
 	out, err = runCLI(t, "photos", "checkout", "list")
 	require.NoError(t, err, out)
 	var list []store.PhotoCheckout
@@ -87,5 +94,4 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	var status api.PhotoCheckoutStatus
 	require.NoError(t, json.Unmarshal([]byte(out), &status))
 	require.Equal(t, created.Checkout.ID, status.Checkout.ID)
-
 }

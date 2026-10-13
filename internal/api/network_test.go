@@ -59,5 +59,4 @@ func TestNetworkServerPathRoutesIgnoreForwardingHeaders(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	assert.Contains(t, response.Body.String(), "daemon's computer")
 	assert.NotContains(t, response.Body.String(), "/uploads")
-
 }

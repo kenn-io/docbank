@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,26 +100,29 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 	storageRoot, watchRoot := t.TempDir(), t.TempDir()
 	s.Config.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: storageRoot}}
 	s.Config.Watches = []config.WatchConfig{{Source: watchRoot}}
+	reject := func(destination string) {
+		t.Helper()
+		_, _, root, err := s.Prepare(t.Context(), selection, destination, 0)
+		if root != nil {
+			require.NoError(t, root.Close())
+		}
+		require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+	}
 	for _, base := range []string{s.VaultRoot, storageRoot, watchRoot} {
 		destination := filepath.Join(base, "checkout")
 		require.NoError(t, os.Mkdir(destination, 0o755))
-		_, _, _, err := s.Prepare(t.Context(), selection, destination, 0)
-		require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+		reject(destination)
 	}
 	nonempty := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(nonempty, "keep"), nil, 0o600))
-	_, _, _, err := s.Prepare(t.Context(), selection, nonempty, 0)
-	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
-	_, _, _, err = s.Prepare(t.Context(), selection, "relative", 0)
-	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
-	_, _, _, err = s.Prepare(t.Context(), selection, filepath.Join(t.TempDir(), "missing"), 0)
-	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+	reject(nonempty)
+	reject("relative")
+	reject(filepath.Join(t.TempDir(), "missing"))
 	c, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
 	require.NoError(t, err)
 	sub := filepath.Join(c.Destination, "nested")
 	require.NoError(t, os.Mkdir(sub, 0o755))
-	_, _, _, err = s.Prepare(t.Context(), selection, sub, 0)
-	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+	reject(sub)
 	require.NoError(t, root.Close())
 	prior := t.TempDir()
 	reserved, _, priorRoot, err := s.Prepare(t.Context(), selection, prior, 0)
@@ -137,15 +141,13 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 	require.NoError(t, root.Close())
 	destination := t.TempDir()
 	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(destination, "missing-descendant")}}
-	_, _, _, err = s.Prepare(t.Context(), selection, destination, 0)
-	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+	reject(destination)
 	alias := filepath.Join(t.TempDir(), "alias")
 	if err := os.Symlink(destination, alias); err != nil {
 		t.Skip("symlink creation unavailable")
 	}
 	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(alias, "missing-descendant")}}
-	_, _, _, err = s.Prepare(t.Context(), selection, destination, 0)
-	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+	reject(destination)
 }
 
 func TestCheckoutRecoveryRemovesOnlyExactEmptyableStages(t *testing.T) {
@@ -326,6 +328,9 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, root.Close())
 	require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
+	var begun, ended atomic.Int32
+	s.ActivityBegin = func() { begun.Add(1) }
+	s.ActivityEnd = func() { ended.Add(1) }
 	supervisor := jobs.New(t.Context(), nil)
 	defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
 	require.NoError(t, s.Resume(t.Context(), supervisor))
@@ -333,6 +338,9 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 		actual, err := s.Store.PhotoCheckout(t.Context(), c.ID)
 		return err == nil && actual.State == "failed" && strings.Contains(actual.Error, "interrupted")
 	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, supervisor.Shutdown(context.Background()))
+	require.Equal(t, int32(1), begun.Load())
+	require.Equal(t, int32(1), ended.Load())
 }
 
 func TestCheckoutFailedRunKeepsVerifiedPartialCopies(t *testing.T) {

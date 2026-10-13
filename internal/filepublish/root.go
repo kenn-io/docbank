@@ -41,7 +41,7 @@ func (s *RootStage) MakeParentDirectories(destination string) error {
 		return errors.New("checkout destination must be root-relative")
 	}
 	current := "."
-	for _, component := range strings.Split(filepath.Dir(destination), string(filepath.Separator)) {
+	for component := range strings.SplitSeq(filepath.Dir(destination), string(filepath.Separator)) {
 		if component == "." {
 			continue
 		}
