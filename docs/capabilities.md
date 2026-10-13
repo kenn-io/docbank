@@ -211,13 +211,16 @@ status, and the verified Markdown that processing produced. See the
 [processing workflow](usage/document-processing.md) and the
 [CLI commands](cli-reference.md#docbank-processing).
 
-[Processing search](usage/search.md) has lexical, semantic, hybrid, and auto
-modes. It searches only the source versions you have authorized. Semantic and
+[Automatic and processing search](usage/search.md) has lexical, semantic, hybrid, and auto
+modes. Explicit processing search uses the source versions you authorize. Semantic and
 hybrid search send query text to a provider, so they need active consent.
-Ordinary name and text search is separate from processing search.
+Plain CLI search automatically tries hybrid retrieval over current live file
+versions when a query embedding binding is configured. It reports a degradation
+reason when it falls back to ordinary lexical search. Explicit processing search
+keeps the profile and source-version fence you supply.
 
 In the web app and TUI, Auto selects Hybrid when an embedding binding is
-available. The processing HTTP API and CLI use lexical retrieval for `auto`.
+available. The processing HTTP API and explicit CLI `--mode auto` use lexical retrieval.
 
 Reranking is optional and off unless you ask for it. It reorders the first
 results, after Docbank has revalidated them, through a configured ZeroEntropy

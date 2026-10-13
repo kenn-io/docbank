@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-10
+last_edited: 2026-10-13
 title: Document processing
 description: Preview, consent to, and run document processing. The original version is never changed.
 ---
@@ -314,5 +314,5 @@ revocation stops new egress and prevents publication under that authorization.
 
 Next: configure a local profile in
 [Document processing configuration](configuration.md), search an authorized
-source set in [Document processing search](search.md), and inspect the data
+source set in [Automatic and processing search](search.md), and inspect the data
 model in [Document derivatives](../architecture/document-derivatives.md).

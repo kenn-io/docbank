@@ -169,6 +169,7 @@ func TestSearchContentFirstModes(t *testing.T) {
 			stub.vaultID = catalog.VaultID()
 			stub.semantic[0].VaultID = catalog.VaultID()
 			stub.semantic[0].NodeID = content.ID
+			stub.semantic[0].NodeRevision = content.Revision
 			stub.semantic[0].ContentVersionID = content.CurrentVersionID
 			stub.semantic[0].Path = "/notes.txt"
 			backend := &contentFirstSearchBackend{retrievalBackendStub: stub, catalog: catalog}
@@ -210,7 +211,9 @@ type contentFirstSearchBackend struct {
 }
 
 func (backend *contentFirstSearchBackend) SearchExplainedLexicalCandidates(ctx context.Context, query string, limit int, options store.SearchOptions, contentFirst bool) ([]store.ExplainedLexicalCandidate, bool, error) {
-	return backend.catalog.SearchExplainedLexicalCandidates(ctx, query, limit, options, contentFirst)
+	hits, truncated, err := backend.catalog.SearchExplainedLexicalCandidates(ctx, query, limit, options, contentFirst)
+	backend.lexical = hits
+	return hits, truncated, err
 }
 
 func (backend *contentFirstSearchBackend) NormalizeSearchOptions(ctx context.Context, options store.SearchOptions) (store.SearchOptions, error) {

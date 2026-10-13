@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-05
+last_edited: 2026-10-13
 title: Searching
 description: Ranked, prefix-matching search over document names and verified text content.
 ---
@@ -7,6 +7,11 @@ description: Ranked, prefix-matching search over document names and verified tex
 # Searching
 
 Find live files and folders by name, current text, tags, or modification time.
+Query words are joined, so `search tax 2026` and `search "tax 2026"` agree.
+Without processing options, search automatically uses hybrid retrieval when a
+query-capable embedding profile is available; otherwise it uses ordinary lexical
+search. A failed semantic leg falls back with an explicit degradation reason.
+See [Automatic and processing search](search.md) for selection and scope limits.
 Search returns at most 50 results by default and tells you when more match.
 
 ```bash
@@ -23,6 +28,8 @@ docbank search report --limit 200
 docbank search report --json
 ```
 
+Ordinary lexical output looks like this:
+
 ```
 SELECTOR   MATCH    PATH
 id:231     name     /taxes/2026/insurance-renewal.pdf
@@ -34,7 +41,7 @@ For example, advanced search `brightness_min:0.4 color_blue_min:0.5` selects
 bright, blue-leaning photos, while `unevaluated:true` selects photos with
 missing measurements.
 
-## How do words match?
+## How do words match in lexical search?
 
 Each whitespace-separated term matches the start of a word. For example,
 `insur` finds `insurance-renewal.pdf`. Every term must match.
@@ -49,14 +56,20 @@ The `MATCH` column tells you which group produced the result.
 
 ## Which documents can match?
 
-Search includes live files and directories, excluding the vault root. Trashed
-nodes do not appear. Restoring them returns them to search. Renames update the
-name index immediately.
+Ordinary lexical search includes live files and directories, excluding the
+vault root. Automatic hybrid search includes current versions of live files;
+directories have no content version to include in that scope. Trashed nodes do
+not appear. Restoring them returns them to search. Renames update the name
+index immediately.
 
 Text search uses only the current version of each live file. Ordinary search
 does not cover older versions. Read those with `docbank versions`.
 
 ## How do I narrow the results?
+
+These filters select ordinary lexical search, including when automatic search
+would otherwise use hybrid retrieval. With configured embeddings, the command
+reports `filters_require_lexical`. `--mode lexical` alone also accepts them.
 
 | Filter | What it selects |
 |--------|-----------------|
@@ -97,7 +110,12 @@ rejected. Add text, a tag, or a time bound before using those filters.
 ## How do I handle incomplete results?
 
 `--limit` accepts 1–1000. Docbank always reports when the result was truncated.
-For scripts, `--json` returns `hits`, `limit`, and `truncated`. `hits` is always
+For scripts, ordinary lexical `--json` returns `hits`, `limit`, and `truncated`.
+Automatic hybrid uses the existing processing report with `results` and
+coverage instead. See [Search report shapes](search.md). Lexical fallback
+writes `degraded: REASON` to stderr and keeps stdout JSON unchanged.
+
+In ordinary lexical JSON, `hits` is always
 an array, including when nothing matches. The limit caps response size, not
 work inside the database.
 
@@ -165,7 +183,7 @@ saved definitions.
 A query payload uses `QueryV1`: a JSON object with version `v: 1`, search text,
 filters, and optional syntax, mode, and sort choices. A saved mode such as
 `hybrid` describes intent. Query snapshots reject it.
-[Processing search](search.md) requires a named processing profile and a
+[Explicit processing search](search.md#choose-exact-versions-and-a-profile) requires a named processing profile and a
 source-version fence.
 See the [payload reference](../architecture/http-api.md#saved-query-and-highlight-definitions)
 for accepted fields and limits.
@@ -435,11 +453,10 @@ Saving search choices in QueryV1 does not execute either workflow.
 
 ## Processing search
 
-Configured document processing adds a separate search over renditions and
-embeddings, limited to the source versions the caller names. It requires a
-mode, a profile, and an authorized set of source versions. It does not change
-ordinary name and plain-text search. See
-[Document processing search](search.md) for modes, coverage, and the consumer
+Automatic CLI search resolves current live versions for hybrid retrieval.
+Explicit processing search selects the profile and source versions you name.
+That explicit form requires a mode, a profile, and an authorized source set. See
+[Automatic and processing search](search.md) for modes, coverage, and the consumer
 contract.
 
 Next: organize documents beyond paths with

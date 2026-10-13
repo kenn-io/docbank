@@ -444,6 +444,11 @@ func (backend *retrievalBackendStub) RevalidateSearchCandidates(_ context.Contex
 	_ []store.SearchCandidateIdentity, _ store.SearchOptions, _, _ string,
 ) (store.SearchCandidateRevalidation, error) {
 	candidates := make([]store.RevalidatedSearchCandidate, 0, len(backend.semantic))
+	for _, candidate := range backend.lexical {
+		candidates = append(candidates, store.RevalidatedSearchCandidate{
+			NodeID: candidate.Node.ID, ContentVersionID: candidate.Node.CurrentVersionID, Path: candidate.Path,
+		})
+	}
 	for _, candidate := range backend.semantic {
 		candidates = append(candidates, store.RevalidatedSearchCandidate{
 			NodeID: candidate.NodeID, ContentVersionID: candidate.ContentVersionID, Path: candidate.Path,

@@ -130,7 +130,9 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 	if expansionDegradation != DegradationNone {
 		report.Degradations = append(report.Degradations, expansionDegradation)
 	}
-	if searcher.expansion.Enabled || searcher.reranking.Enabled {
+	// Query encoding leaves lexical candidates in flight while the catalog can
+	// change. Fence the complete report, including its unembedded lexical hits.
+	if searcher.expansion.Enabled || searcher.reranking.Enabled || report.ActualMode == ModeSemantic || report.ActualMode == ModeHybrid {
 		revalidated, err := searcher.revalidateReport(ctx, query, report)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -139,7 +141,10 @@ func (searcher *Searcher) Search(ctx context.Context, query Query) (Report, erro
 			if searcher.expansion.Enabled {
 				return Report{}, ErrExpandedSearchFailed
 			}
-			return Report{}, ErrRerankingFailed
+			if searcher.reranking.Enabled {
+				return Report{}, ErrRerankingFailed
+			}
+			return Report{}, fmt.Errorf("revalidating semantic search results: %w", err)
 		}
 		report = revalidated
 	}
@@ -166,11 +171,16 @@ func (searcher *Searcher) revalidateReport(ctx context.Context, query Query, rep
 		evidence := make([]store.SearchEvidenceIdentity, len(result.Evidence))
 		var nodeRevision int64
 		for j, reference := range result.Evidence {
-			if nodeRevision == 0 {
+			if j == 0 {
 				nodeRevision = reference.NodeRevision
 			}
 			if reference.NodeRevision != nodeRevision {
-				return Report{}, errors.New("search result evidence spans node revisions")
+				if result.LexicalRank == 0 || result.SemanticRank == 0 {
+					return Report{}, errors.New("search result evidence spans node revisions")
+				}
+				// Fusion can join lanes read on opposite sides of query encoding.
+				// Pin the oldest revision so the store drops a drifted candidate.
+				nodeRevision = min(nodeRevision, reference.NodeRevision)
 			}
 			evidence[j] = store.SearchEvidenceIdentity{Kind: reference.Kind,
 				VectorSpaceID: reference.VectorSpaceID, EmbeddingSetID: reference.EmbeddingSetID,

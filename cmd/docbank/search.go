@@ -22,6 +22,7 @@ const (
 var (
 	searchLimit          int
 	searchJSON           bool
+	searchAgent          bool
 	searchTag            string
 	searchMIME           string
 	searchUnder          string
@@ -46,28 +47,31 @@ type documentSearchCLIOptions struct {
 	Explain           bool
 	Rerank            bool
 	JSON              bool
+	Agent             bool
 }
 
 var searchCmd = &cobra.Command{
-	Example: `  docbank search invoice 2026
+	Example: `  docbank search invoice 2026 --agent
   docbank search merger plan --under /cases/acme --json
   docbank search --tag urgent
   docbank search report --mime-type application/pdf --modified-since 2026-01-01T00:00:00Z`,
-	Long: `Each word matches a word prefix; all words must match. Name hits rank before
-content hits. Only current versions of live nodes are searched.
-Text content is indexed for text/* (txt, md, csv), JSON/JSONL and email
-bodies. PDFs, images and Office files match by name only until a processing
-profile publishes a rendition; plain search then matches that text too.
-Output: table of SELECTOR, MATCH (name|content|filter), PATH; --json prints
-{hits:[{node,path,match}], limit, truncated}.
---mode (lexical|semantic|hybrid|auto) ranks one profile's renditions; it
-requires --profile (see "docbank processing profiles") and one or more
---source-version UUIDs, and cannot be combined with --tag/--under/--mime-type/
---modified-*.`,
+	Long: `Query words are joined. With no processing options, search automatically uses
+hybrid retrieval when a query embedding binding is ready, otherwise lexical.
+Unavailable semantic search falls back with an explicit degradation reason.
+Lexical search matches word prefixes, names before content, on live versions.
+Filters, limits above 100, and queries over 8192 characters use lexical search.
+--mode lexical selects ordinary lexical search explicitly.
+Explicit processing modes require --profile and --source-version UUIDs and
+reject ordinary filters; see "docbank processing profiles".
+--agent prints an OK header and one line per hit; --json keeps typed reports.
+See docs/usage/search.md for automatic selection, scope, and consent.`,
 	GroupID: groupSearch,
 	Use:     "search [<query>...]",
 	Short:   "Find files and folders by name, text, tag, type, folder, or date",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if searchAgent && searchJSON {
+			return usageError(errors.New("--agent and --json are mutually exclusive"))
+		}
 		if cmd.Flags().Changed("similar-to") {
 			if len(args) != 0 {
 				return usageError(errors.New("--similar-to does not accept query text"))
@@ -77,7 +81,7 @@ requires --profile (see "docbank processing profiles") and one or more
 					return usageError(fmt.Errorf("--similar-to cannot be combined with --%s", flag))
 				}
 			}
-			options := documentSearchCLIOptions{Mode: "semantic", Profile: searchProfile, BindingID: searchBinding, ContentVersionIDs: searchSourceVersions, Limit: searchLimit, JSON: searchJSON}
+			options := documentSearchCLIOptions{Mode: "semantic", Profile: searchProfile, BindingID: searchBinding, ContentVersionIDs: searchSourceVersions, Limit: searchLimit, JSON: searchJSON, Agent: searchAgent}
 			if !cmd.Flags().Changed("limit") {
 				options.Limit = 20
 			}
@@ -107,7 +111,7 @@ requires --profile (see "docbank processing profiles") and one or more
 			options := documentSearchCLIOptions{
 				Mode: searchMode, Profile: searchProfile, BindingID: searchBinding,
 				ContentVersionIDs: searchSourceVersions, Limit: searchLimit,
-				Explain: searchExplain, Rerank: searchRerank, JSON: searchJSON,
+				Explain: searchExplain, Rerank: searchRerank, JSON: searchJSON, Agent: searchAgent,
 			}
 			if err := validateDocumentSearchOptions(strings.Join(args, " "), options); err != nil {
 				return err
@@ -171,6 +175,23 @@ requires --profile (see "docbank processing profiles") and one or more
 			opts.UnderNodeID = directory.ID
 			underPath = directory.Path
 		}
+		var degradation string
+		if !cmd.Flags().Changed("mode") {
+			report, reason, searchErr := tryAutomaticSearch(cmd, c, strings.Join(args, " "), searchLimit, opts)
+			if searchErr != nil {
+				return searchErr
+			}
+			if report != nil {
+				if searchJSON {
+					return writeCLIJSON(cmd.OutOrStdout(), *report)
+				}
+				if searchAgent {
+					return writeDocumentSearchAgent(cmd, strings.Join(args, " "), *report)
+				}
+				return writeDocumentSearchReport(cmd, *report, false)
+			}
+			degradation = reason
+		}
 		rep, err := c.SearchWithOptions(
 			cmd.Context(), strings.Join(args, " "), searchLimit, opts,
 		)
@@ -178,7 +199,20 @@ requires --profile (see "docbank processing profiles") and one or more
 			return err
 		}
 		if searchJSON {
+			if degradation != "" {
+				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "degraded: %s\n", degradation); err != nil {
+					return fmt.Errorf("writing search degradation: %w", err)
+				}
+			}
 			return writeCLIJSON(cmd.OutOrStdout(), rep)
+		}
+		if searchAgent {
+			return writeLexicalSearchAgent(cmd, strings.Join(args, " "), rep, degradation)
+		}
+		if degradation != "" {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "degraded: %s\n", degradation); err != nil {
+				return fmt.Errorf("writing search degradation: %w", err)
+			}
 		}
 		if len(rep.Hits) == 0 {
 			var filters []string
@@ -228,7 +262,7 @@ requires --profile (see "docbank processing profiles") and one or more
 }
 
 func documentSearchFlagsChanged(cmd *cobra.Command) bool {
-	return cmd.Flags().Changed("mode") || cmd.Flags().Changed("profile") ||
+	return (cmd.Flags().Changed("mode") && searchMode != "lexical") || cmd.Flags().Changed("profile") ||
 		cmd.Flags().Changed("binding") || cmd.Flags().Changed("source-version") ||
 		cmd.Flags().Changed("explain") || searchRerank
 }
@@ -271,6 +305,9 @@ func runSimilarSearch(cmd *cobra.Command, c *daemonconn.Connection, selector nod
 	}
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)
+	}
+	if options.Agent {
+		return writeSimilarSearchAgent(cmd, report)
 	}
 	return writeSimilarSearchReport(cmd, report)
 }
@@ -333,6 +370,9 @@ func runDocumentSearch(cmd *cobra.Command, c *daemonconn.Connection, query strin
 	}
 	if options.JSON {
 		return writeCLIJSON(cmd.OutOrStdout(), report)
+	}
+	if options.Agent {
+		return writeDocumentSearchAgent(cmd, query, report)
 	}
 	return writeDocumentSearchReport(cmd, report, options.Explain)
 }
@@ -477,7 +517,7 @@ func init() {
 	searchCmd.Flags().StringVar(&searchBefore, "modified-before", "",
 		"require modification before an absolute RFC3339 timestamp")
 	searchCmd.Flags().StringVar(&searchMode, "mode", "",
-		"processing search mode: lexical, semantic, hybrid, or auto")
+		"mode: lexical (ordinary alone), semantic, hybrid, or auto")
 	searchCmd.Flags().StringVar(&searchProfile, "profile", "",
 		"named executable processing profile for --mode search")
 	searchCmd.Flags().StringVar(&searchBinding, "binding", "",
@@ -488,6 +528,7 @@ func init() {
 		"show bounded retrieval stages without raw similarities or vectors")
 	searchCmd.Flags().BoolVar(&searchRerank, "rerank", false,
 		"rerank the source-fenced processing search results")
+	searchCmd.Flags().BoolVar(&searchAgent, "agent", false, "print concise agent-readable text")
 	searchCmd.Flags().BoolVar(&searchJSON, "json", false, "print JSON to stdout")
 	rootCmd.AddCommand(searchCmd)
 }

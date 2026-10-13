@@ -1,17 +1,58 @@
 ---
-last_edited: 2026-10-05
-title: Document processing search
-description: Search only the document versions a consumer currently authorizes.
+last_edited: 2026-10-13
+title: Automatic and processing search
+description: Choose automatic retrieval or an explicit profile and source-version set.
 ---
 
-# Document processing search
+# Automatic and processing search
 
-Processing search is separate from ordinary `docbank search`. It searches
-rendition text (the searchable text that document processing derives from a
-document version) and, where configured, vectors. It searches only the source
-set the caller names. The caller supplies the daemon's vault UUID and one or
-more content version IDs. The CLI obtains the vault UUID and sends repeated
-`--source-version` values for you.
+With no processing options, `docbank search renewal terms` automatically tries
+hybrid search when a query-capable embedding profile is configured. The CLI
+resolves the current versions of all live files through the daemon; you do not
+need profile names or version UUIDs for this path. The daemon enforces query
+consent and index authority. If the semantic leg is unavailable, search returns
+ordinary lexical results and reports a stable degradation reason.
+
+Profiles and query bindings are tried in ascending name order until one
+succeeds. If all fail, the command reports the first candidate's failure reason.
+With no
+configured embeddings, ordinary lexical search runs without degradation. With
+embeddings but no query encoder, the reason is `query_embedding_unavailable`.
+An empty file scope returns lexical search with `empty_source_scope`; more than
+4,096 live versions returns lexical search with `scope_too_large`. The CLI never
+silently truncates the semantic population. Limits above 100 use lexical search
+with `limit_requires_lexical`, preserving the ordinary 1–1000 range.
+Queries longer than 8,192 Unicode characters use lexical search with
+`query_requires_lexical`, since processing requests have that length limit.
+
+After semantic retrieval, the daemon revalidates the complete report against
+current live versions, including unembedded lexical matches. A match trashed or
+replaced during query embedding is removed; moved ancestor paths are refreshed.
+A both-lane match whose node revision drifts is removed instead of failing the
+report, including when a tag edit leaves its path and content version unchanged.
+Removed candidates make the report `truncated`, and surviving result ranks and coverage
+reflect the final check. This applies to automatic and explicit semantic/hybrid
+search, including when expansion and reranking are disabled.
+
+Tag, directory, MIME, and modification filters always use ordinary lexical
+search. With configured embeddings, this reports `filters_require_lexical`.
+Use `--mode lexical` alone to select ordinary lexical search explicitly.
+Authentication, transport, cancellation, and malformed-response errors remain
+errors. Provider/index failures and missing, expired, or revoked consent fall
+back with the daemon's stable problem code. Search never grants consent itself.
+
+`--json` retains the report types already exposed by the CLI: ordinary lexical
+search returns `hits`, while successful automatic hybrid search returns the
+processing report with `results`, actual mode, and coverage. Consumers should
+check which report shape was returned. A lexical fallback writes one plain
+`degraded: REASON` line to stderr and leaves stdout JSON unchanged.
+
+## Choose exact versions and a profile
+
+Explicit processing search uses rendition text (text derived from a document
+version) and, where configured, vectors. It searches only the source set you
+name. The CLI obtains the daemon's vault UUID and sends repeated
+`--source-version` values for you:
 
 ```bash
 docbank search "renewal terms" \
@@ -20,7 +61,7 @@ docbank search "renewal terms" \
   --source-version 11111111-1111-4111-8111-111111111111
 ```
 
-Processing search requires a mode, executable profile, and at least one source
+Explicit processing search requires a mode, executable profile, and at least one source
 version. Replace `<configured-profile>` with a name reported by `docbank
 processing profiles`. A search accepts at most 4,096 unique versions and
 returns at most 100 results. `--binding` is optional when the selected profile
@@ -52,7 +93,7 @@ These grants cover the daemon operator's use of that profile across documents
 and searches. A profile with reranking includes a `query_text_and_excerpt`
 grant in the same approval. Review the reranking provider and its disclosure
 alongside the document and query operations. CLI grants have no expiry.
-`lexical` and `auto` use text already stored locally. They do not require
+Explicit processing `lexical` and `auto` use text already stored locally. They do not require
 query-text consent or call an embedding provider.
 
 ## Rerank search results
@@ -87,7 +128,7 @@ for receipt fields and degradation causes.
 - **`lexical`** searches canonical segments from renditions.
 - **`semantic`** searches the selected embedding binding.
 - **`hybrid`** combines lexical and semantic candidates.
-- **`auto`** uses lexical retrieval and reports `lexical` as the actual mode.
+- **Explicit `auto`** uses lexical retrieval and reports `lexical` as the actual mode.
 
 HTTP and embedded callers can [prefer content matches over filenames](../architecture/http-api.md#coverage-and-source-fenced-search)
 with `content_first: true` or `ContentFirst: true`.

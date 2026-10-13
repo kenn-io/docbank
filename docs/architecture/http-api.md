@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-12
+last_edited: 2026-10-13
 title: HTTP API
 description: The agent-first HTTP API: filesystem-shaped endpoints, revision preconditions, and the daemon's error contract.
 ---
@@ -752,7 +752,7 @@ Search requires nonblank `query` text of at most 8,192 characters, `profile`,
 and `mode` (`lexical`, `semantic`, `hybrid`, or `auto`). `limit` defaults to 50
 and accepts 1–100. `binding_id` selects the embedding binding. Omitting it uses
 the profile's first binding. Set it explicitly for semantic/hybrid search when
-several are configured. The CLI requires that choice. `auto` uses lexical
+several are configured. The explicit CLI processing form requires that choice. `auto` uses lexical
 retrieval. See [processing consent](#processing-consent) before choosing a mode
 that embeds query text.
 
@@ -799,8 +799,15 @@ the trace). An opted-in request also returns a `reranking` receipt with
 degradation. Each result retains its vault, node, and content-version identity
 with bounded evidence references. The source fence applies before retrieval.
 Vector scoring uses only eligible rows from current, live attachments.
+Semantic and hybrid search revalidate the complete result set after query
+embedding, including lexical matches without embeddings. Trashed or replaced
+candidates are removed, current paths are refreshed, result ranks are renumbered, and
+coverage is captured at that final check. Removal sets `truncated: true`.
+Mixed-lane evidence pins the earliest node revision; a revision drift removes
+that candidate rather than failing the report. Inconsistent evidence within one
+lane remains an error.
 Consumers still check visibility immediately before displaying a result.
-See [Processing search](../usage/search.md) for the consumer contract.
+See [Automatic and processing search](../usage/search.md) for the consumer contract.
 
 The reranking degradation causes are `authorization_denied`, `timed_out`,
 `malformed_output`, and `unavailable`. `malformed_output` covers invalid provider

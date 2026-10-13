@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-12
+last_edited: 2026-10-13
 title: Document processing
 description: How Docbank derives readable text and search data while keeping original versions and requiring consent for processing.
 ---
@@ -24,7 +24,7 @@ start with [Document understanding in Go](../document-understanding.md).
 | Daemon background jobs | Local metadata, checksum, and visual-preview work; configured rendition and embedding jobs; vector-index rebuilding |
 | Internal processing and storage packages | Profiles, consent, publication, retention, and derivative purge |
 | Internal retrieval packages | Lexical, semantic, and hybrid retrieval; optional expansion and reranking; QMD export and query adapters |
-| CLI and HTTP | Preview and run profiles, inspect jobs, read retained renditions, and search an explicit source-version fence |
+| CLI and HTTP | Preview and run profiles, inspect jobs, read retained renditions, and search current live versions automatically in the CLI or through an explicit source-version fence |
 | Web app and TUI | Preview processing, record consent, inspect jobs, and read retained sanitized renditions |
 
 The default configuration has no processing profiles. The daemon can execute
@@ -44,9 +44,12 @@ unavailable.
 
 [Document processing](../usage/document-processing.md) follows the operator
 workflow from profile selection through preview, consent, execution, and reads.
-[Processing search](../usage/search.md) explains lexical, semantic, hybrid, and
+[Automatic and processing search](../usage/search.md) explains lexical, semantic, hybrid, and
 auto modes with an explicit profile and authorized source-version fence.
-Ordinary name and text search remains separate.
+Plain CLI search automatically selects hybrid retrieval over current live file
+versions when a query embedding binding is configured. It reports a degradation
+reason when it falls back to ordinary lexical search. Explicit processing search
+keeps the caller's profile and authorized source-version fence.
 
 ## From original bytes to searchable evidence
 
