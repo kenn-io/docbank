@@ -265,7 +265,16 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 				require.NoError(t, err)
 				_, _, err = s.Store.ReplaceContent(t.Context(), node.ID, node.Revision, hash, size, "image/jpeg")
 				require.NoError(t, err)
-				require.NoError(t, s.Run(t.Context(), c, root))
+				supervisor := jobs.New(t.Context(), nil)
+				defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
+				require.NoError(t, s.Start(supervisor, c, root))
+				require.Eventually(t, func() bool {
+					operation, err := s.Store.StorageOperation(t.Context(), op.ID)
+					return err == nil && operation.FinishedAt != nil
+				}, 5*time.Second, 10*time.Millisecond)
+				require.NoError(t, supervisor.Shutdown(context.Background()))
+				root, err = os.OpenRoot(c.Destination)
+				require.NoError(t, err)
 				entries, err = s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 				require.NoError(t, err)
 				require.Len(t, entries, 1)

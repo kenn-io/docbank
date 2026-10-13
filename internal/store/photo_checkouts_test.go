@@ -57,18 +57,37 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	for _, test := range []struct {
 		selection            PhotoCheckoutSelection
 		assets, files, bytes int64
+		selected             []PhotoAsset
 	}{
-		{PhotoCheckoutSelection{All: true}, 3, 5, 93},
-		{PhotoCheckoutSelection{AssetIDs: []string{a.ID, a.ID}}, 1, 3, 33},
-		{PhotoCheckoutSelection{AlbumIDs: []string{set.ID}}, 2, 4, 53},
-		{PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2024, To: 2025}}, 2, 4, 53},
-		{PhotoCheckoutSelection{AssetIDs: []string{c.ID}, AlbumIDs: []string{set.ID}, Years: &PhotoCheckoutYears{From: 2024, To: 2025}}, 3, 5, 93},
+		{PhotoCheckoutSelection{All: true}, 3, 5, 93, []PhotoAsset{a, b, c}},
+		{PhotoCheckoutSelection{AssetIDs: []string{a.ID, a.ID}}, 1, 3, 33, []PhotoAsset{a}},
+		{PhotoCheckoutSelection{AlbumIDs: []string{set.ID}}, 2, 4, 53, []PhotoAsset{a, b}},
+		{PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2024, To: 2025}}, 2, 4, 53, []PhotoAsset{a, b}},
+		{PhotoCheckoutSelection{AssetIDs: []string{c.ID}, AlbumIDs: []string{set.ID}, Years: &PhotoCheckoutYears{From: 2024, To: 2025}}, 3, 5, 93, []PhotoAsset{a, b, c}},
 	} {
 		estimate, err := s.EstimatePhotoCheckout(ctx, test.selection)
 		require.NoError(t, err)
 		require.Equal(t, test.assets, estimate.Assets)
 		require.Equal(t, test.files, estimate.Files)
 		require.Equal(t, test.bytes, estimate.Bytes)
+		checkout, _, err := s.CreatePhotoCheckout(ctx, test.selection, t.TempDir(), test.bytes)
+		require.NoError(t, err)
+		entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+		require.NoError(t, err)
+		expectedVersions := make(map[string]string)
+		for _, asset := range test.selected {
+			for _, file := range asset.Files {
+				node, err := s.NodeByID(ctx, file.NodeID)
+				require.NoError(t, err)
+				expectedVersions[file.ID] = node.CurrentVersionID
+			}
+		}
+		actualVersions := make(map[string]string)
+		for _, entry := range entries {
+			actualVersions[entry.FileID] = entry.VersionID
+		}
+		require.Len(t, entries, len(expectedVersions))
+		require.Equal(t, expectedVersions, actualVersions)
 	}
 	_, err = s.SetPhotoAssetExcluded(ctx, c.ID, c.Revision, true)
 	require.NoError(t, err)

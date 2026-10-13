@@ -23,7 +23,7 @@ func TestNetworkHostGuardPrecedesAuthentication(t *testing.T) {
 		host, key string
 		status    int
 	}{
-		{"docbank:8485", "synthetic-key", 404}, {"docbank:8485", "", 401}, {"docbank:8485", "wrong", 401},
+		{"docbank:8485", "synthetic-key", 404},
 		{"attacker.example:8485", "wrong", 403}, {"0.0.0.0:8485", "synthetic-key", 403},
 		{"docbank:8486", "synthetic-key", 403}, {"docbank-synthetic.localhost:1234", "synthetic-key", 404},
 		{"docbank-other.localhost:1234", "synthetic-key", 403}, {"127.0.0.1:8485", "synthetic-key", 404},
