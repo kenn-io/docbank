@@ -343,25 +343,36 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			publications := 0
+			interrupted := false
 			s.Mutate = func(ctx context.Context, fn func() error) error {
-				publications++
-				if publications == 2 {
+				progress, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
+				require.NoError(t, err)
+				if progress.PublishedFiles == 1 && !interrupted {
 					switch failure {
 					case "collision":
+						interrupted = true
 						return os.ErrExist
 					case "became-invisible":
+						interrupted = true
 						return store.ErrPhotoCheckoutSourceUnavailable
 					}
 				}
-				err := fn()
-				if failure == "operator cancellation" && publications == 1 {
+				err = fn()
+				progress, statusErr := s.Store.PhotoCheckoutStatus(ctx, c.ID)
+				require.NoError(t, statusErr)
+				if progress.PublishedFiles != 1 || interrupted {
+					return err
+				}
+				if failure == "operator cancellation" {
+					interrupted = true
 					require.NoError(t, s.Store.RequestStorageOperationCancel(ctx, op.ID))
 				}
 				if failure == "daemon shutdown" {
+					interrupted = true
 					cancel()
 				}
-				if publications == 1 && failure == "destination moved before completion" {
+				if failure == "destination moved before completion" {
+					interrupted = true
 					moved := filepath.Join(t.TempDir(), "moved")
 					if err := os.Rename(c.Destination, moved); err != nil {
 						if runtime.GOOS == "windows" {
@@ -417,7 +428,7 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 				require.Contains(t, status.Checkout.Error, entries[1].FileID)
 				require.Contains(t, status.Checkout.Error, entries[1].Path)
 				require.True(t, actual[2].Published)
-				require.Equal(t, 3, publications)
+				require.Equal(t, int64(2), status.PublishedFiles)
 			case "destination moved before completion":
 				files, err := os.ReadDir(c.Destination)
 				require.NoError(t, err)

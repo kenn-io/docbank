@@ -31,9 +31,9 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	require.NoError(t, err)
 	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{All: true}, Destination: absoluteDestination, ByteLimit: 100000}
 	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
-	listed := []store.PhotoCheckout{}
+	listed := []store.PhotoCheckout{checkout}
 	status := api.PhotoCheckoutStatus{Checkout: checkout}
-	estimate := store.PhotoCheckoutEstimate{}
+	estimate := store.PhotoCheckoutEstimate{Assets: 2, Files: 3, Bytes: 42}
 	statusRequests := make(chan struct{}, 1)
 	listRequests := make(chan struct{}, 1)
 	inputs := make(chan api.PhotoCheckoutCreateRequest, 1)

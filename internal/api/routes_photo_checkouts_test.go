@@ -24,6 +24,8 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.NoError(t, err)
 	asset, err := catalog.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
+	_, err = catalog.CreateFile(t.Context(), catalog.RootID(), "other.jpg", hash, size, "image/jpeg")
+	require.NoError(t, err)
 	selection := store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/estimate", nil, selection)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
