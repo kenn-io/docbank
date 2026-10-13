@@ -47,6 +47,7 @@ func TestPhotoCheckoutCommandSelections(t *testing.T) {
 }
 
 func TestPhotoCheckoutCreateRejectsInvalidCapacityBeforeDaemon(t *testing.T) {
+	t.Setenv("DOCBANK_HOME", t.TempDir())
 	for _, tc := range []struct {
 		args []string
 		want string

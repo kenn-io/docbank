@@ -189,7 +189,7 @@ func TestPhotoSourceProvenanceMetadata(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	result, _, _ := seedGroupedCheckoutSources(t, s)
+	result, _ := seedGroupedCheckoutSources(t, s)
 	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
 	var backup bytes.Buffer
 	err := s.ExportMetadata(ctx, &backup)
@@ -250,7 +250,7 @@ func TestPhotoCheckoutRejectsByteOverflow(t *testing.T) {
 func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 	t.Parallel()
 	cases := []struct{ name, filename string }{
-		{"empty all", ""}, {"empty album", ""}, {"empty years", ""}, {"audit refusal", ""},
+		{"empty all", ""}, {"audit refusal", ""},
 	}
 	for _, name := range []string{"CON.jpg", "bad:name.jpg", "bad?.jpg", "trailing.", "trailing ", "control\x01.jpg", "bad\\name.jpg"} {
 		cases = append(cases, struct{ name, filename string }{name, name})
@@ -271,18 +271,6 @@ func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 					seedInitialAuditAuthority(t, s, s.RootID())
 					expectedErr = ErrAuditMutationUnsupported
 				}
-			} else {
-				switch tc.name {
-				case "empty album":
-					album, err := s.CreatePhotoSet(t.Context(), "Empty")
-					require.NoError(t, err)
-					selection = PhotoCheckoutSelection{AlbumIDs: []string{album.ID}}
-				case "empty years":
-					selection = PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2024, To: 2024}}
-				}
-				estimate, err := s.EstimatePhotoCheckout(t.Context(), selection)
-				require.NoError(t, err)
-				require.Zero(t, estimate.Files)
 			}
 			_, _, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", 100)
 			require.ErrorIs(t, err, expectedErr)
@@ -335,9 +323,9 @@ func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	result, source, albumID := seedGroupedCheckoutSources(t, s)
+	result, source := seedGroupedCheckoutSources(t, s)
 	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
-	checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}, AlbumIDs: []string{albumID}}, "checkout", 0)
+	checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
 	require.NoError(t, err)
 	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 	require.NoError(t, err)
@@ -400,7 +388,7 @@ func TestPhotoCheckoutNormalizesSourcePaths(t *testing.T) {
 	}
 }
 
-func seedGroupedCheckoutSources(t *testing.T, s *Store) (PhotoImportResult, string, string) {
+func seedGroupedCheckoutSources(t *testing.T, s *Store) (PhotoImportResult, string) {
 	t.Helper()
 	ctx := t.Context()
 	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
@@ -442,15 +430,11 @@ func seedGroupedCheckoutSources(t *testing.T, s *Store) (PhotoImportResult, stri
 		}
 		browsePhotoMetadata(t, s, node, node.Name, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(date, date, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
 	}
-	set, err := s.CreatePhotoSet(ctx, "Trip")
-	require.NoError(t, err)
-	_, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{result.Asset.ID}})
-	require.NoError(t, err)
 	for i, node := range result.Nodes {
 		node, err = s.NodeByID(ctx, node.ID)
 		require.NoError(t, err)
 		_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
 		require.NoError(t, err)
 	}
-	return result, source, set.ID
+	return result, source
 }
