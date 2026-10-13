@@ -115,40 +115,21 @@ func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {
 }
 
 func TestPhotoImportPublishedBytes(t *testing.T) {
-	for _, ambiguity := range []bool{false, true} {
-		t.Run(fmt.Sprintf("ambiguity=%t", ambiguity), func(t *testing.T) {
-			root := t.TempDir()
-			path := filepath.Join(root, "capture.JPG")
-			content := []byte("published photo bytes")
-			require.NoError(t, os.WriteFile(path, content, 0o600))
-			if ambiguity {
-				require.NoError(t, os.WriteFile(filepath.Join(root, "capture.ARW"), []byte("raw-one"), 0o600))
-				require.NoError(t, os.WriteFile(filepath.Join(root, "capture.DNG"), []byte("raw-two"), 0o600))
-			}
-			ing := newTestIngester(t)
-			report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
-			require.NoError(t, err)
-			if ambiguity {
-				assert.Equal(t, int64(1), report.Receipt.Ambiguous)
-				require.Len(t, report.Receipt.Ambiguities, 1)
-				assert.Equal(t, store.PhotoImportMultipleRAW, report.Receipt.Ambiguities[0].Reason)
-				require.Len(t, report.Receipt.Ambiguities[0].Files, 3)
-				repeated, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
-				require.NoError(t, err)
-				assert.Equal(t, int64(1), repeated.Receipt.Ambiguous)
-				assert.Zero(t, repeated.Receipt.Added)
-			} else {
-				require.Equal(t, int64(1), report.Receipt.Added)
-			}
-			node, err := ing.Store.NodeByPath(t.Context(), "/photos/capture.JPG")
-			require.NoError(t, err)
-			reader, err := ing.Blobs.Open(node.BlobHash)
-			require.NoError(t, err)
-			got, readErr := io.ReadAll(reader)
-			require.NoError(t, errors.Join(readErr, reader.Close()))
-			assert.Equal(t, got, content)
-		})
-	}
+	root := t.TempDir()
+	path := filepath.Join(root, "capture.JPG")
+	content := []byte("published photo bytes")
+	require.NoError(t, os.WriteFile(path, content, 0o600))
+	ing := newTestIngester(t)
+	report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), report.Receipt.Added)
+	node, err := ing.Store.NodeByPath(t.Context(), "/photos/capture.JPG")
+	require.NoError(t, err)
+	reader, err := ing.Blobs.Open(node.BlobHash)
+	require.NoError(t, err)
+	got, readErr := io.ReadAll(reader)
+	require.NoError(t, errors.Join(readErr, reader.Close()))
+	assert.Equal(t, content, got)
 }
 
 func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {

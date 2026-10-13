@@ -365,6 +365,7 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			interrupted := false
+			collisionPath := ""
 			s.Mutate = func(ctx context.Context, fn func() error) error {
 				progress, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
 				require.NoError(t, err)
@@ -372,10 +373,15 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 					switch failure {
 					case "collision":
 						interrupted = true
-						return os.ErrExist
+						collisionPath = filepath.Join(c.Destination, filepath.FromSlash(entries[1].Path))
+						require.NoError(t, os.MkdirAll(filepath.Dir(collisionPath), 0o700))
+						require.NoError(t, os.WriteFile(collisionPath, []byte("existing"), 0o600))
 					case "became-invisible":
 						interrupted = true
-						return store.ErrPhotoCheckoutSourceUnavailable
+						asset, err := s.Store.PhotoAssetByID(ctx, entries[1].AssetID)
+						require.NoError(t, err)
+						_, err = s.Store.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+						require.NoError(t, err)
 					}
 				}
 				err = fn()
@@ -419,7 +425,9 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 			switch failure {
 			case "collision":
 				require.True(t, interrupted)
-				require.ErrorIs(t, runErr, os.ErrExist)
+				content, err := os.ReadFile(collisionPath)
+				require.NoError(t, err)
+				require.Equal(t, "existing", string(content))
 			case "verification failure":
 				require.True(t, interrupted)
 				require.ErrorIs(t, runErr, packstore.ErrContentMismatch)
@@ -459,6 +467,7 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 				require.False(t, actual[2].Published)
 				require.Equal(t, int64(1), finished.CompletedObjects)
 			case "became-invisible":
+				require.ErrorIs(t, runErr, store.ErrPhotoCheckoutSourceUnavailable)
 				require.Contains(t, status.Checkout.Error, entries[1].FileID)
 				require.Contains(t, status.Checkout.Error, entries[1].Path)
 				require.True(t, actual[2].Published)

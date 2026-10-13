@@ -115,11 +115,6 @@ n, err := s.PreparePhotoImportDestination(ctx, "/new/photos")
 	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_assets`).Scan(&assets))
 	assert.Equal(t, 1, assets)
 
-	rerun, err := s.IngestPhotoGroup(ctx, run, group)
-	require.NoError(t, err)
-	assert.True(t, rerun.Skipped)
-	assert.False(t, rerun.Added)
-	assert.Equal(t, result.Asset.ID, rerun.Asset.ID)
 	single, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(photoImportTestMember(
 		filepath.Join(root, "single.JPG"), PhotoRoleImage, browseHash("single"), "image/jpeg")))
 	require.NoError(t, err)
@@ -402,6 +397,19 @@ func TestPhotoImportDedupObservation(t *testing.T) {
 			require.NoError(t, err)
 			assert.True(t, rerun.Skipped)
 			assert.False(t, rerun.Added)
+			freshRoot := filepath.Join(t.TempDir(), "fresh")
+			freshGroup := photoImportTestGroup(
+				photoImportTestMember(filepath.Join(freshRoot, "FRESH.ARW"), PhotoRoleRAW, fakeHash("fresh-raw"), "image/x-sony-arw"),
+				photoImportTestMember(filepath.Join(freshRoot, "FRESH.JPG"), PhotoRoleImage, fakeHash("fresh-jpeg"), "image/jpeg"),
+				photoImportTestMember(filepath.Join(freshRoot, "FRESH.XMP"), PhotoRoleSidecar, fakeHash("fresh-xmp"), "application/rdf+xml"))
+			fresh, err := s.IngestPhotoGroup(ctx, run, freshGroup)
+			require.NoError(t, err)
+			assert.True(t, fresh.Added)
+			freshReplay, err := s.IngestPhotoGroup(ctx, run, freshGroup)
+			require.NoError(t, err)
+			assert.True(t, freshReplay.Skipped)
+			assert.False(t, freshReplay.Added)
+			assert.Equal(t, fresh.Asset.ID, freshReplay.Asset.ID)
 			var observations int
 			require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM provenance WHERE original_path=?`, filepath.Join(secondRoot, "IMG.DNG")).Scan(&observations))
 			assert.Equal(t, 1, observations)
