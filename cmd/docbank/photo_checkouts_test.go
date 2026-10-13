@@ -114,7 +114,10 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(out), &estimateOutput))
 			require.Equal(t, estimate, estimateOutput)
 			require.Len(t, estimates, 1)
-			require.Equal(t, tc.expected, (<-estimates).Years)
+			received := <-estimates
+			received.AssetIDs = append([]string(nil), received.AssetIDs...)
+			received.AlbumIDs = append([]string(nil), received.AlbumIDs...)
+			require.Equal(t, store.PhotoCheckoutSelection{Years: tc.expected}, received)
 		}
 	}
 }

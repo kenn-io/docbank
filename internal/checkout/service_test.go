@@ -403,6 +403,9 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 				require.Error(t, runErr)
 			}
 			switch failure {
+			case "collision":
+				require.True(t, interrupted)
+				require.ErrorIs(t, runErr, os.ErrExist)
 			case "daemon shutdown":
 				require.ErrorIs(t, runErr, context.Canceled)
 			case "destination moved before completion":

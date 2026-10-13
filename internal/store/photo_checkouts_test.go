@@ -76,8 +76,7 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	require.NoError(t, err)
 	estimate, err := s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{a.ID, b.ID, c.ID}, AlbumIDs: []string{set.ID}})
 	require.NoError(t, err)
-	require.Equal(t, int64(3), estimate.Files)
-	require.Equal(t, int64(33), estimate.Bytes)
+	require.Equal(t, PhotoCheckoutEstimate{Assets: 1, Files: 3, Bytes: 33}, estimate)
 	for _, bad := range []PhotoCheckoutSelection{{}, {AssetIDs: []string{"bad"}}, {AlbumIDs: []string{"bad"}}, {Years: &PhotoCheckoutYears{From: 0, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2025, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2024, To: 10000}}} {
 		_, err := s.EstimatePhotoCheckout(ctx, bad)
 		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
