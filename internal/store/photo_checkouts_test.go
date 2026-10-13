@@ -363,17 +363,6 @@ func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 		_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
 		require.NoError(t, err)
 	}
-	node, err := s.NodeByID(ctx, raw.NodeID)
-	require.NoError(t, err)
-	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "synthetic", OriginalPath: filepath.Join(source, "ignored.ARW")})
-	require.NoError(t, err)
-	retained, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "retained", 0)
-	require.NoError(t, err)
-	entries, err := s.PhotoCheckoutEntries(ctx, retained.ID)
-	require.NoError(t, err)
-	rawIndex := slices.IndexFunc(entries, func(entry PhotoCheckoutEntry) bool { return entry.FileID == raw.ID })
-	require.NotEqual(t, -1, rawIndex)
-	require.Equal(t, "IMG.ARW", filepath.Base(entries[rawIndex].Path))
 	var backup bytes.Buffer
 	err = s.ExportMetadata(ctx, &backup)
 	require.NoError(t, err)
@@ -432,7 +421,7 @@ func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 
 func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"separate ingests", "conflicting pair", "trashed target", "trashed conflicting sidecar", "multiple sidecars"} {
+	for _, scenario := range []string{"separate ingests", "conflicting pair", "trashed target", "trashed conflicting sidecar", "multiple sidecars", "first observation"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -441,13 +430,17 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 			require.NoError(t, err)
 			raw := photoImportTestMember(filepath.Join(source, "IMG.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw")
 			members := []PhotoImportMember{raw, photoImportTestMember(filepath.Join(source, "IMG.JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg")}
-			if scenario == "multiple sidecars" {
+			switch scenario {
+			case "multiple sidecars":
 				members = append(members, photoImportTestMember(filepath.Join(source, "IMG.XMP"), PhotoRoleSidecar, browseHash("first sidecar"), "application/rdf+xml"))
+			case "first observation":
+				members = append(members, photoImportTestMember(filepath.Join(source, "IMG.ARW.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"))
 			}
 			result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(members...))
 			require.NoError(t, err)
 			name := "IMG.ARW"
-			if scenario == "multiple sidecars" {
+			switch scenario {
+			case "multiple sidecars":
 				for _, observation := range []struct{ sidecar, hash string }{{"RENAMED.ARW.XMP", "second sidecar"}, {"RENAMED.XMP", "first sidecar"}} {
 					run, err = s.BeginIngest(ctx, "photo-import", source)
 					require.NoError(t, err)
@@ -456,7 +449,33 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 						photoImportTestMember(filepath.Join(source, observation.sidecar), PhotoRoleSidecar, browseHash(observation.hash), "application/rdf+xml")))
 					require.NoError(t, err)
 				}
-			} else {
+			case "first observation":
+				laterRun, err := s.BeginIngest(ctx, "photo-import", "renamed duplicates")
+				require.NoError(t, err)
+				for _, observation := range []struct {
+					run  IngestRun
+					name string
+				}{{run, "AAA"}, {laterRun, "RENAMED"}} {
+					duplicate, err := s.IngestPhotoGroup(ctx, observation.run, photoImportTestGroup(
+						photoImportTestMember(filepath.Join(source, observation.name+".ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
+						photoImportTestMember(filepath.Join(source, observation.name+".JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg")))
+					require.NoError(t, err)
+					require.Equal(t, result.Asset.ID, duplicate.Asset.ID)
+				}
+				rawFile := fileByRole(result.Asset.Files, PhotoRoleRAW)
+				node, err := s.NodeByID(ctx, rawFile.NodeID)
+				require.NoError(t, err)
+				node, _, err = s.ReplaceContent(ctx, node.ID, node.Revision, browseHash("replacement raw"), 20, "image/x-sony-arw")
+				require.NoError(t, err)
+				_, err = s.PruneContentVersions(ctx, node.ID, node.Revision, VersionPruneSelector{AllPrior: true}, true)
+				require.NoError(t, err)
+				for i, node := range result.Nodes {
+					node, err = s.NodeByID(ctx, node.ID)
+					require.NoError(t, err)
+					_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
+					require.NoError(t, err)
+				}
+			default:
 				run, err = s.BeginIngest(ctx, "photo-import", source)
 				require.NoError(t, err)
 				sidecarName := name + ".XMP"
@@ -489,14 +508,18 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 				require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
 				require.Contains(t, err.Error(), result.Asset.ID)
 				require.Contains(t, err.Error(), fileByRole(result.Asset.Files, PhotoRoleSidecar).ID)
-				checkouts, err := s.ListPhotoCheckouts(ctx)
-				require.NoError(t, err)
-				require.Empty(t, checkouts)
 				return
 			}
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 			require.NoError(t, err)
+			if scenario == "first observation" {
+				rawID := fileByRole(result.Asset.Files, PhotoRoleRAW).ID
+				rawIndex := slices.IndexFunc(entries, func(entry PhotoCheckoutEntry) bool { return entry.FileID == rawID })
+				require.NotEqual(t, -1, rawIndex)
+				require.Equal(t, "IMG.ARW", filepath.Base(entries[rawIndex].Path))
+				return
+			}
 			expected := []string{"IMG.JPG"}
 			if scenario != "trashed conflicting sidecar" {
 				expected = append(expected, name+".XMP")

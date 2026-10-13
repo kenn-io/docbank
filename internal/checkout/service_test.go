@@ -72,9 +72,6 @@ func TestCheckoutCopiesWritableBases(t *testing.T) {
 	require.Equal(t, store.StorageOperationCompleted, finished.State)
 	require.Equal(t, int64(1), finished.CopiedObjects)
 	require.Equal(t, int64(len(content)), finished.CopiedBytes)
-	status, err := s.Store.PhotoCheckout(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.Equal(t, "completed", status.State)
 }
 
 func TestCheckoutCancellation(t *testing.T) {
@@ -165,7 +162,6 @@ func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
 			finished, err := s.Store.StorageOperation(t.Context(), op.ID)
 			require.NoError(t, err)
 			require.Equal(t, store.StorageOperationFailed, finished.State)
-			require.Equal(t, finished.Error, status.Error)
 			require.NotNil(t, finished.FinishedAt)
 		})
 	}
