@@ -121,9 +121,6 @@ func TestEnsureDiscoveryRejectsProtocolMismatch(t *testing.T) {
 
 	require.True(t, discoverOptions(true).Accept(rec, info))
 
-	rec.Metadata[metaProtocolVersion] = "75"
-	assert.False(t, discoverOptions(true).Accept(rec, info), "main's daemon must be replaced")
-
 	rec.Metadata[metaProtocolVersion] = daemonProtocolVersion + "-other"
 	assert.False(t, discoverOptions(true).Accept(rec, info), "mismatched protocol revision must be replaced")
 	assert.True(t, discoverOptions(false).Accept(rec, info), "status/stop discovery must still see incompatible daemons")

@@ -167,7 +167,7 @@ it.each(["preview", "original"] as const)("releases each rejected %s URL before 
   expect(URL.revokeObjectURL).toHaveBeenCalledTimes(released + (operation === "preview" ? 2 : 1));
 });
 
-it.each([false,true])("serializes neighboring fit requests and hydrates compact=%s", async compact => {
+it.each([false,true])("serializes neighboring fit requests and hydrates compact neighbors, compact=%s", async compact => {
   const { props, preview } = setup(); let release!: () => void;
   preview.mockImplementation(async (item, size) => {
     if (item.asset_id === "photo-3") await new Promise<void>(resolve => release = resolve);

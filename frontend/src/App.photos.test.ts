@@ -671,42 +671,38 @@ it.each([false, true])("keeps direct links and history scoped and conceals a mou
   expect(revoke.mock.calls.length).toBeGreaterThan(before);
 });
 
-it.each(["failed", "revalidated"])("mounts a fresh scoped Map progressively after Library entry, %s", async outcome => {
+it("mounts a fresh scoped Map progressively and revalidates it after Library entry", async () => {
  history.replaceState(null,"","/photos#web_session=synthetic&web_upload_secret=proof");storage();
  vi.stubGlobal("ResizeObserver",class {observe() {} disconnect() {}});vi.spyOn(HTMLElement.prototype,"clientWidth","get").mockReturnValue(1000);vi.spyOn(HTMLElement.prototype,"clientHeight","get").mockReturnValue(800);
  const meta=document.createElement("meta");meta.name="docbank-map-tiles";meta.content=JSON.stringify({tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19});document.head.append(meta);
- let finish!:(value:Response)=>void, changed=false, retry=false;const queries:unknown[]=[];
- let library:Photos|undefined;const resume=Photos.prototype.resume;vi.spyOn(Photos.prototype,"resume").mockImplementation(function(this:Photos,...args){if(!this.projection)library=this;return resume.apply(this,args);});
+ let finish!:(value:Response)=>void, changed=false;
  let poll!:()=>void;const interval=globalThis.setInterval;
  vi.spyOn(globalThis,"setInterval").mockImplementation((callback,delay,...args)=>{if(delay === 2000){poll=callback as ()=>void;return 0 as unknown as ReturnType<typeof setInterval>;}return interval(callback,delay,...args);});
  vi.stubGlobal("fetch",vi.fn(async(url:string,init:RequestInit)=>{
   if(url.endsWith("/photos/hidden")) return Response.json({configured:true,change_id:changed?"second":"first"});
   if(url.endsWith("/photos/assets/query")) {
-   const request=JSON.parse(String(init.body));queries.push(request);
+   const request=JSON.parse(String(init.body));
    if(!request.projection) return Response.json({items:[photo(1)],total:1});
-   if(changed || request.cursor && !retry) return new Promise<Response>(resolve=>finish=resolve);
-   return Response.json({items:[],map_items:[mapPhoto(retry?2:1)],total:2,...(!retry?{next_cursor:"second"}:{})});
+   if(changed || request.cursor) return new Promise<Response>(resolve=>finish=resolve);
+   return Response.json({items:[],map_items:[mapPhoto(1)],total:2,next_cursor:"second"});
   }
   return Response.json({items:[],nodes:[],tags:[],profiles:[]});
  }));render(App);await screen.findByRole("button",{name:"Open Photo 1.jpg"});
- library!.baseQuery={...library!.baseQuery,text:"beach",sort:{field:"relevance",direction:"desc"},filters:{gps_bounds:{south:"-1",west:"10",north:"1",east:"15"}}};await library!.selectDate("2024");
  await fireEvent.click(screen.getByRole("button",{name:"Map"}));
  await waitFor(()=>expect(finish).toBeTypeOf("function"));await waitFor(()=>expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-1"]));
- expect(queries.at(-1)).toMatchObject({projection:"map",query:{text:"beach",sort:{field:"capture_time",direction:"desc"},filters:{capture_after:"2024-01-01",capture_before:"2025-01-01",gps_bounds:{south:"-1",west:"10",north:"1",east:"15"}}}});
- if(outcome === "failed") {finish(Response.json({detail:"Page unavailable"},{status:503}));await screen.findByText("Page unavailable");expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-1"]);retry=true;await fireEvent.click(screen.getByRole("button",{name:"Retry"}));}
- else finish(Response.json({items:[],map_items:[mapPhoto(2)],total:2}));
+ finish(Response.json({items:[],map_items:[mapPhoto(2)],total:2}));
  await waitFor(()=>expect(map.props?.items).toHaveLength(2));
- if(outcome === "revalidated") {
-  const previous=finish;changed=true;poll();await waitFor(()=>expect(finish).not.toBe(previous));
-  expect(screen.queryByRole("heading",{name:"Photos in view"})).toBeNull();finish(Response.json({detail:"Map unavailable"},{status:503}));await screen.findByText("Map unavailable");expect(screen.queryByRole("heading",{name:"Photos in view"})).toBeNull();
-  const failed=finish;await fireEvent.click(screen.getByRole("button",{name:"Retry"}));await waitFor(()=>expect(finish).not.toBe(failed));finish(Response.json({items:[],map_items:[mapPhoto(2)],total:1}));
-  await waitFor(()=>expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-2"]));
- }
+ const previous=finish;changed=true;poll();await waitFor(()=>expect(finish).not.toBe(previous));
+ expect(screen.queryByRole("heading",{name:"Photos in view"})).toBeNull();finish(Response.json({detail:"Map unavailable"},{status:503}));await screen.findByText("Map unavailable");expect(screen.queryByRole("heading",{name:"Photos in view"})).toBeNull();
+ const failed=finish;await fireEvent.click(screen.getByRole("button",{name:"Retry"}));await waitFor(()=>expect(finish).not.toBe(failed));finish(Response.json({items:[],map_items:[mapPhoto(2)],total:1}));
+ await waitFor(()=>expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-2"]));
 });
 
-it.each(["album", "direct album", "Hidden"])("keeps Map scoped when opened from %s", async source => {
+it.each(["album", "direct album", "Hidden", "existing gps_bounds"])("keeps Map scoped when opened from %s", async source => {
   const album = photoAlbum();
   const mapPath = `/photos/map/${album.id}`;
+  const libraryScope = source === "Hidden" || source === "existing gps_bounds";
+  const gpsBounds = source === "existing gps_bounds" ? { south: "-1", west: "10", north: "1", east: "15" } : { south: "-90", west: "-180", north: "90", east: "180" };
   history.replaceState(null, "", `${source === "direct album" ? mapPath : "/photos"}?retained=library#web_session=synthetic&web_upload_secret=proof`);
   storage();
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -736,10 +732,12 @@ it.each(["album", "direct album", "Hidden"])("keeps Map scoped when opened from 
   render(App);
   if (source !== "direct album") {
     await screen.findByRole("button", { name: "Open Photo 1.jpg" });
-    library!.baseQuery = { ...library!.baseQuery, text: "beach", filters: { cameras: ["Library camera"] } };
+    library!.baseQuery = { ...library!.baseQuery, text: "beach", sort: { field: "relevance", direction: "desc" }, filters: { cameras: ["Library camera"], ...(source === "existing gps_bounds" ? { gps_bounds: gpsBounds } : {}) } };
     await library!.selectDate("2024");
-    await fireEvent.click(screen.getByRole("button", { name: source === "album" ? /^Trip/ : "Hidden" }));
-    await screen.findByRole("heading", { name: source === "album" ? "Trip" : "Hidden" });
+    if (source !== "existing gps_bounds") {
+      await fireEvent.click(screen.getByRole("button", { name: source === "album" ? /^Trip/ : "Hidden" }));
+      await screen.findByRole("heading", { name: source === "album" ? "Trip" : "Hidden" });
+    }
     if (source === "Hidden") {
       await waitFor(() => expect((screen.getByRole("button", { name: "Search" }) as HTMLButtonElement).disabled).toBe(false));
       await fireEvent.input(await screen.findByRole("searchbox", { name: "Search photos" }), { target: { value: "private" } });
@@ -750,13 +748,13 @@ it.each(["album", "direct album", "Hidden"])("keeps Map scoped when opened from 
   }
   await waitFor(() => expect(queries.some(request => request.projection === "map")).toBe(true));
   const request = queries.find(request => request.projection === "map")!;
-  expect(location.pathname).toBe(source === "Hidden" ? "/photos/map" : mapPath);
+  expect(location.pathname).toBe(libraryScope ? "/photos/map" : mapPath);
   expect(location.search).toBe("?retained=library");
   expect(within(screen.getByRole("navigation", { name: "Docbank navigation" })).getByRole("button", { name: "Map" }).getAttribute("aria-current")).toBe("page");
   expect(request.hidden).toBe(false);
   expect(request.query.sort).toEqual({ field: "capture_time", direction: "desc" });
-  expect(request.query.filters.gps_bounds).toEqual({ south: "-90", west: "-180", north: "90", east: "180" });
-  if (source === "Hidden") {
+  expect(request.query.filters.gps_bounds).toEqual(gpsBounds);
+  if (libraryScope) {
     expect(request.query).toMatchObject({ text: "beach", filters: { cameras: ["Library camera"], capture_after: "2024-01-01", capture_before: "2025-01-01" } });
     expect(request.query.filters.set_ids).toBeUndefined();
   } else {
@@ -769,7 +767,7 @@ it.each(["album", "direct album", "Hidden"])("keeps Map scoped when opened from 
   await waitFor(() => expect(map.props?.items).toHaveLength(1));
   const reads = queries.length;
   await fireEvent.click(within(screen.getByRole("navigation", { name: "Docbank navigation" })).getByRole("button", { name: "Map" }));
-  expect(location.pathname).toBe(source === "Hidden" ? "/photos/map" : mapPath);
+  expect(location.pathname).toBe(libraryScope ? "/photos/map" : mapPath);
   expect(queries).toHaveLength(reads);
 });
 

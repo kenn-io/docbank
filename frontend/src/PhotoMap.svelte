@@ -76,10 +76,13 @@
     return () => { cancelBuild(); observer.disconnect(); map?.remove(); map = undefined; cluster = undefined; markers.clear(); };
   });
 </script>
-{#if tileError}<div class="photo-error" role="alert">Map tiles from {new URL(tiles.tile_url).host} couldn't load. Check [web.map_tiles], then restart Docbank.</div>{/if}
-<div bind:this={container} class="photo-map" aria-label="Photo map"></div>
+<div class="photo-map-frame">
+  {#if tileError}<div class="photo-error" role="alert">Map tiles from {new URL(tiles.tile_url).host} couldn't load. Check [web.map_tiles], then restart Docbank.</div>{/if}
+  <div bind:this={container} class="photo-map" aria-label="Photo map"></div>
+</div>
 <style>
-  .photo-error { position: absolute; z-index: 1; padding: var(--space-3) var(--space-5); color: var(--text-primary); background: var(--bg-inset); }
+  .photo-map-frame { position: relative; height: 100%; width: 100%; }
+  .photo-error { position: absolute; left: 60px; right: var(--space-3); z-index: 1; padding: var(--space-3) var(--space-5); color: var(--text-primary); background: var(--bg-inset); }
   .photo-map { height: 100%; width: 100%; z-index: 0; }
   :global(.photo-map-dot) { background: var(--accent-blue); border: 2px solid white; border-radius: 50%; }
   :global(.photo-map-cluster) { display: flex; align-items: center; justify-content: center; border-radius: 50%; color: var(--text-primary); background: var(--bg-surface); border: 2px solid var(--accent-blue); font-weight: 600; }

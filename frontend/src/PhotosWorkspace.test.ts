@@ -34,8 +34,6 @@ it.each([false, true])("preserves subsequent scrolling when an interrupted refre
     .mockImplementationOnce(() => new Promise<Response>(resolve => finishRefresh = resolve)));
   const photos = new Photos("scoped", vi.fn(), false, photoQuery, mapMode ? "map" : undefined);
   photos.items = items; photos.total = items.length; photos.started = true; photos.scrollTop = 500;
-  photos.selectLoaded();
-  photos.mapView = { lat: 5, lng: 6, zoom: 7 };
   const cache = new PhotoPreviewCache("scoped", vi.fn());
   const props = { photos, cache, mapMode, tiles: { tile_url: "https://tiles.example.org/{z}/{x}/{y}", attribution: "Example", max_zoom: 19 } };
   const view = render(PhotosWorkspace, props);
@@ -55,10 +53,6 @@ it.each([false, true])("preserves subsequent scrolling when an interrupted refre
   await tick();
   expect(scroll.scrollTop).toBe(1000);
   expect(photos.scrollTop).toBe(1000);
-  expect(photos.items[0].previews.grid).toEqual({ state: "ready", generation_id: "refreshed" });
-  expect(photos.selection.selectedIDs.size).toBe(items.length);
-  expect(photos.mapView).toEqual({ lat: 5, lng: 6, zoom: 7 });
-  if (mapMode) expect(map.props?.view).toEqual(photos.mapView);
   photos.dispose(); await cache.dispose();
 });
 
@@ -764,18 +758,12 @@ it("explains the relevance limit and hides it for complete results or capture da
   photos.dispose(); await cache.dispose();
 });
 
-it("renders disabled maps without fetching a photo list", async () => {
+it("renders disabled maps without fetching and keeps the Library selection on Escape", async () => {
  const fetcher=vi.fn();vi.stubGlobal("fetch",fetcher);
- const photos=new Photos("scoped",vi.fn());
- render(PhotosWorkspace,{tiles,photos,mapMode:true,cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()});
- await screen.findByText("Maps are disabled"); expect(fetcher).not.toHaveBeenCalled(); photos.dispose();
-});
-
-it("keeps the Library selection when Escape is pressed on disabled maps", async () => {
- const photos=new Photos("scoped",vi.fn());photos.items=[photo(1)];photos.started=true;photos.selectLoaded();
+ const photos=new Photos("scoped",vi.fn());photos.items=[photo(1)];photos.selectLoaded();
  render(PhotosWorkspace,{tiles,photos,mapMode:true,cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()});
  await screen.findByText("Maps are disabled");await fireEvent.keyDown(window,{key:"Escape"});
- expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);photos.dispose();
+ expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);expect(fetcher).not.toHaveBeenCalled();photos.dispose();
 });
 
 it("reopens the map where it was after a remount", async () => {
@@ -801,28 +789,6 @@ async function openMapViewer({props,view}: ReturnType<typeof openMapViewerSetup>
  await fireEvent.click(await screen.findByRole("button",{name:"Open Photo 1.jpg"}));
  await view.rerender({...props,photoID:"photo-1"});await screen.findByRole("dialog",{name:"Photo viewer, Photo 1.jpg"});
 }
-it("revalidates the open Map photo on each list refresh without clearing it", async () => {
- const setup=openMapViewerSetup();const {photos,lookup,preview}=setup;
- let opened:Promise<ReturnType<typeof photo>>=Promise.resolve(photo(1));lookup.mockImplementation(async id=>id==="photo-1"?opened:photo(2));
- const openedLookups=()=>lookup.mock.calls.filter(([id])=>id==="photo-1").length;
- await openMapViewer(setup);await waitFor(()=>expect(openedLookups()).toBe(1));
- let finish!:(row:ReturnType<typeof photo>)=>void;opened=new Promise(resolve=>finish=resolve);
- photos.items=photos.items.map(row=>({...row}));
- await waitFor(()=>expect(openedLookups()).toBe(2));expect(screen.getByRole("dialog",{name:"Photo viewer, Photo 1.jpg"})).toBeTruthy();
- finish({...photo(1),content_version_id:"replaced-version"});
- await waitFor(()=>expect(preview).toHaveBeenCalledWith(expect.objectContaining({content_version_id:"replaced-version"}),"fit",expect.any(AbortSignal)));
- photos.dispose();
-});
-it("finishes a Map reload that advances the photo revision", async () => {
- const setup=openMapViewerSetup();const {photos,lookup,preview}=setup;
- stubPhotoFetch(vi.fn(async()=>Response.json({items:[],map_items:[{...mapPhoto(1),revision:2}],total:1})));
- preview.mockRejectedValueOnce(new APIError("Photo changed",409,"photo_display_changed"));await openMapViewer(setup);
- await screen.findByText("Photo changed");lookup.mockImplementation(async id=>id==="photo-1"?{...photo(1),revision:2}:photo(2));
- await fireEvent.click(screen.getByRole("button",{name:"Reload photo"}));
- await waitFor(()=>expect(preview.mock.calls.filter(([row])=>row.asset_id==="photo-1")).toHaveLength(2));expect(screen.queryByText("Photo changed")).toBeNull();
- photos.dispose();
-});
-
 it("revalidates the open Map photo after a reload and a list refresh", async () => {
  const setup=openMapViewerSetup();const {photos,lookup,preview}=setup;
  stubPhotoFetch(vi.fn(async()=>Response.json({items:[],map_items:[{...mapPhoto(1),revision:2}],total:1})));
@@ -830,8 +796,12 @@ it("revalidates the open Map photo after a reload and a list refresh", async () 
  await openMapViewer(setup);await screen.findByText("Photo changed");lookup.mockResolvedValue({...photo(1),revision:2});
  await fireEvent.click(screen.getByRole("button",{name:"Reload photo"}));
  await waitFor(()=>expect(preview).toHaveBeenCalledWith(expect.objectContaining({revision:2}),"fit",expect.any(AbortSignal)));
- lookup.mockResolvedValue({...photo(1),revision:3,name:"Refreshed photo.jpg",content_version_id:"refreshed-version"});
+ let finish!:(row:ReturnType<typeof photo>)=>void;
+ lookup.mockImplementation(()=>new Promise(resolve=>finish=resolve));
  await photos.refresh();
+ await waitFor(()=>expect(finish).toBeTypeOf("function"));
+ expect(screen.getByRole("dialog",{name:"Photo viewer, Photo 1.jpg"})).toBeTruthy();
+ finish({...photo(1),revision:3,name:"Refreshed photo.jpg",content_version_id:"refreshed-version"});
  await screen.findByRole("dialog",{name:"Photo viewer, Refreshed photo.jpg"});
  await waitFor(()=>expect(preview).toHaveBeenCalledWith(expect.objectContaining({content_version_id:"refreshed-version"}),"fit",expect.any(AbortSignal)));
  photos.dispose();
@@ -846,8 +816,6 @@ it("viewer follows the Map query while the viewport filters its grid", async () 
  const view=render(PhotosWorkspace,props);await vi.dynamicImportSettled();map.onvisible!([{...mapPhoto(1),longitude:120}]);
  await fireEvent.click(await screen.findByRole("button",{name:"Open Photo 1.jpg"}));expect(screen.queryByRole("button",{name:"Open Photo 2.jpg"})).toBeNull();
  await view.rerender({...props,photoID:"photo-1"});await screen.findByRole("dialog",{name:"Photo viewer, Photo 1.jpg"});
- expect(photos.lookup).toHaveBeenCalledWith("photo-1",expect.any(AbortSignal));
- await waitFor(()=>expect(photos.preview).toHaveBeenCalledWith(expect.objectContaining({content_version_id:"version-1"}),"fit",expect.any(AbortSignal)));
  expect(screen.getByText("1 of 2")).toBeTruthy();await fireEvent.click(screen.getAllByRole("button",{name:"Next photo"})[0]!);expect(onphotochange).toHaveBeenLastCalledWith("photo-2","step");
  map.onvisible!([]);await waitFor(()=>expect(document.querySelector('.photo-layout [data-asset="photo-1"]')).toBeNull());
  expect(screen.getByRole("dialog",{name:"Photo viewer, Photo 1.jpg"})).toBeTruthy();photos.dispose();

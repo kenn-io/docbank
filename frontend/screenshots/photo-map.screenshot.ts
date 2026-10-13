@@ -215,6 +215,9 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await expect(page.locator(".photo-map-cluster").first()).toBeVisible();
     await expect(page.getByRole("alert")).toHaveText("Map tiles from tiles.example.org couldn't load. Check [web.map_tiles], then restart Docbank.");
     await page.screenshot({path:path.join(output!,"photo-map-tile-error-1440-dark.png"),animations:"disabled"});
+    await page.setViewportSize({width:400,height:860});
+    await page.locator(".map-tabs").getByRole("button",{name:"Map",exact:true}).click();
+    await page.screenshot({path:path.join(output!,"photo-map-tile-error-400-dark.png"),animations:"disabled"});
     await page.route("**/assets/PhotoMap-*.js",route=>route.abort());
     await page.setViewportSize({width:1440,height:960});await page.goto("about:blank");await page.goto(enabledURL.href);
     await expect(page.getByText("Map couldn't load",{exact:true})).toBeVisible();

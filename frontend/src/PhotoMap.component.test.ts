@@ -28,10 +28,13 @@ function setup(items: PhotoMapRow[] = [{...mapPhoto(1),latitude:1,longitude:1}])
 it("renders located rows and cancels pending batches on replacement and disposal", async () => {
  const first={...mapPhoto(1),latitude:1,longitude:1},second={...mapPhoto(2),latitude:2,longitude:2};const {props,view}=setup([...Array.from({length:201},(_,id)=>({...mapPhoto(id),latitude:id % 90,longitude:id % 180})),{...mapPhoto(202),latitude:null,longitude:null}]);
  frame();expect(mocks.marker).toHaveBeenCalledTimes(200);expect(mocks.frames.size).toBe(1);
+ vi.clearAllMocks();
  await view.rerender({...props,items:[second]});
- expect(mocks.cluster.removeLayers).toHaveBeenLastCalledWith(expect.arrayContaining([expect.anything()]));expect(mocks.marker).toHaveBeenCalledTimes(200);expect(props.onvisible).toHaveBeenLastCalledWith([]);
+ expect(mocks.cluster.removeLayers).toHaveBeenLastCalledWith(expect.arrayContaining([expect.anything()]));expect(mocks.marker).not.toHaveBeenCalled();expect(props.onvisible).toHaveBeenLastCalledWith([]);
  await view.rerender({...props,items:[first,{...mapPhoto(3),latitude:null,longitude:null}]});frame();expect(mocks.cluster.addLayers.mock.calls.at(-1)![0]).toHaveLength(1);
+ await view.rerender({...props,items:[]});
  await view.rerender({...props,items:Array.from({length:201},(_,id)=>({...mapPhoto(id),latitude:id % 90,longitude:id % 180}))});frame();
+ vi.clearAllMocks();
  view.unmount();expect(mocks.frames.size).toBe(0);expect(mocks.util.cancelAnimFrame).toHaveBeenCalled();expect(mocks.map.remove).toHaveBeenCalledOnce();
 });
 
