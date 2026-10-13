@@ -3,6 +3,7 @@ import {
   auditEventLabel,
   auditEventSummary,
   auditPathLabel,
+  photoConfirmedFieldNames,
 } from "./audit.js";
 import type { AuditEvent, PhotoAuthored } from "./generated/docbank.js";
 
@@ -24,6 +25,15 @@ function event(overrides: Partial<AuditEvent> = {}): AuditEvent {
 }
 
 describe("audit presentation", () => {
+  it("names supported confirmation fields and marks unsupported masks invalid", () => {
+    expect(photoConfirmedFieldNames()).toBe("none");
+    expect(photoConfirmedFieldNames(12)).toBe("label, caption");
+    expect(photoConfirmedFieldNames(127)).toBe("rating, flag, label, caption, creator, copyright, rotation");
+    for (const mask of [128, 136, -1, 0.5, NaN, Infinity, 2 ** 32]) {
+      expect(photoConfirmedFieldNames(mask)).toBe("Invalid confirmation mask");
+    }
+  });
+
   it("uses human event names without hiding unknown canonical kinds", () => {
     expect(auditEventLabel("content_replace")).toBe("Content replaced");
     expect(auditEventLabel("future_event")).toBe("future event");
@@ -57,6 +67,7 @@ describe("audit presentation", () => {
       });
     expect(auditEventLabel("photo_authored")).toBe("Photo decisions changed");
     expect(auditEventSummary(photoEvent({ ...values, rating: 5, caption: "River" }))).toBe("Changed rating, caption");
+    expect(auditEventSummary(photoEvent({ ...values, confirmed_fields: 8 }))).toBe("Changed caption");
     expect(auditEventSummary(photoEvent(values))).toBe("Decisions unchanged");
   });
 

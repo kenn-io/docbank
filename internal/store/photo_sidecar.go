@@ -134,9 +134,15 @@ func (s *Store) InitializePhotoSidecar(ctx context.Context, target PhotoSidecarT
 				if err != nil {
 					return err
 				}
-				if valid && values != (PhotoAuthored{}) {
-					v := values
-					patch := PhotoAuthoredPatch{&v.Rating, &v.Flag, &v.Label, &v.Caption, &v.Creator, &v.Copyright, &v.Rotation}
+				patch := PhotoAuthoredPatch{}
+				if valid {
+					for _, field := range photoAuthoredFields {
+						if field.nonDefault(&values) {
+							field.setPatch(&patch, &values)
+						}
+					}
+				}
+				if patch != (PhotoAuthoredPatch{}) {
 					result, err = s.applyPhotoAuthoredTx(ctx, tx, []PhotoAuthoredTarget{{FileID: f.ID, Revision: 1, Patch: patch}}, "", &PhotoSidecarProvenance{NodeID: target.NodeID, VersionID: target.VersionID, FileID: target.SidecarFileID}, false)
 					if err != nil {
 						return err

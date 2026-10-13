@@ -23,6 +23,22 @@ const eventLabels: Record<string, string> = {
   tag_unassign: "Tag removed",
 };
 
+// Order matches the confirmation bits in internal/store/photo_authored.go.
+const photoDecisionKeys: (keyof PhotoAuthored)[] = [
+  "rating",
+  "flag",
+  "label",
+  "caption",
+  "creator",
+  "copyright",
+  "rotation",
+];
+
+export function photoConfirmedFieldNames(mask = 0): string {
+  if (!Number.isInteger(mask) || mask < 0 || mask > 127) return "Invalid confirmation mask";
+  return photoDecisionKeys.filter((_, index) => (mask & (1 << index)) !== 0).join(", ") || "none";
+}
+
 export function auditEventLabel(kind: string): string {
   return eventLabels[kind] ?? kind.replaceAll("_", " ");
 }
@@ -70,18 +86,11 @@ function provenanceSummary(state: AuditAttachmentState | undefined): string {
   return state.original_path || `Ingest ${shortID(state.ingest_id)}`;
 }
 
-const photoDecisionKeys: (keyof PhotoAuthored)[] = [
-  "rating",
-  "flag",
-  "label",
-  "caption",
-  "creator",
-  "copyright",
-  "rotation",
-];
-
 function photoSummary(before: PhotoAuthored | undefined, after: PhotoAuthored | undefined): string {
-  const changed = photoDecisionKeys.filter((key) => before?.[key] !== after?.[key]);
+  const confirmed = (before?.confirmed_fields ?? 0) ^ (after?.confirmed_fields ?? 0);
+  const changed = photoDecisionKeys.filter(
+    (key, index) => before?.[key] !== after?.[key] || (confirmed & (1 << index)) !== 0,
+  );
   return changed.length > 0 ? `Changed ${changed.join(", ")}` : "Decisions unchanged";
 }
 

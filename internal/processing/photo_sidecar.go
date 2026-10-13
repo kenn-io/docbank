@@ -27,12 +27,16 @@ func ReadPhotoSidecar(ctx context.Context, data []byte) (store.PhotoAuthored, er
 // boundedSidecarText buffers one property's text up to the authored text
 // limit. An oversized value reads as absent instead of as a truncated prefix,
 // so "3" followed by padding and other text cannot become a three-star rating.
+// It tracks non-whitespace text separately, so an oversized prefix still counts
+// as text beside a property's value.
 type boundedSidecarText struct {
 	builder  strings.Builder
 	overflow bool
+	content  bool
 }
 
 func (t *boundedSidecarText) write(data []byte) {
+	t.content = t.content || len(bytes.TrimSpace(data)) > 0
 	if t.overflow || t.builder.Len()+len(data) > store.MaxPhotoAuthoredTextBytes {
 		t.overflow = true
 		return
@@ -43,6 +47,7 @@ func (t *boundedSidecarText) write(data []byte) {
 func (t *boundedSidecarText) reset() {
 	t.builder.Reset()
 	t.overflow = false
+	t.content = false
 }
 
 func (t *boundedSidecarText) value() string {
@@ -72,6 +77,7 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 	values := map[string]string{}
 	var field string
 	var fieldDepth int
+	var child xml.Name
 	var text boundedSidecarText
 	var items []string
 	var itemText boundedSidecarText
@@ -152,6 +158,11 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 			if field != "" && len(stack) > fieldDepth {
 				valid := t.Name.Space == rdfNamespace
 				if len(stack) == fieldDepth+1 {
+					if child != (xml.Name{}) || text.content {
+						return result, errors.New("multiple authored RDF values")
+					}
+					child = t.Name
+					text.reset()
 					valid = valid && (t.Name.Local == "value" || field == "creator" && t.Name.Local == "Seq" || (field == "description" || field == "rights") && t.Name.Local == "Alt")
 				} else {
 					valid = valid && len(stack) == fieldDepth+2 && t.Name.Local == "li" && parent.Space == rdfNamespace && (parent.Local == "Alt" || parent.Local == "Seq")
@@ -194,6 +205,7 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 					}
 					field = key
 					fieldDepth = len(stack)
+					child = xml.Name{}
 					text.reset()
 					items = nil
 					hasDefault = false
@@ -222,7 +234,13 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 				if itemDepth != 0 {
 					target = &itemText
 				}
-				target.write(t)
+				beside := itemDepth == 0 && child != (xml.Name{}) && (len(stack) != fieldDepth+1 || child.Local != "value")
+				if beside && strings.TrimSpace(string(t)) != "" {
+					return result, errors.New("text beside authored RDF value")
+				}
+				if !beside {
+					target.write(t)
+				}
 			}
 		case xml.EndElement:
 			if len(stack) == 3 {
@@ -295,7 +313,7 @@ func readPhotoSidecar(ctx context.Context, data []byte) (photoSidecarPacket, err
 			result.Rotation = n
 		}
 	}
-	if err := store.ValidatePhotoAuthored(result.PhotoAuthored); err != nil {
+	if err := store.ValidatePhotoAuthoredValues(result.PhotoAuthored); err != nil {
 		return result, err
 	}
 	return result, nil

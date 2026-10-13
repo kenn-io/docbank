@@ -167,11 +167,20 @@ each file's identity, decisions, and revision. Hidden is a Photos privacy
 control: Documents queries and audit history still show a hidden photo's
 decisions.
 
+`confirmed_fields` records supplied fields with bits rating=1, flag=2, label=4,
+caption=8, creator=16, copyright=32, and rotation=64. Zero means untouched.
+Docbank edits with empty text or numeric zero confirm a clear. Unsupplied
+fields keep their earlier values and confirmation. Receipts, audit history,
+undo, and JSONL backup preserve the mask. Unknown bits and non-default values
+without confirmation are refused.
+
 ### Decisions from XMP sidecars
 
 The daemon fills in an original file's decisions from its imported XMP sidecar
 while that file is still at revision 1. Once a sidecar sets a decision, later
-packets don't change it.
+packets don't change it. Only non-default values confirm a decision. Rating 0,
+empty text, no label or pick, and rotation 0 confirm nothing, because editors
+write these defaults on untouched photos.
 
 The daemon picks the original for each sidecar this way:
 
@@ -195,7 +204,7 @@ The daemon reads these XMP properties:
 
 | Decision | XMP property |
 | --- | --- |
-| Rating | `xmp:Rating`. A rating of -1 means reject with rating 0. |
+| Rating | `xmp:Rating`. A rating of -1 means reject with rating 0, even when the packet also has a pick. It confirms only the flag. |
 | Label | `xmp:Label`, case-insensitive |
 | Flag | `Pick` in the `https://teststrip.app/xmp/1.0/` namespace |
 | Rotation | `Rotation` in the `https://teststrip.app/xmp/1.0/` namespace |
@@ -203,11 +212,11 @@ The daemon reads these XMP properties:
 | Creator | The first `dc:creator` entry |
 | Copyright | `dc:rights`, preferring the `x-default` language |
 
-An unsupported value is ignored and the other decisions still apply. That
+An unsupported value is ignored and stays unconfirmed; the other decisions still apply. That
 covers custom color labels, fractional ratings, unknown picks, other rotations,
 and text over 16 KiB. Whitespace-only text counts as absent; other text keeps
-its spaces and newlines. Malformed XML, a repeated property, or nesting deeper
-than 64 elements rejects the whole packet. Empty and rejected packets leave the file, its
+its spaces and newlines. Malformed XML, a repeated property, multiple values in one property, text beside
+a property's value, or nesting deeper than 64 elements rejects the whole packet. Empty and rejected packets leave the file, its
 revision, and audit history unchanged. Sidecars don't import `dc:subject` as
 tags or `tiff:Orientation` as rotation.
 

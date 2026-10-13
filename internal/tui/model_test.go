@@ -1116,7 +1116,7 @@ func TestHistoryDetailShowsPhotoDecisions(t *testing.T) {
 	before := store.PhotoAuthoredSnapshot{FileID: fileID, NodeID: page.Node.ID, Revision: 1}
 	after := before
 	after.Revision = 2
-	after.Values = store.PhotoAuthored{Rating: 5, Flag: "pick", Label: "red", Caption: "River\n\x1b[31m", Creator: "Example photographer", Copyright: "Example rights", Rotation: 90}
+	after.Values = store.PhotoAuthored{Confirmed: store.PhotoConfirmedAll, Rating: 5, Flag: "pick", Label: "red", Caption: "River\n\x1b[31m", Creator: "Example photographer", Copyright: "Example rights", Rotation: 90}
 	page.Items = []api.AuditEvent{{Kind: "photo_authored", Attachment: &api.AuditAttachmentChange{
 		Kind: "photo_authored", Identity: api.AuditAttachmentIdentity{FileID: fileID, NodeID: page.Node.ID},
 		Before: &api.AuditAttachmentState{Photo: &before}, After: &api.AuditAttachmentState{Photo: &after},
@@ -1134,6 +1134,16 @@ func TestHistoryDetailShowsPhotoDecisions(t *testing.T) {
 	for _, want := range []string{fileID, "Revision: 1", "Revision: 2", "Rating: 0", "Rating: 5", `Flag: "pick"`, `Label: "red"`, `Caption: "River\n\x1b[31m"`, `Creator: "Example photographer"`, `Copyright: "Example rights"`, "Rotation: 90"} {
 		assert.Contains(t, detail, want)
 	}
+	assert.Contains(t, detail, "Confirmed fields: rating, flag, label, caption, creator, copyright, rotation")
+	before.Values = store.PhotoAuthored{}
+	after.Values = store.PhotoAuthored{Confirmed: store.PhotoConfirmedCaption}
+	detail = model.render()
+	states := strings.Split(detail, "After attachment: present")
+	require.Len(t, states, 2)
+	assert.Contains(t, states[0], `Caption: ""`)
+	assert.Contains(t, states[0], "Confirmed fields: none")
+	assert.Contains(t, states[1], `Caption: ""`)
+	assert.Contains(t, states[1], "Confirmed fields: caption")
 }
 
 func TestHistoryPathsRemainTerminalSafe(t *testing.T) {

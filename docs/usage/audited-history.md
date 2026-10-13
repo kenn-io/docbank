@@ -131,6 +131,7 @@ fields depend on the event:
 - Content events record prior and resulting version IDs.
 - Tag and provenance events record the attached metadata's stable ID and
   complete before-and-after state.
+- Photo edits and undo show authored values and confirmed field names before and after, including confirmation of an empty caption.
 
 Human output summarizes these changes. JSON returns all event fields with
 their defined types.

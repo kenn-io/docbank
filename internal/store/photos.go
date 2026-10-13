@@ -319,13 +319,13 @@ func inferPhotoRole(facts PhotoNodeFacts) string {
 
 func scanPhotoFile(row scanner) (PhotoFile, error) {
 	var file PhotoFile
-	err := row.Scan(&file.ID, &file.AssetID, &file.NodeID, &file.Role, &file.SidecarOfID, &file.CreatedAt, &file.Revision, &file.Rating, &file.Flag, &file.Label, &file.Caption, &file.Creator, &file.Copyright, &file.Rotation)
+	err := row.Scan(&file.ID, &file.AssetID, &file.NodeID, &file.Role, &file.SidecarOfID, &file.CreatedAt, &file.Revision, &file.Rating, &file.Flag, &file.Label, &file.Caption, &file.Creator, &file.Copyright, &file.Rotation, &file.Confirmed)
 	return file, err
 }
 
 func loadPhotoFiles(ctx context.Context, q metadataQuerier, assetID string) ([]PhotoFile, error) {
 	rows, err := q.QueryContext(ctx, `
-		SELECT file_id, asset_id, node_id, role, sidecar_of_file_id, created_at, revision, rating, flag, label, caption, creator, copyright, rotation
+		SELECT file_id, asset_id, node_id, role, sidecar_of_file_id, created_at, revision, rating, flag, label, caption, creator, copyright, rotation, confirmed_fields
 		FROM photo_files WHERE asset_id=? ORDER BY file_id LIMIT ?`, assetID, PhotoMaxFiles+1)
 	if err != nil {
 		return nil, fmt.Errorf("listing photo files: %w", err)

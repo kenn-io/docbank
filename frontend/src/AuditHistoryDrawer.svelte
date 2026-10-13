@@ -22,6 +22,7 @@
     auditEventLabel,
     auditEventSummary,
     auditPathLabel,
+    photoConfirmedFieldNames,
   } from "./audit.js";
   import { basename, formatDate } from "./format.js";
 
@@ -333,6 +334,7 @@
           <div><dt>Creator</dt><dd>{state.photo.values.creator || "(empty)"}</dd></div>
           <div><dt>Copyright</dt><dd>{state.photo.values.copyright || "(empty)"}</dd></div>
           <div><dt>Rotation</dt><dd>{state.photo.values.rotation}°</dd></div>
+          <div><dt>Confirmed fields</dt><dd>{photoConfirmedFieldNames(state.photo.values.confirmed_fields)}</dd></div>
         {/if}
         {#if state.tag_name}<div><dt>Tag name</dt><dd>{state.tag_name}</dd></div>{/if}
         {#if state.ingest_id}<div><dt>Ingest</dt><dd><code>{state.ingest_id}</code></dd></div>{/if}

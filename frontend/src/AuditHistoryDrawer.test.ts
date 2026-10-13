@@ -7,7 +7,7 @@ import {
   waitFor,
 } from "@testing-library/svelte";
 import AuditHistoryDrawer from "./AuditHistoryDrawer.svelte";
-import type { AuditEvent, AuditEventPage, Node, PhotoAuthoredSnapshot } from "./generated/docbank.js";
+import type { AuditEvent, AuditEventPage, Node, PhotoAuthored, PhotoAuthoredSnapshot } from "./generated/docbank.js";
 
 const node: Node = {
   id: 42,
@@ -66,15 +66,27 @@ describe("audited history drawer", () => {
   it("shows every authored value in both state cards", async () => {
     const fileID = "44444444-4444-4444-8444-444444444444";
     const before: PhotoAuthoredSnapshot = { file_id: fileID, node_id: 42, revision: 1, values: { rating: 0, flag: "", label: "", caption: "", creator: "", copyright: "", rotation: 0 } };
-    const after: PhotoAuthoredSnapshot = { ...before, revision: 2, values: { rating: 5, flag: "pick", label: "red", caption: "River", creator: "Example photographer", copyright: "Example copyright", rotation: 90 } };
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify(page([event({ kind: "photo_authored", attachment: { kind: "photo_authored", identity: { file_id: fileID }, before: { photo: before }, after: { photo: after } } })])), { status: 200, headers: { "Content-Type": "application/json" } }));
-    render(AuditHistoryDrawer, { session: "short-lived", node, path: "/Photos/capture.jpg", onclose: vi.fn(), onauthfailure: vi.fn() });
-    expect(await screen.findByText("River")).toBeTruthy();
-    for (const label of ["File revision", "Rating", "Flag", "Label", "Caption", "Creator", "Copyright", "Rotation"]) expect(screen.getAllByText(label)).toHaveLength(2);
-    expect(screen.getAllByText(fileID)).toHaveLength(2);
-    expect(screen.getByText("0°")).toBeTruthy(); expect(screen.getByText("90°")).toBeTruthy();
-    expect(screen.getAllByText("(empty)")).toHaveLength(5);
-    expect(screen.getByText("Example photographer")).toBeTruthy(); expect(screen.getByText("Example copyright")).toBeTruthy();
+    for (const values of [
+      { confirmed_fields: 127, rating: 5, flag: "pick", label: "red", caption: "River", creator: "Example photographer", copyright: "Example copyright", rotation: 90 },
+      { ...before.values, confirmed_fields: 8 },
+    ] satisfies PhotoAuthored[]) {
+      const after = { ...before, revision: 2, values };
+      vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify(page([event({ kind: "photo_authored", attachment: { kind: "photo_authored", identity: { file_id: fileID }, before: { photo: before }, after: { photo: after } } })])), { status: 200, headers: { "Content-Type": "application/json" } }));
+      render(AuditHistoryDrawer, { session: "short-lived", node, path: "/Photos/capture.jpg", onclose: vi.fn(), onauthfailure: vi.fn() });
+      const confirmed = await screen.findAllByText("Confirmed fields");
+      expect(confirmed.map((label) => label.nextElementSibling?.textContent)).toEqual(["none", values.confirmed_fields === 8 ? "caption" : "rating, flag, label, caption, creator, copyright, rotation"]);
+      if (values.confirmed_fields === 8) {
+        expect(screen.getAllByText("Caption").map((label) => label.nextElementSibling?.textContent)).toEqual(["(empty)", "(empty)"]);
+      } else {
+        expect(screen.getByText("River")).toBeTruthy();
+        for (const label of ["File revision", "Rating", "Flag", "Label", "Caption", "Creator", "Copyright", "Rotation"]) expect(screen.getAllByText(label)).toHaveLength(2);
+        expect(screen.getAllByText(fileID)).toHaveLength(2);
+        expect(screen.getByText("0°")).toBeTruthy(); expect(screen.getByText("90°")).toBeTruthy();
+        expect(screen.getAllByText("(empty)")).toHaveLength(5);
+        expect(screen.getByText("Example photographer")).toBeTruthy(); expect(screen.getByText("Example copyright")).toBeTruthy();
+      }
+      cleanup();
+    }
   });
 
   it("uses the authoritative path returned with history", async () => {
