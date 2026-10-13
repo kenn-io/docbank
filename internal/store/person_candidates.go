@@ -368,6 +368,11 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 	}
 	var saved PersonDocumentAssertion
 	err := s.withLogicalTx(ctx, func(tx *sql.Tx) error {
+		if assertion.Role == "depicted" {
+			if err := s.facePhotoQuery(ctx, tx, assertion.ContentVersionID); err != nil {
+				return err
+			}
+		}
 		personID, err := resolveActiveCandidatePersonTx(ctx, tx, assertion.PersonID)
 		if err != nil {
 			return err
@@ -623,9 +628,6 @@ func requireFaceOccurrenceTx(ctx context.Context, tx *sql.Tx, occurrence PersonC
 func attachCandidateFaceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCandidateOccurrence, assertionID string) error {
 	if occurrence.EvidenceKind != "face" {
 		return nil
-	}
-	if err := validateFaceAssertion(ctx, tx, occurrence.ContentVersionID, assertionID); err != nil {
-		return err
 	}
 	var existing string
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(assertion_id,'') FROM photo_faces WHERE face_id=? AND content_version_id=?`, occurrence.EvidenceID, occurrence.ContentVersionID).Scan(&existing); err != nil {

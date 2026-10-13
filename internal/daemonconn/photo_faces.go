@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"uuid"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 )
@@ -29,7 +30,7 @@ func (c *Connection) PhotoFaces(ctx context.Context, versionID string, cookies .
 	if err != nil {
 		return api.PhotoFacePage{}, err
 	}
-	if page.Faces == nil || page.Assertions == nil || len(page.Faces) > 1000 || len(page.Assertions) > 1000 {
+	if page.Faces == nil || page.Assertions == nil || len(page.Faces) > document.MaxPhotoRecordsPerVersion || len(page.Assertions) > document.MaxPhotoRecordsPerVersion {
 		return api.PhotoFacePage{}, errors.New("photo face response exceeds bound")
 	}
 	assertionIDs := make(map[string]bool, len(page.Assertions))

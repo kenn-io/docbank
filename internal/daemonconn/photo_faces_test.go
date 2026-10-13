@@ -61,7 +61,7 @@ func TestPhotoFaceClientAssertionBoundsAndReferences(t *testing.T) {
 	}{
 		{"suppressed reference", []api.PhotoPersonAssertion{assertion}, true},
 		{"missing reference", []api.PhotoPersonAssertion{}, false},
-		{"over bound", make([]api.PhotoPersonAssertion, 1001), false},
+		{"over bound", make([]api.PhotoPersonAssertion, document.MaxPhotoRecordsPerVersion+1), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

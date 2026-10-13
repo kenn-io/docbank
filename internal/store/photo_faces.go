@@ -12,8 +12,6 @@ import (
 )
 
 const ManualFaceFingerprint = "manual"
-const maxPhotoFaces = 1000
-const maxPhotoAssertions = 1000
 
 var ErrInvalidPhotoFace = errors.New("invalid photo face")
 
@@ -45,7 +43,7 @@ func scanPhotoFace(row scanner) (PhotoFace, error) {
 }
 
 func photoFacesQuery(ctx context.Context, q metadataQuerier, versionID string) ([]PhotoFace, error) {
-	rows, err := q.QueryContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE content_version_id=? ORDER BY face_id LIMIT 1001`, versionID)
+	rows, err := q.QueryContext(ctx, `SELECT `+photoFaceColumns+` FROM photo_faces WHERE content_version_id=? ORDER BY face_id LIMIT ?`, versionID, document.MaxPhotoRecordsPerVersion+1)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +54,7 @@ func photoFacesQuery(ctx context.Context, q metadataQuerier, versionID string) (
 		if err != nil {
 			return nil, err
 		}
-		if len(faces) == maxPhotoFaces {
+		if len(faces) == document.MaxPhotoRecordsPerVersion {
 			return nil, ErrInvalidPhotoFace
 		}
 		faces = append(faces, face)
@@ -112,7 +110,7 @@ func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, 
 		if err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND (action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id)) ORDER BY person_id,assertion_id LIMIT 1001`, versionID)
+		rows, err := tx.QueryContext(ctx, `SELECT assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision FROM person_document_assertions WHERE content_version_id=? AND role='depicted' AND (action='assert' OR EXISTS(SELECT 1 FROM photo_faces f WHERE f.assertion_id=person_document_assertions.assertion_id)) ORDER BY person_id,assertion_id LIMIT ?`, versionID, document.MaxPhotoRecordsPerVersion+1)
 		if err != nil {
 			return err
 		}
@@ -122,7 +120,7 @@ func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, 
 			if err != nil {
 				return err
 			}
-			if len(assertions) == maxPhotoAssertions {
+			if len(assertions) == document.MaxPhotoRecordsPerVersion {
 				return ErrInvalidPhotoFace
 			}
 			assertions = append(assertions, assertion)
@@ -133,9 +131,6 @@ func (s *Store) PhotoFaces(ctx context.Context, versionID string) ([]PhotoFace, 
 }
 
 func insertPhotoFaceTx(ctx context.Context, tx *sql.Tx, face PhotoFace) error {
-	if err := validateFaceAssertion(ctx, tx, face.ContentVersionID, face.AssertionID); err != nil {
-		return err
-	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO photo_faces(face_id,content_version_id,detector_fingerprint,x,y,width,height,revision,assertion_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, face.FaceID, face.ContentVersionID, face.DetectorFingerprint, face.Box.X, face.Box.Y, face.Box.Width, face.Box.Height, face.Revision, nullableString(face.AssertionID), face.CreatedAt)
 	return err
 }
@@ -194,7 +189,7 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM photo_faces WHERE content_version_id=?`, versionID).Scan(&count); err != nil {
 			return err
 		}
-		if count >= maxPhotoFaces {
+		if count >= document.MaxPhotoRecordsPerVersion {
 			return ErrInvalidPhotoFace
 		}
 		face = PhotoFace{FaceID: faceID, ContentVersionID: versionID, DetectorFingerprint: ManualFaceFingerprint, Box: box, Revision: 1, CreatedAt: nowRFC3339()}
@@ -242,7 +237,7 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID strin
 
 // ReconcilePhotoFaces matches observations across detector versions by best overlap, with stable tie breaking.
 func (s *Store) ReconcilePhotoFaces(ctx context.Context, versionID, fingerprint string, boxes []document.FaceBox) ([]PhotoFace, error) {
-	if fingerprint == "" || fingerprint == ManualFaceFingerprint || len(fingerprint) > 256 || !document.ValidPersonIdentityText(fingerprint) || len(boxes) > maxPhotoFaces {
+	if fingerprint == "" || fingerprint == ManualFaceFingerprint || len(fingerprint) > 256 || !document.ValidPersonIdentityText(fingerprint) || len(boxes) > document.MaxPhotoRecordsPerVersion {
 		return nil, ErrInvalidPhotoFace
 	}
 	for _, box := range boxes {
@@ -321,7 +316,7 @@ func (s *Store) ReconcilePhotoFaces(ctx context.Context, versionID, fingerprint 
 			if usedNew[j] {
 				continue
 			}
-			if retained+added >= maxPhotoFaces {
+			if retained+added >= document.MaxPhotoRecordsPerVersion {
 				return ErrInvalidPhotoFace
 			}
 			id, err := newUUIDv4()
@@ -376,28 +371,14 @@ const faceAssertionMatchesSQL = `a.content_version_id=f.content_version_id AND a
 func validatePhotoFaceReferences(ctx context.Context, q metadataQuerier) error {
 	var invalid bool
 	err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces f LEFT JOIN content_versions v ON v.version_id=f.content_version_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE v.version_id IS NULL OR (f.assertion_id IS NOT NULL AND (a.assertion_id IS NULL OR NOT (`+faceAssertionMatchesSQL+`))))
- OR EXISTS(SELECT 1 FROM person_document_assertions WHERE role='depicted' GROUP BY content_version_id HAVING COUNT(*)>1000)
- OR EXISTS(SELECT 1 FROM photo_faces GROUP BY content_version_id HAVING COUNT(*)>1000)
+ OR EXISTS(SELECT 1 FROM person_document_assertions WHERE role='depicted' GROUP BY content_version_id HAVING COUNT(*)>?)
+ OR EXISTS(SELECT 1 FROM photo_faces GROUP BY content_version_id HAVING COUNT(*)>?)
  OR EXISTS(SELECT 1 FROM person_match_candidates c, json_each(c.evidence_json) e LEFT JOIN photo_faces f ON f.face_id=json_extract(e.value,'$.evidence_id') WHERE c.state='open' AND json_extract(e.value,'$.evidence_kind')='face' AND (f.face_id IS NULL OR f.content_version_id<>json_extract(e.value,'$.content_version_id')))
- OR EXISTS(SELECT 1 FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE p.key_face_id IS NOT NULL AND (f.face_id IS NULL OR a.person_id IS NULL OR a.person_id<>p.person_id OR a.action<>'assert'))`).Scan(&invalid)
+ OR EXISTS(SELECT 1 FROM persons p LEFT JOIN photo_faces f ON f.face_id=p.key_face_id LEFT JOIN person_document_assertions a ON a.assertion_id=f.assertion_id WHERE p.key_face_id IS NOT NULL AND (f.face_id IS NULL OR a.person_id IS NULL OR a.person_id<>p.person_id OR a.action<>'assert'))`, document.MaxPhotoRecordsPerVersion, document.MaxPhotoRecordsPerVersion).Scan(&invalid)
 	if err != nil {
 		return fmt.Errorf("checking face references: %w", err)
 	}
 	if invalid {
-		return ErrInvalidPhotoFace
-	}
-	return nil
-}
-
-func validateFaceAssertion(ctx context.Context, q metadataQuerier, versionID, assertionID string) error {
-	if assertionID == "" {
-		return nil
-	}
-	var valid bool
-	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM (SELECT ? AS content_version_id) f JOIN person_document_assertions a ON a.assertion_id=? WHERE `+faceAssertionMatchesSQL+`)`, versionID, assertionID).Scan(&valid); err != nil {
-		return err
-	}
-	if !valid {
 		return ErrInvalidPhotoFace
 	}
 	return nil
@@ -411,7 +392,7 @@ func requirePhotoAssertionCapacity(ctx context.Context, q metadataQuerier, versi
 	if err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_document_assertions WHERE content_version_id=? AND role='depicted'`, versionID).Scan(&count); err != nil {
 		return err
 	}
-	if count >= maxPhotoAssertions {
+	if count >= document.MaxPhotoRecordsPerVersion {
 		return ErrInvalidPhotoFace
 	}
 	return nil

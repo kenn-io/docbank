@@ -1358,7 +1358,7 @@ query arguments.
 
 ## Photo faces
 
-`GET /api/v1/photos/versions/{content_version_id}/faces` reads one live current photo member. It returns `faces` (at most 1,000) and `assertions`, the saved `depicted` assertions whose action is `assert`. Each assertion includes its ID, canonical `person_id`, version, revision and recording time. Whole-photo marks appear in `assertions` even when there are no face boxes.
+`GET /api/v1/photos/versions/{content_version_id}/faces` reads one live current photo member. It returns `faces` and `assertions` (at most 1,000 each). Assertions include saved `depicted` links with action `assert` and suppressed links still referenced by a face. Check `action` before treating a person as depicted. Each assertion includes its ID, canonical `person_id`, version, revision and recording time. Whole-photo marks appear in `assertions` even when there are no face boxes.
 
 `POST` on the same path accepts `box: {x, y, width, height}` and optional `person_id`, or a `person_id` alone for a whole-photo mark. A boxed request requires a caller-supplied UUIDv4 `face_id`. Retain it for retries: the same ID, version and box return the current saved result; a supplied person must match its canonical person. Conflicting reuse returns `409 exists`. The result contains `face` for a box and the saved `assertion` when a person is supplied. Repeated whole-photo marks reuse their assertion.
 

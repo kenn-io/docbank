@@ -132,6 +132,9 @@ func TestPhotoFaceCandidatesAttachSharedAssertionAndMerge(t *testing.T) {
 	require.NoError(t, err)
 	second, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{X: 0.5, Width: 0.2, Height: 0.2}, "")
 	require.NoError(t, err)
+	conflict := openFaceCandidate(t, s, node.CurrentVersionID, first.FaceID, duplicate.PersonID)
+	_, err = s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: conflict.CandidateID, ExpectedRevision: 1, Action: "link", PersonID: duplicate.PersonID})
+	require.ErrorIs(t, err, ErrPersonIdentityConflict)
 	candidate := openFaceCandidate(t, s, node.CurrentVersionID, second.FaceID, duplicate.PersonID)
 	linked, err := s.DecidePersonCandidate(ctx, CandidateDecision{CandidateID: candidate.CandidateID, ExpectedRevision: 1, Action: "link", PersonID: duplicate.PersonID})
 	require.NoError(t, err)
@@ -337,9 +340,23 @@ func TestPhotoFaceMetadataRoundTripAndInvalidReferences(t *testing.T) {
 		})
 	}
 	// Older person records omit the optional key-face field.
-	old := strings.ReplaceAll(exported.String(), `"key_face_id":"`+face.FaceID+`",`, "")
+	lines := strings.Split(exported.String(), "\n")
+	for i, line := range lines {
+		if strings.Contains(line, `"type":"person"`) {
+			var record map[string]any
+			require.NoError(t, json.Unmarshal([]byte(line), &record))
+			require.Contains(t, record, "key_face_id")
+			delete(record, "key_face_id")
+			raw, err := json.Marshal(record)
+			require.NoError(t, err)
+			lines[i] = string(raw)
+		}
+	}
 	legacy := newTestStore(t)
-	require.NoError(t, legacy.ImportMetadata(ctx, strings.NewReader(old)))
+	require.NoError(t, legacy.ImportMetadata(ctx, strings.NewReader(strings.Join(lines, "\n"))))
+	var keyFace *string
+	require.NoError(t, legacy.db.QueryRow(`SELECT key_face_id FROM persons WHERE person_id=?`, person.PersonID).Scan(&keyFace))
+	require.Nil(t, keyFace)
 }
 
 func TestPhotoFaceAuditWritesFailClosed(t *testing.T) {
@@ -412,9 +429,6 @@ func TestPhotoFaceCrossVersionAndStaleCandidates(t *testing.T) {
 	require.NoError(t, err)
 	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: 0.2, Height: 0.2}, "")
 	require.NoError(t, err)
-	assertion, err := s.MarkPersonInPhoto(ctx, second.CurrentVersionID, person.PersonID)
-	require.NoError(t, err)
-	require.ErrorIs(t, validateFaceAssertion(ctx, s.db, node.CurrentVersionID, assertion.AssertionID), ErrInvalidPhotoFace)
 	evidence, err := canonical.Marshal([]PersonCandidateOccurrence{{ContentVersionID: second.CurrentVersionID, Role: "depicted", EvidenceKind: "face", EvidenceID: face.FaceID}})
 	require.NoError(t, err)
 	err = s.withLogicalTx(ctx, func(tx *sql.Tx) error {
@@ -617,7 +631,7 @@ func TestPhotoFaceRestoreBoundsAndSemanticReferences(t *testing.T) {
 	}
 	var bounded strings.Builder
 	bounded.WriteString(exported.String())
-	for range maxPhotoFaces - 1 {
+	for range document.MaxPhotoRecordsPerVersion - 1 {
 		id, err := newUUIDv4()
 		require.NoError(t, err)
 		row["face_id"] = id
@@ -839,6 +853,8 @@ func TestPhotoFaceObservationTargetEligibility(t *testing.T) {
 			require.ErrorIs(t, err, ErrNotFound)
 			_, err = s.MarkPersonInPhoto(ctx, target.CurrentVersionID, person.PersonID)
 			require.ErrorIs(t, err, ErrNotFound)
+			_, err = s.AssertDocumentPerson(ctx, PersonDocumentAssertion{ContentVersionID: target.CurrentVersionID, PersonID: person.PersonID, Role: "depicted", Action: "assert", Revision: 1})
+			require.ErrorIs(t, err, ErrNotFound)
 			_, err = s.ReconcilePhotoFaces(ctx, target.CurrentVersionID, "detector-v1", []document.FaceBox{box})
 			require.ErrorIs(t, err, ErrNotFound)
 		})
@@ -902,7 +918,7 @@ func TestPhotoFaceAssertionCapacityAndRestore(t *testing.T) {
 	_, err := s.db.Exec(`WITH RECURSIVE seq(n) AS (
 		SELECT 1 UNION ALL SELECT n+1 FROM seq WHERE n < ?
 	) INSERT INTO persons(person_id,display_name,display_name_folded,origin,state,revision,created_at,updated_at)
-	SELECT printf('00000000-0000-4000-8000-%012d',n),'Synthetic Person','synthetic person','operator','curated',1,?,? FROM seq`, maxPhotoAssertions-1, nowRFC3339(), nowRFC3339())
+	SELECT printf('00000000-0000-4000-8000-%012d',n),'Synthetic Person','synthetic person','operator','curated',1,?,? FROM seq`, document.MaxPhotoRecordsPerVersion-1, nowRFC3339(), nowRFC3339())
 	require.NoError(t, err)
 	_, err = s.db.Exec(`INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision)
 	 SELECT person_id,?,person_id,'depicted','assert','',?,1 FROM persons`, node.CurrentVersionID, nowRFC3339())
@@ -936,7 +952,7 @@ func TestPhotoFaceAssertionCapacityAndRestore(t *testing.T) {
 	require.NoError(t, err)
 	_, assertions, err := s.PhotoFaces(ctx, node.CurrentVersionID)
 	require.NoError(t, err)
-	require.Len(t, assertions, maxPhotoAssertions)
+	require.Len(t, assertions, document.MaxPhotoRecordsPerVersion)
 	var exported bytes.Buffer
 	require.NoError(t, s.ExportMetadata(ctx, &exported))
 	require.NoError(t, newTestStore(t).ImportMetadata(ctx, bytes.NewReader(exported.Bytes())))
@@ -946,4 +962,35 @@ func TestPhotoFaceAssertionCapacityAndRestore(t *testing.T) {
 	exported.Write(raw)
 	exported.WriteByte('\n')
 	require.ErrorIs(t, newTestStore(t).ImportMetadata(ctx, bytes.NewReader(exported.Bytes())), ErrInvalidPhotoFace)
+}
+
+func TestPhotoFaceGenericDepictedAuthorization(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	assertion, err := s.MarkPersonInPhoto(ctx, node.CurrentVersionID, person.PersonID)
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	require.NoError(t, s.SetupPhotoHidden(ctx, "synthetic-passcode"))
+	_, err = s.SetPhotoAssetHidden(ctx, asset.ID, asset.Revision, true)
+	require.NoError(t, err)
+	assertion.Action = "suppress"
+	_, err = s.AssertDocumentPerson(ctx, assertion)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	other, err := s.CreatePerson(ctx, "Grace", "operator")
+	require.NoError(t, err)
+	create := PersonDocumentAssertion{ContentVersionID: node.CurrentVersionID, PersonID: other.PersonID, Role: "depicted", Action: "assert", Revision: 1}
+	_, err = s.AssertDocumentPerson(ctx, create)
+	require.ErrorIs(t, err, ErrHiddenLocked)
+	create.Role = "author"
+	_, err = s.AssertDocumentPerson(ctx, create)
+	require.NoError(t, err)
+	token, _, err := s.UnlockPhotoHidden(ctx, "synthetic-passcode")
+	require.NoError(t, err)
+	_, err = s.AssertDocumentPerson(WithPhotoHiddenToken(ctx, token), assertion)
+	require.NoError(t, err)
 }

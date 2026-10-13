@@ -5,6 +5,9 @@ import (
 	"math"
 )
 
+// MaxPhotoRecordsPerVersion bounds both faces and depicted assertions on one version.
+const MaxPhotoRecordsPerVersion = 1000
+
 // FaceBox uses normalized coordinates in the EXIF-oriented preview before authored rotation.
 type FaceBox struct {
 	X      float64 `json:"x"`
