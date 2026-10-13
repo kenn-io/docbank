@@ -46,7 +46,7 @@
   let detailLoading = $state(false);
   let reload = $state.raw<{id:string}>();
   let consumedReload = $state.raw<typeof reload>();
-  let reloadedItems: Photos["items"] | undefined;
+  let reloadedRow: Photos["items"][number] | undefined;
   let reloadRevision = $state(0);
   let visitController: AbortController | undefined;
   const fromGrid = $derived(photos.viewerReturn?.contextID === photos.contextID);
@@ -68,15 +68,15 @@
     const controller = new AbortController();
     const explicit = reload?.id === id && reload !== consumedReload;
     // Each accepted list refresh revalidates a grid-opened photo; an explicit reload updates the list itself, so it must not depend on it.
-    if (!explicit && fromGrid) void photos.items;
-    if (!explicit && reload?.id === id && reload === consumedReload && untrack(() => direct?.asset_id === id && (!fromGrid || photos.items === reloadedItems))) { detailLoading = false; return () => controller.abort(); }
+    if (!explicit && fromGrid) void listedRow;
+    if (!explicit && reload?.id === id && reload === consumedReload && untrack(() => direct?.asset_id === id && (!fromGrid || listedRow === reloadedRow))) { detailLoading = false; return () => controller.abort(); }
     if (!explicit) { if (untrack(() => direct?.asset_id) !== id) direct = undefined; detailError = ""; }
     if (!explicit && fromGrid && listedDetail) { detailLoading = false; return () => controller.abort(); }
     detailLoading = true;
     const request = reload;
     const version = untrack(() => current?.content_version_id);
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]);
-    void (explicit ? photos.reload(id, signal) : photos.lookup(id, signal)).then(photo => { if (!signal.aborted) { direct = photo; detailError = ""; if (explicit) { if (photo.content_version_id === version) reloadRevision++; reloadedItems = untrack(() => photos.items); consumedReload = request; } } }).catch(cause => { if (!controller.signal.aborted) detailError = cause instanceof Error ? cause.message : String(cause); }).finally(() => { if (!controller.signal.aborted) detailLoading = false; });
+    void (explicit ? photos.reload(id, signal) : photos.lookup(id, signal)).then(photo => { if (!signal.aborted) { direct = photo; detailError = ""; if (explicit) { if (photo.content_version_id === version) reloadRevision++; reloadedRow = untrack(() => listedRow); consumedReload = request; } } }).catch(cause => { if (!controller.signal.aborted) detailError = cause instanceof Error ? cause.message : String(cause); }).finally(() => { if (!controller.signal.aborted) detailLoading = false; });
     return () => { controller.abort(); if (explicit) consumedReload = request; };
   });
   async function restoreGrid() {

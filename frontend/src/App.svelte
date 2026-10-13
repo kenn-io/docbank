@@ -206,6 +206,7 @@
   const mapAlbumID = $derived(photoPath.startsWith("/photos/map/") ? photoPath.slice("/photos/map/".length) : "");
   const hiddenMode = $derived(photoMode && photoPath === "/photos/hidden");
   const albumID = $derived(photoPath.startsWith("/photos/albums/") ? photoPath.slice("/photos/albums/".length) : "");
+  const albumScopeID = $derived(albumID || mapAlbumID);
   let photoAlbums = $state<PhotoAlbums>();
   let albumPhotos = $state<Photos>();
   let mapPhotos = $state<Photos>();
@@ -290,10 +291,11 @@
     return revalidated;
   }
   async function acceptPhotoAccess(result: generated.PhotoHiddenState) {
+    const changed = result.change_id !== photoChangeID;
     // The refreshed workspace reports an open photo that is no longer listed, so the viewer stays.
-    if (photoState && result.change_id !== photoChangeID) void invalidateLibrary(false);
+    if (photoState && changed) void invalidateLibrary(false);
     // Hiding or unhiding changes album counts and covers. The server omits change_id until the first hide.
-    if (photoAccessChecked && result.change_id !== photoChangeID) void photoAlbums?.load();
+    if (photoAccessChecked && changed) void photoAlbums?.load();
     photoAccessChecked = true;
     photoChangeID = result.change_id;
     if (!photoMode || hiddenMode) return;
@@ -302,7 +304,7 @@
     if (photos?.hiding || photos?.trashing || photoConcealed && photos?.loading) return;
     const version = photoAccessVersion;
     if (state && photoConcealed) {
-      if (!await revalidateLibrary(state, photos?.projection === "map" && !photos.started ? undefined : photos, () => version === photoAccessVersion)) return;
+      if (!await revalidateLibrary(state, photos?.projection === "map" && (!photos.started || !changed && !photos.error) ? undefined : photos, () => version === photoAccessVersion)) return;
     }
     if (version !== photoAccessVersion || document.visibilityState !== "visible") return;
     photoState ??= { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };
@@ -326,7 +328,7 @@
   }
   $effect(() => {
     const session = webSession;
-    const id = albumID;
+    const id = albumScopeID;
     if (!session || !id) { albumPhotos = undefined; return; }
     const photos = new Photos(session, handleFailure, false, albumQuery(id));
     albumPhotos = photos;
@@ -334,10 +336,11 @@
   });
   $effect(() => {
     const state = photoState;
+    const id = mapAlbumID;
     if (!mapMode || !tiles.tile_url || !state) { mapPhotos = undefined; return; }
-    const inherited = mapAlbumID ? albumQuery(mapAlbumID) : untrack(() => state.photos.query);
+    const inherited = untrack(() => id ? albumPhotos?.query ?? albumQuery(id) : state.photos.query);
     const photos = new Photos(webSession, handleFailure, false, { ...inherited, sort: { field: "capture_time", direction: "desc" }, filters: { ...inherited.filters, gps_bounds: inherited.filters.gps_bounds ?? { south: "-90", west: "-180", north: "90", east: "180" } } }, "map");
-    if (!mapAlbumID) photos.date = untrack(() => state.photos.date);
+    photos.date = untrack(() => id ? albumPhotos?.date : state.photos.date);
     mapPhotos = photos;
     return () => photos.dispose();
   });
@@ -2342,7 +2345,8 @@
       {#if hiddenPhotoActionError}<p role="alert">{hiddenPhotoActionError}</p>{/if}
       {#if photoPath === "/photos/albums"}{#if photoAlbums}<PhotoAlbumsIndex albums={photoAlbums} cache={photoState.cache} onnavigate={navigatePhotos} />{/if}
       {:else if albumID}{#if albumPhotos}{#key albumPhotos}<PhotosWorkspace bind:this={libraryWorkspace} photos={albumPhotos} cache={photoState.cache} albums={photoAlbums} {albumID} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
-      {:else if mapMode}{#if !tiles.tile_url}<PhotosWorkspace {mapMode} {tiles} photos={photoState.photos} cache={photoState.cache} />{:else if mapPhotos}{#key mapPhotos}<PhotosWorkspace {mapMode} {tiles} bind:this={libraryWorkspace} photos={mapPhotos} cache={photoState.cache} albums={photoAlbums} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
+      {:else if mapMode}{#if mapAlbumID && photoAlbums?.initialized && !photoAlbums.loading && !photoAlbums.busy && !photoAlbums.loadError && !photoAlbums.items.some(album => album.id === mapAlbumID)}<EmptyState title="Album not found"><Button onclick={() => navigatePhotos("/photos/albums")}>Back to albums</Button></EmptyState>
+      {:else if !tiles.tile_url}<PhotosWorkspace {mapMode} {tiles} photos={photoState.photos} cache={photoState.cache} />{:else if mapPhotos}{#key mapPhotos}<PhotosWorkspace {mapMode} {tiles} bind:this={libraryWorkspace} photos={mapPhotos} cache={photoState.cache} albums={photoAlbums} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
       {:else}{#key photoState.photos.contextID}<PhotosWorkspace {mapMode} {tiles} bind:this={libraryWorkspace} photos={photoState.photos} cache={photoState.cache} albums={photoAlbums} onnavigate={navigatePhotos} {photoID} onphotochange={changePhoto} ontrashed={source => handleTrashed(undefined, source)} onactionerror={error => hiddenPhotoActionError = error} onhidden={invalidateLibrary} oninvalidate={invalidateLibrary} />{/key}{/if}
       {:else if photoAccessError}<div class="photo-access-error"><p role="alert">{photoAccessError}</p><Button onclick={() => void checkPhotoAccess?.()}>Retry</Button></div>{:else}<Spinner />
       {/if}

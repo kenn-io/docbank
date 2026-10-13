@@ -157,3 +157,15 @@ it("replaces an interior marker when its coordinates or name change", async () =
  await view.rerender({items:[{...first,latitude:4,name:"Moved photo.jpg"},second]});frame();
  expect(mocks.marker).toHaveBeenLastCalledWith([4,1],expect.objectContaining({title:"Moved photo.jpg"}));expect(mocks.cluster.removeLayers.mock.calls.at(-1)![0]).toHaveLength(1);
 });
+
+it("updates visible rows when a reloaded interior row moves out of and into view", async () => {
+ const first={...mapPhoto(1),latitude:1},second={...mapPhoto(2),latitude:3};
+ const {props,view}=setup([first,second]);
+ expect(props.onvisible).toHaveBeenLastCalledWith([first]);
+ const outside={...first,latitude:4};
+ await view.rerender({items:[outside,second]});
+ expect(props.onvisible).toHaveBeenLastCalledWith([]);
+ const inside={...outside,latitude:0};
+ await view.rerender({items:[inside,second]});
+ expect(props.onvisible).toHaveBeenLastCalledWith([inside]);
+});

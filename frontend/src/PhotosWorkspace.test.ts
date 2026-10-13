@@ -796,6 +796,9 @@ it("revalidates the open Map photo after a reload and a list refresh", async () 
  await openMapViewer(setup);await screen.findByText("Photo changed");lookup.mockResolvedValue({...photo(1),revision:2});
  await fireEvent.click(screen.getByRole("button",{name:"Reload photo"}));
  await waitFor(()=>expect(preview).toHaveBeenCalledWith(expect.objectContaining({revision:2}),"fit",expect.any(AbortSignal)));
+ expect(lookup).toHaveBeenCalledTimes(2);
+ photos.items=[...photos.items,mapPhoto(3)];await tick();
+ expect(lookup).toHaveBeenCalledTimes(2);
  let finish!:(row:ReturnType<typeof photo>)=>void;
  lookup.mockImplementation(()=>new Promise(resolve=>finish=resolve));
  await photos.refresh();
@@ -804,6 +807,23 @@ it("revalidates the open Map photo after a reload and a list refresh", async () 
  finish({...photo(1),revision:3,name:"Refreshed photo.jpg",content_version_id:"refreshed-version"});
  await screen.findByRole("dialog",{name:"Photo viewer, Refreshed photo.jpg"});
  await waitFor(()=>expect(preview).toHaveBeenCalledWith(expect.objectContaining({content_version_id:"refreshed-version"}),"fit",expect.any(AbortSignal)));
+ photos.dispose();
+});
+
+it("keeps an open Map photo's detail request through appended pages", async () => {
+ const setup=openMapViewerSetup();const {photos,lookup}=setup;
+ let finish!:(row:ReturnType<typeof photo>)=>void;
+ lookup.mockImplementation(()=>new Promise(resolve=>finish=resolve));
+ await vi.dynamicImportSettled();map.onvisible!([photos.items[0] as PhotoMapRow]);
+ await fireEvent.click(await screen.findByRole("button",{name:"Open Photo 1.jpg"}));
+ await setup.view.rerender({...setup.props,photoID:"photo-1"});
+ await waitFor(()=>expect(lookup).toHaveBeenCalledOnce());
+ const signal=lookup.mock.calls[0]![1];
+ photos.items=[...photos.items,mapPhoto(3)];await tick();
+ expect(lookup).toHaveBeenCalledOnce();expect(signal.aborted).toBe(false);
+ finish(photo(1));await screen.findByRole("dialog",{name:"Photo viewer, Photo 1.jpg"});
+ photos.items=[...photos.items,mapPhoto(4)];await tick();
+ expect(lookup).toHaveBeenCalledOnce();
  photos.dispose();
 });
 

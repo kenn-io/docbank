@@ -21,7 +21,7 @@
   function visible(incremental = false) {
     if (!map) return;
     const bounds = map.getPixelBounds();
-    const append = incremental && items.length >= scanned.length && (!scanned.length || items[scanned.length - 1] === scanned[scanned.length - 1]);
+    const append = incremental && items.length >= scanned.length && scanned.every((row, index) => items[index] === row);
     const hits = (append ? items.slice(scanned.length) : items).filter(row => row.latitude != null && row.longitude != null && bounds.contains(map!.project([row.latitude,row.longitude])));
     inView = append ? [...inView, ...hits] : hits;
     scanned = items;

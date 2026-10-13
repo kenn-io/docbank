@@ -692,13 +692,34 @@ it("mounts a fresh scoped Map progressively and revalidates it after Library ent
  await waitFor(()=>expect(finish).toBeTypeOf("function"));await waitFor(()=>expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-1"]));
  finish(Response.json({items:[],map_items:[mapPhoto(2)],total:2}));
  await waitFor(()=>expect(map.props?.items).toHaveLength(2));
+ const refresh=vi.spyOn(Photos.prototype,"refresh");
+ const visibility=vi.spyOn(document,"visibilityState","get").mockReturnValue("hidden");
+ await fireEvent(document,new Event("visibilitychange"));
+ visibility.mockReturnValue("visible");await fireEvent(document,new Event("visibilitychange"));
+ await screen.findByRole("heading",{name:"Photos in view"});
+ expect(refresh).not.toHaveBeenCalled();expect(map.props?.items).toHaveLength(2);
  const previous=finish;changed=true;poll();await waitFor(()=>expect(finish).not.toBe(previous));
+ expect(refresh).toHaveBeenCalledOnce();
  expect(screen.queryByRole("heading",{name:"Photos in view"})).toBeNull();finish(Response.json({detail:"Map unavailable"},{status:503}));await screen.findByText("Map unavailable");expect(screen.queryByRole("heading",{name:"Photos in view"})).toBeNull();
  const failed=finish;await fireEvent.click(screen.getByRole("button",{name:"Retry"}));await waitFor(()=>expect(finish).not.toBe(failed));finish(Response.json({items:[],map_items:[mapPhoto(2)],total:1}));
  await waitFor(()=>expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-2"]));
 });
 
-it.each(["album", "direct album", "Hidden", "existing gps_bounds"])("keeps Map scoped when opened from %s", async source => {
+it("shows Album not found for an unknown album Map", async () => {
+ const album=photoAlbum();history.replaceState(null,"",`/photos/map/${album.id}#web_session=synthetic&web_upload_secret=proof`);storage();
+ const meta=document.createElement("meta");meta.name="docbank-map-tiles";meta.content=JSON.stringify({tile_url:"https://tiles.example.org/{z}/{x}/{y}",attribution:"Example",max_zoom:19});document.head.append(meta);
+ stubPhotoFetch(vi.fn(async(url:string)=>{
+  if(url.endsWith("/photos/albums")) return albumResponse([]);
+  if(url.endsWith("/photos/hidden")) return albumResponse({configured:true});
+  return albumResponse({items:[],map_items:[],nodes:[],tags:[],profiles:[],total:0});
+ }));render(App);
+ await screen.findByText("Album not found");
+ expect(screen.queryByText("No located photos")).toBeNull();
+ await fireEvent.click(screen.getByRole("button",{name:"Back to albums"}));
+ expect(location.pathname).toBe("/photos/albums");
+});
+
+it.each(["album", "album year", "direct album", "Hidden", "existing gps_bounds"])("keeps Map scoped when opened from %s", async source => {
   const album = photoAlbum();
   const mapPath = `/photos/map/${album.id}`;
   const libraryScope = source === "Hidden" || source === "existing gps_bounds";
@@ -714,9 +735,11 @@ it.each(["album", "direct album", "Hidden", "existing gps_bounds"])("keeps Map s
   document.head.append(meta);
   const queries: { projection?: string; hidden: boolean; query: Query }[] = [];
   let library: Photos | undefined;
+  let albumPhotos: Photos | undefined;
   const resume = Photos.prototype.resume;
   vi.spyOn(Photos.prototype, "resume").mockImplementation(function(this: Photos, ...args) {
     if (!this.projection && !this.hidden && !this.query.filters?.set_ids) library = this;
+    if (!this.projection && this.query.filters?.set_ids) albumPhotos = this;
     return resume.apply(this, args);
   });
   stubPhotoFetch(vi.fn(async (url: string, init: RequestInit) => {
@@ -735,8 +758,9 @@ it.each(["album", "direct album", "Hidden", "existing gps_bounds"])("keeps Map s
     library!.baseQuery = { ...library!.baseQuery, text: "beach", sort: { field: "relevance", direction: "desc" }, filters: { cameras: ["Library camera"], ...(source === "existing gps_bounds" ? { gps_bounds: gpsBounds } : {}) } };
     await library!.selectDate("2024");
     if (source !== "existing gps_bounds") {
-      await fireEvent.click(screen.getByRole("button", { name: source === "album" ? /^Trip/ : "Hidden" }));
-      await screen.findByRole("heading", { name: source === "album" ? "Trip" : "Hidden" });
+      await fireEvent.click(screen.getByRole("button", { name: source.startsWith("album") ? /^Trip/ : "Hidden" }));
+      await screen.findByRole("heading", { name: source.startsWith("album") ? "Trip" : "Hidden" });
+      if (source === "album year") { await fireEvent.click(screen.getByRole("button", { name: "Timeline", exact: true })); await albumPhotos!.selectDate("2023"); }
     }
     if (source === "Hidden") {
       await waitFor(() => expect((screen.getByRole("button", { name: "Search" }) as HTMLButtonElement).disabled).toBe(false));
@@ -761,8 +785,8 @@ it.each(["album", "direct album", "Hidden", "existing gps_bounds"])("keeps Map s
     expect(request.query.text).toBe("");
     expect(request.query.filters.set_ids).toEqual([album.id]);
     expect(request.query.filters.cameras).toBeUndefined();
-    expect(request.query.filters.capture_after).toBeUndefined();
-    expect(request.query.filters.capture_before).toBeUndefined();
+    expect(request.query.filters.capture_after).toBe(source === "album year" ? "2023-01-01" : undefined);
+    expect(request.query.filters.capture_before).toBe(source === "album year" ? "2024-01-01" : undefined);
   }
   await waitFor(() => expect(map.props?.items).toHaveLength(1));
   const reads = queries.length;

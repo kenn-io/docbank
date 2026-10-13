@@ -6,7 +6,7 @@ import PhotoLoupe from "./PhotoLoupe.svelte";
 import PhotoLoupeImage from "./PhotoLoupeImage.svelte";
 import { Photos } from "./photos.svelte.js";
 import type { PhotoPreviewCache } from "./photoPreviewCache.js";
-import { photo } from "./photo-test-fixtures.js";
+import { photo, mapPhoto } from "./photo-test-fixtures.js";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 function setup() {
@@ -174,7 +174,7 @@ it.each([false,true])("serializes neighboring fit requests and hydrates compact 
     return { state: "ready", generation_id: `${size}-${item.node_id}` };
   });
   const lookup=vi.spyOn(props.photos,"lookup").mockImplementation(async id=>photo(Number(id.split("-")[1])));
-  const items=compact?props.items.map(({asset_id,revision,name,capture_time,width_px,height_px,previews})=>({asset_id,revision,name,capture_time,width_px,height_px,latitude:0,longitude:12,previews:{grid:previews.grid}})):props.items;
+  const items=compact?props.items.map((item,index)=>({...mapPhoto(index+1),previews:{grid:item.previews.grid}})):props.items;
   render(PhotoLoupe, {...props,items});
   await screen.findByText("Fit preview");
   await waitFor(() => expect(release).toBeTypeOf("function"));
