@@ -39,6 +39,7 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &created))
 	require.Equal(t, request.Selection, created.Checkout.Selection)
 	require.Equal(t, request.ByteLimit, created.Checkout.ByteLimit)
+	require.Equal(t, request.Destination, created.Checkout.Destination)
 	// Wait for worker completion before TempDir cleanup.
 	require.Eventually(t, func() bool {
 		op, err := catalog.StorageOperation(t.Context(), created.Operation.ID)

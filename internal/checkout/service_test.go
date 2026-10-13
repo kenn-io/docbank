@@ -280,12 +280,15 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 
 func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 	t.Parallel()
-	for _, failure := range []string{"operator cancellation", "daemon shutdown", "destination moved before completion", "collision", "became-invisible"} {
+	for _, failure := range []string{"admission retry", "operator cancellation", "daemon shutdown", "destination moved before completion", "collision", "became-invisible"} {
 		t.Run(failure, func(t *testing.T) {
 			s := checkoutService(t)
 			names := []string{"first.jpg", "second.jpg", "third.jpg"}
 			if failure == "destination moved before completion" || failure == "operator cancellation" {
 				names = names[:1]
+			}
+			if failure == "admission retry" {
+				names = names[:2]
 			}
 			for _, name := range names {
 				checkoutPhoto(t, s, name, name)
@@ -298,6 +301,58 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 			}
 			entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
+			if failure == "admission retry" {
+				inflight := 0
+				beforeWork, afterCopy := false, false
+				s.ActivityBegin = func() { inflight++ }
+				s.ActivityEnd = func() { inflight-- }
+				s.Mutate = func(_ context.Context, fn func() error) error { require.Equal(t, 1, inflight); return fn() }
+				s.admit = func(ctx context.Context, _ *store.Store, _ string) (bool, error) {
+					require.Zero(t, inflight)
+					if !beforeWork {
+						beforeWork = true
+						return false, errors.New("reading storage operation: database is locked")
+					}
+					status, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
+					require.NoError(t, err)
+					if status.PublishedFiles == 1 && !afterCopy {
+						afterCopy = true
+						return false, errors.New("reading storage operation: database is locked")
+					}
+					return false, nil
+				}
+				require.ErrorIs(t, s.Run(t.Context(), c, nil), jobs.ErrStorageOperationDeferred)
+				require.Zero(t, inflight)
+				started, err := s.Store.PhotoCheckoutStarted(t.Context(), c.ID)
+				require.NoError(t, err)
+				require.False(t, started)
+				unstarted, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+				require.NoError(t, err)
+				require.Equal(t, "queued", unstarted.Checkout.State)
+				require.Zero(t, unstarted.PublishedFiles)
+				files, err := os.ReadDir(c.Destination)
+				require.NoError(t, err)
+				require.Empty(t, files)
+				require.ErrorIs(t, s.Run(t.Context(), c, nil), jobs.ErrStorageOperationDeferred)
+				require.Zero(t, inflight)
+				partial, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+				require.NoError(t, err)
+				require.Equal(t, int64(1), partial.PublishedFiles)
+				content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
+				require.NoError(t, err)
+				require.Equal(t, filepath.Base(entries[0].Path), string(content))
+				require.NoError(t, s.Run(t.Context(), c, nil))
+				require.Zero(t, inflight)
+				complete, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+				require.NoError(t, err)
+				require.Equal(t, int64(2), complete.PublishedFiles)
+				for _, entry := range entries {
+					content, err := root.ReadFile(filepath.FromSlash(entry.Path))
+					require.NoError(t, err)
+					require.Equal(t, filepath.Base(entry.Path), string(content))
+				}
+				return
+			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			publications := 0
@@ -383,55 +438,4 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCheckoutAdmissionRetryKeepsPartialCopies(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	checkoutPhoto(t, s, "one.jpg", "one")
-	checkoutPhoto(t, s, "two.jpg", "two")
-	c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
-	require.NoError(t, err)
-	require.NoError(t, root.Close())
-	inflight := 0
-	beforeWork, afterCopy := false, false
-	s.ActivityBegin = func() { inflight++ }
-	s.ActivityEnd = func() { inflight-- }
-	s.Mutate = func(_ context.Context, fn func() error) error { require.Equal(t, 1, inflight); return fn() }
-	s.admit = func(ctx context.Context, _ *store.Store, _ string) (bool, error) {
-		require.Zero(t, inflight)
-		if !beforeWork {
-			beforeWork = true
-			return false, errors.New("reading storage operation: database is locked")
-		}
-		status, err := s.Store.PhotoCheckoutStatus(ctx, c.ID)
-		require.NoError(t, err)
-		if status.PublishedFiles == 1 && !afterCopy {
-			afterCopy = true
-			return false, errors.New("reading storage operation: database is locked")
-		}
-		return false, nil
-	}
-	require.ErrorIs(t, s.Run(t.Context(), c, nil), jobs.ErrStorageOperationDeferred)
-	require.Zero(t, inflight)
-	started, err := s.Store.PhotoCheckoutStarted(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.False(t, started)
-	unstarted, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.Equal(t, "queued", unstarted.Checkout.State)
-	require.Zero(t, unstarted.PublishedFiles)
-	files, err := os.ReadDir(c.Destination)
-	require.NoError(t, err)
-	require.Empty(t, files)
-	require.ErrorIs(t, s.Run(t.Context(), c, nil), jobs.ErrStorageOperationDeferred)
-	require.Zero(t, inflight)
-	partial, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), partial.PublishedFiles)
-	require.NoError(t, s.Run(t.Context(), c, nil))
-	require.Zero(t, inflight)
-	complete, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.Equal(t, int64(2), complete.PublishedFiles)
 }
