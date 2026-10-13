@@ -156,40 +156,55 @@ func TestMediaMetadataMissingCurrentTableFailsValidation(t *testing.T) {
 
 func TestPruneContentVersionsRetainsMediaOriginalAndInputAuthority(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	created, err := s.CreateFile(ctx, s.RootID(), "recording.mp3", fakeHash("a1"), 10, "audio/mpeg")
-	require.NoError(t, err)
-	updated, _, err := s.ReplaceContent(ctx, created.ID, created.Revision, fakeHash("b2"), 20, "audio/mpeg")
-	require.NoError(t, err)
-	stamp := nowRFC3339()
-	_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
-		strings.Repeat("c", 64), stamp)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
-		created.CurrentVersionID, `{}`, stamp)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
+	for _, authority := range []string{"media source and input artifact", "checkout entry"} {
+		t.Run(authority, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			name, mediaType := "recording.mp3", "audio/mpeg"
+			if authority == "checkout entry" {
+				name, mediaType = "photo.jpg", "image/jpeg"
+			}
+			created, err := s.CreateFile(ctx, s.RootID(), name, fakeHash("a1"), 10, mediaType)
+			require.NoError(t, err)
+			if authority == "checkout entry" {
+				_, _, err = s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", 10)
+				require.NoError(t, err)
+			}
+			updated, _, err := s.ReplaceContent(ctx, created.ID, created.Revision, fakeHash("b2"), 20, mediaType)
+			require.NoError(t, err)
+			if authority != "checkout entry" {
+				stamp := nowRFC3339()
+				_, err = s.db.Exec(`INSERT INTO media_sources VALUES('source','supplied_media','','',?,?)`,
+					strings.Repeat("c", 64), stamp)
+				require.NoError(t, err)
+				_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES('source-version','source',1,?,?,?)`,
+					created.CurrentVersionID, `{}`, stamp)
+				require.NoError(t, err)
+				_, err = s.db.Exec(`INSERT INTO media_occurrences VALUES(
 		'occurrence','source','source-version','operator','ref','1','','','','{}',1,?,NULL)`, stamp)
-	require.NoError(t, err)
-	_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
+				require.NoError(t, err)
+				_, err = s.db.Exec(`INSERT INTO media_input_artifacts VALUES(
 		'input','occurrence','source','source-version',?,'recording','supplied','','',?,?)`,
-		created.CurrentVersionID, fakeHash("a1"), stamp)
-	require.NoError(t, err)
+					created.CurrentVersionID, fakeHash("a1"), stamp)
+				require.NoError(t, err)
+			}
 
-	preview, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
-		VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, false)
-	require.NoError(t, err)
-	require.Empty(t, preview.Candidates)
-	require.Len(t, preview.DependencyRetained, 1)
-	require.Equal(t, created.CurrentVersionID, preview.DependencyRetained[0].ID)
+			preview, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
+				VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, false)
+			require.NoError(t, err)
+			require.Empty(t, preview.Candidates)
+			require.Len(t, preview.DependencyRetained, 1)
+			require.Equal(t, created.CurrentVersionID, preview.DependencyRetained[0].ID)
 
-	run, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
-		VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, true)
-	require.NoError(t, err)
-	require.False(t, run.Changed)
-	_, err = s.ContentVersionByID(ctx, created.CurrentVersionID)
-	require.NoError(t, err)
+			run, err := s.PruneContentVersions(ctx, created.ID, updated.Revision,
+				VersionPruneSelector{VersionIDs: []string{created.CurrentVersionID}}, true)
+			require.NoError(t, err)
+			require.False(t, run.Changed)
+			require.Zero(t, run.DeletedVersions)
+			_, err = s.ContentVersionByID(ctx, created.CurrentVersionID)
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestPruneContentVersionsRetainsMediaRevertAncestryIncludingAllPrior(t *testing.T) {

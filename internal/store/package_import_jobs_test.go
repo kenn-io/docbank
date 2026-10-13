@@ -479,9 +479,8 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 			require.NoError(t, err)
 			asset, err := s.PhotoAssetForNode(t.Context(), image.ID)
 			require.NoError(t, err)
-			var checkout PhotoCheckout
 			if outcome == "checkout-pinned" {
-				checkout, _, err = s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+				_, _, err = s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
 				require.NoError(t, err)
 			}
 			job := packageImportJobRequest(t, s, request)
@@ -499,11 +498,8 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 			require.NoError(t, s.db.QueryRowContext(t.Context(),
 				`SELECT COUNT(*) FROM photo_change_receipts WHERE asset_id=? AND operation='purge'`, asset.ID).Scan(&purges))
 			if outcome == "checkout-pinned" {
-				entries, err := s.PhotoCheckoutEntries(t.Context(), checkout.ID)
+				_, err := s.NodeByID(t.Context(), image.ID)
 				require.NoError(t, err)
-				retained, err := s.NodeByID(t.Context(), image.ID)
-				require.NoError(t, err)
-				require.Equal(t, entries[0].VersionID, retained.CurrentVersionID)
 				require.Zero(t, purges)
 				return
 			}

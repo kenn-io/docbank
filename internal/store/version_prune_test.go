@@ -941,24 +941,3 @@ func TestPruneContentVersionsValidatesSelectorsAndTargets(t *testing.T) {
 	assert.Equal(t, second.CurrentVersionID, preview.Candidates[0].ID)
 	assert.NotEmpty(t, preview.Cutoff)
 }
-
-func TestPhotoCheckoutRetainsBasesThroughPrune(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	a := albumAsset(t, s, "photo.jpg")
-	c, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", 20)
-	require.NoError(t, err)
-	entries, err := s.PhotoCheckoutEntries(ctx, c.ID)
-	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	n, err := s.NodeByID(ctx, a.Files[0].NodeID)
-	require.NoError(t, err)
-	n, _, err = s.ReplaceContent(ctx, n.ID, n.Revision, browseHash("replacement"), 30, "image/jpeg")
-	require.NoError(t, err)
-	prune, err := s.PruneContentVersions(ctx, n.ID, n.Revision, VersionPruneSelector{AllPrior: true}, true)
-	require.NoError(t, err)
-	require.Zero(t, prune.DeletedVersions)
-	require.Len(t, prune.DependencyRetained, 1)
-	require.Equal(t, entries[0].VersionID, prune.DependencyRetained[0].ID)
-}
