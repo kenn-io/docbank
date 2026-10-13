@@ -351,14 +351,16 @@ func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 			content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
 			require.NoError(t, err)
 			require.NotEmpty(t, content)
-			if failure == "cancel" {
-				return
-			}
 			status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
 			require.NoError(t, err)
-			require.Equal(t, "failed", status.Checkout.State)
 			finished, err := s.Store.StorageOperation(t.Context(), op.ID)
 			require.NoError(t, err)
+			if failure == "cancel" {
+				require.Equal(t, "running", status.Checkout.State)
+				require.Equal(t, store.StorageOperationRunning, finished.State)
+				return
+			}
+			require.Equal(t, "failed", status.Checkout.State)
 			switch failure {
 			case "collision":
 				require.False(t, actual[2].Published)
