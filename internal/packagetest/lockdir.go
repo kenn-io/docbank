@@ -26,6 +26,10 @@ func runWithLockRegistry(m *testing.M, removeAll func(string) error) (code int) 
 		return 1
 	}
 	defer func() {
+		if code != 0 {
+			fmt.Fprintf(os.Stderr, "keeping test lock registry after failure: %s\n", dir)
+			return
+		}
 		if err := removeAll(dir); err != nil {
 			fmt.Fprintf(os.Stderr, "removing test lock registry: %v\n", err)
 			if code == 0 {

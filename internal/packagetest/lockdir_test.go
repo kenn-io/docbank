@@ -95,7 +95,11 @@ func TestRunWithLockRegistry(t *testing.T) {
 			}
 			data, err := os.ReadFile(result)
 			require.NoError(t, err)
-			if tc.removeFails {
+			if tc.testFails {
+				t.Cleanup(func() { require.NoError(t, os.RemoveAll(string(data))) })
+				require.Contains(t, string(output), "keeping test lock registry after failure: "+string(data))
+				require.FileExists(t, filepath.Join(string(data), "synthetic.lock"))
+			} else if tc.removeFails {
 				t.Cleanup(func() { require.NoError(t, os.RemoveAll(string(data))) })
 				require.Contains(t, string(output), "removing test lock registry:")
 				require.DirExists(t, string(data))
