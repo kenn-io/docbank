@@ -129,24 +129,42 @@ func TestPublishGetFileForwardsOverwriteAndReportsErrors(t *testing.T) {
 }
 
 func TestGetIntegrityFailureNeverPublishesPartialDestination(t *testing.T) {
-	dir := t.TempDir()
-	staging, err := makePrivateStagingDirAt(dir, "docbank-get-")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, staging.removeAll()) })
-	content := "complete bytes without the required digest trailer"
-	digest := sha256.Sum256([]byte(content))
-	stream := &daemonconn.ContentStream{
-		ReadCloser: io.NopCloser(strings.NewReader(content)),
-		VersionID:  "7b0dbd90-5730-4436-b082-b692790725ff",
-		BlobHash:   hex.EncodeToString(digest[:]),
-		Size:       int64(len(content)),
+	for _, valid := range []bool{false, true} {
+		t.Run(strconv.FormatBool(valid), func(t *testing.T) {
+			dir := t.TempDir()
+			staging, err := makePrivateStagingDirAt(dir, "docbank-get-")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, staging.removeAll()) })
+			const content = "complete downloaded bytes"
+			const versionID = "7b0dbd90-5730-4436-b082-b692790725ff"
+			digest := sha256.Sum256([]byte(content))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set(api.ContentVersionHeader, versionID)
+				w.Header().Set(api.BlobHashHeader, hex.EncodeToString(digest[:]))
+				w.Header().Set(api.BlobSizeHeader, strconv.Itoa(len(content)))
+				w.Header().Set("Trailer", "Content-Digest")
+				_, writeErr := io.WriteString(w, content)
+				assert.NoError(t, writeErr)
+				if valid {
+					w.Header().Set("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(digest[:])+":")
+				}
+			}))
+			t.Cleanup(server.Close)
+			stream, err := daemonconn.New(server.URL, "synthetic-key").VersionContent(t.Context(), versionID)
+			require.NoError(t, err)
+			output := filepath.Join(dir, "download")
+			renderer := newBackupProgressRenderer(io.Discard, backupProgressAuto)
+			_, err = stageAndPublishGet(context.Background(), staging, stream, stream.Size, output, false, renderer)
+			if valid {
+				require.NoError(t, err)
+				copied, readErr := os.ReadFile(output)
+				require.NoError(t, readErr)
+				assert.Equal(t, content, string(copied))
+			} else {
+				require.ErrorIs(t, err, daemonconn.ErrIntegrity)
+				_, statErr := os.Lstat(output)
+				assert.ErrorIs(t, statErr, os.ErrNotExist)
+			}
+		})
 	}
-	output := filepath.Join(dir, "must-not-exist")
-	renderer := newBackupProgressRenderer(io.Discard, backupProgressAuto)
-	_, err = stageAndPublishGet(context.Background(), staging, stream, stream.Size,
-		output, false, renderer)
-	require.Error(t, err)
-	require.ErrorIs(t, err, daemonconn.ErrIntegrity)
-	_, statErr := os.Lstat(output)
-	assert.ErrorIs(t, statErr, os.ErrNotExist)
 }
