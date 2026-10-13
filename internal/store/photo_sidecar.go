@@ -11,6 +11,10 @@ import (
 	"go.kenn.io/docbank/document"
 )
 
+const photoOriginalPathSQL = `(SELECT p.original_path FROM provenance p JOIN ingests i ON i.id=p.ingest_id
+ WHERE p.node_id=n.id AND i.source_kind NOT LIKE 'embedded:%' AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
+ ORDER BY p.identity LIMIT 1)`
+
 type PhotoSidecarTarget struct {
 	AssetID              string
 	AssetRevision        int64
@@ -202,9 +206,7 @@ func photoSidecarIntendedTarget(ctx context.Context, q metadataQuerier, sidecar 
 		}
 	}
 	path := node.Name
-	err := q.QueryRowContext(ctx, `SELECT p.original_path FROM provenance p JOIN ingests i ON i.id=p.ingest_id
- WHERE p.node_id=? AND i.source_kind NOT LIKE 'embedded:%' AND NOT EXISTS (SELECT 1 FROM provenance successor WHERE successor.supersedes=p.identity)
- ORDER BY p.identity LIMIT 1`, node.ID).Scan(&path)
+	err := q.QueryRowContext(ctx, `SELECT COALESCE(`+photoOriginalPathSQL+`,n.name) FROM nodes n WHERE n.id=?`, node.ID).Scan(&path)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}

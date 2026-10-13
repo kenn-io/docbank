@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"path/filepath"
 	"strings"
@@ -247,6 +248,8 @@ func TestPhotoCheckoutRejectsNonportableNamesBeforeCreatingRecords(t *testing.T)
 			_, _, err = s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
 			require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
 			require.Contains(t, err.Error(), "filename")
+			require.Contains(t, err.Error(), asset.ID)
+			require.Contains(t, err.Error(), asset.Files[0].ID)
 			checkouts, err := s.ListPhotoCheckouts(t.Context())
 			require.NoError(t, err)
 			require.Empty(t, checkouts)
@@ -353,4 +356,56 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 			require.Equal(t, "terminal error", finished.Error)
 		})
 	}
+}
+
+func TestPhotoCheckoutUsesActiveSourceNamesAfterVirtualRename(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+	require.NoError(t, err)
+	source := filepath.Join(t.TempDir(), "camera")
+	result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
+		photoImportTestMember(filepath.Join(source, "IMG.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
+		photoImportTestMember(filepath.Join(source, "IMG.ARW.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"),
+	))
+	require.NoError(t, err)
+	for i, node := range result.Nodes {
+		_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
+		require.NoError(t, err)
+	}
+	checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
+	require.NoError(t, err)
+	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
+	require.NoError(t, err)
+	names := []string{}
+	for _, e := range entries {
+		names = append(names, filepath.Base(e.Path))
+	}
+	require.ElementsMatch(t, []string{"IMG.ARW", "IMG.ARW.XMP"}, names)
+	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
+	node, err := s.NodeByID(ctx, raw.NodeID)
+	require.NoError(t, err)
+	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "synthetic", OriginalPath: filepath.Join(source, "ignored.ARW")})
+	require.NoError(t, err)
+	retained, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "retained", 0)
+	require.NoError(t, err)
+	entries, err = s.PhotoCheckoutEntries(ctx, retained.ID)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		if entry.FileID == raw.ID {
+			require.Equal(t, "IMG.ARW", filepath.Base(entry.Path))
+		}
+	}
+	fallbackAsset := albumAsset(t, s, "fallback.jpg")
+	node, err = s.NodeByID(ctx, fallbackAsset.Files[0].NodeID)
+	require.NoError(t, err)
+	_, err = s.AppendNodeProvenance(ctx, ProvenanceAppendInput{NodeID: node.ID, IfRevision: node.Revision, SourceKind: "agent", SourceDescription: "synthetic", OriginalPath: filepath.Join(source, "ignored.jpg")})
+	require.NoError(t, err)
+	fallback, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{fallbackAsset.ID}}, "fallback", 0)
+	require.NoError(t, err)
+	entries, err = s.PhotoCheckoutEntries(ctx, fallback.ID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, node.Name, filepath.Base(entries[0].Path))
 }

@@ -18,3 +18,5 @@ func syncRootDirectory(root *os.Root, name string) error {
 	}
 	return errors.Join(f.Sync(), f.Close())
 }
+
+func createPrivateRootDirectory(root *os.Root, name string) error { return root.Mkdir(name, 0700) }

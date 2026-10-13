@@ -277,14 +277,15 @@ func classifyDatabaseSchema(driver docsqlite.Driver, db *sql.DB) (databaseSchema
 			}
 			return databaseSchema{version: version, current: true}, nil
 		}
-		for _, source := range releasedStorageSchemas {
+		for i := range releasedStorageSchemas {
+			source := &releasedStorageSchemas[i]
 			if source.version != version {
 				continue
 			}
 			if err := source.validate(db, blobs, packs); err != nil {
 				return databaseSchema{}, err
 			}
-			return databaseSchema{version: version, source: &source}, nil
+			return databaseSchema{version: version, source: source}, nil
 		}
 		return databaseSchema{}, fmt.Errorf(
 			"opening database: development schema version %d has no supported JSONL cutover; recreate the vault",

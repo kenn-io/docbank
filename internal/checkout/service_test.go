@@ -546,33 +546,143 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 
 func TestCheckoutVisibilityChangesDuringCopy(t *testing.T) {
 	t.Parallel()
-	for _, hidden := range []bool{false, true} {
-		t.Run(fmt.Sprint(hidden), func(t *testing.T) {
+	for _, change := range []string{"hidden", "excluded", "trashed"} {
+		t.Run(change, func(t *testing.T) {
 			s := checkoutService(t)
-			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
-			if hidden {
+			for _, name := range []string{"first.jpg", "second.jpg", "third.jpg"} {
+				checkoutPhoto(t, s, name, name)
+			}
+			if change == "hidden" {
 				require.NoError(t, s.Store.SetupPhotoHidden(t.Context(), "synthetic-checkout-passcode"))
 			}
-			c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
+			c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
 			require.NoError(t, err)
 			defer func() { _ = root.Close() }()
+			entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+			require.NoError(t, err)
+			blocked, err := s.Store.PhotoAssetByID(t.Context(), entries[1].AssetID)
+			require.NoError(t, err)
+			publications := 0
 			s.Mutate = func(ctx context.Context, fn func() error) error {
-				if hidden {
-					_, err = s.Store.SetPhotoAssetHidden(ctx, a.ID, a.Revision, true)
-				} else {
-					_, err = s.Store.TrashPhotoAsset(ctx, a.ID, a.Revision)
+				publications++
+				if publications == 2 {
+					switch change {
+					case "hidden":
+						_, err = s.Store.SetPhotoAssetHidden(ctx, blocked.ID, blocked.Revision, true)
+					case "excluded":
+						_, err = s.Store.SetPhotoAssetExcluded(ctx, blocked.ID, blocked.Revision, true)
+					case "trashed":
+						_, err = s.Store.TrashPhotoAsset(ctx, blocked.ID, blocked.Revision)
+					}
+					require.NoError(t, err)
 				}
-				require.NoError(t, err)
 				return fn()
 			}
 			require.ErrorIs(t, s.Run(t.Context(), c, root), store.ErrInvalidPhotoCheckout)
 			status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
 			require.NoError(t, err)
-			require.Zero(t, status.PublishedFiles)
-			entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+			require.Equal(t, int64(2), status.PublishedFiles)
+			require.Equal(t, "failed", status.Checkout.State)
+			require.Contains(t, status.Checkout.Error, entries[1].FileID)
+			require.Contains(t, status.Checkout.Error, entries[1].Path)
+			actual, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
-			require.Contains(t, status.Checkout.Error, entries[0].FileID)
-			require.Contains(t, status.Checkout.Error, entries[0].Path)
+			require.True(t, actual[0].Published)
+			require.False(t, actual[1].Published)
+			require.True(t, actual[2].Published)
+			require.Equal(t, 3, publications)
 		})
 	}
+}
+
+func TestCheckoutAdmissionReleasesActivity(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+	c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
+	require.NoError(t, err)
+	defer func() { _ = root.Close() }()
+	inflight, admissions := 0, 0
+	s.ActivityBegin = func() { inflight++ }
+	s.ActivityEnd = func() { inflight-- }
+	s.admit = func(context.Context, *store.Store, string) (bool, error) {
+		admissions++
+		require.Zero(t, inflight)
+		return false, nil
+	}
+	s.Mutate = func(_ context.Context, fn func() error) error { require.Equal(t, 1, inflight); return fn() }
+	require.NoError(t, s.Run(t.Context(), c, root))
+	require.Equal(t, 2, admissions)
+	require.Zero(t, inflight)
+}
+
+func TestCheckoutQueuedDestinationRevalidatedBeforeCopy(t *testing.T) {
+	t.Parallel()
+	for _, changed := range []string{"unchanged", "nonempty", "watch", "storage", "vault", "checkout"} {
+		t.Run(changed, func(t *testing.T) {
+			s := checkoutService(t)
+			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+			selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
+			c, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
+			require.NoError(t, err)
+			require.NoError(t, root.Close())
+			switch changed {
+			case "nonempty":
+				require.NoError(t, os.WriteFile(filepath.Join(c.Destination, "keep"), []byte("keep"), 0600))
+			case "watch":
+				s.Config.Watches = []config.WatchConfig{{Source: c.Destination}}
+			case "storage":
+				s.Config.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: c.Destination}}
+			case "vault":
+				s.VaultRoot = c.Destination
+			case "checkout":
+				_, _, err = s.Store.CreatePhotoCheckout(t.Context(), selection, c.Destination, 0)
+				require.NoError(t, err)
+			}
+			err = s.Run(t.Context(), c, nil)
+			status, statusErr := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+			require.NoError(t, statusErr)
+			if changed == "unchanged" {
+				require.NoError(t, err)
+				require.Equal(t, "completed", status.Checkout.State)
+				return
+			}
+			require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+			require.Equal(t, "failed", status.Checkout.State)
+			require.Zero(t, status.PublishedFiles)
+			if changed == "nonempty" {
+				content, err := os.ReadFile(filepath.Join(c.Destination, "keep"))
+				require.NoError(t, err)
+				require.Equal(t, "keep", string(content))
+			}
+		})
+	}
+}
+
+func TestCheckoutAdmissionRetryKeepsVerifiedPartialCopies(t *testing.T) {
+	t.Parallel()
+	s := checkoutService(t)
+	checkoutPhoto(t, s, "one.jpg", "one")
+	checkoutPhoto(t, s, "two.jpg", "two")
+	c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
+	require.NoError(t, err)
+	require.NoError(t, root.Close())
+	admissions := 0
+	s.admit = func(context.Context, *store.Store, string) (bool, error) {
+		admissions++
+		if admissions == 3 {
+			return false, store.ErrLaneControl
+		}
+		return false, nil
+	}
+	require.ErrorIs(t, s.Run(t.Context(), c, nil), jobs.ErrStorageOperationDeferred)
+	partial, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.Equal(t, "queued", partial.Checkout.State)
+	require.Equal(t, int64(1), partial.PublishedFiles)
+	require.NoError(t, s.Run(t.Context(), c, nil))
+	complete, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.Equal(t, "completed", complete.Checkout.State)
+	require.Equal(t, int64(2), complete.PublishedFiles)
 }

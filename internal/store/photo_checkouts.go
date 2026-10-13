@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -20,6 +21,8 @@ import (
 )
 
 var ErrInvalidPhotoCheckout = errors.New("invalid photo checkout")
+
+var ErrPhotoCheckoutSourceUnavailable = fmt.Errorf("%w: selected photo is hidden, excluded, detached, or trashed", ErrInvalidPhotoCheckout)
 
 const StorageOperationKindPhotoCheckout = "photo_checkout"
 
@@ -154,7 +157,7 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 	if err != nil {
 		return nil, estimate, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT f.file_id,f.asset_id,v.version_id,v.blob_hash,v.size,n.name,COALESCE(p.capture_date,'')
+	rows, err := tx.QueryContext(ctx, `SELECT f.file_id,f.asset_id,v.version_id,v.blob_hash,v.size,n.name,COALESCE(`+photoOriginalPathSQL+`,''),COALESCE(p.capture_date,'')
  FROM photo_files f JOIN nodes n ON n.id=f.node_id JOIN content_versions v ON v.version_id=n.current_version_id
  JOIN photo_assets a ON a.asset_id=f.asset_id JOIN photo_files display ON display.file_id=a.display_file_id
  JOIN nodes display_node ON display_node.id=display.node_id JOIN content_versions display_version ON display_version.version_id=display_node.current_version_id
@@ -165,10 +168,13 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 	}
 	for rows.Next() {
 		var entry PhotoCheckoutEntry
-		var name, date string
-		if err := rows.Scan(&entry.FileID, &entry.AssetID, &entry.VersionID, &entry.Hash, &entry.Size, &name, &date); err != nil {
+		var name, originalPath, date string
+		if err := rows.Scan(&entry.FileID, &entry.AssetID, &entry.VersionID, &entry.Hash, &entry.Size, &name, &originalPath, &date); err != nil {
 			_ = rows.Close()
 			return nil, estimate, err
+		}
+		if originalPath != "" {
+			name = filepath.Base(originalPath)
 		}
 		if entry.Size < 0 || entry.Size > math.MaxInt64-estimate.Bytes {
 			_ = rows.Close()
@@ -180,13 +186,9 @@ func (s *Store) checkoutEntriesTx(ctx context.Context, tx *sql.Tx, selection Pho
 		}
 		if err := validateCheckoutFilename(name); err != nil {
 			_ = rows.Close()
-			return nil, estimate, fmt.Errorf("filename %q: %w", name, err)
+			return nil, estimate, fmt.Errorf("file %s in asset %s, filename %q: %w", entry.FileID, entry.AssetID, name, err)
 		}
 		entry.Path = path.Join(folder, entry.AssetID, name)
-		if err := validateCheckoutPath(entry.Path); err != nil {
-			_ = rows.Close()
-			return nil, estimate, err
-		}
 		entries = append(entries, entry)
 		estimate.Files++
 		estimate.Bytes += entry.Size
@@ -383,7 +385,7 @@ func (s *Store) PublishPhotoCheckoutEntry(ctx context.Context, e PhotoCheckoutEn
 			return err
 		}
 		if !allowed {
-			return fmt.Errorf("%w: selected photo is hidden, excluded, detached, or trashed", ErrInvalidPhotoCheckout)
+			return ErrPhotoCheckoutSourceUnavailable
 		}
 		published, err := publish()
 		if !published {

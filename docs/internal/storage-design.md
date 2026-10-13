@@ -479,6 +479,9 @@ Released photo files retain their graph and gain revision 1 with empty authored 
 Schema 38 adds `saved_query_runs.photos`, which distinguishes document-node runs from Library photo-asset runs. Predecessor comparisons stay within the same mode. Older JSONL run rows default to Documents; photo runs serialize `photos: true`.
 
 Schema 38 also adds `photo_authored_fts`, which indexes captions, creator, and copyright from `photo_files` in separate columns so phrases stay within a field. It is derived, rebuilt on restore, and excluded from metadata backup.
+### Photo checkouts
+
+`photo_checkouts` stores the frozen selection and machine-local destination and operation state. `photo_checkout_entries` pins each file's content version, historical asset, original filename path, and local publication observation. Schema 34 adds these tables. JSONL v1 carries definitions and frozen bases; restore leaves them unbound and clears local observations. Failed or cancelled checkout folders remain reserved until retirement.
 
 ### Photo technical projection
 

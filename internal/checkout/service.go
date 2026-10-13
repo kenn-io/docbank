@@ -35,6 +35,11 @@ type Service struct {
 }
 
 func (s Service) admitOperation(ctx context.Context, id string) (bool, error) {
+	if s.ActivityBegin != nil && s.ActivityEnd != nil {
+		s.ActivityEnd()
+		defer s.ActivityBegin()
+	}
+
 	if s.admit != nil {
 		return s.admit(ctx, s.Store, id)
 	}
@@ -66,7 +71,7 @@ func (s Service) Prepare(ctx context.Context, selection store.PhotoCheckoutSelec
 		return checkout, operation, nil, fmt.Errorf("%w: opening destination: %v", store.ErrInvalidPhotoCheckout, err)
 	}
 	err = s.mutate(ctx, func() error {
-		if err := s.validateDestination(ctx, root, canonical); err != nil {
+		if err := s.validateDestination(ctx, root, canonical, ""); err != nil {
 			return err
 		}
 		var err error
@@ -80,7 +85,7 @@ func (s Service) Prepare(ctx context.Context, selection store.PhotoCheckoutSelec
 	return checkout, operation, root, nil
 }
 
-func (s Service) validateDestination(ctx context.Context, root *os.Root, destination string) error {
+func (s Service) validateDestination(ctx context.Context, root *os.Root, destination, excludedID string) error {
 	dir, err := root.Open(".")
 	if err != nil {
 		return err
@@ -107,7 +112,7 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 		return err
 	}
 	for _, c := range checkouts {
-		if c.Destination != "" {
+		if c.ID != excludedID && c.Destination != "" {
 			roots = append(roots, c.Destination)
 		}
 	}
@@ -122,11 +127,19 @@ func (s Service) validateDestination(ctx context.Context, root *os.Root, destina
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-	}
-	for _, watch := range s.Config.Watches {
-		_, overlap, err := ingest.WatchBindingOverlap([]config.WatchConfig{watch}, config.StoreBindingConfig{Kind: "filesystem", Path: destination})
+		info, err := os.Stat(other)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			continue
+		}
+		_, overlap, err = ingest.WatchBindingOverlap([]config.WatchConfig{{Name: "checkout protection", Source: other}}, config.StoreBindingConfig{Kind: "filesystem", Path: destination})
 		if overlap {
-			return fmt.Errorf("%w: destination overlaps a watched folder", store.ErrInvalidPhotoCheckout)
+			return fmt.Errorf("%w: destination overlaps a vault, storage root, watched folder, or checkout", store.ErrInvalidPhotoCheckout)
 		}
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -254,18 +267,6 @@ func (s Service) reconcile(ctx context.Context, c store.PhotoCheckout) error {
 	return s.finish(ctx, c, store.StorageOperationFailed, "{}", failure)
 }
 
-type contextReader struct {
-	ctx    context.Context
-	reader io.Reader
-}
-
-func (r contextReader) Read(p []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.reader.Read(p)
-}
-
 func observeCheckoutFile(ctx context.Context, root *os.Root, entry store.PhotoCheckoutEntry) (bool, error) {
 	name := filepath.FromSlash(entry.Path)
 	info, err := root.Lstat(name)
@@ -283,7 +284,7 @@ func observeCheckoutFile(ctx context.Context, root *os.Root, entry store.PhotoCh
 		return false, err
 	}
 	digest := sha256.New()
-	size, readErr := io.Copy(digest, contextReader{ctx, file})
+	size, readErr := io.Copy(digest, blob.ReaderWithContext(ctx, file))
 	err = errors.Join(readErr, file.Close())
 	return err == nil && size == entry.Size && hex.EncodeToString(digest.Sum(nil)) == entry.Hash, err
 }
@@ -294,13 +295,20 @@ func (s Service) finish(ctx context.Context, c store.PhotoCheckout, state store.
 func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) error {
 	if s.ActivityBegin != nil {
 		s.ActivityBegin()
-	}
-	if s.ActivityEnd != nil {
-		defer s.ActivityEnd()
+		if s.ActivityEnd != nil {
+			defer s.ActivityEnd()
+		}
 	}
 	cancelled, err := s.admitOperation(ctx, c.OperationID)
 	if err != nil {
 		return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, err)
+	}
+	started := false
+	if root == nil {
+		started, err = s.Store.PhotoCheckoutStarted(ctx, c.ID)
+		if err != nil {
+			return err
+		}
 	}
 	if err := s.Store.ClaimPhotoCheckout(ctx, c.ID, c.OperationID); err != nil {
 		return err
@@ -320,6 +328,11 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 			return s.finish(ctx, c, store.StorageOperationFailed, "{}", err.Error())
 		}
 		defer func() { _ = root.Close() }()
+		if !started {
+			if err := s.mutate(ctx, func() error { return s.validateDestination(ctx, root, c.Destination, c.ID) }); err != nil {
+				return errors.Join(err, s.finish(ctx, c, store.StorageOperationFailed, "{}", err.Error()))
+			}
+		}
 	}
 	entries, copyErr := s.Store.PhotoCheckoutEntries(ctx, c.ID)
 	var copied, bytes int64
@@ -330,21 +343,27 @@ func (s Service) Run(ctx context.Context, c store.PhotoCheckout, root *os.Root) 
 				bytes += entry.Size
 				continue
 			}
-			cancelled, copyErr = s.admitOperation(ctx, c.OperationID)
-			if copyErr != nil {
-				return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, copyErr)
+			var admissionErr error
+			cancelled, admissionErr = s.admitOperation(ctx, c.OperationID)
+			if admissionErr != nil {
+				return jobs.DeferStorageAdmission(ctx, s.Store, c.OperationID, admissionErr)
 			}
 			if cancelled {
 				break
 			}
-			copyErr = s.copy(ctx, root, c.Destination, entry)
-			if copyErr != nil {
+			if err := s.copy(ctx, root, c.Destination, entry); err != nil {
+				if copyErr == nil {
+					copyErr = err
+				}
+				if errors.Is(err, store.ErrPhotoCheckoutSourceUnavailable) {
+					continue
+				}
 				break
 			}
 			copied++
 			bytes += entry.Size
-			copyErr = s.Store.AdvanceStorageOperation(ctx, c.OperationID, entry.FileID, copied, copied, bytes, "{}")
-			if copyErr != nil {
+			if err := s.Store.AdvanceStorageOperation(ctx, c.OperationID, entry.FileID, copied, copied, bytes, "{}"); err != nil {
+				copyErr = errors.Join(copyErr, err)
 				break
 			}
 		}
@@ -385,15 +404,14 @@ func (s Service) copy(ctx context.Context, root *os.Root, destination string, e 
 			retErr = fmt.Errorf("file %s at %q: %w", e.FileID, e.Path, retErr)
 		}
 	}()
-	parent := filepath.Dir(filepath.FromSlash(e.Path))
-	if err := root.MkdirAll(parent, 0o755); err != nil {
-		return err
-	}
 	stage, err := filepublish.CreateRootStage(root)
 	if err != nil {
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, stage.Cleanup()) }()
+	if err := stage.MakeParentDirectories(filepath.FromSlash(e.Path)); err != nil {
+		return err
+	}
 	stream, size, err := s.Blobs.OpenStreamContext(ctx, e.Hash)
 	if err != nil {
 		return err
@@ -417,7 +435,7 @@ func (s Service) copy(ctx context.Context, root *os.Root, destination string, e 
 		return err
 	}
 	digest := sha256.New()
-	n, err = io.Copy(digest, stage.File)
+	n, err = io.Copy(digest, blob.ReaderWithContext(ctx, stage.File))
 	if err != nil {
 		return err
 	}

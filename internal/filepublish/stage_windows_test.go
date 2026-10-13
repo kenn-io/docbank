@@ -49,6 +49,10 @@ func TestCreateStageOverridesPermissiveParentDACL(t *testing.T) {
 	restricted, err = winsecurity.OpenRestrictedCurrentUserFile(filepath.Join(parent, rootStage.name))
 	require.NoError(t, err)
 	require.NoError(t, restricted.Close())
+	require.NoError(t, rootStage.MakeParentDirectories(filepath.Join("private", "asset", "photo.jpg")))
+	for _, dir := range []string{"private", filepath.Join("private", "asset")} {
+		require.NoError(t, safefileio.ValidatePrivateDir(filepath.Join(parent, dir)))
+	}
 }
 
 func TestPublishAcceptsPathsLongerThanMaxPath(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const rootStagePrefix = ".docbank-checkout-"
@@ -34,6 +35,39 @@ func CreateRootStage(root *os.Root) (*RootStage, error) {
 	return &RootStage{File: file, root: root, name: name, info: info, syncDirectory: syncRootDirectory}, nil
 }
 
+// MakeParentDirectories makes each ancestor durable before a file can be published.
+func (s *RootStage) MakeParentDirectories(destination string) error {
+	if !filepath.IsLocal(destination) {
+		return errors.New("checkout destination must be root-relative")
+	}
+	current := "."
+	for _, component := range strings.Split(filepath.Dir(destination), string(filepath.Separator)) {
+		if component == "." {
+			continue
+		}
+		parent := current
+		current = filepath.Join(current, component)
+		err := createPrivateRootDirectory(s.root, current)
+		if errors.Is(err, os.ErrExist) {
+			info, err := s.root.Stat(current)
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				return errors.New("checkout parent is not a directory")
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := s.syncDirectory(s.root, parent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *RootStage) Publish(destination string) (bool, error) {
 	if !filepath.IsLocal(destination) {
 		return false, errors.New("checkout destination must be root-relative")
@@ -43,6 +77,10 @@ func (s *RootStage) Publish(destination string) (bool, error) {
 		return false, err
 	}
 	defer func() { _ = parent.Close() }()
+	return s.publish(parent, destination)
+}
+
+func (s *RootStage) publish(parent *os.Root, destination string) (bool, error) {
 	source, err := s.root.Open(".")
 	if err != nil {
 		return false, err
@@ -53,6 +91,25 @@ func (s *RootStage) Publish(destination string) (bool, error) {
 		return false, err
 	}
 	defer func() { _ = target.Close() }()
+	rootInfo, err := s.root.Stat(".")
+	if err != nil {
+		return false, err
+	}
+	namedRoot, err := os.Stat(s.root.Name())
+	if err != nil {
+		return false, err
+	}
+	heldParent, err := parent.Stat(".")
+	if err != nil {
+		return false, err
+	}
+	namedParent, err := s.root.Stat(filepath.Dir(destination))
+	if err != nil {
+		return false, err
+	}
+	if !os.SameFile(rootInfo, namedRoot) || !os.SameFile(heldParent, namedParent) {
+		return false, errors.New("checkout destination changed before publication")
+	}
 	if err := renameRootNoReplace(source, s.name, target, filepath.Base(destination)); err != nil {
 		return false, err
 	}

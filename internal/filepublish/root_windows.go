@@ -2,6 +2,7 @@ package filepublish
 
 import (
 	"os"
+	"path/filepath"
 	"unsafe"
 
 	"go.kenn.io/docbank/internal/winsecurity"
@@ -45,4 +46,13 @@ func renameRootNoReplace(source *os.File, name string, destination *os.File, tar
 	info.FileNameLength = uint32(length)
 	copy(unsafe.Slice(&info.FileName[0], len(encoded)-1), encoded)
 	return windows.NtSetInformationFile(handle, &status, &buffer[0], uint32(len(buffer)), windows.FileRenameInformation)
+}
+
+func createPrivateRootDirectory(root *os.Root, name string) error {
+	parent, err := root.OpenRoot(filepath.Dir(name))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = parent.Close() }()
+	return winsecurity.MkdirPrivateAt(parent, filepath.Base(name))
 }

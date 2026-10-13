@@ -63,7 +63,7 @@ func TestRootStageSyncFailureReportsInstalled(t *testing.T) {
 	require.Equal(t, "verified", string(content))
 }
 
-func TestRootStageHoldsDestinationAfterPathReplacement(t *testing.T) {
+func TestRootStageRejectsDestinationAfterPathReplacement(t *testing.T) {
 	t.Parallel()
 	base := t.TempDir()
 	destination := filepath.Join(base, "destination")
@@ -88,13 +88,12 @@ func TestRootStageHoldsDestinationAfterPathReplacement(t *testing.T) {
 	}
 	require.NoError(t, os.Mkdir(destination, 0o755))
 	installed, err := stage.Publish("photo.jpg")
-	require.NoError(t, err)
-	require.True(t, installed)
-	content, err := os.ReadFile(filepath.Join(moved, "photo.jpg"))
-	require.NoError(t, err)
-	require.Equal(t, "verified", string(content))
-	_, err = os.Stat(filepath.Join(destination, "photo.jpg"))
-	require.ErrorIs(t, err, os.ErrNotExist)
+	require.Error(t, err)
+	require.False(t, installed)
+	for _, dir := range []string{destination, moved} {
+		_, err = os.Stat(filepath.Join(dir, "photo.jpg"))
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
 }
 
 func TestRootStageRejectsSymlinkEscape(t *testing.T) {
@@ -116,4 +115,71 @@ func TestRootStageRejectsSymlinkEscape(t *testing.T) {
 	entries, err := os.ReadDir(outside)
 	require.NoError(t, err)
 	require.Empty(t, entries)
+}
+
+func TestRootStageSyncsNewDirectoryParentsBeforePublication(t *testing.T) {
+	t.Parallel()
+	root, err := os.OpenRoot(t.TempDir())
+	require.NoError(t, err)
+	defer func() { _ = root.Close() }()
+	stage, err := CreateRootStage(root)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, stage.Cleanup()) }()
+	var synced []string
+	stage.syncDirectory = func(root *os.Root, name string) error {
+		synced = append(synced, filepath.Join(root.Name(), name))
+		return nil
+	}
+	destination := filepath.Join("2024", "01", "02", "asset", "photo.jpg")
+	require.NoError(t, stage.MakeParentDirectories(destination))
+	require.Equal(t, []string{root.Name(), filepath.Join(root.Name(), "2024"), filepath.Join(root.Name(), "2024", "01"), filepath.Join(root.Name(), "2024", "01", "02")}, synced)
+	require.NoError(t, stage.MakeParentDirectories(destination))
+	require.Len(t, synced, 4)
+	require.NoError(t, stage.File.Close())
+	stage.File = nil
+	installed, err := stage.Publish(destination)
+	require.NoError(t, err)
+	require.True(t, installed)
+	require.Equal(t, filepath.Join(root.Name(), filepath.Dir(destination)), synced[4])
+}
+
+func TestRootStageParentSyncFailureStopsPreparation(t *testing.T) {
+	t.Parallel()
+	root, err := os.OpenRoot(t.TempDir())
+	require.NoError(t, err)
+	defer func() { _ = root.Close() }()
+	stage, err := CreateRootStage(root)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, stage.Cleanup()) }()
+	failure := errors.New("parent sync failed")
+	stage.syncDirectory = func(*os.Root, string) error { return failure }
+	require.ErrorIs(t, stage.MakeParentDirectories(filepath.Join("year", "asset", "photo.jpg")), failure)
+	_, err = root.Stat(filepath.Join("year", "asset"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestRootStageRejectsMovedParentBeforeRename(t *testing.T) {
+	t.Parallel()
+	root, err := os.OpenRoot(t.TempDir())
+	require.NoError(t, err)
+	defer func() { _ = root.Close() }()
+	stage, err := CreateRootStage(root)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, stage.Cleanup()) }()
+	destination := filepath.Join("date", "asset", "photo.jpg")
+	require.NoError(t, stage.MakeParentDirectories(destination))
+	require.NoError(t, stage.File.Close())
+	stage.File = nil
+	parent, err := root.OpenRoot(filepath.Dir(destination))
+	require.NoError(t, err)
+	defer func() { _ = parent.Close() }()
+	outside := filepath.Join(t.TempDir(), "moved")
+	if err := os.Rename(filepath.Join(root.Name(), filepath.Dir(destination)), outside); err != nil {
+		t.Skip("platform pins an opened directory against rename")
+	}
+	installed, err := stage.publish(parent, destination)
+	require.Error(t, err)
+	require.False(t, installed)
+	_, err = os.Stat(filepath.Join(outside, "photo.jpg"))
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
