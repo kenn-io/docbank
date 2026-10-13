@@ -273,7 +273,7 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	require.Equal(t, "terminal error", finished.Error)
 }
 
-func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
+func TestPhotoCheckoutSourceNameSelection(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -378,7 +378,7 @@ func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 
 func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"separate legacy ingests", "renamed duplicate", "conflicting pair", "trashed target"} {
+	for _, scenario := range []string{"separate ingests", "renamed duplicate", "conflicting pair", "trashed target"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -422,7 +422,7 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 				_, err = s.SetPhotoDisplay(ctx, result.Asset.ID, result.Asset.Revision, &jpeg)
 				require.NoError(t, err)
 			}
-			if scenario == "separate legacy ingests" {
+			if scenario == "separate ingests" {
 				_, err = s.db.ExecContext(ctx, `UPDATE photo_files SET source_provenance_identity=NULL WHERE asset_id=?`, result.Asset.ID)
 				require.NoError(t, err)
 				var backup bytes.Buffer

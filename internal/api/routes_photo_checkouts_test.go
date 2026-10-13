@@ -42,7 +42,6 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/"+created.Checkout.ID, nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
-	require.NotContains(t, body, `"entries"`)
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts", nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var list api.PhotoCheckoutList

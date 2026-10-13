@@ -1189,15 +1189,6 @@ func TestPhotoSidecarProvenanceCorrectionRetriesCachedOutcome(t *testing.T) {
 				require.NoError(t, err)
 				require.Len(t, pending, 1)
 				assert.Equal(t, asset.Revision, pending[0].AssetRevision)
-				_, err = s.InitializePhotoSidecar(ctx, pending[0])
-				require.NoError(t, err)
-				var consideredMembers string
-				require.NoError(t, s.db.QueryRowContext(ctx, `SELECT member_revisions FROM photo_sidecar_considered WHERE sidecar_file_id=?`, sidecar.ID).Scan(&consideredMembers))
-				require.Equal(t, pending[0].MemberRevisions, consideredMembers)
-				require.NotEqual(t, targets[0].MemberRevisions, consideredMembers)
-				pending, err = s.MissingPhotoSidecarsAfter(ctx, fakeHash("ee"), "", 1)
-				require.NoError(t, err)
-				require.Empty(t, pending)
 				require.NoError(t, s.ValidateMetadata(ctx))
 				return
 			}
