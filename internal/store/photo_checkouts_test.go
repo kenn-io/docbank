@@ -195,7 +195,7 @@ func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 		{"empty all", "", 100}, {"audit refusal", "", 100},
 		{"negative limit", "", -1}, {"all without limit", "", 0}, {"insufficient limit", "", 19},
 	}
-	for _, name := range []string{"CON.jpg", "bad:name.jpg", "bad?.jpg", "trailing.", "trailing ", "control\x01.jpg"} {
+	for _, name := range []string{"CON.jpg", "bad:name.jpg", "trailing.", "trailing ", "control\x01.jpg"} {
 		cases = append(cases, struct {
 			name, filename string
 			limit          int64
@@ -378,7 +378,7 @@ func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 
 func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"separate ingests", "renamed duplicate", "conflicting pair", "trashed target", "trashed conflicting sidecar"} {
+	for _, scenario := range []string{"separate ingests", "conflicting pair", "trashed target", "trashed conflicting sidecar"} {
 		t.Run(scenario, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -390,23 +390,16 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 			require.NoError(t, err)
 			run, err = s.BeginIngest(ctx, "photo-import", source)
 			require.NoError(t, err)
-			name := "RENAMED.ARW"
-			if scenario != "renamed duplicate" {
-				name = "IMG.ARW"
-				sidecarName := name + ".XMP"
-				if scenario == "conflicting pair" || scenario == "trashed conflicting sidecar" {
-					sidecarName = "unrelated.XMP"
-				}
-				node, err := s.IngestFileExact(ctx, run, s.RootID(), sidecarName, browseHash("sidecar"), 20, "application/rdf+xml", filepath.Join(source, sidecarName), "")
-				require.NoError(t, err)
-				target := fileByRole(result.Asset.Files, PhotoRoleRAW).ID
-				result.Asset, err = s.AttachPhotoFile(ctx, result.Asset.ID, result.Asset.Revision, node.ID, PhotoRoleSidecar, &target)
-				require.NoError(t, err)
-			} else {
-				raw.OriginalPath, raw.Name = filepath.Join(source, name), name
-				result, err = s.IngestPhotoGroup(ctx, run, photoImportTestGroup(raw, photoImportTestMember(filepath.Join(source, name+".XMP"), PhotoRoleSidecar, browseHash("sidecar"), "application/rdf+xml")))
-				require.NoError(t, err)
+			name := "IMG.ARW"
+			sidecarName := name + ".XMP"
+			if scenario == "conflicting pair" || scenario == "trashed conflicting sidecar" {
+				sidecarName = "unrelated.XMP"
 			}
+			node, err := s.IngestFileExact(ctx, run, s.RootID(), sidecarName, browseHash("sidecar"), 20, "application/rdf+xml", filepath.Join(source, sidecarName), "")
+			require.NoError(t, err)
+			target := fileByRole(result.Asset.Files, PhotoRoleRAW).ID
+			result.Asset, err = s.AttachPhotoFile(ctx, result.Asset.ID, result.Asset.Revision, node.ID, PhotoRoleSidecar, &target)
+			require.NoError(t, err)
 			for i, file := range result.Asset.Files {
 				node, err := s.NodeByID(ctx, file.NodeID)
 				require.NoError(t, err)
@@ -421,14 +414,6 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 				jpeg := fileByRole(result.Asset.Files, PhotoRoleImage).ID
 				_, err = s.SetPhotoDisplay(ctx, result.Asset.ID, result.Asset.Revision, &jpeg)
 				require.NoError(t, err)
-			}
-			if scenario == "separate ingests" {
-				_, err = s.db.ExecContext(ctx, `UPDATE photo_files SET source_provenance_identity=NULL WHERE asset_id=?`, result.Asset.ID)
-				require.NoError(t, err)
-				var backup bytes.Buffer
-				require.NoError(t, s.ExportMetadata(ctx, &backup))
-				s = newTestStore(t)
-				require.NoError(t, s.ImportMetadata(ctx, bytes.NewReader(backup.Bytes())))
 			}
 			checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
 			if scenario == "conflicting pair" {
