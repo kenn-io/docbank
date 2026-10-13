@@ -158,6 +158,29 @@ func TestPhotoCheckoutMetadataRestoresUnboundAndDetachedFilesAndValidatesFrozenE
 			var roundtrip bytes.Buffer
 			require.NoError(t, restored.ExportMetadata(t.Context(), &roundtrip))
 			require.Equal(t, exported.String(), roundtrip.String())
+			unixPath := "undated/" + a.ID + "/Trip: Day 1.jpg"
+			unixLines := bytes.Split(exported.Bytes(), []byte{'\n'})
+			for i, line := range unixLines {
+				if !bytes.Contains(line, []byte(`"type":"photo_checkout_entry"`)) {
+					continue
+				}
+				var entry metadataPhotoCheckoutEntry
+				require.NoError(t, json.Unmarshal(line, &entry))
+				entry.Path = unixPath
+				unixLines[i], err = json.Marshal(entry)
+				require.NoError(t, err)
+			}
+			unixRestored, err := Open(filepath.Join(t.TempDir(), "unix-restored.db"), driver.driver)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, unixRestored.Close()) })
+			require.NoError(t, unixRestored.ImportMetadata(t.Context(), bytes.NewReader(bytes.Join(unixLines, []byte{'\n'}))))
+			actual, err = unixRestored.PhotoCheckout(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.Equal(t, "unbound", actual.State)
+			actualEntries, err = unixRestored.PhotoCheckoutEntries(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.Equal(t, unixPath, actualEntries[0].Path)
+			require.NoError(t, unixRestored.ExportMetadata(t.Context(), &bytes.Buffer{}))
 			for _, bad := range []struct {
 				name   string
 				mutate func(*metadataPhotoCheckoutEntry)
@@ -548,15 +571,6 @@ func seedGroupedCheckoutSources(t *testing.T, s *Store) (PhotoImportResult, stri
 	require.NoError(t, err)
 	_, err = s.PruneContentVersions(ctx, rawNode.ID, rawNode.Revision, VersionPruneSelector{AllPrior: true}, true)
 	require.NoError(t, err)
-	for _, node := range result.Nodes {
-		node, err = s.NodeByID(ctx, node.ID)
-		require.NoError(t, err)
-		date := "2025-12-31"
-		if node.Name == "IMG.ARW" {
-			date = "2024-01-02"
-		}
-		browsePhotoMetadata(t, s, node, node.Name, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(date, date, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
-	}
 	for i, node := range result.Nodes {
 		node, err = s.NodeByID(ctx, node.ID)
 		require.NoError(t, err)

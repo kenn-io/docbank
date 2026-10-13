@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"path"
 	"runtime"
@@ -295,14 +296,10 @@ func validateCheckoutFilename(name string) error {
 	return nil
 }
 
+// Checkout metadata uses slash paths independently of the restore host.
 func validateCheckoutPath(name string) error {
-	if name == "" || path.IsAbs(name) || path.Clean(name) != name {
+	if !fs.ValidPath(name) || name == "." || strings.ContainsRune(name, 0) {
 		return ErrInvalidPhotoCheckout
-	}
-	for component := range strings.SplitSeq(name, "/") {
-		if err := validateCheckoutFilename(component); err != nil {
-			return err
-		}
 	}
 	return nil
 }
