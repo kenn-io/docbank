@@ -497,14 +497,15 @@ func TestPackageImportDiscardRepairsOrRetainsPhotoAssets(t *testing.T) {
 			var purges int
 			require.NoError(t, s.db.QueryRowContext(t.Context(),
 				`SELECT COUNT(*) FROM photo_change_receipts WHERE asset_id=? AND operation='purge'`, asset.ID).Scan(&purges))
+			repaired, err := s.PhotoAssetByID(t.Context(), asset.ID)
+			require.NoError(t, err)
 			if outcome == "checkout-pinned" {
+				require.Equal(t, asset, repaired)
 				_, err := s.NodeByID(t.Context(), image.ID)
 				require.NoError(t, err)
 				require.Zero(t, purges)
 				return
 			}
-			repaired, err := s.PhotoAssetByID(t.Context(), asset.ID)
-			require.NoError(t, err)
 			require.Empty(t, repaired.Files)
 			require.Equal(t, asset.Revision+1, repaired.Revision)
 			require.Equal(t, 1, purges)

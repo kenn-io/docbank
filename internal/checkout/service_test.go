@@ -119,57 +119,6 @@ func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
 	}
 }
 
-func TestCheckoutRecoveryRebuildsCopyObservationsAfterPublicationCrash(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	for _, name := range []string{"one.jpg", "two.jpg", "three.jpg"} {
-		checkoutPhoto(t, s, name, name)
-	}
-	c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.Len(t, entries, 3)
-	for _, e := range entries {
-		require.NoError(t, root.MkdirAll(filepath.Dir(filepath.FromSlash(e.Path)), 0o755))
-	}
-	stream, _, err := s.Blobs.OpenStreamContext(t.Context(), entries[0].Hash)
-	require.NoError(t, err)
-	bytes, err := io.ReadAll(stream)
-	require.NoError(t, err)
-	require.NoError(t, stream.Close())
-	// A crash after rename can leave verified bytes without a committed observation.
-	require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), bytes, 0o600))
-	edited := []byte(strings.Repeat("x", int(entries[1].Size)))
-	require.NoError(t, root.WriteFile(filepath.FromSlash(entries[1].Path), edited, 0o600))
-	require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entries[2], func() (bool, error) { return true, nil }))
-	stage, err := filepublish.CreateRootStage(root)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, stage.Cleanup()) }()
-	payload := filepath.Base(stage.File.Name())
-	_, err = stage.File.WriteString("partial bytes")
-	require.NoError(t, err)
-	require.NoError(t, stage.File.Close())
-	stage.File = nil
-	require.NoError(t, s.reconcile(t.Context(), c))
-	_, err = root.Stat(payload)
-	require.ErrorIs(t, err, os.ErrNotExist)
-	observed, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.True(t, observed[0].Published)
-	require.False(t, observed[1].Published)
-	require.False(t, observed[2].Published)
-	actual, err := root.ReadFile(filepath.FromSlash(entries[1].Path))
-	require.NoError(t, err)
-	require.Equal(t, edited, actual)
-	finished, err := s.Store.StorageOperation(t.Context(), op.ID)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), finished.CopiedObjects)
-	require.Equal(t, entries[0].Size, finished.CopiedBytes)
-	require.Equal(t, store.StorageOperationFailed, finished.State)
-}
-
 func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{"file", "inaccessible"} {
@@ -178,15 +127,43 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 				t.Skip("Unix directory permissions")
 			}
 			s := checkoutService(t)
-			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+			a := checkoutPhoto(t, s, "one.jpg", "one.jpg")
+			for _, name := range []string{"two.jpg", "three.jpg"} {
+				checkoutPhoto(t, s, name, name)
+			}
 			bad, badOp, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
 			require.NoError(t, err)
 			require.NoError(t, root.Close())
 			require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), bad.ID, badOp.ID))
-			c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
+			c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
 			require.NoError(t, err)
-			require.NoError(t, root.Close())
+			defer func() { _ = root.Close() }()
 			require.NoError(t, s.Store.ClaimPhotoCheckout(t.Context(), c.ID, op.ID))
+			entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.Len(t, entries, 3)
+			for _, e := range entries {
+				require.NoError(t, root.MkdirAll(filepath.Dir(filepath.FromSlash(e.Path)), 0o755))
+			}
+			stream, _, err := s.Blobs.OpenStreamContext(t.Context(), entries[0].Hash)
+			require.NoError(t, err)
+			bytes, err := io.ReadAll(stream)
+			require.NoError(t, err)
+			require.NoError(t, stream.Close())
+			// A crash after rename can leave verified bytes without a committed observation.
+			require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), bytes, 0o600))
+			edited := []byte(strings.Repeat("x", int(entries[1].Size)))
+			require.NoError(t, root.WriteFile(filepath.FromSlash(entries[1].Path), edited, 0o600))
+			require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entries[2], func() (bool, error) { return true, nil }))
+			stage, err := filepublish.CreateRootStage(root)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, stage.Cleanup()) }()
+			payload := filepath.Base(stage.File.Name())
+			_, err = stage.File.WriteString("partial bytes")
+			require.NoError(t, err)
+			require.NoError(t, stage.File.Close())
+			stage.File = nil
+
 			if kind == "file" {
 				require.NoError(t, os.Remove(bad.Destination))
 				require.NoError(t, os.WriteFile(bad.Destination, []byte("keep this file"), 0600))
@@ -217,6 +194,21 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 			require.NoError(t, supervisor.Shutdown(context.Background()))
 			require.Equal(t, int32(2), begun.Load())
 			require.Equal(t, int32(2), ended.Load())
+			_, err = root.Stat(payload)
+			require.ErrorIs(t, err, os.ErrNotExist)
+			observed, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.True(t, observed[0].Published)
+			require.False(t, observed[1].Published)
+			require.False(t, observed[2].Published)
+			actual, err := root.ReadFile(filepath.FromSlash(entries[1].Path))
+			require.NoError(t, err)
+			require.Equal(t, edited, actual)
+			finished, err := s.Store.StorageOperation(t.Context(), op.ID)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), finished.CopiedObjects)
+			require.Equal(t, entries[0].Size, finished.CopiedBytes)
+			require.Equal(t, store.StorageOperationFailed, finished.State)
 			status, err := s.Store.PhotoCheckout(t.Context(), bad.ID)
 			require.NoError(t, err)
 			require.Contains(t, status.Error, "interrupted")
@@ -340,6 +332,7 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 				require.Zero(t, inflight)
 				complete, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
 				require.NoError(t, err)
+				require.Equal(t, "completed", complete.Checkout.State)
 				require.Equal(t, int64(2), complete.PublishedFiles)
 				for _, entry := range entries {
 					content, err := root.ReadFile(filepath.FromSlash(entry.Path))

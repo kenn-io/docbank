@@ -19,6 +19,8 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	const operationID = "00000000-0000-4000-8000-000000000012"
 	selection := store.PhotoCheckoutSelection{All: true}
 	checkout := store.PhotoCheckout{ID: id, Selection: selection, ByteLimit: 100, Destination: filepath.Join(t.TempDir(), "destination"), OperationID: operationID, State: "queued"}
+	expectedEstimate := store.PhotoCheckoutEstimate{Assets: 1, Files: 2, Bytes: 5}
+	expectedStatus := api.PhotoCheckoutStatus{Checkout: checkout, Files: 2, Bytes: 5, PublishedFiles: 1, PublishedBytes: 3}
 	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
 	var mu sync.Mutex
 	var estimateRequest store.PhotoCheckoutSelection
@@ -36,7 +38,7 @@ func TestPhotoCheckoutClients(t *testing.T) {
 			var request store.PhotoCheckoutSelection
 			decodeErr = json.UnmarshalRead(r.Body, &request)
 			estimateRequest = request
-			out = store.PhotoCheckoutEstimate{Assets: 1, Files: 1, Bytes: 5}
+			out = expectedEstimate
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/photos/checkouts":
 			var request api.PhotoCheckoutCreateRequest
 			decodeErr = json.UnmarshalRead(r.Body, &request)
@@ -47,7 +49,7 @@ func TestPhotoCheckoutClients(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/checkouts":
 			out = api.PhotoCheckoutList{Items: []store.PhotoCheckout{checkout}}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/photos/checkouts/"+id:
-			out = api.PhotoCheckoutStatus{Checkout: checkout}
+			out = expectedStatus
 		default:
 			http.NotFound(w, r)
 			return
@@ -74,7 +76,7 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	}
 	estimate, err := client.EstimatePhotoCheckout(t.Context(), selection)
 	require.NoError(t, err)
-	require.Equal(t, int64(5), estimate.Bytes)
+	require.Equal(t, expectedEstimate, estimate)
 	mu.Lock()
 	estimateErr, actualEstimateRequest := decodeErr, estimateRequest
 	mu.Unlock()
@@ -88,7 +90,7 @@ func TestPhotoCheckoutClients(t *testing.T) {
 	require.Equal(t, []store.PhotoCheckout{checkout}, list)
 	status, err := client.PhotoCheckoutStatus(t.Context(), id)
 	require.NoError(t, err)
-	require.Equal(t, checkout, status.Checkout)
+	require.Equal(t, expectedStatus, status)
 
 	mismatchedState := created
 	mismatchedState.Checkout.State = "running"
