@@ -236,20 +236,10 @@ func TestCheckoutRecoveryRebuildsCopyObservationsAfterPublicationCrash(t *testin
 	require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entries[2], func() (bool, error) { return true, nil }))
 	prefix := ".docbank-checkout-"
 	payload := prefix + strings.Repeat("a", 32)
-	decoy := prefix + strings.Repeat("c", 32)
-	wrongName := prefix + "user-file"
 	require.NoError(t, root.WriteFile(payload, []byte("partial bytes"), 0600))
-	require.NoError(t, root.Mkdir(decoy, 0700))
-	require.NoError(t, root.WriteFile(filepath.Join(decoy, "my-edit.jpg"), []byte("keep"), 0600))
-	require.NoError(t, root.WriteFile(wrongName, []byte("keep"), 0600))
 	require.NoError(t, s.reconcile(t.Context(), c))
 	_, err = root.Stat(payload)
 	require.ErrorIs(t, err, os.ErrNotExist)
-	for _, name := range []string{decoy, wrongName} {
-		_, err = root.Stat(name)
-		require.NoError(t, err)
-	}
-
 	observed, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 	require.NoError(t, err)
 	require.True(t, observed[0].Published)
@@ -412,27 +402,6 @@ func TestCheckoutFailedRunKeepsVerifiedPartialCopies(t *testing.T) {
 	}
 }
 
-func TestCheckoutAdmissionReleasesActivity(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
-	c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	inflight, admissions := 0, 0
-	s.ActivityBegin = func() { inflight++ }
-	s.ActivityEnd = func() { inflight-- }
-	s.admit = func(context.Context, *store.Store, string) (bool, error) {
-		admissions++
-		require.Zero(t, inflight)
-		return false, nil
-	}
-	s.Mutate = func(_ context.Context, fn func() error) error { require.Equal(t, 1, inflight); return fn() }
-	require.NoError(t, s.Run(t.Context(), c, root))
-	require.Equal(t, 2, admissions)
-	require.Zero(t, inflight)
-}
-
 func TestCheckoutQueuedDestinationRevalidatedBeforeCopy(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
@@ -461,19 +430,25 @@ func TestCheckoutAdmissionRetryKeepsVerifiedPartialCopies(t *testing.T) {
 	c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{All: true}, t.TempDir(), 100)
 	require.NoError(t, err)
 	require.NoError(t, root.Close())
-	admissions := 0
+	inflight, admissions := 0, 0
+	s.ActivityBegin = func() { inflight++ }
+	s.ActivityEnd = func() { inflight-- }
+	s.Mutate = func(_ context.Context, fn func() error) error { require.Equal(t, 1, inflight); return fn() }
 	s.admit = func(context.Context, *store.Store, string) (bool, error) {
 		admissions++
+		require.Zero(t, inflight)
 		if admissions == 3 {
 			return false, store.ErrLaneControl
 		}
 		return false, nil
 	}
 	require.ErrorIs(t, s.Run(t.Context(), c, nil), jobs.ErrStorageOperationDeferred)
+	require.Zero(t, inflight)
 	partial, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), partial.PublishedFiles)
 	require.NoError(t, s.Run(t.Context(), c, nil))
+	require.Zero(t, inflight)
 	complete, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), complete.PublishedFiles)

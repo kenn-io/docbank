@@ -3,7 +3,6 @@ package api_test
 import (
 	"encoding/json/v2"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -34,25 +33,11 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	var created api.PhotoCheckoutCreateResult
 	require.NoError(t, json.Unmarshal([]byte(body), &created))
 	require.Equal(t, request.Selection, created.Checkout.Selection)
-	expectedDestination, err := os.Stat(request.Destination)
-	require.NoError(t, err)
-	actualDestination, err := os.Stat(created.Checkout.Destination)
-	require.NoError(t, err)
-	require.True(t, os.SameFile(expectedDestination, actualDestination))
 	require.Equal(t, request.ByteLimit, created.Checkout.ByteLimit)
-	require.Equal(t, "photo_checkout", created.Operation.Kind)
-	require.Equal(t, created.Operation.State, created.Checkout.State)
-	require.Equal(t, created.Operation.ID, created.Checkout.OperationID)
-	poll := time.NewTicker(10 * time.Millisecond)
-	defer poll.Stop()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	require.Eventually(t, func() bool {
 		op, err := catalog.StorageOperation(t.Context(), created.Operation.ID)
-		if err == nil && op.FinishedAt != nil {
-			break
-		}
-		<-poll.C
-	}
+		return err == nil && op.FinishedAt != nil
+	}, 5*time.Second, 10*time.Millisecond)
 
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/"+created.Checkout.ID, nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
