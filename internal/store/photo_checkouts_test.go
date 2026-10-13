@@ -110,12 +110,21 @@ func TestPhotoCheckoutPublication(t *testing.T) {
 					if err != nil {
 						return false, err
 					}
-					waits := s.writeDB.Stats().WaitCount
+					started := make(chan struct{})
 					go func() {
+						close(started)
 						_, err := s.SetPhotoAssetExcluded(ctx, a.ID, a.Revision, true)
 						mutation <- err
 					}()
-					require.Eventually(t, func() bool { return s.writeDB.Stats().WaitCount > waits }, time.Second, time.Millisecond)
+					<-started
+					require.Never(t, func() bool {
+						select {
+						case <-mutation:
+							return true
+						default:
+							return false
+						}
+					}, 50*time.Millisecond, time.Millisecond)
 					return true, nil
 				}))
 				require.NoError(t, <-mutation)
