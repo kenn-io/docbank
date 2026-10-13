@@ -12,27 +12,28 @@ import (
 )
 
 const (
-	jsonSchemaDraft       = "https://json-schema.org/draft/2020-12/schema"
-	packageIDField        = "package_id"
-	personIDField         = "person_id"
-	schemaStateField      = "state"
-	schemaRevisionField   = "revision"
-	schemaLimitField      = "limit"
-	schemaJobIDField      = "job_id"
-	schemaCreatedAtField  = "created_at"
-	jsonSchemaConst       = "const"
-	maxToolResponseBytes  = 1 << 20
-	maxToolErrorBytes     = 1024
-	maxPathBytes          = 16 << 10
-	maxCursorBytes        = api.MaxDocumentCursorBytes
-	maxPathCharacters     = 16 << 10
-	maxCursorCharacters   = maxCursorBytes
-	maxRenditionChars     = 16_000
-	defaultRenditionChars = 8_000
-	maxPackageDiagnostics = 250
-	maxBatesLabels        = 250
-	maxBatesAffixChars    = pdfstamp.MaxLabelPartChars
-	maxBatesLabelChars    = pdfstamp.MaxLabelChars
+	jsonSchemaDraft           = "https://json-schema.org/draft/2020-12/schema"
+	packageIDField            = "package_id"
+	personIDField             = "person_id"
+	schemaStateField          = "state"
+	schemaRevisionField       = "revision"
+	schemaLimitField          = "limit"
+	schemaJobIDField          = "job_id"
+	schemaCreatedAtField      = "created_at"
+	jsonSchemaConst           = "const"
+	maxToolResponseBytes      = 1 << 20
+	maxToolErrorBytes         = 1024
+	maxPathBytes              = 16 << 10
+	maxCursorBytes            = api.MaxDocumentCursorBytes
+	maxPathCharacters         = 16 << 10
+	maxCursorCharacters       = maxCursorBytes
+	maxRenditionChars         = 16_000
+	defaultRenditionChars     = 8_000
+	maxPackageDiagnostics     = 250
+	maxBatesLabels            = 250
+	maxPhotoFacesToolPageSize = 100
+	maxBatesAffixChars        = pdfstamp.MaxLabelPartChars
+	maxBatesLabelChars        = pdfstamp.MaxLabelChars
 )
 
 type schema = map[string]any
@@ -879,6 +880,51 @@ func getPhotoAssetSchemas() (schema, schema) {
 		"node_id":     integerSchema(1, 0),
 		"file_offset": integerSchema(0, 256),
 	})
+}
+
+func photoFaceSchema() schema {
+	return objectSchema(schema{
+		"face_id":              uuidSchema(),
+		"content_version_id":   uuidSchema(),
+		"detector_fingerprint": stringSchema(256),
+		"box": objectSchema(schema{
+			"x": schema{"type": "number", "minimum": 0, "maximum": 1}, "y": schema{"type": "number", "minimum": 0, "maximum": 1},
+			"width": schema{"type": "number", "minimum": 0, "maximum": 1}, "height": schema{"type": "number", "minimum": 0, "maximum": 1},
+		}, "x", "y", "width", "height"),
+		schemaRevisionField:  integerSchema(1, 0),
+		"assertion_id":       uuidSchema(),
+		schemaCreatedAtField: dateTimeSchema(),
+	}, "face_id", "content_version_id", "detector_fingerprint", "box", schemaRevisionField, schemaCreatedAtField)
+}
+
+func photoPersonAssertionSchema() schema {
+	return objectSchema(schema{
+		"assertion_id":       uuidSchema(),
+		"content_version_id": uuidSchema(),
+		"person_id":          uuidSchema(),
+		"role":               enumSchema("depicted"),
+		"action":             enumSchema("assert", "suppress"),
+		"note":               stringSchema(maxToolResponseBytes),
+		"recorded_at":        dateTimeSchema(),
+		schemaRevisionField:  integerSchema(1, 0),
+	}, "assertion_id", "content_version_id", "person_id", "role", "action", "note", "recorded_at", schemaRevisionField)
+}
+
+func getPhotoFacesSchemas() (schema, schema) {
+	input := rootObjectSchema(schema{
+		"content_version_id": uuidSchema(),
+		"offset":             integerSchema(0, document.MaxPhotoRecordsPerVersion),
+		"limit":              integerSchema(1, maxPhotoFacesToolPageSize),
+	}, "content_version_id")
+	output := rootObjectSchema(withPrivateCache(schema{
+		"faces":            arraySchema(photoFaceSchema(), maxPhotoFacesToolPageSize),
+		"assertions":       arraySchema(photoPersonAssertionSchema(), maxPhotoFacesToolPageSize),
+		"total_faces":      integerSchema(0, document.MaxPhotoRecordsPerVersion),
+		"total_assertions": integerSchema(0, document.MaxPhotoRecordsPerVersion),
+		"offset":           integerSchema(0, document.MaxPhotoRecordsPerVersion),
+		"next_offset":      integerSchema(1, document.MaxPhotoRecordsPerVersion),
+	}), "faces", "assertions", "total_faces", "total_assertions", "offset", "ttlMs", "cacheScope")
+	return input, output
 }
 
 func createPhotoAssetSchemas() (schema, schema) {

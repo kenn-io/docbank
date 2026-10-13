@@ -687,21 +687,15 @@ func TestPhotoFaceRetryAndEpoch(t *testing.T) {
 		require.Equal(t, before.String(), after.String())
 		var actual int64
 		require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&actual))
-		if personID == "" {
-			require.Equal(t, epoch, actual)
-		} else {
-			require.Equal(t, epoch+1, actual)
-		}
+		require.Equal(t, epoch, actual)
 		changed := box
 		changed.X = 0.5
 		_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, id, changed, personID)
 		require.ErrorIs(t, err, ErrExists)
-		conflictingPerson := otherPerson.PersonID
-		if personID == "" {
-			conflictingPerson = person.PersonID
+		if personID != "" {
+			_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, id, box, otherPerson.PersonID)
+			require.ErrorIs(t, err, ErrExists)
 		}
-		_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, id, box, conflictingPerson)
-		require.ErrorIs(t, err, ErrExists)
 		other := browsePhotoNode(t, s, id+".jpg", fakeHash("b2"), "image/jpeg")
 		_, _, err = s.CreatePhotoFace(ctx, other.CurrentVersionID, id, box, personID)
 		require.ErrorIs(t, err, ErrExists)
@@ -726,6 +720,116 @@ func TestPhotoFaceRetryAndEpoch(t *testing.T) {
 	require.Len(t, faces, 3)
 	require.Len(t, assertions, 1)
 	require.Equal(t, person.PersonID, assertions[0].PersonID)
+}
+
+func TestPhotoFaceCanNameAnExistingUnnamedFace(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	other, err := s.CreatePerson(ctx, "Grace", "operator")
+	require.NoError(t, err)
+	box := document.FaceBox{Width: 0.2, Height: 0.2}
+	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, "")
+	require.NoError(t, err)
+	var epoch int64
+	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&epoch))
+
+	named, assertion, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, face.FaceID, box, person.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, face.Revision+1, named.Revision)
+	require.NotEmpty(t, named.AssertionID)
+	require.Equal(t, named.AssertionID, assertion.AssertionID)
+	var actual int64
+	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&actual))
+	require.Equal(t, epoch, actual)
+
+	replayed, saved, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, face.FaceID, box, person.PersonID)
+	require.NoError(t, err)
+	require.Equal(t, named, replayed)
+	require.Equal(t, assertion, saved)
+	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&actual))
+	require.Equal(t, epoch, actual)
+	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, face.FaceID, box, other.PersonID)
+	require.ErrorIs(t, err, ErrExists)
+	changed := box
+	changed.X = 0.5
+	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, face.FaceID, changed, person.PersonID)
+	require.ErrorIs(t, err, ErrExists)
+}
+
+func TestPhotoFaceBindingEpochChangesOnlyForProjectedVersion(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
+	person, err := s.CreatePerson(ctx, "Ada", "operator")
+	require.NoError(t, err)
+	target := requireDocumentEventTarget(t, s, node.CurrentVersionID)
+	record := documentEventRecord(t, s.VaultID(), node.CurrentVersionID, "a1")
+	record.DocumentKind = DocumentEventKindForMIMEType(target.MIMEType)
+	raw, _, err := document.MarshalDocumentEventsV1(record)
+	require.NoError(t, err)
+	inputsSHA := requireDocumentEventInputsSHA256(t, s, target)
+	_, err = s.PublishDocumentEvents(ctx, target, DocumentEventsDeriverFingerprint, inputsSHA, raw)
+	require.NoError(t, err)
+	var epoch int64
+	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&epoch))
+
+	_, _, err = s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), document.FaceBox{Width: 0.2, Height: 0.2}, person.PersonID)
+	require.NoError(t, err)
+	var actual int64
+	require.NoError(t, s.db.QueryRow(`SELECT binding_epoch FROM document_people_state`).Scan(&actual))
+	require.Equal(t, epoch+1, actual)
+}
+
+func TestPhotoFaceBoxUsesPhotoAuthoredRotation(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	node := browsePhotoNode(t, s, "portrait.jpg", fakeHash("a1"), "image/jpeg")
+	box := document.FaceBox{X: 0.1, Y: 0.2, Width: 0.3, Height: 0.4}
+	face, _, err := s.CreatePhotoFace(ctx, node.CurrentVersionID, uuid.New().String(), box, "")
+	require.NoError(t, err)
+	asset, err := s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	rotation := 90
+	_, err = s.EditPhotoAuthored(ctx, []PhotoAuthoredTarget{{
+		FileID: asset.Files[0].ID, Revision: asset.Files[0].Revision, Patch: PhotoAuthoredPatch{Rotation: &rotation},
+	}})
+	require.NoError(t, err)
+	asset, err = s.PhotoAssetForNode(ctx, node.ID)
+	require.NoError(t, err)
+	require.Equal(t, 90, asset.Files[0].Rotation)
+
+	faces, _, err := s.PhotoFaces(ctx, node.CurrentVersionID)
+	require.NoError(t, err)
+	require.Equal(t, face.Box, faces[0].Box)
+	displayBox, err := faces[0].Box.Rotate(asset.Files[0].Rotation)
+	require.NoError(t, err)
+	require.InDelta(t, 0.4, displayBox.X, 1e-9)
+	require.InDelta(t, 0.1, displayBox.Y, 1e-9)
+	require.InDelta(t, 0.4, displayBox.Width, 1e-9)
+	require.InDelta(t, 0.3, displayBox.Height, 1e-9)
+}
+
+func TestPhotoFaceRescanRecordsEmptyCompletion(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	node := browsePhotoNode(t, s, "empty.jpg", fakeHash("ee"), "image/jpeg")
+	for range 2 {
+		faces, err := s.ReconcilePhotoFaces(t.Context(), node.CurrentVersionID, "detector-v1", nil)
+		require.NoError(t, err)
+		require.Empty(t, faces)
+	}
+	var scans int
+	require.NoError(t, s.db.QueryRow(`SELECT COUNT(*) FROM photo_face_scans WHERE content_version_id=? AND detector_fingerprint=?`, node.CurrentVersionID, "detector-v1").Scan(&scans))
+	require.Equal(t, 1, scans)
+	var exported bytes.Buffer
+	require.NoError(t, s.ExportMetadata(t.Context(), &exported))
+	require.NotContains(t, exported.String(), "photo_face_scans")
 }
 
 func TestPhotoFacePurgeAndPruneRestoreReferences(t *testing.T) {

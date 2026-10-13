@@ -384,3 +384,15 @@ func advancePersonBindingEpochTx(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, `UPDATE document_people_state SET binding_epoch=binding_epoch+1,updated_at=? WHERE singleton=1`, nowRFC3339())
 	return err
 }
+
+// advancePersonBindingEpochForVersionTx avoids invalidating projections that cannot read this version.
+func advancePersonBindingEpochForVersionTx(ctx context.Context, tx *sql.Tx, versionID string) error {
+	var hasEventHead bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM document_event_heads WHERE content_version_id=?)`, versionID).Scan(&hasEventHead); err != nil {
+		return err
+	}
+	if !hasEventHead {
+		return nil
+	}
+	return advancePersonBindingEpochTx(ctx, tx)
+}

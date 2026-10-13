@@ -177,7 +177,30 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 				existingPerson = saved.PersonID
 			}
 			if resolved != "" && existingPerson != resolved {
-				return ErrExists
+				if existingPerson != "" {
+					return ErrExists
+				}
+				saved, created, err := ensurePersonAssertionTx(ctx, tx, versionID, resolved, "depicted")
+				if err != nil {
+					return err
+				}
+				result, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,revision=revision+1 WHERE face_id=? AND assertion_id IS NULL`, saved.AssertionID, faceID)
+				if err != nil {
+					return err
+				}
+				if changed, err := result.RowsAffected(); err != nil {
+					return err
+				} else if changed != 1 {
+					return ErrExists
+				}
+				existing.AssertionID = saved.AssertionID
+				existing.Revision++
+				assertion = &saved
+				if created {
+					if err := advancePersonBindingEpochForVersionTx(ctx, tx, versionID); err != nil {
+						return err
+					}
+				}
 			}
 			face = existing
 			return nil
@@ -207,7 +230,7 @@ func (s *Store) CreatePhotoFace(ctx context.Context, versionID, faceID string, b
 			return err
 		}
 		if created {
-			return advancePersonBindingEpochTx(ctx, tx)
+			return advancePersonBindingEpochForVersionTx(ctx, tx, versionID)
 		}
 		return nil
 	})
@@ -230,7 +253,7 @@ func (s *Store) MarkPersonInPhoto(ctx context.Context, versionID, personID strin
 		if err != nil || !created {
 			return err
 		}
-		return advancePersonBindingEpochTx(ctx, tx)
+		return advancePersonBindingEpochForVersionTx(ctx, tx, versionID)
 	})
 	return assertion, err
 }
@@ -328,6 +351,9 @@ func (s *Store) ReconcilePhotoFaces(ctx context.Context, versionID, fingerprint 
 				return err
 			}
 			added++
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO photo_face_scans(content_version_id,detector_fingerprint) VALUES(?,?) ON CONFLICT DO NOTHING`, versionID, fingerprint); err != nil {
+			return err
 		}
 		faces, err = photoFacesQuery(ctx, tx, versionID)
 		return err

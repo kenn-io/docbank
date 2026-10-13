@@ -37,7 +37,7 @@ func parsePhotoFaceBox(value string) (*document.FaceBox, error) {
 }
 
 func photoFacesCommand() *cobra.Command {
-	faces := &cobra.Command{Long: "Create a boxed face or mark a person in the whole photo; list reads both.\nUse the current content version ID from docbank inspect. Output: JSON.", Use: "faces", Short: "Record faces and people in photos", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
+	faces := &cobra.Command{Long: "Create a face box or mark a person in the whole photo; list reads both.\nUse current_version_id from docbank stat <path-or-id> --json.", Use: "faces", Short: "Record faces and people in photos", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	faces.AddCommand(&cobra.Command{Use: "list <content-version-id>", Example: "  docbank photos faces list 11111111-1111-4111-8111-111111111111", Short: "List face boxes and people", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		c, err := daemonconn.Ensure(cmd.Context())
 		if err != nil {
@@ -75,8 +75,8 @@ func photoFacesCommand() *cobra.Command {
 		return writeCLIJSON(cmd.OutOrStdout(), result)
 	}}
 	create.Flags().StringVar(&boxText, "box", "", "x,y,width,height as fractions of the EXIF-oriented preview before rotation")
-	create.Flags().StringVar(&personID, "person", "", "person ID; omit --box to mark the whole photo")
-	create.Flags().StringVar(&faceID, "face-id", "", "face UUID to retain when retrying a boxed create")
+	create.Flags().StringVar(&personID, "person", "", "person ID to name a face; omit --box to mark the whole photo")
+	create.Flags().StringVar(&faceID, "face-id", "", "face UUID for retrying or naming an existing box")
 	faces.AddCommand(create)
 	return faces
 }

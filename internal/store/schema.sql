@@ -2390,6 +2390,11 @@ CREATE TABLE IF NOT EXISTS photo_faces (
 );
 CREATE INDEX IF NOT EXISTS photo_faces_version ON photo_faces(content_version_id,face_id);
 CREATE INDEX IF NOT EXISTS photo_faces_assertion ON photo_faces(assertion_id,content_version_id);
+CREATE TABLE IF NOT EXISTS photo_face_scans (
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    detector_fingerprint TEXT NOT NULL,
+    PRIMARY KEY (content_version_id, detector_fingerprint)
+);
 CREATE INDEX IF NOT EXISTS persons_key_face ON persons(key_face_id) WHERE key_face_id IS NOT NULL;
 CREATE TRIGGER IF NOT EXISTS photo_faces_delete AFTER DELETE ON photo_faces
 BEGIN

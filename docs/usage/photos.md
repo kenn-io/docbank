@@ -42,7 +42,11 @@ A box is `x,y,width,height`, each measured as a fraction of the EXIF-oriented pr
 
 A boxed create generates a face UUID. Retain the returned `face_id`, or use `--face-id <uuid>` to supply one. Retry with that same ID, box and version to recover the saved result. A supplied person must match the saved canonical person. A boxed command includes the retry ID after a connection failure, a server failure, or an unreadable success response. Conflicting reuse fails.
 
-Faces require the addressed current, live, included image or RAW member. Sidecars and replaced non-image versions cannot receive boxes or whole-photo marks. Face reads and manual writes require an unlock while the photo is Hidden. Audited vault writes return `audit_mutation_unsupported`. These commands record observations manually. Face detection is unavailable. An unnamed face, wrong box or wrong person cannot be corrected until slice 3; undo also waits for that slice.
+To name an unnamed box later, repeat the boxed create with its `face_id`, the same box and version, and `--person <person-id>`.
+
+MCP `get_photo_faces` reads up to 100 face boxes and depicted-person records per page. Pass `next_offset` as `offset` for the next page. MCP can't unlock Hidden photos. Manual faces and whole-photo marks use HTTP or the CLI.
+
+Faces require the addressed current, live, included image or RAW member. Sidecars and replaced non-image versions cannot receive boxes or whole-photo marks. Face reads and manual writes require an unlock while the photo is Hidden. Audited vault writes return `audit_mutation_unsupported`. These commands record observations manually. Face detection is unavailable. Boxes and existing person assignments can't be changed or undone yet.
 
 ## Open and inspect a photo
 

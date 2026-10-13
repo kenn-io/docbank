@@ -157,7 +157,7 @@ var currentSchemaTables = [...]string{
 	"processing_consent_grants", "rendition_job_waiters", "embedding_jobs",
 	"persons", "person_identities", "person_external_identities", "person_external_uid_aliases",
 	"person_aliases", "person_merges", "person_splits", "custodian_assignments",
-	"document_people_state", "person_match_candidates", "person_document_assertions", "photo_faces",
+	"document_people_state", "person_match_candidates", "person_document_assertions", "photo_faces", "photo_face_scans",
 	"document_people_generations", "document_people_heads", "document_people_builds",
 	"document_people",
 }

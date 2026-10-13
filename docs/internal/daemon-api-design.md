@@ -455,8 +455,8 @@ revision in the body. Merge and split operation UUIDs replay their stored
 receipts. Reads follow a merged person's ID to the survivor. Edits require the
 current person ID and return 404 for a merged ID. The store owns membership
 validation, revision fences, and binding-epoch changes. Browser sessions stay
-denied by default. MCP exposes the person reads only. Edits stay on HTTP and
-the CLI.
+denied by default. MCP exposes person reads and paged photo-face reads. Edits
+stay on HTTP and the CLI.
 
 ## Ingest boundary
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonconn"
 )
@@ -30,6 +31,16 @@ type photoAssetToolOutput struct {
 	TotalFiles            int             `json:"total_files"`
 	FileOffset            int             `json:"file_offset"`
 	NextFileOffset        *int            `json:"next_file_offset,omitzero"`
+}
+
+type photoFacesToolOutput struct {
+	privateCache
+	Faces           []api.PhotoFace            `json:"faces"`
+	Assertions      []api.PhotoPersonAssertion `json:"assertions"`
+	TotalFaces      int                        `json:"total_faces"`
+	TotalAssertions int                        `json:"total_assertions"`
+	Offset          int                        `json:"offset"`
+	NextOffset      *int                       `json:"next_offset,omitzero"`
 }
 
 func photoWriteTool(name string) bool {
@@ -63,6 +74,47 @@ func getPhotoAsset(ctx context.Context, lease *daemonLease, raw []byte) (photoAs
 		return photoAssetToolOutput{}, err
 	}
 	return photoAssetOutput(asset, input.FileOffset)
+}
+
+func getPhotoFaces(ctx context.Context, lease *daemonLease, raw []byte) (photoFacesToolOutput, error) {
+	var input struct {
+		ContentVersionID string `json:"content_version_id"`
+		Offset           int    `json:"offset"`
+		Limit            int    `json:"limit"`
+	}
+	if err := decodeReadArguments(raw, &input); err != nil {
+		return photoFacesToolOutput{}, err
+	}
+	if input.Offset < 0 || input.Offset > document.MaxPhotoRecordsPerVersion {
+		return photoFacesToolOutput{}, invalidToolArgumentsError()
+	}
+	if input.Limit == 0 {
+		input.Limit = maxPhotoFacesToolPageSize
+	}
+	if input.Limit < 1 || input.Limit > maxPhotoFacesToolPageSize {
+		return photoFacesToolOutput{}, invalidToolArgumentsError()
+	}
+	page, err := daemonRead(ctx, lease, func(ctx context.Context, c *daemonconn.Connection) (api.PhotoFacePage, error) {
+		return c.PhotoFaces(ctx, input.ContentVersionID)
+	})
+	if err != nil {
+		return photoFacesToolOutput{}, err
+	}
+	total := max(len(page.Faces), len(page.Assertions))
+	start := min(input.Offset, total)
+	end := min(start+input.Limit, total)
+	output := photoFacesToolOutput{
+		privateCache:    newPrivateCache(),
+		Faces:           append([]api.PhotoFace{}, page.Faces[min(start, len(page.Faces)):min(end, len(page.Faces))]...),
+		Assertions:      append([]api.PhotoPersonAssertion{}, page.Assertions[min(start, len(page.Assertions)):min(end, len(page.Assertions))]...),
+		TotalFaces:      len(page.Faces),
+		TotalAssertions: len(page.Assertions),
+		Offset:          start,
+	}
+	if end < total {
+		output.NextOffset = new(end)
+	}
+	return output, nil
 }
 
 func photoAssetOutput(asset api.PhotoAsset, offset int) (photoAssetToolOutput, error) {
