@@ -123,7 +123,7 @@ func TestPhotoCheckoutPublicationReservesWriterWithoutTransaction(t *testing.T) 
 	require.True(t, entries[0].Published)
 }
 
-func TestPhotoCheckoutMetadataRestoresUnboundAndValidatesFrozenEntries(t *testing.T) {
+func TestPhotoCheckoutMetadataRestoresUnboundAndDetachedFilesAndValidatesFrozenEntries(t *testing.T) {
 	t.Parallel()
 	for _, driver := range v090UpgradeDrivers() {
 		t.Run(driver.name, func(t *testing.T) {
@@ -356,9 +356,9 @@ func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 	rawSource := sources[raw.ID]
 	var alternateSource string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT identity FROM provenance WHERE node_id=? AND original_path LIKE '%AAA.ARW'`, raw.NodeID).Scan(&alternateSource))
-	for _, variant := range []string{"current", "missing source_provenance_identity", "another node"} {
+	for _, variant := range []string{"alternate source", "missing source_provenance_identity", "another node"} {
 		expectedSource := rawSource
-		if variant == "current" {
+		if variant == "alternate source" {
 			expectedSource = alternateSource
 		}
 		lines := bytes.Split(backup.Bytes(), []byte{'\n'})
@@ -370,7 +370,7 @@ func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 			require.NoError(t, json.Unmarshal(line, &file))
 			if variant == "missing source_provenance_identity" {
 				file.SourceProvenanceIdentity = nil
-			} else if variant == "current" && file.FileID == raw.ID {
+			} else if variant == "alternate source" && file.FileID == raw.ID {
 				file.SourceProvenanceIdentity = &alternateSource
 			} else if variant == "another node" && file.Role == PhotoRoleImage {
 				file.SourceProvenanceIdentity = &rawSource
@@ -494,7 +494,7 @@ func TestPhotoCheckoutSourcePathBasenames(t *testing.T) {
 		{`/camera/foo\bar.JPG`, `foo\bar.JPG`},
 		{`/camera/Trip: Day 1.jpg`, "Trip: Day 1.jpg"},
 	} {
-		if runtime.GOOS == "windows" && tc.basename == "Trip: Day 1.jpg" {
+		if runtime.GOOS == "windows" && tc.basename == `foo\bar.JPG` {
 			continue
 		}
 		sourcePath := tc.sourcePath
