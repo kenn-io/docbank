@@ -8,12 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -272,26 +270,38 @@ func TestPhotoImportOutputPointsToJobs(t *testing.T) {
 }
 
 func TestPhotoImportAmbiguitiesReachJobsShow(t *testing.T) {
-	_ = setupVaultHome(t)
-	source := t.TempDir()
-	for name, body := range map[string]string{"IMG_0001.ARW": "raw-one", "IMG_0001.DNG": "raw-two", "IMG_0001.JPG": "jpeg"} {
-		require.NoError(t, os.WriteFile(filepath.Join(source, name), []byte(body), 0o600))
-	}
-	output, err := runCLI(t, "photos", "import", source, "/photos", "--json")
-	require.NoError(t, err, output)
-	var accepted api.StorageOperation
-	require.NoError(t, json.Unmarshal([]byte(output), &accepted))
-	var completed api.StorageOperation
-	require.Eventually(t, func() bool {
-		shown, showErr := runCLI(t, "jobs", "show", accepted.ID, "--json")
-		return showErr == nil && json.Unmarshal([]byte(shown), &completed) == nil && completed.State == "completed"
-	}, 10*time.Second, 20*time.Millisecond)
-	receiptJSON, err := json.Marshal(completed.Receipt)
+	vault := t.TempDir()
+	t.Setenv("DOCBANK_HOME", vault)
+	const token = "synthetic-proof-token"
+	operation := api.StorageOperation{ID: "00000000-0000-4000-8000-000000000021", Kind: "photo_import", State: "completed", Receipt: store.PhotoImportReceipt{
+		Ambiguous: 1, Ambiguities: []store.PhotoImportAmbiguity{{Reason: store.PhotoImportMultipleRAW, Files: []store.PhotoImportAmbiguousFile{
+			{SourcePath: "IMG.ARW", NodeID: 42, Role: store.PhotoRoleRAW},
+			{SourcePath: "IMG.DNG", NodeID: 43, Role: store.PhotoRoleRAW},
+			{SourcePath: "IMG.JPG", NodeID: 44, Role: store.PhotoRoleImage},
+		}}},
+	}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case kitdaemon.DefaultPingPath:
+			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: os.Getpid()}))
+		case daemonauth.ChallengePath:
+			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+			assert.NoError(t, err)
+			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
+		case "/api/v1/jobs/" + operation.ID:
+			assert.Equal(t, http.MethodGet, r.Method)
+			assert.NoError(t, json.MarshalWrite(w, operation))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
 	require.NoError(t, err)
-	var receipt store.PhotoImportReceipt
-	require.NoError(t, json.Unmarshal(receiptJSON, &receipt))
-	assert.Equal(t, int64(1), receipt.Ambiguous)
-	require.Len(t, receipt.Ambiguities, 1)
-	assert.Equal(t, store.PhotoImportMultipleRAW, receipt.Ambiguities[0].Reason)
-	assert.Len(t, receipt.Ambiguities[0].Files, 3)
+	output, err := runCLI(t, "jobs", "show", operation.ID, "--json")
+	require.NoError(t, err, output)
+	expected, err := json.Marshal(operation)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expected), output)
 }

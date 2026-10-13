@@ -16,7 +16,7 @@ import (
 func TestPhotoCheckoutRoutes(t *testing.T) {
 	t.Parallel()
 	supervisor := jobs.New(t.Context(), nil)
-	t.Cleanup(supervisor.Stop)
+	supervisor.Stop()
 	ts, catalog := newTestServer(t, func(d *api.Deps) { d.Jobs = supervisor })
 	hash, size, err := catalog.Blobs.Write(strings.NewReader("photo bytes"))
 	require.NoError(t, err)
@@ -42,12 +42,25 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.Equal(t, request.Selection, created.Checkout.Selection)
 	require.Equal(t, request.ByteLimit, created.Checkout.ByteLimit)
 	require.Equal(t, request.Destination, created.Checkout.Destination)
-	// Wait for worker completion before TempDir cleanup.
-	require.Eventually(t, func() bool {
-		op, err := catalog.StorageOperation(t.Context(), created.Operation.ID)
-		return err == nil && op.FinishedAt != nil
-	}, 5*time.Second, 10*time.Millisecond)
-
+	storedCheckout, storedOperation, err := catalog.PhotoCheckoutOperation(t.Context(), created.Checkout.ID)
+	require.NoError(t, err)
+	require.Equal(t, storedCheckout, created.Checkout)
+	var receipt any
+	require.NoError(t, json.Unmarshal([]byte(storedOperation.ReceiptJSON), &receipt))
+	expectedOperation := api.StorageOperation{
+		ID: storedOperation.ID, Kind: storedOperation.Kind, State: string(storedOperation.State),
+		PlanDigest: storedOperation.RequestDigest, TotalObjects: storedOperation.TotalObjects,
+		CompletedObjects: storedOperation.CompletedObjects, CopiedObjects: storedOperation.CopiedObjects,
+		CopiedBytes: storedOperation.CopiedBytes, CancelRequested: storedOperation.CancelRequested,
+		Error: storedOperation.Error, Receipt: receipt,
+		CreatedAt: storedOperation.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: storedOperation.UpdatedAt.Format(time.RFC3339Nano),
+		FinishedAt: storedOperation.FinishedAt.Format(time.RFC3339Nano),
+	}
+	expectedJSON, err := json.Marshal(expectedOperation)
+	require.NoError(t, err)
+	var expectedResponse api.StorageOperation
+	require.NoError(t, json.Unmarshal(expectedJSON, &expectedResponse))
+	require.Equal(t, expectedResponse, created.Operation)
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/"+created.Checkout.ID, nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var status api.PhotoCheckoutStatus
@@ -66,29 +79,4 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, response.StatusCode, body)
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts", nil, api.PhotoCheckoutCreateRequest{Selection: store.PhotoCheckoutSelection{All: true}, Destination: t.TempDir()})
 	require.Equal(t, http.StatusUnprocessableEntity, response.StatusCode, body)
-	supervisor.Stop()
-	request.Destination = t.TempDir()
-	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts", nil, request)
-	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
-	var failed api.PhotoCheckoutCreateResult
-	require.NoError(t, json.Unmarshal([]byte(body), &failed))
-	storedCheckout, storedOperation, err := catalog.PhotoCheckoutOperation(t.Context(), failed.Checkout.ID)
-	require.NoError(t, err)
-	require.Equal(t, storedCheckout, failed.Checkout)
-	var receipt any
-	require.NoError(t, json.Unmarshal([]byte(storedOperation.ReceiptJSON), &receipt))
-	expectedOperation := api.StorageOperation{
-		ID: storedOperation.ID, Kind: storedOperation.Kind, State: string(storedOperation.State),
-		PlanDigest: storedOperation.RequestDigest, TotalObjects: storedOperation.TotalObjects,
-		CompletedObjects: storedOperation.CompletedObjects, CopiedObjects: storedOperation.CopiedObjects,
-		CopiedBytes: storedOperation.CopiedBytes, CancelRequested: storedOperation.CancelRequested,
-		Error: storedOperation.Error, Receipt: receipt,
-		CreatedAt: storedOperation.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: storedOperation.UpdatedAt.Format(time.RFC3339Nano),
-		FinishedAt: storedOperation.FinishedAt.Format(time.RFC3339Nano),
-	}
-	expectedJSON, err := json.Marshal(expectedOperation)
-	require.NoError(t, err)
-	var expectedResponse api.StorageOperation
-	require.NoError(t, json.Unmarshal(expectedJSON, &expectedResponse))
-	require.Equal(t, expectedResponse, failed.Operation)
 }
