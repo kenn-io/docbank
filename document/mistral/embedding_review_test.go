@@ -12,12 +12,12 @@ import (
 	"net/netip"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/docbank/document"
@@ -110,30 +110,24 @@ func TestMistralEmbeddingAttemptTimeouts(t *testing.T) {
 					recomputeMistralEmbeddingProfile(t, &profile)
 					provider, err := newMistralEmbeddingTestProvider(t, profile, secrets, failingMistralEmbeddingResolver{})
 					require.NoError(t, err)
-					provider.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 						count := requests.Add(1)
-						defer func() { _ = r.Body.Close() }()
 						_, _ = io.Copy(io.Discard, r.Body)
+						w.Header().Set("Content-Type", "application/json")
 						if stage != "credentials" && (outcome != "recover" || count < 3) {
-							if stage == "headers" {
-								if outcome == "caller_cancel" {
-									cancel()
-								}
-								<-r.Context().Done()
-								return nil, r.Context().Err()
+							if stage == "body" {
+								w.WriteHeader(http.StatusOK)
+								assert.NoError(t, http.NewResponseController(w).Flush())
 							}
-							body, writer := io.Pipe()
-							go func() {
-								if outcome == "caller_cancel" {
-									cancel()
-								}
-								<-r.Context().Done()
-								_ = writer.CloseWithError(r.Context().Err())
-							}()
-							return &http.Response{StatusCode: http.StatusOK, Body: body, Header: http.Header{"Content-Type": {"application/json"}}}, nil
+							if outcome == "caller_cancel" {
+								cancel()
+							}
+							<-r.Context().Done()
+							return
 						}
-						return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(response))), Header: http.Header{"Content-Type": {"application/json"}}}, nil
-					})
+						_, _ = w.Write(response)
+					}))
+					provider.http = server.Client()
 					result, err := provider.Embed(ctx, []document.EmbeddingInput{{Key: "first", Role: document.EmbeddingRoleDocument, Kind: document.EmbeddingInputRenditionChunk, Text: "first"}}, embeddingAuthorization(profile.Descriptor))
 					switch outcome {
 					case "recover":
