@@ -346,11 +346,11 @@ func CreatePrivateFileAt(root *os.Root, component string) (*os.File, error) {
 	}
 	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;;GA;;;" + user.String() + ")")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating private file security descriptor: %w", err)
 	}
 	name, err := windows.NewNTUnicodeString(component)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("encoding private file name: %w", err)
 	}
 	attributes := &windows.OBJECT_ATTRIBUTES{Length: uint32(unsafe.Sizeof(windows.OBJECT_ATTRIBUTES{})), RootDirectory: windows.Handle(parent.Fd()), ObjectName: name, Attributes: windows.OBJ_CASE_INSENSITIVE | windows.OBJ_DONT_REPARSE, SecurityDescriptor: descriptor}
 	var handle windows.Handle
@@ -360,7 +360,7 @@ func CreatePrivateFileAt(root *os.Root, component string) (*os.File, error) {
 		return nil, os.ErrExist
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating private file: %w", err)
 	}
 	return os.NewFile(uintptr(handle), component), nil
 }
