@@ -96,6 +96,8 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await page.evaluate(()=>{const map=(window as typeof window & {photoMap:import("leaflet").Map}).photoMap;map.panBy([map.getSize().x/2-8,0],{animate:false});});
     await expect(page.locator(".leaflet-cluster-anim")).toHaveCount(0);await page.locator(".photo-map-cluster").filter({hasText:/^2$/}).press("Space");await expandedOverlap();
     await expect(page.getByText("2 photos",{exact:true})).toBeVisible();
+    await page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([40.748816666666667,-73.98565555555555],19,{animate:false}));
+    await page.locator(".photo-map-cluster").filter({hasText:/^2$/}).press("Space");await expandedOverlap();
     await page.screenshot({path:path.join(output!, "photo-map-overlap-1440-dark.png"), animations:"disabled"});
 
     await page.getByRole("button",{name:"Move to trash",exact:true}).click();
@@ -134,10 +136,24 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await page.getByRole("button",{name:"Map",exact:true}).first().click();
     await expect(page.locator(".photo-map-cluster").first()).toBeVisible();
     await expect(page.getByTestId("photo-scroll").locator("img").first()).toBeVisible();
+    await expect.poll(()=>page.locator(".leaflet-tile-loaded").evaluateAll(tiles=>tiles.length > 0 && tiles.every(tile=>getComputedStyle(tile).opacity === "1"))).toBe(true);
     await page.screenshot({path:path.join(output!, "photo-map-date-1440-dark.png"),animations:"disabled"});
     await page.getByRole("button",{name:"Library",exact:true}).click();
     await page.getByRole("button",{name:"Clear date",exact:true}).click();
     await expect(page.getByText("15 photos · 15 loaded",{exact:true})).toBeVisible();
+    await page.getByRole("navigation",{name:"Docbank navigation"}).getByRole("button",{name:/Paris walks/}).click();
+    await expect(page.getByRole("heading",{name:"Paris walks",exact:true})).toBeVisible();
+    await expect(page.getByText("8 photos · 8 loaded",{exact:true})).toBeVisible();
+    await page.getByRole("navigation",{name:"Docbank navigation"}).getByRole("button",{name:"Map",exact:true}).click();
+    await expect(page.getByText("7 located photos",{exact:true})).toBeVisible();
+    await page.evaluate(()=>(window as typeof window & {photoMap:import("leaflet").Map}).photoMap.setView([0,0],0,{animate:false}));
+    await expect(page.getByText("7 photos",{exact:true})).toBeVisible();
+    await expect(page.getByTestId("photo-scroll").locator("img")).toHaveCount(7);
+    for(const index of [1,3,5,7,9,11,13]) await expect(page.getByRole("button",{name:`Open Synthetic-photo-${String(index).padStart(5,"0")}.jpg`,exact:true})).toBeVisible();
+    await expect(page.locator(".leaflet-tile-loaded")).toHaveCount(1);
+    await expect(page.locator(".leaflet-tile-loaded")).toHaveCSS("opacity","1");
+    await page.screenshot({path:path.join(output!,"photo-map-album-1440-dark.png"),animations:"disabled"});
+    await page.getByRole("button",{name:"Library",exact:true}).click();
     let releasePage!:()=>void;const pendingPage=new Promise<void>(resolve=>releasePage=resolve);
     let releaseCluster!:()=>void;const pendingCluster=new Promise<void>(resolve=>releaseCluster=resolve);
     let neighbor:unknown,joining:unknown,failed=false;
@@ -192,6 +208,13 @@ test("photo map privacy, clusters, marker return and mobile grid", async ({ page
     await page.getByRole("alert").waitFor();await page.getByRole("button",{name:"Retry",exact:true}).waitFor();
     await page.screenshot({path:path.join(output!,"photo-map-access-retry-400-dark.png"),animations:"disabled"});
     await page.unroute("**/photos/assets/query");await page.getByRole("button",{name:"Retry",exact:true}).click();await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
+    await page.unroute("https://tiles.example.org/**");
+    await page.route("https://tiles.example.org/**",route=>route.fulfill({status:404,body:""}));
+    await page.setViewportSize({width:1440,height:960});await page.goto("about:blank");await page.goto(enabledURL.href);
+    await expect(page.getByText("13 located photos",{exact:true})).toBeVisible();
+    await expect(page.locator(".photo-map-cluster").first()).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveText("Map tiles from tiles.example.org couldn't load. Check [web.map_tiles], then restart Docbank.");
+    await page.screenshot({path:path.join(output!,"photo-map-tile-error-1440-dark.png"),animations:"disabled"});
     await page.route("**/assets/PhotoMap-*.js",route=>route.abort());
     await page.setViewportSize({width:1440,height:960});await page.goto("about:blank");await page.goto(enabledURL.href);
     await expect(page.getByText("Map couldn't load",{exact:true})).toBeVisible();
