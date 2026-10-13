@@ -389,7 +389,7 @@
     clearPhotoNotice();
     navOpen = false;
     if (photoMode && path === photoPath && path === location.pathname && !photoID) return;
-    if (!photoMode || path !== photoPath) void invalidateLibrary(false);
+    if ((!photoMode || path !== photoPath) && (isMapPath(path) || mapMode)) void invalidateLibrary(false);
     hiddenPhotoActionError = "";
     const previous = activePhotos();
     if (previous) previous.viewerReturn = undefined;
@@ -2198,7 +2198,7 @@
       {#if photoMode}
         <div class="nav-group">
           <button type="button" class="nav-item" aria-current={photoPath === "/photos" ? "page" : undefined} onclick={() => navigatePhotos("/photos")}><LibraryIcon size="16" aria-hidden="true" />Library</button>
-          <button type="button" class="nav-item" aria-current={mapMode ? "page" : undefined} onclick={() => navigatePhotos(albumID ? `/photos/map/${albumID}` : "/photos/map")}><MapPinIcon size="16" aria-hidden="true" />Map</button>
+          <button type="button" class="nav-item" aria-current={mapMode ? "page" : undefined} onclick={() => navigatePhotos(mapMode ? photoPath : albumID ? `/photos/map/${albumID}` : "/photos/map")}><MapPinIcon size="16" aria-hidden="true" />Map</button>
           <button type="button" class="nav-item" data-albums-nav aria-current={photoPath === "/photos/albums" ? "page" : undefined} onclick={() => navigatePhotos("/photos/albums")}><FoldersIcon size="16" aria-hidden="true" />Albums</button>
           <button type="button" class="nav-item" aria-current={hiddenMode ? "page" : undefined} onclick={() => navigatePhotos("/photos/hidden")}><EyeOffIcon size="16" aria-hidden="true" />Hidden</button>
           <button type="button" class="nav-item" aria-label="Recoverable trash" onclick={() => openPanel({ kind: "trash" })}><Trash2Icon size="16" aria-hidden="true" />Trash</button>

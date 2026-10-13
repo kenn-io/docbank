@@ -48,7 +48,7 @@ func registerWeb(mux *http.ServeMux, enabled bool, webURL, loginOrigin string, t
 	mux.HandleFunc("GET /photos/hidden", index)
 	mux.HandleFunc("GET /photos/map", index)
 	mux.HandleFunc("GET /photos/map/{set_id}", func(w http.ResponseWriter, r *http.Request) {
-		if query.ValidateTextOperand("set", r.PathValue("set_id")) != nil {
+		if !isPhotoMapPage(r.URL.Path) {
 			http.NotFound(w, r)
 			return
 		}
@@ -67,6 +67,11 @@ func registerWeb(mux *http.ServeMux, enabled bool, webURL, loginOrigin string, t
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		static.ServeHTTP(w, r)
 	}))
+}
+
+func isPhotoMapPage(path string) bool {
+	id, ok := strings.CutPrefix(path, "/photos/map/")
+	return ok && query.ValidateTextOperand("set", id) == nil
 }
 
 func isPhotoAlbumPage(path string) bool {

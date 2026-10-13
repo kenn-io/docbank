@@ -106,10 +106,7 @@ func TestPhotoBrowseRouteContract(t *testing.T) {
 		require.NoError(t, err)
 		if name == "a.jpg" {
 			qualityNode = node
-			fields := []document.SourceMetadataFieldV1{
-				{Key: "image.exif.gps_latitude", Namespace: "image.exif", SourceField: "GPSLatitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("0")}},
-				{Key: "image.exif.gps_longitude", Namespace: "image.exif", SourceField: "GPSLongitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("12")}},
-			}
+			fields := syntheticGPSFields()
 			sources := map[string]string{"camera_make": "Make", "camera_model": "Model", "lens_make": "LensMake", "lens_model": "LensModel", "iso": "PhotographicSensitivity", "f_number": "FNumber", "exposure_time_seconds": "ExposureTime", "exposure_bias_ev": "ExposureBiasValue", "focal_length_mm": "FocalLength", "orientation": "Orientation"}
 			for key, value := range map[string]string{"camera_make": "Synthetic Camera", "camera_model": "Model 7", "lens_make": "Synthetic Lens", "lens_model": "Lens 85"} {
 				fields = append(fields, document.SourceMetadataFieldV1{Key: "image.exif." + key, Namespace: "image.exif", SourceField: sources[key], Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new(value)}})
@@ -522,6 +519,13 @@ func TestPreparePhotoPreviewEligibilityAndReuse(t *testing.T) {
 	require.Equal(t, "ready", first.State)
 }
 
+func syntheticGPSFields() []document.SourceMetadataFieldV1 {
+	return []document.SourceMetadataFieldV1{
+		{Key: "image.exif.gps_latitude", Namespace: "image.exif", SourceField: "GPSLatitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("0")}},
+		{Key: "image.exif.gps_longitude", Namespace: "image.exif", SourceField: "GPSLongitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("12")}},
+	}
+}
+
 func TestPhotoBrowseBrowserCoordinatesRequireTiles(t *testing.T) {
 	t.Parallel()
 	for _, enabled := range []bool{false, true} {
@@ -538,10 +542,7 @@ func TestPhotoBrowseBrowserCoordinatesRequireTiles(t *testing.T) {
 			})
 			node, err := s.CreateFile(t.Context(), s.RootID(), "synthetic.jpg", testHash("gps"), 10, "image/jpeg")
 			require.NoError(t, err)
-			canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: []document.SourceMetadataFieldV1{
-				{Key: "image.exif.gps_latitude", Namespace: "image.exif", SourceField: "GPSLatitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("0")}},
-				{Key: "image.exif.gps_longitude", Namespace: "image.exif", SourceField: "GPSLongitude", Value: document.SourceMetadataValueV1{Kind: document.SourceMetadataString, String: new("12")}},
-			}})
+			canonical, _, err := document.MarshalSourceMetadataV1(document.SourceMetadataV1{ContractVersion: document.SourceMetadataContractV1, Fields: syntheticGPSFields()})
 			require.NoError(t, err)
 			_, err = s.PublishSourceMetadata(t.Context(), node.BlobHash, testHash("synthetic gps metadata"), canonical)
 			require.NoError(t, err)

@@ -48,7 +48,7 @@
   let consumedReload = $state.raw<typeof reload>();
   let reloadedItems: Photos["items"] | undefined;
   let reloadRevision = $state(0);
-  let detailController: AbortController | undefined;
+  let visitController: AbortController | undefined;
   const fromGrid = $derived(photos.viewerReturn?.contextID === photos.contextID);
   const listed = $derived(photos.items.some(item => item.asset_id === photoID));
   const membershipNote = $derived(photoID && fromGrid && !listed && !photos.loading ? "This photo is no longer in the refreshed result." : "");
@@ -57,10 +57,15 @@
   let openingID = "";
   let restorePosition: (() => Promise<void>) | undefined;
   $effect(() => {
+    if (!photoID) return;
+    const controller = new AbortController();
+    visitController = controller;
+    return () => controller.abort();
+  });
+  $effect(() => {
     const id = photoID;
     if (!id) { direct = undefined; detailError = ""; if (fromGrid) void restoreGrid(); return; }
     const controller = new AbortController();
-    detailController = controller;
     const explicit = reload?.id === id && reload !== consumedReload;
     // Each accepted list refresh revalidates a grid-opened photo; an explicit reload updates the list itself, so it must not depend on it.
     if (!explicit && fromGrid) void photos.items;
@@ -99,7 +104,7 @@
     onphotochange(id, "open");
   }
   async function move(direction: -1 | 1) {
-    const controller = detailController;
+    const controller = visitController;
     if (!fromGrid || !current || !controller) return;
     const id = current.asset_id;
     const index = ordered.findIndex(item => item.asset_id === id);
