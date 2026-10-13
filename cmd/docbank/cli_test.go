@@ -8,6 +8,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -26,8 +28,11 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/apiclient"
 	"go.kenn.io/docbank/internal/backupapp"
+	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/version"
+	kitdaemon "go.kenn.io/kit/daemon"
 )
 
 // runCLI executes the root command against a test vault (caller must have
@@ -1321,30 +1326,48 @@ func TestSearchCLIReportsTruncation(t *testing.T) {
 }
 
 func TestTrashEmpty(t *testing.T) {
-	setupVaultHome(t)
-	src := writeSourceFile(t, "a.txt", "alpha")
-	_, err := runCLI(t, "add", src, "--dest", "/inbox")
+	vault := t.TempDir()
+	t.Setenv("DOCBANK_HOME", vault)
+	const token = "synthetic-proof-token"
+	runs := make(chan bool, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case kitdaemon.DefaultPingPath:
+			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: os.Getpid()}))
+		case daemonauth.ChallengePath:
+			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+			assert.NoError(t, err)
+			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
+		case "/api/v1/trash/empty":
+			var input struct {
+				Run bool `json:"run"`
+			}
+			assert.NoError(t, json.UnmarshalRead(r.Body, &input))
+			runs <- input.Run
+			report := api.TrashEmptyReport{CandidateRoots: 1, RetainedRoots: 1, Run: input.Run}
+			if input.Run {
+				report.Deleted = 1
+			}
+			assert.NoError(t, json.MarshalWrite(w, report))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
 	require.NoError(t, err)
-	_, err = runCLI(t, "rm", "/inbox/a.txt")
-	require.NoError(t, err)
-
 	out, err := runCLI(t, "trash", "empty")
-	require.NoError(t, err)
+	require.NoError(t, err, out)
 	assert.Contains(t, out, "1 trashed root")
 	assert.Contains(t, out, "dry run")
-
-	// Dry run leaves the node in trash.
-	out, err = runCLI(t, "trash", "list")
-	require.NoError(t, err)
-	assert.Contains(t, out, "a.txt")
-
 	out, err = runCLI(t, "trash", "empty", "--run")
-	require.NoError(t, err)
-	assert.Contains(t, out, "deleted 1")
-
-	out, err = runCLI(t, "trash", "list")
-	require.NoError(t, err)
-	assert.Contains(t, out, "trash is empty")
+	require.NoError(t, err, out)
+	assert.Contains(t, out, "deleted 1 trashed root(s)")
+	assert.Contains(t, out, "retained 1 trashed root(s) referenced by email publications or photo checkouts")
+	require.Len(t, runs, 2)
+	assert.False(t, <-runs)
+	assert.True(t, <-runs)
 }
 
 func TestTreeRejectsFileWithoutOutput(t *testing.T) {

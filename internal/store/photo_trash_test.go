@@ -341,29 +341,6 @@ func TestTrashEmptyDryRunUsesReadSnapshot(t *testing.T) {
 	assert.Equal(t, int64(1), result.Candidates)
 }
 
-func TestTrashEmptyOrdinaryFoldersAcrossBatches(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	for i := range 205 {
-		folder, err := s.Mkdir(t.Context(), s.RootID(), fmt.Sprintf("folder-%d", i))
-		require.NoError(t, err)
-		_, err = s.CreateFile(t.Context(), folder.ID, "notes.txt", fakeHash("b2"), 1, "text/plain")
-		require.NoError(t, err)
-		_, _, err = s.Trash(t.Context(), folder.ID, UnconditionalRev)
-		require.NoError(t, err)
-	}
-	for _, count := range []int64{101, 101, 3} {
-		dry, err := s.TrashEmptyBounded(t.Context(), 0, 101, false)
-		require.NoError(t, err)
-		assert.Equal(t, count, dry.Candidates)
-		assert.Equal(t, count == 101, dry.More)
-		run, err := s.TrashEmptyBounded(t.Context(), 0, 101, true)
-		require.NoError(t, err)
-		assert.Equal(t, count, run.Deleted)
-		assert.Equal(t, dry.More, run.More)
-	}
-}
-
 func BenchmarkTrashEmptyLarge(b *testing.B) {
 	for _, kind := range []string{"files", "folders", "photos"} {
 		for _, count := range []int{1000, 10000} {

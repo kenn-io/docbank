@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
-	"go.kenn.io/docbank/internal/api"
 	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/version"
@@ -35,7 +34,6 @@ func TestEmailDocumentsCLIForwardsRequestsAndPrintsResponses(t *testing.T) {
 	}
 	queries := make(chan url.Values, 1)
 	releases := make(chan struct{ id, digest string }, 1)
-	runs := make(chan bool, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -59,14 +57,6 @@ func TestEmailDocumentsCLIForwardsRequestsAndPrintsResponses(t *testing.T) {
 		case "/api/v1/email-document-relations":
 			queries <- r.URL.Query()
 			assert.NoError(t, json.MarshalWrite(w, page))
-		case "/api/v1/trash/empty":
-			var input struct {
-				Run bool `json:"run"`
-			}
-			assert.NoError(t, json.UnmarshalRead(r.Body, &input))
-			runs <- input.Run
-			report := api.TrashEmptyReport{CandidateRoots: 1, Deleted: 1, RetainedRoots: 1, Run: true}
-			assert.NoError(t, json.MarshalWrite(w, report))
 		default:
 			http.NotFound(w, r)
 		}
@@ -86,14 +76,8 @@ func TestEmailDocumentsCLIForwardsRequestsAndPrintsResponses(t *testing.T) {
 	require.Equal(t, page, relations)
 	require.Len(t, queries, 1)
 	require.Equal(t, url.Values{"parent_version_id": {parentVersion}, "limit": {"64"}, "after_operation_id": {"prior"}, "after_order": {"7"}}, <-queries)
-	out, err = runCLI(t, "trash", "empty", "--run")
-	require.NoError(t, err, out)
-	require.Contains(t, out, "retained 1 trashed root(s) referenced by email publications or photo checkouts")
-	require.Contains(t, out, "deleted 1 trashed root(s)")
 	out, err = runCLI(t, "email-documents", "release", receipt.OperationID, "--request-digest", receipt.RequestDigest)
 	require.NoError(t, err, out)
 	require.Len(t, releases, 1)
 	require.Equal(t, struct{ id, digest string }{receipt.OperationID, receipt.RequestDigest}, <-releases)
-	require.Len(t, runs, 1)
-	require.True(t, <-runs)
 }

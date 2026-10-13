@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -440,31 +441,43 @@ func TestTrashEmptyRemovesProcessedDocumentRenditionAttachment(t *testing.T) {
 
 func TestVaultEmptyTrashBoundedStore(t *testing.T) {
 	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	for _, name := range []string{"first", "second", "third"} {
-		node, err := s.Mkdir(ctx, s.RootID(), name)
-		require.NoError(t, err)
-		_, _, err = s.Trash(ctx, node.ID, node.Revision)
-		require.NoError(t, err)
+	for _, test := range []struct {
+		name         string
+		total, limit int
+		populated    bool
+	}{{"small batch", 3, 2, false}, {"populated folders across batches", 205, 101, true}} {
+		t.Run(test.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := t.Context()
+			for i := range test.total {
+				node, err := s.Mkdir(ctx, s.RootID(), fmt.Sprintf("folder-%d", i))
+				require.NoError(t, err)
+				if test.populated {
+					_, err = s.CreateFile(ctx, node.ID, "notes.txt", fakeHash("b2"), 1, "text/plain")
+					require.NoError(t, err)
+				}
+				_, _, err = s.Trash(ctx, node.ID, UnconditionalRev)
+				require.NoError(t, err)
+			}
+			for remaining := test.total; remaining > 0; remaining -= test.limit {
+				count, more := int64(min(remaining, test.limit)), remaining > test.limit
+				dryRun, err := s.TrashEmptyBounded(ctx, 0, test.limit, false)
+				require.NoError(t, err)
+				assert.Equal(t, TrashEmptyResult{Candidates: count, More: more}, dryRun)
+				roots, err := s.TrashedRoots(ctx)
+				require.NoError(t, err)
+				require.Len(t, roots, remaining)
+				deleted, err := s.TrashEmptyBounded(ctx, 0, test.limit, true)
+				require.NoError(t, err)
+				assert.Equal(t, TrashEmptyResult{Candidates: count, Deleted: count, More: more, Run: true}, deleted)
+				roots, err = s.TrashedRoots(ctx)
+				require.NoError(t, err)
+				require.Len(t, roots, remaining-int(count))
+			}
+			_, err := s.TrashEmptyBounded(ctx, 0, 0, true)
+			require.ErrorContains(t, err, "maximum trash roots must be positive")
+		})
 	}
-
-	dryRun, err := s.TrashEmptyBounded(ctx, 0, 2, false)
-	require.NoError(t, err)
-	assert.Equal(t, TrashEmptyResult{Candidates: 2, More: true}, dryRun)
-	roots, err := s.TrashedRoots(ctx)
-	require.NoError(t, err)
-	require.Len(t, roots, 3)
-
-	deleted, err := s.TrashEmptyBounded(ctx, 0, 2, true)
-	require.NoError(t, err)
-	assert.Equal(t, TrashEmptyResult{Candidates: 2, Deleted: 2, More: true, Run: true}, deleted)
-	remaining, err := s.TrashedRoots(ctx)
-	require.NoError(t, err)
-	require.Len(t, remaining, 1)
-
-	_, err = s.TrashEmptyBounded(ctx, 0, 0, true)
-	require.ErrorContains(t, err, "maximum trash roots must be positive")
 }
 
 func TestTrashEmptyAdvancesAffectedTagRevisionsOnce(t *testing.T) {
