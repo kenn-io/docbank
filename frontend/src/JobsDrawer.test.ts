@@ -33,24 +33,6 @@ describe("background jobs drawer", () => {
   it.each([
     ["initial load", 503, { detail: "busy" }, "busy"],
     ["active polling", 503, { detail: "busy" }, "busy"],
-    [
-      "lane controls",
-      200,
-      {
-        items: [
-          {
-            name: "storage:a",
-            kind: "photo_import",
-            operation_id: "a",
-            status: "running",
-            started_at: "2026-07-23T12:00:00Z",
-            can_cancel: true,
-          },
-        ],
-        lane_controls_error: "Lane controls are unavailable",
-      },
-      "Lane controls are unavailable",
-    ],
   ])(
     "recovers unavailable %s responses after retry",
     async (failure, status, body, message) => {
@@ -95,11 +77,7 @@ describe("background jobs drawer", () => {
           expect(screen.getByRole("alert").textContent).toBe(message);
           expect(screen.queryByText("No background jobs")).toBeNull();
           expect(screen.queryByText("Read-only")).toBeNull();
-          await fireEvent.click(
-            screen.getByRole("button", {
-              name: failure === "initial load" ? "Try again" : "Refresh background jobs",
-            }),
-          );
+          await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
           await vi.advanceTimersByTimeAsync(0);
           expect(screen.getByText("No background jobs")).toBeTruthy();
         }
@@ -288,151 +266,166 @@ describe("background jobs drawer", () => {
   });
 
   it("shows durable job progress and cancels through the shared Jobs route", async () => {
-    const id = "f6730699-23b5-458a-b6d9-11b140ac1f92";
-    const placeId = "0b9d8f43-6f0e-4b4a-9d55-2f1c5b2b7c11";
-    const items: Job[] = [
-      {
-        name: `storage:${id}`,
-        kind: "photo_import",
-        operation_id: id,
-        status: "running",
-        started_at: "2026-07-23T12:00:00Z",
-        completed_objects: 75,
-        total_objects: 300,
-        can_cancel: true,
-      },
-      {
-        name: "storage:b",
-        kind: "photo_import",
-        operation_id: "b",
-        status: "queued",
-        started_at: "2026-07-23T12:00:20Z",
-        total_objects: 1,
-        can_cancel: true,
-      },
-      {
-        name: "storage:checkout",
-        kind: "photo_checkout",
-        operation_id: "checkout",
-        status: "running",
-        started_at: "2026-07-23T12:00:30Z",
-        completed_objects: 1,
-        total_objects: 2,
-      },
-      {
-        name: `storage:${placeId}`,
-        kind: "place",
-        operation_id: placeId,
-        status: "queued",
-        started_at: "2026-07-23T12:01:00Z",
-        can_cancel: true,
-      },
-      {
-        name: "watch:inbox",
-        status: "running",
-        started_at: "2026-07-23T11:00:00Z",
-      },
-    ];
-    const preparedLanes: ReturnType<typeof jobs.jobLanes> = [
-      {
-        key: "photo_import",
+    vi.useFakeTimers();
+    try {
+      const id = "f6730699-23b5-458a-b6d9-11b140ac1f92";
+      const placeId = "0b9d8f43-6f0e-4b4a-9d55-2f1c5b2b7c11";
+      const items: Job[] = [
+        {
+          name: `storage:${id}`,
+          kind: "photo_import",
+          operation_id: id,
+          status: "running",
+          started_at: "2026-07-23T12:00:00Z",
+          completed_objects: 75,
+          total_objects: 300,
+          can_cancel: true,
+        },
+        {
+          name: "storage:b",
+          kind: "photo_import",
+          operation_id: "b",
+          status: "queued",
+          started_at: "2026-07-23T12:00:20Z",
+          total_objects: 1,
+          can_cancel: true,
+        },
+        {
+          name: "storage:checkout",
+          kind: "photo_checkout",
+          operation_id: "checkout",
+          status: "running",
+          started_at: "2026-07-23T12:00:30Z",
+          completed_objects: 1,
+          total_objects: 2,
+        },
+        {
+          name: `storage:${placeId}`,
+          kind: "place",
+          operation_id: placeId,
+          status: "queued",
+          started_at: "2026-07-23T12:01:00Z",
+          can_cancel: true,
+        },
+        {
+          name: "watch:inbox",
+          status: "running",
+          started_at: "2026-07-23T11:00:00Z",
+        },
+      ];
+      const preparedLanes: ReturnType<typeof jobs.jobLanes> = [
+        {
+          key: "photo_import",
+          lane: "photo_import",
+          title: "Photo import",
+          members: [items[0], items[1]],
+          status: "running",
+          completed: 75,
+          total: 400,
+          active: true,
+          control: undefined,
+        },
+        {
+          key: "photo_checkout",
+          lane: "photo_checkout",
+          title: "Photo checkout",
+          members: [items[2]],
+          status: "running",
+          completed: 1,
+          total: 2,
+          active: true,
+          control: undefined,
+        },
+        {
+          key: "place",
+          lane: "place",
+          title: "Storage placement",
+          members: [items[3]],
+          status: "queued",
+          completed: 0,
+          total: undefined,
+          active: true,
+          control: undefined,
+        },
+        {
+          key: "watch:inbox",
+          lane: "watch:inbox",
+          title: "watch · inbox",
+          members: [items[4]],
+          status: "running",
+          completed: 0,
+          total: undefined,
+          active: true,
+          control: undefined,
+        },
+      ];
+      const group = vi.spyOn(jobs, "jobLanes").mockReturnValue(preparedLanes);
+      const control = {
         lane: "photo_import",
-        title: "Photo import",
-        members: [items[0], items[1]],
-        status: "running",
-        completed: 75,
-        total: 400,
-        active: true,
-        control: undefined,
-      },
-      {
-        key: "photo_checkout",
-        lane: "photo_checkout",
-        title: "Photo checkout",
-        members: [items[2]],
-        status: "running",
-        completed: 1,
-        total: 2,
-        active: true,
-        control: undefined,
-      },
-      {
-        key: "place",
-        lane: "place",
-        title: "Storage placement",
-        members: [items[3]],
-        status: "queued",
-        completed: 0,
-        total: undefined,
-        active: true,
-        control: undefined,
-      },
-      {
-        key: "watch:inbox",
-        lane: "watch:inbox",
-        title: "watch · inbox",
-        members: [items[4]],
-        status: "running",
-        completed: 0,
-        total: undefined,
-        active: true,
-        control: undefined,
-      },
-    ];
-    const group = vi.spyOn(jobs, "jobLanes").mockReturnValue(preparedLanes);
-    const control = {
-      lane: "photo_import",
-      paused: true,
-      concurrency: 1,
-      revision: 2,
-      can_set_concurrency: false,
-    };
-    let available = false;
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      available
-        ? jobsResponse(items, [control])
-        : new Response(
-            JSON.stringify({ items, lane_controls_error: "Lane controls are unavailable" }),
-            { headers: { "Content-Type": "application/json" } },
-          ),
-    );
+        paused: true,
+        concurrency: 1,
+        revision: 2,
+        can_set_concurrency: false,
+      };
+      let available = false;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+        available
+          ? jobsResponse(items, [control])
+          : new Response(
+              JSON.stringify({ items, lane_controls_error: "Lane controls are unavailable" }),
+              { headers: { "Content-Type": "application/json" } },
+            ),
+      );
 
-    render(JobsDrawer, {
-      session: "short-lived",
-      onclose: vi.fn(),
-      onauthfailure: vi.fn(),
-    });
+      render(JobsDrawer, {
+        session: "short-lived",
+        onclose: vi.fn(),
+        onauthfailure: vi.fn(),
+      });
 
-    expect((await screen.findByRole("alert")).textContent).toBe("Lane controls are unavailable");
-    expect(screen.queryByText("Read-only")).toBeNull();
-    const progress = await screen.findByRole("progressbar", { name: "Photo import progress" });
-    await waitFor(() => expect(group).toHaveBeenCalledWith(items, []));
-    expect(progress.getAttribute("aria-valuenow")).toBe("75");
-    expect(progress.getAttribute("aria-valuemax")).toBe("400");
-    expect(screen.getByText("Photo import")).toBeTruthy();
-    expect(screen.getByText("75 of 400 groups")).toBeTruthy();
-    const checkoutProgress = screen.getByRole("progressbar", { name: "Photo checkout progress" });
-    expect(checkoutProgress.getAttribute("aria-valuenow")).toBe("1");
-    expect(checkoutProgress.getAttribute("aria-valuemax")).toBe("2");
-    expect(screen.getByText("1 of 2 files")).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /^Cancel / })).toHaveLength(3);
-    expect(screen.getByText("2 operations")).toBeTruthy();
-    expect(screen.getByText(id).tagName).toBe("CODE");
-    expect(screen.getByRole("button", { name: `Cancel Photo import ${id}` })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Cancel Photo import b" })).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(0);
+      expect((await screen.findByRole("alert")).textContent).toBe("Lane controls are unavailable");
+      expect(screen.queryByText("Read-only")).toBeNull();
+      const progress = await screen.findByRole("progressbar", { name: "Photo import progress" });
+      await waitFor(() => expect(group).toHaveBeenCalledWith(items, []));
+      expect(progress.getAttribute("aria-valuenow")).toBe("75");
+      expect(progress.getAttribute("aria-valuemax")).toBe("400");
+      expect(screen.getByText("Photo import")).toBeTruthy();
+      expect(screen.getByText("75 of 400 groups")).toBeTruthy();
+      const checkoutProgress = screen.getByRole("progressbar", { name: "Photo checkout progress" });
+      expect(checkoutProgress.getAttribute("aria-valuenow")).toBe("1");
+      expect(checkoutProgress.getAttribute("aria-valuemax")).toBe("2");
+      expect(screen.getByText("1 of 2 files")).toBeTruthy();
+      expect(screen.getAllByRole("button", { name: /^Cancel / })).toHaveLength(3);
+      expect(screen.getByText("2 operations")).toBeTruthy();
+      expect(screen.getByText(id).tagName).toBe("CODE");
+      expect(screen.getByRole("button", { name: `Cancel Photo import ${id}` })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Cancel Photo import b" })).toBeTruthy();
 
-    await fireEvent.click(screen.getByRole("button", { name: /^Cancel Storage placement/ }));
-    const cancel = fetchSpy.mock.calls.find(([url]) =>
-      String(url).endsWith(`/api/v1/jobs/${placeId}/cancel`),
-    );
-    expect(cancel).toBeTruthy();
-    expect(cancel?.[1]?.method).toBe("POST");
-    expect(new Headers(cancel?.[1]?.headers).has("If-Match")).toBe(false);
-    available = true;
-    group.mockReturnValue([{ ...preparedLanes[0], control }, ...preparedLanes.slice(1)]);
-    await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
-    expect(await screen.findByRole("button", { name: "Resume Photo import" })).toBeTruthy();
-    expect(group).toHaveBeenCalledWith(items, [control]);
-    expect(screen.queryByRole("alert")).toBeNull();
+      fetchSpy.mockReturnValueOnce(new Promise<Response>(() => {}));
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("alert").textContent).toBe("Lane controls are unavailable");
+      expect(screen.queryByText("No background jobs")).toBeNull();
+      expect(screen.queryByText("Read-only")).toBeNull();
+
+      await fireEvent.click(screen.getByRole("button", { name: /^Cancel Storage placement/ }));
+      const cancel = fetchSpy.mock.calls.find(([url]) =>
+        String(url).endsWith(`/api/v1/jobs/${placeId}/cancel`),
+      );
+      expect(cancel).toBeTruthy();
+      expect(cancel?.[1]?.method).toBe("POST");
+      expect(new Headers(cancel?.[1]?.headers).has("If-Match")).toBe(false);
+      available = true;
+      group.mockReturnValue([{ ...preparedLanes[0], control }, ...preparedLanes.slice(1)]);
+      await fireEvent.click(screen.getByRole("button", { name: "Refresh background jobs" }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await screen.findByRole("button", { name: "Resume Photo import" })).toBeTruthy();
+      expect(group).toHaveBeenCalledWith(items, [control]);
+      expect(screen.queryByRole("alert")).toBeNull();
+    } finally {
+      cleanup();
+      vi.useRealTimers();
+    }
   });
 });

@@ -32,7 +32,7 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{All: true, AssetIDs: []string{checkoutID}, AlbumIDs: []string{operationID}}, Destination: absoluteDestination, ByteLimit: 100000}
 	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
 	listed := []store.PhotoCheckout{checkout}
-	status := api.PhotoCheckoutStatus{Checkout: checkout}
+	status := api.PhotoCheckoutStatus{Checkout: checkout, Files: 7, Bytes: 101, PublishedFiles: 3, PublishedBytes: 42}
 	estimate := store.PhotoCheckoutEstimate{Assets: 2, Files: 3, Bytes: 42}
 	statusRequests := make(chan struct{}, 1)
 	listRequests := make(chan struct{}, 1)

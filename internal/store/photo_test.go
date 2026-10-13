@@ -56,12 +56,17 @@ func TestPhotoEnrollmentClassifiesCreatedNodes(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
-	image, err := s.CreateFile(ctx, s.RootID(), "image.jpg", fakeHash("a1"), 4, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), asset.Revision)
-	assert.Equal(t, PhotoRoleImage, asset.Files[0].Role)
+	for _, test := range []struct{ name, mime string }{
+		{"image.jpg", "image/jpeg"}, {"capture.ARW", "image/x-sony-arw"}, {"capture.WEBP", "image/webp"},
+	} {
+		image, err := s.CreateFile(ctx, s.RootID(), test.name, browseHash(test.name), 4, test.mime)
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(ctx, image.ID)
+		require.NoError(t, err)
+		require.Len(t, asset.Files, 1)
+		assert.Equal(t, int64(1), asset.Revision)
+		assert.Equal(t, PhotoRoleImage, asset.Files[0].Role)
+	}
 
 	video, err := s.CreateFile(ctx, s.RootID(), "video.mp4", fakeHash("b2"), 4, "video/mp4")
 	require.NoError(t, err)
@@ -169,15 +174,17 @@ func TestPhotoSettingsRecomputeInheritedAssets(t *testing.T) {
 	group, err = s.PhotoAssetByID(ctx, group.ID)
 	require.NoError(t, err)
 	assert.Equal(t, PhotoRoleImage, fileByID(group.Files, *group.DisplayFileID).Role)
-	rawFileID := fileByRole(group.Files, PhotoRoleRAW).ID
-	group, err = s.SetPhotoDisplay(ctx, group.ID, group.Revision, &rawFileID)
+	imageFileID := fileByRole(group.Files, PhotoRoleImage).ID
+	group, err = s.SetPhotoDisplay(ctx, group.ID, group.Revision, &imageFileID)
 	require.NoError(t, err)
-	settings, err = s.SetPhotoSettings(ctx, settings.Revision, nil)
+	preference = "raw"
+	settings, err = s.SetPhotoSettings(ctx, settings.Revision, &preference)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), settings.Revision)
 	unchangedGroup, err := s.PhotoAssetByID(ctx, group.ID)
 	require.NoError(t, err)
 	assert.Equal(t, group.Revision, unchangedGroup.Revision)
+	assert.Equal(t, imageFileID, *unchangedGroup.DisplayFileID)
 	_, err = s.SetPhotoSettings(ctx, settings.Revision-1, &preference)
 	require.ErrorIs(t, err, ErrStaleRevision)
 	assert.Contains(t, receiptOperations(photoReceiptRows(t, s, group.ID)), "settings_recompute")
@@ -499,6 +506,7 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	updated, err := s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
 	require.NoError(t, err)
 	assert.Equal(t, beforeID, updated.ID)
+	assert.NotNil(t, updated.ExcludedAt)
 	_, err = s.PromotePhotoNode(ctx, image.ID, nil, "", "")
 	require.ErrorIs(t, err, ErrStaleRevision)
 	assert.NotEmpty(t, photoReceiptRows(t, s, asset.ID))
@@ -552,8 +560,11 @@ func TestPhotoPromoteUnownedNodeRejectsRevisionPrecondition(t *testing.T) {
 
 func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 	t.Parallel()
-	for _, mime := range []string{"application/pdf", "image/jpeg"} {
-		t.Run(mime, func(t *testing.T) {
+	for _, test := range []struct {
+		name, mime    string
+		pruneOriginal bool
+	}{{"JPEG to PDF and revert", "application/pdf", false}, {"JPEG to JPEG and revert", "image/jpeg", false}, {"prune JPEG under PDF", "application/pdf", true}} {
+		t.Run(test.name, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
 			image, err := s.CreateFile(ctx, s.RootID(), "a.jpg", fakeHash("a1"), 1, "image/jpeg")
@@ -561,7 +572,7 @@ func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 			asset, err := s.PhotoAssetForNode(ctx, image.ID)
 			require.NoError(t, err)
 			originalVersionID := image.CurrentVersionID
-			updated, replacementVersion, err := s.ReplaceContent(ctx, image.ID, image.Revision, fakeHash("b2"), 1, mime)
+			updated, replacement, err := s.ReplaceContent(ctx, image.ID, image.Revision, fakeHash("b2"), 1, test.mime)
 			require.NoError(t, err)
 			require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
 			assetAfter, err := s.PhotoAssetForNode(ctx, image.ID)
@@ -572,41 +583,38 @@ func TestPhotoVersionTransitionsKeepIdentity(t *testing.T) {
 			promoted, err := s.PromotePhotoNode(ctx, image.ID, &assetAfter.Revision, PhotoRoleImage, PhotoKindPhoto)
 			require.NoError(t, err)
 			assert.Equal(t, assetAfter.Revision, promoted.Revision)
-			reverted, _, source, err := s.RevertContent(ctx, image.ID, updated.Revision, originalVersionID)
+			prunedID := originalVersionID
+			if !test.pruneOriginal {
+				var reverted ContentVersion
+				var source ContentVersion
+				updated, reverted, source, err = s.RevertContent(ctx, image.ID, updated.Revision, originalVersionID)
+				require.NoError(t, err)
+				assert.Equal(t, originalVersionID, source.ID)
+				assert.Equal(t, image.ID, updated.ID)
+				versions, total, err := s.ContentVersions(ctx, image.ID, 10, 0)
+				require.NoError(t, err)
+				require.Len(t, versions, 3)
+				assert.Equal(t, 3, total)
+				assert.Equal(t, reverted.ID, versions[0].ID)
+				assert.Equal(t, replacement.ID, versions[1].ID)
+				assert.Equal(t, asset.ID, mustPhotoAsset(t, s, image.ID).ID)
+				prunedID = replacement.ID
+				preview, err := s.PruneContentVersions(ctx, image.ID, updated.Revision, VersionPruneSelector{VersionIDs: []string{prunedID}}, false)
+				require.NoError(t, err)
+				assert.False(t, preview.Changed)
+			}
+			receipt, err := s.PruneContentVersions(ctx, image.ID, updated.Revision, VersionPruneSelector{VersionIDs: []string{prunedID}}, true)
 			require.NoError(t, err)
-			assert.Equal(t, originalVersionID, source.ID)
-			assert.Equal(t, image.ID, reverted.ID)
-			assetAfterRevert, err := s.PhotoAssetForNode(ctx, image.ID)
+			assert.True(t, receipt.Changed)
+			_, err = s.ContentVersionByID(ctx, prunedID)
+			require.ErrorIs(t, err, ErrNotFound)
+			require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
+			retained, err := s.PhotoAssetForNode(ctx, image.ID)
 			require.NoError(t, err)
-			assert.Equal(t, asset.ID, assetAfterRevert.ID)
-			_, err = s.PruneContentVersions(ctx, image.ID, reverted.Revision,
-				VersionPruneSelector{VersionIDs: []string{replacementVersion.ID}}, true)
-			require.NoError(t, err)
-			assetAfterPrune, err := s.PhotoAssetForNode(ctx, image.ID)
-			require.NoError(t, err)
-			assert.Equal(t, asset.ID, assetAfterPrune.ID)
+			assert.Equal(t, asset.ID, retained.ID)
+			assert.Equal(t, PhotoRoleImage, retained.Files[0].Role)
 		})
 	}
-}
-
-func TestPhotoVersionPrunePreservesChangedMediaMembership(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	image, err := s.CreateFile(ctx, s.RootID(), "pruned.jpg", fakeHash("prune-media-a"), 1, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	updated, _, err := s.ReplaceContent(ctx, image.ID, image.Revision, fakeHash("prune-media-b"), 1, "application/pdf")
-	require.NoError(t, err)
-	_, err = s.PruneContentVersions(ctx, image.ID, updated.Revision,
-		VersionPruneSelector{VersionIDs: []string{image.CurrentVersionID}}, true)
-	require.NoError(t, err)
-	require.NoError(t, validatePhotoMetadataState(ctx, s.db, currentStorageSchemaVersion))
-	retained, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	assert.Equal(t, asset.ID, retained.ID)
-	assert.Equal(t, PhotoRoleImage, retained.Files[0].Role)
 }
 
 func TestPhotoRenamePreservesAdmissionClassification(t *testing.T) {

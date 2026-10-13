@@ -46,28 +46,6 @@ func TestPhotoNodeFactsKeepVideoFamily(t *testing.T) {
 	assert.Equal(t, PhotoKindVideo, video.AssetKind)
 }
 
-func TestOrdinaryPhotoMediaEnrollment(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	for _, test := range []struct {
-		name string
-		mime string
-		role string
-	}{
-		{name: "capture.ARW", mime: "image/x-sony-arw", role: PhotoRoleImage},
-		{name: "capture.JPG", mime: "image/jpeg", role: PhotoRoleImage},
-		{name: "capture.WEBP", mime: "image/webp", role: PhotoRoleImage},
-	} {
-		file, err := s.CreateFile(ctx, s.RootID(), test.name, fakeHash(test.name), 4, test.mime)
-		require.NoError(t, err)
-		asset, err := s.PhotoAssetForNode(ctx, file.ID)
-		require.NoError(t, err)
-		require.Len(t, asset.Files, 1)
-		assert.Equal(t, test.role, asset.Files[0].Role)
-	}
-}
-
 func photoImportTestMember(path, role, hash, mediaType string) PhotoImportMember {
 	return PhotoImportMember{Name: filepath.Base(path), Role: role, BlobHash: hash,
 		Size: 4, MediaType: mediaType, OriginalPath: path}
@@ -142,6 +120,11 @@ func TestPhotoImportAtomicGroup(t *testing.T) {
 	assert.True(t, rerun.Skipped)
 	assert.False(t, rerun.Added)
 	assert.Equal(t, result.Asset.ID, rerun.Asset.ID)
+	single, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(photoImportTestMember(
+		filepath.Join(root, "single.JPG"), PhotoRoleImage, browseHash("single"), "image/jpeg")))
+	require.NoError(t, err)
+	require.Len(t, single.Nodes, 1)
+	assert.NotEqual(t, result.Nodes[0].ID, single.Nodes[0].ID)
 }
 
 func TestPhotoImportQualifiedSidecarTargets(t *testing.T) {
@@ -557,83 +540,6 @@ func TestPhotoImportSidecarDedupStaysWithinSourceGroup(t *testing.T) {
 	assert.NotEqual(t, first.Asset.ID, second.Asset.ID)
 	assert.Len(t, first.Asset.Files, 2)
 	assert.Len(t, second.Asset.Files, 2)
-}
-
-func TestPhotoImportNodeStates(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
-	require.NoError(t, err)
-	directory, _, err := s.MkdirPath(ctx, "/state-dir")
-	require.NoError(t, err)
-	file, err := s.CreateFile(ctx, directory.ID, "state.txt", fakeHash("state-file"), 4, "text/plain")
-	require.NoError(t, err)
-	assert.Equal(t, "dir", directory.Kind)
-	assert.Equal(t, "file", file.Kind)
-	directory, err = s.NodeByID(ctx, directory.ID)
-	require.NoError(t, err)
-	trashedDir, _, err := s.Trash(ctx, directory.ID, directory.Revision)
-	require.NoError(t, err)
-	assert.Equal(t, "dir", trashedDir.Kind)
-	trashedFile, err := s.NodeByID(ctx, file.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "file", trashedFile.Kind)
-	require.NotNil(t, trashedFile.TrashedAt)
-
-	group := photoImportTestGroup(photoImportTestMember(
-		filepath.Join(t.TempDir(), "state.JPG"), PhotoRoleImage, fakeHash("state-import"), "image/jpeg"))
-	group.DestinationID = s.RootID()
-	result, err := s.IngestPhotoGroup(ctx, run, group)
-	require.NoError(t, err)
-	require.Len(t, result.Nodes, 1)
-	assert.NotEqual(t, file.ID, result.Nodes[0].ID)
-	_, err = s.TrashEmpty(ctx, 0, true)
-	require.NoError(t, err)
-	_, err = s.NodeByID(ctx, directory.ID)
-	require.ErrorIs(t, err, ErrNotFound)
-	_, err = s.NodeByID(ctx, file.ID)
-	require.ErrorIs(t, err, ErrNotFound)
-}
-
-func TestPhotoImportMembershipStates(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	image, err := s.CreateFile(ctx, s.RootID(), "membership.JPG", fakeHash("membership-image"), 4, "image/jpeg")
-	require.NoError(t, err)
-	automatic, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	assert.Equal(t, PhotoRoleImage, automatic.Files[0].Role)
-	excluded, err := s.SetPhotoAssetExcluded(ctx, automatic.ID, automatic.Revision, true)
-	require.NoError(t, err)
-	assert.NotNil(t, excluded.ExcludedAt)
-	explicit, err := s.PromotePhotoNode(ctx, image.ID, &excluded.Revision, PhotoRoleImage, PhotoKindPhoto)
-	require.NoError(t, err)
-	assert.Nil(t, explicit.ExcludedAt)
-
-	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
-	require.NoError(t, err)
-	root := filepath.Join(t.TempDir(), "camera")
-	group := photoImportTestGroup(
-		photoImportTestMember(filepath.Join(root, "MEM.ARW"), PhotoRoleRAW, fakeHash("membership-raw"), "image/x-sony-arw"),
-		photoImportTestMember(filepath.Join(root, "MEM.JPG"), PhotoRoleImage, fakeHash("membership-jpg"), "image/jpeg"),
-	)
-	group.DestinationID = s.RootID()
-	groupResult, err := s.IngestPhotoGroup(ctx, run, group)
-	require.NoError(t, err)
-	groupAsset, err := s.PhotoAssetByID(ctx, groupResult.Asset.ID)
-	require.NoError(t, err)
-	imageFile := fileByRole(groupAsset.Files, PhotoRoleImage)
-	groupAsset, err = s.SetPhotoDisplay(ctx, groupAsset.ID, groupAsset.Revision, &imageFile.ID)
-	require.NoError(t, err)
-	preference := "raw"
-	_, err = s.SetPhotoSettings(ctx, 1, &preference)
-	require.NoError(t, err)
-	groupAsset, err = s.PhotoAssetByID(ctx, groupAsset.ID)
-	require.NoError(t, err)
-	assert.Equal(t, imageFile.ID, *groupAsset.DisplayFileID)
-	assert.Equal(t, PhotoRoleRAW, fileByRole(groupAsset.Files, PhotoRoleRAW).Role)
 }
 
 func TestPhotoImportMetadata(t *testing.T) {

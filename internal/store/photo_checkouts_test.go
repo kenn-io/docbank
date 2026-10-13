@@ -445,10 +445,13 @@ func TestPhotoCheckoutResolvesCompanionSources(t *testing.T) {
 		raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
 		rawNode, err := s.NodeByID(ctx, raw.NodeID)
 		require.NoError(t, err)
+		originalRAWVersion := rawNode.CurrentVersionID
 		rawNode, _, err = s.ReplaceContent(ctx, rawNode.ID, rawNode.Revision, browseHash("replacement raw"), 20, "image/x-sony-arw")
 		require.NoError(t, err)
 		_, err = s.PruneContentVersions(ctx, rawNode.ID, rawNode.Revision, VersionPruneSelector{AllPrior: true}, true)
 		require.NoError(t, err)
+		_, err = s.ContentVersionByID(ctx, originalRAWVersion)
+		require.ErrorIs(t, err, ErrNotFound)
 		for i, node := range result.Nodes {
 			node, err = s.NodeByID(ctx, node.ID)
 			require.NoError(t, err)
