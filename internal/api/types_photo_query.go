@@ -16,7 +16,7 @@ type PhotoBrowseRequest struct {
 	Hidden     bool                   `json:"hidden,omitempty"`
 	Query      QueryPayload           `json:"query"`
 	Coverage   WorkspaceQueryCoverage `json:"coverage,omitzero"`
-	PageSize   int                    `json:"page_size,omitempty,omitzero" minimum:"1" maximum:"250" default:"50"`
+	PageSize   int                    `json:"page_size,omitempty,omitzero" minimum:"1" maximum:"1000" default:"50" doc:"Maximum 250, or 1000 with projection map."`
 	Facets     []string               `json:"facets,omitempty" maxItems:"5" uniqueItems:"true" enum:"camera,lens,year,location,set"`
 	Cursor     string                 `json:"cursor,omitempty" maxLength:"32768"`
 }

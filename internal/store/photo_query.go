@@ -493,7 +493,7 @@ func normalizePhotoBrowseRequest(request PhotoBrowseRequest) (PhotoBrowseRequest
 	if request.PageSize == 0 {
 		request.PageSize = DefaultDocumentCatalogPageSize
 	}
-	if request.PageSize < 1 || request.PageSize > MaxDocumentCatalogPageSize {
+	if request.PageSize < 1 || request.PageSize > 1000 {
 		return request, ErrInvalidPhotoQuery
 	}
 	var err error

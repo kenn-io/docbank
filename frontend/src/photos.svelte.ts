@@ -126,19 +126,13 @@ export class Photos {
   }
 
   async reload(assetID: string, signal: AbortSignal): Promise<PhotoBrowseRow> {
-    if (!this.projection) {
-      const row = await this.lookup(assetID, signal);
-      signal.throwIfAborted();
-      this.items = this.items.map(item => item.asset_id === assetID ? row : item);
-      return row;
-    }
     const query = this.query;
     try {
       if (query.filters.asset_ids && !query.filters.asset_ids.includes(assetID)) throw new APIError("This photo is no longer in this view.", 404, "not_found");
-      const row = this.projection ? (await this.page({ ...query, filters: { ...query.filters, asset_ids: [assetID] } }, signal).catch(cause => {
+      const row = (await this.page({ ...query, filters: { ...query.filters, asset_ids: [assetID] } }, signal).catch(cause => {
         if (!signal.aborted) this.authFailure(cause);
         throw cause;
-      })).items[0] : await this.lookup(assetID, signal, query);
+      })).items[0];
       if (!row) throw new APIError("This photo is no longer in this view.", 404, "not_found");
       signal.throwIfAborted();
       if (!this.disposed && this.query === query) {
@@ -153,14 +147,14 @@ export class Photos {
         this.cancelPending(true);
         if (this.items.some(item => item.asset_id === assetID) || this.trashTargets.some(item => item.asset_id === assetID)) this.removeTarget(assetID);
         void this.resume();
-        if (query.text || Object.keys(query.filters).length) return this.lookup(assetID, signal);
+        return this.lookup(assetID, signal);
       }
       throw cause;
     }
   }
 
   private async page(query: Query, signal: AbortSignal, cursor?: string) {
-    const page = await listPhotoAssets({ query, projection: this.projection, hidden: this.hidden, facets: [], page_size: 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
+    const page = await listPhotoAssets({ query, projection: this.projection, hidden: this.hidden, facets: [], page_size: this.projection ? 1000 : 250, ...(cursor ? { cursor } : {}) }, { session: this.session, signal });
     return { ...page, items: this.projection ? page.map_items ?? [] : page.items };
   }
 

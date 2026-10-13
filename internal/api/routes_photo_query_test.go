@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/v2"
+	"fmt"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/media/mediatest"
@@ -91,6 +92,46 @@ type interruptedPhotoCatalog struct {
 
 func (c *interruptedPhotoCatalog) Resolve(_ context.Context, _ packstore.Hash) (packstore.Location, error) {
 	return packstore.Location{}, c.cause
+}
+
+func TestPhotoBrowsePageSizeLimits(t *testing.T) {
+	t.Parallel()
+	ts, s := newTestServer(t, nil)
+	for i := range 251 {
+		name := fmt.Sprintf("synthetic-%03d.jpg", i)
+		_, err := s.CreateFile(t.Context(), s.RootID(), name, testHash(name), 10, "image/jpeg")
+		require.NoError(t, err)
+	}
+	for _, tc := range []struct {
+		projection string
+		size       int
+		status     int
+		errorText  string
+	}{
+		{"", 250, http.StatusOK, ""},
+		{"", 251, http.StatusUnprocessableEntity, "page_size must be at most 250 without projection map"},
+		{"", 1000, http.StatusUnprocessableEntity, "page_size must be at most 250 without projection map"},
+		{"map", 1000, http.StatusOK, ""},
+		{"map", 1001, http.StatusUnprocessableEntity, "1000"},
+	} {
+		t.Run(fmt.Sprintf("%s/%d", tc.projection, tc.size), func(t *testing.T) {
+			response, body := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{}`), Projection: tc.projection, PageSize: tc.size})
+			require.Equal(t, tc.status, response.StatusCode, body)
+			if tc.errorText != "" {
+				require.Contains(t, body, tc.errorText)
+				return
+			}
+			var page api.PhotoBrowsePage
+			require.NoError(t, json.Unmarshal([]byte(body), &page))
+			if tc.projection == "map" {
+				require.Len(t, page.MapItems, 251)
+				require.Empty(t, page.NextCursor)
+			} else {
+				require.Len(t, page.Items, 250)
+				require.NotEmpty(t, page.NextCursor)
+			}
+		})
+	}
 }
 
 func TestPhotoBrowseRouteContract(t *testing.T) {
@@ -285,6 +326,16 @@ func TestReadPhotoPreviewVerifiedBytes(t *testing.T) {
 	asset, err := s.PhotoAssetForNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	generation, data, previewHash := publishTestPhotoPreview(t, s, node)
+	queryResponse, queryBody := do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{}`)})
+	require.Equal(t, http.StatusOK, queryResponse.StatusCode, queryBody)
+	var library api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(queryBody), &library))
+	queryResponse, queryBody = do(t, ts, http.MethodPost, "/api/v1/photos/assets/query", nil, api.PhotoBrowseRequest{Query: api.QueryPayload(`{}`), Projection: "map"})
+	require.Equal(t, http.StatusOK, queryResponse.StatusCode, queryBody)
+	var mapped api.PhotoBrowsePage
+	require.NoError(t, json.Unmarshal([]byte(queryBody), &mapped))
+	require.Equal(t, library.Items[0].Previews.Grid, mapped.MapItems[0].Previews.Grid)
+	require.Equal(t, "ready", mapped.MapItems[0].Previews.Grid.State)
 	path := "/api/v1/photos/assets/" + asset.ID + "/previews/" + generation.GenerationID
 	response, body := get(t, ts, path, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)

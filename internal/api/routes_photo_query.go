@@ -41,6 +41,9 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 		Summary:      "Browse matching photo assets",
 		MaxBodyBytes: query.MaxInputBytes + (64 << 10),
 	}, func(ctx context.Context, in *struct{ Body PhotoBrowseRequest }) (*struct{ Body PhotoBrowsePage }, error) {
+		if in.Body.Projection != "map" && in.Body.PageSize > 250 {
+			return nil, NewError(http.StatusUnprocessableEntity, "invalid_photo_query", "page_size must be at most 250 without projection map")
+		}
 		value, err := query.Parse(in.Body.Query)
 		if err != nil {
 			return nil, NewError(http.StatusUnprocessableEntity, "invalid_query", err.Error())
@@ -75,8 +78,7 @@ func registerPhotoQueryRoutes(api huma.API, d Deps, service *documentQueryServic
 			if in.Body.Projection == "map" {
 				mapped := PhotoMapRow{AssetID: row.AssetID, Revision: row.Revision, Name: row.Name, CaptureTime: row.Fields.CaptureTime, WidthPX: row.Fields.WidthPX, HeightPX: row.Fields.HeightPX, Latitude: row.Fields.Latitude, Longitude: row.Fields.Longitude}
 				if slot, ok := row.Previews["grid"]; ok {
-					preview := photoPreviewSlot(row.AssetID, slot.State, slot.Generation)
-					mapped.Previews.Grid = PhotoPreviewSlot{State: preview.State, GenerationID: preview.GenerationID, Width: preview.Width, Height: preview.Height}
+					mapped.Previews.Grid = photoPreviewSlot(row.AssetID, slot.State, slot.Generation)
 				}
 				if browserSessionRequest(ctx) && d.Cfg.Web.MapTiles.TileURL == "" {
 					mapped.Latitude, mapped.Longitude = nil, nil
