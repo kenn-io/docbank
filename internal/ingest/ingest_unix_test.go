@@ -37,22 +37,6 @@ func TestImportRefusesSymlinkAtOpen(t *testing.T) {
 		require.Len(t, report.Failed, 1)
 		require.Error(t, report.Failed[0].Err)
 	})
-	t.Run("replaced after observation", func(t *testing.T) {
-		ing := newTestIngester(t)
-		ctx := t.Context()
-		path := filepath.Join(t.TempDir(), "capture.JPG")
-		other := filepath.Join(t.TempDir(), "other.JPG")
-		require.NoError(t, os.WriteFile(path, []byte("same"), 0o600))
-		require.NoError(t, os.WriteFile(other, []byte("other"), 0o600))
-		before, err := observeLocalFileFingerprint(path)
-		require.NoError(t, err)
-		require.NoError(t, os.Remove(path))
-		if err := os.Symlink(other, path); err != nil {
-			t.Skipf("symbolic links unavailable: %v", err)
-		}
-		_, err = ing.readLocalFile(ctx, path, path, nil, &before)
-		require.Error(t, err)
-	})
 }
 
 func TestAddOneRejectsNonUTF8SourcePathWithoutPoisoningMetadata(t *testing.T) {

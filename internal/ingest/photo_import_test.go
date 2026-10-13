@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -179,33 +180,33 @@ func TestPhotoImportSettlesOnceOutsideTheGate(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(root, fmt.Sprintf("IMG_%d.JPG", i)), []byte(fmt.Sprint("jpeg-", i)), 0o600))
 	}
 	ing := newTestIngester(t)
-	begin, end := 0, 0
-	interval := 500 * time.Millisecond
-	var entered, left []time.Time
-	started := time.Now()
-	report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{
-		SettleInterval: interval,
-		ActivityBegin:  func() { begin++ },
-		ActivityEnd:    func() { end++ },
-		Mutate: func(_ context.Context, fn func() error) error {
-			entered = append(entered, time.Now())
-			defer func() { left = append(left, time.Now()) }()
-			return fn()
-		},
+	synctest.Test(t, func(t *testing.T) {
+		begin, end := 0, 0
+		interval := 500 * time.Millisecond
+		var entered, left []time.Time
+		report, err := ing.ImportPhotoDirectory(t.Context(), root, "/photos", PhotoImportOptions{
+			SettleInterval: interval,
+			ActivityBegin:  func() { begin++ },
+			ActivityEnd:    func() { end++ },
+			Mutate: func(_ context.Context, fn func() error) error {
+				entered = append(entered, time.Now())
+				defer func() { left = append(left, time.Now()) }()
+				return fn()
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, int64(6), report.Receipt.Added)
+		assert.Equal(t, 1, begin)
+		assert.Equal(t, 1, end)
+		require.Len(t, entered, 7)
+		assert.Equal(t, interval, entered[1].Sub(left[0]))
+		for i := 2; i < len(entered); i++ {
+			assert.Equal(t, time.Duration(0), entered[i].Sub(left[i-1]))
+		}
+		for i := range entered {
+			assert.Equal(t, entered[i], left[i], "settlement stays outside the mutation gate")
+		}
 	})
-	elapsed := time.Since(started)
-	require.NoError(t, err)
-	assert.Equal(t, int64(6), report.Receipt.Added)
-	assert.Equal(t, 1, begin)
-	assert.Equal(t, 1, end)
-	require.Len(t, entered, 7)
-	// The only wait sits between destination setup and the first group, outside the gate.
-	assert.GreaterOrEqual(t, entered[1].Sub(left[0]), interval)
-	var held time.Duration
-	for i := range entered {
-		held += left[i].Sub(entered[i])
-	}
-	assert.Less(t, elapsed-held, 6*interval)
 }
 func TestPhotoImportRunnerCancelsAndResumes(t *testing.T) {
 	for _, interruption := range []string{"before work", "after final group", "shutdown and resume", "startup pause cancellation", "after-one-group cancellation", "startup admission failure", "after-group admission failure"} {
