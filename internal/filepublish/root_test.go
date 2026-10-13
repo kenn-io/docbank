@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -83,7 +84,10 @@ func TestRootStageRejectsDestinationAfterPathReplacement(t *testing.T) {
 			replacedPath := filepath.Join(destination, filepath.Dir(relativePath))
 			moved := filepath.Join(base, "moved")
 			if err := os.Rename(replacedPath, moved); err != nil {
-				t.Skip("platform pins an opened directory against rename")
+				if runtime.GOOS == "windows" {
+					t.Skip("Windows pins an opened directory against rename")
+				}
+				require.NoError(t, err)
 			}
 			require.NoError(t, os.Mkdir(replacedPath, 0o755))
 			var installed bool
@@ -131,7 +135,7 @@ func TestRootStageSyncsNewDirectoryParentsBeforePublication(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Equal(t, []string{root.Name(), filepath.Join(root.Name(), "2024"), filepath.Join(root.Name(), "2024", "01"), filepath.Join(root.Name(), "2024", "01", "02")}, synced)
+			require.Equal(t, []string{filepath.Join(root.Name(), "."), filepath.Join(root.Name(), "2024"), filepath.Join(root.Name(), "2024", "01"), filepath.Join(root.Name(), "2024", "01", "02")}, synced)
 			require.NoError(t, stage.MakeParentDirectories(destination))
 			require.Len(t, synced, 4)
 			_, err = stage.File.WriteString("verified")

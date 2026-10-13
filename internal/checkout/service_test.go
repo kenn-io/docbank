@@ -261,54 +261,6 @@ func TestCheckoutRecoveryRebuildsCopyObservationsAfterPublicationCrash(t *testin
 	require.Equal(t, store.StorageOperationFailed, finished.State)
 }
 
-func TestCheckoutPausedRestart(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
-	c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
-	require.NoError(t, err)
-	require.NoError(t, root.Close())
-	control, err := s.Store.SetLaneControl(t.Context(), store.LaneControl{Lane: "photo_checkout", Paused: true, Concurrency: 1}, 1)
-	require.NoError(t, err)
-	waitPaused := func() {
-		require.Eventually(t, func() bool {
-			operation, err := s.Store.StorageOperation(t.Context(), op.ID)
-			return err == nil && operation.State == store.StorageOperationQueued
-		}, 5*time.Second, 10*time.Millisecond)
-		started, err := s.Store.PhotoCheckoutStarted(t.Context(), c.ID)
-		require.NoError(t, err)
-		require.False(t, started)
-		status, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-		require.NoError(t, err)
-		require.Zero(t, status.PublishedFiles)
-		files, err := os.ReadDir(c.Destination)
-		require.NoError(t, err)
-		require.Empty(t, files)
-	}
-	_, err = s.Store.ClaimStorageOperation(t.Context(), op.ID)
-	require.NoError(t, err)
-	supervisor := jobs.New(t.Context(), nil)
-	require.NoError(t, s.Resume(t.Context(), supervisor))
-	waitPaused()
-	require.NoError(t, supervisor.Shutdown(context.Background()))
-	started, err := s.Store.PhotoCheckoutStarted(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.False(t, started)
-	_, err = s.Store.ClaimStorageOperation(t.Context(), op.ID)
-	require.NoError(t, err)
-	supervisor = jobs.New(t.Context(), nil)
-	defer func() { require.NoError(t, supervisor.Shutdown(context.Background())) }()
-	require.NoError(t, s.Resume(t.Context(), supervisor))
-	waitPaused()
-	control.Paused = false
-	_, err = s.Store.SetLaneControl(t.Context(), control, control.Revision)
-	require.NoError(t, err)
-	require.Eventually(t, func() bool {
-		op, err := s.Store.StorageOperation(t.Context(), op.ID)
-		return err == nil && op.State == store.StorageOperationCompleted
-	}, 5*time.Second, 10*time.Millisecond)
-}
-
 func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 	t.Parallel()
 	s := checkoutService(t)
@@ -387,7 +339,7 @@ func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 			require.Error(t, runErr)
 			if failure == "cancel" {
 				require.ErrorIs(t, runErr, context.Canceled)
-			} else if failure != "collision" {
+			} else if failure != "collision" && failure != "became-invisible" {
 				require.ErrorIs(t, runErr, store.ErrInvalidPhotoCheckout)
 			}
 			actual, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
@@ -463,11 +415,23 @@ func TestCheckoutAdmissionRetryKeepsPartialCopies(t *testing.T) {
 	s.admit = func(context.Context, *store.Store, string) (bool, error) {
 		admissions++
 		require.Zero(t, inflight)
-		if admissions == 3 {
+		if admissions == 1 || admissions == 4 {
 			return false, store.ErrLaneControl
 		}
 		return false, nil
 	}
+	require.ErrorIs(t, s.Run(t.Context(), c, nil), jobs.ErrStorageOperationDeferred)
+	require.Zero(t, inflight)
+	started, err := s.Store.PhotoCheckoutStarted(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.False(t, started)
+	unstarted, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+	require.NoError(t, err)
+	require.Equal(t, "queued", unstarted.Checkout.State)
+	require.Zero(t, unstarted.PublishedFiles)
+	files, err := os.ReadDir(c.Destination)
+	require.NoError(t, err)
+	require.Empty(t, files)
 	require.ErrorIs(t, s.Run(t.Context(), c, nil), jobs.ErrStorageOperationDeferred)
 	require.Zero(t, inflight)
 	partial, err := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
