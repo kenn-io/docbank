@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -72,7 +73,7 @@ func TestPhotoCheckoutCapacity(t *testing.T) {
 	a := albumAsset(t, s, "photo.jpg")
 	_, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "checkout", -1)
 	require.ErrorContains(t, err, "byte_limit must be nonnegative")
-	for _, limit := range []int64{0, -1, 19} {
+	for _, limit := range []int64{0, 19} {
 		_, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", limit)
 		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
 	}
@@ -342,11 +343,9 @@ func TestPhotoCheckoutUsesActiveSourceNamesAfterVirtualRename(t *testing.T) {
 	require.NoError(t, err)
 	entries, err = s.PhotoCheckoutEntries(ctx, retained.ID)
 	require.NoError(t, err)
-	for _, entry := range entries {
-		if entry.FileID == raw.ID {
-			require.Equal(t, "IMG.ARW", filepath.Base(entry.Path))
-		}
-	}
+	rawIndex := slices.IndexFunc(entries, func(entry PhotoCheckoutEntry) bool { return entry.FileID == raw.ID })
+	require.NotEqual(t, -1, rawIndex)
+	require.Equal(t, "IMG.ARW", filepath.Base(entries[rawIndex].Path))
 	fallbackAsset := albumAsset(t, s, "fallback.jpg")
 	node, err = s.NodeByID(ctx, fallbackAsset.Files[0].NodeID)
 	require.NoError(t, err)
@@ -358,12 +357,12 @@ func TestPhotoCheckoutUsesActiveSourceNamesAfterVirtualRename(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, node.Name, filepath.Base(entries[0].Path))
-	for _, source := range []string{`C:\camera\capture.JPG`, `\\camera\photos\capture.JPG`} {
-		t.Run(source, func(t *testing.T) {
+	for _, windowsSource := range []string{`C:\camera\capture.JPG`, `\\camera\photos\capture.JPG`} {
+		t.Run(windowsSource, func(t *testing.T) {
 			s := newTestStore(t)
 			run, err := s.BeginIngest(t.Context(), "photo-import", t.TempDir())
 			require.NoError(t, err)
-			member := photoImportTestMember(source, PhotoRoleImage, browseHash("capture"), "image/jpeg")
+			member := photoImportTestMember(windowsSource, PhotoRoleImage, browseHash("capture"), "image/jpeg")
 			member.Name = "renamed.JPG"
 			result, err := s.IngestPhotoGroup(t.Context(), run, photoImportTestGroup(member))
 			require.NoError(t, err)

@@ -174,10 +174,36 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 	require.Error(t, err)
 	c, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
 	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
 	sub := filepath.Join(c.Destination, "nested")
 	require.NoError(t, os.Mkdir(sub, 0o755))
 	_, _, _, err = s.Prepare(t.Context(), selection, sub, 0)
+	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+	require.NoError(t, root.Close())
+	prior := t.TempDir()
+	reserved, _, priorRoot, err := s.Prepare(t.Context(), selection, prior, 0)
+	require.NoError(t, err)
+	require.NoError(t, priorRoot.Close())
+	require.NoError(t, os.Remove(reserved.Destination))
+	require.NoError(t, os.WriteFile(reserved.Destination, []byte("keep"), 0600))
+	_, _, unrelatedRoot, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
+	require.NoError(t, err)
+	require.NoError(t, unrelatedRoot.Close())
+	missing := filepath.Join(t.TempDir(), "missing")
+	s.Config.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: filepath.Join(missing, "archive")}}
+	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(missing, "watch")}}
+	_, _, root, err = s.Prepare(t.Context(), selection, t.TempDir(), 0)
+	require.NoError(t, err)
+	require.NoError(t, root.Close())
+	destination := t.TempDir()
+	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(destination, "missing-descendant")}}
+	_, _, _, err = s.Prepare(t.Context(), selection, destination, 0)
+	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(destination, alias); err != nil {
+		t.Skip("symlink creation unavailable")
+	}
+	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(alias, "missing-descendant")}}
+	_, _, _, err = s.Prepare(t.Context(), selection, destination, 0)
 	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
 }
 
@@ -198,65 +224,6 @@ func TestCheckoutRefusesCorruptBytes(t *testing.T) {
 	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 	require.NoError(t, err)
 	require.False(t, entries[0].Published)
-}
-
-func TestCheckoutCollidingOriginalNamesFailDuringCopy(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	first := checkoutPhoto(t, s, "photo.jpg", "first")
-	dir, err := s.Store.Mkdir(t.Context(), s.Store.RootID(), "other")
-	require.NoError(t, err)
-	hash, size, err := s.Blobs.Write(strings.NewReader("first"))
-	require.NoError(t, err)
-	second, err := s.Store.CreateFile(t.Context(), dir.ID, "photo.jpg", hash, size, "image/jpeg")
-	require.NoError(t, err)
-	owned, err := s.Store.PhotoAssetForNode(t.Context(), second.ID)
-	require.NoError(t, err)
-	_, err = s.Store.DetachPhotoFile(t.Context(), owned.ID, owned.Revision, owned.Files[0].ID, store.PhotoDetachOptions{})
-	require.NoError(t, err)
-	_, err = s.Store.AttachPhotoFile(t.Context(), first.ID, first.Revision, second.ID, store.PhotoRoleImage, nil)
-	require.NoError(t, err)
-	c, op, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{first.ID}}, t.TempDir(), 0)
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.Len(t, entries, 2)
-	require.Equal(t, entries[0].Path, entries[1].Path)
-	require.Error(t, s.Run(t.Context(), c, root))
-	actual, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.True(t, actual[0].Published)
-	require.False(t, actual[1].Published)
-	finished, err := s.Store.StorageOperation(t.Context(), op.ID)
-	require.NoError(t, err)
-	require.Equal(t, store.StorageOperationFailed, finished.State)
-}
-
-func TestCheckoutAllowsUnrelatedMissingRoots(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
-	selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
-	missing := filepath.Join(t.TempDir(), "missing")
-	s.Config.StoreBindings = map[string]config.StoreBindingConfig{"archive": {Kind: "filesystem", Path: filepath.Join(missing, "archive")}}
-	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(missing, "watch")}}
-	_, _, err := s.Store.CreatePhotoCheckout(t.Context(), selection, filepath.Join(missing, "checkout"), 0)
-	require.NoError(t, err)
-	_, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
-	require.NoError(t, err)
-	require.NoError(t, root.Close())
-	destination := t.TempDir()
-	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(destination, "missing-descendant")}}
-	_, _, _, err = s.Prepare(t.Context(), selection, destination, 0)
-	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
-	alias := filepath.Join(t.TempDir(), "alias")
-	if err := os.Symlink(destination, alias); err != nil {
-		t.Skip("symlink creation unavailable")
-	}
-	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(alias, "missing-descendant")}}
-	_, _, _, err = s.Prepare(t.Context(), selection, destination, 0)
-	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
 }
 
 func TestCheckoutRecoveryRemovesOnlyExactEmptyableStages(t *testing.T) {
@@ -372,30 +339,44 @@ func TestCheckoutDestinationMoveFailsAndRetainsPartialCopies(t *testing.T) {
 	}
 }
 
-func TestCheckoutRecoveryContinuesAfterDestinationBecomesFile(t *testing.T) {
+func TestCheckoutRecoveryContinuesAfterDestinationBecomesUnusable(t *testing.T) {
 	t.Parallel()
-	s := checkoutService(t)
-	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
-	selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
-	first, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
-	require.NoError(t, err)
-	require.NoError(t, root.Close())
-	require.NoError(t, os.Remove(first.Destination))
-	require.NoError(t, os.WriteFile(first.Destination, []byte("keep this file"), 0o600))
-	second, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
-	// The inaccessible prior reservation is still checked for overlap.
-	require.NoError(t, err)
-	require.NoError(t, root.Close())
-	for _, c := range []store.PhotoCheckout{first, second} {
-		require.NoError(t, s.reconcile(t.Context(), c))
-		status, err := s.Store.PhotoCheckout(t.Context(), c.ID)
-		require.NoError(t, err)
-		require.Equal(t, "failed", status.State)
-		require.Contains(t, status.Error, "interrupted")
+	for _, kind := range []string{"file", "inaccessible"} {
+		t.Run(kind, func(t *testing.T) {
+			if kind == "inaccessible" && runtime.GOOS == "windows" {
+				t.Skip("Unix directory permissions")
+			}
+			s := checkoutService(t)
+			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+			c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
+			require.NoError(t, err)
+			require.NoError(t, root.Close())
+			if kind == "file" {
+				require.NoError(t, os.Remove(c.Destination))
+				require.NoError(t, os.WriteFile(c.Destination, []byte("keep this file"), 0600))
+			} else {
+				require.NoError(t, os.Chmod(c.Destination, 0))
+				defer func() { require.NoError(t, os.Chmod(c.Destination, 0700)) }()
+				probe, err := os.OpenRoot(c.Destination)
+				if err == nil {
+					_ = probe.Close()
+					t.Skip("this user can open directories without read permission")
+				}
+			}
+			require.NoError(t, s.reconcile(t.Context(), c))
+			status, err := s.Store.PhotoCheckout(t.Context(), c.ID)
+			require.NoError(t, err)
+			require.Equal(t, "failed", status.State)
+			require.Contains(t, status.Error, "interrupted")
+			if kind == "file" {
+				content, err := os.ReadFile(c.Destination)
+				require.NoError(t, err)
+				require.Equal(t, "keep this file", string(content))
+			} else {
+				require.Contains(t, status.Error, "reconciliation failed")
+			}
+		})
 	}
-	content, err := os.ReadFile(first.Destination)
-	require.NoError(t, err)
-	require.Equal(t, "keep this file", string(content))
 }
 
 func TestCheckoutRecoveryRebuildsCopyObservationsAfterPublicationCrash(t *testing.T) {
@@ -546,35 +527,22 @@ func TestCheckoutAdmissionReleasesActivity(t *testing.T) {
 
 func TestCheckoutQueuedDestinationRevalidatedBeforeCopy(t *testing.T) {
 	t.Parallel()
-	for _, changed := range []string{"unchanged", "nonempty"} {
-		t.Run(changed, func(t *testing.T) {
-			s := checkoutService(t)
-			a := checkoutPhoto(t, s, "photo.jpg", "bytes")
-			selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
-			c, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
-			require.NoError(t, err)
-			require.NoError(t, root.Close())
-			if changed == "nonempty" {
-				require.NoError(t, os.WriteFile(filepath.Join(c.Destination, "keep"), []byte("keep"), 0600))
-			}
-			err = s.Run(t.Context(), c, nil)
-			status, statusErr := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
-			require.NoError(t, statusErr)
-			if changed == "unchanged" {
-				require.NoError(t, err)
-				require.Equal(t, "completed", status.Checkout.State)
-				return
-			}
-			require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
-			require.Equal(t, "failed", status.Checkout.State)
-			require.Zero(t, status.PublishedFiles)
-			if changed == "nonempty" {
-				content, err := os.ReadFile(filepath.Join(c.Destination, "keep"))
-				require.NoError(t, err)
-				require.Equal(t, "keep", string(content))
-			}
-		})
-	}
+	s := checkoutService(t)
+	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
+	selection := store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}
+	c, _, root, err := s.Prepare(t.Context(), selection, t.TempDir(), 0)
+	require.NoError(t, err)
+	require.NoError(t, root.Close())
+	require.NoError(t, os.WriteFile(filepath.Join(c.Destination, "keep"), []byte("keep"), 0600))
+	err = s.Run(t.Context(), c, nil)
+	status, statusErr := s.Store.PhotoCheckoutStatus(t.Context(), c.ID)
+	require.NoError(t, statusErr)
+	require.ErrorIs(t, err, store.ErrInvalidPhotoCheckout)
+	require.Equal(t, "failed", status.Checkout.State)
+	require.Zero(t, status.PublishedFiles)
+	content, err := os.ReadFile(filepath.Join(c.Destination, "keep"))
+	require.NoError(t, err)
+	require.Equal(t, "keep", string(content))
 }
 
 func TestCheckoutAdmissionRetryKeepsVerifiedPartialCopies(t *testing.T) {

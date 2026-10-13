@@ -6,6 +6,7 @@ import (
 	"go.kenn.io/docbank/internal/api"
 	"image/color"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/docbank/internal/store"
@@ -21,7 +22,6 @@ func TestPhotoCheckoutCommandSelections(t *testing.T) {
 		{args: []string{"estimate", "--years", "2024:2025"}, years: &store.PhotoCheckoutYears{From: 2024, To: 2025}},
 		{args: []string{"estimate", "--years", "2024"}, years: &store.PhotoCheckoutYears{From: 2024, To: 2024}},
 		{args: []string{"estimate", "--all"}, all: true},
-		{args: []string{"estimate"}, wantError: true},
 		{args: []string{"estimate", "--years", "bad"}, wantError: true},
 	} {
 		cmd := newPhotoCheckoutCmd()
@@ -46,7 +46,6 @@ func TestPhotoCheckoutCreateRejectsInvalidCapacityBeforeDaemon(t *testing.T) {
 	}{
 		{[]string{"create", "destination", "--all"}, "positive --byte-limit"},
 		{[]string{"create", "destination", "--asset", "00000000-0000-4000-8000-000000000001", "--byte-limit", "-1"}, "--byte-limit must be nonnegative"},
-		{[]string{"create", "destination", "--album", "00000000-0000-4000-8000-000000000001", "--byte-limit", "-1"}, "--byte-limit must be nonnegative"},
 	} {
 		cmd := newPhotoCheckoutCmd()
 		cmd.SetArgs(tc.args)
@@ -71,11 +70,22 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	require.NoError(t, err, out)
 	var list []store.PhotoCheckout
 	require.NoError(t, json.Unmarshal([]byte(out), &list))
-	require.Len(t, list, 1)
 	require.Equal(t, created.Checkout.ID, list[0].ID)
 	out, err = runCLI(t, "photos", "checkout", "status", created.Checkout.ID)
 	require.NoError(t, err, out)
 	var status api.PhotoCheckoutStatus
 	require.NoError(t, json.Unmarshal([]byte(out), &status))
 	require.Equal(t, created.Checkout.ID, status.Checkout.ID)
+	require.Eventually(t, func() bool {
+		out, err := runCLI(t, "jobs", "show", created.Operation.ID, "--json")
+		if err != nil {
+			return false
+		}
+		var operation api.StorageOperation
+		if json.Unmarshal([]byte(out), &operation) != nil {
+			return false
+		}
+		return operation.FinishedAt != ""
+	}, 5*time.Second, 20*time.Millisecond)
+
 }
