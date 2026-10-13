@@ -599,6 +599,8 @@ Metadata JSONL v1 includes `trash` and `restore` receipts recording the operatio
 
 ## Map
 
+Map plots GPS photos matching the current Library search and filters, sorted by capture date; albums and Hidden are not mapped.
+
 Configure [photo map tiles](../configuration.md#photo-map-tiles) in `[web.map_tiles]` and restart Docbank, then choose Map beside Library to browse GPS-positioned photos from the current query. Markers group nearby photos into numbered clusters. Click a marker to open the photo viewer; Escape returns focus to the marker or its cluster and retains the map position. The map also keeps its position when an access check conceals and refreshes it. Switching workspaces resets the map position. A cluster zooms in or spreads overlapping markers so you can open each photo.
 
 Map inherits Library's text, filters and date, sorts by capture date instead of Library's sort, then adds GPS eligibility. Each visit starts a fresh result and selection, fetching every matching located photo in pages of 250. Markers appear as pages arrive; the grid appears after loading completes. Earlier results stay visible during a refresh or if it fails. Retry resumes the failed page; an expired cursor starts a fresh load. The viewer and arrow keys follow the Map query, while the viewport filters only the grid. Panning retains selection, and the trash confirmation discloses selections outside the grid.

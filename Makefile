@@ -24,7 +24,7 @@ export GOLANGCI_LINT_CACHE
 # golangci-lint built with kit's kennlint plugin; rebuilt when its pins change.
 CUSTOM_GCL := $(CURDIR)/.cache/golangci-lint/custom-gcl$(if $(filter Windows_NT,$(OS)),.exe)
 
-.PHONY: build install clean test test-v openapi generate-api frontend frontend-test frontend-dev report-export-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
+.PHONY: build install clean test test-v openapi generate-api frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy help
 
 build: frontend
 	CGO_ENABLED=1 go build -tags "$(BUILD_TAGS)" -ldflags="$(LDFLAGS)" -o bin/ ./cmd/docbank
@@ -69,6 +69,10 @@ frontend-dev:
 
 report-export-browser-test: frontend
 	node frontend/screenshots/report-export.run.mjs
+
+photo-map-browser-test: frontend
+	go build -tags "$(BUILD_TAGS)" -o bin/docbank-map$(if $(filter Windows_NT,$(OS)),.exe) ./cmd/docbank
+	DOCBANK_SCREENSHOT_BINARY="$(CURDIR)/bin/docbank-map$(if $(filter Windows_NT,$(OS)),.exe)" DOCBANK_MAP_PROOF_DIR="$(CURDIR)/.superpowers/photo-map-proof" node frontend/node_modules/@playwright/test/cli.js test photo-map.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium
 
 docs-screenshots:
 	cd frontend && npm run screenshots
@@ -137,4 +141,4 @@ docs-deploy:
 	./scripts/deploy-docs.sh
 
 help:
-	@echo "Targets: build install clean test test-v openapi generate-api frontend frontend-test frontend-dev report-export-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"
+	@echo "Targets: build install clean test test-v openapi generate-api frontend frontend-test frontend-dev report-export-browser-test photo-map-browser-test docs-screenshots fmt lint lint-ci tidy install-hooks docs-install docs-subpath-test docs-assets-test docs-assets-sync docs-build docs-serve docs-link docs-deploy"

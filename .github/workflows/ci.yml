@@ -130,9 +130,7 @@ jobs:
       - name: Qualify photo map in Chromium
         env:
           CGO_ENABLED: "0"
-        run: |
-          go build -tags fts5 -o "$RUNNER_TEMP/docbank-map" ./cmd/docbank
-          DOCBANK_SCREENSHOT_BINARY="$RUNNER_TEMP/docbank-map" DOCBANK_MAP_PROOF_DIR="$RUNNER_TEMP/photo-map-proof" node frontend/node_modules/@playwright/test/cli.js test photo-map.screenshot.ts --config frontend/screenshots/playwright.config.ts --project chromium
+        run: make photo-map-browser-test
 
   test:
     name: Linux tests

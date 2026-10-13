@@ -52,6 +52,7 @@ it("restores and reports the map view", () => {
 });
 it("restores focus to a visible parent or the map without moving it", () => {
  const second={...mapPhoto(2),latitude:2,longitude:2};const {view}=setup([second]);frame();const child=mocks.marker.mock.results[0]!.value;
+ expect(mocks.marker).toHaveBeenCalledWith([2,2],expect.objectContaining({autoPanOnFocus:false}));
  const focus=vi.fn(); mocks.cluster.getVisibleParent.mockReturnValue({getElement:()=>({focus})});
  view.component.focus(second.asset_id);
  expect(mocks.cluster.getVisibleParent).toHaveBeenCalledWith(child); expect(focus).toHaveBeenCalledWith({preventScroll:true});

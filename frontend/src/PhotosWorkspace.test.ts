@@ -166,6 +166,24 @@ it("does not write the user's scroll position back to the grid", async () => {
   photos.dispose(); await cache.dispose();
 });
 
+it("starts no extra detail request after a successful reload", async () => {
+  vi.stubGlobal("ResizeObserver", class {observe() {} disconnect() {}});
+  const photos = new Photos("scoped", vi.fn()); photos.started = true;
+  vi.spyOn(photos, "resume").mockResolvedValue();
+  const lookup = vi.spyOn(photos, "lookup").mockResolvedValueOnce(photo(1)).mockResolvedValueOnce({...photo(1), name:"Reloaded photo.jpg"}).mockRejectedValue(new Error("Duplicate lookup failed"));
+  vi.spyOn(photos, "preview").mockRejectedValueOnce(new APIError("Photo changed", 409, "photo_display_changed")).mockResolvedValue({state:"unsupported"});
+  render(PhotosWorkspace, {photos, cache:{get:vi.fn()} as unknown as PhotoPreviewCache, photoID:"photo-1"});
+  await screen.findByRole("dialog", {name:"Photo viewer, Photo 1.jpg"});
+  await screen.findByText("Photo changed");
+  await fireEvent.click(screen.getByRole("button", {name:"Reload photo"}));
+  await screen.findByRole("dialog", {name:"Photo viewer, Reloaded photo.jpg"});
+  await waitFor(() => expect(screen.queryByRole("button", {name:"Reload photo"})).toBeNull());
+  await tick();
+  expect(lookup).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText("Duplicate lookup failed")).toBeNull();
+  photos.dispose();
+});
+
 it.each([
   ["2024", "2025-12-15", /^2024/, "2024-01-01", "2025-01-01", "in 2024"],
   ["2024-02", "2024-02-28", /^February 2024/, "2024-02-01", "2024-03-01", "in February 2024"],

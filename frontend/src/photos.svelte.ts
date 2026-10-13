@@ -212,8 +212,10 @@ export class Photos {
     try { localPreferenceStorage()?.setItem(densityKey, value); } catch { /* Keep the current session's preference. */ }
   }
 
-  async loadMore(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.disposed || this.hiding || this.loading || this.trashing || this.error || this.replacement || (this.started && !this.cursor)) return;
+  async loadMore(preserve?: () => (() => Promise<void>) | undefined): Promise<void> {
+    if (this.disposed || this.hiding || this.loading || this.trashing || this.error) return;
+    if (this.replacement) return this.retry(preserve);
+    if (this.started && !this.cursor) return;
     this.loading = true;
     const controller = this.controller;
     let signal = controller.signal;

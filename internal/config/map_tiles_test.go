@@ -14,6 +14,10 @@ func TestMapTiles(t *testing.T) {
 	valid := MapTilesConfig{TileURL: "https://tiles.example.org/{z}/{x}/{y}.png", Attribution: "Example", MaxZoom: 19}
 	require.NoError(t, valid.Validate())
 	assert.Equal(t, "https://tiles.example.org", valid.Origin())
+	canonical := valid
+	canonical.TileURL = "https://127.0.0.1/{z}/{x}/{y}.png"
+	require.NoError(t, canonical.Validate())
+	assert.Equal(t, "https://127.0.0.1", canonical.Origin())
 	for _, tc := range []struct{ address, message string }{
 		{"https://tiles.example.org/%7Bz%7D/%7Bx%7D/%7By%7D", "tile_url path requires"},
 		{"http://tiles.example.org/{z}/{x}/{y}", "tile_url must use a fixed HTTPS origin"},
@@ -23,6 +27,12 @@ func TestMapTiles(t *testing.T) {
 		{"https://tiles.example.org/{z}/{x}", "tile_url path requires"},
 		{"https://*.example.org/{z}/{x}/{y}", "tile_url requires a fixed ASCII hostname"},
 		{"https://[2001:db8::1]/{z}/{x}/{y}", "tile_url cannot use an IPv6 address"},
+		{"https://127.1/{z}/{x}/{y}.png", "tile_url requires a canonical IPv4 address"},
+		{"https://0177.0.0.1/{z}/{x}/{y}.png", "tile_url requires a canonical IPv4 address"},
+		{"https://0x7f.0.0.1/{z}/{x}/{y}.png", "tile_url requires a canonical IPv4 address"},
+		{"https://0x7f000001/{z}/{x}/{y}.png", "tile_url requires a canonical IPv4 address"},
+		{"https://2130706433/{z}/{x}/{y}.png", "tile_url requires a canonical IPv4 address"},
+		{"https://127.0.0.1./{z}/{x}/{y}.png", "tile_url requires a canonical IPv4 address"},
 		{"https://tiles.example.org?/{z}/{x}/{y}", "tile_url path requires"},
 		{"https://tiles.example.org:0/{z}/{x}/{y}", "tile_url port must be between"},
 		{"https://tiles.example.org/{z}/{x}/{y}/{s}", "tile_url has unsupported placeholders"},

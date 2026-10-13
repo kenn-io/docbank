@@ -100,6 +100,16 @@ func (m MapTilesConfig) Validate() error {
 	if !validASCIIHostname(u.Hostname()) {
 		return errors.New("[web.map_tiles] tile_url requires a fixed ASCII hostname")
 	}
+	host := u.Hostname()
+	// Browsers parse hosts ending in a number as IPv4, including shorthand and alternate bases.
+	labels := strings.Split(strings.TrimSuffix(host, "."), ".")
+	last := strings.ToLower(labels[len(labels)-1])
+	if strings.Trim(last, "0123456789") == "" || strings.HasPrefix(last, "0x") && strings.Trim(last[2:], "0123456789abcdef") == "" {
+		ip, err := netip.ParseAddr(host)
+		if err != nil || !ip.Is4() || ip.String() != host {
+			return errors.New("[web.map_tiles] tile_url requires a canonical IPv4 address in dotted decimal form")
+		}
+	}
 	if u.Port() != "" || strings.HasSuffix(u.Host, ":") {
 		port, err := strconv.ParseUint(u.Port(), 10, 16)
 		if err != nil || port == 0 {

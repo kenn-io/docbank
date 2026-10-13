@@ -42,7 +42,7 @@
       for (; offset < end; offset++) {
         const photo = pending[offset]!;
         if (photo.latitude == null || photo.longitude == null) continue;
-        const marker = L.marker([photo.latitude, photo.longitude], { title: photo.name, alt: photo.name, icon: L.divIcon({ className: "photo-map-dot", iconSize: [16,16] }) });
+        const marker = L.marker([photo.latitude, photo.longitude], { title: photo.name, alt: photo.name, autoPanOnFocus: false, icon: L.divIcon({ className: "photo-map-dot", iconSize: [16,16] }) });
         marker.on("keypress", event => { if (event.originalEvent.key === "Enter" || event.originalEvent.key === " ") { event.originalEvent.preventDefault(); const element = marker.getElement(); if (element) onopen(photo.asset_id, element); } });
         marker.on("click", () => { const element = marker.getElement(); if (element) onopen(photo.asset_id, element); });
         marker.on("add", () => { const element = marker.getElement(); if (element) element.dataset.mapAsset = photo.asset_id; });

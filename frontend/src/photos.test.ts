@@ -417,7 +417,7 @@ it("keeps earlier pages on failure, waits for Retry, and reuses the failed curso
   photos.dispose();
 });
 
-it.each(["2024", undefined])("blocks paging during interrupted date navigation to %s and resumes with the accepted date on failure", async date => {
+it.each(["2024", undefined])("resumes interrupted date navigation to %s through load more and keeps the accepted date on failure", async date => {
   let finish!: (value: Response) => void;
   const fetcher = vi.fn().mockResolvedValueOnce(response([photo(1)], "old"))
     .mockImplementationOnce(() => new Promise(resolve => finish = resolve))
@@ -429,9 +429,7 @@ it.each(["2024", undefined])("blocks paging during interrupted date navigation t
   photos.selectLoaded(); photos.scrollTop = 500;
   const interrupted = photos.selectDate(date);
   photos.cancelPending();
-  const requests = fetcher.mock.calls.length;
-  await photos.loadMore(); expect(fetcher).toHaveBeenCalledTimes(requests);
-  await photos.resume();
+  await photos.loadMore();
   finish(response([photo(99)])); await interrupted;
   expect(photos.error).toBe("Try again");
   expect(photos.date).toBe("2025-01-01");
@@ -503,7 +501,7 @@ it("stages multiple replacement pages and preserves accepted rows on a failed re
   photos.cancelPending();
   expect(photos.loading).toBe(false);
   const refreshStart = fetcher.mock.calls.length;
-  await photos.resume(preserve);
+  await photos.loadMore(preserve);
   expect(JSON.parse(fetcher.mock.calls[refreshStart][1].body).cursor).toBeUndefined();
   finishReplacement(response([photo(99)])); await interruptedRefresh;
   expect(photos.items.map(item => item.asset_id)).toEqual(["photo-10", "photo-11"]);
