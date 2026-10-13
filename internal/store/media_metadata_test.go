@@ -154,7 +154,7 @@ func TestMediaMetadataMissingCurrentTableFailsValidation(t *testing.T) {
 	require.ErrorContains(t, err, "media_input_artifacts")
 }
 
-func TestPruneContentVersionsRetainsMediaOriginalAndInputAuthority(t *testing.T) {
+func TestPruneContentVersionsRetainsMediaAuthorityAndCheckoutEntryPins(t *testing.T) {
 	t.Parallel()
 	for _, authority := range []string{"media source and input artifact", "checkout entry"} {
 		t.Run(authority, func(t *testing.T) {

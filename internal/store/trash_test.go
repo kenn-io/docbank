@@ -316,7 +316,7 @@ func TestTrashEmpty(t *testing.T) {
 	assert.Equal(t, 1, blobCount)
 }
 
-func TestTrashEmptyRetainsMediaAuthorityAndDeletesUnrelatedRoots(t *testing.T) {
+func TestTrashEmptyRetainsMediaAuthorityAndCheckoutEntryPinsAndDeletesUnrelatedRoots(t *testing.T) {
 	t.Parallel()
 	for _, authority := range []string{"source version", "input artifact", "checkout entry"} {
 		t.Run(authority, func(t *testing.T) {

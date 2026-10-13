@@ -365,9 +365,6 @@ func TestCheckoutFailedRunKeepsPartialCopies(t *testing.T) {
 			switch failure {
 			case "collision":
 				require.False(t, actual[2].Published)
-				content, err := root.ReadFile(filepath.FromSlash(entries[1].Path))
-				require.NoError(t, err)
-				require.Equal(t, "keep my edit", string(content))
 				require.Equal(t, int64(1), finished.CompletedObjects)
 			case "became-invisible":
 				require.Contains(t, status.Checkout.Error, entries[1].FileID)

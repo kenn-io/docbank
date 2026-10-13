@@ -68,9 +68,9 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestPhotoCheckoutPublicationRechecksVisibility(t *testing.T) {
+func TestPhotoCheckoutPublication(t *testing.T) {
 	t.Parallel()
-	for _, column := range []string{"hidden_at", "excluded_at", "trashed"} {
+	for _, column := range []string{"hidden_at", "excluded_at", "trashed", "writer reservation"} {
 		t.Run(column, func(t *testing.T) {
 			s := newTestStore(t)
 			a := albumAsset(t, s, "photo.jpg")
@@ -78,6 +78,30 @@ func TestPhotoCheckoutPublicationRechecksVisibility(t *testing.T) {
 			require.NoError(t, err)
 			entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
 			require.NoError(t, err)
+			if column == "writer reservation" {
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				mutation := make(chan error, 1)
+				require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) {
+					// An independent connection can write because publication holds no SQLite transaction.
+					_, err := s.db.ExecContext(ctx, `UPDATE storage_operations SET error='' WHERE operation_id=?`, c.OperationID)
+					if err != nil {
+						return false, err
+					}
+					waits := s.writeDB.Stats().WaitCount
+					go func() {
+						_, err := s.SetPhotoAssetExcluded(ctx, a.ID, a.Revision, true)
+						mutation <- err
+					}()
+					require.Eventually(t, func() bool { return s.writeDB.Stats().WaitCount > waits }, time.Second, time.Millisecond)
+					return true, nil
+				}))
+				require.NoError(t, <-mutation)
+				entries, err = s.PhotoCheckoutEntries(t.Context(), c.ID)
+				require.NoError(t, err)
+				require.True(t, entries[0].Published)
+				return
+			}
 			if column == "trashed" {
 				_, err = s.TrashPhotoAsset(t.Context(), a.ID, a.Revision)
 			} else {
@@ -90,37 +114,6 @@ func TestPhotoCheckoutPublicationRechecksVisibility(t *testing.T) {
 			require.False(t, called)
 		})
 	}
-}
-
-func TestPhotoCheckoutPublicationReservesWriterWithoutTransaction(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	a := albumAsset(t, s, "photo.jpg")
-	c, _, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "checkout", 0)
-	require.NoError(t, err)
-	entries, err := s.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	mutation := make(chan error, 1)
-	require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) {
-		// An independent connection can write because publication holds no SQLite transaction.
-		_, err := s.db.ExecContext(ctx, `UPDATE storage_operations SET error='' WHERE operation_id=?`, c.OperationID)
-		if err != nil {
-			return false, err
-		}
-		waits := s.writeDB.Stats().WaitCount
-		go func() {
-			_, err := s.SetPhotoAssetExcluded(ctx, a.ID, a.Revision, true)
-			mutation <- err
-		}()
-		require.Eventually(t, func() bool { return s.writeDB.Stats().WaitCount > waits }, time.Second, time.Millisecond)
-		return true, nil
-	}))
-	require.NoError(t, <-mutation)
-	entries, err = s.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.True(t, entries[0].Published)
 }
 
 func TestPhotoCheckoutMetadataRestoresUnboundAndDetachedFilesAndValidatesFrozenEntries(t *testing.T) {
@@ -331,7 +324,7 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	require.Equal(t, "terminal error", finished.Error)
 }
 
-func TestPhotoCheckoutSourceNameSelection(t *testing.T) {
+func TestPhotoSourceSelectionMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -359,16 +352,8 @@ func TestPhotoCheckoutSourceNameSelection(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Equal(t, node.Name, filepath.Base(entries[0].Path))
-}
-
-func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	result, _ := seedGroupedCheckoutSources(t, s)
-	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
 	var backup bytes.Buffer
-	err := s.ExportMetadata(ctx, &backup)
+	err = s.ExportMetadata(ctx, &backup)
 	require.NoError(t, err)
 	sources := make(map[string]string)
 	for _, file := range result.Asset.Files {
