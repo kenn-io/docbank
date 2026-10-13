@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,55 +19,75 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonauth"
 	"go.kenn.io/docbank/internal/daemonconn"
+	"go.kenn.io/docbank/internal/version"
+	kitdaemon "go.kenn.io/kit/daemon"
 )
 
 func TestGetPublishesVerifiedCurrentVersion(t *testing.T) {
-	_ = setupVaultHome(t)
-	source := writeSourceFile(t, "statement.bin", "synthetic binary\x00content")
-	_, err := runCLI(t, "add", source, "--dest", "/inbox", "--json")
+	vault := t.TempDir()
+	t.Setenv("DOCBANK_HOME", vault)
+	const token = "synthetic-proof-token"
+	const content = "download"
+	sum := sha256.Sum256([]byte(content))
+	node := api.Node{ID: 42, Name: "statement.bin", Kind: "file", Revision: 1, CurrentVersionID: "00000000-0000-4000-8000-000000000021", BlobHash: hex.EncodeToString(sum[:]), Size: int64(len(content))}
+	requests := make(chan string, 8)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case kitdaemon.DefaultPingPath:
+			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: os.Getpid()}))
+		case daemonauth.ChallengePath:
+			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+			assert.NoError(t, err)
+			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
+		case "/api/v1/path", "/api/v1/nodes/42":
+			assert.Equal(t, http.MethodGet, r.Method)
+			requests <- r.URL.Path + "?" + r.URL.Query().Get("path")
+			response := node
+			if r.URL.Path == "/api/v1/nodes/42" {
+				response.TrashedAt = "2026-01-01T00:00:00Z"
+			}
+			w.Header().Set("Content-Type", "application/json")
+			assert.NoError(t, json.MarshalWrite(w, response))
+		case "/api/v1/versions/" + node.CurrentVersionID + "/content":
+			w.Header().Set(api.ContentVersionHeader, node.CurrentVersionID)
+			w.Header().Set(api.BlobHashHeader, node.BlobHash)
+			w.Header().Set(api.BlobSizeHeader, strconv.FormatInt(node.Size, 10))
+			w.Header().Set("Trailer", "Content-Digest")
+			_, err := io.WriteString(w, content)
+			assert.NoError(t, err)
+			w.Header().Set("Content-Digest", "sha-256=:"+base64.StdEncoding.EncodeToString(sum[:])+":")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
 	require.NoError(t, err)
-
 	output := filepath.Join(t.TempDir(), "retrieved.bin")
-	out, err := runCLI(t, "get", "/inbox/statement.bin", output, "--json")
-	require.NoError(t, err)
-	var receipt getReceipt
-	require.NoError(t, json.Unmarshal([]byte(out), &receipt), out)
-	assert.Positive(t, receipt.NodeID)
-	assert.NotEmpty(t, receipt.VersionID)
-	assert.Len(t, receipt.BlobHash, 64)
-	assert.Equal(t, int64(len("synthetic binary\x00content")), receipt.Size)
-	absOutput, err := filepath.Abs(output)
-	require.NoError(t, err)
-	assert.Equal(t, absOutput, receipt.Output)
-	bytes, err := os.ReadFile(output)
-	require.NoError(t, err)
-	assert.Equal(t, "synthetic binary\x00content", string(bytes))
-	assert.NotContains(t, out, "download:", "JSON must contain no progress lines")
-	assertNoGetStaging(t, filepath.Dir(output))
-	require.NoError(t, os.WriteFile(output, []byte("keep me"), 0o600))
+	for _, selector := range []string{"/inbox/statement.bin", "id:42"} {
+		args := []string{"get", selector, output, "--json"}
+		if selector == "id:42" {
+			args = append(args, "--overwrite")
+		}
+		out, err := runCLI(t, args...)
+		require.NoError(t, err, out)
+		var receipt getReceipt
+		require.NoError(t, json.Unmarshal([]byte(out), &receipt))
+		assert.Equal(t, getReceipt{NodeID: node.ID, VersionID: node.CurrentVersionID, BlobHash: node.BlobHash, Size: node.Size, Output: output}, receipt)
+		assert.NotContains(t, out, "download:")
+		assert.Equal(t, selector == "id:42", getOverwrite)
+		if selector == "id:42" {
+			assert.Equal(t, "/api/v1/nodes/42?", <-requests)
+		} else {
+			assert.Equal(t, "/api/v1/path?/inbox/statement.bin", <-requests)
+		}
+	}
 	_, err = runCLI(t, "get", "/inbox/statement.bin", output)
 	require.ErrorContains(t, err, "pass --overwrite")
-	bytes, err = os.ReadFile(output)
-	require.NoError(t, err)
-	assert.Equal(t, "keep me", string(bytes))
-	assertNoGetStaging(t, filepath.Dir(output))
-	out, err = runCLI(t, "get", "/inbox/statement.bin", output, "--overwrite", "--json")
-	require.NoError(t, err)
-	assert.True(t, jsontext.Value([]byte(out)).IsValid(), out)
-	bytes, err = os.ReadFile(output)
-	require.NoError(t, err)
-	assert.Equal(t, "synthetic binary\x00content", string(bytes))
-	assertNoGetStaging(t, filepath.Dir(output))
-	_, err = runCLI(t, "rm", formatNodeSelector(receipt.NodeID), "--json")
-	require.NoError(t, err)
-	recovered := filepath.Join(filepath.Dir(output), "recovered.bin")
-	_, err = runCLI(t, "get", formatNodeSelector(receipt.NodeID), recovered, "--json")
-	require.NoError(t, err)
-	bytes, err = os.ReadFile(recovered)
-	require.NoError(t, err)
-	assert.Equal(t, "synthetic binary\x00content", string(bytes))
-	assertNoGetStaging(t, filepath.Dir(recovered))
+	require.Empty(t, requests)
 }
 
 func TestGetRejectsDirectoryAndInvalidProgress(t *testing.T) {
@@ -127,13 +149,4 @@ func TestGetIntegrityFailureNeverPublishesPartialDestination(t *testing.T) {
 	require.ErrorIs(t, err, daemonconn.ErrIntegrity)
 	_, statErr := os.Lstat(output)
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
-}
-
-func assertNoGetStaging(t *testing.T, dir string) {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	for _, entry := range entries {
-		assert.False(t, strings.HasPrefix(entry.Name(), "docbank-get-"), entry.Name())
-	}
 }

@@ -21,7 +21,7 @@ func TestPhotoImportRoutes(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "capture.JPG"), []byte("photo"), 0o600))
-	ts, _ := newTestServer(t, func(d *api.Deps) {
+	ts, catalog := newTestServer(t, func(d *api.Deps) {
 		d.Jobs = jobs.New(t.Context(), nil)
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -29,7 +29,8 @@ func TestPhotoImportRoutes(t *testing.T) {
 			require.NoError(t, d.Jobs.Shutdown(ctx))
 		})
 	})
-	body, err := json.Marshal(api.PhotoImportStartRequest{SourceRoot: root, Destination: "/photos"})
+	submitted := api.PhotoImportStartRequest{SourceRoot: root, Destination: "/photos"}
+	body, err := json.Marshal(submitted)
 	require.NoError(t, err)
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/api/v1/photos/imports", bytes.NewReader(body))
 	require.NoError(t, err)
@@ -43,6 +44,12 @@ func TestPhotoImportRoutes(t *testing.T) {
 	require.NotEmpty(t, started.ID)
 	assert.Equal(t, store.StorageOperationKindPhotoImport, started.Kind)
 	assert.Equal(t, "queued", started.State)
+
+	stored, err := catalog.StorageOperation(t.Context(), started.ID)
+	require.NoError(t, err)
+	var accepted store.PhotoImportRequest
+	require.NoError(t, json.Unmarshal([]byte(stored.RequestJSON), &accepted))
+	assert.Equal(t, store.PhotoImportRequest{SourceRoot: submitted.SourceRoot, Destination: submitted.Destination}, accepted)
 
 	pollCtx, cancelPoll := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancelPoll()

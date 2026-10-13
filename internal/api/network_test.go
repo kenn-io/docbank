@@ -29,7 +29,11 @@ func TestNetworkHostGuardPrecedesAuthentication(t *testing.T) {
 		{"docbank-other.localhost:1234", "synthetic-key", 403}, {"127.0.0.1:8485", "synthetic-key", 404},
 	} {
 		t.Run(test.host+test.key, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "http://localhost/api/v1/unknown", nil)
+			path := "/api/v1/unknown"
+			if test.host == "attacker.example:8485" {
+				path = "/api/v1/nodes/1"
+			}
+			r := httptest.NewRequest(http.MethodGet, "http://localhost"+path, nil)
 			r.Host = test.host
 			r.Header.Set("X-Api-Key", test.key)
 			w := httptest.NewRecorder()

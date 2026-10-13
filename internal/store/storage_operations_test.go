@@ -13,7 +13,7 @@ import (
 
 func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
 	t.Parallel()
-	for _, kind := range []string{"placement", "local"} {
+	for _, kind := range []string{"placement", "local", "completed"} {
 		t.Run(kind, func(t *testing.T) {
 			local := kind == "local"
 			s := newTestStore(t)
@@ -42,15 +42,26 @@ func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
 			claimed, err := s.ClaimStorageOperation(t.Context(), created.ID)
 			require.NoError(t, err)
 			assert.Equal(t, StorageOperationRunning, claimed.State)
+			if kind == "placement" {
+				resumable, err := s.ResumableStorageOperations(t.Context())
+				require.NoError(t, err)
+				require.Equal(t, []StorageOperation{claimed}, resumable)
+				claimed, err = s.ClaimStorageOperation(t.Context(), created.ID)
+				require.NoError(t, err)
+				assert.Equal(t, StorageOperationRunning, claimed.State)
+			}
 			if local {
 				require.NoError(t, s.SetStorageOperationTotal(t.Context(), created.ID, 3))
 			}
+			const progressReceipt = `{"added":1}`
 			cursor, copied, copiedBytes, receipts := "hash-1", int64(1), int64(12), []string(nil)
 			if local {
-				cursor, copied, copiedBytes, receipts = "", 0, 0, []string{`{"added":1}`}
+				cursor, copied, copiedBytes, receipts = "", 0, 0, []string{progressReceipt}
 			}
 			require.NoError(t, s.AdvanceStorageOperation(t.Context(), created.ID, cursor, 1, copied, copiedBytes, receipts...))
-			require.NoError(t, s.RequestStorageOperationCancel(t.Context(), created.ID))
+			if kind != "completed" {
+				require.NoError(t, s.RequestStorageOperationCancel(t.Context(), created.ID))
+			}
 
 			current, err := s.StorageOperation(t.Context(), created.ID)
 			require.NoError(t, err)
@@ -59,51 +70,39 @@ func TestStorageOperationPersistsProgressAndCancellation(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, []StorageOperation{current}, resumable)
 				assert.Equal(t, int64(3), current.TotalObjects)
+				assert.Equal(t, progressReceipt, current.ReceiptJSON)
 			}
 			assert.Equal(t, cursor, current.Cursor)
 			assert.Equal(t, int64(1), current.CompletedObjects)
 			assert.Equal(t, copiedBytes, current.CopiedBytes)
-			assert.True(t, current.CancelRequested)
+			assert.Equal(t, kind != "completed", current.CancelRequested)
 
 			receipt, expiry := `{"cancelled":true}`, time.Now().Add(24*time.Hour)
 			if local {
-				receipt, expiry = current.ReceiptJSON, time.Time{}
+				receipt, expiry = progressReceipt, time.Time{}
+			}
+			terminal := StorageOperationCancelled
+			if kind == "completed" {
+				terminal = StorageOperationCompleted
 			}
 			require.NoError(t, s.FinishStorageOperation(
-				t.Context(), created.ID, StorageOperationCancelled, receipt, "", expiry,
+				t.Context(), created.ID, terminal, receipt, "", expiry,
 			))
 			items, err := s.StorageOperations(t.Context(), 10)
 			require.NoError(t, err)
 			require.Len(t, items, 1)
-			assert.Equal(t, StorageOperationCancelled, items[0].State)
+			assert.Equal(t, terminal, items[0].State)
 			assert.NotNil(t, items[0].FinishedAt)
+			if kind == "completed" {
+				require.ErrorIs(t, s.RequestStorageOperationCancel(t.Context(), created.ID), ErrStorageOperationTerminal)
+			}
 			if local {
+				assert.Equal(t, progressReceipt, items[0].ReceiptJSON)
 				_, err = s.CreateLocalOperation(t.Context(), "unknown", `{}`)
 				require.Error(t, err)
 			}
 		})
 	}
-}
-
-func TestStorageOperationClaimResumesInterruptedWork(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
-		Kind: "place", RequestDigest: fakeHash("b6"),
-		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
-	})
-	require.NoError(t, err)
-	_, err = s.ClaimStorageOperation(t.Context(), created.ID)
-	require.NoError(t, err)
-
-	resumable, err := s.ResumableStorageOperations(t.Context())
-	require.NoError(t, err)
-	require.Len(t, resumable, 1)
-	assert.Equal(t, created.ID, resumable[0].ID)
-
-	claimed, err := s.ClaimStorageOperation(t.Context(), created.ID)
-	require.NoError(t, err)
-	assert.Equal(t, StorageOperationRunning, claimed.State)
 }
 
 func TestStorageOperationRejectsConcurrentEvacuationsForOneStore(t *testing.T) {
@@ -138,23 +137,6 @@ func TestStorageOperationRejectsConcurrentEvacuationsForOneStore(t *testing.T) {
 		RequestJSON:   `{"version":1}`, PlanJSON: `{"hashes":[]}`,
 	})
 	require.NoError(t, err)
-}
-
-func TestStorageOperationRejectsCancellationAfterTerminalState(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	created, err := s.CreateStorageOperation(t.Context(), StorageOperationCreate{
-		Kind: "place", RequestDigest: fakeHash("c7"),
-		RequestJSON: `{"version":1}`, PlanJSON: `{"hashes":[]}`,
-	})
-	require.NoError(t, err)
-	require.NoError(t, s.FinishStorageOperation(
-		t.Context(), created.ID, StorageOperationCompleted, `{}`, "",
-		time.Now().Add(24*time.Hour),
-	))
-
-	err = s.RequestStorageOperationCancel(t.Context(), created.ID)
-	require.ErrorIs(t, err, ErrStorageOperationTerminal)
 }
 
 func TestStorageOperationCleanupPersistsUntilCompleted(t *testing.T) {
