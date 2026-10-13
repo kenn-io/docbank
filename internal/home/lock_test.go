@@ -447,12 +447,12 @@ func TestOpenLaunchOutputStaysOutsideVault(t *testing.T) {
 
 func TestTargetLockRegistryIgnoresProcessHomeEnvironment(t *testing.T) {
 	t.Setenv("DOCBANK_LOCK_DIR", "")
-	before, err := targetLockRegistryDir()
+	before, err := targetLockRegistryPath()
 	require.NoError(t, err)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	after, err := targetLockRegistryDir()
+	after, err := targetLockRegistryPath()
 	require.NoError(t, err)
 	require.Equal(t, before, after)
 }
