@@ -30,34 +30,6 @@ function jobsResponse(
 }
 
 describe("background jobs drawer", () => {
-  it.each(["initial load", "lane controls"])(
-    "shows a retry for unavailable %s and recovers to the empty state",
-    async (failure) => {
-      vi.spyOn(globalThis, "fetch")
-        .mockResolvedValueOnce(
-          failure === "initial load"
-            ? new Response(JSON.stringify({ detail: "busy" }), {
-                status: 503,
-                headers: { "Content-Type": "application/json" },
-              })
-            : new Response(
-                JSON.stringify({ items: [], lane_controls_error: "Lane controls are unavailable" }),
-                { headers: { "Content-Type": "application/json" } },
-              ),
-        )
-        .mockResolvedValueOnce(jobsResponse([]));
-      render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
-      expect((await screen.findByRole("alert")).textContent).toBe(
-        failure === "initial load" ? "busy" : "Lane controls are unavailable",
-      );
-      expect(screen.queryByText("No background jobs")).toBeNull();
-      await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-      expect(await screen.findByText("No background jobs")).toBeTruthy();
-      expect(screen.queryByRole("alert")).toBeNull();
-      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
-    },
-  );
-
   it.each([
     ["initial load", 503, { detail: "busy" }, "busy"],
     [
@@ -79,8 +51,8 @@ describe("background jobs drawer", () => {
       "Lane controls are unavailable",
     ],
   ])(
-    "keeps the unavailable %s error while a poll is pending",
-    async (_failure, status, body, message) => {
+    "shows a retry for unavailable %s and recovers to the empty state",
+    async (failure, status, body, message) => {
       vi.useFakeTimers();
       try {
         vi.spyOn(globalThis, "fetch")
@@ -90,15 +62,26 @@ describe("background jobs drawer", () => {
               headers: { "Content-Type": "application/json" },
             }),
           )
-          .mockReturnValueOnce(new Promise<Response>(() => {}));
+          .mockReturnValueOnce(new Promise<Response>(() => {}))
+          .mockResolvedValueOnce(jobsResponse([]));
         render(JobsDrawer, { session: "short-lived", onclose: vi.fn(), onauthfailure: vi.fn() });
         await vi.advanceTimersByTimeAsync(0);
         expect(screen.getByRole("alert").textContent).toBe(message);
+        expect(screen.queryByText("No background jobs")).toBeNull();
         await vi.advanceTimersByTimeAsync(2000);
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);
         expect(screen.getByRole("alert").textContent).toBe(message);
         expect(screen.queryByText("No background jobs")).toBeNull();
         expect(screen.queryByText("Read-only")).toBeNull();
+        await fireEvent.click(
+          screen.getByRole("button", {
+            name: failure === "initial load" ? "Try again" : "Refresh background jobs",
+          }),
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        expect(screen.getByText("No background jobs")).toBeTruthy();
+        expect(screen.queryByRole("alert")).toBeNull();
+        expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
       } finally {
         vi.useRealTimers();
       }

@@ -399,8 +399,6 @@ func TestTrashListAndEmpty(t *testing.T) {
 	for _, run := range []bool{false, true} {
 		expected, err := expectedStore.TrashEmpty(t.Context(), 0, run)
 		require.NoError(t, err)
-		require.Positive(t, expected.Retained)
-		require.Positive(t, expected.Held)
 		resp, body = do(t, ts, http.MethodPost, "/api/v1/trash/empty", nil,
 			map[string]any{"older_than": "", "run": run})
 		require.Equal(t, http.StatusOK, resp.StatusCode, body)

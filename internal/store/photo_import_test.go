@@ -559,30 +559,6 @@ func TestPhotoImportSidecarDedupStaysWithinSourceGroup(t *testing.T) {
 	assert.Len(t, second.Asset.Files, 2)
 }
 
-func TestPhotoSidecarImageTarget(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	image, err := s.CreateFile(ctx, s.RootID(), "IMG.JPG", fakeHash("image"), 4, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
-	require.NoError(t, err)
-	asset, err = s.PromotePhotoNode(ctx, image.ID, nil, PhotoRoleImage, PhotoKindPhoto)
-	require.NoError(t, err)
-	sidecar, err := s.CreateFile(ctx, s.RootID(), "IMG.XMP", fakeHash("sidecar"), 4, "application/rdf+xml")
-	require.NoError(t, err)
-	imageFile := fileByRole(asset.Files, PhotoRoleImage)
-	asset, err = s.AttachPhotoFile(ctx, asset.ID, asset.Revision, sidecar.ID, PhotoRoleSidecar, &imageFile.ID)
-	require.NoError(t, err)
-	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, imageFile.ID, PhotoDetachOptions{})
-	require.Error(t, err)
-	asset, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, imageFile.ID, PhotoDetachOptions{ClearDependentSidecars: true})
-	require.NoError(t, err)
-	assert.Empty(t, asset.Files)
-}
-
 func TestPhotoSidecarImageLifecycle(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -590,6 +566,10 @@ func TestPhotoSidecarImageLifecycle(t *testing.T) {
 	image, err := s.CreateFile(ctx, s.RootID(), "lifecycle.JPG", fakeHash("a1"), 4, "image/jpeg")
 	require.NoError(t, err)
 	asset, err := s.PhotoAssetForNode(ctx, image.ID)
+	require.NoError(t, err)
+	_, err = s.DetachPhotoFile(ctx, asset.ID, asset.Revision, asset.Files[0].ID, PhotoDetachOptions{})
+	require.NoError(t, err)
+	asset, err = s.PromotePhotoNode(ctx, image.ID, nil, PhotoRoleImage, PhotoKindPhoto)
 	require.NoError(t, err)
 	imageFile := asset.Files[0]
 	sidecarOne, err := s.CreateFile(ctx, s.RootID(), "lifecycle-one.XMP", fakeHash("a2"), 4, "application/rdf+xml")
