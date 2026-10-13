@@ -468,17 +468,17 @@ func (s *Store) NodeTags(ctx context.Context, nodeID int64, limit, offset int) (
 	if err := validatePage(limit, offset); err != nil {
 		return nil, 0, err
 	}
+	// Count assignments after pagination, not for tags discarded by the sort.
 	rows, err := s.db.QueryContext(ctx, `
 		WITH target AS (SELECT id FROM nodes WHERE id = ?),
 		page AS (
-		  SELECT t.id, t.name, t.revision,
-		         (SELECT COUNT(*) FROM node_tags all_nt WHERE all_nt.tag_id = t.id) AS assignments
+		  SELECT t.id, t.name, t.revision
 		  FROM tags t JOIN node_tags nt ON nt.tag_id = t.id
 		  WHERE nt.node_id = ? ORDER BY t.name, t.id LIMIT ? OFFSET ?
 		), totals AS (SELECT COUNT(*) AS total FROM node_tags WHERE node_id = ?)
 		SELECT totals.total, COALESCE(page.id, ''), COALESCE(page.name, ''),
 		       COALESCE(page.revision, 0),
-		       COALESCE(page.assignments, 0)
+		       (SELECT COUNT(*) FROM node_tags WHERE tag_id = page.id)
 		FROM target CROSS JOIN totals LEFT JOIN page ON true ORDER BY page.name, page.id`,
 		nodeID, nodeID, limit, offset, nodeID)
 	if err != nil {

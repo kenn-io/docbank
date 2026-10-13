@@ -154,6 +154,19 @@ func TestTagPagesKeepAssignmentCounts(t *testing.T) {
 	require.Empty(t, tags)
 	require.Equal(t, 3, total)
 
+	tags, total, err = s.NodeTags(ctx, node.ID, 1, 1)
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	require.Equal(t, []Tag{{ID: beta.ID, Name: "beta", Revision: 3, AssignmentCount: 2}}, tags)
+	tags, total, err = s.NodeTags(ctx, s.RootID(), 1, 0)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Equal(t, []Tag{{ID: beta.ID, Name: "beta", Revision: 3, AssignmentCount: 2}}, tags)
+	tags, total, err = s.NodeTags(ctx, node.ID, 1, 2)
+	require.NoError(t, err)
+	require.Empty(t, tags)
+	require.Equal(t, 2, total)
+
 	for _, want := range []Tag{
 		{ID: alpha.ID, Name: "alpha", Revision: 2, AssignmentCount: 1},
 		{ID: beta.ID, Name: "beta", Revision: 3, AssignmentCount: 2},
@@ -208,6 +221,10 @@ func TestTagQueriesAreBoundedAndIncludeTrashedNodes(t *testing.T) {
 	assert.Equal(t, 2, total)
 	require.Len(t, nodeTags, 2)
 	assert.Equal(t, []string{"alpha", "beta"}, []string{nodeTags[0].Name, nodeTags[1].Name})
+	nodeTags, total, err = s.NodeTags(ctx, s.RootID(), 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, nodeTags)
+	assert.Zero(t, total)
 
 	nodes, total, err := s.TaggedNodes(ctx, first.ID, 10, 0)
 	require.NoError(t, err)
