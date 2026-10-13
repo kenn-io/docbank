@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import * as jobs from "./jobs.js";
+import type { Job } from "./generated/docbank.js";
 import JobsDrawer from "./JobsDrawer.svelte";
 
 afterEach(() => {
@@ -327,51 +329,96 @@ describe("background jobs drawer", () => {
   it("shows durable job progress and cancels through the shared Jobs route", async () => {
     const id = "f6730699-23b5-458a-b6d9-11b140ac1f92";
     const placeId = "0b9d8f43-6f0e-4b4a-9d55-2f1c5b2b7c11";
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
-      jobsResponse([
-        {
-          name: `storage:${id}`,
-          kind: "photo_import",
-          operation_id: id,
-          status: "running",
-          started_at: "2026-07-23T12:00:00Z",
-          completed_objects: 75,
-          total_objects: 300,
-          can_cancel: true,
-        },
-        {
-          name: "storage:b",
-          kind: "photo_import",
-          operation_id: "b",
-          status: "queued",
-          started_at: "2026-07-23T12:00:20Z",
-          total_objects: 1,
-          can_cancel: true,
-        },
-        {
-          name: "storage:checkout",
-          kind: "photo_checkout",
-          operation_id: "checkout",
-          status: "running",
-          started_at: "2026-07-23T12:00:30Z",
-          completed_objects: 1,
-          total_objects: 2,
-        },
-        {
-          name: `storage:${placeId}`,
-          kind: "place",
-          operation_id: placeId,
-          status: "queued",
-          started_at: "2026-07-23T12:01:00Z",
-          can_cancel: true,
-        },
-        {
-          name: "watch:inbox",
-          status: "running",
-          started_at: "2026-07-23T11:00:00Z",
-        },
-      ]),
-    );
+    const items: Job[] = [
+      {
+        name: `storage:${id}`,
+        kind: "photo_import",
+        operation_id: id,
+        status: "running",
+        started_at: "2026-07-23T12:00:00Z",
+        completed_objects: 75,
+        total_objects: 300,
+        can_cancel: true,
+      },
+      {
+        name: "storage:b",
+        kind: "photo_import",
+        operation_id: "b",
+        status: "queued",
+        started_at: "2026-07-23T12:00:20Z",
+        total_objects: 1,
+        can_cancel: true,
+      },
+      {
+        name: "storage:checkout",
+        kind: "photo_checkout",
+        operation_id: "checkout",
+        status: "running",
+        started_at: "2026-07-23T12:00:30Z",
+        completed_objects: 1,
+        total_objects: 2,
+      },
+      {
+        name: `storage:${placeId}`,
+        kind: "place",
+        operation_id: placeId,
+        status: "queued",
+        started_at: "2026-07-23T12:01:00Z",
+        can_cancel: true,
+      },
+      {
+        name: "watch:inbox",
+        status: "running",
+        started_at: "2026-07-23T11:00:00Z",
+      },
+    ];
+    const group = vi.spyOn(jobs, "jobLanes").mockReturnValue([
+      {
+        key: "photo_import",
+        lane: "photo_import",
+        title: "Photo import",
+        members: [items[0], items[1]],
+        status: "running",
+        completed: 75,
+        total: 400,
+        active: true,
+        control: undefined,
+      },
+      {
+        key: "photo_checkout",
+        lane: "photo_checkout",
+        title: "Photo checkout",
+        members: [items[2]],
+        status: "running",
+        completed: 1,
+        total: 2,
+        active: true,
+        control: undefined,
+      },
+      {
+        key: "place",
+        lane: "place",
+        title: "Storage placement",
+        members: [items[3]],
+        status: "queued",
+        completed: 0,
+        total: undefined,
+        active: true,
+        control: undefined,
+      },
+      {
+        key: "watch:inbox",
+        lane: "watch:inbox",
+        title: "watch · inbox",
+        members: [items[4]],
+        status: "running",
+        completed: 0,
+        total: undefined,
+        active: true,
+        control: undefined,
+      },
+    ]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jobsResponse(items));
 
     render(JobsDrawer, {
       session: "short-lived",
@@ -380,10 +427,11 @@ describe("background jobs drawer", () => {
     });
 
     const progress = await screen.findByRole("progressbar", { name: "Photo import progress" });
+    await waitFor(() => expect(group).toHaveBeenCalledWith(items, []));
     expect(progress.getAttribute("aria-valuenow")).toBe("75");
-    expect(progress.getAttribute("aria-valuemax")).toBe("301");
+    expect(progress.getAttribute("aria-valuemax")).toBe("400");
     expect(screen.getByText("Photo import")).toBeTruthy();
-    expect(screen.getByText("75 of 301 groups")).toBeTruthy();
+    expect(screen.getByText("75 of 400 groups")).toBeTruthy();
     const checkoutProgress = screen.getByRole("progressbar", { name: "Photo checkout progress" });
     expect(checkoutProgress.getAttribute("aria-valuenow")).toBe("1");
     expect(checkoutProgress.getAttribute("aria-valuemax")).toBe("2");

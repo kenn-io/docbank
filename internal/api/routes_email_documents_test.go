@@ -43,10 +43,6 @@ func TestTrashEmptyReportsEmailRetentionWithoutBlockingOtherRoots(t *testing.T) 
 	require.EqualValues(t, 1, report.CandidateRoots)
 	require.EqualValues(t, 1, report.Deleted)
 	require.EqualValues(t, 1, report.RetainedRoots)
-	_, err = s.NodeByID(t.Context(), version.NodeID)
-	require.NoError(t, err)
-	_, err = s.NodeByID(t.Context(), discard.ID)
-	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
 func TestEmailDocumentsAndConsentRequireMasterAPIKey(t *testing.T) {

@@ -192,6 +192,11 @@ func TestCheckoutResumeReconcilesStartedWorkInSupervisor(t *testing.T) {
 				return true
 			}, 5*time.Second, 10*time.Millisecond)
 			require.NoError(t, supervisor.Shutdown(context.Background()))
+			var jobNames []string
+			for _, job := range supervisor.Snapshot() {
+				jobNames = append(jobNames, job.Name)
+			}
+			require.ElementsMatch(t, []string{"storage:" + badOp.ID, "storage:" + op.ID}, jobNames)
 			require.Equal(t, int32(2), begun.Load())
 			require.Equal(t, int32(2), ended.Load())
 			_, err = root.Stat(payload)

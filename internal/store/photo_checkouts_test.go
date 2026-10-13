@@ -103,31 +103,20 @@ func TestPhotoCheckoutPublication(t *testing.T) {
 			if scenario == "writer reservation" {
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
-				mutation := make(chan error, 1)
 				require.NoError(t, s.PublishPhotoCheckoutEntry(ctx, entries[0], func() (bool, error) {
 					// An independent connection can write because publication holds no SQLite transaction.
 					_, err := s.db.ExecContext(ctx, `UPDATE storage_operations SET error='' WHERE operation_id=?`, c.OperationID)
 					if err != nil {
 						return false, err
 					}
-					started := make(chan struct{})
-					go func() {
-						close(started)
-						_, err := s.SetPhotoAssetExcluded(ctx, a.ID, a.Revision, true)
-						mutation <- err
-					}()
-					<-started
-					require.Never(t, func() bool {
-						select {
-						case <-mutation:
-							return true
-						default:
-							return false
-						}
-					}, 50*time.Millisecond, time.Millisecond)
+					blocked, stop := context.WithTimeout(ctx, 2*time.Second)
+					defer stop()
+					_, err = s.SetPhotoAssetExcluded(blocked, a.ID, a.Revision, true)
+					require.ErrorIs(t, err, context.DeadlineExceeded)
 					return true, nil
 				}))
-				require.NoError(t, <-mutation)
+				_, err = s.SetPhotoAssetExcluded(ctx, a.ID, a.Revision, true)
+				require.NoError(t, err)
 				entries, err = s.PhotoCheckoutEntries(t.Context(), c.ID)
 				require.NoError(t, err)
 				require.True(t, entries[0].Published)
