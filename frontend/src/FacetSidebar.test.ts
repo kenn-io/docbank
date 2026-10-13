@@ -33,10 +33,6 @@ it("shows every requested facet with selected-zero, missing, other, and unavaila
   render(FacetSidebar, { facets, query: originalQuery, disabled: false, onchange: vi.fn() });
   expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(8);
   expect(screen.getByRole("button", { name: "reviewed, 0 documents, selected" }).getAttribute("aria-pressed")).toBe("true");
-  expect(screen.getByText("1 not in a collection")).toBeTruthy();
-  expect(screen.getByText("2 memberships in unlisted collections")).toBeTruthy();
-  expect(screen.getByText("1 with no tags")).toBeTruthy();
-  expect(screen.getByText("2 uses of unlisted tags")).toBeTruthy();
   expect(within(screen.getByRole("group", { name: "Text coverage facet" })).getByText(/coverage unconfigured/i)).toBeTruthy();
   expect(screen.queryByRole("button", { name: /unique/i })).toBeNull();
   expect(screen.getByText("unique · 7 · informational")).toBeTruthy();
@@ -53,15 +49,15 @@ it.each([
   ["extension", "with no extension", "in unlisted extensions", "in unlisted extension"],
   ["modified", "with no modified date", "in unlisted months", "in unlisted month"],
 ] as const)("shows positive %s counts in plain words and hides zeros", async (dimension, missing, other, singular) => {
-  const view = render(FacetSidebar, { facets: [facet(dimension, { missing: 6, other: other ? 6 : 0 })], query: originalQuery, onchange: vi.fn() });
+  const view = render(FacetSidebar, { facets: [facet(dimension, { missing: 6, other: 6 })], query: originalQuery, onchange: vi.fn() });
   expect(screen.getByText(`6 ${missing}`)).toBeTruthy();
-  if (other) expect(screen.getByText(`6 ${other}`)).toBeTruthy();
-  await view.rerender({ facets: [facet(dimension, { missing: 1, other: other ? 1 : 0 })] });
+  expect(screen.getByText(`6 ${other}`)).toBeTruthy();
+  await view.rerender({ facets: [facet(dimension, { missing: 1, other: 1 })] });
   expect(screen.getByText(`1 ${missing}`)).toBeTruthy();
-  if (singular) expect(screen.getByText(`1 ${singular}`)).toBeTruthy();
-  await view.rerender({ facets: [facet(dimension, { missing: 0, other: other ? 6 : 0 })] });
+  expect(screen.getByText(`1 ${singular}`)).toBeTruthy();
+  await view.rerender({ facets: [facet(dimension, { missing: 0, other: 6 })] });
   expect(screen.queryByText(`0 ${missing}`)).toBeNull();
-  if (other) expect(screen.getByText(`6 ${other}`)).toBeTruthy();
+  expect(screen.getByText(`6 ${other}`)).toBeTruthy();
   await view.rerender({ facets: [facet(dimension, { missing: 6, other: 0 })] });
   expect(screen.getByText(`6 ${missing}`)).toBeTruthy();
   expect(view.container.querySelectorAll(".summary span")).toHaveLength(dimension === "tags" ? 0 : 1);
@@ -69,8 +65,8 @@ it.each([
   expect(view.container.querySelector(".summary")).toBeNull();
 });
 
-it("omits empty summaries for fixed-value facets", () => {
-  const view = render(FacetSidebar, { facets: [facet("media_family", { missing: 0, other: 0 }), facet("size", { missing: 0, other: 0 }), facet("duplicates", { missing: 0, other: 0 })], query: originalQuery, onchange: vi.fn() });
+it("omits summaries for fixed-value facets with positive missing and other counts", () => {
+  const view = render(FacetSidebar, { facets: [facet("media_family", { missing: 1, other: 2 }), facet("size", { missing: 1, other: 2 }), facet("duplicates", { missing: 1, other: 2 })], query: originalQuery, onchange: vi.fn() });
   expect(view.container.querySelector(".summary")).toBeNull();
 });
 

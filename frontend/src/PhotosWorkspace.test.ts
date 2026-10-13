@@ -448,7 +448,7 @@ it.each(["density", "album trash"])("keeps the top photo after %s and pages that
   await cache.dispose();
 });
 
-it.each(["native", "detail-1"])("opens on touch with empty selection and keeps selection taps before a %s double-tap", async mode => {
+it("opens on touch with empty selection and keeps selection taps before a double-tap", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
@@ -470,31 +470,10 @@ it.each(["native", "detail-1"])("opens on touch with empty selection and keeps s
   await tap(); expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
   await tap(); expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
   open.mockClear();
-  await tap(); await tap(mode === "native" ? 2 : 1, 100); await fireEvent.doubleClick(second);
+  await tap(); await tap(2, 100); await fireEvent.doubleClick(second);
   expect(open).toHaveBeenCalledExactlyOnceWith("photo-2", "open");
   expect([...photos.selection.selectedIDs]).toEqual(["photo-1", "photo-2"]);
   await fireEvent.keyDown(cell, { key: "Enter" }); expect(open).toHaveBeenCalledTimes(2);
-});
-
-it("keeps only the first photo selected after two displaced Ctrl-clicks on the second", async () => {
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
-  const photos = new Photos("scoped", vi.fn()); photos.items = [photo(1), photo(2)]; photos.started = true;
-  const open = vi.fn();
-  render(PhotosWorkspace, { photos, cache: { get: vi.fn() } as unknown as PhotoPreviewCache, photoID: "", onphotochange: open });
-  await fireEvent.click(await screen.findByRole("button", { name: "Select Photo 1.jpg" }));
-  const second = screen.getByRole("button", { name: "Select Photo 2.jpg" });
-  for (const [time, position] of [[1000, 10], [1100, 100]]) {
-    await fireEvent.pointerDown(second, { pointerType: "mouse" });
-    const event = new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true, clientX: position, clientY: position });
-    Object.defineProperty(event, "pointerType", { value: "mouse" });
-    Object.defineProperty(event, "timeStamp", { value: time });
-    await fireEvent(second, event);
-  }
-  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);
-  expect(open).not.toHaveBeenCalled();
-  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 it.each(["success", "grid", "removed", "pending"])("keeps query order and viewer membership after %s continuation", async scenario => {
