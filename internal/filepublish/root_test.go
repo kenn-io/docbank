@@ -56,30 +56,49 @@ func TestRootStageNoReplaceAndCleanup(t *testing.T) {
 
 func TestRootStageRejectsDestinationAfterPathReplacement(t *testing.T) {
 	t.Parallel()
-	base := t.TempDir()
-	destination := filepath.Join(base, "destination")
-	require.NoError(t, os.Mkdir(destination, 0o755))
-	root, err := os.OpenRoot(destination)
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	stage, err := CreateRootStage(root)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, stage.Cleanup()) }()
-	_, err = stage.File.WriteString("verified")
-	require.NoError(t, err)
-	require.NoError(t, stage.File.Close())
-	stage.File = nil
-	moved := filepath.Join(base, "moved")
-	if err := os.Rename(destination, moved); err != nil {
-		t.Skip("platform pins an opened directory against rename")
-	}
-	require.NoError(t, os.Mkdir(destination, 0o755))
-	installed, err := stage.Publish("photo.jpg")
-	require.Error(t, err)
-	require.False(t, installed)
-	for _, dir := range []string{destination, moved} {
-		_, err = os.Stat(filepath.Join(dir, "photo.jpg"))
-		require.ErrorIs(t, err, os.ErrNotExist)
+	for _, replaced := range []string{"destination root", "parent"} {
+		t.Run(replaced, func(t *testing.T) {
+			base := t.TempDir()
+			destination := filepath.Join(base, "destination")
+			require.NoError(t, os.Mkdir(destination, 0o755))
+			root, err := os.OpenRoot(destination)
+			require.NoError(t, err)
+			defer func() { _ = root.Close() }()
+			stage, err := CreateRootStage(root)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, stage.Cleanup()) }()
+			_, err = stage.File.WriteString("verified")
+			require.NoError(t, err)
+			require.NoError(t, stage.File.Close())
+			stage.File = nil
+			relativePath := "photo.jpg"
+			parent := root
+			if replaced == "parent" {
+				relativePath = filepath.Join("date", "asset", "photo.jpg")
+				require.NoError(t, stage.MakeParentDirectories(relativePath))
+				parent, err = root.OpenRoot(filepath.Dir(relativePath))
+				require.NoError(t, err)
+				defer func() { _ = parent.Close() }()
+			}
+			replacedPath := filepath.Join(destination, filepath.Dir(relativePath))
+			moved := filepath.Join(base, "moved")
+			if err := os.Rename(replacedPath, moved); err != nil {
+				t.Skip("platform pins an opened directory against rename")
+			}
+			require.NoError(t, os.Mkdir(replacedPath, 0o755))
+			var installed bool
+			if replaced == "parent" {
+				installed, err = stage.publish(parent, relativePath)
+			} else {
+				installed, err = stage.Publish(relativePath)
+			}
+			require.ErrorContains(t, err, "checkout destination changed before publication")
+			require.False(t, installed)
+			for _, dir := range []string{replacedPath, moved} {
+				_, err = os.Stat(filepath.Join(dir, "photo.jpg"))
+				require.ErrorIs(t, err, os.ErrNotExist)
+			}
+		})
 	}
 }
 
@@ -133,31 +152,4 @@ func TestRootStageSyncsNewDirectoryParentsBeforePublication(t *testing.T) {
 			require.Equal(t, "verified", string(content))
 		})
 	}
-}
-
-func TestRootStageRejectsMovedParentBeforeRename(t *testing.T) {
-	t.Parallel()
-	root, err := os.OpenRoot(t.TempDir())
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	stage, err := CreateRootStage(root)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, stage.Cleanup()) }()
-	destination := filepath.Join("date", "asset", "photo.jpg")
-	require.NoError(t, stage.MakeParentDirectories(destination))
-	require.NoError(t, stage.File.Close())
-	stage.File = nil
-	parent, err := root.OpenRoot(filepath.Dir(destination))
-	require.NoError(t, err)
-	defer func() { _ = parent.Close() }()
-	outside := filepath.Join(t.TempDir(), "moved")
-	if err := os.Rename(filepath.Join(root.Name(), filepath.Dir(destination)), outside); err != nil {
-		t.Skip("platform pins an opened directory against rename")
-	}
-	require.NoError(t, root.Mkdir(filepath.Dir(destination), 0700))
-	installed, err := stage.publish(parent, destination)
-	require.ErrorContains(t, err, "checkout destination changed before publication")
-	require.False(t, installed)
-	_, err = os.Stat(filepath.Join(outside, "photo.jpg"))
-	require.ErrorIs(t, err, os.ErrNotExist)
 }

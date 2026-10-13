@@ -50,8 +50,11 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	const checkoutID = "00000000-0000-4000-8000-000000000001"
 	const operationID = "00000000-0000-4000-8000-000000000002"
 	const token = "synthetic-proof-token"
-	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{All: true}, Destination: t.TempDir(), ByteLimit: 100000}
-	statusIDs := make(chan string, 1)
+	destination := filepath.Join("relative", "checkout")
+	absoluteDestination, err := filepath.Abs(destination)
+	require.NoError(t, err)
+	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{All: true}, Destination: absoluteDestination, ByteLimit: 100000}
+	statusRequests := make(chan struct{}, 1)
 	listRequests := make(chan struct{}, 1)
 	inputs := make(chan api.PhotoCheckoutCreateRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,29 +78,26 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 				assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutList{Items: []store.PhotoCheckout{}}))
 			}
 		case "/api/v1/photos/checkouts/" + checkoutID:
-			statusIDs <- strings.TrimPrefix(r.URL.Path, "/api/v1/photos/checkouts/")
+			statusRequests <- struct{}{}
 			assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutStatus{Checkout: checkout}))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(server.Close)
-	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
+	_, err = daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
 	require.NoError(t, err)
-	out, err := runCLI(t, "photos", "checkout", "create", checkout.Destination, "--all", "--byte-limit", "100000")
+	out, err := runCLI(t, "photos", "checkout", "create", destination, "--all", "--byte-limit", "100000")
 	require.NoError(t, err, out)
 	require.Len(t, inputs, 1)
 	input := <-inputs
 	require.True(t, input.Selection.All)
 	require.Equal(t, int64(100000), input.ByteLimit)
-	destination, err := filepath.Abs(checkout.Destination)
-	require.NoError(t, err)
-	require.Equal(t, destination, input.Destination)
+	require.Equal(t, absoluteDestination, input.Destination)
 	out, err = runCLI(t, "photos", "checkout", "list")
 	require.NoError(t, err, out)
 	require.Len(t, listRequests, 1)
 	out, err = runCLI(t, "photos", "checkout", "status", checkoutID)
 	require.NoError(t, err, out)
-	require.Len(t, statusIDs, 1)
-	require.Equal(t, checkoutID, <-statusIDs)
+	require.Len(t, statusRequests, 1)
 }
