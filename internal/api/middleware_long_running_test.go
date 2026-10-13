@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -381,8 +382,9 @@ func TestLargeAudioPlanContextOutlivesOnlyServerDeadline(t *testing.T) {
 		handler := timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 			type identityKey struct{}
 			bounded := context.WithValue(r.Context(), identityKey{}, "synthetic:operator")
-			audio, err := withoutRequestTimeout(bounded)
+			audio, cleanup, err := withoutRequestTimeout(bounded)
 			require.NoError(t, err)
+			defer cleanup()
 			deadline, ok := audio.Deadline()
 			require.True(t, ok)
 			require.Equal(t, wantDeadline, deadline)
@@ -390,6 +392,7 @@ func TestLargeAudioPlanContextOutlivesOnlyServerDeadline(t *testing.T) {
 			time.Sleep(61 * time.Second)
 			require.ErrorIs(t, bounded.Err(), context.DeadlineExceeded)
 			require.NoError(t, audio.Err())
+			require.NoError(t, context.Cause(audio))
 			derived, stop := context.WithCancel(audio)
 			defer stop()
 			cancel()
@@ -407,10 +410,11 @@ func TestLargeAudioPlanClearsHandlerReadDeadline(t *testing.T) {
 		mux := http.NewServeMux()
 		humaAPI := humago.New(mux, huma.DefaultConfig("test", "test"))
 		huma.Register(humaAPI, huma.Operation{OperationID: "testLargeAudioPlan", Method: http.MethodPost, Path: "/api/v1/processing/plans"}, func(ctx context.Context, _ *struct{ Body struct{} }) (*struct{ Body string }, error) {
-			long, err := withoutRequestTimeout(ctx)
+			long, cleanup, err := withoutRequestTimeout(ctx)
 			if err != nil {
 				return nil, err
 			}
+			defer cleanup()
 			time.Sleep(61 * time.Second)
 			return &struct{ Body string }{Body: "planned"}, long.Err()
 		})
@@ -444,4 +448,49 @@ func TestLargeAudioPlanKeepsUnrelatedLimits(t *testing.T) {
 	} {
 		require.Equal(t, test.long, largeAudioProcessingPlan(store.ContentVersion{Size: test.size, MimeType: test.mediaType}, test.maximum))
 	}
+}
+
+func TestLargeAudioPlanPreservesBrowserSessionRevocation(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		sessions := newWebSessionRegistry()
+		token, _, err := sessions.issue()
+		require.NoError(t, err)
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/processing/plans", nil)
+		request.Header.Set(WebSessionHeader, token)
+		handler := timeoutMiddleware(authMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			audio, cleanup, err := withoutRequestTimeout(r.Context())
+			require.NoError(t, err)
+			defer cleanup()
+			require.True(t, browserSessionRequest(audio))
+			time.Sleep(61 * time.Second)
+			require.NoError(t, audio.Err())
+			sessions.revoke(token)
+			synctest.Wait()
+			require.ErrorIs(t, r.Context().Err(), context.DeadlineExceeded)
+			require.ErrorIs(t, audio.Err(), context.Canceled)
+		}), "synthetic-master-key", sessions, "master"))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	})
+}
+
+func TestLargeAudioPlanPreservesCallerCancellationCause(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		cause := errors.New("synthetic caller cancellation")
+		parent, cancel := context.WithCancelCause(t.Context())
+		defer cancel(nil)
+		handler := timeoutMiddleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			audio, cleanup, err := withoutRequestTimeout(r.Context())
+			require.NoError(t, err)
+			defer cleanup()
+			time.Sleep(61 * time.Second)
+			cancel(cause)
+			require.ErrorIs(t, audio.Err(), context.Canceled)
+			require.ErrorIs(t, context.Cause(audio), cause)
+		}))
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(parent, http.MethodPost, "/api/v1/processing/plans", nil))
+	})
 }

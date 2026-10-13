@@ -91,7 +91,9 @@ func registerProcessingRoutes(api huma.API, d Deps) {
 		if version, err := d.Store.ContentVersionByID(ctx, input.Body.Selector.ContentVersionID); err == nil &&
 			largeAudioProcessingPlan(version, d.Processing.MediaSourceMaxBytes()) {
 			var contextErr error
-			ctx, contextErr = withoutRequestTimeout(ctx)
+			var cleanup func()
+			ctx, cleanup, contextErr = withoutRequestTimeout(ctx)
+			defer cleanup()
 			if contextErr != nil {
 				return nil, fromProcessingError(contextErr)
 			}

@@ -64,10 +64,14 @@ func TestMediaUploadThroughSuppliedTranscript(t *testing.T) { //nolint:parallelt
 		Processing:  &api.MediaProcessingBody{Profile: processing.SuppliedMediaProfileName, SuppliedInputID: input.SuppliedInputID},
 	})
 	require.NoError(t, err)
+	pollInterval := 20 * time.Millisecond
+	if size > 1<<30 {
+		pollInterval = time.Second
+	}
 	require.Eventually(t, func() bool {
 		status, statusErr := client.MediaStatus(t.Context(), retained.SourceID)
 		return statusErr == nil && status.OperationID == queued.OperationID && status.OperationState == "succeeded"
-	}, 3*time.Minute, 100*time.Millisecond)
+	}, 3*time.Minute, pollInterval)
 	evidence, err := client.MediaTranscript(t.Context(), retained.SourceID, retained.SourceVersionID, retained.ContentVersionID)
 	require.NoError(t, err)
 	require.NotNil(t, evidence.Transcript)

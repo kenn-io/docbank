@@ -417,7 +417,9 @@ releases the reservation. Operators can free space and retry the same operation.
 HTTP processing plans for cataloged audio sources above 1 GiB and within the
 configured ceiling lift the server's 60-second handler deadline after bounded
 JSON decoding. They clear the remaining socket read deadline and preserve the
-client's cancellation, original deadline and authentication context. Smaller
+client's cancellation, original deadline and authentication context. Browser-session
+revocation still cancels the inspection, and cancellation hooks detach when the
+plan finishes. Smaller
 audio plans, documents, video, over-ceiling sources and request-body limits keep
 their existing deadline behavior.
 

@@ -485,7 +485,8 @@ caption, or hosted-provider bounds. Audio retains its 24-hour duration and codec
 video originals keep their 20 MiB limit. Transcript and caption uploads and the built-in profiles' responses
 keep their 16 MiB limits. A staging disk or quota failure releases the reservation,
 removes the failed file, and returns HTTP 503 with `media_staging_unavailable`;
-free disk space and retry. The staging reservation limits aggregate bytes, so
+free disk space and retry. Embedded callers can match
+`docbank.ErrMediaStagingUnavailable` with `errors.Is`. The staging reservation limits aggregate bytes, so
 one maximum-size source occupies the whole reservation until its stage closes.
 Processing plans for retained audio above 1 GiB may run beyond the ordinary
 60-second request deadline while the full source is verified. Client cancellation

@@ -23,6 +23,7 @@ const requestTimeout = 60 * time.Second
 
 type requestTimeoutParentKey struct{}
 type requestTimeoutControllerKey struct{}
+type authenticationSessionContextKey struct{}
 
 // requestTimeoutParentContext preserves handler values while using the original
 // request's cancellation and deadline for a qualified long source inspection.
@@ -32,19 +33,39 @@ type requestTimeoutParentContext struct {
 	values context.Context
 }
 
-func (ctx requestTimeoutParentContext) Value(key any) any { return ctx.values.Value(key) }
+func (ctx requestTimeoutParentContext) Value(key any) any {
+	// WithoutCancel hides internal cancellation metadata. Resolve those hidden
+	// keys against the new parent while preserving handler values, including nil.
+	value := context.WithoutCancel(ctx.values).Value(key)
+	if value == nil && ctx.values.Value(key) != nil {
+		return ctx.Context.Value(key)
+	}
+	return value
+}
 
-func withoutRequestTimeout(ctx context.Context) (context.Context, error) {
+func withoutRequestTimeout(ctx context.Context) (context.Context, func(), error) {
+	noop := func() {}
 	parent, ok := ctx.Value(requestTimeoutParentKey{}).(context.Context)
-	if !ok {
-		return ctx, nil
+	if !ok || ctx.Err() != nil {
+		return ctx, noop, nil
 	}
 	if controller, ok := ctx.Value(requestTimeoutControllerKey{}).(*http.ResponseController); ok {
 		if err := controller.SetReadDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
-			return nil, err
+			return nil, noop, err
 		}
 	}
-	return requestTimeoutParentContext{Context: parent, values: ctx}, nil
+	// Use the original caller's deadline/cause, and independently retain browser
+	// authority added by authentication after timeout middleware ran.
+	live, cancel := context.WithCancelCause(parent)
+	stopSession := func() bool { return false }
+	if session, ok := ctx.Value(authenticationSessionContextKey{}).(context.Context); ok {
+		stopSession = context.AfterFunc(session, func() { cancel(context.Cause(session)) })
+		if session.Err() != nil {
+			cancel(context.Cause(session))
+		}
+	}
+	cleanup := func() { stopSession(); cancel(nil) }
+	return requestTimeoutParentContext{Context: live, values: ctx}, cleanup, nil
 }
 
 type authenticationContextKey struct{}
@@ -271,6 +292,7 @@ func authMiddleware(next http.Handler, key string, sessions *webSessionRegistry,
 			stop := context.AfterFunc(sessionCtx, cancel)
 			defer stop()
 			defer cancel()
+			ctx = context.WithValue(ctx, authenticationSessionContextKey{}, sessionCtx)
 			ctx = context.WithValue(ctx, authenticationContextKey{}, "browser")
 			ctx = context.WithValue(ctx, workspaceSnapshotOwnerContextKey{}, owner)
 			next.ServeHTTP(w, r.WithContext(ctx))
