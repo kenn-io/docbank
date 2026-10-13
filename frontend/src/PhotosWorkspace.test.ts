@@ -3,7 +3,7 @@ import { tick } from "svelte";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import PhotosWorkspace from "./PhotosWorkspace.svelte";
 import { APIError } from "./api-transport.js";
-import { Photos, photoQuery, type MapView } from "./photos.svelte.js";
+import { Photos, photoQuery, mapPhotoLimit, type MapView } from "./photos.svelte.js";
 import { PhotoPreviewCache } from "./photoPreviewCache.js";
 import { photo, mapPhoto } from "./photo-test-fixtures.js";
 import { captureDateQuery } from "./photoTimeline.js";
@@ -14,6 +14,7 @@ const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) =>
 
 const map = vi.hoisted(() => ({onvisible:undefined as ((rows:PhotoMapRow[]) => void) | undefined, props:undefined as {view?:MapView; onview:(view:MapView) => void} | undefined}));
 vi.mock("./PhotoMap.svelte", () => ({default:(_anchor:unknown, props:{onvisible:(rows:PhotoMapRow[]) => void; view?:MapView; onview:(view:MapView) => void}) => { map.onvisible = props.onvisible; map.props = props; return {}; }}));
+vi.mock("./photos.svelte.js", async importOriginal => ({ ...await importOriginal<typeof import("./photos.svelte.js")>(), mapPhotoLimit: 2 }));
 
 const tiles = {tile_url:"",attribution:"",max_zoom:19};
 
@@ -809,6 +810,27 @@ it("renders disabled maps without fetching and keeps the Library selection on Es
  render(PhotosWorkspace,{tiles,photos,mapMode:true,cache:{get:vi.fn()} as unknown as PhotoPreviewCache,photoID:"",onphotochange:vi.fn()});
  await screen.findByText("Maps are disabled");await fireEvent.keyDown(window,{key:"Escape"});
  expect([...photos.selection.selectedIDs]).toEqual(["photo-1"]);expect(fetcher).not.toHaveBeenCalled();photos.dispose();
+});
+
+it("shows the Map limit notice only for capped results and bounds loading progress", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  photos.items = [mapPhoto(1), mapPhoto(2)]; photos.started = true; photos.total = 3000; photos.cursor = "next"; photos.loading = true;
+  vi.spyOn(photos, "resume").mockResolvedValue();
+  render(PhotosWorkspace, { photos, mapMode: true, tiles: { tile_url: "https://tiles.example.org/{z}/{x}/{y}", attribution: "Example", max_zoom: 19 }, cache: { get: vi.fn() } as unknown as PhotoPreviewCache });
+  const note = "Showing the newest 2 of 3,000 located photos. Narrow your search or date to see the rest.";
+  expect(screen.queryByText(note)).toBeNull();
+  photos.total = mapPhotoLimit + 1000;
+  await screen.findByText(`Loading located photos: 2 of ${mapPhotoLimit.toLocaleString()}`);
+  photos.total = 3000; photos.cursor = undefined; photos.loading = false;
+  const notice = await screen.findByText(note);
+  expect(notice.getAttribute("role")).toBe("status");
+  expect(notice.classList.contains("photo-search-limit")).toBe(true);
+  photos.total = photos.items.length;
+  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  photos.total = 3000; photos.cursor = "next";
+  await waitFor(() => expect(screen.queryByText(note)).toBeNull());
+  photos.dispose();
 });
 
 it("reopens the map where it was after a remount", async () => {

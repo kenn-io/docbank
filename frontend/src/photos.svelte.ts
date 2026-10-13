@@ -11,6 +11,7 @@ import { parseQuery, canonicalQuery, type Query, type QuerySort } from "./query.
 import { captureDateQuery, type CaptureDayFacet } from "./photoTimeline.js";
 
 export const photoQuery = parseQuery('{"syntax":"simple","sort":{"field":"capture_time","direction":"desc"}}');
+export const mapPhotoLimit = 20_000;
 const photoFacets = ["camera", "lens", "year", "location", "set"] as const;
 // One move can audit-trash up to 1,000 files in a single writer transaction.
 const photoRejectsTimeout = 300_000;
@@ -55,6 +56,7 @@ export class Photos {
   set items(value: PhotoRow[]) { this.appendedFrom = undefined; this.seenIDs = undefined; this.rows = value; }
   total = $state(0);
   cursor = $state<string | undefined>();
+  get mapCapped() { return this.projection === "map" && !this.cursor && this.total > this.items.length; }
   loading = $state(false);
   trashing = $state(false);
   rejects = $state<PhotoRejectsPreflight>();
@@ -241,6 +243,7 @@ export class Photos {
         if (this.allResults) this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined };
         if (!this.started || !this.projection) this.total = page.total;
         this.cursor = page.next_cursor;
+        if (this.projection === "map" && this.items.length >= mapPhotoLimit) this.cursor = undefined;
         this.started = true;
         await restore?.();
       } while (this.projection && this.cursor && !controller.signal.aborted);
@@ -466,7 +469,7 @@ export class Photos {
         cursor = page.next_cursor;
         staged.cursor = cursor;
         staged.total = total;
-        staged.complete = !cursor || !this.projection && (mode === "date" || reachedPrefix && (mode === "refresh" || reachedPreviously));
+        staged.complete = !cursor || !!this.projection && candidate.size >= mapPhotoLimit || !this.projection && (mode === "date" || reachedPrefix && (mode === "refresh" || reachedPreviously));
       }
       const eligible = mode === "date" ? new Set(candidate.keys()) : await this.eligibleSelection(candidate.keys(), query, controller.signal);
       if (controller.signal.aborted) return false;
@@ -475,6 +478,7 @@ export class Photos {
       this.total = total;
       this.facets = []; this.facetsError = "";
       this.cursor = cursor;
+      if (this.projection === "map" && candidate.size >= mapPhotoLimit) this.cursor = undefined;
       this.started = true;
       if (mode === "date") {
         this.query = query;

@@ -3,7 +3,7 @@
   import { Button, EmptyState, IconButton, Menu, MenuTrigger, MenuContent, MenuItem, Modal, TextInput, SelectDropdown, SearchInput, Spinner } from "@kenn-io/kit-ui";
   import StarIcon from "@lucide/svelte/icons/star";
   import ImageIcon from "@lucide/svelte/icons/image";
-  import type { Photos, PhotoReturn } from "./photos.svelte.js";
+  import { mapPhotoLimit, type Photos, type PhotoReturn } from "./photos.svelte.js";
   import { groupPhotos, monthLabel, ROW_HEIGHTS, type Density } from "./photoGrid.js";
   import type { PhotoPreviewCache } from "./photoPreviewCache.js";
   import { isAppShortcutSuppressed } from "./shortcuts.js";
@@ -214,9 +214,10 @@
   {#if mapMode}
     <div class="map-disclosure">{new URL(tiles.tile_url).host} receives your IP address and viewed map areas.</div>
     {#if photos.started}<div class="map-controls"><span>{photos.total.toLocaleString()} located photo{photos.total === 1 ? "" : "s"}{photos.date ? ` ${photos.date.length === 10 ? "on" : "in"} ${dateLabel}` : ""}</span></div>{/if}
+    {#if photos.mapCapped}<p class="photo-search-limit" role="status">Showing the newest {photos.items.length.toLocaleString()} of {photos.total.toLocaleString()} located photos. Narrow your search or date to see the rest.</p>{/if}
     <div class="map-tabs"><Button size="sm" surface={mobileTab === "map" ? "solid" : "outline"} onclick={() => mobileTab = "map"}>Map</Button><Button size="sm" surface={mobileTab === "photos" ? "solid" : "outline"} onclick={() => mobileTab = "photos"}>Photos</Button></div>
   {/if}
-  {#if mapMode && photos.loading}<div class="photo-loading" role="status"><Spinner size={14} />Loading located photos: {photos.items.length.toLocaleString()} of {photos.total.toLocaleString()}</div>{/if}
+  {#if mapMode && photos.loading}<div class="photo-loading" role="status"><Spinner size={14} />Loading located photos: {photos.items.length.toLocaleString()} of {Math.min(photos.total, mapPhotoLimit).toLocaleString()}</div>{/if}
   {#if mapMode && photos.error}
     <div class="photo-error" role="alert"><span>{photos.error}</span><Button size="sm" onclick={() => void retryNavigation()}>Retry</Button></div>
   {/if}

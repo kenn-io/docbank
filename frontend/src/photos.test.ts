@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { APIError } from "./api-transport.js";
 import * as download from "./download.js";
-import { Photos, loadDensity, photoQuery, type PhotoRow } from "./photos.svelte.js";
+import { Photos, loadDensity, photoQuery, mapPhotoLimit, type PhotoRow } from "./photos.svelte.js";
 import { photo, mapPhoto } from "./photo-test-fixtures.js";
 import * as snapshots from "./snapshots.js";
 
@@ -50,6 +50,49 @@ it("keeps the first Map count and bounds each page", async () => {
   expect(photos.total).toBe(2);
   expect(timeout.mock.calls).toEqual([[60_000], [60_000]]);
   expect(fetcher.mock.calls.map(([, init]) => JSON.parse(init.body).page_size)).toEqual([1000, 1000]);
+  photos.dispose();
+});
+
+it("stops Map loadMore and resume at the located photo limit", async () => {
+  const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+    const request = JSON.parse(init.body as string);
+    const start = Number(request.cursor ?? 0);
+    return Response.json({ items: [], map_items: Array.from({ length: 1000 }, (_, index) => mapPhoto(start + index + 1)), total: mapPhotoLimit + 1000, next_cursor: String(start + 1000) });
+  });
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  await photos.loadMore();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit}`);
+  expect(photos.total).toBe(mapPhotoLimit + 1000);
+  expect(photos.cursor).toBeUndefined();
+  expect(photos.mapCapped).toBe(true);
+  await photos.loadMore(); await photos.resume();
+  expect(fetcher).toHaveBeenCalledTimes(20);
+  photos.dispose();
+});
+
+it.each(["refresh", "expiry"])("stops Map replacement at the located photo limit, %s", async mode => {
+  const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+    const request = JSON.parse(init.body as string);
+    if (request.cursor === "expired") return Response.json({ code: "cursor_expired" }, { status: 410 });
+    const start = Number(request.cursor ?? 0);
+    return Response.json({ items: [], map_items: Array.from({ length: 1000 }, (_, index) => mapPhoto(start + index + 2)), total: mapPhotoLimit + 1000, next_cursor: String(start + 1000) });
+  });
+  stubPhotoFetch(fetcher);
+  const photos = new Photos("scoped", vi.fn(), false, photoQuery, "map");
+  photos.items = [mapPhoto(1)]; photos.started = true; photos.total = 1;
+  if (mode === "expiry") { photos.cursor = "expired"; await photos.loadMore(); await photos.retry(); }
+  else await photos.refresh();
+  expect(photos.items).toHaveLength(mapPhotoLimit);
+  expect(photos.items[0].asset_id).toBe("photo-2");
+  expect(photos.items.at(-1)?.asset_id).toBe(`photo-${mapPhotoLimit + 1}`);
+  expect(photos.total).toBe(mapPhotoLimit + 1000);
+  expect(photos.cursor).toBeUndefined();
+  expect(photos.mapCapped).toBe(true);
+  expect(photos.error).toBe("");
+  await photos.loadMore(); await photos.resume();
+  expect(fetcher).toHaveBeenCalledTimes(mode === "refresh" ? 20 : 21);
   photos.dispose();
 });
 
