@@ -49,9 +49,10 @@ export class Photos {
   facetsError = $state("");
   facetsRetryable = $state(true);
   private rows = $state.raw<PhotoRow[]>([]);
+  private seenIDs: Set<string> | undefined;
   appendedFrom = $state.raw<PhotoRow[]>();
   get items() { return this.rows; }
-  set items(value: PhotoRow[]) { this.appendedFrom = undefined; this.rows = value; }
+  set items(value: PhotoRow[]) { this.appendedFrom = undefined; this.seenIDs = undefined; this.rows = value; }
   total = $state(0);
   cursor = $state<string | undefined>();
   loading = $state(false);
@@ -128,7 +129,10 @@ export class Photos {
     const query = this.query;
     try {
       if (query.filters.asset_ids && !query.filters.asset_ids.includes(assetID)) throw new APIError("This photo is no longer in this view.", 404, "not_found");
-      const row = this.projection ? (await this.page({ ...query, filters: { ...query.filters, asset_ids: [assetID] } }, signal)).items[0] : await this.lookup(assetID, signal, query);
+      const row = this.projection ? (await this.page({ ...query, filters: { ...query.filters, asset_ids: [assetID] } }, signal).catch(cause => {
+        if (!signal.aborted) this.authFailure(cause);
+        throw cause;
+      })).items[0] : await this.lookup(assetID, signal, query);
       if (!row) throw new APIError("This photo is no longer in this view.", 404, "not_found");
       signal.throwIfAborted();
       if (!this.disposed && this.query === query) {
@@ -228,11 +232,11 @@ export class Photos {
         signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
         const page = await this.page(this.query, signal, this.cursor);
         if (signal.aborted) throw signal.reason;
-        const seen = new Set(this.items.map(item => item.asset_id));
+        const seen = this.seenIDs ??= new Set(this.items.map(item => item.asset_id));
         const added = page.items.filter(item => { if (seen.has(item.asset_id)) return false; seen.add(item.asset_id); return true; });
         const restore = preserve?.();
         const previous = this.items;
-        this.items = [...previous, ...added];
+        this.rows = [...previous, ...added];
         this.appendedFrom = previous;
         if (this.allResults) this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined };
         if (!this.started) this.total = page.total;
@@ -244,7 +248,7 @@ export class Photos {
     } catch (cause) {
       if (controller.signal.aborted) return;
       this.authFailure(cause);
-      this.expired = cause instanceof APIError && cause.code === "cursor_expired";
+      this.expired = cause instanceof APIError && (cause.code === "cursor_expired" || cause.code === "invalid_photo_cursor");
       this.error = signal.aborted || cause instanceof Error && cause.name === "TimeoutError" ? "Photo refresh timed out. Retry to keep browsing." : cause instanceof Error ? cause.message : String(cause);
     } finally {
       if (!controller.signal.aborted) this.loading = false;

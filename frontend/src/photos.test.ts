@@ -887,7 +887,7 @@ it.each(["display", "excluded", "version", "download-display", "download-node", 
   }
 });
 
-it.each(["success", "failure", "expired", "cancel"])("pages one GPS collection and resumes its accepted cursor after %s", async outcome => {
+it.each(["success", "failure", "expired", "invalid_photo_cursor", "cancel"])("pages one GPS collection and resumes its accepted cursor after %s", async outcome => {
  let finish!:(value:Response)=>void;
  const located=mapPhoto;
  const query={...photoQuery,filters:{capture_after:"2024-01-01",gps_bounds:{south:"-90",west:"-180",north:"90",east:"180"}}};
@@ -896,14 +896,16 @@ it.each(["success", "failure", "expired", "cancel"])("pages one GPS collection a
  await vi.waitFor(()=>expect(photos.items.map(row=>row.asset_id)).toEqual(["photo-2"]));
  expect(photos.loading).toBe(true);photos.selectLoaded();
  if(outcome === "cancel") photos.cancelPending();
- finish(outcome === "failure"?new Response("{}",{status:503}):outcome === "expired"?Response.json({code:"cursor_expired"},{status:422}):response([located(1),located(3)]));await pending;
+ const rejected=outcome === "expired" || outcome === "invalid_photo_cursor";
+ finish(outcome === "failure"?new Response("{}",{status:503}):rejected?Response.json({code:outcome === "expired"?"cursor_expired":outcome},{status:422}):response([located(1),located(3)]));await pending;
  if(outcome !== "success") {
-  if(outcome === "expired") fetcher.mockResolvedValueOnce(response([located(2)],"second"));
+  if(rejected) fetcher.mockResolvedValueOnce(response([located(2)],"second"));
   fetcher.mockResolvedValueOnce(response([located(1),located(3)]));await photos.retry();
  }
  expect(photos.items.map(row=>row.asset_id)).toEqual(["photo-2","photo-1","photo-3"]);expect(photos.total).toBe(3);expect(photos.error).toBe("");
  expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toMatchObject({query,projection:"map"});
  if(outcome === "failure" || outcome === "cancel") expect(JSON.parse(fetcher.mock.calls[2]![1].body).cursor).toBe("second");
+ if(rejected) expect(fetcher.mock.calls.map(([,init])=>JSON.parse(init.body).cursor)).toEqual([undefined,"second",undefined,"second"]);
  photos.dispose();
 });
 
@@ -915,6 +917,31 @@ it("marks appended pages and clears the marker on other item assignments", async
  expect(photos.appendedFrom).toBe(previous);expect(photos.items).toHaveLength(2);
  photos.items=photos.items.map(row=>({...row,latitude:3}));
  expect(photos.appendedFrom).toBeUndefined();
+ photos.dispose();
+});
+
+it("reuses seen IDs across pages and resets them when items are replaced", async () => {
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");
+ const previous=[mapPhoto(1)];photos.items=previous;photos.started=true;photos.cursor="next";
+ const scans=vi.fn(()=>"photo-1");Object.defineProperty(previous[0],"asset_id",{get:scans});
+ const fetcher=vi.fn().mockResolvedValueOnce(response([mapPhoto(1),mapPhoto(2)],"last")).mockResolvedValueOnce(response([mapPhoto(2),mapPhoto(3),mapPhoto(3)]));vi.stubGlobal("fetch",fetcher);
+ await photos.loadMore();
+ expect(scans).toHaveBeenCalledTimes(1);expect(photos.items.map(row=>row.asset_id)).toEqual(["photo-1","photo-2","photo-3"]);
+ photos.items=[mapPhoto(2),mapPhoto(4)];photos.cursor="replacement-tail";
+ fetcher.mockResolvedValueOnce(response([mapPhoto(1),mapPhoto(2),mapPhoto(3),mapPhoto(4),mapPhoto(5),mapPhoto(5)]));
+ await photos.loadMore();
+ expect(photos.items.map(row=>row.asset_id)).toEqual(["photo-2","photo-4","photo-1","photo-3","photo-5"]);
+ photos.dispose();
+});
+
+it.each(["map", "library"])("routes %s Reload authentication failures through the store handler", async projection => {
+ const onauth=vi.fn();
+ const photos=new Photos("expired",onauth,false,photoQuery,projection === "map"?"map":undefined);
+ photos.items=[projection === "map"?mapPhoto(1):photo(1)];photos.started=true;
+ const fetcher=vi.fn().mockResolvedValue(Response.json({code:"unauthorized"},{status:401}));vi.stubGlobal("fetch",fetcher);
+ await expect(photos.reload("photo-1",new AbortController().signal)).rejects.toMatchObject({status:401});
+ expect(onauth).toHaveBeenCalledTimes(1);expect(onauth).toHaveBeenCalledWith(expect.objectContaining({status:401}));
+ expect(JSON.parse(fetcher.mock.calls[0]![1].body).projection).toBe(projection === "map"?"map":undefined);
  photos.dispose();
 });
 
