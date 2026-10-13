@@ -99,72 +99,32 @@ func TestPhotoImportDiscovery(t *testing.T) {
 	require.NoError(t, os.WriteFile(hidden, []byte("photo"), 0o600))
 	linkTarget := filepath.Join(root, "linked.JPG")
 	require.NoError(t, os.WriteFile(linkTarget, []byte("linked"), 0o600))
-	link := filepath.Join(root, "descendant.JPG")
-	if err := os.Symlink(linkTarget, link); err != nil {
-		t.Skipf("symbolic links unavailable: %v", err)
-	}
 	candidates, unsupported, err := discoverPhotoCandidates(t.Context(), root)
 	require.NoError(t, err)
 	require.Len(t, candidates, 3)
 	assert.Equal(t, int64(2), unsupported, ".DS_Store and notes.txt are counted, not imported")
 	assert.ElementsMatch(t, []string{keep, linkTarget, hidden}, []string{candidates[0].Path, candidates[1].Path, candidates[2].Path})
 
-	rootLink := filepath.Join(t.TempDir(), "camera-link")
-	if err := os.Symlink(root, rootLink); err != nil {
-		t.Skipf("root symbolic links unavailable: %v", err)
-	}
-	candidates, _, err = discoverPhotoCandidates(t.Context(), rootLink)
-	require.NoError(t, err)
-	assert.NotEmpty(t, candidates)
-}
-
-func TestPhotoImportSourceStability(t *testing.T) {
-	ing := newTestIngester(t)
-	ctx := t.Context()
-	for _, test := range []struct {
-		name string
-		edit func(t *testing.T, path string, before localFileFingerprint)
-	}{
-		{name: "size changed", edit: func(t *testing.T, path string, _ localFileFingerprint) {
-			t.Helper()
-			require.NoError(t, os.WriteFile(path, []byte("changed-size"), 0o600))
-		}},
-		{name: "same-size replacement", edit: func(t *testing.T, path string, before localFileFingerprint) {
-			t.Helper()
-			require.NoError(t, os.Rename(path, path+".old"))
-			require.NoError(t, os.WriteFile(path, []byte("same"), 0o600))
-			require.NoError(t, os.Chtimes(path, before.info.ModTime(), before.info.ModTime()))
-		}},
-		{name: "disappeared", edit: func(t *testing.T, path string, _ localFileFingerprint) {
-			t.Helper()
-			require.NoError(t, os.Remove(path))
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "capture.JPG")
-			require.NoError(t, os.WriteFile(path, []byte("same"), 0o600))
-			before, err := observeLocalFileFingerprint(path)
-			require.NoError(t, err)
-			test.edit(t, path, before)
-			_, err = ing.readLocalFile(ctx, path, path, nil, &before)
-			require.Error(t, err)
-			if test.name != "disappeared" {
-				assert.ErrorIs(t, err, ErrSourceChanged)
-			}
-		})
-	}
-
-	path := filepath.Join(t.TempDir(), "capture.JPG")
-	other := filepath.Join(t.TempDir(), "other.JPG")
-	require.NoError(t, os.WriteFile(path, []byte("same"), 0o600))
-	require.NoError(t, os.WriteFile(other, []byte("other"), 0o600))
-	before, err := observeLocalFileFingerprint(path)
-	require.NoError(t, err)
-	require.NoError(t, os.Remove(path))
-	require.NoError(t, os.Symlink(other, path))
-	_, err = ing.readLocalFile(ctx, path, path, nil, &before)
-	require.Error(t, err)
-	assert.Error(t, err)
+	t.Run("descendant symlink", func(t *testing.T) {
+		link := filepath.Join(root, "descendant.JPG")
+		if err := os.Symlink(linkTarget, link); err != nil {
+			t.Skipf("symbolic links unavailable: %v", err)
+		}
+		candidates, unsupported, err := discoverPhotoCandidates(t.Context(), root)
+		require.NoError(t, err)
+		require.Len(t, candidates, 3)
+		assert.Equal(t, int64(2), unsupported)
+		assert.ElementsMatch(t, []string{keep, linkTarget, hidden}, []string{candidates[0].Path, candidates[1].Path, candidates[2].Path})
+	})
+	t.Run("root symlink", func(t *testing.T) {
+		rootLink := filepath.Join(t.TempDir(), "camera-link")
+		if err := os.Symlink(root, rootLink); err != nil {
+			t.Skipf("root symbolic links unavailable: %v", err)
+		}
+		candidates, _, err := discoverPhotoCandidates(t.Context(), rootLink)
+		require.NoError(t, err)
+		assert.NotEmpty(t, candidates)
+	})
 }
 
 func TestPhotoImportSkipsGroupChangedAfterScan(t *testing.T) {

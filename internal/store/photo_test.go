@@ -513,26 +513,6 @@ func TestPhotoExcludePromotePreservesIdentityAndReceipt(t *testing.T) {
 	assert.Equal(t, 1, staleWrites)
 }
 
-func TestPhotoPromoteExistingAssetChecksLiveNode(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	image, err := s.CreateFile(ctx, s.RootID(), "trashed-existing.jpg", fakeHash("cc01"), 1, "image/jpeg")
-	require.NoError(t, err)
-	asset, err := s.PhotoAssetForNode(ctx, image.ID)
-	require.NoError(t, err)
-	excluded, err := s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
-	require.NoError(t, err)
-	_, _, err = s.Trash(ctx, image.ID, image.Revision)
-	require.NoError(t, err)
-	_, err = s.PromotePhotoNode(ctx, image.ID, &excluded.Revision, "", "")
-	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
-	unchanged, err := s.PhotoAssetByID(ctx, asset.ID)
-	require.NoError(t, err)
-	assert.Equal(t, excluded.Revision, unchanged.Revision)
-	assert.NotNil(t, unchanged.ExcludedAt)
-}
-
 func TestPhotoPromoteUnownedNodeRejectsRevisionPrecondition(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
@@ -701,6 +681,22 @@ func TestPhotoNodeModesRefuseDirectoryAndTrashedPromotion(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.PromotePhotoNode(ctx, file.ID, nil, PhotoRoleRAW, "")
 	require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
+	t.Run("excluded asset on trashed node", func(t *testing.T) {
+		image, err := s.CreateFile(ctx, s.RootID(), "trashed-existing.jpg", fakeHash("cc01"), 1, "image/jpeg")
+		require.NoError(t, err)
+		asset, err := s.PhotoAssetForNode(ctx, image.ID)
+		require.NoError(t, err)
+		excluded, err := s.SetPhotoAssetExcluded(ctx, asset.ID, asset.Revision, true)
+		require.NoError(t, err)
+		_, _, err = s.Trash(ctx, image.ID, image.Revision)
+		require.NoError(t, err)
+		_, err = s.PromotePhotoNode(ctx, image.ID, &excluded.Revision, "", "")
+		require.ErrorIs(t, err, ErrPhotoNodeNotEligible)
+		unchanged, err := s.PhotoAssetByID(ctx, asset.ID)
+		require.NoError(t, err)
+		assert.Equal(t, excluded.Revision, unchanged.Revision)
+		assert.NotNil(t, unchanged.ExcludedAt)
+	})
 }
 
 func TestPhotoEnrollmentSkipsEmailChildAndKeepsProcessedSource(t *testing.T) {

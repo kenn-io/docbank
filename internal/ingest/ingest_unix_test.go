@@ -17,22 +17,42 @@ import (
 )
 
 func TestImportRefusesSymlinkAtOpen(t *testing.T) {
-	ing := newTestIngester(t)
-	ctx := t.Context()
-	src := writeTree(t, map[string]string{"real.txt": "hello"})
-	link := filepath.Join(src, "link.txt")
-	require.NoError(t, os.Symlink(filepath.Join(src, "real.txt"), link))
+	t.Run("symlink at import", func(t *testing.T) {
+		ing := newTestIngester(t)
+		ctx := t.Context()
+		src := writeTree(t, map[string]string{"real.txt": "hello"})
+		link := filepath.Join(src, "link.txt")
+		if err := os.Symlink(filepath.Join(src, "real.txt"), link); err != nil {
+			t.Skipf("symbolic links unavailable: %v", err)
+		}
 
-	// Classification via Lstat/WalkDir can be raced by a swap, so "symlinks
-	// are skipped" has to hold at the point the file is opened for reading.
-	ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
-	require.NoError(t, err)
-	files := &filesystemIngest{ing: ing, run: ingestID}
-	var report Report
-	require.NoError(t, files.addOne(ctx, &report, &ingestDirectory{id: ing.Store.RootID()}, link, link, false, nil))
-	require.NoError(t, files.flush(ctx, &report, nil))
-	require.Len(t, report.Failed, 1)
-	require.Error(t, report.Failed[0].Err)
+		// Classification via Lstat/WalkDir can be raced by a swap, so "symlinks
+		// are skipped" has to hold at the point the file is opened for reading.
+		ingestID, err := ing.Store.BeginIngest(ctx, "cli", "test")
+		require.NoError(t, err)
+		files := &filesystemIngest{ing: ing, run: ingestID}
+		var report Report
+		require.NoError(t, files.addOne(ctx, &report, &ingestDirectory{id: ing.Store.RootID()}, link, link, false, nil))
+		require.NoError(t, files.flush(ctx, &report, nil))
+		require.Len(t, report.Failed, 1)
+		require.Error(t, report.Failed[0].Err)
+	})
+	t.Run("replaced after observation", func(t *testing.T) {
+		ing := newTestIngester(t)
+		ctx := t.Context()
+		path := filepath.Join(t.TempDir(), "capture.JPG")
+		other := filepath.Join(t.TempDir(), "other.JPG")
+		require.NoError(t, os.WriteFile(path, []byte("same"), 0o600))
+		require.NoError(t, os.WriteFile(other, []byte("other"), 0o600))
+		before, err := observeLocalFileFingerprint(path)
+		require.NoError(t, err)
+		require.NoError(t, os.Remove(path))
+		if err := os.Symlink(other, path); err != nil {
+			t.Skipf("symbolic links unavailable: %v", err)
+		}
+		_, err = ing.readLocalFile(ctx, path, path, nil, &before)
+		require.Error(t, err)
+	})
 }
 
 func TestAddOneRejectsNonUTF8SourcePathWithoutPoisoningMetadata(t *testing.T) {
