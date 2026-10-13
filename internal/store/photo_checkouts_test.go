@@ -66,24 +66,6 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-func TestPhotoCheckoutCapacity(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	a := albumAsset(t, s, "photo.jpg")
-	_, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, "checkout", -1)
-	require.ErrorContains(t, err, "byte_limit must be nonnegative")
-	for _, limit := range []int64{0, 19} {
-		_, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", limit)
-		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
-	}
-	c, op, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", 20)
-	require.NoError(t, err)
-	require.Equal(t, StorageOperationKindPhotoCheckout, op.Kind)
-	require.Equal(t, op.ID, c.OperationID)
-	require.Equal(t, int64(1), op.TotalObjects)
-}
-
 func TestPhotoCheckoutPublicationRechecksVisibility(t *testing.T) {
 	t.Parallel()
 	for _, column := range []string{"hidden_at", "excluded_at", "trashed"} {
@@ -203,11 +185,18 @@ func TestPhotoCheckoutRejectsByteOverflow(t *testing.T) {
 
 func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 	t.Parallel()
-	cases := []struct{ name, filename string }{
-		{"empty all", ""}, {"audit refusal", ""},
+	cases := []struct {
+		name, filename string
+		limit          int64
+	}{
+		{"empty all", "", 100}, {"audit refusal", "", 100},
+		{"negative limit", "", -1}, {"all without limit", "", 0}, {"insufficient limit", "", 19},
 	}
 	for _, name := range []string{"CON.jpg", "bad:name.jpg", "bad?.jpg", "trailing.", "trailing ", "control\x01.jpg"} {
-		cases = append(cases, struct{ name, filename string }{name, name})
+		cases = append(cases, struct {
+			name, filename string
+			limit          int64
+		}{name, name, 100})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -215,19 +204,24 @@ func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 			selection := PhotoCheckoutSelection{All: true}
 			expectedErr := ErrInvalidPhotoCheckout
 			var asset PhotoAsset
-			if tc.filename != "" || tc.name == "audit refusal" {
+			if tc.name != "empty all" {
 				asset = albumAsset(t, s, "photo.jpg")
-				selection = PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
+				if tc.filename != "" || tc.name == "audit refusal" || tc.name == "negative limit" {
+					selection = PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
+				}
 				if tc.filename != "" {
 					_, err := s.db.ExecContext(t.Context(), "UPDATE nodes SET name=? WHERE id=?", tc.filename, asset.Files[0].NodeID)
 					require.NoError(t, err)
-				} else {
+				} else if tc.name == "audit refusal" {
 					seedInitialAuditAuthority(t, s, s.RootID())
 					expectedErr = ErrAuditMutationUnsupported
 				}
 			}
-			_, _, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", 100)
+			_, _, err := s.CreatePhotoCheckout(t.Context(), selection, "checkout", tc.limit)
 			require.ErrorIs(t, err, expectedErr)
+			if tc.name == "negative limit" {
+				require.ErrorContains(t, err, "byte_limit must be nonnegative")
+			}
 			if tc.filename != "" {
 				require.Contains(t, err.Error(), "filename")
 				require.Contains(t, err.Error(), asset.ID)
@@ -246,9 +240,12 @@ func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {
 func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
-	asset := albumAsset(t, s, "photo.jpg")
-	checkout, op, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}, "checkout", 0)
+	albumAsset(t, s, "photo.jpg")
+	checkout, op, err := s.CreatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true}, "checkout", 20)
 	require.NoError(t, err)
+	require.Equal(t, StorageOperationKindPhotoCheckout, op.Kind)
+	require.Equal(t, op.ID, checkout.OperationID)
+	require.Equal(t, int64(1), op.TotalObjects)
 	_, err = s.ClaimStorageOperation(t.Context(), op.ID)
 	require.NoError(t, err)
 	require.NoError(t, s.ClaimPhotoCheckout(t.Context(), checkout.ID, op.ID))
