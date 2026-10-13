@@ -139,6 +139,8 @@ func TestPhotoCheckoutMetadataRestoresUnboundAndValidatesFrozenEntries(t *testin
 			var roundtrip bytes.Buffer
 			require.NoError(t, restored.ExportMetadata(t.Context(), &roundtrip))
 			require.Equal(t, exported.String(), roundtrip.String())
+			require.Contains(t, exported.String(), `"relative_path":"undated/`)
+			require.Contains(t, exported.String(), `"size":20,"relative_path"`)
 			for _, bad := range []struct {
 				metadata string
 				path     bool

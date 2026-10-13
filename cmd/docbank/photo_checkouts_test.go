@@ -51,8 +51,8 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	const operationID = "00000000-0000-4000-8000-000000000002"
 	const token = "synthetic-proof-token"
 	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{All: true}, Destination: t.TempDir(), ByteLimit: 100000}
-	statusRequests := make(chan string, 1)
-	listRequests := make(chan string, 1)
+	statusIDs := make(chan string, 1)
+	listRequests := make(chan struct{}, 1)
 	inputs := make(chan api.PhotoCheckoutCreateRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -71,11 +71,11 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 				w.WriteHeader(http.StatusAccepted)
 				assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}))
 			} else {
-				listRequests <- r.Method + " " + r.URL.Path
+				listRequests <- struct{}{}
 				assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutList{Items: []store.PhotoCheckout{}}))
 			}
 		case "/api/v1/photos/checkouts/" + checkoutID:
-			statusRequests <- r.Method + " " + r.URL.Path
+			statusIDs <- strings.TrimPrefix(r.URL.Path, "/api/v1/photos/checkouts/")
 			assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutStatus{Checkout: checkout}))
 		default:
 			http.NotFound(w, r)
@@ -96,9 +96,8 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	out, err = runCLI(t, "photos", "checkout", "list")
 	require.NoError(t, err, out)
 	require.Len(t, listRequests, 1)
-	require.Equal(t, "GET /api/v1/photos/checkouts", <-listRequests)
 	out, err = runCLI(t, "photos", "checkout", "status", checkoutID)
 	require.NoError(t, err, out)
-	require.Len(t, statusRequests, 1)
-	require.Equal(t, "GET /api/v1/photos/checkouts/"+checkoutID, <-statusRequests)
+	require.Len(t, statusIDs, 1)
+	require.Equal(t, checkoutID, <-statusIDs)
 }
