@@ -169,6 +169,8 @@ func TestMistralEmbeddingAttemptTimeoutsThroughProductionTransport(t *testing.T)
 		t.Run(stage, func(t *testing.T) {
 			t.Parallel()
 			var reached atomic.Bool
+			release := make(chan struct{})
+			defer close(release)
 			endpoint, egress, resolver := mistralFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _ = io.Copy(io.Discard, r.Body)
 				w.Header().Set("Content-Type", "application/json")
@@ -177,7 +179,8 @@ func TestMistralEmbeddingAttemptTimeoutsThroughProductionTransport(t *testing.T)
 					assert.NoError(t, http.NewResponseController(w).Flush())
 				}
 				reached.Store(true)
-				<-r.Context().Done()
+				// Delay net/http's implicit response until the client assertions finish.
+				<-release
 			}))
 			profile := testEmbeddingProfile(t)
 			profile.Endpoint, profile.EgressPolicy = endpoint, egress
