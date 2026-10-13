@@ -16,7 +16,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func TestCreateStageOverridesPermissiveParentDACL(t *testing.T) {
+func TestStagesAndCheckoutDirectoriesOverridePermissiveParentDACL(t *testing.T) {
 	parent := t.TempDir()
 	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
 	require.NoError(t, err)

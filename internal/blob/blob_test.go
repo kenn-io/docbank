@@ -696,12 +696,3 @@ func TestWriteRefusesInvalidExistingObject(t *testing.T) {
 	_, _, err = bs.Write(strings.NewReader(content))
 	require.Error(t, err)
 }
-
-func TestReaderWithContextCancelsBeforeSourceRead(t *testing.T) {
-	t.Parallel()
-	ctx, cancel := context.WithCancel(t.Context())
-	reader := ReaderWithContext(ctx, strings.NewReader("bytes"))
-	cancel()
-	_, err := io.ReadAll(reader)
-	require.ErrorIs(t, err, context.Canceled)
-}

@@ -942,7 +942,7 @@ func TestPruneContentVersionsValidatesSelectorsAndTargets(t *testing.T) {
 	assert.NotEmpty(t, preview.Cutoff)
 }
 
-func TestPhotoCheckoutFrozenBasesRetainVersions(t *testing.T) {
+func TestPhotoCheckoutFreezesBasesAndRetainsThemThroughPruneAndTrashEmpty(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()

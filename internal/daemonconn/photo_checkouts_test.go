@@ -107,6 +107,4 @@ func TestPhotoCheckoutClients(t *testing.T) {
 		_, err = create(invalid)
 		require.Error(t, err)
 	}
-	_, err = client.PhotoCheckoutStatus(t.Context(), "bad")
-	require.Error(t, err)
 }

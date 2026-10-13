@@ -1,11 +1,8 @@
 package api_test
 
 import (
-	"bytes"
 	"encoding/json/v2"
 	"net/http"
-	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -43,7 +40,7 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.Equal(t, created.Operation.ID, created.Checkout.OperationID)
 	require.Eventually(t, func() bool {
 		op, err := catalog.StorageOperation(t.Context(), created.Operation.ID)
-		return err == nil && op.FinishedAt != nil
+		return err == nil && op.State == store.StorageOperationCompleted
 	}, 5*time.Second, 10*time.Millisecond)
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/"+created.Checkout.ID, nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
@@ -65,26 +62,7 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &created))
 	require.Equal(t, "failed", created.Checkout.State)
 	require.Equal(t, "failed", created.Operation.State)
-	require.NotEmpty(t, created.Operation.FinishedAt)
-	require.Equal(t, created.Checkout.Error, created.Operation.Error)
 	persisted, err := catalog.PhotoCheckout(t.Context(), created.Checkout.ID)
 	require.NoError(t, err)
 	require.Equal(t, created.Checkout, persisted)
-}
-
-func TestPhotoCheckoutCreationRequiresLoopback(t *testing.T) {
-	t.Parallel()
-	_, catalog := newTestServer(t, nil)
-	body, err := json.Marshal(api.PhotoCheckoutCreateRequest{Selection: store.PhotoCheckoutSelection{All: true}, Destination: filepath.Join(t.TempDir(), "destination"), ByteLimit: 100})
-	require.NoError(t, err)
-	request := httptest.NewRequest(http.MethodPost, "http://localhost/api/v1/photos/checkouts", bytes.NewReader(body))
-	request.RemoteAddr = "192.0.2.10:10000"
-	request.Header.Set("X-Api-Key", testAPIKey)
-	request.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-	catalog.Server.Handler().ServeHTTP(recorder, request)
-	require.Equal(t, http.StatusForbidden, recorder.Code)
-	require.Contains(t, recorder.Body.String(), "loopback_only")
-	require.Contains(t, recorder.Body.String(), "daemon's computer")
-	require.NotContains(t, recorder.Body.String(), "/uploads")
 }

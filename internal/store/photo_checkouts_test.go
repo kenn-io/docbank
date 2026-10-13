@@ -139,11 +139,23 @@ func TestPhotoCheckoutMetadataRestoresUnbound(t *testing.T) {
 			var roundtrip bytes.Buffer
 			require.NoError(t, restored.ExportMetadata(t.Context(), &roundtrip))
 			require.Equal(t, exported.String(), roundtrip.String())
-			for _, bad := range []string{strings.Replace(exported.String(), `"relative_path":"undated/`, `"relative_path":"../`, 1), strings.Replace(exported.String(), `"relative_path":"undated/`, `"relative_path":"CON/`, 1), strings.Replace(exported.String(), `"size":20,"relative_path"`, `"size":21,"relative_path"`, 1)} {
+			for _, bad := range []struct {
+				metadata string
+				path     bool
+			}{
+				{strings.Replace(exported.String(), `"relative_path":"undated/`, `"relative_path":"../`, 1), true},
+				{strings.Replace(exported.String(), `"relative_path":"undated/`, `"relative_path":"CON/`, 1), true},
+				{strings.Replace(exported.String(), `"size":20,"relative_path"`, `"size":21,"relative_path"`, 1), false},
+			} {
 				invalid, err := Open(filepath.Join(t.TempDir(), "invalid.db"), driver.driver)
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, invalid.Close()) })
-				require.Error(t, invalid.ImportMetadata(t.Context(), strings.NewReader(bad)))
+				err = invalid.ImportMetadata(t.Context(), strings.NewReader(bad.metadata))
+				if bad.path {
+					require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
+				} else {
+					require.ErrorContains(t, err, "photo checkout frozen bases do not match content versions")
+				}
 			}
 			original := `"type":"photo_checkout_entry","checkout_id":"` + c.ID + `","file_id":"` + entries[0].FileID + `"`
 			forged := `"type":"photo_checkout_entry","checkout_id":"` + c.ID + `","file_id":"` + second.Files[0].ID + `"`
@@ -151,14 +163,14 @@ func TestPhotoCheckoutMetadataRestoresUnbound(t *testing.T) {
 			forgedFile, err := Open(filepath.Join(t.TempDir(), "forged.db"), driver.driver)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, forgedFile.Close()) })
-			require.Error(t, forgedFile.ImportMetadata(t.Context(), strings.NewReader(strings.Replace(exported.String(), original, forged, 1))))
+			require.ErrorContains(t, forgedFile.ImportMetadata(t.Context(), strings.NewReader(strings.Replace(exported.String(), original, forged, 1))), "photo checkout frozen bases do not match content versions")
 			forgedAsset, err := Open(filepath.Join(t.TempDir(), "missing-asset.db"), driver.driver)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, forgedAsset.Close()) })
 			originalAsset := `"asset_id":"` + a.ID + `","version_id":`
 			missingAsset := `"asset_id":"00000000-0000-4000-8000-000000000001","version_id":`
 			require.Contains(t, exported.String(), originalAsset)
-			require.Error(t, forgedAsset.ImportMetadata(t.Context(), strings.NewReader(strings.Replace(exported.String(), originalAsset, missingAsset, 1))))
+			require.ErrorContains(t, forgedAsset.ImportMetadata(t.Context(), strings.NewReader(strings.Replace(exported.String(), originalAsset, missingAsset, 1))), "photo checkout frozen bases do not match content versions")
 			_, err = s.DetachPhotoFile(t.Context(), a.ID, a.Revision, a.Files[0].ID, PhotoDetachOptions{})
 			require.NoError(t, err)
 			exported.Reset()
@@ -187,43 +199,6 @@ func TestPhotoCheckoutAuditedMutationRefused(t *testing.T) {
 	ops, err := s.StorageOperations(t.Context(), 10)
 	require.NoError(t, err)
 	require.Empty(t, ops)
-}
-
-func TestPhotoCheckoutFreezesEveryGroupedMemberOnce(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	ctx := t.Context()
-	run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
-	require.NoError(t, err)
-	root := filepath.Join(t.TempDir(), "camera")
-	group := photoImportTestGroup(
-		photoImportTestMember(filepath.Join(root, "IMG.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
-		photoImportTestMember(filepath.Join(root, "IMG.JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg"),
-		photoImportTestMember(filepath.Join(root, "IMG.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"),
-	)
-	result, err := s.IngestPhotoGroup(ctx, run, group)
-	require.NoError(t, err)
-	for _, node := range result.Nodes {
-		node, err = s.NodeByID(ctx, node.ID)
-		require.NoError(t, err)
-		date := "2025-12-31"
-		if node.Name == "IMG.ARW" {
-			date = "2024-01-02"
-		}
-		browsePhotoMetadata(t, s, node, node.Name, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(date, date, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
-	}
-	set, err := s.CreatePhotoSet(ctx, "Trip")
-	require.NoError(t, err)
-	_, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{result.Asset.ID}})
-	require.NoError(t, err)
-	c, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}, AlbumIDs: []string{set.ID}}, "checkout", 0)
-	require.NoError(t, err)
-	entries, err := s.PhotoCheckoutEntries(ctx, c.ID)
-	require.NoError(t, err)
-	require.Len(t, entries, 3)
-	for _, entry := range entries {
-		require.True(t, strings.HasPrefix(entry.Path, "2024/01/02/"+result.Asset.ID+"/"))
-	}
 }
 
 func TestPhotoCheckoutRejectsByteOverflow(t *testing.T) {
@@ -309,7 +284,7 @@ func TestPhotoCheckoutStatusTracksOperationAcrossPauseAndFinish(t *testing.T) {
 	require.Equal(t, "terminal error", finished.Error)
 }
 
-func TestPhotoCheckoutUsesActiveSourceNamesAfterVirtualRename(t *testing.T) {
+func TestPhotoCheckoutFreezesGroupedSourcePaths(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -318,22 +293,42 @@ func TestPhotoCheckoutUsesActiveSourceNamesAfterVirtualRename(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "camera")
 	result, err := s.IngestPhotoGroup(ctx, run, photoImportTestGroup(
 		photoImportTestMember(filepath.Join(source, "IMG.ARW"), PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
+		photoImportTestMember(filepath.Join(source, "IMG.JPG"), PhotoRoleImage, browseHash("jpeg"), "image/jpeg"),
 		photoImportTestMember(filepath.Join(source, "IMG.ARW.XMP"), PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"),
 	))
 	require.NoError(t, err)
+	for _, node := range result.Nodes {
+		node, err = s.NodeByID(ctx, node.ID)
+		require.NoError(t, err)
+		date := "2025-12-31"
+		if node.Name == "IMG.ARW" {
+			date = "2024-01-02"
+		}
+		browsePhotoMetadata(t, s, node, node.Name, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(date, date, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
+	}
+	set, err := s.CreatePhotoSet(ctx, "Trip")
+	require.NoError(t, err)
+	_, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{result.Asset.ID}})
+	require.NoError(t, err)
 	for i, node := range result.Nodes {
+		node, err = s.NodeByID(ctx, node.ID)
+		require.NoError(t, err)
 		_, _, err = s.Move(ctx, node.ID, s.RootID(), fmt.Sprintf("virtual-%d.%s", i, strings.TrimPrefix(filepath.Ext(node.Name), ".")), node.Revision)
 		require.NoError(t, err)
 	}
-	checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}}, "checkout", 0)
+	checkout, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{result.Asset.ID}, AlbumIDs: []string{set.ID}}, "checkout", 0)
 	require.NoError(t, err)
 	entries, err := s.PhotoCheckoutEntries(ctx, checkout.ID)
 	require.NoError(t, err)
+	require.Len(t, entries, 3)
+	for _, entry := range entries {
+		require.True(t, strings.HasPrefix(entry.Path, "2024/01/02/"+result.Asset.ID+"/"))
+	}
 	names := []string{}
 	for _, e := range entries {
 		names = append(names, filepath.Base(e.Path))
 	}
-	require.ElementsMatch(t, []string{"IMG.ARW", "IMG.ARW.XMP"}, names)
+	require.ElementsMatch(t, []string{"IMG.ARW", "IMG.JPG", "IMG.ARW.XMP"}, names)
 	raw := fileByRole(result.Asset.Files, PhotoRoleRAW)
 	node, err := s.NodeByID(ctx, raw.NodeID)
 	require.NoError(t, err)

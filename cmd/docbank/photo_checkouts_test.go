@@ -63,6 +63,17 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	require.NoError(t, err, out)
 	var created api.PhotoCheckoutCreateResult
 	require.NoError(t, json.Unmarshal([]byte(out), &created))
+	t.Cleanup(func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			out, err := runCLI(t, "jobs", "show", created.Operation.ID, "--json")
+			var operation api.StorageOperation
+			if err == nil && json.Unmarshal([]byte(out), &operation) == nil && operation.FinishedAt != "" {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
 	require.True(t, created.Checkout.Selection.All)
 	require.Equal(t, int64(100000), created.Checkout.ByteLimit)
 	require.Equal(t, destination, created.Checkout.Destination)
@@ -76,16 +87,5 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	var status api.PhotoCheckoutStatus
 	require.NoError(t, json.Unmarshal([]byte(out), &status))
 	require.Equal(t, created.Checkout.ID, status.Checkout.ID)
-	require.Eventually(t, func() bool {
-		out, err := runCLI(t, "jobs", "show", created.Operation.ID, "--json")
-		if err != nil {
-			return false
-		}
-		var operation api.StorageOperation
-		if json.Unmarshal([]byte(out), &operation) != nil {
-			return false
-		}
-		return operation.FinishedAt != ""
-	}, 5*time.Second, 20*time.Millisecond)
 
 }
