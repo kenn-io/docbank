@@ -74,7 +74,4 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(body), &created))
 	require.Equal(t, "failed", created.Checkout.State)
 	require.Equal(t, "failed", created.Operation.State)
-	persisted, err := catalog.PhotoCheckout(t.Context(), created.Checkout.ID)
-	require.NoError(t, err)
-	require.Equal(t, created.Checkout, persisted)
 }

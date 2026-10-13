@@ -1,16 +1,22 @@
 package main
 
 import (
+	"encoding/hex"
 	"encoding/json/v2"
-	"go.kenn.io/docbank/document/media/mediatest"
-	"go.kenn.io/docbank/internal/api"
-	"image/color"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
-	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/docbank/internal/api"
+	"go.kenn.io/docbank/internal/daemonauth"
+	"go.kenn.io/docbank/internal/daemonconn"
 	"go.kenn.io/docbank/internal/store"
+	"go.kenn.io/docbank/internal/version"
+	kitdaemon "go.kenn.io/kit/daemon"
 )
 
 func TestPhotoCheckoutCommandSelections(t *testing.T) {
@@ -55,43 +61,56 @@ func TestPhotoCheckoutCreateRejectsInvalidCapacityBeforeDaemon(t *testing.T) {
 }
 
 func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
-	_ = setupVaultHome(t)
-	source := writeSourceFile(t, "checkout-image.jpeg", string(mediatest.JPEG(2, 2, color.White)))
-	_, err := runCLI(t, "add", source, "--dest", "/inbox")
-	require.NoError(t, err)
-	destination := t.TempDir()
-	out, err := runCLI(t, "photos", "checkout", "create", destination, "--all", "--byte-limit", "100000")
-	require.NoError(t, err, out)
-	var created api.PhotoCheckoutCreateResult
-	require.NoError(t, json.Unmarshal([]byte(out), &created))
-	t.Cleanup(func() {
-		poll := time.NewTicker(20 * time.Millisecond)
-		defer poll.Stop()
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			out, err := runCLI(t, "jobs", "show", created.Operation.ID, "--json")
-			var operation api.StorageOperation
-			if err == nil && json.Unmarshal([]byte(out), &operation) == nil && operation.FinishedAt != "" {
-				return
+	vault := t.TempDir()
+	t.Setenv("DOCBANK_HOME", vault)
+	const checkoutID = "00000000-0000-4000-8000-000000000001"
+	const operationID = "00000000-0000-4000-8000-000000000002"
+	const token = "synthetic-proof-token"
+	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{All: true}, Destination: t.TempDir(), ByteLimit: 100000}
+	requests := make(chan string, 3)
+	inputs := make(chan api.PhotoCheckoutCreateRequest, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case kitdaemon.DefaultPingPath:
+			assert.NoError(t, json.MarshalWrite(w, kitdaemon.PingInfo{OK: true, Service: daemonconn.Service, Version: version.Version, PID: os.Getpid()}))
+		case daemonauth.ChallengePath:
+			nonce, err := hex.DecodeString(r.URL.Query().Get("nonce"))
+			assert.NoError(t, err)
+			assert.NoError(t, json.MarshalWrite(w, map[string]string{"proof": daemonauth.Proof(token, nonce)}))
+		case "/api/v1/photos/checkouts":
+			requests <- r.Method + " " + r.URL.Path
+			if r.Method == http.MethodPost {
+				var input api.PhotoCheckoutCreateRequest
+				assert.NoError(t, json.UnmarshalRead(r.Body, &input))
+				inputs <- input
+				w.WriteHeader(http.StatusAccepted)
+				assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}))
+			} else {
+				assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutList{Items: []store.PhotoCheckout{}}))
 			}
-			<-poll.C
+		case "/api/v1/photos/checkouts/" + checkoutID:
+			requests <- r.Method + " " + r.URL.Path
+			assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutStatus{Checkout: checkout}))
+		default:
+			http.NotFound(w, r)
 		}
-	})
-	require.True(t, created.Checkout.Selection.All)
-	require.Equal(t, int64(100000), created.Checkout.ByteLimit)
-	expectedDestination, err := os.Stat(destination)
+	}))
+	t.Cleanup(server.Close)
+	_, err := daemonconn.RuntimeStore(vault).Write(daemonconn.NewRecord(strings.TrimPrefix(server.URL, "http://"), "synthetic-key", token, ""))
 	require.NoError(t, err)
-	actualDestination, err := os.Stat(created.Checkout.Destination)
-	require.NoError(t, err)
-	require.True(t, os.SameFile(expectedDestination, actualDestination))
+	out, err := runCLI(t, "photos", "checkout", "create", checkout.Destination, "--all", "--byte-limit", "100000")
+	require.NoError(t, err, out)
+	require.Len(t, inputs, 1)
+	input := <-inputs
+	require.True(t, input.Selection.All)
+	require.Equal(t, int64(100000), input.ByteLimit)
 	out, err = runCLI(t, "photos", "checkout", "list")
 	require.NoError(t, err, out)
-	var list []store.PhotoCheckout
-	require.NoError(t, json.Unmarshal([]byte(out), &list))
-	require.Equal(t, created.Checkout.ID, list[0].ID)
-	out, err = runCLI(t, "photos", "checkout", "status", created.Checkout.ID)
+	out, err = runCLI(t, "photos", "checkout", "status", checkoutID)
 	require.NoError(t, err, out)
-	var status api.PhotoCheckoutStatus
-	require.NoError(t, json.Unmarshal([]byte(out), &status))
-	require.Equal(t, created.Checkout.ID, status.Checkout.ID)
+	require.Len(t, requests, 3)
+	require.Equal(t, "POST /api/v1/photos/checkouts", <-requests)
+	require.Equal(t, "GET /api/v1/photos/checkouts", <-requests)
+	require.Equal(t, "GET /api/v1/photos/checkouts/"+checkoutID, <-requests)
 }

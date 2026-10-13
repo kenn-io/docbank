@@ -542,3 +542,21 @@ func TestRestoreAfterParentHardDeleteNeverRetargets(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/f.txt", p)
 }
+
+func TestPhotoCheckoutRetainsNodesThroughTrashEmpty(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	a := albumAsset(t, s, "photo.jpg")
+	_, _, err := s.CreatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true}, "checkout", 20)
+	require.NoError(t, err)
+	n, err := s.NodeByID(ctx, a.Files[0].NodeID)
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, n.ID, n.Revision)
+	require.NoError(t, err)
+	empty, err := s.TrashEmpty(ctx, 0, true)
+	require.NoError(t, err)
+	require.Zero(t, empty.Candidates)
+	_, err = s.NodeByID(ctx, n.ID)
+	require.NoError(t, err)
+}

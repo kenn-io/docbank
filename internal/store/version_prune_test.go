@@ -942,7 +942,7 @@ func TestPruneContentVersionsValidatesSelectorsAndTargets(t *testing.T) {
 	assert.NotEmpty(t, preview.Cutoff)
 }
 
-func TestPhotoCheckoutRetainsBasesThroughPruneAndTrashEmpty(t *testing.T) {
+func TestPhotoCheckoutRetainsBasesThroughPrune(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
 	ctx := t.Context()
@@ -961,13 +961,4 @@ func TestPhotoCheckoutRetainsBasesThroughPruneAndTrashEmpty(t *testing.T) {
 	require.Zero(t, prune.DeletedVersions)
 	require.Len(t, prune.DependencyRetained, 1)
 	require.Equal(t, entries[0].VersionID, prune.DependencyRetained[0].ID)
-	n, err = s.NodeByID(ctx, n.ID)
-	require.NoError(t, err)
-	_, _, err = s.Trash(ctx, n.ID, n.Revision)
-	require.NoError(t, err)
-	empty, err := s.TrashEmpty(ctx, 0, true)
-	require.NoError(t, err)
-	require.Zero(t, empty.Candidates)
-	_, err = s.NodeByID(ctx, n.ID)
-	require.NoError(t, err)
 }

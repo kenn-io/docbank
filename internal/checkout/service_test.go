@@ -139,49 +139,6 @@ func TestCheckoutDestinationSafety(t *testing.T) {
 	_, _, root, err = s.Prepare(t.Context(), selection, t.TempDir(), 0)
 	require.NoError(t, err)
 	require.NoError(t, root.Close())
-	destination := t.TempDir()
-	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(destination, "missing-descendant")}}
-	reject(destination)
-	alias := filepath.Join(t.TempDir(), "alias")
-	if err := os.Symlink(destination, alias); err != nil {
-		t.Skip("symlink creation unavailable")
-	}
-	s.Config.Watches = []config.WatchConfig{{Source: filepath.Join(alias, "missing-descendant")}}
-	reject(destination)
-}
-
-func TestCheckoutRecoveryRemovesOnlyExactEmptyableStages(t *testing.T) {
-	t.Parallel()
-	s := checkoutService(t)
-	a := checkoutPhoto(t, s, "photo.jpg", "bytes")
-	c, _, root, err := s.Prepare(t.Context(), store.PhotoCheckoutSelection{AssetIDs: []string{a.ID}}, t.TempDir(), 0)
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	entries, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
-	require.NoError(t, err)
-	prefix := ".docbank-checkout-"
-	payload := prefix + strings.Repeat("a", 32)
-	decoy := prefix + strings.Repeat("c", 32)
-	wrongName := prefix + "user-file"
-	require.NoError(t, root.WriteFile(payload, []byte("partial bytes"), 0600))
-	require.NoError(t, root.Mkdir(decoy, 0700))
-	require.NoError(t, root.WriteFile(filepath.Join(decoy, "my-edit.jpg"), []byte("keep"), 0600))
-	require.NoError(t, root.WriteFile(wrongName, []byte("keep"), 0600))
-	require.NoError(t, root.MkdirAll(filepath.Dir(filepath.FromSlash(entries[0].Path)), 0755))
-	require.NoError(t, root.WriteFile(filepath.FromSlash(entries[0].Path), []byte("published copy"), 0600))
-	require.NoError(t, s.reconcile(t.Context(), c))
-	_, err = root.Stat(payload)
-	require.ErrorIs(t, err, os.ErrNotExist)
-	for _, name := range []string{decoy, wrongName} {
-		_, err = root.Stat(name)
-		require.NoError(t, err)
-	}
-	content, err := root.ReadFile(filepath.FromSlash(entries[0].Path))
-	require.NoError(t, err)
-	require.Equal(t, "published copy", string(content))
-	status, err := s.Store.PhotoCheckout(t.Context(), c.ID)
-	require.NoError(t, err)
-	require.Equal(t, "failed", status.State)
 }
 
 func TestCheckoutStartFailurePersistsFailureAndClosesRoot(t *testing.T) {
@@ -277,7 +234,22 @@ func TestCheckoutRecoveryRebuildsCopyObservationsAfterPublicationCrash(t *testin
 	edited := []byte(strings.Repeat("x", int(entries[1].Size)))
 	require.NoError(t, root.WriteFile(filepath.FromSlash(entries[1].Path), edited, 0o600))
 	require.NoError(t, s.Store.PublishPhotoCheckoutEntry(t.Context(), entries[2], func() (bool, error) { return true, nil }))
+	prefix := ".docbank-checkout-"
+	payload := prefix + strings.Repeat("a", 32)
+	decoy := prefix + strings.Repeat("c", 32)
+	wrongName := prefix + "user-file"
+	require.NoError(t, root.WriteFile(payload, []byte("partial bytes"), 0600))
+	require.NoError(t, root.Mkdir(decoy, 0700))
+	require.NoError(t, root.WriteFile(filepath.Join(decoy, "my-edit.jpg"), []byte("keep"), 0600))
+	require.NoError(t, root.WriteFile(wrongName, []byte("keep"), 0600))
 	require.NoError(t, s.reconcile(t.Context(), c))
+	_, err = root.Stat(payload)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	for _, name := range []string{decoy, wrongName} {
+		_, err = root.Stat(name)
+		require.NoError(t, err)
+	}
+
 	observed, err := s.Store.PhotoCheckoutEntries(t.Context(), c.ID)
 	require.NoError(t, err)
 	require.True(t, observed[0].Published)

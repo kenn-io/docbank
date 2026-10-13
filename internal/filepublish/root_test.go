@@ -41,26 +41,36 @@ func TestRootStageNoReplace(t *testing.T) {
 	require.Equal(t, "verified", string(content))
 }
 
-func TestRootStageSyncFailureReportsInstalled(t *testing.T) {
+func TestRootStageSyncFailure(t *testing.T) {
 	t.Parallel()
-	root, err := os.OpenRoot(t.TempDir())
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	stage, err := CreateRootStage(root)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, stage.Cleanup()) }()
-	_, err = stage.File.WriteString("verified")
-	require.NoError(t, err)
-	require.NoError(t, stage.File.Close())
-	stage.File = nil
-	failure := errors.New("directory sync failed")
-	stage.syncDirectory = func(*os.Root, string) error { return failure }
-	installed, err := stage.Publish("photo.jpg")
-	require.True(t, installed)
-	require.ErrorIs(t, err, failure)
-	content, err := root.ReadFile("photo.jpg")
-	require.NoError(t, err)
-	require.Equal(t, "verified", string(content))
+	for _, phase := range []string{"parent preparation", "publication"} {
+		t.Run(phase, func(t *testing.T) {
+			root, err := os.OpenRoot(t.TempDir())
+			require.NoError(t, err)
+			defer func() { _ = root.Close() }()
+			stage, err := CreateRootStage(root)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, stage.Cleanup()) }()
+			failure := errors.New("directory sync failed")
+			stage.syncDirectory = func(*os.Root, string) error { return failure }
+			if phase == "parent preparation" {
+				require.ErrorIs(t, stage.MakeParentDirectories(filepath.Join("year", "asset", "photo.jpg")), failure)
+				_, err = root.Stat(filepath.Join("year", "asset"))
+				require.ErrorIs(t, err, os.ErrNotExist)
+				return
+			}
+			_, err = stage.File.WriteString("verified")
+			require.NoError(t, err)
+			require.NoError(t, stage.File.Close())
+			stage.File = nil
+			installed, err := stage.Publish("photo.jpg")
+			require.True(t, installed)
+			require.ErrorIs(t, err, failure)
+			content, err := root.ReadFile("photo.jpg")
+			require.NoError(t, err)
+			require.Equal(t, "verified", string(content))
+		})
+	}
 }
 
 func TestRootStageRejectsDestinationAfterPathReplacement(t *testing.T) {
@@ -141,21 +151,6 @@ func TestRootStageSyncsNewDirectoryParentsBeforePublication(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, installed)
 	require.Equal(t, filepath.Join(root.Name(), filepath.Dir(destination)), synced[4])
-}
-
-func TestRootStageParentSyncFailureStopsPreparation(t *testing.T) {
-	t.Parallel()
-	root, err := os.OpenRoot(t.TempDir())
-	require.NoError(t, err)
-	defer func() { _ = root.Close() }()
-	stage, err := CreateRootStage(root)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, stage.Cleanup()) }()
-	failure := errors.New("parent sync failed")
-	stage.syncDirectory = func(*os.Root, string) error { return failure }
-	require.ErrorIs(t, stage.MakeParentDirectories(filepath.Join("year", "asset", "photo.jpg")), failure)
-	_, err = root.Stat(filepath.Join("year", "asset"))
-	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestRootStageRejectsMovedParentBeforeRename(t *testing.T) {
