@@ -1987,7 +1987,10 @@ Single-tag lookups count assignments through the tag index, including live
 and trashed nodes, in the same query as the definition. This avoids joining
 and grouping the assignment rows.
 `GET /nodes/{id}/tags` and `GET /tags/{tag_id}/nodes` provide bounded forward
-and reverse listings. Reverse results include a path only for live nodes.
+and reverse listings. A node's tag listing selects the name-sorted page before
+counting its tags' assignments, so tags outside the page do not add counting
+work. The page, total, and assignment counts share one query snapshot.
+Reverse results include a path only for live nodes.
 `live_only=true` returns a bounded live projection and `omitted_trashed` count
 from one metadata snapshot, which is suitable for an interactive live browser
 without assembling paths and trash states across pages.

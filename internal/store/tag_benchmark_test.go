@@ -4,10 +4,71 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+// BenchmarkNodeTags measures a node's tag pages as its assignments grow.
+// Each tag has 100 members; synthetic catalog creation is outside the timer.
+func BenchmarkNodeTags(b *testing.B) {
+	for _, definitions := range []int{1, 100, 1000} {
+		b.Run(fmt.Sprintf("tags=%d", definitions), func(b *testing.B) {
+			s, err := Open(filepath.Join(b.TempDir(), "docbank.db"))
+			require.NoError(b, err)
+			b.Cleanup(func() { require.NoError(b, s.Close()) })
+			ctx := b.Context()
+			var selected int64
+			require.NoError(b, s.withStorageTx(ctx, func(tx *sql.Tx) error {
+				nodes := make([]int64, 100)
+				for i := range nodes {
+					node, _, err := s.createFileTx(ctx, tx, s.RootID(),
+						fmt.Sprintf("file-%04d.bin", i), fmt.Sprintf("%064x", i+1),
+						128, "application/octet-stream")
+					if err != nil {
+						return err
+					}
+					nodes[i] = node.ID
+				}
+				selected = nodes[0]
+				for i := range definitions {
+					// Permute IDs so membership-index order differs from name order.
+					id := fmt.Sprintf("%08x-1111-4111-8111-111111111111", (i*7919)%definitions+1)
+					if _, err := tx.ExecContext(ctx, `INSERT INTO tags(id,name) VALUES(?,?)`,
+						id, fmt.Sprintf("tag-%04d", i)); err != nil {
+						return err
+					}
+					for _, nodeID := range nodes {
+						if _, err := tx.ExecContext(ctx,
+							`INSERT INTO node_tags(node_id,tag_id) VALUES(?,?)`, nodeID, id,
+						); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			}))
+			for _, limit := range slices.Compact([]int{min(definitions, 50), min(definitions, 100), definitions}) {
+				for _, offset := range slices.Compact([]int{0, definitions - limit}) {
+					b.Run(fmt.Sprintf("limit=%d/offset=%d", limit, offset), func(b *testing.B) {
+						first, last := fmt.Sprintf("tag-%04d", offset), fmt.Sprintf("tag-%04d", offset+limit-1)
+						b.ReportAllocs()
+						for b.Loop() {
+							page, total, err := s.NodeTags(ctx, selected, limit, offset)
+							if err != nil || total != definitions || len(page) != limit {
+								b.Fatalf("tags=%d total=%d err=%v", len(page), total, err)
+							}
+							if page[0].Name != first || page[len(page)-1].Name != last || page[0].AssignmentCount != 100 {
+								b.Fatal("unexpected node tag page")
+							}
+						}
+					})
+				}
+			}
+		})
+	}
+}
 
 // BenchmarkTags measures listing definitions as assignments outside the page grow.
 func BenchmarkTags(b *testing.B) {
