@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-12
+last_edited: 2026-10-13
 title: Photo assets
 description: Group camera files, browse photos, and organize albums in the web app, CLI, or HTTP API.
 ---
@@ -27,6 +27,20 @@ Sidecars never display and must point at a RAW or image member in the same
 asset. Removing the selected member chooses another displayable member
 atomically, or stores a null display when none remains. Assets are limited to
 256 files.
+
+## Record faces and people
+
+Use a photo file's `current_version_id` from `docbank stat <path-or-id> --json` to record an observation:
+
+```sh
+docbank photos faces create <content-version-id> --box 0.1,0.2,0.3,0.4 --person <person-id>
+docbank photos faces create <content-version-id> --person <person-id>
+docbank photos faces list <content-version-id>
+```
+
+A box is `x,y,width,height`, each measured as a fraction of the unrotated image. Omit `--person` for an unnamed face, or omit `--box` to mark a person in the whole photo. Naming a face records the same `depicted` person link as a whole-photo mark. Multiple faces of one person share that link.
+
+Face boxes and suggestions stay inaccessible while their photo is Hidden and locked. Face writes in an audited vault return `audit_mutation_unsupported`. These commands record observations manually; they do not run face detection.
 
 ## Open and inspect a photo
 

@@ -2260,6 +2260,7 @@ CREATE INDEX IF NOT EXISTS photo_change_receipts_operation ON photo_change_recei
 
 CREATE TABLE IF NOT EXISTS persons (
     person_id TEXT PRIMARY KEY NOT NULL,
+    key_face_id TEXT,
     display_name TEXT NOT NULL,
     display_name_folded TEXT NOT NULL,
     origin TEXT NOT NULL,
@@ -2372,8 +2373,33 @@ CREATE TABLE IF NOT EXISTS person_document_assertions (
     note TEXT NOT NULL,
     recorded_at TEXT NOT NULL,
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-    UNIQUE (content_version_id, person_id, role)
+    UNIQUE (content_version_id, person_id, role),
+    UNIQUE (assertion_id, content_version_id)
 );
+
+CREATE TABLE IF NOT EXISTS photo_faces (
+    face_id TEXT PRIMARY KEY NOT NULL,
+    content_version_id TEXT NOT NULL REFERENCES content_versions(version_id) ON DELETE CASCADE,
+    detector_fingerprint TEXT NOT NULL,
+    x REAL NOT NULL,
+    y REAL NOT NULL,
+    width REAL NOT NULL,
+    height REAL NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    assertion_id TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (assertion_id, content_version_id) REFERENCES person_document_assertions(assertion_id, content_version_id)
+);
+CREATE INDEX IF NOT EXISTS photo_faces_version ON photo_faces(content_version_id,face_id);
+CREATE INDEX IF NOT EXISTS photo_faces_assertion ON photo_faces(assertion_id,content_version_id);
+CREATE INDEX IF NOT EXISTS persons_key_face ON persons(key_face_id) WHERE key_face_id IS NOT NULL;
+CREATE TRIGGER IF NOT EXISTS photo_faces_delete AFTER DELETE ON photo_faces
+BEGIN
+    UPDATE persons SET key_face_id=NULL WHERE key_face_id=OLD.face_id;
+    UPDATE person_match_candidates SET state='superseded',revision=revision+1
+    WHERE state='open' AND reason='face_match' AND EXISTS(SELECT 1 FROM json_each(evidence_json) e
+        WHERE json_extract(e.value,'$.evidence_kind')='face' AND json_extract(e.value,'$.evidence_id')=OLD.face_id);
+END;
 
 CREATE TABLE IF NOT EXISTS person_match_candidates (
     candidate_id TEXT PRIMARY KEY NOT NULL,

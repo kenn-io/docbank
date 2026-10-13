@@ -26,15 +26,16 @@ const (
 )
 
 type metadataPerson struct {
-	Type              string `json:"type"`
-	PersonID          string `json:"person_id" db:"person_id"`
-	DisplayName       string `json:"display_name" db:"display_name"`
-	DisplayNameFolded string `json:"display_name_folded" db:"display_name_folded"`
-	Origin            string `json:"origin" db:"origin"`
-	State             string `json:"state" db:"state"`
-	Revision          int64  `json:"revision" db:"revision"`
-	CreatedAt         string `json:"created_at" db:"created_at"`
-	UpdatedAt         string `json:"updated_at" db:"updated_at"`
+	Type              string  `json:"type"`
+	PersonID          string  `json:"person_id" db:"person_id"`
+	DisplayName       string  `json:"display_name" db:"display_name"`
+	DisplayNameFolded string  `json:"display_name_folded" db:"display_name_folded"`
+	Origin            string  `json:"origin" db:"origin"`
+	State             string  `json:"state" db:"state"`
+	Revision          int64   `json:"revision" db:"revision"`
+	CreatedAt         string  `json:"created_at" db:"created_at"`
+	UpdatedAt         string  `json:"updated_at" db:"updated_at"`
+	KeyFaceID         *string `json:"key_face_id,omitempty" db:"key_face_id"`
 }
 
 type metadataPersonIdentity struct {
@@ -178,9 +179,13 @@ var personMetadataTables = []metadataRecordCodec{
 		suffix: "ORDER BY assertion_id", validate: validateMetadataPersonAssertion, checkExport: true}),
 	newMetadataTable(metadataTable[metadataPersonMatchCandidate]{record: metadataPersonMatchCandidate{Type: metadataPersonCandidateType}, table: "person_match_candidates",
 		suffix: "ORDER BY candidate_id", validate: validateMetadataPersonCandidate, checkExport: true}),
+	photoFaceMetadata,
 }
 
 func validateMetadataPerson(r metadataPerson) error {
+	if r.KeyFaceID != nil && validateUUIDv4(*r.KeyFaceID) != nil {
+		return errors.New("invalid person key face")
+	}
 	if r.Type != metadataPersonType || validateUUIDv4(r.PersonID) != nil || r.Revision < 1 ||
 		!validPersonName(r.DisplayName) || r.DisplayNameFolded != document.FoldPersonName(r.DisplayName) ||
 		!validPersonOrigin(r.Origin) ||
@@ -390,7 +395,7 @@ func validateMetadataPersonAssertion(r metadataPersonDocumentAssertion) error {
 
 func validateMetadataPersonCandidate(r metadataPersonMatchCandidate) error {
 	if r.Type != metadataPersonCandidateType || validateUUIDv4(r.CandidateID) != nil || r.Revision < 1 ||
-		document.ValidateActorKeyV1(r.ActorKey) != nil || !document.ValidPersonIdentityText(r.ActorKey) || !validPersonName(r.DisplayName) ||
+		!validCandidateActorKey(r.ActorKey, r.Reason) || !document.ValidPersonIdentityText(r.ActorKey) || !validPersonName(r.DisplayName) ||
 		!slices.Contains([]string{"open", "linked", "rejected", "superseded"}, r.State) ||
 		len(r.EvidenceJSON) == 0 || len(r.EvidenceJSON) > maxPersonCandidateEvidence || r.OccurrenceCount < 1 {
 		return errors.New("invalid person candidate metadata")
@@ -433,8 +438,13 @@ func validateUniqueMetadataUUIDs(ids []string) error {
 	return nil
 }
 
-func validatePersonMetadataState(ctx context.Context, q metadataQuerier) error {
-	for _, table := range personMetadataTables {
+func validatePersonMetadataState(ctx context.Context, q metadataQuerier, version int) error {
+	if version >= photoFacesStorageSchemaVersion {
+		if err := validatePhotoFaceReferences(ctx, q); err != nil {
+			return err
+		}
+	}
+	for _, table := range personMetadataTablesForSchema(version) {
 		if err := table.validateRows(ctx, q); err != nil {
 			return fmt.Errorf("validating person metadata records: %w", err)
 		}
@@ -563,4 +573,30 @@ func validatePersonSplitMetadataState(ctx context.Context, q metadataQuerier) er
 		}
 	}
 	return rows.Err()
+}
+
+// Released person rows predate key-face references.
+type metadataPersonBeforeFaces struct {
+	Type              string `json:"type"`
+	PersonID          string `json:"person_id" db:"person_id"`
+	DisplayName       string `json:"display_name" db:"display_name"`
+	DisplayNameFolded string `json:"display_name_folded" db:"display_name_folded"`
+	Origin            string `json:"origin" db:"origin"`
+	State             string `json:"state" db:"state"`
+	Revision          int64  `json:"revision" db:"revision"`
+	CreatedAt         string `json:"created_at" db:"created_at"`
+	UpdatedAt         string `json:"updated_at" db:"updated_at"`
+}
+
+var personMetadataBeforeFaces = newMetadataTable(metadataTable[metadataPersonBeforeFaces]{record: metadataPersonBeforeFaces{Type: metadataPersonType}, table: "persons", suffix: "ORDER BY person_id", validate: func(v metadataPersonBeforeFaces) error {
+	return validateMetadataPerson(metadataPerson{Type: v.Type, PersonID: v.PersonID, DisplayName: v.DisplayName, DisplayNameFolded: v.DisplayNameFolded, Origin: v.Origin, State: v.State, Revision: v.Revision, CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt})
+}, checkExport: true})
+
+func personMetadataTablesForSchema(version int) []metadataRecordCodec {
+	if version >= photoFacesStorageSchemaVersion {
+		return personMetadataTables
+	}
+	tables := slices.Clone(personMetadataTables[:len(personMetadataTables)-1])
+	tables[0] = personMetadataBeforeFaces
+	return tables
 }

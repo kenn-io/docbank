@@ -140,6 +140,7 @@ var storeErrCodes = []struct {
 	{store.ErrHiddenConfigured, http.StatusConflict, "hidden_configured"},
 	{store.ErrHiddenPasscode, http.StatusForbidden, "hidden_passcode"},
 	{store.ErrInvalidHiddenPasscode, http.StatusUnprocessableEntity, "invalid_hidden_passcode"},
+	{store.ErrInvalidPhotoFace, http.StatusUnprocessableEntity, "invalid_photo_face"},
 	{store.ErrInvalidPhotoAsset, http.StatusUnprocessableEntity, "invalid_photo_asset"},
 	{store.ErrInvalidPhotoAlbum, http.StatusUnprocessableEntity, "invalid_photo_album"},
 	{store.ErrPhotoNodeNotEligible, http.StatusUnprocessableEntity, "photo_node_not_eligible"},

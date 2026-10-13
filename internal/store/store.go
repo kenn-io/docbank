@@ -42,6 +42,7 @@ type Store struct {
 const currentStorageSchemaVersion = 34
 
 const peopleStorageSchemaVersion = 15
+const photoFacesStorageSchemaVersion = 34
 
 // DefaultSQLiteDriver returns the build's standalone-compatible adapter: CGO
 // builds use mattn/go-sqlite3 and no-CGO builds use modernc.org/sqlite.

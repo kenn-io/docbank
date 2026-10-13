@@ -68,9 +68,9 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 	if candidate.CandidateID != "" && validateUUIDv4(candidate.CandidateID) != nil {
 		return invalid("candidate id")
 	}
-	if document.ValidateActorKeyV1(candidate.ActorKey) != nil || !document.ValidPersonIdentityText(candidate.ActorKey) ||
+	if !validCandidateActorKey(candidate.ActorKey, candidate.Reason) || !document.ValidPersonIdentityText(candidate.ActorKey) ||
 		!validPersonName(candidate.DisplayName) ||
-		!slices.Contains([]string{"name_only", "identifier_conflict", "external_uid_conflict", "transfer_unresolved"}, candidate.Reason) ||
+		!slices.Contains([]string{"name_only", "identifier_conflict", "external_uid_conflict", "transfer_unresolved", "face_match"}, candidate.Reason) ||
 		(candidate.State != "" && candidate.State != "open") {
 		return invalid("candidate fields")
 	}
@@ -89,11 +89,26 @@ func normalizePersonCandidate(candidate PersonMatchCandidate) (PersonMatchCandid
 		return invalid("candidate evidence is empty")
 	}
 	for _, occurrence := range occurrences {
+		if occurrence.EvidenceKind == "face" && (occurrence.Role != "depicted" || validateUUIDv4(occurrence.EvidenceID) != nil || candidate.Reason != "face_match") {
+			return invalid("face occurrence")
+		}
 		if validateUUIDv4(occurrence.ContentVersionID) != nil ||
 			!document.ValidPersonRole(occurrence.Role) ||
 			!slices.Contains(document.PersonEvidenceKinds(), document.PersonEvidenceKind(occurrence.EvidenceKind)) ||
 			occurrence.EvidenceID == "" || len(occurrence.EvidenceID) > document.MaxPersonEvidenceIDBytes || !document.ValidPersonIdentityText(occurrence.EvidenceID) {
 			return invalid("candidate occurrence")
+		}
+	}
+	if candidate.Reason == "face_match" {
+		matchedKey := false
+		for _, occurrence := range occurrences {
+			if occurrence.EvidenceKind != "face" {
+				return invalid("mixed face evidence")
+			}
+			matchedKey = matchedKey || candidate.ActorKey == "face:"+occurrence.EvidenceID
+		}
+		if !matchedKey {
+			return invalid("face candidate key")
 		}
 	}
 	raw, err := canonical.Marshal(occurrences)
@@ -130,6 +145,17 @@ func (s *Store) OpenPersonCandidate(
 	candidate, err := normalizePersonCandidate(candidate)
 	if err != nil {
 		return PersonMatchCandidate{}, false, err
+	}
+	occurrences, err := decodeStoredCandidateEvidence(candidate.Evidence)
+	if err != nil {
+		return PersonMatchCandidate{}, false, err
+	}
+	for _, occurrence := range occurrences {
+		if occurrence.EvidenceKind == "face" {
+			if err := requireFaceOccurrenceTx(ctx, tx, occurrence); err != nil {
+				return PersonMatchCandidate{}, false, err
+			}
+		}
 	}
 	if candidate.SuggestedPersonID != "" {
 		resolved, err := resolveActiveCandidatePersonTx(ctx, tx, candidate.SuggestedPersonID)
@@ -194,14 +220,20 @@ func (s *Store) PersonCandidates(ctx context.Context, state string, limit, offse
 		return nil, 0, fmt.Errorf("starting person candidate page snapshot: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	visible := personCandidateVisibleSQL
+	if _, err := s.hiddenSession(ctx, tx); err == nil {
+		visible = "1=1"
+	} else if !errors.Is(err, ErrHiddenLocked) {
+		return nil, 0, err
+	}
 	var total int64
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state=?`, state).Scan(&total); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_match_candidates WHERE state=? AND `+visible, state).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT candidate_id,actor_key,display_name,
 		COALESCE(suggested_person_id,''),reason,evidence_json,evidence_sha256,revision,occurrence_count,
 		state,COALESCE(decided_person_id,''),created_at,COALESCE(decided_at,'')
-		FROM person_match_candidates WHERE state=? ORDER BY created_at,candidate_id LIMIT ? OFFSET ?`, state, limit, offset)
+		FROM person_match_candidates WHERE state=? AND `+visible+` ORDER BY created_at,candidate_id LIMIT ? OFFSET ?`, state, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -241,6 +273,19 @@ func (s *Store) DecidePersonCandidate(ctx context.Context, decision CandidateDec
 		candidate, err := personCandidateByIDTx(ctx, tx, decision.CandidateID)
 		if err != nil {
 			return err
+		}
+		if candidate.Reason == "face_match" {
+			occurrences, err := decodeStoredCandidateEvidence(candidate.Evidence)
+			if err != nil {
+				return err
+			}
+			for _, occurrence := range occurrences {
+				if occurrence.EvidenceKind == "face" {
+					if _, err := s.facePhotoQuery(ctx, tx, occurrence.ContentVersionID); err != nil {
+						return err
+					}
+				}
+			}
 		}
 		if candidate.State != "open" {
 			return ErrPersonCandidateDecided
@@ -350,6 +395,11 @@ func (s *Store) AssertDocumentPerson(ctx context.Context, assertion PersonDocume
 		default:
 			return err
 		}
+		if assertion.Action == "suppress" {
+			if _, err := tx.ExecContext(ctx, `UPDATE persons SET key_face_id=NULL WHERE key_face_id IN (SELECT face_id FROM photo_faces WHERE assertion_id=?)`, assertion.AssertionID); err != nil {
+				return err
+			}
+		}
 		if err := advancePersonBindingEpochTx(ctx, tx); err != nil {
 			return err
 		}
@@ -424,17 +474,19 @@ func createCandidatePersonTx(ctx context.Context, tx *sql.Tx, displayName string
 func materializeCandidateAssertionsTx(
 	ctx context.Context, tx *sql.Tx, personID string, occurrences []PersonCandidateOccurrence,
 ) error {
-	seen := make(map[string]bool, len(occurrences))
 	for _, occurrence := range occurrences {
-		key := occurrence.ContentVersionID + "\x00" + occurrence.Role
-		if seen[key] {
-			continue
+		if occurrence.EvidenceKind == "face" {
+			if err := requireFaceOccurrenceTx(ctx, tx, occurrence); err != nil {
+				return err
+			}
 		}
-		seen[key] = true
 		existing, err := personAssertionByIdentityTx(ctx, tx, occurrence.ContentVersionID, personID, occurrence.Role)
 		if err == nil {
 			if existing.Action != "assert" {
 				return ErrPersonIdentityConflict
+			}
+			if err := attachCandidateFaceTx(ctx, tx, occurrence, existing.AssertionID); err != nil {
+				return err
 			}
 			continue
 		}
@@ -453,6 +505,9 @@ func materializeCandidateAssertionsTx(
 		_, err = tx.ExecContext(ctx, `INSERT INTO person_document_assertions(assertion_id,content_version_id,person_id,role,action,note,recorded_at,revision) VALUES(?,?,?,?,'assert','',?,1)`,
 			assertionID, occurrence.ContentVersionID, personID, occurrence.Role, nowRFC3339())
 		if err != nil {
+			return err
+		}
+		if err := attachCandidateFaceTx(ctx, tx, occurrence, assertionID); err != nil {
 			return err
 		}
 	}
@@ -529,4 +584,48 @@ func scanPersonAssertion(row scanner) (PersonDocumentAssertion, error) {
 	err := row.Scan(&assertion.AssertionID, &assertion.ContentVersionID, &assertion.PersonID, &assertion.Role,
 		&assertion.Action, &assertion.Note, &assertion.RecordedAt, &assertion.Revision)
 	return assertion, err
+}
+
+func validCandidateActorKey(key, reason string) bool {
+	if reason == "face_match" {
+		return strings.HasPrefix(key, "face:") && validateUUIDv4(strings.TrimPrefix(key, "face:")) == nil
+	}
+	return document.ValidateActorKeyV1(key) == nil
+}
+
+const personCandidateVisibleSQL = `NOT EXISTS(SELECT 1 FROM json_each(CASE WHEN person_match_candidates.reason='face_match' THEN person_match_candidates.evidence_json ELSE '[]' END) e
+ JOIN content_versions cv ON cv.version_id=json_extract(e.value,'$.content_version_id')
+ JOIN photo_files f ON f.node_id=cv.node_id JOIN photo_assets a ON a.asset_id=f.asset_id
+ WHERE json_extract(e.value,'$.evidence_kind')='face' AND a.hidden_at IS NOT NULL)`
+
+func requireFaceOccurrenceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCandidateOccurrence) error {
+	if occurrence.Role != "depicted" || validateUUIDv4(occurrence.EvidenceID) != nil {
+		return ErrInvalidPerson
+	}
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM photo_faces WHERE face_id=? AND content_version_id=?)`, occurrence.EvidenceID, occurrence.ContentVersionID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrInvalidPhotoFace
+	}
+	return nil
+}
+
+func attachCandidateFaceTx(ctx context.Context, tx *sql.Tx, occurrence PersonCandidateOccurrence, assertionID string) error {
+	if occurrence.EvidenceKind != "face" {
+		return nil
+	}
+	var existing string
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(assertion_id,'') FROM photo_faces WHERE face_id=? AND content_version_id=?`, occurrence.EvidenceID, occurrence.ContentVersionID).Scan(&existing); err != nil {
+		return err
+	}
+	if existing != "" && existing != assertionID {
+		return ErrPersonIdentityConflict
+	}
+	if existing == assertionID {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=?,revision=revision+1 WHERE face_id=? AND content_version_id=?`, assertionID, occurrence.EvidenceID, occurrence.ContentVersionID)
+	return err
 }

@@ -509,7 +509,7 @@ func exportMetadataSnapshotWithVaultIdentity(
 		return err
 	}
 	if layout.hasPersons() {
-		if err := exportMetadataTables(ctx, tx, write, personMetadataTables); err != nil {
+		if err := exportMetadataTables(ctx, tx, write, personMetadataTablesForSchema(layout.schemaVersion)); err != nil {
 			return err
 		}
 	}
@@ -1548,7 +1548,7 @@ func validateMetadataStateWithVaultIdentity(
 			return err
 		}
 		if layout.hasPersons() {
-			if err := validatePersonMetadataState(ctx, tx); err != nil {
+			if err := validatePersonMetadataState(ctx, tx, layout.schemaVersion); err != nil {
 				return err
 			}
 		}

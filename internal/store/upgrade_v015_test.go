@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"uuid"
 
+	"go.kenn.io/docbank/document"
 	"go.kenn.io/docbank/document/bundle"
 	docsqlite "go.kenn.io/docbank/sqlite"
 )
@@ -213,6 +214,22 @@ func TestEveryReleasedSchemaFixtureUpgrades(t *testing.T) {
 				require.NoError(t, err)
 				require.Nil(t, asset.HiddenAt)
 				require.Equal(t, node.ID, asset.Files[0].NodeID)
+
+				person, err := s.CreatePerson(t.Context(), "Ada", "operator")
+				require.NoError(t, err)
+				currentNode, err := s.NodeByID(t.Context(), node.ID)
+				require.NoError(t, err)
+				face, err := s.CreatePhotoFace(t.Context(), currentNode.CurrentVersionID, document.FaceBox{Width: 0.2, Height: 0.2}, person.PersonID)
+				require.NoError(t, err)
+				var metadata bytes.Buffer
+				require.NoError(t, s.ExportMetadata(t.Context(), &metadata))
+				restored, err := Open(filepath.Join(t.TempDir(), "restored.db"), driver.driver)
+				require.NoError(t, err)
+				defer func() { require.NoError(t, restored.Close()) }()
+				require.NoError(t, restored.ImportMetadata(t.Context(), bytes.NewReader(metadata.Bytes())))
+				faces, err := restored.PhotoFaces(t.Context(), currentNode.CurrentVersionID)
+				require.NoError(t, err)
+				require.Equal(t, []PhotoFace{face.Face}, faces)
 			})
 		}
 	}

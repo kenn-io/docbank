@@ -171,6 +171,9 @@ func (s *Store) MergePersons(ctx context.Context, survivorID, absorbedID, operat
 		if _, err := tx.ExecContext(ctx, `UPDATE custodian_assignments SET person_id=?,revision=revision+1 WHERE person_id=?`, survivorID, absorbedID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `UPDATE photo_faces SET assertion_id=(SELECT keep.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.assertion_id=photo_faces.assertion_id) WHERE assertion_id IN (SELECT old.assertion_id FROM person_document_assertions old JOIN person_document_assertions keep ON keep.person_id=? AND keep.content_version_id=old.content_version_id AND keep.role=old.role AND keep.action=old.action WHERE old.person_id=?)`, survivorID, survivorID, absorbedID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM person_document_assertions WHERE person_id=? AND EXISTS(
 			SELECT 1 FROM person_document_assertions keep WHERE keep.person_id=?
 			AND keep.content_version_id=person_document_assertions.content_version_id

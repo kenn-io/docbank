@@ -387,6 +387,7 @@ var codeToTypedErr = map[string]error{
 	"version_node_mismatch":         store.ErrVersionNodeMismatch,
 	"version_already_current":       store.ErrVersionAlreadyCurrent,
 	"invalid_version_prune":         store.ErrInvalidVersionPrune,
+	"invalid_photo_face":            store.ErrInvalidPhotoFace,
 	"invalid_photo_asset":           store.ErrInvalidPhotoAsset,
 	"invalid_photo_album":           store.ErrInvalidPhotoAlbum,
 	"photo_node_not_eligible":       store.ErrPhotoNodeNotEligible,

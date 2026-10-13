@@ -3177,6 +3177,26 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
+    CreatePhotoFaceRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/CreatePhotoFaceRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        box:
+          $ref: "#/components/schemas/FaceBox"
+        person_id:
+          format: uuid
+          type: string
+      type: object
+      x-go-type: api.CreatePhotoFaceRequest
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
     CreateTagRequest:
       additionalProperties: false
       properties:
@@ -6708,6 +6728,31 @@ components:
       x-go-type-import:
         path: go.kenn.io/docbank/document/bundle
         name: bundle
+    FaceBox:
+      additionalProperties: false
+      properties:
+        height:
+          format: double
+          type: number
+        width:
+          format: double
+          type: number
+        x:
+          format: double
+          type: number
+        "y":
+          format: double
+          type: number
+      required:
+        - x
+        - "y"
+        - width
+        - height
+      type: object
+      x-go-type: document.FaceBox
+      x-go-type-import:
+        path: go.kenn.io/docbank/document
+        name: document
     Filters:
       additionalProperties: false
       properties:
@@ -11925,6 +11970,81 @@ components:
         - previews
       type: object
       x-go-type: api.PhotoBrowseRow
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoFace:
+      additionalProperties: false
+      properties:
+        assertion_id:
+          type: string
+        box:
+          $ref: "#/components/schemas/FaceBox"
+        content_version_id:
+          type: string
+        created_at:
+          type: string
+        detector_fingerprint:
+          type: string
+        face_id:
+          type: string
+        revision:
+          format: int64
+          type: integer
+      required:
+        - face_id
+        - content_version_id
+        - detector_fingerprint
+        - box
+        - revision
+        - created_at
+      type: object
+      x-go-type: store.PhotoFace
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/store
+        name: store
+    PhotoFacePage:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoFacePage.json
+          format: uri
+          readOnly: true
+          type: string
+        faces:
+          items:
+            $ref: "#/components/schemas/PhotoFace"
+          maxItems: 1000
+          type: array
+      required:
+        - faces
+      type: object
+      x-go-type: api.PhotoFacePage
+      x-go-type-import:
+        path: go.kenn.io/docbank/internal/api
+        name: api
+    PhotoFaceResult:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PhotoFaceResult.json
+          format: uri
+          readOnly: true
+          type: string
+        assertion_id:
+          format: uuid
+          type: string
+        face:
+          $ref: "#/components/schemas/PhotoFace"
+        receipt_id:
+          format: uuid
+          type: string
+      type: object
+      x-go-type: api.PhotoFaceResult
       x-go-type-import:
         path: go.kenn.io/docbank/internal/api
         name: api
@@ -24922,6 +25042,59 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Error
       summary: Set or reset the photo display preference
+  /api/v1/photos/versions/{content_version_id}/faces:
+    get:
+      operationId: listPhotoFaces
+      parameters:
+        - in: path
+          name: content_version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoFacePage"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Read face boxes on one photo version
+    post:
+      operationId: createPhotoFace
+      parameters:
+        - in: path
+          name: content_version_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePhotoFaceRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PhotoFaceResult"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Error
+      summary: Record a face box or a person in a whole photo
   /api/v1/processing/consent/grants:
     post:
       operationId: grantDocumentProcessingConsent
