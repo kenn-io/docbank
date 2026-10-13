@@ -341,7 +341,12 @@ func (s *Store) TrashedRootsPage(
         WHERE n.trash_name IS NOT NULL
     ) `
 	var total int
-	if err := tx.QueryRowContext(ctx, grouped+`SELECT COUNT(*) FROM groups WHERE representative=1`).Scan(&total); err != nil {
+	// Counting needs only the grouping key, not the window sorts that select
+	// each group's representative and latest trash time for the page below.
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT COALESCE(file.asset_id, CAST(n.id AS TEXT)))
+		FROM nodes n LEFT JOIN photo_files file ON file.node_id=n.id
+		WHERE n.trash_name IS NOT NULL`).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("counting trash: %w", err)
 	}
 	rows, err := tx.QueryContext(ctx,
