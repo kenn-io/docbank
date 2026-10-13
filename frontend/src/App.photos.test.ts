@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { photo, mapPhoto, photoAlbum, albumResponse, storage } from "./photo-test-fixtures.js";
 import App from "./App.svelte";
 import { Photos } from "./photos.svelte.js";
+import type { Query } from "./query.js";
 
 // Answers background filter-count requests so tests that predate counts see only their own reads.
 const stubPhotoFetch = (fetcher: (url: string, init: RequestInit) => unknown) => vi.stubGlobal("fetch", (url: string, init: RequestInit) => url.endsWith("/photos/assets/query") && JSON.parse(String(init?.body ?? "{}")).facets?.length ? Promise.resolve(Response.json({ items: [], total: 0, facets: [] })) : fetcher(url, init));
@@ -701,6 +702,70 @@ it.each(["failed", "revalidated"])("mounts a fresh scoped Map progressively afte
   const failed=finish;await fireEvent.click(screen.getByRole("button",{name:"Retry"}));await waitFor(()=>expect(finish).not.toBe(failed));finish(Response.json({items:[],map_items:[mapPhoto(2)],total:1}));
   await waitFor(()=>expect(map.props?.items.map(row=>row.asset_id)).toEqual(["photo-2"]));
  }
+});
+
+it.each(["album", "direct album", "Hidden"])("keeps Map scoped when opened from %s", async source => {
+  const album = photoAlbum();
+  const mapPath = `/photos/map/${album.id}`;
+  history.replaceState(null, "", `${source === "direct album" ? mapPath : "/photos"}?retained=library#web_session=synthetic&web_upload_secret=proof`);
+  storage();
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(800);
+  const meta = document.createElement("meta");
+  meta.name = "docbank-map-tiles";
+  meta.content = JSON.stringify({ tile_url: "https://tiles.example.org/{z}/{x}/{y}", attribution: "Example", max_zoom: 19 });
+  document.head.append(meta);
+  const queries: { projection?: string; hidden: boolean; query: Query }[] = [];
+  let library: Photos | undefined;
+  const resume = Photos.prototype.resume;
+  vi.spyOn(Photos.prototype, "resume").mockImplementation(function(this: Photos, ...args) {
+    if (!this.projection && !this.hidden && !this.query.filters?.set_ids) library = this;
+    return resume.apply(this, args);
+  });
+  stubPhotoFetch(vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/photos/albums")) return albumResponse([album]);
+    if (url.endsWith("/photos/hidden")) return albumResponse({ configured: true, expires_at: "2099-01-01T00:00:00Z", expires_in: 300 });
+    if (url.endsWith("/photos/assets/query")) {
+      const request = JSON.parse(String(init.body));
+      queries.push(request);
+      return albumResponse(request.projection ? { items: [], map_items: [mapPhoto(1)], total: 1 } : { items: [photo(1)], total: 1 });
+    }
+    return albumResponse({ items: [], nodes: [], tags: [], profiles: [] });
+  }));
+  render(App);
+  if (source !== "direct album") {
+    await screen.findByRole("button", { name: "Open Photo 1.jpg" });
+    library!.baseQuery = { ...library!.baseQuery, text: "beach", filters: { cameras: ["Library camera"] } };
+    await library!.selectDate("2024");
+    await fireEvent.click(screen.getByRole("button", { name: source === "album" ? /^Trip/ : "Hidden" }));
+    await screen.findByRole("heading", { name: source === "album" ? "Trip" : "Hidden" });
+    if (source === "Hidden") {
+      await waitFor(() => expect((screen.getByRole("button", { name: "Search" }) as HTMLButtonElement).disabled).toBe(false));
+      await fireEvent.input(await screen.findByRole("searchbox", { name: "Search photos" }), { target: { value: "private" } });
+      await fireEvent.click(screen.getByRole("button", { name: "Search" }));
+      await waitFor(() => expect(queries.some(request => request.hidden && request.query.text === "private")).toBe(true));
+    }
+    await fireEvent.click(screen.getByRole("button", { name: "Map" }));
+  }
+  await waitFor(() => expect(queries.some(request => request.projection === "map")).toBe(true));
+  const request = queries.find(request => request.projection === "map")!;
+  expect(location.pathname).toBe(source === "Hidden" ? "/photos/map" : mapPath);
+  expect(location.search).toBe("?retained=library");
+  expect(within(screen.getByRole("navigation", { name: "Docbank navigation" })).getByRole("button", { name: "Map" }).getAttribute("aria-current")).toBe("page");
+  expect(request.hidden).toBe(false);
+  expect(request.query.sort).toEqual({ field: "capture_time", direction: "desc" });
+  expect(request.query.filters.gps_bounds).toEqual({ south: "-90", west: "-180", north: "90", east: "180" });
+  if (source === "Hidden") {
+    expect(request.query).toMatchObject({ text: "beach", filters: { cameras: ["Library camera"], capture_after: "2024-01-01", capture_before: "2025-01-01" } });
+    expect(request.query.filters.set_ids).toBeUndefined();
+  } else {
+    expect(request.query.text).toBe("");
+    expect(request.query.filters.set_ids).toEqual([album.id]);
+    expect(request.query.filters.cameras).toBeUndefined();
+    expect(request.query.filters.capture_after).toBeUndefined();
+    expect(request.query.filters.capture_before).toBeUndefined();
+  }
 });
 
 it.each(["Library", "album"])("closes the %s viewer from its active sidebar entry without reloading", async kind => {

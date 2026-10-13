@@ -198,10 +198,12 @@
   let mounted = false;
   let stopSessionReporting: (() => Promise<void>) | undefined;
   const tiles = mapTiles();
-  const isPhotoPath = (path: string) => ["/photos", "/photos/map", "/photos/hidden", "/photos/albums"].includes(path) || path.startsWith("/photos/albums/");
+  const isMapPath = (path: string) => path === "/photos/map" || path.startsWith("/photos/map/");
+  const isPhotoPath = (path: string) => isMapPath(path) || ["/photos", "/photos/hidden", "/photos/albums"].includes(path) || path.startsWith("/photos/albums/");
   let photoMode = $state(isPhotoPath(location.pathname));
   let photoPath = $state(location.pathname);
-  const mapMode = $derived(photoMode && photoPath === "/photos/map");
+  const mapMode = $derived(photoMode && isMapPath(photoPath));
+  const mapAlbumID = $derived(photoPath.startsWith("/photos/map/") ? photoPath.slice("/photos/map/".length) : "");
   const hiddenMode = $derived(photoMode && photoPath === "/photos/hidden");
   const albumID = $derived(photoPath.startsWith("/photos/albums/") ? photoPath.slice("/photos/albums/".length) : "");
   let photoAlbums = $state<PhotoAlbums>();
@@ -225,7 +227,7 @@
     const id = new URLSearchParams(location.hash.slice(1)).get("photo") ?? "", path = location.pathname;
     const showing = photoMode && path === photoPath;
     // Album views are recreated when their path changes, so only the open album can keep a return record.
-    const photos = path === "/photos/hidden" ? hiddenWorkspace?.activePhotos() : path === "/photos/map" ? mapPhotos : path === "/photos" ? photoState?.photos : showing && albumID ? albumPhotos : undefined;
+    const photos = path === "/photos/hidden" ? hiddenWorkspace?.activePhotos() : isMapPath(path) ? mapPhotos : path === "/photos" ? photoState?.photos : showing && albumID ? albumPhotos : undefined;
     const workspace = path === "/photos/hidden" ? hiddenWorkspace : libraryWorkspace;
     const record = history.state?.photoReturn as PhotoReturn | undefined;
     if (id && photos) {
@@ -319,20 +321,23 @@
     photoAlbums = albums;
     return () => { albums.dispose(); photoAlbums = undefined; };
   });
+  function albumQuery(id: string): Query {
+    return { v: 1, syntax: "advanced", mode: "lexical", text: "", filters: { set_ids: [id] }, sort: { field: "added_time", direction: "desc" } };
+  }
   $effect(() => {
     const session = webSession;
     const id = albumID;
     if (!session || !id) { albumPhotos = undefined; return; }
-    const photos = new Photos(session, handleFailure, false, { v: 1, syntax: "advanced", mode: "lexical", text: "", filters: { set_ids: [id] }, sort: { field: "added_time", direction: "desc" } });
+    const photos = new Photos(session, handleFailure, false, albumQuery(id));
     albumPhotos = photos;
     return () => photos.dispose();
   });
   $effect(() => {
     const state = photoState;
     if (!mapMode || !tiles.tile_url || !state) { mapPhotos = undefined; return; }
-    const inherited = untrack(() => state.photos.query);
+    const inherited = mapAlbumID ? albumQuery(mapAlbumID) : untrack(() => state.photos.query);
     const photos = new Photos(webSession, handleFailure, false, { ...inherited, sort: { field: "capture_time", direction: "desc" }, filters: { ...inherited.filters, gps_bounds: inherited.filters.gps_bounds ?? { south: "-90", west: "-180", north: "90", east: "180" } } }, "map");
-    photos.date = untrack(() => state.photos.date);
+    if (!mapAlbumID) photos.date = untrack(() => state.photos.date);
     mapPhotos = photos;
     return () => photos.dispose();
   });
@@ -2193,7 +2198,7 @@
       {#if photoMode}
         <div class="nav-group">
           <button type="button" class="nav-item" aria-current={photoPath === "/photos" ? "page" : undefined} onclick={() => navigatePhotos("/photos")}><LibraryIcon size="16" aria-hidden="true" />Library</button>
-          <button type="button" class="nav-item" aria-current={mapMode ? "page" : undefined} onclick={() => navigatePhotos("/photos/map")}><MapPinIcon size="16" aria-hidden="true" />Map</button>
+          <button type="button" class="nav-item" aria-current={mapMode ? "page" : undefined} onclick={() => navigatePhotos(albumID ? `/photos/map/${albumID}` : "/photos/map")}><MapPinIcon size="16" aria-hidden="true" />Map</button>
           <button type="button" class="nav-item" data-albums-nav aria-current={photoPath === "/photos/albums" ? "page" : undefined} onclick={() => navigatePhotos("/photos/albums")}><FoldersIcon size="16" aria-hidden="true" />Albums</button>
           <button type="button" class="nav-item" aria-current={hiddenMode ? "page" : undefined} onclick={() => navigatePhotos("/photos/hidden")}><EyeOffIcon size="16" aria-hidden="true" />Hidden</button>
           <button type="button" class="nav-item" aria-label="Recoverable trash" onclick={() => openPanel({ kind: "trash" })}><Trash2Icon size="16" aria-hidden="true" />Trash</button>
