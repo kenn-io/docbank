@@ -30,6 +30,22 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 		require.NoError(t, err)
 		asset, err := s.PhotoAssetForNode(ctx, n.ID)
 		require.NoError(t, err)
+		if v.name == "first.jpg" {
+			run, err := s.BeginIngest(ctx, "photo-import", t.TempDir())
+			require.NoError(t, err)
+			group := photoImportTestGroup(
+				photoImportTestMember("first.ARW", PhotoRoleRAW, browseHash("raw"), "image/x-sony-arw"),
+				photoImportTestMember("first.jpg", PhotoRoleImage, browseHash(v.name), "image/jpeg"),
+				photoImportTestMember("first.ARW.XMP", PhotoRoleSidecar, browseHash("xmp"), "application/rdf+xml"))
+			group.Members[0].Size = v.size + 1
+			group.Members[1].Size = v.size
+			group.Members[2].Size = v.size + 2
+			result, err := s.IngestPhotoGroup(ctx, run, group)
+			require.NoError(t, err)
+			asset = result.Asset
+			n, err = s.NodeByID(ctx, fileByRole(asset.Files, PhotoRoleRAW).NodeID)
+			require.NoError(t, err)
+		}
 		assets = append(assets, asset)
 		browsePhotoMetadata(t, s, n, v.date, photoMetadataField("created", "image.exif", "DateTimeOriginal", photoTimestamp(v.date, v.date, document.SourceMetadataPrecisionDate, document.SourceMetadataTimezoneOmitted, "")))
 	}
@@ -39,19 +55,19 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	_, err = s.ChangePhotoSetMembers(ctx, set.ID, set.Revision, true, PhotoSetSelection{AssetIDs: []string{a.ID, b.ID}})
 	require.NoError(t, err)
 	for _, test := range []struct {
-		selection    PhotoCheckoutSelection
-		count, bytes int64
+		selection            PhotoCheckoutSelection
+		assets, files, bytes int64
 	}{
-		{PhotoCheckoutSelection{All: true}, 3, 70},
-		{PhotoCheckoutSelection{AssetIDs: []string{a.ID, a.ID}}, 1, 10},
-		{PhotoCheckoutSelection{AlbumIDs: []string{set.ID}}, 2, 30},
-		{PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2024, To: 2024}}, 2, 30},
-		{PhotoCheckoutSelection{AssetIDs: []string{c.ID}, AlbumIDs: []string{set.ID}, Years: &PhotoCheckoutYears{From: 2024, To: 2024}}, 3, 70},
+		{PhotoCheckoutSelection{All: true}, 3, 5, 93},
+		{PhotoCheckoutSelection{AssetIDs: []string{a.ID, a.ID}}, 1, 3, 33},
+		{PhotoCheckoutSelection{AlbumIDs: []string{set.ID}}, 2, 4, 53},
+		{PhotoCheckoutSelection{Years: &PhotoCheckoutYears{From: 2024, To: 2024}}, 2, 4, 53},
+		{PhotoCheckoutSelection{AssetIDs: []string{c.ID}, AlbumIDs: []string{set.ID}, Years: &PhotoCheckoutYears{From: 2024, To: 2024}}, 3, 5, 93},
 	} {
 		estimate, err := s.EstimatePhotoCheckout(ctx, test.selection)
 		require.NoError(t, err)
-		require.Equal(t, test.count, estimate.Assets)
-		require.Equal(t, test.count, estimate.Files)
+		require.Equal(t, test.assets, estimate.Assets)
+		require.Equal(t, test.files, estimate.Files)
 		require.Equal(t, test.bytes, estimate.Bytes)
 	}
 	_, err = s.SetPhotoAssetExcluded(ctx, c.ID, c.Revision, true)
@@ -60,8 +76,8 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	require.NoError(t, err)
 	estimate, err := s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{a.ID, b.ID, c.ID}, AlbumIDs: []string{set.ID}})
 	require.NoError(t, err)
-	require.Equal(t, int64(1), estimate.Files)
-	require.Equal(t, int64(10), estimate.Bytes)
+	require.Equal(t, int64(3), estimate.Files)
+	require.Equal(t, int64(33), estimate.Bytes)
 	for _, bad := range []PhotoCheckoutSelection{{}, {AssetIDs: []string{"bad"}}, {AlbumIDs: []string{"bad"}}, {Years: &PhotoCheckoutYears{From: 0, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2025, To: 2024}}, {Years: &PhotoCheckoutYears{From: 2024, To: 10000}}} {
 		_, err := s.EstimatePhotoCheckout(ctx, bad)
 		require.ErrorIs(t, err, ErrInvalidPhotoCheckout)

@@ -344,18 +344,15 @@ func TestCheckoutInterruptedRunKeepsPartialCopies(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			publications := 0
-			if failure == "collision" {
-				collision := filepath.FromSlash(entries[1].Path)
-				require.NoError(t, root.MkdirAll(filepath.Dir(collision), 0755))
-				require.NoError(t, root.WriteFile(collision, []byte("keep my edit"), 0600))
-			}
 			s.Mutate = func(ctx context.Context, fn func() error) error {
 				publications++
-				if failure == "became-invisible" && publications == 2 {
-					blocked, err := s.Store.PhotoAssetByID(ctx, entries[1].AssetID)
-					require.NoError(t, err)
-					_, err = s.Store.TrashPhotoAsset(ctx, blocked.ID, blocked.Revision)
-					require.NoError(t, err)
+				if publications == 2 {
+					switch failure {
+					case "collision":
+						return os.ErrExist
+					case "became-invisible":
+						return store.ErrPhotoCheckoutSourceUnavailable
+					}
 				}
 				err := fn()
 				if failure == "operator cancellation" && publications == 1 {

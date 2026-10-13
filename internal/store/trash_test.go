@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -318,7 +319,7 @@ func TestTrashEmpty(t *testing.T) {
 
 func TestTrashEmptyRetainsMediaAuthorityAndCheckoutEntryPinsAndDeletesUnrelatedRoots(t *testing.T) {
 	t.Parallel()
-	for _, authority := range []string{"source version", "input artifact", "checkout entry"} {
+	for _, authority := range []string{"source version", "input artifact", "checkout entry", "sealed snapshot"} {
 		t.Run(authority, func(t *testing.T) {
 			s := newTestStore(t)
 			ctx := t.Context()
@@ -337,6 +338,15 @@ func TestTrashEmptyRetainsMediaAuthorityAndCheckoutEntryPinsAndDeletesUnrelatedR
 				fakeHash("a1"), stamp)
 			require.NoError(t, err)
 			switch authority {
+			case "sealed snapshot":
+				snapshotID, idErr := newUUIDv4()
+				require.NoError(t, idErr)
+				occurrence := strings.Repeat("a", 32)
+				_, err = s.SealCollectionSnapshot(ctx, SnapshotSealRequest{SnapshotID: snapshotID,
+					Members: []CollectionSnapshotMember{{Ordinal: 1, OccurrenceID: occurrence,
+						NodeID: protected.ID, ContentVersionID: protected.CurrentVersionID,
+						BlobSHA256: protected.BlobHash, Size: protected.Size, FamilyID: occurrence, FamilyOrder: 1,
+						DisplayName: protected.Name, FrozenFieldsJSON: "{}", DocumentKind: "other"}}})
 			case "source version":
 				_, err = s.db.Exec(`INSERT INTO media_source_versions VALUES(
 					'source-version','source',1,?,?,?)`, protected.CurrentVersionID, `{}`, stamp)
@@ -358,13 +368,14 @@ func TestTrashEmptyRetainsMediaAuthorityAndCheckoutEntryPinsAndDeletesUnrelatedR
 			_, _, err = s.Trash(ctx, unrelated.ID, unrelated.Revision)
 			require.NoError(t, err)
 
-			preview, err := s.TrashEmpty(ctx, 0, false)
+			preview, err := s.TrashEmptyBounded(ctx, 0, 1, false)
 			require.NoError(t, err)
 			require.Equal(t, int64(1), preview.Candidates)
+			require.False(t, preview.More)
 			if authority == "checkout entry" {
 				require.Equal(t, int64(1), preview.Retained)
 			}
-			run, err := s.TrashEmpty(ctx, 0, true)
+			run, err := s.TrashEmptyBounded(ctx, 0, 1, true)
 			require.NoError(t, err)
 			require.Equal(t, preview.Candidates, run.Candidates)
 			require.Equal(t, preview.Retained, run.Retained)

@@ -2,7 +2,9 @@ package store
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"testing"
@@ -836,6 +838,72 @@ func TestPruneContentVersionsRetainsDependenciesAndCheckpointsAllPrior(t *testin
 			require.ErrorIs(t, err, ErrNotFound)
 		}
 	})
+	t.Run("sealed snapshot", func(t *testing.T) {
+		s := newTestStore(t)
+		body := []byte("Original package source")
+		hash := sha256.Sum256(body)
+		node, err := s.CreateFile(t.Context(), s.RootID(), "original.txt", hex.EncodeToString(hash[:]), int64(len(body)), "text/plain")
+		require.NoError(t, err)
+		oldVersion := node.CurrentVersionID
+		snapshotID, err := newUUIDv4()
+		require.NoError(t, err)
+		occurrence := strings.Repeat("e", 32)
+		_, err = s.SealCollectionSnapshot(t.Context(), SnapshotSealRequest{
+			SnapshotID: snapshotID,
+			Members: []CollectionSnapshotMember{{
+				Ordinal: 1, OccurrenceID: occurrence, NodeID: node.ID,
+				ContentVersionID: oldVersion, BlobSHA256: hex.EncodeToString(hash[:]), Size: int64(len(body)),
+				FamilyID: occurrence, FamilyOrder: 1, DisplayName: node.Name,
+				FrozenFieldsJSON: "{}", DocumentKind: "other",
+			}},
+		})
+		require.NoError(t, err)
+		replacement := []byte("New current version")
+		replacementHash := sha256.Sum256(replacement)
+		updated, _, err := s.ReplaceContent(t.Context(), node.ID, node.Revision,
+			hex.EncodeToString(replacementHash[:]), int64(len(replacement)), "text/plain")
+		require.NoError(t, err)
+		selector := VersionPruneSelector{VersionIDs: []string{oldVersion}}
+		for _, run := range []bool{false, true} {
+			_, err = s.PruneContentVersions(t.Context(), node.ID, updated.Revision, selector, run)
+			require.ErrorIs(t, err, ErrPackageRetained)
+		}
+		_, err = s.ContentVersionByID(t.Context(), oldVersion)
+		require.NoError(t, err)
+	})
+	for _, authority := range []string{"label", "receipt"} {
+		t.Run(authority, func(t *testing.T) {
+			s := newTestStore(t)
+			pkg, node := seedReceivedPackage(t, s, authority)
+			key, err := PackageRecordKey("VOL001.dat", 1, "DOC-A")
+			require.NoError(t, err)
+			occurrence := PackageOccurrenceID(pkg.PackageID, key)
+			switch authority {
+			case "label":
+				_, err = s.db.ExecContext(t.Context(), `INSERT INTO package_labels(
+					package_id,provenance,label_set,label,occurrence_id,content_version_id,
+					page_state,endpoint) VALUES(?,?,?,?,?,?,?,?)`, pkg.PackageID, "received", "EXT",
+					"EXT000001", occurrence, node.CurrentVersionID, "unknown", "begin")
+			case "receipt":
+				receiptID, idErr := newUUIDv4()
+				require.NoError(t, idErr)
+				_, err = s.db.ExecContext(t.Context(), `INSERT INTO package_import_receipts(
+					receipt_id,package_id,record_key,occurrence_id,content_version_id,state,receipt_json,recorded_at
+				) VALUES(?,?,?,?,?,?,?,?)`, receiptID, pkg.PackageID, key, occurrence, node.CurrentVersionID,
+					"committed", []byte(`{}`), nowRFC3339())
+				require.NoError(t, err)
+			}
+			require.NoError(t, err)
+			updated, _, err := s.ReplaceContent(t.Context(), node.ID, node.Revision,
+				fakeHash("d1"), 12, "text/plain")
+			require.NoError(t, err)
+			for _, run := range []bool{false, true} {
+				_, err = s.PruneContentVersions(t.Context(), node.ID, updated.Revision,
+					VersionPruneSelector{VersionIDs: []string{node.CurrentVersionID}}, run)
+				require.ErrorIs(t, err, ErrPackageRetained)
+			}
+		})
+	}
 }
 
 func TestPruneContentVersionsRemovesRenditionAttachment(t *testing.T) {

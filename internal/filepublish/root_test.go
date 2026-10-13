@@ -13,7 +13,7 @@ import (
 
 func TestRootStageNoReplaceAndCleanup(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []string{"collision and cleanup", "destination root", "parent", "success", "parent failure", "publication failure"} {
+	for _, scenario := range []string{"cleanup", "destination root", "parent", "success", "parent failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			base := t.TempDir()
 			destination := filepath.Join(base, "destination")
@@ -25,43 +25,21 @@ func TestRootStageNoReplaceAndCleanup(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { require.NoError(t, stage.Cleanup()) }()
 			switch scenario {
-			case "collision and cleanup":
-				_, err = stage.File.WriteString("verified")
+			case "cleanup":
+				require.NoError(t, stage.Cleanup())
+				_, err = root.Stat(stage.name)
+				require.ErrorIs(t, err, os.ErrNotExist)
+				stage, err = CreateRootStage(root)
 				require.NoError(t, err)
 				require.NoError(t, stage.File.Close())
 				stage.File = nil
-				installed, err := stage.Publish("photo.jpg")
-				require.NoError(t, err)
-				require.True(t, installed)
-				_, err = root.Stat(stage.name)
-				require.ErrorIs(t, err, os.ErrNotExist)
-				collision, err := CreateRootStage(root)
-				require.NoError(t, err)
-				defer func() { require.NoError(t, collision.Cleanup()) }()
-				_, err = collision.File.WriteString("replacement")
-				require.NoError(t, err)
-				require.NoError(t, collision.File.Close())
-				collision.File = nil
-				installed, err = collision.Publish("photo.jpg")
-				require.Error(t, err)
-				require.False(t, installed)
-				content, err := root.ReadFile("photo.jpg")
-				require.NoError(t, err)
-				require.Equal(t, "verified", string(content))
-				require.NoError(t, collision.Cleanup())
-				_, err = root.Stat(collision.name)
-				require.ErrorIs(t, err, os.ErrNotExist)
-				collision, err = CreateRootStage(root)
-				require.NoError(t, err)
-				require.NoError(t, collision.File.Close())
-				collision.File = nil
 				decoy := rootStagePrefix + strings.Repeat("c", 32)
 				wrongName := rootStagePrefix + "user-file"
 				require.NoError(t, root.Mkdir(decoy, 0700))
 				require.NoError(t, root.WriteFile(filepath.Join(decoy, "my-edit.jpg"), []byte("keep"), 0600))
 				require.NoError(t, root.WriteFile(wrongName, []byte("keep"), 0600))
 				require.NoError(t, CleanupRootStages(root))
-				_, err = root.Stat(collision.name)
+				_, err = root.Stat(stage.name)
 				require.ErrorIs(t, err, os.ErrNotExist)
 				for _, name := range []string{decoy, wrongName} {
 					_, err = root.Stat(name)
@@ -105,10 +83,9 @@ func TestRootStageNoReplaceAndCleanup(t *testing.T) {
 			default:
 				var synced []string
 				failure := errors.New("directory sync failed")
-				publishing := false
 				stage.syncDirectory = func(root *os.Root, name string) error {
 					synced = append(synced, filepath.Join(root.Name(), name))
-					if scenario == "parent failure" || scenario == "publication failure" && publishing {
+					if scenario == "parent failure" {
 						return failure
 					}
 					return nil
@@ -129,14 +106,9 @@ func TestRootStageNoReplaceAndCleanup(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, stage.File.Close())
 				stage.File = nil
-				publishing = true
 				installed, err := stage.Publish(relativePath)
 				require.True(t, installed)
-				if scenario == "publication failure" {
-					require.ErrorIs(t, err, failure)
-				} else {
-					require.NoError(t, err)
-				}
+				require.NoError(t, err)
 				require.Equal(t, filepath.Join(root.Name(), filepath.Dir(relativePath)), synced[4])
 				content, err := root.ReadFile(relativePath)
 				require.NoError(t, err)

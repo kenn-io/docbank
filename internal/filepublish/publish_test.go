@@ -11,32 +11,63 @@ import (
 )
 
 func TestPublishHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
-	dir := t.TempDir()
-	destination := filepath.Join(dir, "out.pdf")
-	stage := func(name, value string) string {
-		path := filepath.Join(dir, name)
-		require.NoError(t, os.WriteFile(path, []byte(value), 0o600))
-		return path
+	for _, method := range []string{"path", "root"} {
+		t.Run(method, func(t *testing.T) {
+			dir := t.TempDir()
+			root, err := os.OpenRoot(dir)
+			require.NoError(t, err)
+			defer func() { _ = root.Close() }()
+			failure := errors.New("synthetic directory sync failure")
+			publish := func(name, value, destination string, overwrite, failSync bool) (bool, error) {
+				if method == "root" {
+					stage, err := CreateRootStage(root)
+					require.NoError(t, err)
+					defer func() { require.NoError(t, stage.Cleanup()) }()
+					_, err = stage.File.WriteString(value)
+					require.NoError(t, err)
+					require.NoError(t, stage.File.Close())
+					stage.File = nil
+					if failSync {
+						stage.syncDirectory = func(*os.Root, string) error { return failure }
+					}
+					published, err := stage.Publish(destination)
+					if !published {
+						require.NoError(t, stage.Cleanup())
+					}
+					_, statErr := root.Stat(stage.name)
+					require.ErrorIs(t, statErr, os.ErrNotExist)
+					return published, err
+				}
+				path := filepath.Join(dir, name)
+				require.NoError(t, os.WriteFile(path, []byte(value), 0o600))
+				if failSync {
+					previous := syncDirectory
+					syncDirectory = func(string) error { return failure }
+					defer func() { syncDirectory = previous }()
+				}
+				return Publish(path, filepath.Join(dir, destination), overwrite)
+			}
+			published, err := publish("first.tmp", "first", "out.pdf", false, false)
+			require.NoError(t, err)
+			require.True(t, published)
+			published, err = publish("second.tmp", "second", "out.pdf", false, false)
+			require.Error(t, err)
+			require.False(t, published)
+			got, err := root.ReadFile("out.pdf")
+			require.NoError(t, err)
+			require.Equal(t, "first", string(got))
+			destination := "out.pdf"
+			if method == "root" {
+				destination = "durable.pdf"
+			}
+			published, err = publish("replace.tmp", "replacement", destination, true, true)
+			require.ErrorContains(t, err, "directory sync")
+			require.True(t, published)
+			got, err = root.ReadFile(destination)
+			require.NoError(t, err)
+			require.Equal(t, "replacement", string(got))
+		})
 	}
-	published, err := Publish(stage("first.tmp", "first"), destination, false)
-	require.NoError(t, err)
-	require.True(t, published)
-	published, err = Publish(stage("second.tmp", "second"), destination, false)
-	require.Error(t, err)
-	require.False(t, published)
-	got, err := os.ReadFile(destination)
-	require.NoError(t, err)
-	require.Equal(t, "first", string(got))
-
-	previous := syncDirectory
-	syncDirectory = func(string) error { return errors.New("synthetic sync failure") }
-	t.Cleanup(func() { syncDirectory = previous })
-	published, err = Publish(stage("replace.tmp", "replacement"), destination, true)
-	require.ErrorContains(t, err, "directory sync")
-	require.True(t, published)
-	got, err = os.ReadFile(destination)
-	require.NoError(t, err)
-	require.Equal(t, "replacement", string(got))
 }
 
 func TestCreateStageRemovesOnlyStaleAbandonedStages(t *testing.T) {

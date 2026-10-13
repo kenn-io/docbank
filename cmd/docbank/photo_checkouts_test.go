@@ -30,6 +30,10 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	absoluteDestination, err := filepath.Abs(destination)
 	require.NoError(t, err)
 	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{All: true}, Destination: absoluteDestination, ByteLimit: 100000}
+	created := api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}
+	listed := []store.PhotoCheckout{}
+	status := api.PhotoCheckoutStatus{Checkout: checkout}
+	estimate := store.PhotoCheckoutEstimate{}
 	statusRequests := make(chan struct{}, 1)
 	listRequests := make(chan struct{}, 1)
 	inputs := make(chan api.PhotoCheckoutCreateRequest, 1)
@@ -49,19 +53,19 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 				assert.NoError(t, json.UnmarshalRead(r.Body, &input))
 				inputs <- input
 				w.WriteHeader(http.StatusAccepted)
-				assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}))
+				assert.NoError(t, json.MarshalWrite(w, created))
 			} else {
 				listRequests <- struct{}{}
-				assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutList{Items: []store.PhotoCheckout{}}))
+				assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutList{Items: listed}))
 			}
 		case "/api/v1/photos/checkouts/" + checkoutID:
 			statusRequests <- struct{}{}
-			assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutStatus{Checkout: checkout}))
+			assert.NoError(t, json.MarshalWrite(w, status))
 		case "/api/v1/photos/checkouts/estimate":
 			var input store.PhotoCheckoutSelection
 			assert.NoError(t, json.UnmarshalRead(r.Body, &input))
 			estimates <- input
-			assert.NoError(t, json.MarshalWrite(w, store.PhotoCheckoutEstimate{}))
+			assert.NoError(t, json.MarshalWrite(w, estimate))
 		default:
 			http.NotFound(w, r)
 		}
@@ -71,6 +75,9 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	require.NoError(t, err)
 	out, err := runCLI(t, "photos", "checkout", "create", destination, "--all", "--byte-limit", "100000")
 	require.NoError(t, err, out)
+	var createdOutput api.PhotoCheckoutCreateResult
+	require.NoError(t, json.Unmarshal([]byte(out), &createdOutput))
+	require.Equal(t, created, createdOutput)
 	require.Len(t, inputs, 1)
 	input := <-inputs
 	require.True(t, input.Selection.All)
@@ -78,9 +85,15 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	require.Equal(t, absoluteDestination, input.Destination)
 	out, err = runCLI(t, "photos", "checkout", "list")
 	require.NoError(t, err, out)
+	var listedOutput []store.PhotoCheckout
+	require.NoError(t, json.Unmarshal([]byte(out), &listedOutput))
+	require.Equal(t, listed, listedOutput)
 	require.Len(t, listRequests, 1)
 	out, err = runCLI(t, "photos", "checkout", "status", checkoutID)
 	require.NoError(t, err, out)
+	var statusOutput api.PhotoCheckoutStatus
+	require.NoError(t, json.Unmarshal([]byte(out), &statusOutput))
+	require.Equal(t, status, statusOutput)
 	require.Len(t, statusRequests, 1)
 	for _, tc := range []struct {
 		years     string
@@ -97,6 +110,9 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 			require.Empty(t, estimates)
 		} else {
 			require.NoError(t, err, out)
+			var estimateOutput store.PhotoCheckoutEstimate
+			require.NoError(t, json.Unmarshal([]byte(out), &estimateOutput))
+			require.Equal(t, estimate, estimateOutput)
 			require.Len(t, estimates, 1)
 			require.Equal(t, tc.expected, (<-estimates).Years)
 		}
