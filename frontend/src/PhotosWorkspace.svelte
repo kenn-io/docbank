@@ -57,11 +57,12 @@
   let restorePosition: (() => Promise<void>) | undefined;
   $effect(() => {
     const id = photoID;
-    if (fromGrid) void listedRevision;
     if (!id) { direct = undefined; detailError = ""; if (fromGrid) void restoreGrid(); return; }
     const controller = new AbortController();
     detailController = controller;
     const explicit = reload?.id === id && reload !== consumedReload;
+    // Each accepted list refresh revalidates a grid-opened photo; an explicit reload updates the list itself, so it must not depend on it.
+    if (!explicit && fromGrid) void listedRow;
     if (!explicit) { if (untrack(() => direct?.asset_id) !== id) direct = undefined; detailError = ""; }
     if (!explicit && fromGrid && listedDetail) { detailLoading = false; return () => controller.abort(); }
     detailLoading = true;
@@ -135,9 +136,7 @@
   const ordered = $derived(photos.items);
   const outsideSelection = $derived(mapMode ? [...photos.selection.selectedIDs].filter(id => !shownIDs.has(id)).length : 0);
   const listedRow = $derived(photos.items.find(item => item.asset_id === photoID));
-  // Map rows carry no detail, so the viewer refetches only when the listed photo changes, not when a refresh swaps in an identical row.
   const listedDetail = $derived(!!listedRow && "content_version_id" in listedRow);
-  const listedRevision = $derived(listedRow?.revision);
   const current = $derived(photoID ? fromGrid && listedRow && "content_version_id" in listedRow ? listedRow : direct : undefined);
   const orderedIDs = $derived(groups.flatMap(group => group.items.map(item => item.asset_id)));
   const dateLabel = $derived(photos.date?.length === 7 ? monthLabel(photos.date) : photos.date);
