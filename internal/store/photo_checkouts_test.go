@@ -375,7 +375,7 @@ func TestPhotoSourceMetadataRestoreAndMissingIdentityBackfill(t *testing.T) {
 	}
 }
 
-func TestPhotoCheckoutNormalizesSourcePaths(t *testing.T) {
+func TestPhotoCheckoutSourcePathBasenames(t *testing.T) {
 	t.Parallel()
 	for _, sourcePath := range []string{`C:\camera\capture.JPG`, `\\camera\photos\capture.JPG`, `/camera/foo\bar.JPG`} {
 		t.Run(sourcePath, func(t *testing.T) {
