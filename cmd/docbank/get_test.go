@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -99,19 +100,29 @@ func TestGetRejectsDirectoryAndInvalidProgress(t *testing.T) {
 	require.ErrorContains(t, err, "invalid --progress value")
 }
 
-func TestPublishGetFileNoReplacePreservesConcurrentDestination(t *testing.T) {
-	dir := t.TempDir()
-	staged := filepath.Join(dir, "staged")
-	output := filepath.Join(dir, "output")
-	require.NoError(t, os.WriteFile(staged, []byte("download"), 0o600))
-	require.NoError(t, os.WriteFile(output, []byte("concurrent"), 0o600))
-
-	err := publishGetFile(staged, output, false)
-	require.Error(t, err)
-	require.ErrorIs(t, err, os.ErrExist)
-	bytes, readErr := os.ReadFile(output)
-	require.NoError(t, readErr)
-	assert.Equal(t, "concurrent", string(bytes))
+func TestPublishGetFileForwardsOverwriteAndReportsErrors(t *testing.T) {
+	for _, overwrite := range []bool{false, true} {
+		t.Run(strconv.FormatBool(overwrite), func(t *testing.T) {
+			dir := t.TempDir()
+			staged, output := filepath.Join(dir, "staged"), filepath.Join(dir, "output")
+			require.NoError(t, os.WriteFile(staged, []byte("download"), 0o600))
+			require.NoError(t, os.WriteFile(output, []byte("existing"), 0o600))
+			originalSync := syncGetDestinationDir
+			syncGetDestinationDir = func(got string) error {
+				assert.True(t, overwrite, "no-replace failure must return before syncing")
+				assert.Equal(t, filepath.Dir(output), got)
+				return errors.New("injected destination directory sync failure")
+			}
+			t.Cleanup(func() { syncGetDestinationDir = originalSync })
+			err := publishGetFile(staged, output, overwrite)
+			if overwrite {
+				require.ErrorContains(t, err, "file published")
+				require.ErrorContains(t, err, "injected destination directory sync failure")
+			} else {
+				require.ErrorContains(t, err, "publish without replacing")
+			}
+		})
+	}
 }
 
 func TestGetIntegrityFailureNeverPublishesPartialDestination(t *testing.T) {
@@ -135,27 +146,6 @@ func TestGetIntegrityFailureNeverPublishesPartialDestination(t *testing.T) {
 	require.ErrorIs(t, err, daemonconn.ErrIntegrity)
 	_, statErr := os.Lstat(output)
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
-}
-
-func TestPublishGetFileSurfacesDestinationDirectorySyncFailure(t *testing.T) {
-	dir := t.TempDir()
-	staged := filepath.Join(dir, "staged")
-	output := filepath.Join(dir, "output")
-	require.NoError(t, os.WriteFile(staged, []byte("durable content"), 0o600))
-	syncErr := errors.New("injected destination directory sync failure")
-	originalSync := syncGetDestinationDir
-	syncGetDestinationDir = func(got string) error {
-		assert.Equal(t, dir, got)
-		return syncErr
-	}
-	t.Cleanup(func() { syncGetDestinationDir = originalSync })
-
-	err := publishGetFile(staged, output, false)
-	require.ErrorIs(t, err, syncErr)
-	require.ErrorContains(t, err, "file published")
-	bytes, readErr := os.ReadFile(output)
-	require.NoError(t, readErr)
-	assert.Equal(t, "durable content", string(bytes))
 }
 
 func assertNoGetStaging(t *testing.T, dir string) {

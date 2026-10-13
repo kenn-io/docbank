@@ -129,7 +129,11 @@ func TestPublishHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, published)
 			published, err = publish("second.tmp", "second", "out.pdf", false, false)
-			require.Error(t, err)
+			if method == "path" {
+				require.ErrorIs(t, err, os.ErrExist)
+			} else {
+				require.Error(t, err)
+			}
 			require.False(t, published)
 			got, err := root.ReadFile("out.pdf")
 			require.NoError(t, err)
@@ -139,6 +143,7 @@ func TestPublishHonorsNoReplaceAndReportsPostInstallDurability(t *testing.T) {
 				destination = "durable.pdf"
 			}
 			published, err = publish("replace.tmp", "replacement", destination, true, true)
+			require.ErrorIs(t, err, failure)
 			require.ErrorContains(t, err, "directory sync")
 			require.True(t, published)
 			got, err = root.ReadFile(destination)

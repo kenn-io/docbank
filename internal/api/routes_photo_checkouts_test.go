@@ -70,7 +70,25 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	request.Destination = t.TempDir()
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts", nil, request)
 	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
-	require.NoError(t, json.Unmarshal([]byte(body), &created))
-	require.Equal(t, "failed", created.Checkout.State)
-	require.Equal(t, "failed", created.Operation.State)
+	var failed api.PhotoCheckoutCreateResult
+	require.NoError(t, json.Unmarshal([]byte(body), &failed))
+	storedCheckout, storedOperation, err := catalog.PhotoCheckoutOperation(t.Context(), failed.Checkout.ID)
+	require.NoError(t, err)
+	require.Equal(t, storedCheckout, failed.Checkout)
+	var receipt any
+	require.NoError(t, json.Unmarshal([]byte(storedOperation.ReceiptJSON), &receipt))
+	expectedOperation := api.StorageOperation{
+		ID: storedOperation.ID, Kind: storedOperation.Kind, State: string(storedOperation.State),
+		PlanDigest: storedOperation.RequestDigest, TotalObjects: storedOperation.TotalObjects,
+		CompletedObjects: storedOperation.CompletedObjects, CopiedObjects: storedOperation.CopiedObjects,
+		CopiedBytes: storedOperation.CopiedBytes, CancelRequested: storedOperation.CancelRequested,
+		Error: storedOperation.Error, Receipt: receipt,
+		CreatedAt: storedOperation.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: storedOperation.UpdatedAt.Format(time.RFC3339Nano),
+		FinishedAt: storedOperation.FinishedAt.Format(time.RFC3339Nano),
+	}
+	expectedJSON, err := json.Marshal(expectedOperation)
+	require.NoError(t, err)
+	var expectedResponse api.StorageOperation
+	require.NoError(t, json.Unmarshal(expectedJSON, &expectedResponse))
+	require.Equal(t, expectedResponse, failed.Operation)
 }
