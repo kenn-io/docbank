@@ -1124,6 +1124,13 @@ func TestPhotoSidecarProvenanceCorrectionRetriesCachedOutcome(t *testing.T) {
 				path := filepath.Join(root, "capture.xmp")
 				ordinary, err := s.BeginIngest(ctx, "cli", root)
 				require.NoError(t, err)
+				ordinaryIdentity, err := provenanceIdentity(metadataProvenance{NodeID: 2, IngestID: ordinary.ID(), OriginalPath: path})
+				require.NoError(t, err)
+				importedIdentity, err := provenanceIdentity(metadataProvenance{NodeID: 2, IngestID: run.ID(), OriginalPath: path})
+				require.NoError(t, err)
+				if importedIdentity > ordinaryIdentity {
+					ordinary.record.ID, run.record.ID = run.record.ID, ordinary.record.ID
+				}
 				node, err := s.IngestFileExact(ctx, ordinary, s.RootID(), "capture.xmp", fakeHash("c3"), 4, "application/rdf+xml", path, "")
 				require.NoError(t, err)
 				require.Equal(t, int64(2), node.ID)

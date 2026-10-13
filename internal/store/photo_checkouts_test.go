@@ -68,6 +68,10 @@ func TestPhotoCheckoutSelections(t *testing.T) {
 	}
 	_, err = s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{AssetIDs: []string{"00000000-0000-4000-8000-000000000001"}})
 	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.CreateFile(ctx, s.RootID(), "large.jpg", browseHash("large"), math.MaxInt64, "image/jpeg")
+	require.NoError(t, err)
+	_, err = s.EstimatePhotoCheckout(ctx, PhotoCheckoutSelection{All: true})
+	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
 }
 
 func TestPhotoCheckoutPublication(t *testing.T) {
@@ -225,16 +229,6 @@ func TestPhotoCheckoutMetadataRestoresUnboundAndDetachedFilesAndValidatesFrozenE
 			require.Equal(t, entries, actualEntries)
 		})
 	}
-}
-
-func TestPhotoCheckoutRejectsByteOverflow(t *testing.T) {
-	t.Parallel()
-	s := newTestStore(t)
-	_, err := s.CreateFile(t.Context(), s.RootID(), "large.jpg", browseHash("large"), math.MaxInt64, "image/jpeg")
-	require.NoError(t, err)
-	albumAsset(t, s, "small.jpg")
-	_, err = s.EstimatePhotoCheckout(t.Context(), PhotoCheckoutSelection{All: true})
-	require.ErrorIs(t, err, ErrInvalidPhotoCheckout)
 }
 
 func TestPhotoCheckoutRejectedCreateLeavesNoCheckoutOrOperation(t *testing.T) {

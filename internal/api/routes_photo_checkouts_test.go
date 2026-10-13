@@ -27,6 +27,11 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 	selection := store.PhotoCheckoutSelection{AssetIDs: []string{asset.ID}}
 	response, body := do(t, ts, http.MethodPost, "/api/v1/photos/checkouts/estimate", nil, selection)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var estimate store.PhotoCheckoutEstimate
+	require.NoError(t, json.Unmarshal([]byte(body), &estimate))
+	expectedEstimate, err := catalog.EstimatePhotoCheckout(t.Context(), selection)
+	require.NoError(t, err)
+	require.Equal(t, expectedEstimate, estimate)
 	request := api.PhotoCheckoutCreateRequest{Selection: selection, Destination: t.TempDir(), ByteLimit: 100}
 	response, body = do(t, ts, http.MethodPost, "/api/v1/photos/checkouts", nil, request)
 	require.Equal(t, http.StatusAccepted, response.StatusCode, body)
@@ -42,6 +47,11 @@ func TestPhotoCheckoutRoutes(t *testing.T) {
 
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts/"+created.Checkout.ID, nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
+	var status api.PhotoCheckoutStatus
+	require.NoError(t, json.Unmarshal([]byte(body), &status))
+	expectedStatus, err := catalog.PhotoCheckoutStatus(t.Context(), created.Checkout.ID)
+	require.NoError(t, err)
+	require.Equal(t, expectedStatus, status)
 	response, body = do(t, ts, http.MethodGet, "/api/v1/photos/checkouts", nil, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode, body)
 	var list api.PhotoCheckoutList
