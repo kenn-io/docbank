@@ -6,8 +6,8 @@
   import "leaflet.markercluster/dist/MarkerCluster.css";
   import { type MapTiles } from "./photoMap.js";
   import type { PhotoMapRow } from "./generated/docbank.js";
-  import type { MapView } from "./photos.svelte.js";
-  let { items, tiles, view, onopen, onvisible, onview }: { items: PhotoMapRow[]; tiles: MapTiles; view?: MapView; onopen: (id: string, element: HTMLElement) => void; onvisible: (rows: PhotoMapRow[]) => void; onview?: (view: MapView) => void } = $props();
+  import type { MapView, PhotoRow } from "./photos.svelte.js";
+  let { items, appendedFrom, tiles, view, onopen, onvisible, onview }: { items: PhotoMapRow[]; appendedFrom?: PhotoRow[]; tiles: MapTiles; view?: MapView; onopen: (id: string, element: HTMLElement) => void; onvisible: (rows: PhotoMapRow[]) => void; onview?: (view: MapView) => void } = $props();
   let container: HTMLDivElement;
   let map: L.Map | undefined;
   let cluster: L.MarkerClusterGroup | undefined;
@@ -21,7 +21,7 @@
   function visible(incremental = false) {
     if (!map) return;
     const bounds = map.getPixelBounds();
-    const append = incremental && items.length >= scanned.length && scanned.every((row, index) => items[index] === row);
+    const append = incremental && appendedFrom === scanned;
     const hits = (append ? items.slice(scanned.length) : items).filter(row => row.latitude != null && row.longitude != null && bounds.contains(map!.project([row.latitude,row.longitude])));
     inView = append ? [...inView, ...hits] : hits;
     scanned = items;

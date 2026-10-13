@@ -99,12 +99,13 @@ it("scans only appended rows and recomputes replacements", async () => {
  const first=mapPhoto(1), second=mapPhoto(2), third=mapPhoto(3);
  const {props,view}=setup([first]);
  mocks.map.project.mockClear();
- await view.rerender({items:[first,second]});
+ const appended = [first,second];
+ await view.rerender({items:appended,appendedFrom:props.items});
  expect(mocks.map.project).toHaveBeenCalledTimes(1);
  expect(props.onvisible).toHaveBeenLastCalledWith([first,second]);
  mocks.map.project.mockClear();
  const replacement={...first,latitude:3};
- await view.rerender({items:[replacement,third,second]});
+ await view.rerender({items:[replacement,third,second],appendedFrom:undefined});
  expect(mocks.map.project).toHaveBeenCalledTimes(3);
  expect(props.onvisible).toHaveBeenLastCalledWith([third,second]);
 });

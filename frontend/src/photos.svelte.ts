@@ -48,7 +48,10 @@ export class Photos {
   facetsLoading = $state(false);
   facetsError = $state("");
   facetsRetryable = $state(true);
-  items = $state.raw<PhotoRow[]>([]);
+  private rows = $state.raw<PhotoRow[]>([]);
+  appendedFrom = $state.raw<PhotoRow[]>();
+  get items() { return this.rows; }
+  set items(value: PhotoRow[]) { this.appendedFrom = undefined; this.rows = value; }
   total = $state(0);
   cursor = $state<string | undefined>();
   loading = $state(false);
@@ -228,7 +231,9 @@ export class Photos {
         const seen = new Set(this.items.map(item => item.asset_id));
         const added = page.items.filter(item => { if (seen.has(item.asset_id)) return false; seen.add(item.asset_id); return true; });
         const restore = preserve?.();
-        this.items = [...this.items, ...added];
+        const previous = this.items;
+        this.items = [...previous, ...added];
+        this.appendedFrom = previous;
         if (this.allResults) this.selection = { selectedIDs: new Set(this.items.map(item => item.asset_id)), anchorID: undefined };
         if (!this.started) this.total = page.total;
         this.cursor = page.next_cursor;
@@ -311,7 +316,7 @@ export class Photos {
   }
 
   async retry(preserve?: () => (() => Promise<void>) | undefined) {
-    if (this.replacement || this.expired) { if (await this.replace(this.replacement ?? "expiry", preserve, this.replacementDate, true) && this.projection) return this.loadMore(preserve); return; }
+    if (this.replacement || this.expired) { await this.replace(this.replacement ?? "expiry", preserve, this.replacementDate, true); return; }
     this.error = "";
     this.expired = false;
     return this.loadMore(preserve);

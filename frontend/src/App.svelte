@@ -304,7 +304,7 @@
     if (photos?.hiding || photos?.trashing || photoConcealed && photos?.loading) return;
     const version = photoAccessVersion;
     if (state && photoConcealed) {
-      if (!await revalidateLibrary(state, photos?.projection === "map" && (!photos.started || !changed && !photos.error) ? undefined : photos, () => version === photoAccessVersion)) return;
+      if (!await revalidateLibrary(state, photos?.projection === "map" && !photos.started ? undefined : photos, () => version === photoAccessVersion)) return;
     }
     if (version !== photoAccessVersion || document.visibilityState !== "visible") return;
     photoState ??= { photos: new Photos(webSession, handleFailure), cache: new PhotoPreviewCache(webSession, handleFailure) };

@@ -866,6 +866,17 @@ it.each(["success", "failure", "expired", "cancel"])("pages one GPS collection a
  photos.dispose();
 });
 
+it("marks appended pages and clears the marker on other item assignments", async () => {
+ const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");
+ const previous=[mapPhoto(1)];photos.items=previous;photos.started=true;photos.cursor="next";
+ vi.stubGlobal("fetch",vi.fn().mockResolvedValue(response([mapPhoto(2)])));
+ await photos.loadMore();
+ expect(photos.appendedFrom).toBe(previous);expect(photos.items).toHaveLength(2);
+ photos.items=photos.items.map(row=>({...row,latitude:3}));
+ expect(photos.appendedFrom).toBeUndefined();
+ photos.dispose();
+});
+
 it("refreshes the complete GPS query when its accepted population grows", async () => {
  const rows=Array.from({length:250},(_,index)=>mapPhoto(index+1));
  const photos=new Photos("scoped",vi.fn(),false,photoQuery,"map");photos.items=rows;photos.started=true;photos.total=250;

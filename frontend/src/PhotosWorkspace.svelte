@@ -301,7 +301,7 @@
   {/snippet}
   {#if mapMode}
     {#await import("./PhotoMap.svelte") then { default: PhotoMap }}
-      <div class="map-pane"><PhotoMap bind:this={map} items={photos.items.filter((row): row is PhotoMapRow => "latitude" in row)} {tiles} view={photos.mapView} onopen={open} onvisible={rows => { visible = rows; }} onview={view => { photos.mapView = view; }} /></div>
+      <div class="map-pane"><PhotoMap bind:this={map} items={photos.items as PhotoMapRow[]} appendedFrom={photos.appendedFrom} {tiles} view={photos.mapView} onopen={open} onvisible={rows => { visible = rows; }} onview={view => { photos.mapView = view; }} /></div>
       {@render libraryGrid()}
     {:catch}<EmptyState title="Map couldn't load" description="Reload this page to try again." />{/await}
   {:else}{@render libraryGrid()}{/if}
