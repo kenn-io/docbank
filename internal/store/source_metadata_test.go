@@ -394,3 +394,34 @@ func TestMissingSourceMetadataTargetsCanAdvancePastAFailingHash(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []SourceMetadataTarget{{SourceSHA256: fakeHash("b2"), Size: 4}}, second)
 }
+
+func TestMissingSourceMetadataTargetsIncludeDistinctRetainedContent(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := t.Context()
+	file, err := s.CreateFile(ctx, s.RootID(), "history.pdf", fakeHash("a1"), 3, "application/pdf")
+	require.NoError(t, err)
+	_, _, err = s.ReplaceContent(ctx, file.ID, file.Revision, fakeHash("b2"), 5, "application/pdf")
+	require.NoError(t, err)
+	_, err = s.CreateFile(ctx, s.RootID(), "copy.pdf", fakeHash("b2"), 5, "application/pdf")
+	require.NoError(t, err)
+	trashed, err := s.CreateFile(ctx, s.RootID(), "trash.pdf", fakeHash("c3"), 7, "application/pdf")
+	require.NoError(t, err)
+	_, _, err = s.Trash(ctx, trashed.ID, trashed.Revision)
+	require.NoError(t, err)
+	// Stored bytes without a retained content version are not backfill work.
+	_, err = s.db.ExecContext(ctx, `INSERT INTO blobs(hash,size,created_at) VALUES(?,?,?)`,
+		fakeHash("01"), 11, nowRFC3339())
+	require.NoError(t, err)
+
+	targets, err := s.MissingSourceMetadataTargetsAfter(ctx, fakeHash("f1"), "", 3)
+	require.NoError(t, err)
+	require.Equal(t, []SourceMetadataTarget{
+		{SourceSHA256: fakeHash("a1"), Size: 3},
+		{SourceSHA256: fakeHash("b2"), Size: 5},
+		{SourceSHA256: fakeHash("c3"), Size: 7},
+	}, targets)
+	targets, err = s.MissingSourceMetadataTargetsAfter(ctx, fakeHash("f1"), fakeHash("b2"), 2)
+	require.NoError(t, err)
+	require.Equal(t, []SourceMetadataTarget{{SourceSHA256: fakeHash("c3"), Size: 7}}, targets)
+}
