@@ -194,8 +194,13 @@ func TestPhotoSourceProvenanceMetadata(t *testing.T) {
 	var backup bytes.Buffer
 	err := s.ExportMetadata(ctx, &backup)
 	require.NoError(t, err)
-	var rawSource string
-	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, raw.ID).Scan(&rawSource))
+	sources := make(map[string]string)
+	for _, file := range result.Asset.Files {
+		var source string
+		require.NoError(t, s.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, file.ID).Scan(&source))
+		sources[file.ID] = source
+	}
+	rawSource := sources[raw.ID]
 	var alternateSource string
 	require.NoError(t, s.db.QueryRowContext(ctx, `SELECT identity FROM provenance WHERE node_id=? AND original_path LIKE '%AAA.ARW'`, raw.NodeID).Scan(&alternateSource))
 	for _, variant := range []string{"current", "legacy", "another node"} {
@@ -231,9 +236,18 @@ func TestPhotoSourceProvenanceMetadata(t *testing.T) {
 			continue
 		}
 		require.NoError(t, err)
-		var storedSource string
-		require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, raw.ID).Scan(&storedSource))
-		require.Equal(t, expectedSource, storedSource, variant)
+		for _, file := range result.Asset.Files {
+			if variant != "legacy" && file.ID != raw.ID {
+				continue
+			}
+			want := expectedSource
+			if variant == "legacy" {
+				want = sources[file.ID]
+			}
+			var storedSource string
+			require.NoError(t, restored.db.QueryRowContext(ctx, `SELECT source_provenance_identity FROM photo_files WHERE file_id=?`, file.ID).Scan(&storedSource))
+			require.Equal(t, want, storedSource, "%s: %s", variant, file.ID)
+		}
 	}
 }
 

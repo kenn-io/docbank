@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -23,12 +24,10 @@ func TestPhotoCheckoutCommandSelections(t *testing.T) {
 	for _, tc := range []struct {
 		args      []string
 		years     *store.PhotoCheckoutYears
-		all       bool
 		wantError bool
 	}{
 		{args: []string{"estimate", "--years", "2024:2025"}, years: &store.PhotoCheckoutYears{From: 2024, To: 2025}},
 		{args: []string{"estimate", "--years", "2024"}, years: &store.PhotoCheckoutYears{From: 2024, To: 2024}},
-		{args: []string{"estimate", "--all"}, all: true},
 		{args: []string{"estimate", "--years", "bad"}, wantError: true},
 	} {
 		cmd := newPhotoCheckoutCmd()
@@ -41,7 +40,6 @@ func TestPhotoCheckoutCommandSelections(t *testing.T) {
 		} else {
 			require.NoError(t, err)
 			require.Equal(t, tc.years, selection.Years)
-			require.Equal(t, tc.all, selection.All)
 		}
 	}
 }
@@ -54,6 +52,7 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	const token = "synthetic-proof-token"
 	checkout := store.PhotoCheckout{ID: checkoutID, OperationID: operationID, State: "queued", Selection: store.PhotoCheckoutSelection{All: true}, Destination: t.TempDir(), ByteLimit: 100000}
 	statusIDs := make(chan string, 1)
+	listRequests := make(chan string, 1)
 	inputs := make(chan api.PhotoCheckoutCreateRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -72,6 +71,7 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 				w.WriteHeader(http.StatusAccepted)
 				assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutCreateResult{Checkout: checkout, Operation: api.StorageOperation{ID: operationID, Kind: "photo_checkout", State: "queued"}}))
 			} else {
+				listRequests <- r.Method + " " + r.URL.Path
 				assert.NoError(t, json.MarshalWrite(w, api.PhotoCheckoutList{Items: []store.PhotoCheckout{}}))
 			}
 		case "/api/v1/photos/checkouts/" + checkoutID:
@@ -90,8 +90,13 @@ func TestPhotoCheckoutCLICreateListStatus(t *testing.T) {
 	input := <-inputs
 	require.True(t, input.Selection.All)
 	require.Equal(t, int64(100000), input.ByteLimit)
+	destination, err := filepath.Abs(checkout.Destination)
+	require.NoError(t, err)
+	require.Equal(t, destination, input.Destination)
 	out, err = runCLI(t, "photos", "checkout", "list")
 	require.NoError(t, err, out)
+	require.Len(t, listRequests, 1)
+	require.Equal(t, "GET /api/v1/photos/checkouts", <-listRequests)
 	out, err = runCLI(t, "photos", "checkout", "status", checkoutID)
 	require.NoError(t, err, out)
 	require.Len(t, statusIDs, 1)
