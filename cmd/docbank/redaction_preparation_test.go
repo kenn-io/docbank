@@ -77,13 +77,9 @@ func TestPDFRedactionSourcePreparation(t *testing.T) {
 
 	output := filepath.Join(t.TempDir(), "redacted.pdf")
 	artifact, original := writeRedactionPDF(t, output, source, plan)
-	require.NoError(t, os.WriteFile(output+".txt", sidecar, 0o600))
 	saved, err := os.ReadFile(output)
 	require.NoError(t, err)
-	savedText, err := os.ReadFile(output + ".txt")
-	require.NoError(t, err)
-	require.Equal(t, "[REDACTED] KEEP SECRET\f", string(savedText))
-	verifyRedactionPDF(t, saved, savedText, artifact)
+	verifyRedactionPDF(t, saved, sidecar, artifact)
 	require.Equal(t, "[REDACTED] KEEP SECRET",
 		strings.Join(strings.Fields(readRedactionPDFText(t, saved)), " "))
 	assertRedactionPixels(t, saved, original)
